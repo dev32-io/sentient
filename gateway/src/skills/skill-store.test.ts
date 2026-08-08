@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type SkillStore, createSkillStore } from "./skill-store.js";
 import type { SkillFile } from "./skill-file.js";
+import { type SkillStore, createSkillStore } from "./skill-store.js";
 
 const MAX_BODY_CHARS = 20000;
 const KNOWN_TOOLS = new Set(["search_web"]);
@@ -83,10 +83,7 @@ describe("SkillStore — list skips corrupt entries", () => {
 
     const mismatchedDir = join(root, "mismatched");
     mkdirSync(mismatchedDir, { recursive: true });
-    writeFileSync(
-      join(mismatchedDir, "SKILL.md"),
-      "---\nname: not-mismatched\ndescription: d\n---\nbody\n",
-    );
+    writeFileSync(join(mismatchedDir, "SKILL.md"), "---\nname: not-mismatched\ndescription: d\n---\nbody\n");
 
     const listed = store.list();
     expect(listed).toHaveLength(1);

@@ -82,9 +82,7 @@ function splitFrontmatter(raw: string): FrontmatterSplit | null {
  *  back to the caller. */
 function describeError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
-  return message.length > ERROR_DETAIL_MAX_CHARS
-    ? `${message.slice(0, ERROR_DETAIL_MAX_CHARS)}…`
-    : message;
+  return message.length > ERROR_DETAIL_MAX_CHARS ? `${message.slice(0, ERROR_DETAIL_MAX_CHARS)}…` : message;
 }
 
 // ---------------------------------------------------------------------------

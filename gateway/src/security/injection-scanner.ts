@@ -243,9 +243,7 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : null;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
 }
 
 function hasTopLevelKey(obj: Record<string, unknown>, keys: ReadonlySet<string>): boolean {
@@ -402,10 +400,11 @@ function collectStructuralSpans(raw: string): StructuralScan {
 function mergeSpans(spans: Span[]): Span[] {
   if (spans.length === 0) return [];
   const sorted = [...spans].sort((a, b) => a.start - b.start);
-  const merged: Span[] = [{ ...sorted[0]! }];
-  for (let i = 1; i < sorted.length; i += 1) {
-    const cur = sorted[i]!;
-    const last = merged[merged.length - 1]!;
+  const [first, ...rest] = sorted;
+  if (first === undefined) return [];
+  const merged: Span[] = [{ ...first }];
+  for (const cur of rest) {
+    const last = merged[merged.length - 1] as Span;
     if (cur.start <= last.end) {
       last.end = Math.max(last.end, cur.end);
     } else {

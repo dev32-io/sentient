@@ -54,10 +54,7 @@ describe("parseSkillFile", () => {
   });
 
   it("rejects a bad name (uppercase/spaces)", () => {
-    const raw = serializeSkillFile({ name: "x", description: "d", body: "b" }).replace(
-      "name: x",
-      "name: My Skill",
-    );
+    const raw = serializeSkillFile({ name: "x", description: "d", body: "b" }).replace("name: x", "name: My Skill");
     const parsed = parseSkillFile(raw, { maxBodyChars: MAX_BODY_CHARS });
     expect(parsed).toMatchObject({ ok: false, error: { kind: "bad_name", name: "My Skill" } });
   });

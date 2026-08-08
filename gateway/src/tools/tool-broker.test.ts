@@ -1833,7 +1833,13 @@ function nativeRunner(opts: {
 }): NativeToolRunner {
   const name = opts.name ?? "skill_list";
   return {
-    definition: { name, description: "a native skill tool", parameters: {}, category: "foreground", tier: opts.tier ?? "read" },
+    definition: {
+      name,
+      description: "a native skill tool",
+      parameters: {},
+      category: "foreground",
+      tier: opts.tier ?? "read",
+    },
     ...(opts.validate ? { validate: opts.validate } : {}),
     run: async (args) => {
       opts.onRun?.(args);
@@ -1903,7 +1909,15 @@ describe("ToolBroker — foreground-native tools", () => {
     let ranWith: Record<string, unknown> | undefined;
     const { broker } = nativeBroker({
       role: "adult",
-      natives: [nativeRunner({ name: "skill_list", tier: "read", onRun: (a) => (ranWith = a) })],
+      natives: [
+        nativeRunner({
+          name: "skill_list",
+          tier: "read",
+          onRun: (a) => {
+            ranWith = a;
+          },
+        }),
+      ],
     });
 
     const result = await broker.dispatch(makeInvocation({ name: "skill_list", args: { q: "cooking" } }));
@@ -1917,7 +1931,15 @@ describe("ToolBroker — foreground-native tools", () => {
     let ran = 0;
     const { broker, confirmCalls } = nativeBroker({
       role: "adult",
-      natives: [nativeRunner({ name: "skill_run_privileged", tier: "confirm", onRun: () => (ran += 1) })],
+      natives: [
+        nativeRunner({
+          name: "skill_run_privileged",
+          tier: "confirm",
+          onRun: () => {
+            ran += 1;
+          },
+        }),
+      ],
       confirm: true,
     });
 
@@ -1933,7 +1955,15 @@ describe("ToolBroker — foreground-native tools", () => {
     let ran = 0;
     const { broker, confirmCalls } = nativeBroker({
       role: "adult",
-      natives: [nativeRunner({ name: "skill_create", tier: "read", onRun: () => (ran += 1) })],
+      natives: [
+        nativeRunner({
+          name: "skill_create",
+          tier: "read",
+          onRun: () => {
+            ran += 1;
+          },
+        }),
+      ],
       // read-tier defaults to Allow; the stored Deny under the reserved key must win.
       permissions: { [NATIVE_TOOL_SERVER_KEY]: { skill_create: "deny" } },
     });
@@ -1984,7 +2014,9 @@ describe("ToolBroker — foreground-native tools", () => {
           name: "skill_run_privileged",
           tier: "confirm",
           validate: () => ({ content: "missing required argument: skillId", isError: true }),
-          onRun: () => (ran += 1),
+          onRun: () => {
+            ran += 1;
+          },
         }),
       ],
     });
@@ -2009,7 +2041,9 @@ describe("ToolBroker — foreground-native tools", () => {
           name: "skill_list",
           tier: "read",
           validate: () => null,
-          onRun: () => (ran += 1),
+          onRun: () => {
+            ran += 1;
+          },
         }),
       ],
     });

@@ -8,8 +8,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { loadSkillIndexPreamble } from "../context/system-prompt-loader.js";
-import type { SkillMeta } from "./skill-store.js";
 import { renderSkillIndex } from "./skill-index.js";
+import type { SkillMeta } from "./skill-store.js";
 
 const PREAMBLE = loadSkillIndexPreamble();
 
