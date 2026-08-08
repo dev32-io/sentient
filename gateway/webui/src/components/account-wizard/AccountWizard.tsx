@@ -70,9 +70,12 @@ const INITIAL_DRAFT: Omit<DraftAccount, "isAdmin"> = {
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" },
     persona: { template: "default", overrides: "" },
-    tools: {
-      enabled: {} as Record<string, string[]>,
-    },
+    // No `permissions` key at all — a fresh account has never touched a
+    // dropdown, so every tool resolves from its role template (see
+    // `ProfileV1["tools"]["permissions"]`'s doc comment). Writing `{}` here
+    // would instead mean "every server off", which is not what a new
+    // account should get.
+    tools: {},
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   },

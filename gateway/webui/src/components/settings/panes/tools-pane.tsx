@@ -2,6 +2,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
+import type { ToolPermission } from "@sentient/config";
 import type {
   HermesBuiltinToolView,
   McpCatalogView,
@@ -11,9 +12,38 @@ import type {
 import { Card } from "../primitives/card.tsx";
 import { PaneHead } from "../primitives/pane-head.tsx";
 import { Toggle } from "../primitives/toggle.tsx";
+import { Select, type SelectOption } from "../primitives/select.tsx";
 import { Icon } from "../../common/icon.tsx";
+import { effectiveToolPermission, effectiveWildcardPermission, withToolPermission } from "./tool-permission-patch.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "tools-pane"]);
+
+// `Record<ToolPermission, ...>` rather than a bare array: adding a fifth
+// permission value (`auto`, once the classifier lands) makes this object
+// literal fail to typecheck until every site that reads it — starting here —
+// is updated. That is the whole reason the owner picked a dropdown over a
+// segmented toggle for this control.
+const PERMISSION_OPTION_BY_VALUE: Record<ToolPermission, SelectOption> = {
+  allow: { value: "allow", label: "Allow", tag: "auto" },
+  ask: { value: "ask", label: "Ask", tag: "prompts" },
+  deny: { value: "deny", label: "Deny", tag: "refused" },
+  off: { value: "off", label: "Off", tag: "hidden" },
+};
+const PERMISSION_OPTIONS: SelectOption[] = Object.values(PERMISSION_OPTION_BY_VALUE);
+
+/** Row-dimming modifier for the shared `.tool-row` style. EXHAUSTIVE, no
+ *  `default:` arm — a fifth permission value must break this at compile
+ *  time rather than silently falling through to "on". */
+function permissionRowModifier(permission: ToolPermission): "on" | "off" {
+  switch (permission) {
+    case "allow":
+    case "ask":
+    case "deny":
+      return "on";
+    case "off":
+      return "off";
+  }
+}
 
 export interface ToolsPaneProps {
   api: ProfileApi;
@@ -23,7 +53,7 @@ export interface ToolsPaneProps {
 }
 
 export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): JSX.Element {
-  const enabled = draft.tools.enabled;
+  const permissions = draft.tools.permissions;
   const toolsets = draft.tools.toolsets ?? [];
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [hermesOpen, setHermesOpen] = useState(true);
@@ -49,33 +79,21 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     };
   }, [api, token]);
 
-  const handleToggleServer = (id: string, defaultInclude: readonly string[]) => {
-    const isEnabled = id in enabled;
-    const next = { ...enabled };
-    if (isEnabled) {
-      delete next[id];
-    } else {
-      // Seed with the operator default whitelist so the per-tool checkboxes
-      // start in their canonical positions. Empty array would mean "inherit
-      // catalog default" today — but materializing the list makes the UI
-      // unambiguous and stops a subsequent untoggle-then-retoggle from
-      // resurrecting tools the user already turned off.
-      next[id] = [...defaultInclude];
-    }
-    log.debug("tools.toggle-server", { id, nextEnabled: !isEnabled });
-    onDraftTools({ ...draft.tools, enabled: next });
+  const handleToolPermissionChange = (serverId: string, toolName: string, permission: ToolPermission) => {
+    log.debug("tools.permission.change", { serverId, toolName, permission });
+    onDraftTools({ ...draft.tools, permissions: withToolPermission(permissions, serverId, toolName, permission) });
   };
 
-  const handleToggleTool = (serverId: string, toolName: string, defaultInclude: readonly string[]) => {
-    const current = enabled[serverId];
-    if (current === undefined) return;
-    // Empty list = "inherit default". Materialize before mutating so we can
-    // opt out of the default without flipping the whole server off.
-    const baseline = current.length === 0 ? [...defaultInclude] : current;
-    const isOn = baseline.includes(toolName);
-    const nextList = isOn ? baseline.filter((t) => t !== toolName) : [...baseline, toolName];
-    log.debug("tools.toggle-tool", { serverId, toolName, nextOn: !isOn, listLen: nextList.length });
-    onDraftTools({ ...draft.tools, enabled: { ...enabled, [serverId]: nextList } });
+  // The master control writes the SAME shape a per-tool Select does — it
+  // just targets the server's wildcard key instead of one tool's name.
+  // "On" always writes an explicit `allow` rather than trying to restore
+  // "unset" (which would mean deleting the wildcard key): every state this
+  // pane can put a person into must be one it wrote down, not one it erased
+  // its way back to.
+  const handleServerMasterToggle = (serverId: string, wildcardKey: string, turnOn: boolean) => {
+    const next: ToolPermission = turnOn ? "allow" : "off";
+    log.debug("tools.server-master.change", { serverId, wildcardKey, next });
+    onDraftTools({ ...draft.tools, permissions: withToolPermission(permissions, serverId, wildcardKey, next) });
   };
 
   const handleToggleHermesToolset = (toolset: string) => {
@@ -95,12 +113,13 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
   }
 
   const serverIds = Object.keys(catalog.servers).sort();
+  const wildcardKey = catalog.wildcardPermissionKey;
 
   return (
     <>
       <PaneHead
         title="Tools"
-        sub="Tools available to the assistant on each cycle. Toggle a server or built-in tool group on/off, or expand to gate individual tools. Changes apply after you save settings."
+        sub="Pick Allow / Ask / Deny / Off per tool, or use a server's master switch to set them all at once. Changes apply after you save settings."
       />
 
       <Card title="MCP servers" padding={false}>
@@ -118,17 +137,42 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
                 key={id}
                 id={id}
                 entry={entry}
-                isEnabled={id in enabled}
-                userInclude={enabled[id]}
+                wildcardKey={wildcardKey}
+                permissions={permissions}
                 isOpen={!!open[id]}
                 onToggleOpen={() => setOpen((o) => ({ ...o, [id]: !o[id] }))}
-                onToggleServer={() => handleToggleServer(id, entry.defaultInclude)}
-                onToggleTool={(toolName) => handleToggleTool(id, toolName, entry.defaultInclude)}
+                onMasterToggle={(turnOn) => handleServerMasterToggle(id, wildcardKey, turnOn)}
+                onToolChange={(toolName, permission) => handleToolPermissionChange(id, toolName, permission)}
               />
             );
           })}
         </div>
       </Card>
+
+      {catalog.nativeTools.length > 0 && (
+        <Card
+          title="Gateway tools"
+          sub="Built into the gateway itself, not an MCP server — governed by role until a later release lets a person override it."
+          padding={false}
+        >
+          <PermissionToolTable
+            rows={catalog.nativeTools.map((t) => ({
+              key: t.name,
+              name: t.name,
+              description: t.description,
+              permission: t.permission,
+              settable: t.settable,
+              onChange: () => {
+                // Unreachable: `settable` is false for every row rendered
+                // here today, and the Select underneath is disabled — kept
+                // as a real no-op rather than omitted so a future settable
+                // native tool gets a working handler by just flipping
+                // `settable` server-side, no client change required.
+              },
+            }))}
+          />
+        </Card>
+      )}
 
       <HermesBuiltinsCard
         tools={catalog.hermesBuiltins}
@@ -142,29 +186,33 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 }
 
 // ---------------------------------------------------------------------------
-// MCP server section — header row + collapsible per-tool table
+// MCP server section — header row (name + count + master control) + a
+// collapsible per-tool permission table.
 // ---------------------------------------------------------------------------
 
 interface McpServerSectionProps {
   id: string;
   entry: McpCatalogView["servers"][string];
-  isEnabled: boolean;
-  userInclude: readonly string[] | undefined;
+  wildcardKey: string;
+  permissions: ProfileV1["tools"]["permissions"];
   isOpen: boolean;
   onToggleOpen: () => void;
-  onToggleServer: () => void;
-  onToggleTool: (toolName: string) => void;
+  onMasterToggle: (turnOn: boolean) => void;
+  onToolChange: (toolName: string, permission: ToolPermission) => void;
 }
 
 function McpServerSection(props: McpServerSectionProps): JSX.Element {
-  const { id, entry, isEnabled, userInclude, isOpen, onToggleOpen, onToggleServer, onToggleTool } = props;
-  // Active count: tools currently enabled (either via the user's explicit
-  // list, or — when empty — the inherited operator default). Total: the
-  // operator-declared universe.
-  const activeNames: readonly string[] =
-    userInclude !== undefined && userInclude.length > 0 ? userInclude : entry.defaultInclude;
-  const toolsActive = isEnabled ? activeNames.length : 0;
+  const { id, entry, wildcardKey, permissions, isOpen, onToggleOpen, onMasterToggle, onToolChange } = props;
+
+  const effectivePermissions = useMemo(
+    () => entry.tools.map((t) => effectiveToolPermission(permissions, id, t)),
+    [entry.tools, permissions, id],
+  );
+  const toolsActive = effectivePermissions.filter((p) => p !== "off").length;
   const toolsTotal = entry.tools.length;
+
+  const wildcard = effectiveWildcardPermission(permissions, id, wildcardKey, entry.wildcardPermission);
+  const masterOn = wildcard !== "off";
 
   return (
     <div class="mcp">
@@ -189,47 +237,32 @@ function McpServerSection(props: McpServerSectionProps): JSX.Element {
           </div>
           {entry.description && <div class="mcp-desc dim">{entry.description}</div>}
         </div>
-        <span class="mcp-count dim">{isEnabled ? `${toolsActive}/${toolsTotal} tools` : "off"}</span>
+        <span class="mcp-count dim">
+          {toolsActive}/{toolsTotal} tools
+        </span>
         <span onClick={(e: MouseEvent) => e.stopPropagation()}>
-          <Toggle on={isEnabled} onChange={onToggleServer} />
+          <Toggle on={masterOn} onChange={() => onMasterToggle(!masterOn)} />
         </span>
       </div>
-      {isOpen && isEnabled && entry.tools.length > 0 && (
-        <ToolTable
+      {isOpen && (
+        <PermissionToolTable
           rows={entry.tools.map((t) => ({
             key: t.name,
             name: t.name,
             description: t.description,
-            on: activeNames.includes(t.name),
-            onChange: () => onToggleTool(t.name),
+            permission: effectiveToolPermission(permissions, id, t),
+            settable: t.settable,
+            onChange: (permission: ToolPermission) => onToolChange(t.name, permission),
           }))}
         />
-      )}
-      {isOpen && isEnabled && entry.tools.length === 0 && (
-        <div class="tool-table">
-          <div class="tool-row tool-row-placeholder">
-            <div class="tc-tog" />
-            <div class="tc-desc tc-placeholder">
-              No tools declared for this server. Edit <code>gateway/config.yaml#mcp_catalog</code> and add{" "}
-              <code>tools.available</code>.
-            </div>
-          </div>
-        </div>
-      )}
-      {isOpen && !isEnabled && (
-        <div class="tool-table">
-          <div class="tool-row tool-row-placeholder">
-            <div class="tc-tog" />
-            <div class="tc-desc tc-placeholder">Server is off. Toggle on to enable and configure individual tools.</div>
-          </div>
-        </div>
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Hermes built-ins card
+// Hermes built-ins card (unchanged: toolset on/off, not a per-tool
+// permission — Task 6 only replaces the MCP + gateway-native controls).
 // ---------------------------------------------------------------------------
 
 interface HermesBuiltinsCardProps {
@@ -288,7 +321,7 @@ function HermesBuiltinsCard(props: HermesBuiltinsCardProps): JSX.Element {
             </span>
           </div>
           {isOpen && (
-            <ToolTable
+            <ToggleToolTable
               rows={sorted.map((t) => ({
                 key: t.name,
                 name: t.name,
@@ -306,10 +339,56 @@ function HermesBuiltinsCard(props: HermesBuiltinsCardProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Shared tool table — header + rows
+// Permission tool table — one row per tool, a 4-state Select in place of the
+// old boolean Toggle. Shared by MCP server sections and gateway-native tools.
 // ---------------------------------------------------------------------------
 
-interface ToolRow {
+interface PermissionToolRow {
+  key: string;
+  name: string;
+  description: string;
+  permission: ToolPermission;
+  /** `false` renders the Select genuinely non-interactive (native `disabled`
+   *  on the underlying button — no click reaches `onChange`), for a tool a
+   *  stored table cannot address (`delegateTask`). */
+  settable: boolean;
+  onChange: (permission: ToolPermission) => void;
+}
+
+function PermissionToolTable({ rows }: { rows: readonly PermissionToolRow[] }): JSX.Element {
+  return (
+    <div class="tool-table">
+      <div class="tool-row tool-row-head">
+        <div class="tc-tog tc-th">Permission</div>
+        <div class="tc-name tc-th">Tool</div>
+        <div class="tc-desc tc-th">Description</div>
+      </div>
+      {rows.map((r) => (
+        <div key={r.key} class={["tool-row", permissionRowModifier(r.permission)].join(" ")}>
+          <div class="tc-tog">
+            <Select
+              value={r.permission}
+              options={PERMISSION_OPTIONS}
+              onChange={(v) => r.onChange(v as ToolPermission)}
+              disabled={!r.settable}
+            />
+          </div>
+          <div class="tc-name">
+            <code class="kbd">{r.name}</code>
+          </div>
+          <div class="tc-desc dim">{r.description || <span class="tc-placeholder">No description.</span>}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Toggle tool table — the original boolean on/off table, kept for the Hermes
+// built-ins card (toolset on/off is not a 4-state permission).
+// ---------------------------------------------------------------------------
+
+interface ToggleToolRow {
   key: string;
   name: string;
   description: string;
@@ -318,7 +397,7 @@ interface ToolRow {
   onChange: () => void;
 }
 
-function ToolTable({ rows }: { rows: readonly ToolRow[] }): JSX.Element {
+function ToggleToolTable({ rows }: { rows: readonly ToggleToolRow[] }): JSX.Element {
   return (
     <div class="tool-table">
       <div class="tool-row tool-row-head">

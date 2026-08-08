@@ -14,7 +14,7 @@ const PROFILE_BODY = {
   voice: { provider: "local-tts", id: "v-old" },
   audio: { ttsEnabled: true, channel: "voice" },
   persona: { template: "default", overrides: "" },
-  tools: { enabled: {} },
+  tools: {},
   compression: { threshold: 0.5 },
   advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
 };

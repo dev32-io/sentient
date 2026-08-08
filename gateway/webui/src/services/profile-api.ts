@@ -1,3 +1,5 @@
+import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import { createLogger } from "@sentient/web-sdk";
 import { type ApiHttpError, bearerHeaders, handleFetch, jsonHeaders } from "./_helpers";
 
@@ -35,13 +37,20 @@ export interface ProfileV1 {
   };
   tools: {
     /**
-     * Per-server, per-user MCP tool whitelist. Keys are MCP server names
-     * (must exist in the operator catalog at gateway/config.yaml#mcp_catalog).
-     * Empty array = inherit the operator's `tools.include` allow-list for
-     * that server (the common case). Non-empty array = user further narrows
-     * to a subset.
+     * Per-tool permission, keyed by MCP server name then tool name (or the
+     * server's `"*"` wildcard — see `McpCatalogView.wildcardPermissionKey`
+     * below). Mirrors gateway `ProfileV1["tools"]["permissions"]`
+     * (`gateway/src/profile-store/profile-types.ts`) exactly — replaces the
+     * retired `enabled` narrowing-array map.
+     *
+     * OPTIONAL, and that is load-bearing, not an oversight: absent means
+     * "never set" — every tool resolves from the person's role template.
+     * An empty object (`{}`) is a DIFFERENT, deliberate statement: a table
+     * naming no server, i.e. every server off. Never default this to `{}`
+     * when building a PUT body — see `McpCatalogView.servers`'s doc comment
+     * for the absent-server rule this trips.
      */
-    enabled: Record<string, string[]>;
+    permissions?: ToolPermissionMap;
     /**
      * Hermes built-in toolsets enabled for this user. Each entry is a
      * Hermes toolset name (memory, todo, skills, web, browser, terminal,
@@ -108,23 +117,42 @@ export interface RestartResult {
 }
 
 // ---------------------------------------------------------------------------
-// MCP catalog — operator-managed list of MCP servers + per-server tool
-// allow-lists. Used by the Tools pane to render per-tool toggles.
+// MCP catalog — mirrors gateway/src/api/handlers/mcp-catalog.ts's view types
+// EXACTLY (read that file's doc comments before touching this section; they
+// answer most questions about what a client is and isn't allowed to assume).
+// Used by the Tools pane to render one permission dropdown per tool.
 // ---------------------------------------------------------------------------
 
 export interface McpToolView {
-  name: string;
-  description: string;
+  readonly name: string;
+  readonly description: string;
+  readonly tier: ImpactTier;
+  readonly permission: ToolPermission;
+  /** Whether a PUT to `/api/v1/profile/me` can actually change this tool's
+   *  `permission`. `false` for a gateway-native tool (`delegateTask`, under
+   *  `McpCatalogView.nativeTools`): no MCP server addresses it, so no key a
+   *  client writes back is ever read for it. A client MUST render an
+   *  unsettable tool read-only — branch on THIS FIELD, never on the tool's
+   *  name; the wire never special-cases `delegateTask` by name either. */
+  readonly settable: boolean;
 }
 
-export interface McpCatalogEntry {
-  /** Operator-declared universe — every tool the MCP can expose, with
-   *  one-line descriptions. The UI renders one row per entry. */
-  tools: readonly McpToolView[];
-  /** Operator-curated default whitelist (subset of `tools` names). The
-   *  baseline when a user's `profile.tools.enabled[name]` is empty. */
-  defaultInclude: readonly string[];
-  description?: string;
+export interface McpCatalogEntryView {
+  /** Role-narrowed: a tool this account's role can never execute is omitted
+   *  entirely, never shown locked. Always non-empty when the server key
+   *  itself is present (see `McpCatalogView.servers` below). */
+  readonly tools: readonly McpToolView[];
+  /** Operator-curated default whitelist, predates per-tool permissions;
+   *  superseded for governance purposes by each tool's own `permission`
+   *  above. Mirrored for wire fidelity, not read by this pane. */
+  readonly defaultInclude: readonly string[];
+  /** This server's own `"*"` wildcard entry, or `null` when unset. `null`
+   *  does NOT mean every tool resolves to the role template — a person may
+   *  still have per-tool overrides this field doesn't reflect. To turn a
+   *  whole server off, PUT `permissions[server][wildcardPermissionKey] =
+   *  "off"` — NEVER delete the server's key (see `servers` below). */
+  readonly wildcardPermission: ToolPermission | null;
+  readonly description?: string;
 }
 
 export interface HermesBuiltinToolView {
@@ -136,8 +164,29 @@ export interface HermesBuiltinToolView {
 }
 
 export interface McpCatalogView {
-  servers: Record<string, McpCatalogEntry>;
-  hermesBuiltins: readonly HermesBuiltinToolView[];
+  /** A server key is present here iff it has >= 1 tool this role can govern.
+   *  Do NOT infer "off" from a missing key in THIS READ view — a server can
+   *  be absent for three unrelated reasons (stdio transport, zero
+   *  role-governable tools, or simply not in the catalog) that this shape
+   *  does not distinguish. Contrast the STORED table a PUT writes back,
+   *  where an absent server key is NOT neutral: it means "off" permanently.
+   *  A PUT body's `permissions` must carry forward every server key it
+   *  means to keep — build it from what changed, never by re-deriving the
+   *  whole map from this view (that would silently drop the three kinds of
+   *  absence above and write `off` for them forever). */
+  readonly servers: Record<string, McpCatalogEntryView>;
+  /** The literal sentinel key a client writes into `permissions[server]` to
+   *  set every tool on that server at once. Read this rather than
+   *  hardcoding `"*"` — if the sentinel ever changes, this field changes
+   *  with it. */
+  readonly wildcardPermissionKey: string;
+  /** Gateway-native tools with no MCP server (today just `delegateTask`).
+   *  Governed by the same resolver and role gate as every catalog tool, just
+   *  addressed by declared tier instead of by server — cannot live under
+   *  `servers` because no `mcp_catalog` entry curates it. Empty for a role
+   *  that cannot reach the `confirm` tier (child, guest). */
+  readonly nativeTools: readonly McpToolView[];
+  readonly hermesBuiltins: readonly HermesBuiltinToolView[];
 }
 
 // ---------------------------------------------------------------------------
