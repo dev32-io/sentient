@@ -65,7 +65,7 @@ describe("loadStartupConfig — security.inbound_scan carry-through", () => {
       expect(cfg.inboundScan.channels.tool_result).toBe(false);
       expect(cfg.inboundScan.channels.skill_body).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.GATEWAY_CONFIG_PATH;
+      if (prev === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
       else process.env.GATEWAY_CONFIG_PATH = prev;
     }
   });
