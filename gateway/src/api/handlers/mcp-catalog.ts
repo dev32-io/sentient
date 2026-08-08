@@ -1,4 +1,10 @@
-import type { HermesBuiltinTools, McpCatalog, ToolPermission, ToolPermissionMap } from "@sentient/config";
+import {
+  ALL_TOOLS_PERMISSION_KEY,
+  type HermesBuiltinTools,
+  type McpCatalog,
+  type ToolPermission,
+  type ToolPermissionMap,
+} from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
 import { getLog } from "../../logging/logger.js";
 import type { ProfileStore } from "../../profile-store/profile-store.js";
@@ -46,6 +52,18 @@ export interface McpToolView {
   readonly description: string;
   readonly tier: ImpactTier;
   readonly permission: ToolPermission;
+  /** Whether a PUT to `/api/v1/profile/me` can actually change this tool's
+   *  `permission`. `true` for every catalog tool (it lives under an MCP
+   *  server name a stored table CAN address). `false` for a gateway-native
+   *  tool (`delegateTask`, under `nativeTools` below): `serverOf` answers
+   *  `null` for it STRUCTURALLY, so no key any client writes — under any
+   *  spelling — is ever read back for it; its `permission` is always exactly
+   *  its role template's answer. A client MUST render an unsettable tool
+   *  read-only — a control that saves successfully and changes nothing is
+   *  worse than no control. `McpToolView` is the identical shape under both
+   *  `servers[x].tools` and `nativeTools`, so this field is what a client
+   *  branches on, not which array the tool came from. */
+  readonly settable: boolean;
 }
 
 export interface McpCatalogEntryView {
@@ -56,11 +74,32 @@ export interface McpCatalogEntryView {
    *  role CAN reach is always listed, even when its resolved `permission` is
    *  `off` — that is a real, person-editable state, not a locked one. */
   readonly tools: readonly McpToolView[];
-  /** Operator-curated default whitelist (subset of `tools` names). Predates
-   *  per-tool permissions (`tools.enabled`'s narrowing-array format) — kept
-   *  for existing consumers; superseded for governance purposes by each
-   *  tool's own `permission` above. */
+  /** Operator-curated default whitelist (subset of `tools` names), ALSO
+   *  narrowed to what this role may execute — a name here is a name a PUT's
+   *  per-server list would seed, and seeding a tool the role can never reach
+   *  would hand back exactly what the role gate withholds everywhere else.
+   *  Predates per-tool permissions (`tools.enabled`'s narrowing-array
+   *  format); superseded for governance purposes by each tool's own
+   *  `permission` above. */
   readonly defaultInclude: readonly string[];
+  /** This server's own `"*"` wildcard entry — `profile.tools.permissions
+   *  [server][wildcardPermissionKey]` (see `McpCatalogView.wildcardPermissionKey`
+   *  below) — or `null` when the person has not set one. This is the ONLY
+   *  way to express "every tool on this server, including ones the operator
+   *  adds tomorrow" as a single write; each `tools[i].permission` above is
+   *  already-resolved and per-TOOL, so it cannot carry that intent by
+   *  itself. `null` here does NOT mean every tool resolves to the role
+   *  template — a person may still have set per-tool overrides that this
+   *  field does not reflect; read each tool's own `permission` for that.
+   *
+   *  DELETING THIS SERVER'S KEY FROM A PUT BODY IS A DIFFERENT, PERMANENT
+   *  no-op — the absent-server rule (`resolve-tool-permission.ts`'s
+   *  `storedPermissionFor`) turns a whole server "off" through a mechanism
+   *  this field does NOT report, because deleting is a legacy footgun this
+   *  view intentionally never encourages. To turn a whole server off,
+   *  write `permissions[server][view.wildcardPermissionKey] = "off"` in the
+   *  PUT body — never delete the server's key. */
+  readonly wildcardPermission: ToolPermission | null;
   readonly description?: string;
 }
 
@@ -75,7 +114,27 @@ export interface HermesBuiltinToolView {
 }
 
 export interface McpCatalogView {
+  /** A server key is present here iff it has ≥1 tool this role can govern —
+   *  do NOT assume every catalog server name always appears, and do NOT
+   *  infer "off" from a missing key in THIS READ VIEW. A server can be
+   *  absent for three unrelated reasons this shape does not distinguish:
+   *  excluded for being `transport: stdio` (see `projectServers` below),
+   *  present in the catalog but zero of its tools are within this role's
+   *  reach, or simply not in the catalog at all. Contrast this with the
+   *  STORED table you write back in a PUT body, where an absent server key
+   *  is NOT neutral — it means "off" permanently (the absent-server rule).
+   *  If a client reconstructs a `permissions` PUT body FROM this view, it
+   *  must carry forward every server key it means to keep, using
+   *  `wildcardPermission/wildcardPermissionKey` below for a bulk write —
+   *  never by omission. */
   readonly servers: Record<string, McpCatalogEntryView>;
+  /** The literal sentinel key (`@sentient/config`'s `ALL_TOOLS_PERMISSION_KEY`,
+   *  currently `"*"`) a client writes into `permissions[server]` to set
+   *  every tool on that server at once — see `McpCatalogEntryView.
+   *  wildcardPermission`. Read this rather than hardcoding the literal in
+   *  three separate client codebases (web/iOS/Android): if the sentinel
+   *  ever changes, every client that reads it here changes with it. */
+  readonly wildcardPermissionKey: string;
   /** Gateway-native tools with no MCP server — today just `delegateTask`
    *  (`tools/delegate-task.ts`). No `mcp_catalog` entry curates it (it is
    *  gateway-native, not catalog-keyed), so it cannot live under `servers`;
@@ -97,13 +156,42 @@ export interface McpCatalogHandlerDeps {
    *  rule). The role gates which tools this projection may ever show. */
   users: Pick<UserStore, "get">;
   /** Source of this person's OWN stored `profile.tools.permissions`, read
-   *  fresh per request through the same fail-closed reader the ToolBroker
-   *  uses (`tools/user-tool-permissions.ts`) — so a settings read and a live
-   *  dispatch degrade the same way on an unreadable profile. */
+   *  through the same fail-closed reader the ToolBroker uses
+   *  (`tools/user-tool-permissions.ts`) — so a settings read and a live
+   *  dispatch degrade the same way on an unreadable profile. The handler
+   *  keeps ONE reader per user across requests (see `readerFor` below), not
+   *  one per request, so that reader's own `lastKnownGood` contract actually
+   *  reaches this endpoint. */
   profileStore: ProfileStore;
 }
 
 export function createMcpCatalogHandler(deps: McpCatalogHandlerDeps): (request: Request) => Promise<Response> {
+  // ONE READER PER USER, held for the life of THIS HANDLER (the gateway
+  // process) — never rebuilt per request. `createToolPermissionsReader`'s
+  // `lastKnownGood` anchor is the fail-closed-to-"last real answer" contract
+  // every OTHER caller relies on (`tool-broker.ts`'s session-scoped reader,
+  // `delegated-broker.ts`'s per-user cached one): once a read has succeeded,
+  // a LATER transient failure (io-error / corrupt-file / validation-error)
+  // serves that table rather than collapsing to "every server off". A fresh
+  // reader per request has no memory of that prior success, so a hiccup on
+  // one GET would show every MCP tool off in Settings while a live session's
+  // own broker — which built its reader once and kept it — still enforces
+  // the real table. This is NOT the same reader instance any one live
+  // session's ToolBroker holds (a user may have zero or several live
+  // sessions, each independently warmed with its OWN reader) — it cannot
+  // promise byte-identical degradation with one specific session on a
+  // transient failure, only the same fail-closed CONTRACT applied
+  // consistently across this endpoint's own calls. Unbounded like
+  // `delegated-broker.ts`'s own per-user map; fine at household scale.
+  const permissionReaders = new Map<string, () => Promise<ToolPermissionMap | undefined>>();
+  function readerFor(userId: string): () => Promise<ToolPermissionMap | undefined> {
+    const existing = permissionReaders.get(userId);
+    if (existing) return existing;
+    const reader = createToolPermissionsReader({ profileStore: deps.profileStore, userId });
+    permissionReaders.set(userId, reader);
+    return reader;
+  }
+
   return async (request) => {
     if (request.method !== "GET") {
       return new Response("Method Not Allowed", { status: HTTP_METHOD });
@@ -120,13 +208,11 @@ export function createMcpCatalogHandler(deps: McpCatalogHandlerDeps): (request: 
     const { role } = roleResult;
 
     const roleTemplate = defaultPermissionsFor(role, deps.catalog);
-    const storedPermissions = await createToolPermissionsReader({
-      profileStore: deps.profileStore,
-      userId: auth.userId,
-    })();
+    const storedPermissions = await readerFor(auth.userId)();
 
     const view: McpCatalogView = {
       servers: projectServers(deps.catalog, role, roleTemplate, storedPermissions),
+      wildcardPermissionKey: ALL_TOOLS_PERMISSION_KEY,
       nativeTools: projectNativeTools(role, roleTemplate, storedPermissions),
       hermesBuiltins: deps.hermesBuiltinTools.map((t) => ({
         name: t.name,
@@ -185,16 +271,25 @@ function projectServers(
         storedPermissions,
         roleTemplate,
       });
-      tools.push({ name: tool.name, description: tool.description, tier: tool.tier, permission });
+      // `settable: true` — every catalog tool lives under a real server name,
+      // which is exactly what a stored table addresses (contrast
+      // `projectNativeTools` below).
+      tools.push({ name: tool.name, description: tool.description, tier: tool.tier, permission, settable: true });
     }
     // Nothing left for this role to govern on this server — an empty,
     // expandable section is the same noise a locked row is.
     if (tools.length === 0) continue;
 
-    const defaultInclude: readonly string[] = entry.tools.include.map((t) => t.name);
+    // Role-narrowed for the same reason `tools` above is: a name here is a
+    // name a PUT's per-server seed would materialize, and a role-denied tool
+    // must not come back through this side door.
+    const defaultInclude: readonly string[] = entry.tools.include
+      .filter((t) => canExecute(role, t.tier))
+      .map((t) => t.name);
+    const wildcardPermission = storedPermissions?.[serverName]?.[ALL_TOOLS_PERMISSION_KEY] ?? null;
     out[serverName] = entry.description
-      ? { tools, defaultInclude, description: entry.description }
-      : { tools, defaultInclude };
+      ? { tools, defaultInclude, wildcardPermission, description: entry.description }
+      : { tools, defaultInclude, wildcardPermission };
   }
   return out;
 }
@@ -213,7 +308,12 @@ function projectServers(
  * is, and will remain, exactly its role template's answer for `confirm` until
  * a later task gives it a storable key. Reporting an accurate value the
  * settings screen cannot yet let a person CHANGE is still honest; inventing a
- * writable-looking slot for it here would not be.
+ * writable-looking slot for it here would not be — which is exactly why this
+ * projects `settable: false` (`McpToolView`'s doc comment) rather than
+ * leaving that constraint to live only in this comment: a client decoding
+ * this into a typed struct sees the SAME `permission`/`tier` fields as every
+ * governable catalog tool, and would otherwise have no on-the-wire signal to
+ * tell the two apart.
  */
 function projectNativeTools(
   role: UserRole,
@@ -229,7 +329,7 @@ function projectNativeTools(
     storedPermissions,
     roleTemplate,
   });
-  return [{ name, description: DELEGATE_TASK_SETTINGS_DESCRIPTION, tier, permission }];
+  return [{ name, description: DELEGATE_TASK_SETTINGS_DESCRIPTION, tier, permission, settable: false }];
 }
 
 interface AuthOk {

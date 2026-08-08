@@ -1,4 +1,4 @@
-import { type HermesBuiltinTools, type McpCatalog, mcpCatalogSchema } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, type HermesBuiltinTools, type McpCatalog, mcpCatalogSchema } from "@sentient/config";
 import type { Result, UserRole } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { createAccessManager } from "../../access/access-manager.js";
@@ -97,6 +97,22 @@ function makeProfileStore(profile: ProfileV1): ProfileStore {
   };
 }
 
+/** Answers `get` from a queue, one result per call, holding the last result
+ *  for any call past the end of the queue — for exercising "a read that
+ *  SUCCEEDED, then later fails" across multiple requests through the SAME
+ *  handler instance. */
+function profileStoreReturning(...results: Array<Result<ProfileV1, ProfileStoreError>>): ProfileStore {
+  let i = 0;
+  const refuse = (): never => {
+    throw new Error("not used by this test");
+  };
+  return {
+    get: vi.fn(async () => results[Math.min(i++, results.length - 1)] as Result<ProfileV1, ProfileStoreError>),
+    save: refuse,
+    remove: refuse,
+  };
+}
+
 const NO_HERMES_BUILTINS: HermesBuiltinTools = [];
 
 function makeDeps(opts: {
@@ -165,6 +181,79 @@ describe("GET /api/v1/mcp-catalog — auth", () => {
   });
 });
 
+describe("GET /api/v1/mcp-catalog — the permission reader persists per user (matches the ToolBroker's own reader contract)", () => {
+  it("serves the LAST-KNOWN-GOOD table on a later transient read failure, not a fresh empty one", async () => {
+    // Same failure-CLASS distinction `user-tool-permissions.ts` itself
+    // documents: a read that already succeeded outranks the error class on
+    // every later call. `createMcpCatalogHandler` must hold ONE reader per
+    // user across requests for that contract to reach this endpoint at all —
+    // a fresh `createToolPermissionsReader` per request has no memory of the
+    // first call's success and would fail-closed all the way to "off".
+    const profileStore = profileStoreReturning(
+      { ok: true, value: sampleProfile("alice", { household: { add_to_list: "deny" } }) },
+      { ok: false, error: "io-error" },
+    );
+    const handler = createMcpCatalogHandler(makeDeps({ role: "adult", profileStore }));
+
+    const first = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+    const second = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+
+    expect(permissionOf(first, "household", "add_to_list")).toBe("deny");
+    // The second call's underlying read failed — if this fell back to a
+    // fresh DENY_EVERY_SERVER table instead of the first call's success,
+    // `look_up` would come back "off" here instead of its stored/template
+    // answer, and every tool would swing to "off" on a transient hiccup.
+    expect(permissionOf(second, "household", "add_to_list")).toBe("deny");
+    expect(permissionOf(second, "household", "look_up")).toBe("allow");
+  });
+
+  it("keeps readers SEPARATE per user — one user's success or failure never leaks into another's on the SAME handler", async () => {
+    // One handler instance serving two different accounts, as it does in
+    // production (`createMcpCatalogHandler` is built once at server start).
+    const userRecordFor = (userId: string): UserRecord => ({
+      userId,
+      displayName: userId,
+      pinHash: "$argon2id$fake-hash",
+      role: "adult",
+      avatarTint: "sage",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      credentialsValidFrom: NEVER_REVOKED,
+    });
+    const deps = {
+      tokens: {
+        validate: vi.fn(async (token: string): Promise<TokenResult<TokenPayload>> => {
+          const userId = token === "alice-token" ? "alice" : "bob";
+          return { ok: true, value: { userId, issuedAt: 0, expiresAt: 9999999999 } };
+        }),
+      },
+      catalog: CATALOG,
+      hermesBuiltinTools: NO_HERMES_BUILTINS,
+      users: { get: vi.fn(async (userId: string) => ({ ok: true as const, value: userRecordFor(userId) })) },
+      profileStore: {
+        get: vi.fn(async (userId: string): Promise<Result<ProfileV1, ProfileStoreError>> => {
+          if (userId === "alice")
+            return { ok: true, value: sampleProfile("alice", { household: { add_to_list: "deny" } }) };
+          return { ok: false, error: "io-error" };
+        }),
+        save: vi.fn(),
+        remove: vi.fn(),
+      } satisfies ProfileStore,
+    };
+    const handler = createMcpCatalogHandler(deps);
+
+    const aliceFirst = (await (await handler(makeGetRequest("alice-token"))).json()) as McpCatalogView;
+    const bob = (await (await handler(makeGetRequest("bob-token"))).json()) as McpCatalogView;
+    const aliceSecond = (await (await handler(makeGetRequest("alice-token"))).json()) as McpCatalogView;
+
+    expect(permissionOf(aliceFirst, "household", "add_to_list")).toBe("deny");
+    // bob's own reader has NEVER succeeded — it must not inherit alice's
+    // cached table just because her reader (in the same handler) has one.
+    expect(permissionOf(bob, "household", "look_up")).toBe("off");
+    // …and alice's own answer is unaffected by bob's failure on the same handler.
+    expect(permissionOf(aliceSecond, "household", "add_to_list")).toBe("deny");
+  });
+});
+
 describe("GET /api/v1/mcp-catalog — every tool carries a real permission and tier", () => {
   it("projects the ROLE TEMPLATE's answer for an account with NO permission table at all (every account on disk today)", async () => {
     // `permissions` is genuinely UNSET here — not `{}` — which is the actual
@@ -181,9 +270,20 @@ describe("GET /api/v1/mcp-catalog — every tool carries a real permission and t
       description: "looks something up",
       tier: "read",
       permission: "allow",
+      settable: true,
     });
     expect(tools.find((t) => t.name === "add_to_list")).toMatchObject({ tier: "write", permission: "ask" });
     expect(tools.find((t) => t.name === "unlock_door")).toMatchObject({ tier: "confirm", permission: "ask" });
+  });
+
+  it("marks every catalog tool 'settable' — a stored table CAN address it", async () => {
+    const handler = createMcpCatalogHandler(makeDeps({ role: "adult" }));
+
+    const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+
+    for (const tool of view.servers.household?.tools ?? []) {
+      expect(tool.settable).toBe(true);
+    }
   });
 
   it("an empty table ({}) is a DIFFERENT case — every catalog tool resolves 'off', not the template", async () => {
@@ -219,6 +319,42 @@ describe("GET /api/v1/mcp-catalog — every tool carries a real permission and t
   });
 });
 
+describe("GET /api/v1/mcp-catalog — the server-level wildcard is expressible and obvious", () => {
+  it("reports the top-level sentinel key so a client never hardcodes the literal '*'", async () => {
+    const handler = createMcpCatalogHandler(makeDeps({ role: "adult" }));
+
+    const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+
+    expect(view.wildcardPermissionKey).toBe(ALL_TOOLS_PERMISSION_KEY);
+  });
+
+  it("reports null when the person has not set a wildcard — distinct from a wildcard set to a value", async () => {
+    const unsetView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "adult", permissions: undefined }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+    const setView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "adult", permissions: { household: { "*": "deny" } } }))(
+        makeGetRequest("valid-token"),
+      )
+    ).json()) as McpCatalogView;
+
+    expect(unsetView.servers.household?.wildcardPermission).toBeNull();
+    expect(setView.servers.household?.wildcardPermission).toBe("deny");
+  });
+
+  it("does NOT report a wildcard for a server that is merely absent from the stored table (a different mechanism)", async () => {
+    // The table names a DIFFERENT server, so `household` is absent from it —
+    // the absent-server rule resolves every household tool to "off", but
+    // nobody set household's own "*" key, and `wildcardPermission` must say so.
+    const handler = createMcpCatalogHandler(makeDeps({ role: "adult", permissions: { "other-server": {} } }));
+
+    const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+
+    expect(permissionOf(view, "household", "look_up")).toBe("off");
+    expect(view.servers.household?.wildcardPermission).toBeNull();
+  });
+});
+
 describe("GET /api/v1/mcp-catalog — role-based omission", () => {
   it("a guest sees only the read-tier tool, never a write- or confirm-tier one", async () => {
     const handler = createMcpCatalogHandler(makeDeps({ role: "guest" }));
@@ -229,6 +365,20 @@ describe("GET /api/v1/mcp-catalog — role-based omission", () => {
     // would also pass if the whole server silently vanished.
     expect(names(view, "household")).toEqual(["look_up"]);
     expect(permissionOf(view, "household", "look_up")).toBe("allow");
+  });
+
+  it("also narrows defaultInclude by role — it must not hand back a name the role gate withholds everywhere else", async () => {
+    const guestView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "guest" }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+    const adultView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "adult" }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+
+    expect(guestView.servers.household?.defaultInclude).toEqual(["look_up"]);
+    // Pinned alongside: an adult's defaultInclude still carries every curated
+    // name, so this isn't just an always-empty/always-one-item coincidence.
+    expect(adultView.servers.household?.defaultInclude).toEqual(["look_up", "add_to_list", "wipe_data", "unlock_door"]);
   });
 
   it("a child reaches read and write, never confirm", async () => {
@@ -269,6 +419,14 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
     expect(view.nativeTools[0]).toMatchObject({ name: "delegateTask", tier: "confirm", permission: "ask" });
   });
 
+  it("projects 'settable: false' — the wire signal a client must render read-only, since servers[x].tools carries the identical shape", async () => {
+    const handler = createMcpCatalogHandler(makeDeps({ role: "adult" }));
+
+    const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
+
+    expect(view.nativeTools[0]?.settable).toBe(false);
+  });
+
   it("is absent for roles that never reach 'confirm' (child, guest) — paired with the household check above", async () => {
     const childView = (await (
       await createMcpCatalogHandler(makeDeps({ role: "child" }))(makeGetRequest("valid-token"))
@@ -293,17 +451,25 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
 });
 
 // ---------------------------------------------------------------------------
-// AGREEMENT WITH THE BROKER. Same catalog, same role, same stored table, fed
-// to a REAL ToolBroker and to this handler — if the two ever disagree about a
-// tool's resolved PERMISSION, the settings screen is lying about what the
-// model can do (plan 2026-08-07-tool-permissions task 5, controller notes).
+// AGREEMENT WITH THE BROKER — what this suite actually proves, precisely.
 //
-// The one place they are EXPECTED to differ is which tools they expose at
-// all: the broker's `definitions()` hides `off` from the MODEL (a prompt-
-// cache concern — see tool-broker.ts), while this projection must keep an
-// `off` tool LISTED so a person can turn it back on. That is a different
-// consumer making a different choice about the SAME value, not a
-// disagreement about the value itself — this suite checks both.
+// The GUARANTEE that the two can never disagree about a resolved VALUE comes
+// from the extraction itself (`tools/resolve-tool-permission.ts`): the broker
+// and this handler call the identical function, which is separately pinned
+// directly in `resolve-tool-permission.test.ts`. `ToolBroker.definitions()`
+// exposes only tool NAMES (`d.name`), never the permission it resolved each
+// one to — so a suite built on it can prove "visible to the model" vs "not",
+// and NOTHING finer; it could not, by itself, catch an `allow`↔`ask` swap.
+//
+// What THIS suite checks: that the VISIBILITY MAPPING is consistent with the
+// exact values a real broker and this handler each land on for a shared
+// catalog/role/stored-table fixture — every tool the broker exposes resolves
+// to a concrete non-off value here (asserted per-tool, not via a blanket
+// negative check), and the one tool the broker hides for being `off` is
+// still LISTED here at exactly that value, because this projection must let
+// a person turn it back on while the model must not see it at all. That is a
+// different consumer making a different choice about the SAME value, not a
+// disagreement about the value itself.
 // ---------------------------------------------------------------------------
 describe("GET /api/v1/mcp-catalog — agrees with the ToolBroker's own resolution", () => {
   const householdTools: McpToolRef[] = [
@@ -394,16 +560,20 @@ describe("GET /api/v1/mcp-catalog — agrees with the ToolBroker's own resolutio
     // The broker's model-facing surface: `deny` stays visible, `off` does not.
     expect(visibleToModel.sort()).toEqual(["add_to_list", "look_up", "unlock_door"]);
 
-    // Every tool the broker WOULD show the model resolves to something other
-    // than "off" here too — the two must never disagree about the VALUE.
-    for (const toolName of visibleToModel) {
-      expect(permissionOf(view, "household", toolName)).not.toBe("off");
-    }
-    // `wipe_data` is invisible to the model but still listed here, at exactly
-    // the value that made the broker hide it.
+    // EXACT expected value per tool, not a blanket `not.toBe("off")` — a
+    // loop-with-a-negative-assertion passes just as well when `permissionOf`
+    // returns `undefined` (tool missing entirely) as when it returns a real
+    // non-off value, so it cannot actually distinguish "visible and correct"
+    // from "silently absent". Concrete values close that gap for the three
+    // classes this fixture exercises (profile-stored, role-template, and the
+    // tool the stored table turned off).
+    expect(permissionOf(view, "household", "look_up")).toBe("allow"); // role-template, unset
+    expect(permissionOf(view, "household", "add_to_list")).toBe("deny"); // profile-stored
+    expect(permissionOf(view, "household", "unlock_door")).toBe("ask"); // role-template, confirm tier
+    // `wipe_data` is invisible to the model (broker's `definitions()` hides
+    // `off`) but still LISTED here, at exactly the value that made it hidden.
     expect(names(view, "household")).toContain("wipe_data");
-    expect(permissionOf(view, "household", "wipe_data")).toBe("off");
-    expect(permissionOf(view, "household", "add_to_list")).toBe("deny");
+    expect(permissionOf(view, "household", "wipe_data")).toBe("off"); // profile-stored
   });
 
   it("child: the role gate excludes 'unlock_door' from BOTH the broker's tools[] and the settings projection", async () => {
