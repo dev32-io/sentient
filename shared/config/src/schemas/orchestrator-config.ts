@@ -77,6 +77,25 @@ export const orchestratorConfigSchema = z.object({
     // 1000-200000.
     max_tool_result_chars: z.number().int().min(1000).max(200000).default(20000),
   }),
+  // SKILLS (skill-system spec) — the per-user/operator SKILL.md library
+  // surfaced to the model as a system-prompt index plus on-demand bodies.
+  skills: z
+    .object({
+      // Skills listed in the system-prompt index. Overflow WARNs at boot and
+      // truncates newest-first, so an operator who keeps piling on skills
+      // notices rather than silently losing the oldest ones out of context.
+      // Range 1-500.
+      max_index_entries: z.number().int().min(1).max(500).default(50),
+      // Max SKILL.md body accepted at write time, in characters (~5k tokens
+      // at the default). Guards the same class of blowout as
+      // `tools.max_tool_result_chars` — a skill body is read into model
+      // context whenever the skill is invoked. Range 1000-100000.
+      max_body_chars: z.number().int().min(1000).max(100000).default(20000),
+    })
+    // Block-level default: operator configs (`~/.sentient/gateway/config/config.yaml`)
+    // are edited in place and predate this key — a missing block must never
+    // brick boot for a gateway that was working yesterday.
+    .default({}),
   delegation: z.object({
     // Per-agent frontmatter file dir (static delegation envelopes).
     frontmatter_dir: z.string().default("./config/delegation"),

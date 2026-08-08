@@ -301,6 +301,11 @@ orchestrator:
     # tool output at 10 KiB / 256 lines head-and-tail; Pi caps at 2000 lines
     # / 50 KB and tells the model to paginate. Range 1000-200000.
     max_tool_result_chars: 20000
+  # SKILLS — the per-user/operator SKILL.md library surfaced to the model as
+  # a system-prompt index plus on-demand bodies (skill-system spec).
+  skills:
+    max_index_entries: 50    # skills listed in the system-prompt index; overflow WARNs and truncates newest-first (1-500)
+    max_body_chars: 20000    # max SKILL.md body accepted at write; ~5k tokens (1000-100000)
   delegation:
     frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
     hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
@@ -1118,3 +1123,15 @@ managed_services:
     healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port; must match tts.url above
     depends_on: []
     optional: false
+
+# ---------------------------------------------------------------------------
+# Security — inbound prompt-injection scanning (gateway/src/security/)
+# ---------------------------------------------------------------------------
+security:
+  inbound_scan:
+    enabled: true            # master switch for scanning non-person text entering model context
+    channels:                # per-channel toggles; a channel off = that text passes unscanned (logged at boot)
+      tool_result: true
+      background_completion: true
+      skill_body: true
+      delegation_prompt: true

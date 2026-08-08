@@ -373,6 +373,43 @@ export const downloadsConfigSchema = z.object({
 export type DownloadsConfig = z.output<typeof downloadsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Security — inbound prompt-injection scanning (gateway/src/security/)
+// ---------------------------------------------------------------------------
+
+export const inboundScanConfigSchema = z
+  .object({
+    // Master switch for scanning non-person text before it enters model
+    // context (tool results, background-task completions, skill bodies,
+    // delegation prompts). Missing block or missing key = scanning ON —
+    // secure by default, never opt-in.
+    enabled: z.boolean().default(true),
+    // Per-channel toggles. A channel set to false lets that text pass
+    // unscanned into model context — logged at boot so a silently-disabled
+    // channel is visible in the log trail, not just the YAML.
+    channels: z
+      .object({
+        tool_result: z.boolean().default(true),
+        background_completion: z.boolean().default(true),
+        skill_body: z.boolean().default(true),
+        delegation_prompt: z.boolean().default(true),
+      })
+      .default({}),
+  })
+  // Block-level default: operator configs are edited in place and predate
+  // this key — a missing block must never brick boot for a gateway that was
+  // working yesterday. Because every field here also defaults to `true`, the
+  // secure-by-default posture holds even when the whole block is absent.
+  .default({});
+
+export type InboundScanConfig = z.output<typeof inboundScanConfigSchema>;
+
+export const securityConfigSchema = z.object({
+  inbound_scan: inboundScanConfigSchema,
+});
+
+export type SecurityConfig = z.output<typeof securityConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
 
@@ -448,6 +485,11 @@ export const gatewayConfigSchema = z.object({
   // defaults match the standard docker-compose volume layout. Override
   // artifacts_dir and public_base_url in config.yaml for your deployment.
   downloads: downloadsConfigSchema.default({}),
+  // Security — inbound prompt-injection scanning master switch + per-channel
+  // toggles (gateway/src/security/). `.default({})` so an operator config
+  // predating this block keeps booting, and every leaf field also defaults
+  // to `true` so a missing block lands on scanning ON, never OFF.
+  security: securityConfigSchema.default({}),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;
