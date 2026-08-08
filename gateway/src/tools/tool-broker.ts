@@ -69,6 +69,9 @@ import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import { type ImpactTier, canExecute } from "@sentient/protocol";
 import type { Capability } from "../access/capability.js";
 import { getLog } from "../logging/logger.js";
+import { createPassthroughInboundGate } from "../security/inbound-gate.js";
+import type { InboundGate } from "../security/inbound-gate.js";
+import type { ScanProvenance } from "../security/injection-scanner.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { UserId } from "../user-auth/user-id.js";
 import { createBackgroundRegistry } from "./background-registry.js";
@@ -96,6 +99,29 @@ const TOO_MANY_BACKGROUND_TASKS = "too many running tasks";
 /** Client-facing failure-note budget on a `delegation.progress` error frame.
  *  A tile shows a hint, never the delegated worker's full output. */
 const NOTE_PREVIEW_LEN = 120;
+
+/** The gateway-native skill tool whose RESULT is a skill body — screened under
+ *  the `skill_body` channel (its own operator toggle) rather than the generic
+ *  `tool_result` channel, and sourced by the skill it ran rather than the tool
+ *  name. Every other tool's result is generic `tool_result` content. */
+const SKILL_USE_TOOL_NAME = "skill_use";
+
+/** Impact tiers that DO something — the only tiers an elevated risk level
+ *  escalates. `read` is excluded on purpose (see `resolveDecision`). */
+const SIDE_EFFECTING_TIERS: ReadonlySet<ImpactTier> = new Set<ImpactTier>(["write", "confirm", "admin"]);
+
+/** Decision-log `source` for a permission the risk accumulator raised from
+ *  `allow` to `ask`. Distinct from `resolve-tool-permission.ts`'s
+ *  `PermissionSource` literals so the log says the escalation fired, not that a
+ *  table answered `ask`. */
+const RISK_ESCALATION_SOURCE = "risk-escalation";
+
+/** What the person is told when recent risk — not their own setting — is why a
+ *  side-effecting call now needs confirmation. Names the risk, not a policy
+ *  rule, for the same reason the other confirm copy names the person. */
+function riskEscalationReason(toolName: string): string {
+  return `Recent activity in this session looks risky, so this ${toolName} call needs your confirmation.`;
+}
 
 /** `delegateTask`'s worker name; any other background tool reports under its
  *  own tool name. Never throws on a malformed `args` — the guard/runner is
@@ -377,6 +403,14 @@ export interface ToolBrokerDeps {
    *  `setBackgroundCompletionSink` is late-bound — a headless/dev broker has
    *  no client — but an UNSET sink is logged once per task, never silent. */
   onDelegationProgress?: (p: DelegationProgress) => void;
+  /** The inbound scanning boundary (security/inbound-gate.ts). OPTIONAL and
+   *  defaulting to a disabled passthrough: the REAL gate — scanner + this
+   *  session's risk accumulator — is composed by the composition root in a
+   *  later task, so a broker built without it behaves exactly as before. It
+   *  does two things here: every foreground result is screened through it
+   *  before the result cap, and its `getRiskLevel()` feeds the PDP escalation
+   *  in `resolveDecision`. */
+  inboundGate?: InboundGate;
 }
 
 /** What `resolveTarget` found: the lane the call runs on, what it needs to run
@@ -401,6 +435,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   } = deps;
   // Optional dep: a broker with no native tools behaves exactly as before.
   const nativeTools: Map<string, NativeToolRunner> = deps.nativeTools ?? new Map();
+  // Optional dep: a broker with no gate scans nothing and carries no risk, so a
+  // caller that never wires one gets the pre-boundary behaviour verbatim.
+  const inboundGate: InboundGate = deps.inboundGate ?? createPassthroughInboundGate();
   const ownerUserId = capability.ownerUserId;
   const role = capability.role;
   // THE FLOOR, resolved once. Both inputs are immutable for this broker's life
@@ -560,7 +597,28 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { action: "deny", reason: roleDeniedReason(inv.name) };
     }
 
-    const { permission, source } = resolvePermission(inv.name, tier);
+    const resolved = resolvePermission(inv.name, tier);
+    let permission: ToolPermission = resolved.permission;
+    let source: string = resolved.source;
+
+    // RISK ESCALATION (spec §6.2). A STORED `allow` on a side-effecting tool is
+    // exactly the case a template-only rule would miss, so the escalation lives
+    // at the resolved permission, not in the template: when the inbound gate's
+    // accumulated risk is `escalate`/`block`, a `write`/`confirm`/`admin` call
+    // that would otherwise run unmediated is turned into a confirm.
+    //
+    // `read` stays frictionless BY DESIGN — do not extend this to it. A flagged
+    // page tends to be read many times in a row, so escalating reads turns one
+    // finding into a prompt storm that trains the person to click through; and
+    // the read tier's real blast radius (the camera/playback residual) is owned
+    // elsewhere, not by this confirm.
+    const riskEscalates =
+      permission === "allow" && SIDE_EFFECTING_TIERS.has(tier) && isRiskElevated();
+    if (riskEscalates) {
+      permission = "ask";
+      source = RISK_ESCALATION_SOURCE;
+    }
+
     log.info("tool-broker.pdp.decision", {
       sessionId,
       tool: inv.name,
@@ -568,12 +626,26 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       role,
       tier,
       permission,
-      // WHICH table answered. The difference matters when a person swears they
-      // set something: `role-template` means their profile is silent on it, and
-      // `catalog-backstop` means nothing answered at all.
+      // WHICH table answered — or `risk-escalation` when accumulated risk, not a
+      // table, raised an `allow` to `ask`. The difference matters when a person
+      // swears they set something: `role-template` means their profile is silent
+      // on it, and `catalog-backstop` means nothing answered at all.
       source,
     });
+
+    // The escalation-driven confirm names the risk, not the person's settings —
+    // routed here rather than through `applyUserPermission`'s `ask` arm so the
+    // prompt copy is honest about why it appeared.
+    if (riskEscalates) return runConfirmFlow(inv, riskEscalationReason(inv.name));
     return applyUserPermission(inv, permission);
+  }
+
+  /** True when the inbound gate's accumulated risk warrants an extra confirm on
+   *  a side-effecting tool. `warn` is intentionally NOT elevated — only
+   *  `escalate` and `block` gate a call the person otherwise allowed. */
+  function isRiskElevated(): boolean {
+    const level = inboundGate.getRiskLevel();
+    return level === "escalate" || level === "block";
   }
 
   /**
@@ -687,6 +759,35 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     return { kind: "foreground", serverName, tier: def.tier };
   }
 
+  /** How a foreground result is labelled to the inbound scanner. A `skill_use`
+   *  result IS a skill body — governed by the `skill_body` channel toggle and
+   *  sourced by the skill it ran (`args.name`) — so a parent who silenced that
+   *  channel silences skill bodies specifically. Every other tool's output is
+   *  generic `tool_result` content, sourced by the tool name. Write-time skill
+   *  authoring args are NOT screened here: the invisible-char lint and the
+   *  confirm dialog already gate authoring, and this use-time screen catches
+   *  what a body actually does. */
+  function provenanceFor(inv: ToolInvocation): ScanProvenance {
+    if (inv.name === SKILL_USE_TOOL_NAME) {
+      const skillName = typeof inv.args.name === "string" && inv.args.name.length > 0 ? inv.args.name : inv.name;
+      return { channel: "skill_body", source: skillName };
+    }
+    return { channel: "tool_result", source: inv.name };
+  }
+
+  /** Runs a foreground result through the inbound gate BEFORE the size cap, so
+   *  the model sees the envelope-stripped text and the cap bounds what actually
+   *  survives. Annotate-only: the gate never drops a result, it only records
+   *  risk and returns sanitized text (identical to the input unless a hostile
+   *  envelope was stripped). */
+  function screenResult(inv: ToolInvocation, result: ToolResult): ToolResult {
+    const screened = inboundGate.screen(result.content, provenanceFor(inv), {
+      sessionId,
+      toolCallId: inv.toolCallId,
+    });
+    return screened.text === result.content ? result : { ...result, content: screened.text };
+  }
+
   /** The ONE place a tool result's size is bounded before it can reach the
    *  model (task 18, D17) — every result flowing through this function,
    *  whatever tool produced it, inherits the cap. See tool-result-cap.ts's
@@ -716,7 +817,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     foregroundInFlight += 1;
     try {
       const raw = await mcp.callTool(serverName, inv.name, inv.args, inv.signal);
-      const result = capResult(inv, raw, "tool-broker.dispatch.foreground.result-capped");
+      const screened = screenResult(inv, raw);
+      const result = capResult(inv, screened, "tool-broker.dispatch.foreground.result-capped");
       log.info("tool-broker.dispatch.foreground.done", {
         sessionId,
         tool: inv.name,
@@ -741,7 +843,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     foregroundInFlight += 1;
     try {
       const raw = await runner.run(inv.args, { signal: inv.signal });
-      const result = capResult(inv, raw, "tool-broker.dispatch.native.result-capped");
+      const screened = screenResult(inv, raw);
+      const result = capResult(inv, screened, "tool-broker.dispatch.native.result-capped");
       log.info("tool-broker.dispatch.native.done", {
         sessionId,
         tool: inv.name,
