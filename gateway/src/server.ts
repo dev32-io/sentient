@@ -143,6 +143,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     tokens: services.auth.tokens,
     catalog: services.mcpCatalog,
     hermesBuiltinTools: services.hermesBuiltinTools,
+    users: services.auth.users,
+    profileStore: services.profileStore,
   });
   const handleServicesVersions = createServicesVersionsHandler({
     installState: services.installState,

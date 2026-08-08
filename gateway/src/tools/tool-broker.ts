@@ -63,7 +63,7 @@
 // `mcp-host/tools/identify-user.ts`, which is the only place that knows both
 // the channel and what the tool means without one.
 
-import { ALL_TOOLS_PERMISSION_KEY, type McpCatalog, type OrchestratorConfig } from "@sentient/config";
+import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import { type ImpactTier, canExecute } from "@sentient/protocol";
 import type { Capability } from "../access/capability.js";
@@ -73,7 +73,8 @@ import type { UserId } from "../user-auth/user-id.js";
 import { createBackgroundRegistry } from "./background-registry.js";
 import type { BackgroundRegistry } from "./background-registry.js";
 import type { McpClient } from "./mcp-client.js";
-import { defaultPermissionForTier, defaultPermissionsFor } from "./role-defaults.js";
+import { type ResolvedPermission, resolveToolPermission } from "./resolve-tool-permission.js";
+import { defaultPermissionsFor } from "./role-defaults.js";
 import { capToolResult } from "./tool-result-cap.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
 import type { DelegationProgress, PdpDecision, ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
@@ -360,24 +361,6 @@ type ResolvedTarget =
   | { kind: "background"; runner: BackgroundToolRunner; tier: ImpactTier }
   | { kind: "foreground"; serverName: string; tier: ImpactTier };
 
-/** Which of the three tables answered, for the log. They are three different
- *  facts and only the first two are things a person or an operator chose:
- *
- *    profile           the person's own stored setting (a tool key, a `"*"`
- *                      wildcard, or the absent-server rule)
- *    role-template     their role's starter table, or — for a gateway-native
- *                      tool with no server — the same tier→permission mapping
- *                      that table is built from
- *    catalog-backstop  NOTHING answered. Fail-closed `off`, not a choice
- *                      anybody made; means the live tool surface and
- *                      `config.yaml#mcp_catalog` have drifted apart. */
-type PermissionSource = "profile" | "role-template" | "catalog-backstop";
-
-interface ResolvedPermission {
-  readonly permission: ToolPermission;
-  readonly source: PermissionSource;
-}
-
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const {
     mcp,
@@ -483,42 +466,6 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   /**
-   * The person's OWN STORED setting for a tool, or `undefined` when their table
-   * does not answer — which is the signal to fall to the role template.
-   *
-   * PRECEDENCE inside a server: the tool's own key, then the server's `"*"`
-   * wildcard, then unanswered.
-   *
-   * THE SERVER-LEVEL ASYMMETRY, deliberate and load-bearing. A tool absent
-   * from a PRESENT server is unanswered (the template decides); a whole server
-   * absent from a NON-EMPTY table is `off`, and that `off` is a STORED answer
-   * that stops the template ever being consulted. That is not a second rule
-   * invented here — it is the meaning `tools.enabled` always carried and that
-   * every client still encodes: the web and mobile Tools panes switch a server
-   * off by DELETING its key. Letting the template answer underneath a deleted
-   * key would re-grant the whole server on every save, silently. The asymmetry
-   * is confined to the server level and goes away for good once the clients
-   * write the explicit `{"*": "off"}` spelling instead of deleting.
-   *
-   * UNSET IS NOT EMPTY. `undefined` here means the person never set a table, so
-   * every tool falls to the template — which is every account created before
-   * seeding landed. An empty OBJECT is a table that names no server, i.e. every
-   * server off, which is exactly what "turn all five servers off in the UI"
-   * produces and what `user-tool-permissions.ts` reports for a profile it
-   * cannot read. `ProfileV1["tools"]["permissions"]` is `.optional()` rather
-   * than `.default({})` precisely so these two remain distinguishable all the
-   * way down to this line.
-   */
-  function storedPermissionFor(toolName: string): ToolPermission | undefined {
-    const serverName = serverOf(toolName);
-    if (serverName === null) return undefined;
-    if (permissions === undefined) return undefined;
-    const perServer = permissions[serverName];
-    if (perServer === undefined) return "off";
-    return perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY];
-  }
-
-  /**
    * THE RESOLUTION, total by construction — every tool has exactly one answer,
    * `undefined` is not one of them, and the answer says WHICH table produced it.
    *
@@ -527,30 +474,24 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    * is dispatched under cannot drift, and the two log lines cannot disagree
    * about where the value came from.
    *
-   * `defaultPermissionsFor` is server-addressed because it is built from the
-   * catalog, so it cannot answer for a GATEWAY-NATIVE tool (`delegateTask`),
-   * which belongs to no server: `serverOf` returns null for it structurally.
-   * That tool declares its own `tier`, and the SAME tier→permission mapping the
-   * template is built from answers for it — one rule, asked at two
-   * granularities, never two rules. Falling to the `"off"` backstop for it
-   * instead would delete delegation from every profile in the product.
-   *
-   * The backstop must never be `allow`: a tool in neither the person's table nor
-   * the role template is one the operator's catalog does not curate, and nobody
-   * tiered it. Note this is NOT "absent = inherit everything" — the value
-   * underneath is a server-computed, role-derived template, not a permissive
-   * default. It is reported as its own `source` rather than folded into
-   * `role-template`, because "the template said so" and "no table said anything"
-   * are different facts and only the first is something a person can change.
+   * DELEGATES TO `resolve-tool-permission.ts` (Task 5) rather than resolving
+   * inline — the mcp-catalog API projection needs the EXACT same rule to build
+   * the settings screen's read model, and a second inline copy here is exactly
+   * the drift class this codebase keeps paying for (`mcp-policy.yaml`, twice).
+   * This wrapper supplies the three inputs only a live broker holds — the
+   * `serverOf` lookup (backed by a live `mcpIndex`), the per-turn `permissions`
+   * snapshot, and this broker's own `roleTemplate` — and the shared function
+   * carries the actual precedence rule (profile → role template → fail-closed
+   * backstop) plus the gateway-native serverless case (`delegateTask`).
    */
   function resolvePermission(toolName: string, tier: ImpactTier): ResolvedPermission {
-    const stored = storedPermissionFor(toolName);
-    if (stored !== undefined) return { permission: stored, source: "profile" };
-    const serverName = serverOf(toolName);
-    if (serverName === null) return { permission: defaultPermissionForTier(tier), source: "role-template" };
-    const templated = roleTemplate[serverName]?.[toolName];
-    if (templated !== undefined) return { permission: templated, source: "role-template" };
-    return { permission: "off", source: "catalog-backstop" };
+    return resolveToolPermission({
+      toolName,
+      tier,
+      serverName: serverOf(toolName),
+      storedPermissions: permissions,
+      roleTemplate,
+    });
   }
 
   /**
