@@ -35,12 +35,11 @@
 // `sessionChannel` is hardcoded to "text": Plan 2 walks text-only
 // end-to-end (voice/TTS lands in Plan 3). When a session gains a real
 // channel, thread it through `createToolBroker`'s deps instead of the
-// principal/config shape locked here.
+// capability/config shape locked here.
 
 import { ALL_TOOLS_PERMISSION_KEY, type OrchestratorConfig } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { Capability } from "../access/capability.js";
-import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { PolicyContext, PolicyEngine } from "../security/policy-engine.js";
 import type { SessionStore } from "../store/session-store.js";
@@ -168,11 +167,10 @@ export type BackgroundCompletionSink = (result: BackgroundCompletionResult) => v
 
 export interface ToolBroker {
   /** Whose authority this broker acts under — read from its `Capability` at
-   *  construction, never from the `principal` dep (spec §3.2: a capability is
-   *  the authorization input, `principal` is log correlation only). Exposed
-   *  so a caller can confirm which identity a broker instance was actually
-   *  built for, the same confused-deputy check `openSessionStore` makes for
-   *  the store. */
+   *  construction; there is no ambient principal dep to fall back to (spec
+   *  §3.2). Exposed so a caller can confirm which identity a broker instance
+   *  was actually built for, the same confused-deputy check `openSessionStore`
+   *  makes for the store. */
   readonly ownerUserId: UserId;
   /**
    * Resolve the MCP half of the vocabulary. Idempotent and memoized, so every
@@ -238,21 +236,14 @@ export interface ToolBrokerDeps {
   mcp: McpClient;
   policy: PolicyEngine;
   store: SessionStore;
-  /** The AUTHORIZATION input (spec §3.2). `broker.ownerUserId` and the PDP's
-   *  `PolicyContext.userId` both read `capability.ownerUserId` — never
-   *  `principal.userId` — so the broker's authority is exactly what its
-   *  capability grants, not whatever principal happened to be threaded in
-   *  alongside it. Mint from the same `AccessManager` that mints the
-   *  session's own store capability. */
+  /** THE authorization input (spec §3.2). `broker.ownerUserId` and the PDP's
+   *  `PolicyContext.userId`/`role` all read straight off this value — never an
+   *  ambient principal — so the broker's authority is exactly what this
+   *  capability grants, nothing threaded in alongside it. `AccessManager.grant`
+   *  is the only place a principal becomes this value (task 2026-08-07 #2);
+   *  mint from the same `AccessManager` that mints the session's own store
+   *  capability. */
   capability: Capability;
-  /** Log correlation ONLY (`role` is useful in a log line) — it must never be
-   *  an input to a PDP decision. `mcp-policy.yaml` rules keyed on `role`
-   *  (e.g. child/guest tiering) still read `principal.role`: role is not the
-   *  identity this task's confused-deputy fix is about (a capability is
-   *  always minted from the very principal whose role this is — see
-   *  `AccessManager.grant` — so the two cannot diverge), and `Capability`
-   *  carries no role of its own to substitute. */
-  principal: UserPrincipal;
   /** The CONNECTION id (`ws.data.sessionId`), for log correlation and nothing
    *  else — every `tool-broker.*` line below carries it so a dispatch is
    *  traceable to the one socket that made it. It is NOT the durable
@@ -306,7 +297,6 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const {
     mcp,
     policy,
-    principal,
     capability,
     sessionId,
     backgroundTools,
@@ -455,8 +445,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
 
     const ctx: PolicyContext = {
       tool: inv.name,
-      userId: ownerUserId, // capability, not the ambient principal — spec §3.2.
-      role: principal.role, // RBAC tier only; see ToolBrokerDeps.principal's doc comment.
+      userId: ownerUserId, // capability, not an ambient principal — spec §3.2.
+      role: capability.role, // baked in at mint (AccessManager.grant) — task 2026-08-07 #2.
       sessionChannel: "text", // Plan 2 is text-only; see file header.
       args: inv.args,
     };
@@ -466,6 +456,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       sessionId,
       tool: inv.name,
       toolCallId: inv.toolCallId,
+      role: capability.role,
       action: decision.action,
       reason: decision.reason,
       rule: decision.rule,

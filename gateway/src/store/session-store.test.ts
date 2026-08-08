@@ -14,6 +14,7 @@ const cap: Capability = Object.freeze({
   ownerUserId: "u_aaaaaaaa",
   resource: "session-store",
   rootPath: `${ROOT}/u_aaaaaaaa`,
+  role: "adult",
 });
 
 // For the confused-deputy test below: a real AccessManager grant, so the
@@ -148,6 +149,7 @@ describe("SessionStore", () => {
       ownerUserId: "u_bbbbbbbb",
       resource: "session-store",
       rootPath: freshRoot,
+      role: "adult",
     });
     const store = openSessionStore(freshCap);
     const appended = store.append(entry({ sessionId: "fresh", text: "hi" }));
@@ -173,6 +175,7 @@ describe("SessionStore", () => {
       ownerUserId: "u_cccccccc",
       resource: "session-store",
       rootPath: legacyRoot,
+      role: "adult",
     });
     const store = openSessionStore(legacyCap);
     const rows = store.readSession("old");

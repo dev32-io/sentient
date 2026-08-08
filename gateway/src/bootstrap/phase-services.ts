@@ -680,7 +680,6 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       mcp: mcpClient,
       policy: policyEngine,
       store: brokerStore,
-      principal,
       capability,
       // Log correlation only (see `ToolBrokerDeps.sessionId`) — the CONNECTION,
       // so a tool dispatch stays traceable to the one socket that made it.

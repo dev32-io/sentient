@@ -6,6 +6,7 @@
 // user" for a confused deputy to be confused about.
 
 import path from "node:path";
+import type { UserRole } from "@sentient/protocol";
 import type { UserId } from "../user-auth/user-id.js";
 
 export type ResourceClass = "session-store" | "file-scope" | "tool-broker";
@@ -16,6 +17,14 @@ export interface Capability {
   readonly resource: ResourceClass;
   /** Absolute filesystem root this grant is confined to. */
   readonly rootPath: string;
+  /**
+   * The owning principal's role, baked in at mint (spec §5.3, plan
+   * 2026-08-07-tool-permissions task 2). This is what lets an L2 holder — the
+   * `ToolBroker` today — decide a role-gated question from the capability it
+   * already holds by value, instead of reaching for an ambient `principal`
+   * alongside it. A role is not user content: logging it is fine.
+   */
+  readonly role: UserRole;
 }
 
 /**

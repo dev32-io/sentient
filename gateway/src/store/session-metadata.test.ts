@@ -13,6 +13,7 @@ const cap: Capability = Object.freeze({
   ownerUserId: "u_meta",
   resource: "session-store",
   rootPath: `${ROOT}/u_meta`,
+  role: "adult",
 });
 
 // Reconstructs a database exactly as far as schema [version] and no further —

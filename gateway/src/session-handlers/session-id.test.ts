@@ -37,6 +37,7 @@ function freshStore(): SessionStore {
     ownerUserId: userId,
     resource: "session-store",
     rootPath: `${ROOT}/${userId}`,
+    role: "adult",
   });
   return openSessionStore(cap);
 }

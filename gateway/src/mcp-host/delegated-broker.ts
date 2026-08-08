@@ -15,7 +15,15 @@
 //     whose message reaches the delegated model verbatim, so a confirm-tier
 //     tool fails closed with an explanation rather than hanging.
 //   * The principal's role is `DELEGATED_PRINCIPAL_ROLE` — the same default a
-//     real session gets. A delegated agent acts FOR its user, never above them.
+//     real session gets. A delegated agent acts FOR its user, never above
+//     them, so this synthetic principal is what stands in for that user until
+//     a real per-user role model lands (see `ws-auth-gate.ts`'s own
+//     `DEFAULT_PRINCIPAL_ROLE` stub). `AccessManager.grant` bakes THIS role
+//     into the capability below exactly as it would for a real session's
+//     principal — no special-casing here — so the delegated capability's role
+//     always tracks whatever the delegating user's own role resolves to, both
+//     today (a shared stub) and once the real model lands (both call sites
+//     move together, same as the comment they both already carry).
 //
 // It shares the SESSION broker's per-tool permission reader for exactly that
 // last reason: a tool its user set to Deny or Off must be refused here too, or
@@ -108,7 +116,6 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
         mcp: deps.mcp,
         policy: deps.policy,
         store: unusedStore(),
-        principal,
         capability,
         // Log correlation only. Named apart from a connection id on purpose:
         // every line from this broker is a delegated call, not a socket's.

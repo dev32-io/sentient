@@ -14,6 +14,7 @@ const aliceCap: Capability = Object.freeze({
   ownerUserId: "u_aaaaaaaa",
   resource: "file-scope",
   rootPath: aliceRoot,
+  role: "adult",
 });
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));

@@ -3,6 +3,7 @@ import { ALL_TOOLS_PERMISSION_KEY } from "@sentient/config";
 import type { OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
+import type { Capability } from "../access/capability.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { applyProfileDefaults } from "../profile-store/profile-defaults.js";
 import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
@@ -113,9 +114,9 @@ function fakeStore(): SessionStore {
 }
 
 const principal = createUserPrincipal("u_aaaaaaaa", "adult", "household-1");
-// A real AccessManager grant — the broker's authority is this value, not the
-// `principal` above (which stays only for log correlation, see
-// ToolBrokerDeps.principal's doc comment).
+// A real AccessManager grant — `ToolBrokerDeps` holds no principal at all
+// (task 2026-08-07 #2), so this capability — userId AND role both baked in at
+// mint — is the broker's only source of authority.
 const accessManager = createAccessManager({ userDataRoot: "/tmp/sentient-tool-broker-test" });
 const capability = accessManager.grant(principal, "tool-broker");
 
@@ -146,22 +147,20 @@ const weatherTool: McpToolRef = {
 };
 
 // ---------------------------------------------------------------------------
-// Authority — the broker's identity comes from its capability, not the
-// ambient principal (spec §3.2, closing the second of two L2 holes CLAUDE.md
-// claimed were already closed; the first is session-store.ts's resource-class
-// check).
+// Authority — the broker's identity comes from its capability alone.
+// `ToolBrokerDeps` carries no `principal` field at all (spec §3.2, task
+// 2026-08-07 #2) — the two describe blocks below are what makes that a fact
+// about the type, not just the current callers: userId and role both have to
+// travel on the capability, with nothing else in the deps object able to
+// answer either question.
 // ---------------------------------------------------------------------------
 
 describe("ToolBroker — authority", () => {
-  it("SECURITY: the broker's authority comes from its capability, not an ambient principal", () => {
-    const mismatchedPrincipal = createUserPrincipal("u_bbbbbbbb", "adult", "household-1");
+  it("reads ownerUserId from the capability — there is no other identity input in ToolBrokerDeps", () => {
     const broker = createToolBroker({
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      // Deliberately mismatched from `capability` below — proves ownerUserId
-      // is read from the capability, never from this ambient principal.
-      principal: mismatchedPrincipal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -171,6 +170,60 @@ describe("ToolBroker — authority", () => {
     });
 
     expect(broker.ownerUserId).toBe(capability.ownerUserId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The capability carries the role (plan 2026-08-07-tool-permissions, task 2).
+//
+// `AccessManager.grant` bakes the minting principal's role into the
+// capability; the broker's PDP context reads `capability.role`. This is the
+// task's own failing-test-first requirement: two brokers built from
+// differently-roled capabilities must disagree about the same tool call, and
+// neither `ToolBrokerDeps` nor this test constructs a `UserPrincipal`
+// anywhere — the role has nowhere ambient left to come from.
+// ---------------------------------------------------------------------------
+
+describe("ToolBroker — the capability carries the role", () => {
+  it("SECURITY: an adult capability and a child capability disagree about the same tool, with no principal in sight", async () => {
+    // A policy fake that answers purely off `ctx.role` — the only way this can
+    // differ between the two dispatches below is if that role reached the PDP
+    // from the capability each broker was built with.
+    const roleGatedPolicy: PolicyEngine = {
+      evaluate: (ctx) =>
+        ctx.role === "adult" ? { action: "allow" } : { action: "deny", reason: `role "${ctx.role}" may not run this` },
+    };
+
+    // Hand-built, not minted through AccessManager — this IS "no principal in
+    // sight": nothing in this test ever constructs a UserPrincipal.
+    const adultCapability: Capability = {
+      ownerUserId: "u_aaaaaaaa",
+      resource: "tool-broker",
+      rootPath: "/tmp/sentient-tool-broker-test/u_aaaaaaaa",
+      role: "adult",
+    };
+    const childCapability: Capability = { ...adultCapability, role: "child" };
+
+    const buildBroker = (cap: Capability) =>
+      createToolBroker({
+        mcp: fakeMcp([weatherTool]),
+        policy: roleGatedPolicy,
+        store: fakeStore(),
+        capability: cap,
+        sessionId: "session-1",
+        backgroundTools: new Map(),
+        config: toolsConfig,
+        toolPermissions: noUserPermissions,
+        requestConfirm: async () => false,
+      });
+
+    const adultResult = await buildBroker(adultCapability).dispatch(makeInvocation());
+    const childResult = await buildBroker(childCapability).dispatch(makeInvocation());
+
+    expect(adultResult).toEqual({ content: "result from test-mcp/get_weather", isError: false });
+    expect(childResult).toMatchObject({ isError: true });
+    if ("taskId" in childResult) throw new Error("expected a ToolResult, got a background handle");
+    expect(childResult.content).toContain('role "child" may not run this');
   });
 });
 
@@ -185,7 +238,6 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       mcp,
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -206,7 +258,6 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       mcp,
       policy: fakePolicy({ action: "deny", reason: "not allowed for this role" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -230,7 +281,6 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -255,7 +305,6 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -276,7 +325,6 @@ describe("ToolBroker — PDP choke point (foreground)", () => {
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "side-effecting tool" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -310,7 +358,6 @@ describe("ToolBroker — the foreground in-flight counter", () => {
       mcp,
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -332,7 +379,6 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -356,7 +402,6 @@ describe("ToolBroker — unanswerable confirm (fail-closed reason passthrough)",
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "side-effecting" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -396,7 +441,6 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       mcp,
       policy,
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -425,7 +469,6 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       mcp,
       policy,
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -461,7 +504,6 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
       mcp: fakeMcp([weatherTool]),
       policy,
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -491,7 +533,6 @@ describe("ToolBroker — background dispatch", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -521,7 +562,6 @@ describe("ToolBroker — background dispatch", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "deny", reason: "delegation disabled" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -546,7 +586,6 @@ describe("ToolBroker — background dispatch", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -594,7 +633,6 @@ describe("ToolBroker — background completion sink", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -642,7 +680,6 @@ describe("ToolBroker — background completion sink", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -675,7 +712,6 @@ describe("ToolBroker — background completion sink", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -727,7 +763,6 @@ describe("ToolBroker — delegation.progress producer", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([
@@ -770,7 +805,6 @@ describe("ToolBroker — delegation.progress producer", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([
@@ -828,7 +862,6 @@ describe("ToolBroker — tool result cap", () => {
       mcp: fakeMcpWithContent(oversized),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -852,7 +885,6 @@ describe("ToolBroker — tool result cap", () => {
       mcp: fakeMcpWithContent(small),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -877,7 +909,6 @@ describe("ToolBroker — tool result cap", () => {
       mcp: fakeMcp([]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -928,7 +959,6 @@ function brokerWithPermission(
     mcp,
     policy: fakePolicy(opts.policy ?? { action: "confirm", reason: "no rule matched" }),
     store: fakeStore(),
-    principal,
     capability,
     sessionId: "session-1",
     backgroundTools: new Map(),
@@ -1039,7 +1069,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp,
       policy: fakePolicy({ action: "confirm", reason: "no rule matched" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1067,7 +1096,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp,
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1088,7 +1116,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp,
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1107,7 +1134,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp,
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1128,7 +1154,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1146,7 +1171,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1177,7 +1201,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map([["delegateTask", runner]]),
@@ -1200,7 +1223,6 @@ describe("ToolBroker — per-tool permissions", () => {
       mcp: fakeMcp([weatherTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1240,7 +1262,6 @@ describe("ToolBroker — an unreadable profile does not resurrect a switched-off
       // person's `off` is lost, the tool runs with no prompt at all.
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),
@@ -1333,7 +1354,6 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
       mcp: fakeMcp([searxngTool]),
       policy: fakePolicy({ action: "allow" }),
       store: fakeStore(),
-      principal,
       capability,
       sessionId: "session-1",
       backgroundTools: new Map(),

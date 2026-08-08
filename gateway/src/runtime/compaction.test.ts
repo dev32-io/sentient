@@ -17,6 +17,7 @@ const cap: Capability = Object.freeze({
   ownerUserId: "u_aaaaaaaa",
   resource: "session-store",
   rootPath: `${ROOT}/u_aaaaaaaa`,
+  role: "adult",
 });
 
 // keep_recent_turns = 1: the newest turn rides verbatim in the marker, the

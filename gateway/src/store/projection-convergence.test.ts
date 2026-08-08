@@ -18,6 +18,7 @@ const cap: Capability = Object.freeze({
   ownerUserId: "u_aaaaaaaa",
   resource: "session-store",
   rootPath: `${ROOT}/u_aaaaaaaa`,
+  role: "adult",
 });
 
 function entry(overrides: Partial<NewSessionEntry>): NewSessionEntry {

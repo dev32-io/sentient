@@ -29,6 +29,7 @@ const cap: Capability = Object.freeze({
   ownerUserId: "u_bbbbbbbb",
   resource: "session-store",
   rootPath: `${ROOT}/u_bbbbbbbb`,
+  role: "adult",
 });
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));

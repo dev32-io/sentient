@@ -647,7 +647,6 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         setTitle: () => false,
         close: () => {},
       },
-      principal: alice,
       capability: am.grant(alice, "tool-broker"),
       sessionId: "sess-3b",
       backgroundTools: new Map([["delegateTask", backgroundRunner]]),

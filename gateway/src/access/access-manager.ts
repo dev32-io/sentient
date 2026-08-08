@@ -47,6 +47,9 @@ export function createAccessManager(config: AccessManagerConfig): AccessManager 
         ownerUserId: principal.userId,
         resource,
         rootPath: userHomeDir(principal),
+        // Baked in at mint, not read again later — this IS the principal
+        // becoming authority (spec §2.1/L1). See Capability.role's doc comment.
+        role: principal.role,
       });
       log.debug("capability.minted", {
         userId: principal.userId,
