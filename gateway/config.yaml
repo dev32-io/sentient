@@ -836,8 +836,12 @@ mcp_catalog:
     # mcp-server-fetch registers exactly one tool (gateway/mcp/fetch-mcp/
     # run_http.py). Named explicitly for the same reason as above.
     tools:
-      # Read-only: what it returns is untrusted content, handled by the
-      # injection scanner (gateway/src/security/), not by a permission tier.
+      # Read-only: what it returns is untrusted content. It is genuinely
+      # handled now (docs/native-todo.md's HIGH-PRIORITY SECURITY item,
+      # CLOSED 2026-08-08) — every result crosses the inbound gate
+      # (gateway/src/security/inbound-gate.ts), which runs the injection
+      # scanner (injection-scanner.ts) and raises PDP risk on findings; that
+      # is the control, not this tier.
       include:
         - { name: fetch, tier: read }
 
@@ -856,6 +860,10 @@ mcp_catalog:
     # fetch_url is suppressed because our dedicated fetch-mcp container
     # owns URL fetching (cleaner separation, smaller per-tool prompt).
     tools:
+      # Read-only: same rationale and same control as fetch above — results
+      # are untrusted content, screened by the inbound gate
+      # (gateway/src/security/inbound-gate.ts + injection-scanner.ts), not by
+      # this tier. Lost when mcp-policy.yaml's rules retired; restored here.
       include:
         - { name: search_web, tier: read }
 

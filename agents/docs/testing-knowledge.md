@@ -965,6 +965,26 @@ Repro + measurements: `qa/web/evidence/2026-07-30-mobile-390-matrix/README.md`.
 ### Native-restart local-tts hang (found, not a numbered case — real defect)
 **Scenario:** On a real gateway process restart, the native driver's `local-tts` spawn can hang completely — no `native.started`, no `native.prepare-failed`, `apply.complete` never fires, so the post-boot health watchdog never even starts. Reproduced 2 of 2 consecutive restarts in this drive; ruled out the command itself (clean manual run, ~3s) and port conflicts (`lsof`/`ps` both clean). Full diagnosis: `qa/web/evidence/2026-07-30-native-restart-tts-hang/README.md`. A P1 for whoever owns `gateway/src/system-orchestrator/**`.
 
+## Skill system + inbound scanning boundary (web, Playwright MCP)
+
+Reusable cases from the skill-system spec's e2e matrix (`docs/superpowers/specs/2026-08-08-skill-system-design.md` §7). Future features that touch skill invocation or inbound content scanning should reference these two by name rather than re-deriving them. The matrix's other rows (`skill-create-chat`, `skill-list-chat`, `skill-update-delete`, `skill-role-gate`, `skill-settings-toggle`, `skill-dup-invalid`, `skill-index-cap`, `inbound-scan-annotate`, `mobile-skill-parity`) are one-off per that spec and not duplicated here.
+
+### skill-trigger-fresh
+**Scenario:** A skill seeded on disk (no in-conversation authoring step) is picked up by a brand-new session purely from its index entry, and the model follows it without being told it exists.
+**Pre-state:** a skill exists under `~/.sentient/gateway/users/<userId>/skills/<slug>/SKILL.md` (seeded directly, not created via chat this session); open a NEW session (fresh tab/reload, not a continuation).
+**Action:** ask something that matches the skill's `description` only — never name the skill or mention `skill_use`.
+**Expected user-visible:** the model calls `skill_use`, a tool pill renders for it, and the reply follows the skill's instructions.
+**Expected log trail:** the system prompt for the new session carries the skills index (one `name — description` line per skill, rendered once at runtime construction — verify via the assembled-message debug log or `orchestrator.skills.*` config-driven render, not by eye on the transcript); then an ordinary `skill_use` tool_call + tool_result pair appended to the turn, same shape as any other foreground tool.
+**Why added:** proves progressive disclosure end-to-end — level 1 (index, always in context) actually triggers level 2 (body, loaded on demand) for a skill the session never authored, which is the core skill mechanism and the thing most likely to silently regress if the index render or the harness note wording drifts.
+
+### inbound-scan-escalate
+**Scenario:** Accumulated inbound risk (from prior flagged tool results in the session) causes the PDP to demand a `confirm` on a write-tier tool call that would otherwise have resolved `allow`.
+**Pre-state:** session risk already at `escalate` level (drive `inbound-scan-annotate` first, or repeat it, until risk crosses the threshold — `security.inbound_scan.*` config sets the accumulator thresholds).
+**Action:** ask the model to do something that dispatches a write-tier tool normally resolved `allow` by the person's permissions/role template.
+**Expected user-visible:** a permission dialog appears where none would have for that same tool at baseline risk.
+**Expected log trail:** `tool-broker.pdp.decision … source="risk-escalation"` (not `source="role-template"` or a stored-permission source) carrying the risk snapshot that triggered it; the read-tier exemption means this ONLY fires for `write`/`confirm`/`admin`-tier calls — repeating the same case against a read-tier tool at the same risk level is expected to stay `allow` and is not a bug.
+**Why added:** proves the inbound-scan boundary's actual enforcement point — annotation alone (`inbound-scan-annotate`) shows detection works, but the product claim is that flagged content changes what the PDP will silently allow, and that only happens through this path.
+
 ## Sentient 2.0 turn wire — NATIVE mobile (Maestro)
 
 Driven 2026-07-30 (native-stack migration Task 10) against the local dev stack:
