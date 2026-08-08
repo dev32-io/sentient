@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { profileV1Schema } from "./profile-types.js";
+import { profileV1PutBodySchema, profileV1Schema } from "./profile-types.js";
 
 const BASE = {
   schemaVersion: 1,
@@ -60,5 +60,54 @@ describe("profile tools.permissions", () => {
     });
     expect(parsed.tools.permissions?.home_assistant?.ha_search).toBe("ask");
     expect(() => profileV1Schema.parse({ ...BASE, tools: { permissions: { s: { t: "auto" } } } })).toThrow();
+  });
+
+  // `profileV1Schema` itself (the STORED shape) rejects `null` outright — it
+  // is what `readStoredProfile`/`ProfileStore.get` validate a persisted
+  // profile.json against, and a `null` leaf must never survive a save
+  // (`profile-update.ts#mergeServer` strips every clear before anything is
+  // written back). If this schema ever started accepting `null`, a clear
+  // could reach disk unresolved instead of collapsing to an absent key.
+  it("the STORED schema rejects a null permission leaf", () => {
+    expect(() =>
+      profileV1Schema.parse({ ...BASE, tools: { permissions: { household: { look_up: null } } } }),
+    ).toThrow();
+  });
+});
+
+// `profileV1PutBodySchema` is what a `PUT /api/v1/profile/me` BODY is parsed
+// against — identical to `profileV1Schema` except a permission leaf may also
+// be `null` (a CLEAR — see `ToolPermissionOrClear`'s doc comment). These pin
+// the schema itself, at the actual JSON-parsing boundary, separately from
+// `profile-update.test.ts`'s pure-function tests (which hand-construct
+// already-typed objects and so never exercise zod at all).
+describe("profile PUT body accepts a null permission leaf", () => {
+  it("accepts null as a valid per-tool value, alongside a real one", () => {
+    const parsed = profileV1PutBodySchema.parse({
+      ...BASE,
+      tools: { permissions: { household: { look_up: null, add_to_list: "ask" } } },
+    });
+    expect(parsed.tools.permissions?.household?.look_up).toBeNull();
+    expect(parsed.tools.permissions?.household?.add_to_list).toBe("ask");
+  });
+
+  it("still rejects a value that is neither a real permission nor null", () => {
+    expect(() =>
+      profileV1PutBodySchema.parse({ ...BASE, tools: { permissions: { household: { look_up: "auto" } } } }),
+    ).toThrow();
+  });
+
+  it("still migrates a legacy tools.enabled body the same way the stored schema does", () => {
+    const parsed = profileV1PutBodySchema.parse({
+      ...BASE,
+      tools: { enabled: { home_assistant: [] }, toolsets: ["memory"] },
+    });
+    expect(parsed.tools.permissions?.home_assistant).toEqual({});
+  });
+
+  it("validates every other field identically to the stored schema", () => {
+    expect(() =>
+      profileV1PutBodySchema.parse({ ...BASE, model: { provider: "not-a-real-provider", id: "x" }, tools: {} }),
+    ).toThrow();
   });
 });

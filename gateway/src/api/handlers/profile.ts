@@ -3,7 +3,7 @@ import type { Result } from "@sentient/protocol";
 import type { ApplyError, ApplyOutcome } from "../../apply/orchestrator.js";
 import { getLog } from "../../logging/logger.js";
 import type { ProfileStore, ProfileStoreError } from "../../profile-store/profile-store.js";
-import { type ProfileV1, profileV1Schema } from "../../profile-store/profile-types.js";
+import { type ProfileV1, type ProfileV1PutBody, profileV1PutBodySchema } from "../../profile-store/profile-types.js";
 import {
   type ProfileUpdateBase,
   applyProfileUpdate,
@@ -174,7 +174,7 @@ async function handleMePut(deps: ProfileHandlerDeps, userId: string, request: Re
   return Response.json(toSave, { status: HTTP_OK });
 }
 
-async function parseProfileBody(request: Request, userId: string): Promise<ProfileV1 | Response> {
+async function parseProfileBody(request: Request, userId: string): Promise<ProfileV1PutBody | Response> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -183,7 +183,7 @@ async function parseProfileBody(request: Request, userId: string): Promise<Profi
     return jsonError(HTTP_UNPROCESSABLE, "invalid-json");
   }
 
-  const parsed = profileV1Schema.safeParse(raw);
+  const parsed = profileV1PutBodySchema.safeParse(raw);
   if (!parsed.success) {
     log.warn("me.put-schema-error", { userId, reason: parsed.error.message });
     return jsonError(HTTP_UNPROCESSABLE, "schema-invalid");

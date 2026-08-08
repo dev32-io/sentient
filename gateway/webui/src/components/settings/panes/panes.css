@@ -521,14 +521,20 @@
 }
 .settings-v2 .tool-row {
   display: grid;
-  /* First column used to be a 32px boolean Toggle knob; a 4-state
-     Allow/Ask/Deny/Off Select needs room for its label + tag pill +
-     chevron, hence the widen (task 2026-08-07-tool-permissions #6). */
-  grid-template-columns: 140px minmax(180px, 1fr) 1.6fr;
+  /* 32px fits the boolean Toggle knob used by the Hermes built-ins table
+     (ToggleToolTable). The wider permission table below overrides this. */
+  grid-template-columns: 32px minmax(180px, 1fr) 1.6fr;
   align-items: center;
   gap: 12px;
   padding: 7px 18px 7px 36px;
 }
+/* Permission table only (PermissionToolTable: MCP servers + gateway-native
+   tools) — a 4-state Allow/Ask/Deny/Off Select needs room for its label +
+   tag pill + chevron that the 32px Toggle column never had to reserve
+   (task 2026-08-07-tool-permissions #6). Scoped to its OWN modifier rather
+   than widening `.tool-row` itself, which the Hermes built-ins table
+   (ToggleToolTable) still uses unchanged with its narrow boolean Toggle. */
+.settings-v2 .tool-row.tool-row-perm { grid-template-columns: 140px minmax(180px, 1fr) 1.6fr; }
 .settings-v2 .tool-row.off { opacity: .55; }
 .settings-v2 .tool-row.off:hover { opacity: .8; }
 .settings-v2 .tool-row.on .tc-name code { color: var(--color-ink); }

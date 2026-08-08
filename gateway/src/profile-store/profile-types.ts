@@ -1,5 +1,5 @@
 import { audioPrefsSchema } from "@sentient/audio-prefs";
-import { type ToolPermission, toolPermissionSchema } from "@sentient/config";
+import { type ToolPermission, toolPermissionOrClearSchema, toolPermissionSchema } from "@sentient/config";
 import { z } from "zod";
 
 export const PROFILE_SCHEMA_VERSION = 1;
@@ -200,3 +200,32 @@ export const profileV1Schema = z.object({
 });
 
 export type ProfileV1 = z.output<typeof profileV1Schema>;
+
+/**
+ * The shape a `PUT /api/v1/profile/me` BODY is parsed against — identical to
+ * `profileV1Schema` except `tools.permissions`'s leaf values additionally
+ * accept `null` (`ToolPermissionOrClear` — see its doc comment in
+ * `@sentient/config` for why a client needs to be able to send that: it is
+ * the only way to express "go back to my role default" for one key without
+ * deleting anything, now that an absent key under a floor-seeded table means
+ * the role template decides rather than `off`).
+ *
+ * NEVER THE STORED SHAPE. `profile-update.ts#applyProfileUpdate` collapses
+ * every `null` to an absent key while merging — a `null` never reaches
+ * `ProfileStore.save`, and nothing downstream of the merge (the ToolBroker,
+ * the mcp-catalog projection, a GET response) ever sees this schema. Built
+ * with `.extend()` rather than a hand-copied second `z.object({...})` so
+ * every OTHER field — model, voice, persona, compression, advanced,
+ * `tools.toolsets` — stays byte-for-byte the same validation `profileV1Schema`
+ * already does; only the one leaf that needs to widen, widens.
+ */
+export const profileV1PutBodySchema = profileV1Schema.extend({
+  tools: z.preprocess(
+    migrateEnabledToPermissions,
+    z.object({
+      permissions: z.record(z.string().min(1), z.record(z.string().min(1), toolPermissionOrClearSchema)).optional(),
+      toolsets: z.array(z.string().min(1)).optional(),
+    }),
+  ),
+});
+export type ProfileV1PutBody = z.output<typeof profileV1PutBodySchema>;

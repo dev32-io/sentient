@@ -53,3 +53,35 @@ export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
  * finally a fail-closed `off`.
  */
 export const ALL_TOOLS_PERMISSION_KEY = "*";
+
+/**
+ * One PUT's incoming per-tool value: a permission to WRITE, or `null` to
+ * CLEAR that key back to "no stored opinion" — the role template answers it
+ * again, exactly as if the key had never been set (`gateway/src/tools/
+ * resolve-tool-permission.ts`'s floor).
+ *
+ * WHY THIS EXISTS. Before the per-role floor (`role-defaults.ts`), an absent
+ * key meant `off`, so a client could never safely omit one — "never delete a
+ * key" was the only safe rule. Under the floor, absent means "the role
+ * template decides", which is exactly the state a person needs to be able to
+ * RETURN to (e.g. a server master control's "on" position must restore every
+ * un-overridden tool to its role default, not blanket-`allow` them — writing
+ * any concrete value into the wildcard forecloses the template for every tool
+ * under it with no per-tool override, `ask`-tier tools included). `null` is
+ * the only way a client can express "go back to floor" without deleting
+ * anything: the incoming body still names the key, it just carries no
+ * opinion for it anymore.
+ *
+ * NEVER THE STORED SHAPE. `ToolPermissionMap`'s leaves are `ToolPermission`
+ * only — a clear collapses to an absent key during the merge
+ * (`gateway/src/profile-store/profile-update.ts`) and is never persisted as
+ * a literal `null`.
+ */
+export const toolPermissionOrClearSchema = z.union([toolPermissionSchema, z.null()]);
+export type ToolPermissionOrClear = z.infer<typeof toolPermissionOrClearSchema>;
+
+/** One PUT body's whole per-tool intent: MCP server name -> tool name (or the
+ *  `ALL_TOOLS_PERMISSION_KEY` wildcard) -> a permission to write, or `null`
+ *  to clear it. Contrast `ToolPermissionMap`, the STORED shape, whose leaves
+ *  are never `null`. */
+export type ToolPermissionPatchMap = Record<string, Record<string, ToolPermissionOrClear>>;

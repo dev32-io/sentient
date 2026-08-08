@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { ToolPermissionMap } from "@sentient/config";
-import type { ProfileV1 } from "./profile-types.js";
+import type { ToolPermissionMap, ToolPermissionPatchMap } from "@sentient/config";
+import { resolveToolPermission } from "../tools/resolve-tool-permission.js";
+import type { ProfileV1, ProfileV1PutBody } from "./profile-types.js";
 import { applyProfileUpdate } from "./profile-update.js";
 
 function profile(permissions: ToolPermissionMap | undefined, toolsets?: string[]): ProfileV1 {
@@ -12,6 +13,26 @@ function profile(permissions: ToolPermissionMap | undefined, toolsets?: string[]
     audio: { ttsEnabled: true, channel: "voice" },
     persona: { template: "default", overrides: "" },
     tools: { ...(permissions === undefined ? {} : { permissions }), ...(toolsets === undefined ? {} : { toolsets }) },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+  };
+}
+
+/** Builds an INCOMING PUT body — unlike `profile()` above (which builds a
+ *  STORED `ProfileV1`, whose permission leaves are never `null`), this one's
+ *  `permissions` may name a key with `null` to CLEAR it. Separate helper
+ *  rather than widening `profile()` itself: every `stored:` fixture in this
+ *  file needs the STORED type, and widening `profile()`'s return type would
+ *  stop satisfying it. */
+function putBody(permissions: ToolPermissionPatchMap | undefined): ProfileV1PutBody {
+  return {
+    schemaVersion: 1,
+    userId: "alice",
+    model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
+    voice: { provider: "local-tts", id: "voice-abc" },
+    audio: { ttsEnabled: true, channel: "voice" },
+    persona: { template: "default", overrides: "" },
+    tools: { ...(permissions === undefined ? {} : { permissions }) },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };
@@ -161,5 +182,154 @@ describe("a server key from the body cannot reach the prototype", () => {
     expect(Object.hasOwn(out.tools.permissions ?? {}, "__proto__")).toBe(true);
     expect(out.tools.permissions?.household).toEqual({ look_up: "allow" });
     expect(({} as Record<string, unknown>).evil).toBeUndefined();
+  });
+
+  // Same hazard one level down: a TOOL name is exactly as client-chosen as a
+  // server name. `mergeServer` (profile-update.ts) uses two arrays plus one
+  // closing `Object.fromEntries` instead of `merged[tool] = …` for this reason.
+  it("keeps a __proto__ tool as an own key within a server and leaves Object.prototype alone", () => {
+    const out = applyProfileUpdate(profile(JSON.parse('{"household":{"__proto__":"allow"}}')), {
+      stored: profile({ household: { look_up: "allow" } }),
+      permissionDefaults: TEMPLATE,
+    });
+
+    expect(Object.hasOwn(out.tools.permissions?.household ?? {}, "__proto__")).toBe(true);
+    expect(out.tools.permissions?.household?.look_up).toBe("allow");
+    expect(({} as Record<string, unknown>).evil).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CLEARING. A `null` leaf removes that key instead of writing it, which is
+// what lets a client honestly say "I have no opinion here anymore" — the
+// state a person needs to be able to return to now that an absent key means
+// "the role template decides" rather than `off` (see `applyProfileUpdate`'s
+// doc comment for why this retires the rev-1 "never delete a key" rule's
+// RATIONALE without contradicting its text: nothing here deletes a key from
+// the BODY or the STORED table wholesale — `null` only ever targets one
+// named key, exactly like a real permission value does).
+// ---------------------------------------------------------------------------
+describe("a null value clears that key instead of writing it", () => {
+  it("removes just the cleared tool, keeping its siblings under the same server", () => {
+    const stored = profile({ household: { look_up: "allow", add_to_list: "ask" } });
+    const out = applyProfileUpdate(putBody({ household: { look_up: null } }), {
+      stored,
+      permissionDefaults: TEMPLATE,
+    });
+    expect(out.tools.permissions?.household).toEqual({ add_to_list: "ask" });
+  });
+
+  it("leaves the server key present with an empty map when its last key is cleared — never removes the server key", () => {
+    const stored = profile({ household: { look_up: "off" } });
+    const out = applyProfileUpdate(putBody({ household: { look_up: null } }), {
+      stored,
+      permissionDefaults: TEMPLATE,
+    });
+    // An absent server key is a stored "off" forever (the absent-server
+    // rule); an empty map is "present, no opinions" and falls through to the
+    // role template. Collapsing the two would turn "restore my defaults"
+    // into "hide the whole server" — the opposite of what a clear means.
+    expect(Object.hasOwn(out.tools.permissions ?? {}, "household")).toBe(true);
+    expect(out.tools.permissions?.household).toEqual({});
+  });
+
+  it("clearing a wildcard alongside a per-tool override keeps the override", () => {
+    const stored = profile({ household: { "*": "off", unlock_door: "ask" } });
+    const out = applyProfileUpdate(putBody({ household: { "*": null } }), {
+      stored,
+      permissionDefaults: TEMPLATE,
+    });
+    expect(out.tools.permissions?.household).toEqual({ unlock_door: "ask" });
+  });
+
+  it("a cleared key resolves through the floor to the role template's answer, not just an empty table shape", () => {
+    const stored = profile({ household: { look_up: "off" } });
+    const out = applyProfileUpdate(putBody({ household: { look_up: null } }), {
+      stored,
+      permissionDefaults: TEMPLATE,
+    });
+    const resolved = resolveToolPermission({
+      toolName: "look_up",
+      tier: "read",
+      serverName: "household",
+      storedPermissions: out.tools.permissions,
+      roleTemplate: TEMPLATE,
+    });
+    expect(resolved).toEqual({ permission: "allow", source: "role-template" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE REGRESSION THIS FIX EXISTS FOR. A server master control's "off" writes
+// the wildcard explicitly (`{"*": "off"}`); its "on" must CLEAR the wildcard
+// (`{"*": null}`), never write a concrete value such as `"allow"` — writing
+// ANY concrete value forecloses the role template for every tool under that
+// server with no per-tool override, `confirm`-tier ones included. Exercised
+// against the REAL resolver (`resolve-tool-permission.ts`), not just the
+// merged table's shape, because the shape alone cannot tell "off then
+// allow-by-accident" apart from "off then genuinely back to the template".
+// ---------------------------------------------------------------------------
+describe("a server's master control can restore role-template defaults without ratcheting privilege", () => {
+  // Stands in for a real `confirm`-tier tool (a door lock): the role
+  // template's own answer for it is `ask`, never `allow` — the entire point
+  // of the confirm tier is that the model must not act on it unprompted.
+  const TEMPLATE_WITH_LOCK: ToolPermissionMap = {
+    household: { look_up: "allow", unlock_door: "ask" },
+  };
+
+  it("off then on (clear) resolves a confirm-tier tool back to 'ask', never 'allow'", () => {
+    // `household` HAS a stored table (an older tool, `look_up`, was already
+    // named — seeding is not the point of this test) but has never named
+    // `unlock_door` at all, the same way a tool the operator adds to the
+    // catalog after this account was seeded would be absent: this is what
+    // "never touched" means for one specific tool once a floor exists — a
+    // NAMED entry (from seeding or an earlier edit) always outranks the
+    // wildcard, so it is the UNNAMED case the master control's write must
+    // stay safe for.
+    const seeded = profile({ household: { look_up: "allow" } });
+
+    // Master "off": the wildcard hides every un-overridden tool on the server.
+    const off = applyProfileUpdate(putBody({ household: { "*": "off" } }), {
+      stored: seeded,
+      permissionDefaults: TEMPLATE_WITH_LOCK,
+    });
+    expect(
+      resolveToolPermission({
+        toolName: "unlock_door",
+        tier: "confirm",
+        serverName: "household",
+        storedPermissions: off.tools.permissions,
+        roleTemplate: TEMPLATE_WITH_LOCK,
+      }).permission,
+    ).toBe("off");
+
+    // Master "on": CLEARS the wildcard instead of writing "allow". A
+    // regression that wrote a concrete value here (this fix's bug) would
+    // make the assertion below observe "allow" instead of "ask".
+    const backOn = applyProfileUpdate(putBody({ household: { "*": null } }), {
+      stored: off,
+      permissionDefaults: TEMPLATE_WITH_LOCK,
+    });
+    const resolved = resolveToolPermission({
+      toolName: "unlock_door",
+      tier: "confirm",
+      serverName: "household",
+      storedPermissions: backOn.tools.permissions,
+      roleTemplate: TEMPLATE_WITH_LOCK,
+    });
+    expect(resolved.permission).toBe("ask");
+    expect(resolved.permission).not.toBe("allow");
+
+    // The un-overridden read-tier tool is unaffected either way — this test
+    // is about the confirm-tier tool specifically, not "nothing resolves".
+    expect(
+      resolveToolPermission({
+        toolName: "look_up",
+        tier: "read",
+        serverName: "household",
+        storedPermissions: backOn.tools.permissions,
+        roleTemplate: TEMPLATE_WITH_LOCK,
+      }).permission,
+    ).toBe("allow");
   });
 });

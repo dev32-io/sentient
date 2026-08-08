@@ -49,6 +49,12 @@ describe("withToolPermission", () => {
     expect(before.household.look_up).toBe("allow");
     expect(after).not.toBe(before);
   });
+
+  it("writes an explicit null to clear a key, keeping the server key and its siblings", () => {
+    const before = { household: { "*": "off" as const, unlock_door: "ask" as const } };
+    const after = withToolPermission(before, "household", "*", null);
+    expect(after.household).toEqual({ "*": null, unlock_door: "ask" });
+  });
 });
 
 describe("effectiveToolPermission", () => {
@@ -81,5 +87,16 @@ describe("effectiveWildcardPermission", () => {
 
   it("is null when neither the draft nor the catalog has a wildcard set", () => {
     expect(effectiveWildcardPermission(undefined, "household", "*", null)).toBeNull();
+  });
+
+  // The regression this control exists to prevent: a pending CLEAR (`null`)
+  // must read as "cleared", never silently fall back to a stale catalog
+  // snapshot — `??` cannot tell "clear" apart from "no pending edit" because
+  // it treats `null` and `undefined` identically. This is the master
+  // control's "on" write (tools-pane.tsx) — reading it wrong here would show
+  // the toggle as still "off" right after the person cleared it.
+  it("reads an explicit pending null as cleared, NOT as 'fall back to the catalog snapshot'", () => {
+    const permissions = { household: { "*": null } };
+    expect(effectiveWildcardPermission(permissions, "household", "*", "off")).toBeNull();
   });
 });

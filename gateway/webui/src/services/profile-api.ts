@@ -1,4 +1,4 @@
-import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
+import type { ToolPermission, ToolPermissionPatchMap } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { createLogger } from "@sentient/web-sdk";
 import { type ApiHttpError, bearerHeaders, handleFetch, jsonHeaders } from "./_helpers";
@@ -39,9 +39,15 @@ export interface ProfileV1 {
     /**
      * Per-tool permission, keyed by MCP server name then tool name (or the
      * server's `"*"` wildcard — see `McpCatalogView.wildcardPermissionKey`
-     * below). Mirrors gateway `ProfileV1["tools"]["permissions"]`
-     * (`gateway/src/profile-store/profile-types.ts`) exactly — replaces the
-     * retired `enabled` narrowing-array map.
+     * below). Mirrors gateway `ProfileV1PutBody["tools"]["permissions"]`
+     * (`gateway/src/profile-store/profile-types.ts`) exactly, NOT the stored
+     * `ProfileV1["tools"]["permissions"]` — the gateway's GET response never
+     * contains a `null` leaf, but a PUT this client sends MAY, to CLEAR a key
+     * back to "no stored opinion" (see `ToolPermissionOrClear`'s doc comment
+     * in `@sentient/config`). Using the wider PUT-body type for the single
+     * client-side draft this whole pane edits, rather than switching types
+     * between GET and PUT, keeps `withToolPermission` (tool-permission-patch.ts)
+     * the one place that has to reason about the difference.
      *
      * OPTIONAL, and that is load-bearing, not an oversight: absent means
      * "never set" — every tool resolves from the person's role template.
@@ -50,7 +56,7 @@ export interface ProfileV1 {
      * when building a PUT body — see `McpCatalogView.servers`'s doc comment
      * for the absent-server rule this trips.
      */
-    permissions?: ToolPermissionMap;
+    permissions?: ToolPermissionPatchMap;
     /**
      * Hermes built-in toolsets enabled for this user. Each entry is a
      * Hermes toolset name (memory, todo, skills, web, browser, terminal,

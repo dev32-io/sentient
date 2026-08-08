@@ -2,7 +2,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
-import type { ToolPermission } from "@sentient/config";
+import type { ToolPermission, ToolPermissionOrClear } from "@sentient/config";
 import type {
   HermesBuiltinToolView,
   McpCatalogView,
@@ -86,12 +86,24 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
   // The master control writes the SAME shape a per-tool Select does — it
   // just targets the server's wildcard key instead of one tool's name.
-  // "On" always writes an explicit `allow` rather than trying to restore
-  // "unset" (which would mean deleting the wildcard key): every state this
-  // pane can put a person into must be one it wrote down, not one it erased
-  // its way back to.
+  //
+  // "Off" writes an explicit `off`: a real, stored opinion that hides every
+  // un-overridden tool on this server from the model.
+  //
+  // "On" CLEARS the wildcard (`null`) rather than writing a concrete value
+  // such as `allow`. Once the wildcard holds ANY concrete permission,
+  // `resolveToolPermission` returns it for every tool on this server with no
+  // per-tool override of its own — the role template is never consulted
+  // again for them. For a `confirm`-tier tool (a lock, a purchase) whose
+  // template answer is `ask`, that would silently turn "on" into "auto-
+  // approve", which defeats the whole point of the confirm tier through this
+  // feature's own primary control. Clearing instead restores "no stored
+  // opinion" — exactly the state a never-touched server is in — so every
+  // un-overridden tool goes back to asking its role template, `ask`-tier
+  // ones included, while any of the server's own per-tool overrides (set
+  // directly, never via this control) are untouched either way.
   const handleServerMasterToggle = (serverId: string, wildcardKey: string, turnOn: boolean) => {
-    const next: ToolPermission = turnOn ? "allow" : "off";
+    const next: ToolPermissionOrClear = turnOn ? null : "off";
     log.debug("tools.server-master.change", { serverId, wildcardKey, next });
     onDraftTools({ ...draft.tools, permissions: withToolPermission(permissions, serverId, wildcardKey, next) });
   };
@@ -119,7 +131,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     <>
       <PaneHead
         title="Tools"
-        sub="Pick Allow / Ask / Deny / Off per tool, or use a server's master switch to set them all at once. Changes apply after you save settings."
+        sub="Pick Allow / Ask / Deny / Off per tool. A server's master switch can hide every tool at once, or return un-overridden tools to their role defaults. Changes apply after you save settings."
       />
 
       <Card title="MCP servers" padding={false}>
@@ -358,13 +370,13 @@ interface PermissionToolRow {
 function PermissionToolTable({ rows }: { rows: readonly PermissionToolRow[] }): JSX.Element {
   return (
     <div class="tool-table">
-      <div class="tool-row tool-row-head">
+      <div class="tool-row tool-row-perm tool-row-head">
         <div class="tc-tog tc-th">Permission</div>
         <div class="tc-name tc-th">Tool</div>
         <div class="tc-desc tc-th">Description</div>
       </div>
       {rows.map((r) => (
-        <div key={r.key} class={["tool-row", permissionRowModifier(r.permission)].join(" ")}>
+        <div key={r.key} class={["tool-row", "tool-row-perm", permissionRowModifier(r.permission)].join(" ")}>
           <div class="tc-tog">
             <Select
               value={r.permission}
