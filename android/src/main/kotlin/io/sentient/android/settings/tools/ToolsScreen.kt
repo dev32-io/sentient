@@ -42,6 +42,9 @@ import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.settings.McpCatalogEntry
 import io.sentient.mobilesdk.settings.McpCatalogView
+import io.sentient.mobilesdk.settings.ToolPermission
+import io.sentient.mobilesdk.settings.ToolPermissionMap
+import io.sentient.mobilesdk.settings.effectiveToolPermission
 
 private const val HEAD_SUB =
     "Tools available to the assistant each cycle. Toggle a server or built-in group on/off, or " +
@@ -100,7 +103,7 @@ private fun ColumnScope.ToolsBody(
                 McpServerSection(
                     id = id,
                     entry = entry,
-                    userInclude = draft.tools.enabled[id],
+                    permissions = draft.tools.permissions,
                     controlsEnabled = enabled,
                     onToggleServer = { onToggleServer(id) },
                     onToggleTool = { tool -> onToggleTool(id, tool) },
@@ -120,15 +123,15 @@ private fun ColumnScope.ToolsBody(
 private fun McpServerSection(
     id: String,
     entry: McpCatalogEntry,
-    userInclude: List<String>?,
+    permissions: ToolPermissionMap?,
     controlsEnabled: Boolean,
     onToggleServer: () -> Unit,
     onToggleTool: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val isEnabled = userInclude != null
-    val activeNames = if (userInclude != null && userInclude.isNotEmpty()) userInclude else entry.defaultInclude
-    val count = if (isEnabled) "${activeNames.size}/${entry.tools.size} tools" else "off"
+    val activeTools = entry.tools.filter { effectiveToolPermission(permissions, id, it) != ToolPermission.OFF }
+    val isEnabled = activeTools.isNotEmpty()
+    val count = if (isEnabled) "${activeTools.size}/${entry.tools.size} tools" else "off"
     SectionHeaderRow(
         title = id,
         description = entry.description,
@@ -145,7 +148,7 @@ private fun McpServerSection(
             RowToggle(
                 label = tool.name,
                 sub = tool.description.ifBlank { null },
-                checked = tool.name in activeNames,
+                checked = tool in activeTools,
                 onCheckedChange = { onToggleTool(tool.name) },
                 enabled = controlsEnabled,
                 testTag = "settings-tools-tool-$id-${tool.name}",

@@ -29,6 +29,7 @@ import io.sentient.mobilesdk.settings.ProfileModelRef
 import io.sentient.mobilesdk.settings.ProfilePersona
 import io.sentient.mobilesdk.settings.ProfileTools
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ProfileV1PutBody
 import io.sentient.mobilesdk.settings.ProfileVoiceRef
 import io.sentient.mobilesdk.settings.SecretsStatus
 import io.sentient.mobilesdk.settings.ServicesVersions
@@ -54,7 +55,7 @@ fun sampleProfile(
     voice = ProfileVoiceRef(provider = "local-tts", id = voiceId),
     audio = ProfileAudio(ttsEnabled = ttsEnabled, channel = channel),
     persona = ProfilePersona(template = "default", overrides = ""),
-    tools = ProfileTools(enabled = emptyMap(), toolsets = null),
+    tools = ProfileTools(permissions = null, toolsets = null),
     compression = ProfileCompression(threshold = 0.5),
     advanced = ProfileAdvanced(extraSystemPrompt = "", maxTokens = 1024, reasoningEffort = "minimal"),
 )
@@ -75,10 +76,10 @@ class FakeProfileRepository : ProfileRepository {
     // Recorders
     var putProfileCalls = 0
     var applyCalls = 0
-    var lastPutProfile: ProfileV1? = null
+    var lastPutProfile: ProfileV1PutBody? = null
 
     override suspend fun getProfile(): SentientResult<ProfileV1> = getProfileResult
-    override suspend fun putProfile(profile: ProfileV1): SentientResult<ProfileV1> {
+    override suspend fun putProfile(profile: ProfileV1PutBody): SentientResult<ProfileV1> {
         putProfileCalls++
         lastPutProfile = profile
         return putProfileResult

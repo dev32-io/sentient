@@ -31,6 +31,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.toPutBody
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
@@ -75,7 +76,11 @@ class ApplyProfileChangeUseCase(
     }
 
     private suspend fun FlowCollector<ApplyState>.runPutProfile(m: ProfileMutation.PutProfile) {
-        when (val put = profile.putProfile(m.next)) {
+        // .toPutBody() is the identity conversion for every ordinary save (no permission
+        // clear) — see its doc comment. `m.next` stays plain ProfileV1 all the way up
+        // through every settings ViewModel; only this one call site widens it to the
+        // PATCH-shaped wire body ProfileHttpClient.updateMe actually requires.
+        when (val put = profile.putProfile(m.next.toPutBody())) {
             is SentientResult.Failure -> go(ApplyState.Failed(put.error), ApplyState.Saving, "profile.put.failed")
             is SentientResult.Success -> {
                 if (isAudioOnlyProfileDiff(m.previous, m.next)) {

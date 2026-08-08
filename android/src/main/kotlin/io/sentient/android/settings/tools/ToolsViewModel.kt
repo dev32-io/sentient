@@ -3,19 +3,21 @@
 // changed → PUT then apply (Hermes restart). Loads the profile + the MCP catalog;
 // holds `original` + `draft`.
 //
-// enabled-map semantics (mirrors webui tools-pane EXACTLY):
-//   profile.tools.enabled: Map<serverId, List<toolName>>
-//     - key ABSENT           → server OFF (disabled).
-//     - key present, list []  → server ON, inheriting the operator default whitelist
-//                               (entry.defaultInclude).
-//     - key present, non-empty → server ON, exactly those tools enabled.
-//   Toggle server ON  → materialize enabled[id] = defaultInclude (not []), so the
-//                       per-tool checkboxes start canonical and a re-toggle can't
-//                       resurrect tools the user already turned off.
-//   Toggle server OFF → remove the key.
-//   Toggle a tool     → materialize the baseline (default when empty) then add/remove.
-//   profile.tools.toolsets: List<String>? — Hermes built-ins; a builtin row is ON
-//   iff its toolset ∈ toolsets. Toggling flips the whole toolset.
+// INTERIM two-state view over the per-tool permission model landed in
+// 2026-08-07-tool-permissions task 7 (ProfileTools.permissions: server -> tool ->
+// ToolPermission, replacing the retired enabled narrowing-array map). A tool/server
+// counts as "on" iff its resolved permission is anything other than OFF — ALLOW,
+// ASK and DENY all read as "on" here, collapsed onto the Switch this screen already
+// has. This screen writes ONLY concrete ALLOW/OFF (never ASK/DENY, never a clear) —
+// the real four-state ALLOW/ASK/DENY/OFF dropdown, the wildcard master control, the
+// settable-disabled row (delegateTask), and the nativeTools section are task 8's
+// per-tool permission UI, not built here.
+//
+// Reads go through effectiveToolPermission/effectiveWildcardPermission (shared pure
+// helpers, io.sentient.mobilesdk.settings.ToolPermissionPatch.kt) so this screen's
+// notion of "is this on" can never drift from what the ToolBroker actually resolves.
+// profile.tools.toolsets: List<String>? — Hermes built-ins; a builtin row is ON iff
+// its toolset is in toolsets. Toggling flips the whole toolset (unchanged).
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.tools
 
@@ -29,6 +31,8 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.ProfileTools
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ToolPermission
+import io.sentient.mobilesdk.settings.effectiveToolPermission
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,16 +51,18 @@ data class ToolsUiState(
     val alreadyApplying: Boolean = false,
     val applyError: String? = null,
 ) {
-    /** Compares with `toolsets` normalized (null → empty) — the server can round-trip a
-     *  never-configured toolsets as either null or [], and those are semantically identical;
-     *  comparing raw would spuriously flag a save as dirty on a profile the user never touched. */
+    /** Compares with `permissions`/`toolsets` normalized (null → empty) — the server can
+     *  round-trip a never-configured table as either null or {}/[] and those are
+     *  semantically identical; comparing raw would spuriously flag a save as dirty on a
+     *  profile the user never touched. */
     val dirty: Boolean
         get() = original != null && draft != null && draft.tools.normalized() != original.tools.normalized()
 
     val applyActive: Boolean get() = saving || restarting
 }
 
-private fun ProfileTools.normalized(): ProfileTools = copy(toolsets = toolsets ?: emptyList())
+private fun ProfileTools.normalized(): ProfileTools =
+    copy(permissions = permissions ?: emptyMap(), toolsets = toolsets ?: emptyList())
 
 class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
     private val log = createLogger("android", "settings", "tools-vm")
@@ -89,20 +95,24 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
         }
     }
 
+    /** Flips every role-governable tool on this server between ALLOW and OFF in one write —
+     *  see the file header for why this is a 2-state stand-in, not the real master control. */
     fun toggleServer(id: String) = editTools { draft, catalog ->
         val entry = catalog.servers[id] ?: return@editTools draft.tools
-        val enabled = draft.tools.enabled
-        val next = if (id in enabled) enabled - id else enabled + (id to entry.defaultInclude)
-        log.info("toggle-server", mapOf("id" to id, "on" to (id !in enabled)))
-        draft.tools.copy(enabled = next)
+        val isOn = entry.tools.any { effectiveToolPermission(draft.tools.permissions, id, it) != ToolPermission.OFF }
+        val value = if (isOn) ToolPermission.OFF else ToolPermission.ALLOW
+        val serverMap = entry.tools.associate { it.name to value } + (catalog.wildcardPermissionKey to value)
+        log.info("toggle-server", mapOf("id" to id, "on" to !isOn))
+        draft.tools.copy(permissions = (draft.tools.permissions ?: emptyMap()) + (id to serverMap))
     }
 
     fun toggleTool(serverId: String, toolName: String) = editTools { draft, catalog ->
         val entry = catalog.servers[serverId] ?: return@editTools draft.tools
-        val current = draft.tools.enabled[serverId] ?: return@editTools draft.tools
-        val baseline = if (current.isEmpty()) entry.defaultInclude else current
-        val nextList = if (toolName in baseline) baseline - toolName else baseline + toolName
-        draft.tools.copy(enabled = draft.tools.enabled + (serverId to nextList))
+        val tool = entry.tools.find { it.name == toolName } ?: return@editTools draft.tools
+        val current = effectiveToolPermission(draft.tools.permissions, serverId, tool)
+        val next = if (current == ToolPermission.OFF) ToolPermission.ALLOW else ToolPermission.OFF
+        val serverMap = (draft.tools.permissions?.get(serverId) ?: emptyMap()) + (toolName to next)
+        draft.tools.copy(permissions = (draft.tools.permissions ?: emptyMap()) + (serverId to serverMap))
     }
 
     fun toggleToolset(toolset: String) = editTools { draft, _ ->
@@ -126,7 +136,10 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
         val previous = state.original ?: return
         val next = state.draft ?: return
         if (!state.dirty || state.applyActive) return
-        log.info("save", mapOf("servers" to next.tools.enabled.size, "toolsets" to (next.tools.toolsets?.size ?: 0)))
+        log.info(
+            "save",
+            mapOf("servers" to (next.tools.permissions?.size ?: 0), "toolsets" to (next.tools.toolsets?.size ?: 0)),
+        )
         viewModelScope.launch {
             component.applyProfileChange(ProfileMutation.PutProfile(previous, next)).collect { st ->
                 _ui.update { it.foldApply(st) }
