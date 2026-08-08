@@ -31,6 +31,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ProfileV1PutBody
 import io.sentient.mobilesdk.settings.toPutBody
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -76,11 +77,9 @@ class ApplyProfileChangeUseCase(
     }
 
     private suspend fun FlowCollector<ApplyState>.runPutProfile(m: ProfileMutation.PutProfile) {
-        // .toPutBody() is the identity conversion for every ordinary save (no permission
-        // clear) — see its doc comment. `m.next` stays plain ProfileV1 all the way up
-        // through every settings ViewModel; only this one call site widens it to the
-        // PATCH-shaped wire body ProfileHttpClient.updateMe actually requires.
-        when (val put = profile.putProfile(m.next.toPutBody())) {
+        // m.next is already the PATCH-shaped ProfileV1PutBody (ProfileMutation.PutProfile's
+        // doc comment) — no conversion needed here; the caller built it via `.toPutBody()`.
+        when (val put = profile.putProfile(m.next)) {
             is SentientResult.Failure -> go(ApplyState.Failed(put.error), ApplyState.Saving, "profile.put.failed")
             is SentientResult.Success -> {
                 if (isAudioOnlyProfileDiff(m.previous, m.next)) {
@@ -154,12 +153,16 @@ class ApplyProfileChangeUseCase(
     }
 }
 
-/** True when every profile field EXCEPT `audio` is unchanged — the fast, no-restart path. */
-internal fun isAudioOnlyProfileDiff(previous: ProfileV1, next: ProfileV1): Boolean =
-    previous.copy(audio = next.audio) == next
+/** True when every profile field EXCEPT `audio` is unchanged — the fast, no-restart path.
+ *  Compares against `next` (the PATCH-shaped PUT body) by lifting `previous` to the same
+ *  shape via `.toPutBody()` — a pending permission CLEAR anywhere in `next.tools` (a
+ *  concrete leaf lifted from `previous` can never equal a `null` leaf in `next`) correctly
+ *  fails this check and takes the slow/restart path, exactly as any other tools change does. */
+internal fun isAudioOnlyProfileDiff(previous: ProfileV1, next: ProfileV1PutBody): Boolean =
+    previous.toPutBody().copy(audio = next.audio) == next
 
 /** Build the minimal live-preference patch: only fields that actually changed are non-null. */
-internal fun diffToAudioPatch(previous: ProfileV1, next: ProfileV1): AudioPreferencesPatch =
+internal fun diffToAudioPatch(previous: ProfileV1, next: ProfileV1PutBody): AudioPreferencesPatch =
     AudioPreferencesPatch(
         ttsEnabled = next.audio.ttsEnabled.takeIf { it != previous.audio.ttsEnabled },
         channel = next.audio.channel.takeIf { it != previous.audio.channel },

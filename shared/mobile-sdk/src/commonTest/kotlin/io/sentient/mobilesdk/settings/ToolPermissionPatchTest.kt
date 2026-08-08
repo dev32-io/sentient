@@ -165,3 +165,41 @@ class EffectiveWildcardPermissionTest {
         assertNull(effectiveWildcardPermission(permissions, "household", "*", ToolPermission.OFF))
     }
 }
+
+class MergeToolPermissionPatchTest {
+    @Test
+    fun `carries forward a server the overlay never touched`() {
+        val base: ToolPermissionMap = mapOf("search" to mapOf("web_search" to ToolPermission.ASK))
+        val merged = mergeToolPermissionPatch(base, emptyMap())
+        assertEquals(mapOf("web_search" to ToolPermission.ASK), merged["search"])
+    }
+
+    @Test
+    fun `carries forward sibling tools under a server the overlay only partially edited`() {
+        val base: ToolPermissionMap =
+            mapOf("household" to mapOf("look_up" to ToolPermission.ALLOW, "unlock_door" to ToolPermission.ASK))
+        val overlay: ToolPermissionPatchMap = mapOf("household" to mapOf("unlock_door" to ToolPermission.OFF))
+        val merged = mergeToolPermissionPatch(base, overlay)
+        assertEquals(mapOf("look_up" to ToolPermission.ALLOW, "unlock_door" to ToolPermission.OFF), merged["household"])
+    }
+
+    @Test
+    fun `overlay clear wins over the base's concrete value for the same key`() {
+        val base: ToolPermissionMap = mapOf("household" to mapOf("look_up" to ToolPermission.DENY))
+        val overlay: ToolPermissionPatchMap = mapOf("household" to mapOf("look_up" to null))
+        val merged = mergeToolPermissionPatch(base, overlay)
+        assertNull(merged["household"]?.get("look_up"))
+    }
+
+    @Test
+    fun `includes a server the overlay names that base never had`() {
+        val overlay: ToolPermissionPatchMap = mapOf("new-server" to mapOf("*" to ToolPermission.OFF))
+        val merged = mergeToolPermissionPatch(null, overlay)
+        assertEquals(mapOf("*" to ToolPermission.OFF), merged["new-server"])
+    }
+
+    @Test
+    fun `a null base and empty overlay merge to an empty patch never every-server-off`() {
+        assertEquals(emptyMap(), mergeToolPermissionPatch(null, emptyMap()))
+    }
+}

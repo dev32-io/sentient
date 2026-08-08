@@ -13,6 +13,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.ApplyResult
 import io.sentient.mobilesdk.settings.MemorySlot
+import io.sentient.mobilesdk.settings.toPutBody
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -33,26 +34,26 @@ class ApplyProfileChangeUseCaseTest {
     fun `audio-only diff classifies as fast`() {
         val prev = sampleProfile(ttsEnabled = true)
         val next = sampleProfile(ttsEnabled = false)
-        assertTrue(isAudioOnlyProfileDiff(prev, next))
+        assertTrue(isAudioOnlyProfileDiff(prev, next.toPutBody()))
     }
 
     @Test
     fun `model diff classifies as slow`() {
-        assertTrue(!isAudioOnlyProfileDiff(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+        assertTrue(!isAudioOnlyProfileDiff(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
     }
 
     @Test
     fun `audio plus model diff classifies as slow`() {
         val prev = sampleProfile(ttsEnabled = true, modelId = "a")
         val next = sampleProfile(ttsEnabled = false, modelId = "b")
-        assertTrue(!isAudioOnlyProfileDiff(prev, next))
+        assertTrue(!isAudioOnlyProfileDiff(prev, next.toPutBody()))
     }
 
     @Test
     fun `diff patch carries only changed audio fields`() {
         val prev = sampleProfile(ttsEnabled = true, channel = "voice")
         val next = sampleProfile(ttsEnabled = false, channel = "voice")
-        val patch = diffToAudioPatch(prev, next)
+        val patch = diffToAudioPatch(prev, next.toPutBody())
         assertEquals(false, patch.ttsEnabled)
         assertNull(patch.channel) // unchanged → omitted
     }
@@ -64,7 +65,7 @@ class ApplyProfileChangeUseCaseTest {
         val repo = FakeProfileRepository()
         val patches = mutableListOf<AudioPreferencesPatch>()
         val states = useCase(repo, patches)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(channel = "voice"), sampleProfile(channel = "text")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(channel = "voice"), sampleProfile(channel = "text").toPutBody()))
             .toList()
 
         assertEquals(listOf(ApplyState.Saving, ApplyState.Ready(0L)), states)
@@ -78,7 +79,7 @@ class ApplyProfileChangeUseCaseTest {
         val repo = FakeProfileRepository()
         val useCase = ApplyProfileChangeUseCase(repo) { throw IllegalStateException("dead socket") }
         val states = useCase
-            .invoke(ProfileMutation.PutProfile(sampleProfile(channel = "voice"), sampleProfile(channel = "text")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(channel = "voice"), sampleProfile(channel = "text").toPutBody()))
             .toList()
 
         assertEquals(
@@ -96,7 +97,7 @@ class ApplyProfileChangeUseCaseTest {
     fun `model save is Saving Restarting Ready with one apply`() = runTest {
         val repo = FakeProfileRepository().apply { applyResult = ApplyResult.Ready(900) }
         val states = useCase(repo)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
             .toList()
 
         assertEquals(listOf(ApplyState.Saving, ApplyState.Restarting, ApplyState.Ready(900)), states)
@@ -111,7 +112,7 @@ class ApplyProfileChangeUseCaseTest {
             applyResult = ApplyResult.Ready(90_000)
         }
         val states = useCase(repo)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
             .toList()
 
         assertEquals(ApplyState.Restarting, states[1])
@@ -124,7 +125,7 @@ class ApplyProfileChangeUseCaseTest {
     fun `apply 429 surfaces AlreadyApplying`() = runTest {
         val repo = FakeProfileRepository().apply { applyResult = ApplyResult.InProgress }
         val states = useCase(repo)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
             .toList()
 
         assertEquals(listOf(ApplyState.Saving, ApplyState.Restarting, ApplyState.AlreadyApplying), states)
@@ -138,7 +139,7 @@ class ApplyProfileChangeUseCaseTest {
             putProfileResult = SentientResult.Failure(SentientError.Connection("offline"))
         }
         val states = useCase(repo)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
             .toList()
 
         assertEquals(ApplyState.Saving, states[0])
@@ -150,7 +151,7 @@ class ApplyProfileChangeUseCaseTest {
     fun `apply failure surfaces Failed`() = runTest {
         val repo = FakeProfileRepository().apply { applyResult = ApplyResult.Failed(status = 502, code = "docker-restart") }
         val states = useCase(repo)
-            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b")))
+            .invoke(ProfileMutation.PutProfile(sampleProfile(modelId = "a"), sampleProfile(modelId = "b").toPutBody()))
             .toList()
 
         assertEquals(ApplyState.Restarting, states[1])

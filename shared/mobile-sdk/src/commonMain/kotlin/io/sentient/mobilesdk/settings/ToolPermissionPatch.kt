@@ -114,3 +114,31 @@ fun effectiveWildcardPermission(
     if (!serverMap.containsKey(wildcardKey)) return catalogWildcard
     return serverMap[wildcardKey]
 }
+
+/**
+ * Merges a session's accumulated pending edits ([overlay] — built incrementally via
+ * [withToolPermission] / [withServerMasterPermission], seeded from an empty map) on top of
+ * the ORIGINALLY-LOADED stored permissions ([base]) at SAVE time, producing the patch to
+ * actually PUT.
+ *
+ * WHY THIS IS NEEDED, NOT JUST `base + overlay` AT THE SERVER LEVEL: [overlay] typically
+ * names only the servers/tools the person actually touched this session — a server the
+ * person never opened is simply absent from it. But [ProfileTools.permissions]'s absent-
+ * SERVER rule reads a server missing from a NON-EMPTY table as "off forever" (see its doc
+ * comment) — so a save that sent `overlay` alone, dropping every untouched server, would
+ * silently turn every one of them off. This merges at the TOOL-NAME level within each
+ * server too (not a per-server whole-map replace): [base]'s other tools under a server the
+ * person partially edited are carried forward exactly as [withToolPermission] already
+ * promises for a single edit — this is just that same carry-forward guarantee applied once,
+ * across every server, at the point a whole session's edits are flattened into one write.
+ *
+ * A concrete [base] leaf is always a valid patch leaf (see [ProfileV1.toPutBody]), so only
+ * [overlay]'s own keys can carry a `null` clear — this function never invents one.
+ */
+fun mergeToolPermissionPatch(base: ToolPermissionMap?, overlay: ToolPermissionPatchMap): ToolPermissionPatchMap {
+    val servers = base.orEmpty().keys + overlay.keys
+    return servers.associateWith { server ->
+        val baseServerMap: Map<String, ToolPermission?> = base?.get(server).orEmpty()
+        baseServerMap + overlay[server].orEmpty()
+    }
+}

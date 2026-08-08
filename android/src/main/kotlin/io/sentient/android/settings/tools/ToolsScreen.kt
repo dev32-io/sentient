@@ -1,9 +1,11 @@
 // ---------------------------------------------------------------------------
 // ToolsScreen — Tools settings page: per-MCP-server cards (master toggle + expand to
 // per-tool toggles) and a Hermes built-ins card (per-toolset toggles). SLOW save
-// (restart copy) via the shared SettingsEditChrome. enabled-map semantics live in
-// ToolsViewModel; this screen renders the derived active/total counts. Copy mirrors
-// webui tools-pane.
+// (restart copy) via the shared SettingsEditChrome. Interim 2-state permission
+// semantics (see ToolsViewModel's file header) live in ToolsViewModel; this screen
+// renders the derived active/total counts reading `state.pendingPermissions`
+// (a patch overlay, NOT the loaded profile's own stored permissions) through the
+// shared effectiveToolPermission helper. Copy mirrors webui tools-pane.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.tools
 
@@ -43,7 +45,7 @@ import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.settings.McpCatalogEntry
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.ToolPermission
-import io.sentient.mobilesdk.settings.ToolPermissionMap
+import io.sentient.mobilesdk.settings.ToolPermissionPatchMap
 import io.sentient.mobilesdk.settings.effectiveToolPermission
 
 private const val HEAD_SUB =
@@ -85,8 +87,8 @@ private fun ColumnScope.ToolsBody(
     onToggleToolset: (String) -> Unit,
 ) {
     val catalog = state.catalog
-    val draft = state.draft
-    if (catalog == null || draft == null) {
+    val original = state.original
+    if (catalog == null || original == null) {
         SettingsLoadStatus(loading = state.loading, error = state.loadError)
         return
     }
@@ -103,7 +105,7 @@ private fun ColumnScope.ToolsBody(
                 McpServerSection(
                     id = id,
                     entry = entry,
-                    permissions = draft.tools.permissions,
+                    permissions = state.pendingPermissions,
                     controlsEnabled = enabled,
                     onToggleServer = { onToggleServer(id) },
                     onToggleTool = { tool -> onToggleTool(id, tool) },
@@ -113,7 +115,7 @@ private fun ColumnScope.ToolsBody(
     }
     HermesBuiltinsCard(
         catalog = catalog,
-        enabledToolsets = draft.tools.toolsets ?: emptyList(),
+        enabledToolsets = state.pendingToolsets ?: original.tools.toolsets ?: emptyList(),
         controlsEnabled = enabled,
         onToggleToolset = onToggleToolset,
     )
@@ -123,7 +125,7 @@ private fun ColumnScope.ToolsBody(
 private fun McpServerSection(
     id: String,
     entry: McpCatalogEntry,
-    permissions: ToolPermissionMap?,
+    permissions: ToolPermissionPatchMap,
     controlsEnabled: Boolean,
     onToggleServer: () -> Unit,
     onToggleTool: (String) -> Unit,

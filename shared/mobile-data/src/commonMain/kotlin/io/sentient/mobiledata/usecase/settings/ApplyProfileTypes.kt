@@ -8,6 +8,7 @@ package io.sentient.mobiledata.usecase.settings
 import io.sentient.mobilesdk.result.SentientError
 import io.sentient.mobilesdk.settings.MemorySlot
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ProfileV1PutBody
 
 /**
  * A single settings mutation the FSM can execute. `PutProfile` carries [previous]
@@ -15,8 +16,22 @@ import io.sentient.mobilesdk.settings.ProfileV1
  * needs-restart change (SLOW). Soul / memory / personality writes always restart.
  */
 sealed interface ProfileMutation {
-    /** Full-profile PUT. Audio-only diff → fast path; anything else → PUT then apply. */
-    data class PutProfile(val previous: ProfileV1, val next: ProfileV1) : ProfileMutation
+    /**
+     * Full-profile PUT. Audio-only diff → fast path; anything else → PUT then apply.
+     *
+     * [next] is [ProfileV1PutBody] — the PATCH-shaped wire body, NOT [ProfileV1] — so a
+     * tool-permission CLEAR (a `null` leaf) can go through this ONE mutation, and this
+     * ONE Saving/Restarting/Ready/Failed sequencing, exactly like every other profile
+     * write. Build one from a loaded [ProfileV1] via `.toPutBody()`; every caller with no
+     * clear to express (the overwhelming majority — audio/model/voice/persona/advanced
+     * saves, and ordinary concrete per-tool edits) does exactly that with no further
+     * remapping. Deliberately NOT [ProfileV1]: a mutation type that could only ever carry
+     * concrete permissions would force every caller that DOES need a clear (a tools
+     * screen's server master control / "reset to role default") to either hand-roll its
+     * own restart-state sequencing around a raw repository call, or reinvent this widening
+     * itself — the same decision made twice, inconsistently, in two client languages.
+     */
+    data class PutProfile(val previous: ProfileV1, val next: ProfileV1PutBody) : ProfileMutation
 
     /** System-prompt (SOUL) write — the endpoint restarts; single call. */
     data class PutSoul(val content: String) : ProfileMutation

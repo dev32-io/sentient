@@ -59,6 +59,15 @@ data class ProfileV1(
  * returns. Build one from a loaded [ProfileV1] via [toPutBody]; `schemaVersion`
  * / `userId` are server-assigned identity fields a caller must round-trip
  * verbatim, never invent.
+ *
+ * HAND-DUPLICATED from [ProfileV1], not derived — Kotlin data classes have no
+ * `.extend()` the way the mirrored gateway zod schema does
+ * (`profileV1PutBodySchema = profileV1Schema.extend({ tools: ... })`). This is
+ * a silent trap, not a compile-time-caught one: a field added to [ProfileV1]
+ * later will NOT fail to compile here — [toPutBody] just won't carry it
+ * through, and that field will silently never round-trip on a PUT. Any future
+ * [ProfileV1] field addition MUST add the same field here (and to [toPutBody])
+ * by hand.
  */
 @Serializable
 data class ProfileV1PutBody(
