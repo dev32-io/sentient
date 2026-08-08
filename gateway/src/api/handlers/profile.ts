@@ -2,9 +2,14 @@ import type { McpCatalog, ToolPermissionMap } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 import type { ApplyError, ApplyOutcome } from "../../apply/orchestrator.js";
 import { getLog } from "../../logging/logger.js";
-import { applyProfileDefaults } from "../../profile-store/profile-defaults.js";
 import type { ProfileStore, ProfileStoreError } from "../../profile-store/profile-store.js";
 import { type ProfileV1, profileV1Schema } from "../../profile-store/profile-types.js";
+import {
+  type ProfileUpdateBase,
+  applyProfileUpdate,
+  seedsPermissionDefaults,
+} from "../../profile-store/profile-update.js";
+import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import type { TokenService } from "../../user-auth/token-service.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 
@@ -148,8 +153,17 @@ async function handleMePut(deps: ProfileHandlerDeps, userId: string, request: Re
   const storedOrError = await readStoredProfile(deps, userId);
   if (storedOrError instanceof Response) return storedOrError;
 
-  const merged = mergeIntoStored(parsedOrError, storedOrError);
-  const toSave = await seedIfNeverConfigured(deps, userId, merged);
+  const base: ProfileUpdateBase = {
+    stored: storedOrError,
+    permissionDefaults: await resolveRoleTemplate(deps, userId),
+  };
+  if (seedsPermissionDefaults(base)) {
+    log.info("me.put-seeded-permissions", {
+      userId,
+      reason: "the stored profile carried no permission table",
+    });
+  }
+  const toSave = applyProfileUpdate(parsedOrError, base);
 
   const saveResult = await deps.profileStore.save(toSave);
   if (!saveResult.ok) {
@@ -227,83 +241,34 @@ function isAbsentProfile(error: ProfileStoreError): boolean {
 }
 
 /**
- * A PUT REPLACES ONLY THE PERMISSION KEYS IT NAMES.
+ * The account's per-role starter table — what `applyProfileUpdate` seeds a
+ * never-tabled profile from. `undefined` when the role cannot be read.
  *
- * Everything else in the profile is a whole-value field the body always
- * carries (the schema requires model, voice, persona, compression, advanced),
- * so it is replaced outright. `tools.permissions` is the one field a client can
- * legitimately hold an opinion about only PART of, and the difference matters:
- *
- *   - a SERVER the body does not name keeps its stored per-tool map;
- *   - a TOOL the body does not name keeps its stored permission;
- *   - a body with no `permissions` key at all, or an empty one, changes
- *     nothing.
- *
- * WHY A DELTA AND NOT A REPLACEMENT. Every account's table is complete for its
- * role from creation (`applyProfileDefaults`), and the broker resolves it with
- * no fallthrough behind it — so an entry that disappears does not revert to a
- * default, it becomes a tool with no answer. Under replacement, a client that
- * renders four servers and PUTs what it rendered silently deletes the fifth;
- * a client saving a VOICE change with a stale `tools` object silently deletes
- * all of them. Both are one-line client changes away at all times, and neither
- * would look like a bug from the client's side.
- *
- * NOTHING IS LOST BY GIVING UP DELETION: the four permission states already
- * express every intent a client has. "Off" is `"off"` — including
- * `{"*": "off"}` for a whole server — never an absent key. Silence means "no
- * opinion", which is the only thing a partial body can honestly mean.
- */
-function mergeIntoStored(incoming: ProfileV1, stored: ProfileV1 | undefined): ProfileV1 {
-  const merged = mergePermissions(stored?.tools.permissions, incoming.tools.permissions);
-  if (merged === undefined) return incoming;
-  return { ...incoming, tools: { ...incoming.tools, permissions: merged } };
-}
-
-function mergePermissions(
-  stored: ToolPermissionMap | undefined,
-  incoming: ToolPermissionMap | undefined,
-): ToolPermissionMap | undefined {
-  if (stored === undefined) return incoming;
-  if (incoming === undefined) return stored;
-  const merged: ToolPermissionMap = { ...stored };
-  for (const [server, perServer] of Object.entries(incoming)) {
-    merged[server] = { ...merged[server], ...perServer };
-  }
-  return merged;
-}
-
-/**
- * Seeds the account's per-role template onto a profile that has never carried a
- * permission table — the backfill for accounts created before tables existed.
- * A table that IS set is never touched: it is the person's, and the role
- * template is a starting point, not an authority above them.
- *
- * A role we cannot read is not fatal. Seeding repairs an incomplete profile; it
- * grants nothing that was not already the account's default, so failing it
+ * A ROLE WE CANNOT READ IS NOT FATAL. Seeding repairs an incomplete profile; it
+ * grants nothing that was not already the account's default, so skipping it
  * leaves the profile exactly as complete as it already was. Refusing the whole
  * save would instead cost the person the voice change they came here to make,
  * for a reason that has nothing to do with it.
+ *
+ * Only PERMISSIONS are seeded here, deliberately — not `applyProfileDefaults`,
+ * which also refills `tools.toolsets` whenever it is empty. An empty toolsets
+ * list is legal and meaningful ("no built-ins, MCP-only", see profile-types.ts),
+ * so refilling it on a save would silently hand four Hermes toolsets back to
+ * somebody who had just turned them all off — the same asymmetry the empty
+ * permission table is careful about.
  */
-async function seedIfNeverConfigured(deps: ProfileHandlerDeps, userId: string, profile: ProfileV1): Promise<ProfileV1> {
-  if (profile.tools.permissions !== undefined) return profile;
-
+async function resolveRoleTemplate(deps: ProfileHandlerDeps, userId: string): Promise<ToolPermissionMap | undefined> {
   const record = await deps.users.get(userId);
   if (!record.ok || record.value === null) {
     log.warn("me.put-role-unavailable", {
       userId,
       reason: record.ok ? "no-user-record" : record.error,
-      outcome: "saved-unseeded",
+      outcome: "no-seeding",
       detail: "the account's role decides its default permission table and could not be read",
     });
-    return profile;
+    return undefined;
   }
-
-  log.info("me.put-seeded-permissions", {
-    userId,
-    role: record.value.role,
-    reason: "the stored profile carried no permission table",
-  });
-  return applyProfileDefaults(profile, { role: record.value.role, mcpCatalog: deps.mcpCatalog });
+  return defaultPermissionsFor(record.value.role, deps.mcpCatalog);
 }
 
 function mapApplyError(userId: string, error: ApplyError): Response {

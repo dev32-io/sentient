@@ -17,11 +17,22 @@
 // TWO INPUTS, TWO DIFFERENT QUESTIONS, and they must not be conflated:
 //   role + tier  → MAY this person reach the tool at all (`canExecute`)
 //   tier         → what happens when they do (the mapping below)
-// The first question is re-asked live by the role gate on every turn, from the
-// capability's role. It is deliberately NOT frozen into the seeded table as an
+//
+// The role question is deliberately NOT frozen into the seeded table as an
 // `off` entry: a stored `off` is a statement the PERSON made, and writing the
-// role's verdict in that same slot would both misattribute it and go stale the
-// moment an admin re-roles the account.
+// role's verdict into that same slot would both misattribute it and go stale
+// the moment an admin re-roles the account. It belongs to a gate that re-asks
+// it live, from the capability's role.
+//
+// THAT GATE DOES NOT EXIST YET — it is task 4 of plan 2026-08-07-tool-permissions,
+// and `canExecute` has no runtime call site anywhere in `gateway/src` outside
+// this module and its tests. So what an omission from this table means TODAY is
+// not "denied": `permissionFor` returns `undefined` for a tool with no entry
+// under a present server, which still falls through to `mcp-policy.yaml`, and
+// that file CONFIRMS the tools in question (a permission prompt) rather than
+// denying them. No regression — omitting is never wider than the old behaviour
+// — but do not read the paragraph above as a description of live enforcement
+// until task 4 lands the gate and retires the policy engine.
 
 import { type McpCatalog, type ToolPermission, type ToolPermissionMap, catalogTools } from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";

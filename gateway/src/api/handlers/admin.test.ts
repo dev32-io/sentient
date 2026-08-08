@@ -1,8 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { loadConfig, mcpCatalogSchema } from "@sentient/config";
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import type {
   CreateError,
   DeleteError,
@@ -11,6 +7,7 @@ import type {
   UserProvisioner,
 } from "../../admin/user-provisioner.js";
 import { PROFILE_SCHEMA_VERSION } from "../../profile-store/profile-types.js";
+import { loadShippedCatalog } from "../../testing/shipped-catalog.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { UserRecord } from "../../user-auth/types.js";
@@ -86,10 +83,7 @@ function makeProvisioner(): UserProvisioner {
 /** The SHIPPED catalog, not a fixture: a new member's table is seeded from it,
  *  and the failure this guards against ("the account came out with no tools")
  *  is invisible against a stub. */
-const shippedCatalog = loadConfig(
-  readFileSync(join(import.meta.dir, "../../../config.yaml"), "utf-8"),
-  z.object({ mcp_catalog: mcpCatalogSchema }),
-).mcp_catalog;
+const shippedCatalog = loadShippedCatalog();
 
 function makeDeps(overrides?: Partial<AdminDeps>): AdminDeps {
   return {

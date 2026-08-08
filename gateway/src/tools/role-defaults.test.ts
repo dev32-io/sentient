@@ -1,9 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { type McpCatalog, catalogTools, loadConfig, mcpCatalogSchema } from "@sentient/config";
+import { type McpCatalog, catalogTools, mcpCatalogSchema } from "@sentient/config";
 import { USER_ROLES, canExecute } from "@sentient/protocol";
-import { z } from "zod";
+import { loadShippedCatalog } from "../testing/shipped-catalog.js";
 import { defaultPermissionsFor } from "./role-defaults.js";
 
 // ---------------------------------------------------------------------------
@@ -114,10 +112,7 @@ describe("a server this role can reach no tool of is absent, never empty", () =>
 // in a .ts file would have drifted from.
 // ---------------------------------------------------------------------------
 
-const shippedCatalog = loadConfig(
-  readFileSync(join(import.meta.dir, "../../config.yaml"), "utf-8"),
-  z.object({ mcp_catalog: mcpCatalogSchema }),
-).mcp_catalog;
+const shippedCatalog = loadShippedCatalog();
 
 /** Every entry in a table, flattened to `server/tool` for set comparison. */
 function seededToolNames(role: Parameters<typeof defaultPermissionsFor>[0]): string[] {

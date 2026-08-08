@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { type McpCatalog, loadConfig, mcpCatalogSchema } from "@sentient/config";
+import type { McpCatalog } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import type { InstallStateData } from "../../admin/install-state.js";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.js";
+import { loadShippedCatalog } from "../../testing/shipped-catalog.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import type { AuthError, AuthService, ChangePinError, UpdateDisplayNameError } from "../../user-auth/auth-service.js";
 import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
@@ -469,10 +467,7 @@ function makeSetupRequest(): Request {
 // Asserted against the SHIPPED catalog, not a fixture: the bug this guards is
 // "a genuinely fresh account came out with no tools", and a fixture catalog
 // would have been just as green while the real one seeded nothing.
-const shippedCatalog = loadConfig(
-  readFileSync(join(import.meta.dir, "../../../config.yaml"), "utf-8"),
-  z.object({ mcp_catalog: mcpCatalogSchema }),
-).mcp_catalog;
+const shippedCatalog = loadShippedCatalog();
 
 function seededPermissions(userProvisioner: UserProvisioner): Record<string, Record<string, string>> | undefined {
   const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];

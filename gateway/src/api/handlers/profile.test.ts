@@ -252,14 +252,10 @@ describe("PUT /api/v1/profile/me", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A PUT IS A DELTA OVER `tools.permissions`, NOT A REPLACEMENT.
-//
-// The table is complete for the account's role from the moment it is created,
-// so there is no legitimate "and delete the entries I didn't mention". Every
-// wire shape that used to mean deletion — an absent key, an empty table, a
-// client that renders only some servers — now means "no opinion", and the four
-// permission states are the only way to say anything at all. `off` is how you
-// switch something off; silence never is.
+// PUT WIRING. What a partial body MEANS is pinned in profile-update.test.ts,
+// against the pure function; these are the four things only the handler can get
+// wrong — does it pass the stored profile, does it pass the role template, does
+// it get the role from the RECORD, and does it fail closed when it cannot read.
 // ---------------------------------------------------------------------------
 describe("PUT /api/v1/profile/me — partial permission tables", () => {
   const storedTable = {
@@ -272,7 +268,7 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
     return makeProfileStore({ ...profile, tools: { ...profile.tools, permissions } });
   }
 
-  it("replaces only the tool keys the body names, keeping the rest of the stored table", async () => {
+  it("applies the body as a delta over the STORED table, not over nothing", async () => {
     const profileStore = storedWith(storedTable);
     const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore));
     const body = sampleProfile("alice");
@@ -288,44 +284,25 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
     });
   });
 
-  it("leaves a table the body does not mention at all completely untouched", async () => {
-    const profileStore = storedWith(storedTable);
-    const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore));
-    const body = sampleProfile("alice");
-
-    // The shape a client sends when it is changing the VOICE and has never
-    // rendered the tools pane. Under replace-the-whole-thing semantics this
-    // wipes every permission the person set.
-    await handler(makePutRequest({ ...body, tools: { toolsets: ["memory"] } }, "t"));
-
-    expect(savedProfile(profileStore).tools.permissions).toEqual(storedTable);
-  });
-
-  it("treats an empty table as 'no opinion', not as 'clear everything'", async () => {
-    const profileStore = storedWith(storedTable);
-    const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore));
-    const body = sampleProfile("alice");
-
-    await handler(makePutRequest({ ...body, tools: { ...body.tools, permissions: {} } }, "t"));
-
-    expect(savedProfile(profileStore).tools.permissions).toEqual(storedTable);
-  });
-
-  it("seeds the account's role template when the stored profile never had a table", async () => {
+  it("seeds the template for the role on the RECORD, not a fixed one", async () => {
     const profileStore = storedWith(undefined);
     const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore, makeUsers("child")));
     const body = sampleProfile("alice");
 
     await handler(makePutRequest({ ...body, tools: { toolsets: ["memory"] } }, "t"));
 
-    // The record's role, not a fixed one: the confirm-tier tool is absent and
-    // the two tiers a child does reach are present.
+    // The confirm-tier tool is absent and the two tiers a child does reach are
+    // present — an adult's template would carry all three.
     expect(savedProfile(profileStore).tools.permissions).toEqual(defaultPermissionsFor("child", CATALOG));
     expect(savedProfile(profileStore).tools.permissions?.household?.unlock_door).toBeUndefined();
     expect(savedProfile(profileStore).tools.permissions?.household?.look_up).toBe("allow");
   });
 
-  it("keeps what the body names when it seeds an unseeded profile", async () => {
+  // THE ORDERING, end to end. Seeding runs BEFORE the delta, so a body naming
+  // one permission comes out complete. The other order — merge, then seed only
+  // if the result is still absent — leaves a one-entry table and no template,
+  // permanently, and a partial body is the shape the settings panes send.
+  it("seeds the WHOLE template and puts a partial body on top of it", async () => {
     const profileStore = storedWith(undefined);
     const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore, makeUsers("adult")));
     const body = sampleProfile("alice");
@@ -334,9 +311,31 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
       makePutRequest({ ...body, tools: { ...body.tools, permissions: { household: { look_up: "off" } } } }, "t"),
     );
 
-    // Nothing to merge onto, so the body IS the table — and a table that
-    // exists is never overwritten by the role template.
-    expect(savedProfile(profileStore).tools.permissions).toEqual({ household: { look_up: "off" } });
+    const saved = savedProfile(profileStore).tools.permissions;
+    // The body's one opinion…
+    expect(saved?.household?.look_up).toBe("off");
+    // …and every OTHER tool an adult reaches, which merge-then-seed dropped.
+    expect(saved).toEqual({
+      ...defaultPermissionsFor("adult", CATALOG),
+      household: { ...defaultPermissionsFor("adult", CATALOG).household, look_up: "off" },
+    });
+    expect(Object.keys(saved ?? {})).toEqual(Object.keys(defaultPermissionsFor("adult", CATALOG)));
+  });
+
+  // Seeding fills PERMISSIONS and nothing else. `applyProfileDefaults` also
+  // refills `tools.toolsets` whenever it is empty, and an empty toolsets list
+  // is legal and meaningful — "no built-ins, MCP-only" — so routing this path
+  // through it would hand four Hermes toolsets back to somebody who had just
+  // turned them all off.
+  it("seeds permissions without refilling an explicitly empty toolsets list", async () => {
+    const profileStore = storedWith(undefined);
+    const handler = createProfileHandler(makeDeps(makeTokens("alice"), profileStore, makeUsers("adult")));
+    const body = sampleProfile("alice");
+
+    await handler(makePutRequest({ ...body, tools: { toolsets: [] } }, "t"));
+
+    expect(savedProfile(profileStore).tools.toolsets).toEqual([]);
+    expect(savedProfile(profileStore).tools.permissions).toEqual(defaultPermissionsFor("adult", CATALOG));
   });
 
   it("refuses the save when the stored profile cannot be read, rather than merging onto nothing", async () => {
