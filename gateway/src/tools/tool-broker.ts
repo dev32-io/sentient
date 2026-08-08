@@ -63,6 +63,7 @@
 // `mcp-host/tools/identify-user.ts`, which is the only place that knows both
 // the channel and what the tool means without one.
 
+import { NATIVE_TOOL_SERVER_KEY } from "@sentient/config";
 import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import { type ImpactTier, canExecute } from "@sentient/protocol";
@@ -192,6 +193,25 @@ export interface BackgroundToolRunner {
   run(inv: ToolInvocation, taskId: string): { cancel: () => void; result: Promise<ToolResult> };
 }
 
+/** A gateway-native FOREGROUND tool (skill tools, Plan §4) — the gateway runs
+ *  it in-process and AWAITS the result, exactly like an MCP call, so its
+ *  outcome feeds straight back into the same ReAct turn. It belongs to no MCP
+ *  server, but — unlike `delegateTask` — it resolves its stored permission
+ *  under the reserved `"native"` namespace (`serverOf` answers
+ *  `NATIVE_TOOL_SERVER_KEY` for it), so `stored["native"][tool]` genuinely
+ *  overrides the tier default and a parent's `off` bites (spec §4.1). The
+ *  definition carries the tier the role gate judges. */
+export interface NativeToolRunner {
+  definition: ToolDefinition;
+  /** Cheap, side-effect-free argument validation, run BEFORE the PDP: a
+   *  non-null return is answered to the model as a tool error with NO
+   *  `resolveDecision` and NO permission prompt. Invalid input is a model
+   *  error, not an authorization question, and prompting to confirm a write
+   *  that would be rejected anyway trains the user to click through. */
+  validate?(args: Record<string, unknown>): ToolResult | null;
+  run(args: Record<string, unknown>, ctx: { signal: AbortSignal }): Promise<ToolResult>;
+}
+
 /** The settled outcome of a background tool run, handed to whatever sink
  *  `setBackgroundCompletionSink` installed. `toolName` + `taskId` + `request`
  *  let the sink build a stimulus note that identifies itself; `content`/
@@ -314,6 +334,11 @@ export interface ToolBrokerDeps {
   sessionId: string;
   /** name → runner. `delegateTask` (Task 5) registers itself here. */
   backgroundTools: Map<string, BackgroundToolRunner>;
+  /** name → runner for FOREGROUND gateway-native tools (skill tools). Optional
+   *  — a broker with none behaves exactly as before. Resolved BEFORE the MCP
+   *  index (same as `backgroundTools`) and permission-keyed under the reserved
+   *  `"native"` namespace, so a stored `native[tool]` override is honoured. */
+  nativeTools?: Map<string, NativeToolRunner>;
   config: OrchestratorConfig["tools"];
   /**
    * Reads THIS broker's owner's `profile.tools.permissions` — server name →
@@ -359,6 +384,7 @@ export interface ToolBrokerDeps {
  *  the execution path can never be judging two different tools. */
 type ResolvedTarget =
   | { kind: "background"; runner: BackgroundToolRunner; tier: ImpactTier }
+  | { kind: "native"; runner: NativeToolRunner; tier: ImpactTier }
   | { kind: "foreground"; serverName: string; tier: ImpactTier };
 
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
@@ -373,6 +399,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     toolPermissions,
     onDelegationProgress,
   } = deps;
+  // Optional dep: a broker with no native tools behaves exactly as before.
+  const nativeTools: Map<string, NativeToolRunner> = deps.nativeTools ?? new Map();
   const ownerUserId = capability.ownerUserId;
   const role = capability.role;
   // THE FLOOR, resolved once. Both inputs are immutable for this broker's life
@@ -459,9 +487,15 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    *  mapping used for both existence (`resolveTarget`) and permission lookup,
    *  so the two can never disagree about which server a tool belongs to. */
   function serverOf(toolName: string): string | null {
-    // Background tools (`delegateTask`) are gateway-native: no MCP server, so
-    // no key in a map that is addressed by server name.
+    // Background tools (`delegateTask`) are gateway-native AND structurally
+    // non-overridable: no MCP server and no permission key at all — `null`.
     if (backgroundTools.has(toolName)) return null;
+    // Foreground-native tools (skill tools) are also serverless, but they ARE
+    // overridable: they resolve their stored permission under the reserved
+    // `"native"` namespace, so a `native[tool]` override is honoured while the
+    // catalog-built role template (which has no `"native"` key) is bypassed for
+    // the tier default. See resolve-tool-permission.ts.
+    if (nativeTools.has(toolName)) return NATIVE_TOOL_SERVER_KEY;
     return mcpIndex?.get(toolName) ?? null;
   }
 
@@ -627,6 +661,11 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   async function resolveTarget(inv: ToolInvocation): Promise<ResolvedTarget | null> {
     const runner = backgroundTools.get(inv.name);
     if (runner) return { kind: "background", runner, tier: runner.definition.tier };
+    // Native foreground tools resolve BEFORE the MCP index, same choke as the
+    // background registry — their tier travels with the target so the role gate
+    // and the run path judge the same tool.
+    const nativeRunner = nativeTools.get(inv.name);
+    if (nativeRunner) return { kind: "native", runner: nativeRunner, tier: nativeRunner.definition.tier };
     await ensureMcpWarm();
     const serverName = serverOf(inv.name);
     if (!serverName) return null;
@@ -689,6 +728,31 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     } finally {
       // `finally`, not a decrement after the await: a throwing or aborted call
       // that left the counter high would pin its session resident forever.
+      foregroundInFlight -= 1;
+    }
+  }
+
+  /** Runs a gateway-native FOREGROUND tool in-process and AWAITS it, exactly
+   *  like `dispatchForeground` awaits an MCP call: same in-flight counter (so a
+   *  session whose last window closed mid-native-call stays resident) and the
+   *  same result cap. The runner receives the args and the turn's `AbortSignal`
+   *  directly — it owns no server, no port, no wire. */
+  async function dispatchNative(inv: ToolInvocation, runner: NativeToolRunner): Promise<ToolResult> {
+    foregroundInFlight += 1;
+    try {
+      const raw = await runner.run(inv.args, { signal: inv.signal });
+      const result = capResult(inv, raw, "tool-broker.dispatch.native.result-capped");
+      log.info("tool-broker.dispatch.native.done", {
+        sessionId,
+        tool: inv.name,
+        toolCallId: inv.toolCallId,
+        isError: result.isError,
+        contentLength: result.content.length,
+      });
+      return result;
+    } finally {
+      // `finally`, not a decrement after the await: a throwing or aborted
+      // native call that left the counter high would pin its session resident.
       foregroundInFlight -= 1;
     }
   }
@@ -808,11 +872,12 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   function definitions(): ToolDefinition[] {
     void ensureMcpWarm(); // idempotent kick-off; definitions() itself stays synchronous
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
+    const nativeDefs = [...nativeTools.values()].map((runner) => runner.definition);
     const visible: ToolDefinition[] = [];
     const roleWithheld: string[] = [];
     const permissionWithheld: string[] = [];
 
-    for (const def of [...mcpDefs, ...backgroundDefs]) {
+    for (const def of [...mcpDefs, ...backgroundDefs, ...nativeDefs]) {
       if (!canExecute(role, def.tier)) {
         roleWithheld.push(`${def.name}:${def.tier}`);
         continue;
@@ -860,9 +925,28 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
         sessionId,
         tool: inv.name,
         toolCallId: inv.toolCallId,
-        reason: "name is in neither the MCP catalog nor the background registry — answered before the PDP",
+        reason: "name is in neither the MCP catalog nor the background/native registry — answered before the PDP",
       });
       return { content: `Unknown tool: ${inv.name}`, isError: true };
+    }
+
+    // Native argument pre-validation, BEFORE the PDP: an invalid call is a
+    // model error the loop absorbs, never an authorization question. Answering
+    // it here means no `resolveDecision` runs and no permission prompt is
+    // raised — a confirm dialog for a write that would be rejected anyway just
+    // teaches the person to click through. Existence is already resolved above,
+    // so this cannot fire for a hallucinated name.
+    if (target.kind === "native" && target.runner.validate) {
+      const invalid = target.runner.validate(inv.args);
+      if (invalid) {
+        log.warn("tool-broker.dispatch.native.invalid-args", {
+          sessionId,
+          tool: inv.name,
+          toolCallId: inv.toolCallId,
+          reason: "native tool rejected its arguments before the PDP — answered as a tool error, no permission prompt",
+        });
+        return capResult(inv, invalid, "tool-broker.dispatch.native.invalid-args.result-capped");
+      }
     }
 
     // ALLOW-LISTED, not deny-listed. `PdpDecision` still admits
@@ -884,6 +968,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     }
 
     if (target.kind === "background") return dispatchBackground(inv, target.runner);
+    if (target.kind === "native") return dispatchNative(inv, target.runner);
     return dispatchForeground(inv, target.serverName);
   }
 

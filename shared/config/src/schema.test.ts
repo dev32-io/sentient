@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { mcpCatalogSchema } from "./schemas/mcp-catalog.ts";
+import { NATIVE_TOOL_SERVER_KEY } from "./schemas/tool-permission.ts";
 import {
   companionsConfigSchema,
   gatewayConfigSchema,
@@ -368,5 +370,32 @@ describe("sessionConfigSchema", () => {
 
   it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {
     expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 500 }).success).toBe(false);
+  });
+});
+
+describe("mcpCatalogSchema — the reserved 'native' server key", () => {
+  const validServer = {
+    transport: "http",
+    url: "http://127.0.0.1:9000/mcp",
+    tools: { include: [{ name: "get_weather", tier: "read" }] },
+  };
+
+  it("accepts an ordinary operator-named server", () => {
+    const result = mcpCatalogSchema.safeParse({ "test-mcp": validServer });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a server literally named 'native' — it would alias the synthetic permission namespace", () => {
+    const result = mcpCatalogSchema.safeParse({ [NATIVE_TOOL_SERVER_KEY]: validServer });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected the reserved-name refinement to reject");
+    const issue = result.error.issues.find((i) => i.path.includes(NATIVE_TOOL_SERVER_KEY));
+    expect(issue?.message).toContain("reserved");
+  });
+
+  it("rejects 'native' even alongside legitimately-named servers", () => {
+    const result = mcpCatalogSchema.safeParse({ "test-mcp": validServer, [NATIVE_TOOL_SERVER_KEY]: validServer });
+    expect(result.success).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { ALL_TOOLS_PERMISSION_KEY, mcpCatalogSchema } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY, mcpCatalogSchema } from "@sentient/config";
 import type { McpCatalog, OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
-import type { Result, UserRole } from "@sentient/protocol";
+import type { ImpactTier, Result, UserRole } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
@@ -10,7 +10,7 @@ import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-s
 import { type ProfileV1, profileV1Schema } from "../profile-store/profile-types.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
-import type { BackgroundToolRunner } from "./tool-broker.js";
+import type { BackgroundToolRunner, NativeToolRunner } from "./tool-broker.js";
 import { createToolBroker } from "./tool-broker.js";
 import { ConfirmUnavailableError } from "./tool-types.js";
 import type { DelegationProgress, ToolInvocation, ToolResult } from "./tool-types.js";
@@ -1810,5 +1810,214 @@ describe("ToolBroker — tools[] stays cache-stable under the two-gate resolutio
     // pass by never producing a difference at all.
     expect(await serializedFor("off")).not.toBe(allow);
     expect(await serializedFor("allow", "guest")).not.toBe(allow);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOREGROUND-NATIVE tools (skill tools, Plan §4). Gateway-native and awaited
+// like an MCP call, but permission-keyed under the reserved `"native"`
+// namespace so a stored `native[tool]` override is GENUINELY honoured — the
+// piece that makes §4.1's "a parent may set a child's skill_use to off" a real
+// toggle rather than a control that saves and changes nothing (the delegateTask
+// defect). The role gate still runs first, at both choke points.
+// ---------------------------------------------------------------------------
+
+/** A gateway-native foreground tool. `run` records its call; `validate` is
+ *  supplied only when a test exercises the pre-PDP argument gate. */
+function nativeRunner(opts: {
+  name?: string;
+  tier?: ImpactTier;
+  result?: ToolResult;
+  validate?: (args: Record<string, unknown>) => ToolResult | null;
+  onRun?: (args: Record<string, unknown>) => void;
+}): NativeToolRunner {
+  const name = opts.name ?? "skill_list";
+  return {
+    definition: { name, description: "a native skill tool", parameters: {}, category: "foreground", tier: opts.tier ?? "read" },
+    ...(opts.validate ? { validate: opts.validate } : {}),
+    run: async (args) => {
+      opts.onRun?.(args);
+      return opts.result ?? { content: `native ${name} ran`, isError: false };
+    },
+  };
+}
+
+/** Builds a broker with a native registry, spying on the two PDP-entry inputs
+ *  — the per-turn permission read and the confirm hook — so a test can prove
+ *  the PDP was (or was not) consulted. */
+function nativeBroker(opts: {
+  role?: UserRole;
+  natives: NativeToolRunner[];
+  permissions?: ToolPermissionMap;
+  confirm?: boolean;
+}) {
+  let confirmCalls = 0;
+  let permReads = 0;
+  const broker = createToolBroker({
+    mcp: fakeMcp([weatherTool]),
+    catalog: testCatalog,
+    store: fakeStore(),
+    capability: opts.role ? capabilityFor(opts.role) : capability,
+    sessionId: "session-1",
+    backgroundTools: new Map(),
+    nativeTools: new Map(opts.natives.map((r) => [r.definition.name, r])),
+    config: toolsConfig,
+    toolPermissions: async () => {
+      permReads += 1;
+      return opts.permissions;
+    },
+    requestConfirm: async () => {
+      confirmCalls += 1;
+      return opts.confirm ?? true;
+    },
+  });
+  return { broker, confirmCalls: () => confirmCalls, permReads: () => permReads };
+}
+
+describe("ToolBroker — foreground-native tools", () => {
+  it("advertises a read-tier native tool to an adult", async () => {
+    const { broker } = nativeBroker({ role: "adult", natives: [nativeRunner({ name: "skill_list", tier: "read" })] });
+    await broker.ready();
+
+    expect(broker.definitions().map((d) => d.name)).toContain("skill_list");
+  });
+
+  it("SECURITY: withholds a confirm-tier native tool from BOTH child and guest — neither reaches the tier", async () => {
+    const confirmNative = () => nativeRunner({ name: "skill_run_privileged", tier: "confirm" });
+    const childNames = await (async () => {
+      const { broker } = nativeBroker({ role: "child", natives: [confirmNative()] });
+      await broker.ready();
+      return broker.definitions().map((d) => d.name);
+    })();
+    const guestNames = await (async () => {
+      const { broker } = nativeBroker({ role: "guest", natives: [confirmNative()] });
+      await broker.ready();
+      return broker.definitions().map((d) => d.name);
+    })();
+
+    expect(childNames).not.toContain("skill_run_privileged");
+    expect(guestNames).not.toContain("skill_run_privileged");
+  });
+
+  it("dispatches a native tool in-process and returns its result down the tool_result path", async () => {
+    let ranWith: Record<string, unknown> | undefined;
+    const { broker } = nativeBroker({
+      role: "adult",
+      natives: [nativeRunner({ name: "skill_list", tier: "read", onRun: (a) => (ranWith = a) })],
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_list", args: { q: "cooking" } }));
+
+    if ("taskId" in result) throw new Error("expected a foreground ToolResult, not a background handle");
+    expect(result).toEqual({ content: "native skill_list ran", isError: false });
+    expect(ranWith).toEqual({ q: "cooking" });
+  });
+
+  it("resolves a confirm-tier native tool to Ask via the tier default, so it prompts before running", async () => {
+    let ran = 0;
+    const { broker, confirmCalls } = nativeBroker({
+      role: "adult",
+      natives: [nativeRunner({ name: "skill_run_privileged", tier: "confirm", onRun: () => (ran += 1) })],
+      confirm: true,
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_run_privileged" }));
+
+    expect(confirmCalls()).toBe(1);
+    expect(ran).toBe(1);
+    if ("taskId" in result) throw new Error("expected a foreground ToolResult");
+    expect(result.isError).toBe(false);
+  });
+
+  it("lets a STORED native permission override the tier default — the toggle is real, unlike delegateTask", async () => {
+    let ran = 0;
+    const { broker, confirmCalls } = nativeBroker({
+      role: "adult",
+      natives: [nativeRunner({ name: "skill_create", tier: "read", onRun: () => (ran += 1) })],
+      // read-tier defaults to Allow; the stored Deny under the reserved key must win.
+      permissions: { [NATIVE_TOOL_SERVER_KEY]: { skill_create: "deny" } },
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_create" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult");
+    expect(result.isError).toBe(true);
+    expect(result.content).toContain("Deny");
+    expect(ran).toBe(0);
+    expect(confirmCalls()).toBe(0);
+  });
+
+  it("is NOT hidden by a non-empty table that names only real MCP servers — its absence is not 'off'", async () => {
+    const { broker } = nativeBroker({
+      role: "adult",
+      natives: [nativeRunner({ name: "skill_list", tier: "read" })],
+      // A seeded account's table: names real servers, never the `native` key.
+      permissions: { "some-other-server": { whatever: "allow" } },
+    });
+    await broker.ready();
+
+    expect(broker.definitions().map((d) => d.name)).toContain("skill_list");
+  });
+
+  it("answers an unknown name as a tool error without consulting the PDP, native registry notwithstanding", async () => {
+    const { broker, confirmCalls, permReads } = nativeBroker({
+      role: "adult",
+      natives: [nativeRunner({ name: "skill_list", tier: "read" })],
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_nope" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult");
+    expect(result).toEqual({ content: "Unknown tool: skill_nope", isError: true });
+    expect(confirmCalls()).toBe(0);
+    expect(permReads()).toBe(0);
+  });
+
+  it("SECURITY: a validate() rejection is answered WITHOUT the PDP running — no permission read, no prompt, no run", async () => {
+    let ran = 0;
+    const { broker, confirmCalls, permReads } = nativeBroker({
+      role: "adult",
+      // confirm-tier: if the PDP DID run it would resolve to Ask and fire the
+      // confirm hook. It must not, because validate answered first.
+      natives: [
+        nativeRunner({
+          name: "skill_run_privileged",
+          tier: "confirm",
+          validate: () => ({ content: "missing required argument: skillId", isError: true }),
+          onRun: () => (ran += 1),
+        }),
+      ],
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_run_privileged", args: {} }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult");
+    expect(result).toEqual({ content: "missing required argument: skillId", isError: true });
+    // The PDP entry points were never touched: no per-turn permission read and
+    // no confirm prompt. Invalid input is a model error, not an auth decision.
+    expect(permReads()).toBe(0);
+    expect(confirmCalls()).toBe(0);
+    expect(ran).toBe(0);
+  });
+
+  it("runs a valid native call normally when validate returns null", async () => {
+    let ran = 0;
+    const { broker } = nativeBroker({
+      role: "adult",
+      natives: [
+        nativeRunner({
+          name: "skill_list",
+          tier: "read",
+          validate: () => null,
+          onRun: () => (ran += 1),
+        }),
+      ],
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "skill_list" }));
+
+    if ("taskId" in result) throw new Error("expected a ToolResult");
+    expect(result.isError).toBe(false);
+    expect(ran).toBe(1);
   });
 });

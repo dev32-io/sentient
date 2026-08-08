@@ -1,5 +1,6 @@
 import { type ImpactTier, impactTierSchema } from "@sentient/protocol";
 import { z } from "zod";
+import { NATIVE_TOOL_SERVER_KEY } from "./tool-permission";
 
 // ---------------------------------------------------------------------------
 // MCP Catalog — operator-managed inventory of available MCP servers
@@ -131,7 +132,24 @@ const mcpStdioEntrySchema = z.object({
 export const mcpServerEntrySchema = z.discriminatedUnion("transport", [mcpHttpEntrySchema, mcpStdioEntrySchema]);
 export type McpServerEntry = z.output<typeof mcpServerEntrySchema>;
 
-export const mcpCatalogSchema = z.record(z.string(), mcpServerEntrySchema).default({});
+// `"native"` is reserved for the gateway's foreground-native tools' synthetic
+// permission namespace (`NATIVE_TOOL_SERVER_KEY`, tool-permission.ts). An
+// operator MCP server under that name would alias the namespace: a person's
+// `native: { … }` overrides for skill tools and the real server's tools would
+// resolve through the same key, silently overriding one another. Refuse it at
+// config load, BY NAME, rather than let it save successfully and misbehave.
+export const mcpCatalogSchema = z
+  .record(z.string(), mcpServerEntrySchema)
+  .superRefine((catalog, ctx) => {
+    if (Object.hasOwn(catalog, NATIVE_TOOL_SERVER_KEY)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [NATIVE_TOOL_SERVER_KEY],
+        message: `MCP server "${NATIVE_TOOL_SERVER_KEY}" is reserved for the gateway's foreground-native tools — rename this mcp_catalog entry. A server under this key aliases the synthetic "native" permission namespace and would silently override real native tools.`,
+      });
+    }
+  })
+  .default({});
 export type McpCatalog = z.output<typeof mcpCatalogSchema>;
 
 /** One curated tool, joined to the server that exposes it. */

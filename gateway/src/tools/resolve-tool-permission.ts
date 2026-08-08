@@ -18,7 +18,7 @@
 // itself — never the resolution rule. So the inputs are parameters here, and
 // the rule lives in exactly one place.
 
-import { ALL_TOOLS_PERMISSION_KEY } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { defaultPermissionForTier } from "./role-defaults.js";
@@ -59,6 +59,15 @@ export interface ResolvedPermission {
  * `serverName: null` is the gateway-native case (`delegateTask`): no server
  * addresses it, so no stored table can ever answer for it — this always
  * returns `undefined` and resolution falls straight to the tier mapping.
+ *
+ * `serverName === NATIVE_TOOL_SERVER_KEY` (`"native"`) is the FOREGROUND-native
+ * case (skill tools): a synthetic namespace that IS overridable — a stored
+ * `native[tool]` or `native["*"]` answers here — but whose ABSENCE from a
+ * non-empty table reads as UNANSWERED, not `off`. A seeded account's table is
+ * built from the MCP catalog and never carries a `"native"` key, so applying
+ * the server-absent-`off` rule to it would delete every native tool from every
+ * account. Distinguishing it from a real server is the whole reason the
+ * namespace is reserved (`mcp-catalog.ts` refuses an operator server so named).
  */
 export function storedPermissionFor(
   permissions: ToolPermissionMap | undefined,
@@ -68,7 +77,11 @@ export function storedPermissionFor(
   if (serverName === null) return undefined;
   if (permissions === undefined) return undefined;
   const perServer = permissions[serverName];
-  if (perServer === undefined) return "off";
+  if (perServer === undefined) {
+    // A real server absent from a non-empty table is a stored `off`; the
+    // synthetic `"native"` namespace absent from it is merely unanswered.
+    return serverName === NATIVE_TOOL_SERVER_KEY ? undefined : "off";
+  }
   return perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY];
 }
 
@@ -105,7 +118,12 @@ export function resolveToolPermission(params: {
   const { toolName, tier, serverName, storedPermissions, roleTemplate } = params;
   const stored = storedPermissionFor(storedPermissions, serverName, toolName);
   if (stored !== undefined) return { permission: stored, source: "profile" };
-  if (serverName === null) return { permission: defaultPermissionForTier(tier), source: "role-template" };
+  // Both serverless tools (`delegateTask`, `null`) and foreground-native tools
+  // (`"native"`) resolve their default from the tier mapping: the role template
+  // is built from the MCP catalog and carries no key for either.
+  if (serverName === null || serverName === NATIVE_TOOL_SERVER_KEY) {
+    return { permission: defaultPermissionForTier(tier), source: "role-template" };
+  }
   const templated = roleTemplate[serverName]?.[toolName];
   if (templated !== undefined) return { permission: templated, source: "role-template" };
   return { permission: "off", source: "catalog-backstop" };

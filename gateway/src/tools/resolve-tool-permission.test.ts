@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { NATIVE_TOOL_SERVER_KEY } from "@sentient/config";
 import type { ToolPermissionMap } from "@sentient/config";
 import { resolveToolPermission, storedPermissionFor } from "./resolve-tool-permission.js";
 
@@ -137,6 +138,64 @@ describe("resolveToolPermission — the SAME rule the ToolBroker's PDP dispatche
       expect(result).toEqual({ permission: "ask", source: "role-template" });
     });
   });
+
+  describe("the synthetic 'native' namespace — foreground-native (skill) tools", () => {
+    it("reads a stored override under the 'native' key, source 'profile' — the toggle is REAL", () => {
+      // The whole point of the namespace: unlike delegateTask, a native tool's
+      // stored permission is consulted, so a parent's `off` actually bites.
+      const result = resolveToolPermission({
+        toolName: "skill_create",
+        tier: "write",
+        serverName: NATIVE_TOOL_SERVER_KEY,
+        storedPermissions: { native: { skill_create: "deny" } },
+        roleTemplate: ROLE_TEMPLATE,
+      });
+
+      expect(result).toEqual({ permission: "deny", source: "profile" });
+    });
+
+    it("falls to the TIER DEFAULT when nothing is stored — the server-addressed template has no 'native' key", () => {
+      // The role template is built from the MCP catalog, so it never carries a
+      // `native` entry; resolution must reach the tier mapping directly, exactly
+      // like the serverless case, rather than the `off` catalog-backstop.
+      const result = resolveToolPermission({
+        toolName: "skill_create",
+        tier: "read",
+        serverName: NATIVE_TOOL_SERVER_KEY,
+        storedPermissions: undefined,
+        roleTemplate: ROLE_TEMPLATE,
+      });
+
+      expect(result).toEqual({ permission: "allow", source: "role-template" });
+    });
+
+    it("is NOT switched off by a NON-EMPTY table that names only real servers", () => {
+      // A seeded account's table is built from the MCP catalog and carries no
+      // `native` key. The server-absent-`off` rule that a real server obeys must
+      // NOT apply here, or every native tool vanishes from every account.
+      const result = resolveToolPermission({
+        toolName: "skill_create",
+        tier: "read",
+        serverName: NATIVE_TOOL_SERVER_KEY,
+        storedPermissions: { "test-mcp": { look_up: "allow" } },
+        roleTemplate: ROLE_TEMPLATE,
+      });
+
+      expect(result).toEqual({ permission: "allow", source: "role-template" });
+    });
+
+    it("honours a `native: { '*': 'off' }` wildcard — the whole category turned off", () => {
+      const result = resolveToolPermission({
+        toolName: "skill_create",
+        tier: "read",
+        serverName: NATIVE_TOOL_SERVER_KEY,
+        storedPermissions: { native: { "*": "off" } },
+        roleTemplate: ROLE_TEMPLATE,
+      });
+
+      expect(result).toEqual({ permission: "off", source: "profile" });
+    });
+  });
 });
 
 describe("storedPermissionFor", () => {
@@ -150,5 +209,11 @@ describe("storedPermissionFor", () => {
 
   it("returns 'off' when the table exists but the server is absent from it", () => {
     expect(storedPermissionFor({ "other-mcp": {} }, "test-mcp", "look_up")).toBe("off");
+  });
+
+  it("returns undefined (NOT off) for the 'native' key absent from a non-empty table", () => {
+    // The synthetic namespace's absence means "no override", so the tier default
+    // answers — it is never turned off by omission the way a real server is.
+    expect(storedPermissionFor({ "other-mcp": {} }, NATIVE_TOOL_SERVER_KEY, "skill_create")).toBeUndefined();
   });
 });

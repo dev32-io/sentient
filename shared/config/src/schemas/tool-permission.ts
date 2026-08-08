@@ -55,6 +55,30 @@ export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
 export const ALL_TOOLS_PERMISSION_KEY = "*";
 
 /**
+ * Reserved MCP-server key for the gateway's own FOREGROUND-NATIVE tools (skill
+ * tools et al.) inside a person's permission table
+ * (`ProfileV1["tools"]["permissions"]["native"]`). These tools belong to no MCP
+ * server, but — unlike `delegateTask`, which is structurally non-overridable —
+ * they MUST be settable per §4.1 ("a parent may set a child's skill_use to
+ * off"), so they resolve their stored permission under this synthetic namespace
+ * exactly as an MCP tool resolves under its server. `stored["native"]["x"]`
+ * therefore wins over the tier default, and a whole-category `off` is a
+ * `native: { "*": "off" }` wildcard.
+ *
+ * RESERVED, not just conventional: `mcp_catalog` refuses an operator server
+ * literally named `"native"` at config load (see `mcp-catalog.ts`), because a
+ * real server under this key would alias the synthetic namespace and silently
+ * override real native tools.
+ *
+ * The one asymmetry from a real server (see `resolve-tool-permission.ts`): a
+ * NON-EMPTY table that does not name `"native"` reads as UNANSWERED here (fall
+ * to the tier default), not `off`. A seeded account's table is built from the
+ * MCP catalog and carries no `"native"` key at all, so the server-absent-`off`
+ * rule would otherwise delete every native tool from every account.
+ */
+export const NATIVE_TOOL_SERVER_KEY = "native";
+
+/**
  * One PUT's incoming per-tool value: a permission to WRITE, or `null` to
  * CLEAR that key back to "no stored opinion" — the role template answers it
  * again, exactly as if the key had never been set (`gateway/src/tools/
