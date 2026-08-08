@@ -419,9 +419,14 @@ export const gatewayConfigSchema = z.object({
   // Co-deployed companion service configuration: version resolution URLs,
   // file paths, and cache knobs. Defaults work for the standard docker compose.
   companions: companionsConfigSchema.default({}),
-  // Operator-managed inventory of available MCP servers. Per-user
-  // profiles reference these by name in `tools.enabled[]`. Add a new MCP
-  // by editing this section in config.yaml (no code change required).
+  // Operator-managed inventory of available MCP servers, and the ONE
+  // enumeration of the tool universe: it declares which tools exist and what
+  // impact tier each carries, which is what the role gate and every per-role
+  // permission template are derived from. A person's profile addresses these
+  // by server + tool name in `tools.permissions` (the retired `tools.enabled[]`
+  // name list is gone). Add a new MCP by editing this section in config.yaml
+  // (no code change required) — but every tool needs a `tier:`, or the gateway
+  // refuses to boot.
   mcp_catalog: mcpCatalogSchema,
   // Per-tool inventory of Hermes built-in tools. Powers the webui Tools
   // page's "Hermes built-ins" category (per-tool toggles backed by

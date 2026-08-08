@@ -136,9 +136,15 @@ data class ProfilePersona(val template: String, val overrides: String)
  *     that one tool.
  *   - a SERVER missing from a non-empty table: the WHOLE server is OFF,
  *     forever — the role template never answers for it again. This is why
- *     nothing in this codebase deletes a server key to mean "off"; write the
- *     wildcard key's permission to `OFF` explicitly instead (never hardcode
- *     the wildcard literal — read it off `McpCatalogView.wildcardPermissionKey`).
+ *     nothing in this codebase deletes a server key to mean "off".
+ *
+ * TURNING A WHOLE SERVER OFF is a named `OFF` for every tool the catalog lists
+ * under it PLUS the wildcard key — `withServerMasterPermission`
+ * (ToolPermissionPatch.kt) is the one implementation. Writing ONLY the wildcard
+ * is a no-op on any real account: every account is seeded with a named entry
+ * per catalog tool its role can execute, and the resolver reads a tool's own
+ * name before the wildcard. (Never hardcode the wildcard literal — read it off
+ * `McpCatalogView.wildcardPermissionKey`.)
  *
  * NEVER a nullable-leaf map here — see [ProfileToolsPatch] for the PUT-body
  * shape whose leaves may be `null`, and why the two must stay separate types

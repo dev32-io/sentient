@@ -179,18 +179,25 @@ container, which applies a hostname denylist. A compromised agent cannot
 exfiltrate to arbitrary internet hosts without going through the proxy's
 filter.
 
-Defense-in-depth additions on top of the network posture, in
-`gateway/src/security/`:
+Defense-in-depth additions on top of the network posture. Two of them — the
+injection scanner and the risk accumulator — are the whole of
+`gateway/src/security/`; the rest each name where they actually live:
 
 - **Prompt-injection scanner** — six pattern categories
   (`ignore_instructions`, `override_system`, `leak_prompt`,
   `disobey_role`, `jailbreak_phrases`, `inline_tool_invocation`). Pure
   observability — feeds the risk accumulator, never blocks output
   silently.
-- **Policy engine** — declarative tool-call gating. Rules read
-  `tool` / `userId` / `role` / `session.channel` / `args.*` predicates
-  and emit `allow` / `deny` / `confirm`. No dynamic eval; predicates are
-  parsed into a fixed AST.
+- **Per-tool permissions + a role gate** — tool-call gating, and NOT in
+  `gateway/src/security/`: it lives at the tool boundary itself
+  (`gateway/src/tools/tool-broker.ts`, over `shared/protocol/src/roles.ts`).
+  Two independent questions. The role gate asks whether this person's role
+  reaches the tool's declared impact tier at all (`canExecute(role, tier)`
+  over `admin|adult|child|guest` × `read|write|confirm|admin`); the
+  permission table then says what happens when they do —
+  `allow` / `ask` / `deny` / `off`, resolved per person, per server, per
+  tool. The declarative `mcp-policy.yaml` rules engine this list used to
+  name is deleted, not moved.
 - **Risk accumulator** — exponential-decay running score with
   `none` / `warn` / `escalate` / `block` levels driven by configurable
   per-event weights.

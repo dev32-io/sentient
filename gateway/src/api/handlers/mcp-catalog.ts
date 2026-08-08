@@ -92,13 +92,25 @@ export interface McpCatalogEntryView {
    *  template — a person may still have set per-tool overrides that this
    *  field does not reflect; read each tool's own `permission` for that.
    *
-   *  DELETING THIS SERVER'S KEY FROM A PUT BODY IS A DIFFERENT, PERMANENT
-   *  no-op — the absent-server rule (`resolve-tool-permission.ts`'s
-   *  `storedPermissionFor`) turns a whole server "off" through a mechanism
-   *  this field does NOT report, because deleting is a legacy footgun this
-   *  view intentionally never encourages. To turn a whole server off,
-   *  write `permissions[server][view.wildcardPermissionKey] = "off"` in the
-   *  PUT body — never delete the server's key. */
+   *  TO TURN A WHOLE SERVER OFF, WRITING THIS KEY ALONE IS NOT ENOUGH — and
+   *  on a real account it does nothing at all. Every account is seeded with a
+   *  NAMED entry for every catalog tool its role can execute
+   *  (`profile-defaults.ts#applyProfileDefaults`), and `storedPermissionFor`
+   *  reads a tool's own name BEFORE this wildcard. So on any seeded account
+   *  every tool already has an answer that outranks it, and a wildcard-only
+   *  write changes the resolved permission of nothing.
+   *
+   *  The correct bulk write is a NAMED `"off"` for every tool in this entry's
+   *  `tools[]` PLUS `permissions[server][view.wildcardPermissionKey] = "off"`
+   *  for whatever that list cannot enumerate. Every client already has it:
+   *  `withServerMasterPermission` (webui `tool-permission-patch.ts`, mobile-sdk
+   *  `ToolPermissionPatch.kt`). Do not re-derive it.
+   *
+   *  Never DELETE the server's key either. That is a different mechanism this
+   *  field does not report — the absent-server rule
+   *  (`resolve-tool-permission.ts`'s `storedPermissionFor`) — and it is
+   *  unreachable from a PUT anyway, since `profile-update.ts` merges a delta
+   *  and leaves an omitted key untouched. */
   readonly wildcardPermission: ToolPermission | null;
   readonly description?: string;
 }

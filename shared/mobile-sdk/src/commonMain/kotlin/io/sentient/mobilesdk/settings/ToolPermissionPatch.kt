@@ -24,10 +24,18 @@ package io.sentient.mobilesdk.settings
  *
  * [permission] MAY be `null` — a CLEAR, not a delete. The gateway's merge is
  * what turns a `null` leaf into an absent stored key; this function (and every
- * caller of it) never deletes a map key itself. Dropping a SERVER key here
- * instead of carrying it forward would be a silent PERMANENT no-op on the next
- * save — the absent-server rule reads a missing key as "off forever" and never
- * consults the role template again for it.
+ * caller of it) never deletes a map key itself.
+ *
+ * DROPPING A SERVER KEY FROM THE PATCH IS SIMPLY A NO-OP for that server, and
+ * NOT the "off forever" the absent-server rule describes. The two are different
+ * maps. `profile-update.ts` does a per-server, per-tool DELTA merge: a key this
+ * patch omits is left exactly as stored. The absent-server rule
+ * (`resolve-tool-permission.ts#storedPermissionFor`) is a property of the
+ * STORED table — a server that has no key there at all — and no PUT can put the
+ * table into that state by omission. Keys are carried forward here to match the
+ * full-resend convention every other PUT field follows (see
+ * [mergeToolPermissionPatch], which states the same thing), not to avert a
+ * wipe.
  */
 fun withToolPermission(
     permissions: ToolPermissionPatchMap?,

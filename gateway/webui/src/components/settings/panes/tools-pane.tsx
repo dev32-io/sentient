@@ -186,11 +186,19 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
               permission: t.permission,
               settable: t.settable,
               onChange: () => {
-                // Unreachable: `settable` is false for every row rendered
-                // here today, and the Select underneath is disabled — kept
-                // as a real no-op rather than omitted so a future settable
-                // native tool gets a working handler by just flipping
-                // `settable` server-side, no client change required.
+                // Unreachable: `settable` is false for every row rendered here
+                // today, and the Select underneath is disabled.
+                //
+                // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A native
+                // tool has no MCP server, and `resolveToolPermission`'s
+                // `serverName: null` branch returns before any stored table is
+                // consulted — so no key any client can write is ever read back
+                // for one. Flipping the flag alone would make this row tappable
+                // and silently discard every selection. Making a native tool
+                // settable needs a gateway-side address for it first (a
+                // reserved server key in the stored table, or a second
+                // permission map keyed by tool name) and a resolver branch that
+                // reads it; then this handler and a real `onChange` write.
               },
             }))}
           />

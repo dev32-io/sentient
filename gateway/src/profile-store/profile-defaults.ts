@@ -27,10 +27,17 @@ export interface ProfileDefaultsContext {
 
 /**
  * Returns a profile with default tools.permissions / tools.toolsets seeded
- * when the caller didn't supply any. Used by the wizard, admin user creation
- * and the profile save to give every account a table that is COMPLETE for its
- * role — after this there is no such thing as a tool with no permission, which
- * is what lets the broker resolve one with nothing behind it.
+ * when the caller didn't supply any. Called at ACCOUNT CREATION only — the
+ * wizard's first admin (`user-auth/auth.ts`) and admin member creation
+ * (`api/handlers/admin.ts`) — to give every account a table that is COMPLETE
+ * for its role, so there is no such thing as a tool with no permission and the
+ * broker can resolve one with nothing behind it.
+ *
+ * NOT the profile save. A PUT seeds through `profile-update.ts`
+ * (`seedsPermissionDefaults`), which merges the body's delta ON TOP of the
+ * template in one step; calling this from there instead would let a body naming
+ * one permission produce a one-entry table that is no longer absent, so the
+ * template would never land.
  *
  * Caller-provided permissions or toolsets are preserved as-is, so settings
  * rotation and explicit zeros are respected. For permissions that includes an

@@ -50,9 +50,17 @@ data class McpCatalogEntry(
      *  in the stored table), or `null` when the person has not set one. `null`
      *  does NOT mean every tool resolves to the role template — a person may
      *  still have per-tool overrides this field does not reflect; read each
-     *  tool's own [McpToolView.permission] for that. To turn the whole server
-     *  off, write `permissions[server][wildcardPermissionKey] = OFF` in a PUT
-     *  body — NEVER delete the server's key (see [McpCatalogView.servers]). */
+     *  tool's own [McpToolView.permission] for that.
+     *
+     *  TO TURN THE WHOLE SERVER OFF, WRITING THIS KEY ALONE DOES NOTHING on any
+     *  real account. Every account is seeded with a NAMED entry for every
+     *  catalog tool its role can execute, and the resolver reads a tool's own
+     *  name BEFORE this wildcard — so every tool already has an answer that
+     *  outranks it. The correct write is a named `OFF` for every tool in
+     *  [tools] PLUS the wildcard, which is exactly what
+     *  `withServerMasterPermission` (ToolPermissionPatch.kt) does. Use it; do
+     *  not re-derive it, and never delete the server's key
+     *  (see [McpCatalogView.servers]). */
     val wildcardPermission: ToolPermission? = null,
     val description: String? = null,
 )

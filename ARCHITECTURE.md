@@ -249,12 +249,25 @@ choke points — `definitions()`, the sole producer of the model's
    by the operator in `config.yaml#mcp_catalog`. The role travels on the
    capability, minted once by `AccessManager.grant`; it is never
    re-derived and never cached from a lookup.
-2. **The person's permission**, resolved with no fallthrough:
-   `stored[server]?[tool] ?? defaultPermissionsFor(role, catalog)[server]?[tool] ?? "off"`.
+2. **The person's permission**, resolved with no fallthrough
+   (`gateway/src/tools/resolve-tool-permission.ts`, the ONE copy of the
+   rule, shared by the broker and the settings API so the UI cannot lie
+   about what the model can do):
+   `stored[server][tool] ?? stored[server]["*"] ?? defaultPermissionsFor(role, catalog)[server]?[tool] ?? "off"`.
+   The `"*"` wildcard is how a bulk "whole server" write reaches a tool
+   the client could not enumerate; a tool's OWN key always outranks it,
+   which is why a wildcard-only write is a no-op on a seeded account.
    The role template (`gateway/src/tools/role-defaults.ts`) is the FLOOR,
    not a one-time copy, so a profile with no stored table, a re-roled
    account, and a tool the operator adds tomorrow all resolve. The final
    `off` is the fail-closed backstop.
+
+   One asymmetry, deliberate: a TOOL missing under a present server is
+   unanswered and the template decides, but a SERVER missing from a
+   non-empty stored table resolves `off` — a stored answer the template
+   never sits underneath. A PUT cannot create that state (the update is a
+   per-key delta; an omitted key is left as stored), so it only describes a
+   table written before seeding or hand-edited.
 
 `allow`/`ask`/`deny` leave `tools[]` byte-identical — a prompt-cache
 invariant. Only `off` and the role gate change it. A rule that is

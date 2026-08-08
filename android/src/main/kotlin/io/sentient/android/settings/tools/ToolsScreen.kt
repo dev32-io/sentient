@@ -202,11 +202,17 @@ private fun NativeToolsCard(catalog: McpCatalogView, controlsEnabled: Boolean) {
                 onSelect = {
                     // Unreachable while settable is false (every native tool today —
                     // delegateTask): RowSelect renders fully disabled underneath, so
-                    // this can't fire. Kept as a real no-op rather than omitted, so a
-                    // future settable native tool (plus a server-addressable write
-                    // path — resolve-tool-permission.ts's `serverName: null` means
-                    // none exists yet) gets a working handler by flipping `settable`,
-                    // no client change required here.
+                    // this can't fire.
+                    //
+                    // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A native
+                    // tool has no MCP server, and resolve-tool-permission.ts's
+                    // `serverName: null` branch returns before any stored table is
+                    // consulted — so no key a client can write is ever read back for
+                    // one. Flipping the flag alone would make this row tappable and
+                    // silently discard every selection. Making a native tool settable
+                    // needs a gateway-side address for it first (a reserved server
+                    // key, or a second map keyed by tool name) plus a resolver branch
+                    // that reads it; then a real write here.
                 },
                 testTag = "settings-tools-native-${tool.name}",
             )

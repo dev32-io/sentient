@@ -625,9 +625,11 @@ companions:
   version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000
 
 # ---------------------------------------------------------------------------
-# MCP catalog — inventory of available MCP servers, ops-managed.
-# Per-user profiles reference these by name in profile.tools.enabled[].
-# Add a new MCP by editing this section (no code change required).
+# MCP catalog — inventory of available MCP servers, ops-managed, and THE
+# enumeration of the tool universe: which tools exist and what impact tier each
+# carries. Per-user profiles address these by server + tool name in
+# profile.tools.permissions; the old profile.tools.enabled[] name list is
+# retired. Add a new MCP by editing this section (no code change required).
 #
 # Variable substitution in command/args/url/env values:
 #   {{userId}}   real auth-derived user id (e.g. u_6ae26974); used as

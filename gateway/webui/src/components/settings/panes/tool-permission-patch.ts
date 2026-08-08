@@ -32,16 +32,21 @@ import type { McpToolView } from "../../../services/profile-api.js";
  * a tool (or a server's wildcard) to "no stored opinion, let the role
  * template answer" without this client ever deleting a JS object key itself.
  *
- * NEVER DELETES A KEY ON THIS SIDE EITHER. The whole-profile PUT
- * (`ProfileApi.updateMe`) sends this map verbatim; dropping a SERVER key
- * here would be a silent PERMANENT no-op the next time this person saves —
- * `ProfileV1["tools"]["permissions"]`'s absent-server rule reads a missing
- * key as "off forever" and never consults the role template again for it.
- * Building the next map by spreading the PREVIOUS one (rather than
- * reconstructing it from the catalog view) is what keeps a server the
- * catalog excluded for an unrelated reason — stdio transport, zero
- * role-governable tools — from being wiped out just because this person
- * happened to touch a different server's dropdown.
+ * NEVER DELETES A KEY ON THIS SIDE EITHER — but not for the reason this
+ * comment used to give. Dropping a SERVER key from the body is simply a NO-OP
+ * for that server, NOT the "off forever" the absent-server rule describes.
+ * They are different maps: `profile-update.ts` does a per-server, per-tool
+ * DELTA merge, so a key the body omits is left exactly as stored, while the
+ * absent-server rule (`resolve-tool-permission.ts`'s `storedPermissionFor`)
+ * is a property of the STORED table — a server with no key there at all — and
+ * no PUT can reach that state by omission.
+ *
+ * Keys are carried forward to match the full-resend convention every other
+ * PUT field follows. Building the next map by spreading the PREVIOUS one
+ * (rather than reconstructing it from the catalog view) is what keeps a
+ * server the catalog excluded for an unrelated reason — stdio transport, zero
+ * role-governable tools — represented in the body at all, so this person's
+ * saved table stays a complete statement of what they chose.
  */
 export function withToolPermission(
   permissions: ToolPermissionPatchMap | undefined,

@@ -156,18 +156,23 @@ export const profileV1Schema = z.object({
        *   - a SERVER missing from a table that exists → the whole server is
        *     `off`, and that `off` is a stored answer the template never gets to
        *     sit underneath.
-       * The second rule is not new behaviour: `tools.enabled` expressed
-       * availability by presence, and the Tools panes still switch a server off
-       * by DELETING its key. Letting the role template answer underneath a
-       * missing server would show somebody "off" in the UI while the model kept
-       * the tools.
+       * The second rule is inherited from the retired `tools.enabled`, which
+       * expressed availability by presence. NO CLIENT RELIES ON IT ANY MORE:
+       * since task 6 all three Tools panes turn a server off by WRITING, and
+       * `profile-update.ts` merges a delta, so a key a PUT omits is left
+       * untouched rather than deleted. The rule is kept because the stored table
+       * can still hold a missing server (written before seeding, or hand-edited)
+       * — letting the role template answer underneath one would show somebody
+       * "off" in the UI while the model kept the tools.
        *
-       * Turning a whole server off EXPLICITLY (preferred over deleting the
-       * key): the profile schema never sees the catalog, so it cannot write one
-       * `off` entry per tool a server carries. Use the reserved
-       * `ALL_TOOLS_PERMISSION_KEY` ("*", exported from @sentient/config) as a
-       * server's per-tool key — the broker checks a tool's own name first, then
-       * this wildcard, then applies the rules above.
+       * TURNING A WHOLE SERVER OFF is a named `off` for every tool the catalog
+       * lists under it PLUS the reserved `ALL_TOOLS_PERMISSION_KEY` ("*",
+       * exported from @sentient/config) for whatever that list cannot
+       * enumerate. The wildcard ALONE is a no-op on any seeded account: the
+       * resolver checks a tool's own name first, and seeding gave every catalog
+       * tool one. This schema never sees the catalog, which is why the wildcard
+       * exists at all — a client that does (`withServerMasterPermission`, in
+       * every one of the three) writes both halves.
        *
        * Replaces the retired `enabled` map. That field's only consumer was the
        * Hermes profile renderer, whose `mcp:` block Hermes never reads (the

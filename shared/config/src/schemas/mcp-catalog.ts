@@ -4,13 +4,17 @@ import { z } from "zod";
 // ---------------------------------------------------------------------------
 // MCP Catalog — operator-managed inventory of available MCP servers
 // ---------------------------------------------------------------------------
-// One entry per MCP that may be exposed to a user's Hermes worker. The
-// per-user `profile.tools.enabled[]` list carries names that reference into
-// this catalog; the renderer joins entry + slotKey/userId at render time.
+// One entry per MCP that may be exposed to the agent loop. THE enumeration of
+// the tool universe: which tools exist, and what impact tier each carries.
+// A person's profile addresses these by server + tool name in
+// `tools.permissions`; the retired `profile.tools.enabled[]` name list is gone.
 //
 // New MCPs are added by editing this YAML — no code change, no rebuild.
-// User-facing toggle UI fetches the catalog and offers each entry as an
-// on/off switch.
+//
+// The user-facing Tools page is NOT an on/off switch per entry. Each tool gets
+// its own four-state permission (`allow` / `ask` / `deny` / `off`), and a
+// server's header control is a BULK write over those — never a fifth state of
+// its own. See shared/config/src/schemas/tool-permission.ts.
 //
 // Variable interpolation (rendered into command/args/url/env values):
 //   {{userId}}   real auth-derived user id (e.g. u_6ae26974)

@@ -137,10 +137,18 @@ struct ToolsScreen: View {
                         onChange: { _ in
                             // Unreachable: `settable` is false for every native tool
                             // today (delegateTask), and ToolPermissionRow renders a
-                            // disabled RowSelect underneath — kept as a real no-op
-                            // rather than omitted, so a future settable native tool
-                            // gets a working handler by just flipping `settable`
-                            // server-side, no client change required.
+                            // disabled RowSelect underneath.
+                            //
+                            // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A
+                            // native tool has no MCP server, and
+                            // `resolveToolPermission`'s `serverName: null` branch
+                            // returns before any stored table is consulted — so no key
+                            // a client can write is ever read back for one. Flipping
+                            // the flag alone would make this row tappable and silently
+                            // discard every selection. Making a native tool settable
+                            // needs a gateway-side address for it first (a reserved
+                            // server key, or a second map keyed by tool name) plus a
+                            // resolver branch that reads it; then a real write here.
                         }
                     )
                 }

@@ -1122,7 +1122,7 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(broker.definitions().map((d) => d.name)).toEqual(["get_weather"]);
   });
 
-  it("treats a server ABSENT from a non-empty table as off, which is how every client still spells it", async () => {
+  it("treats a server ABSENT from a non-empty table as off — a stored answer, not a gap", async () => {
     const mcp = fakeMcp([weatherTool]);
     const broker = createToolBroker({
       mcp,
@@ -1132,9 +1132,14 @@ describe("ToolBroker — per-tool permissions", () => {
       sessionId: "session-1",
       backgroundTools: new Map(),
       config: toolsConfig,
-      // The web and mobile Tools panes turn a server off by DELETING its key.
-      // Letting the role template answer underneath a deleted key would show the
-      // person "off" while the model kept the tools.
+      // NO CLIENT PRODUCES THIS STATE ANY MORE — since task 6 all three Tools
+      // panes turn a server off by writing a named `off` per tool plus the
+      // wildcard (`withServerMasterPermission`), and `profile-update.ts` merges
+      // a delta, so an omitted key is never deleted from storage either. The
+      // rule is pinned because the STORED table can still hold it: a table
+      // written before seeding, or hand-edited. Letting the role template answer
+      // underneath a missing server would show the person "off" while the model
+      // kept the tools.
       toolPermissions: permissionsFor("some-other-server", { whatever: "allow" }),
       requestConfirm: async () => true,
     });

@@ -41,8 +41,18 @@ module scope. Identity and authority flow only as explicit parameters.
   prefixes the root are correctly excluded). Physical per-user isolation
   (separate dir, separate DB file) sits underneath the code-level capability
   as defense-in-depth.
-- **L3 — PDP/PEP tool-call mediation** is Plan 2 (the security primitives in
-  `gateway/src/security/` are retained but not yet wired into a tool path).
+- **L3 — PDP/PEP tool-call mediation** is BUILT, in
+  `gateway/src/tools/tool-broker.ts`. Every proposed tool call is mediated
+  twice over: the ROLE GATE (`canExecute(capability.role, tier)`, over the
+  tier the catalog declares for that tool) decides whether this person may
+  reach it at all, and their PER-TOOL PERMISSION (`allow` / `ask` / `deny` /
+  `off`) decides what happens when they do. The role is baked into the
+  `Capability` at mint, so it cannot change under a live broker. `ask` is a
+  real permission prompt, and a side-effecting tool fails closed. A
+  model-emitted tool call is never itself an authorization decision.
+  The security primitives in `gateway/src/security/` (injection scanner, risk
+  accumulator) are a SEPARATE concern and share no code with this path — the
+  declarative `mcp-policy.yaml` engine that once sat between them is deleted.
 
 ## Session store — single source of truth (spec §3)
 
