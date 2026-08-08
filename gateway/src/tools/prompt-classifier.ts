@@ -1,22 +1,25 @@
 // PromptClassifier (Plan 2 Task 5, spec §2.3/§2.4) — the "auto-mode"
 // risk-tiering of a free-form `taskPrompt`. This is where real delegation
 // safety lives (the static frontmatter envelope in delegation-guard.ts
-// cannot constrain free-form intent). Reuses the two dormant shared
-// security primitives rather than re-deriving thresholds: `scanForInjection`
-// finds pattern hits, `createRiskAccumulator` turns the hit count into one
-// of the accumulator's calibrated severity levels.
+// cannot constrain free-form intent). It runs the free-form prompt through
+// the v2 injection scanner (`scanContent`) and maps the scanner's max
+// severity onto the classifier's coarse 3-tier scale.
 //
 // `findings` returned to callers are injection *category* names only
-// (e.g. "ignore_instructions") — never the raw matched text, which could
+// (e.g. "instruction_override") — never the raw matched text, which could
 // carry user-authored prompt content. Callers (delegation-guard.ts) log
 // `findings.length` and these category names, never the prompt itself.
 
 import type { RiskConfig } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
-import { scanForInjection } from "../security/injection-scanner.js";
-import { type RiskLevel, createRiskAccumulator } from "../security/risk-accumulator.js";
+import { type ScanSeverity, scanContent } from "../security/injection-scanner.js";
 
 const log = getLog(["sentient", "tools", "prompt-classifier"]);
+
+/** Provenance source for delegation-prompt scans. The classifier is invoked
+ *  without the concrete agent name in scope; source is pure scan metadata and
+ *  does not affect findings or severity. */
+const DELEGATION_SOURCE = "delegation";
 
 export type PromptRiskTier = "low" | "medium" | "high";
 
@@ -30,37 +33,33 @@ export interface PromptClassifier {
 }
 
 export interface PromptClassifierDeps {
+  /** Retained for constructor compatibility with the composition root; the v2
+   *  scanner's severity is authoritative for tiering, so no accumulator is
+   *  threaded here. */
   riskConfig: RiskConfig;
 }
 
-/** Maps the risk accumulator's severity level (fed one `injection_pattern`
- *  event per pattern hit) to the classifier's coarser 3-tier scale.
- *  `none`/`warn` collapse to `medium` — ANY injection-pattern hit is at
- *  least medium risk, never `low`; `escalate`/`block` are `high`. */
-function tierFromRiskLevel(level: RiskLevel): PromptRiskTier {
-  if (level === "escalate" || level === "block") return "high";
+/** Maps the scanner's max severity onto the classifier's 3-tier scale:
+ *  no findings → `low`; any `notice`/`suspicious` finding → `medium`; a
+ *  `hostile` finding (a structural tool-envelope) → `high`. The hostile→high
+ *  step is a deliberate escalation: a single structural envelope reaches the
+ *  top tier in one move, without needing accumulated risk. */
+function tierFromSeverity(severity: ScanSeverity | null): PromptRiskTier {
+  if (severity === null) return "low";
+  if (severity === "hostile") return "high";
   return "medium";
 }
 
-export function createPromptClassifier(deps: PromptClassifierDeps): PromptClassifier {
-  const { riskConfig } = deps;
-
+export function createPromptClassifier(_deps: PromptClassifierDeps): PromptClassifier {
   function classify(prompt: string): PromptClassification {
-    const hits = scanForInjection(prompt);
-    if (hits.length === 0) {
-      log.debug("prompt-classifier.classify", { tier: "low", findingsCount: 0 });
-      return { tier: "low", findings: [] };
-    }
-
-    const accumulator = createRiskAccumulator(riskConfig);
-    let level: RiskLevel = "none";
-    for (const _hit of hits) {
-      level = accumulator.record("injection_pattern").level;
-    }
-
-    const tier = tierFromRiskLevel(level);
-    const findings = hits.map((hit) => hit.category);
-    log.debug("prompt-classifier.classify", { tier, findingsCount: findings.length, riskLevel: level });
+    const result = scanContent(prompt, { channel: "delegation_prompt", source: DELEGATION_SOURCE });
+    const tier = tierFromSeverity(result.maxSeverity);
+    const findings = [...new Set(result.findings.map((f) => f.category))];
+    log.debug("prompt-classifier.classify", {
+      tier,
+      findingsCount: findings.length,
+      maxSeverity: result.maxSeverity,
+    });
     return { tier, findings };
   }
 
