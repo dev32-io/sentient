@@ -11,6 +11,7 @@ const REF: McpToolRef = {
   name: "search_web",
   description: "Read-only web search",
   inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  tier: "read",
 };
 
 const CTX: ToolContext = { sessionId: null, userId: "u_deadbeef", role: "user", sessionChannel: "voice" };

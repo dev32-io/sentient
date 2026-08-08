@@ -5,7 +5,13 @@ import type { McpToolRef } from "../tools/mcp-client.js";
 import { createProxiedToolSurface } from "./proxied-tool-surface.js";
 
 function ref(name: string, serverName = "home_assistant"): McpToolRef {
-  return { serverName, name, description: `${name} description`, inputSchema: { type: "object", properties: {} } };
+  return {
+    serverName,
+    name,
+    description: `${name} description`,
+    inputSchema: { type: "object", properties: {} },
+    tier: "read",
+  };
 }
 
 /** Runs against the SHIPPED mcp-policy.yaml on purpose: a rule edit that

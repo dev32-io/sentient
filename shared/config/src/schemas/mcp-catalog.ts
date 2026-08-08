@@ -1,3 +1,4 @@
+import { type ImpactTier, impactTierSchema } from "@sentient/protocol";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -19,15 +20,61 @@ import { z } from "zod";
 // One tool the MCP exposes. `available` is the operator-declared universe
 // (full list) for the webui to render with descriptions. `include` /
 // `exclude` are operator-curated whitelist / blacklist over those names.
-const mcpToolDescriptorSchema = z.object({
+//
+// EVERY declared tool carries a `tier` — its IMPACT TIER, the input to the
+// role gate (`canExecute(role, tier)` in @sentient/protocol). The tier says
+// WHO may reach the tool at all; what happens when they do is the person's
+// per-tool permission, which is a different table.
+//
+//   read    — answers a question. No state changes anywhere. Anyone.
+//   write   — a routine, reversible change to household or session state
+//             (add a shopping item, group two speakers). Adults and children.
+//   confirm — irreversible, reaches outside the house, spends, touches a
+//             security-relevant device class, or changes who the assistant
+//             acts for. Adults only.
+//   admin   — operator/role-restricted control that is NOT about asking first.
+//             Adults only. (`pause_audio` is the shipped example: no prompt
+//             wanted, but a child must not silence the house.)
+//
+// There is NO default. An operator who adds a tool without a tier gets a
+// config-load failure naming it (see `tieredToolSchema` below), because the
+// two ways of guessing are both wrong in a way nobody notices: guess `read`
+// and a guest gets a tool nobody meant to give them; guess `admin` and an
+// adult silently loses one.
+export interface McpToolDescriptor {
+  name: string;
+  description: string;
+  tier: ImpactTier;
+}
+
+const rawToolDescriptorSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
+  tier: impactTierSchema.optional(),
 });
-export type McpToolDescriptor = z.output<typeof mcpToolDescriptorSchema>;
+
+/** Refuses an untiered tool BY NAME — a bare `tier: Required` zod path names
+ *  an array index, and an operator staring at `include[7]` has to count. */
+const tieredToolSchema = rawToolDescriptorSchema.transform((tool, ctx): McpToolDescriptor => {
+  if (tool.tier === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["tier"],
+      fatal: true,
+      message: `MCP tool "${tool.name}" declares no impact tier — add \`tier: read|write|confirm|admin\` to its mcp_catalog entry`,
+    });
+    return z.NEVER;
+  }
+  return { name: tool.name, description: tool.description, tier: tool.tier };
+});
 
 const mcpToolFilterSchema = z.object({
-  available: z.array(mcpToolDescriptorSchema).optional(),
-  include: z.array(z.string()).min(1).optional(),
+  available: z.array(tieredToolSchema).optional(),
+  // REQUIRED, and the reason is the tier above: a server whose surface is
+  // "whatever upstream advertises today" cannot be tiered, and an untiered
+  // tool must not reach the model. Curating the list is what makes tiering
+  // possible, so the two are one obligation.
+  include: z.array(tieredToolSchema).min(1),
   exclude: z.array(z.string()).min(1).optional(),
   // Hermes-side knobs (per-MCP) that toggle the four "housekeeping" tools
   // it auto-registers for every MCP regardless of include/exclude:
@@ -47,7 +94,9 @@ const mcpHttpEntrySchema = z.object({
   timeout: z.number().int().min(1).max(600).default(30),
   connect_timeout: z.number().int().min(1).max(60).default(5),
   description: z.string().optional(),
-  tools: mcpToolFilterSchema.optional(),
+  // REQUIRED for the same reason `include` is (see above): a catalog entry
+  // with no declared surface is a set of untiered tools.
+  tools: mcpToolFilterSchema,
 });
 
 const mcpStdioEntrySchema = z.object({
@@ -58,7 +107,9 @@ const mcpStdioEntrySchema = z.object({
   timeout: z.number().int().min(1).max(600).default(30),
   connect_timeout: z.number().int().min(1).max(60).default(10),
   description: z.string().optional(),
-  tools: mcpToolFilterSchema.optional(),
+  // REQUIRED for the same reason `include` is (see above): a catalog entry
+  // with no declared surface is a set of untiered tools.
+  tools: mcpToolFilterSchema,
 });
 
 export const mcpServerEntrySchema = z.discriminatedUnion("transport", [mcpHttpEntrySchema, mcpStdioEntrySchema]);
@@ -66,3 +117,24 @@ export type McpServerEntry = z.output<typeof mcpServerEntrySchema>;
 
 export const mcpCatalogSchema = z.record(z.string(), mcpServerEntrySchema).default({});
 export type McpCatalog = z.output<typeof mcpCatalogSchema>;
+
+/** One curated tool, joined to the server that exposes it. */
+export interface CatalogTool extends McpToolDescriptor {
+  server: string;
+}
+
+/** Every tool the operator curated, across every server, in catalog order.
+ *  THE enumeration of the tool universe — the role gate, the per-role default
+ *  permission table and the settings API all read the same list, so none of
+ *  them can disagree about which tools exist or what tier one carries. */
+export function catalogTools(catalog: McpCatalog): CatalogTool[] {
+  return Object.entries(catalog).flatMap(([server, entry]) => entry.tools.include.map((tool) => ({ ...tool, server })));
+}
+
+/** The impact tier of one tool by name, or `undefined` when no catalog server
+ *  curates it. `undefined` is NOT a tier and must never be widened into one:
+ *  a caller that cannot find a tier is holding a tool the catalog does not
+ *  describe, and the answer is to refuse it, not to pick a tier for it. */
+export function tierOf(catalog: McpCatalog, toolName: string): ImpactTier | undefined {
+  return catalogTools(catalog).find((tool) => tool.name === toolName)?.tier;
+}

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { McpCatalog } from "@sentient/config";
+import type { McpCatalog, McpToolDescriptor } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import {
-  type McpToolRef,
+  type AdvertisedTool,
   classifyTransport,
   createMcpClient,
   filterByAllowlist,
@@ -14,22 +15,26 @@ const tools = [
   { serverName: "ha", name: "ha_dangerous", description: "", inputSchema: {} },
 ];
 
-function toolRef(name: string): McpToolRef {
+function advertised(name: string): AdvertisedTool {
   return { serverName: "ha", name, description: "", inputSchema: {} };
+}
+
+function curated(name: string, tier: ImpactTier = "read"): McpToolDescriptor {
+  return { name, description: "", tier };
 }
 
 describe("filterByAllowlist", () => {
   it("keeps only allowlisted tools when an include list is set", () => {
-    expect(filterByAllowlist(tools, ["ha_get_state"]).kept.map((t) => t.name)).toEqual(["ha_get_state"]);
-  });
-  it("keeps all tools when no include list is set", () => {
-    expect(filterByAllowlist(tools, undefined).kept).toHaveLength(2);
-  });
-  it("reports no unmatched entries when no include list is set", () => {
-    expect(filterByAllowlist(tools, undefined).unmatched).toEqual([]);
+    expect(filterByAllowlist(tools, [curated("ha_get_state")]).kept.map((t) => t.name)).toEqual(["ha_get_state"]);
   });
   it("reports no unmatched entries when every include entry is advertised", () => {
-    expect(filterByAllowlist(tools, ["ha_get_state"]).unmatched).toEqual([]);
+    expect(filterByAllowlist(tools, [curated("ha_get_state")]).unmatched).toEqual([]);
+  });
+  // The tier is the operator's, declared in the catalog — nothing on the wire
+  // carries it, so this join is the only place a tool can acquire one.
+  it("attaches each kept tool's operator-declared impact tier", () => {
+    const { kept } = filterByAllowlist(tools, [curated("ha_dangerous", "confirm")]);
+    expect(kept.map((t) => t.tier)).toEqual(["confirm"]);
   });
 
   // D19: `ha_search_entities` sat in config.yaml's include list and its own
@@ -40,7 +45,10 @@ describe("filterByAllowlist", () => {
   // for that mechanism: an include entry matching no advertised tool must be
   // REPORTED, not silently dropped, so the caller can WARN on it.
   it("INVARIANT: an include entry matching no advertised tool is reported, not silently dropped", () => {
-    const { kept, unmatched } = filterByAllowlist([toolRef("ha_search")], ["ha_search", "ha_search_entities"]);
+    const { kept, unmatched } = filterByAllowlist(
+      [advertised("ha_search")],
+      [curated("ha_search"), curated("ha_search_entities")],
+    );
     expect(kept).toHaveLength(1);
     expect(kept.map((t) => t.name)).toEqual(["ha_search"]);
     expect(unmatched).toEqual(["ha_search_entities"]);
@@ -290,7 +298,13 @@ describe("a catalog server that restarts under the client", () => {
   beforeEach(() => {
     peer = startFakeMcpPeer();
     const catalog: McpCatalog = {
-      music_assistant: { transport: "http", url: peer.url, timeout: 5, connect_timeout: 5 },
+      music_assistant: {
+        transport: "http",
+        url: peer.url,
+        timeout: 5,
+        connect_timeout: 5,
+        tools: { include: [{ name: "ma_search", description: "", tier: "read" }] },
+      },
     };
     client = createMcpClient(catalog);
   });
@@ -395,8 +409,17 @@ live("[@live] mcp-client against a real MCP server", () => {
   it("lists at least one tool", async () => {
     const url = process.env.MCP_LIVE_URL;
     if (!url) throw new Error("live test requires MCP_LIVE_URL (e.g. http://localhost:8088/mcp)");
+    // A catalog entry curates and tiers its surface, so the live server must be
+    // asked for a tool it actually advertises — MCP_LIVE_TOOL names it when the
+    // exposed server is not fetch-mcp.
     const catalog: McpCatalog = {
-      live: { transport: "http", url, timeout: 30, connect_timeout: 5 },
+      live: {
+        transport: "http",
+        url,
+        timeout: 30,
+        connect_timeout: 5,
+        tools: { include: [{ name: process.env.MCP_LIVE_TOOL ?? "fetch", description: "", tier: "read" }] },
+      },
     };
     const client = createMcpClient(catalog);
     try {

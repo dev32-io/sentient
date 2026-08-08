@@ -213,6 +213,7 @@ const weatherDef: ToolDefinition = {
   description: "gets the weather",
   parameters: { type: "object", properties: {} },
   category: "foreground",
+  tier: "read",
 };
 
 // ---------------------------------------------------------------------------
@@ -614,6 +615,7 @@ describe("SessionRuntime — delegateTask fire-and-steer loop closes end to end"
         description: "delegate to a background worker",
         parameters: { type: "object", properties: {} },
         category: "background",
+        tier: "confirm",
       },
       run: () => ({
         cancel: () => {},
@@ -2845,6 +2847,7 @@ describe("SessionRuntime — task list", () => {
       description: "delegates to a background agent",
       parameters: { type: "object", properties: {} },
       category: "background",
+      tier: "confirm",
     };
     // A `{ taskId }` return is exactly what promotes the row to "background"
     // in the projector — see task-list.ts's promotion doc.

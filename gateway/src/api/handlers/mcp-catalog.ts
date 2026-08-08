@@ -92,10 +92,11 @@ function project(catalog: McpCatalog): Record<string, McpCatalogEntryView> {
     // `available` is the operator-declared universe (name + description per
     // tool). Fall back to projecting `include` when `available` is missing —
     // gives older operator configs a degraded but still-functional UI.
-    const tools: McpToolView[] = entry.tools?.available
-      ? entry.tools.available.map((t) => ({ name: t.name, description: t.description }))
-      : (entry.tools?.include ?? []).map((n) => ({ name: n, description: "" }));
-    const defaultInclude: readonly string[] = entry.tools?.include ?? tools.map((t) => t.name);
+    const tools: McpToolView[] = (entry.tools.available ?? entry.tools.include).map((t) => ({
+      name: t.name,
+      description: t.description,
+    }));
+    const defaultInclude: readonly string[] = entry.tools.include.map((t) => t.name);
     const view: McpCatalogEntryView = entry.description
       ? { tools, defaultInclude, description: entry.description }
       : { tools, defaultInclude };

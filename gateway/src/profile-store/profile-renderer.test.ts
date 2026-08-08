@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { McpCatalog } from "@sentient/config";
+import type { McpCatalog, McpToolDescriptor } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isMap, parseDocument } from "yaml";
 import { createPersonalityStore } from "./personality-store.js";
@@ -10,12 +11,17 @@ import { PROFILE_SCHEMA_VERSION, type ProfileV1 } from "./profile-types.js";
 
 // Test catalog mirrors gateway/config.yaml#mcp_catalog defaults so the
 // renderer-output expectations stay close to operator-visible behavior.
+function tool(name: string, tier: ImpactTier): McpToolDescriptor {
+  return { name, description: "", tier };
+}
+
 const TEST_CATALOG: McpCatalog = {
   home_assistant: {
     transport: "http",
     url: "http://ha-mcp:8086/mcp",
     timeout: 30,
     connect_timeout: 5,
+    tools: { include: [tool("ha_get_state", "read"), tool("ha_call_service", "confirm")] },
   },
   gateway: {
     transport: "stdio",
@@ -24,7 +30,7 @@ const TEST_CATALOG: McpCatalog = {
     env: {},
     timeout: 30,
     connect_timeout: 10,
-    tools: { include: ["identify_user", "pause_audio"] },
+    tools: { include: [tool("identify_user", "confirm"), tool("pause_audio", "admin")] },
   },
   duckduckgo: {
     transport: "stdio",
@@ -33,12 +39,14 @@ const TEST_CATALOG: McpCatalog = {
     env: { HTTP_PROXY: "http://egress-proxy:3128" },
     timeout: 30,
     connect_timeout: 10,
+    tools: { include: [tool("search", "read")] },
   },
   music_assistant: {
     transport: "http",
     url: "http://ma-mcp:8668/mcp",
     timeout: 30,
     connect_timeout: 5,
+    tools: { include: [tool("ma_search", "read")] },
   },
 };
 

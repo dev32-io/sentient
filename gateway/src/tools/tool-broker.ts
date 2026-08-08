@@ -348,6 +348,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
             description: ref.description,
             parameters: ref.inputSchema,
             category: "foreground" as const,
+            // Straight off the catalog entry that curated this tool — see
+            // `filterByAllowlist`. Nothing here decides a tier.
+            tier: ref.tier,
           }));
           log.info("tool-broker.mcp-warmup.ok", { sessionId, toolCount: refs.length });
         })

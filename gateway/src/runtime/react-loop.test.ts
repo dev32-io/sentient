@@ -128,12 +128,14 @@ describe("runTurn — tool vocabulary", () => {
       description: "search the web",
       parameters: { type: "object", properties: {} },
       category: "foreground",
+      tier: "read",
     };
     const backgroundTool: ToolDefinition = {
       name: "delegateTask",
       description: "delegate",
       parameters: { type: "object", properties: {} },
       category: "background",
+      tier: "confirm",
     };
 
     // Mirrors the real broker: `definitions()` reports only what has resolved
@@ -250,6 +252,7 @@ describe("runTurn — one tool call", () => {
       description: "gets the weather",
       parameters: { type: "object", properties: {} },
       category: "foreground",
+      tier: "read",
     };
     const broker = fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false }));
 
@@ -329,6 +332,7 @@ describe("runTurn — runaway tool-calling model", () => {
       description: "does nothing",
       parameters: { type: "object", properties: {} },
       category: "foreground",
+      tier: "read",
     };
     const broker = fakeBroker([noopDef], async () => ({ content: "ok", isError: false }));
 
@@ -458,6 +462,7 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
       description: "gets the weather",
       parameters: { type: "object", properties: {} },
       category: "foreground",
+      tier: "read",
     };
     const broker = fakeBroker([weatherDef], async () => ({ content: "sunny", isError: false }));
 
@@ -634,6 +639,7 @@ const delegateDef: ToolDefinition = {
   description: "delegates to a sub-agent",
   parameters: { type: "object", properties: {} },
   category: "background",
+  tier: "confirm",
 };
 
 describe("runTurn — background tool dispatch", () => {

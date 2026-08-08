@@ -637,6 +637,25 @@ companions:
 # Transports:
 #   transport: http   → HTTP MCP (url required)
 #   transport: stdio  → STDIO MCP (command + args, optional env)
+#
+# EVERY tool in a `tools.include` list declares its IMPACT TIER, and the
+# gateway refuses to boot on one that does not — naming it. The tier is the
+# input to the role gate (`canExecute` in shared/protocol/src/roles.ts): it
+# decides WHO may reach the tool at all. What happens when they do is the
+# person's own per-tool permission, a separate table on their profile.
+#
+#   tier: read     answers a question, changes nothing → adult, child, guest
+#   tier: write    routine reversible change to household/session state
+#                  (shopping item, speaker grouping)  → adult, child
+#   tier: confirm  irreversible, reaches outside the house, spends, touches a
+#                  security-relevant device class (locks, alarms), or changes
+#                  who the assistant acts for          → adult
+#   tier: admin    role-restricted control that is NOT about asking first —
+#                  the gate is the whole point         → adult
+#
+# There is no default and no fallback. Guessing `read` hands a guest a tool
+# nobody meant to give them; guessing higher silently takes one away from an
+# adult. Both are worse than refusing to start.
 # ---------------------------------------------------------------------------
 mcp_catalog:
   home_assistant:
@@ -656,27 +675,31 @@ mcp_catalog:
     tools:
       include:
         # query / state
-        - ha_get_overview
-        - ha_get_state
-        - ha_search
-        - ha_get_history
-        - ha_eval_template
-        - ha_get_operation_status
+        - { name: ha_get_overview, tier: read }
+        - { name: ha_get_state, tier: read }
+        - { name: ha_search, tier: read }
+        - { name: ha_get_history, tier: read }
+        - { name: ha_eval_template, tier: read }
+        - { name: ha_get_operation_status, tier: read }
         # spatial
-        - ha_list_floors_areas
-        - ha_get_zone
-        - ha_get_camera_image
-        # action
-        - ha_call_service
-        - ha_bulk_control
-        # todos / shopping list
-        - ha_get_todo
-        - ha_set_todo_item
-        - ha_remove_todo_item
-        # calendar
-        - ha_config_get_calendar_events
-        - ha_config_set_calendar_event
-        - ha_config_remove_calendar_event
+        - { name: ha_list_floors_areas, tier: read }
+        - { name: ha_get_zone, tier: read }
+        - { name: ha_get_camera_image, tier: read }
+        # action. Both are GENERIC dispatchers whose blast radius includes
+        # locks and alarms — a security-relevant device class, hence confirm
+        # rather than write, and hence out of a child's reach.
+        - { name: ha_call_service, tier: confirm }
+        - { name: ha_bulk_control, tier: confirm }
+        # todos / shopping list. A list line is a string anyone in the house
+        # re-adds in a second, so both halves are routine writes.
+        - { name: ha_get_todo, tier: read }
+        - { name: ha_set_todo_item, tier: write }
+        - { name: ha_remove_todo_item, tier: write }
+        # calendar. Creating/editing is reversible; DELETING destroys a
+        # household commitment whose details nothing else holds.
+        - { name: ha_config_get_calendar_events, tier: read }
+        - { name: ha_config_set_calendar_event, tier: write }
+        - { name: ha_config_remove_calendar_event, tier: confirm }
 
   # Gateway-hosted MCP — the SECOND TIER of MCP a delegated agent gets, on top
   # of whatever the user configured for themselves. One Unix socket per user;
@@ -708,10 +731,15 @@ mcp_catalog:
     description: Sentient gateway tools (identify, audio, channel).
     tools:
       include:
-        - identify_user
-        - pause_audio
-        - resume_audio
-        - update_user_settings
+        # An identity rebind changes WHO the assistant acts for — the
+        # confused-deputy case. Adult-only, and asked for even then.
+        - { name: identify_user, tier: confirm }
+        # `admin` and not `read`, though it is session-local and prompt-free:
+        # the tier is what stops a child silencing the house. Nothing about
+        # it wants a permission dialog — the gate is the whole restriction.
+        - { name: pause_audio, tier: admin }
+        - { name: resume_audio, tier: read }
+        - { name: update_user_settings, tier: confirm }
 
   # Music Assistant — dockerized HTTP MCP at gateway/mcp/ma-mcp/.
   # Built from the davidpadbury/music-assistant-mcp fork (the upstream
@@ -729,24 +757,33 @@ mcp_catalog:
     # Curated tool surface — the full set the pinned fork registers
     # (players/playback/queue/music, gateway/mcp/ma-mcp/Dockerfile pins the
     # commit). Enumerated rather than left open so the surface cannot grow
-    # silently on a fork bump: every tool here is tiered in
-    # gateway/mcp-policy.yaml, and an untiered tool prompts on every call.
+    # silently on a fork bump, and tiered here so nothing reaches the model
+    # untiered.
+    #
+    # Playback transport is `read` and that is deliberate: it changes only
+    # what is audible right now, stops mattering when the music does, and the
+    # next voice command undoes it. Prompting on "play some jazz" / "turn it
+    # down" would make voice music control unusable. Queue and grouping
+    # OUTLIVE the current track — someone else's queue, another room's
+    # speakers — so they are writes.
     tools:
       include:
         # library reads
-        - ma_search
-        - ma_browse
+        - { name: ma_search, tier: read }
+        - { name: ma_browse, tier: read }
         # players
-        - ma_list_players
-        - ma_volume
-        - ma_group
+        - { name: ma_list_players, tier: read }
+        - { name: ma_volume, tier: read }
+        - { name: ma_group, tier: write }
         # playback
-        - ma_playback
-        - ma_play_media
-        # queue
-        - ma_queue
-        - ma_queue_item
-        - ma_transfer_queue
+        - { name: ma_playback, tier: read }
+        - { name: ma_play_media, tier: read }
+        # queue. `ma_queue` is a mixed read/write tool upstream — the same
+        # call that reports the queue can clear it or flip shuffle/repeat —
+        # so it is tiered by its worst case.
+        - { name: ma_queue, tier: write }
+        - { name: ma_queue_item, tier: write }
+        - { name: ma_transfer_queue, tier: write }
 
   # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
   # Outbound HTTP fetches route through egress-proxy.
@@ -759,8 +796,10 @@ mcp_catalog:
     # mcp-server-fetch registers exactly one tool (gateway/mcp/fetch-mcp/
     # run_http.py). Named explicitly for the same reason as above.
     tools:
+      # Read-only: what it returns is untrusted content, handled by the
+      # injection scanner (gateway/src/security/), not by a permission tier.
       include:
-        - fetch
+        - { name: fetch, tier: read }
 
   # SearXNG metasearch — dockerized HTTP MCP at gateway/mcp/searxng-mcp/.
   # Adapter forwards queries to the sibling searxng container which
@@ -778,7 +817,7 @@ mcp_catalog:
     # owns URL fetching (cleaner separation, smaller per-tool prompt).
     tools:
       include:
-        - search_web
+        - { name: search_web, tier: read }
 
 # ─────────────────────────────────────────────────────────────────────────
 # system_orchestrator

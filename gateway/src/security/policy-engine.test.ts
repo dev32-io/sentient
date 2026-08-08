@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type McpPolicy, loadConfig, mcpCatalogSchema } from "@sentient/config";
+import { type McpPolicy, catalogTools, loadConfig, mcpCatalogSchema } from "@sentient/config";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createPolicyEngine, evaluateCondition } from "./policy-engine.js";
@@ -281,17 +281,14 @@ describe("shipped mcp-policy.yaml", () => {
 // Catalog ↔ policy coverage (gateway/config.yaml#mcp_catalog vs mcp-policy.yaml)
 //
 // SECURITY BOUNDARY, second half. Failing closed MEDIATES an untiered tool; it
-// does not TIER it. Two ways that degrades into a prompt on every call:
+// does not TIER it: an enumerated tool no rule names lands on the fail-closed
+// default, so even its read path prompts. Pinned here, so adding an MCP to the
+// catalog without tiering its tools fails the suite instead of shipping
+// friction (or, before the fail-closed default, silent dispatch).
 //
-//   1. a catalog entry with no `tools.include` puts an unknown, upstream-owned
-//      tool surface into the vocabulary — nobody can tier what nobody can
-//      enumerate, and an upstream bump silently adds more of it;
-//   2. an enumerated tool no rule names lands on the fail-closed default, so
-//      even its read path prompts.
-//
-// Both halves are pinned here, so adding an MCP to the catalog without tiering
-// its tools fails the suite instead of shipping friction (or, before the
-// fail-closed default, silent dispatch).
+// The other half of this used to live here too — "every catalog entry curates
+// its surface with tools.include". `mcpToolFilterSchema` now requires
+// `include`, so an uncurated entry cannot be parsed, let alone reach a test.
 // ---------------------------------------------------------------------------
 
 describe("mcp_catalog ↔ mcp-policy.yaml coverage", () => {
@@ -303,16 +300,7 @@ describe("mcp_catalog ↔ mcp-policy.yaml coverage", () => {
     z.object({ mcp_catalog: mcpCatalogSchema }),
   ).mcp_catalog;
 
-  const curated = Object.entries(catalog).flatMap(([server, entry]) =>
-    (entry.tools?.include ?? []).map((tool) => ({ server, tool })),
-  );
-
-  it("curates every catalog entry's tool surface with tools.include", () => {
-    const uncurated = Object.entries(catalog)
-      .filter(([, entry]) => entry.tools?.include === undefined)
-      .map(([server]) => server);
-    expect(uncurated).toEqual([]);
-  });
+  const curated = catalogTools(catalog).map(({ server, name }) => ({ server, tool: name }));
 
   // Evaluated as an adult on voice: the role/channel deny rules do not fire, so
   // anything that still reaches the default is genuinely untiered rather than

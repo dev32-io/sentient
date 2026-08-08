@@ -3,6 +3,8 @@
 // first tool producer/consumer; Task 4 (ToolBroker) and later the ReAct loop
 // import from this module rather than redefining the shapes locally.
 
+import type { ImpactTier } from "@sentient/protocol";
+
 /** Dispatch lane a tool runs on. `foreground` blocks the current ReAct turn
  *  and its result feeds straight back into the model; `background` runs
  *  off-turn (e.g. delegateTask) and reports back asynchronously. */
@@ -22,6 +24,16 @@ export interface ToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
   category: ToolCategory;
+  /** How much reach this tool has, and so which roles may hold it at all —
+   *  `canExecute(role, tier)` (@sentient/protocol). Operator-declared in
+   *  `config.yaml#mcp_catalog`, never inferred here and never defaulted: a
+   *  tool the catalog does not tier does not reach this type, because the
+   *  config fails to load first. `delegateTask` is the one exception to
+   *  "operator-declared" — it is gateway-native, so it declares its own.
+   *
+   *  NOT the same question as the person's per-tool permission. This one is
+   *  "who may"; that one is "what happens when they do". */
+  tier: ImpactTier;
 }
 
 /** A single in-flight tool call, as dispatched by the loop to a broker. */

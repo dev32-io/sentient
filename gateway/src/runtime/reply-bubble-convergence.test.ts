@@ -215,12 +215,14 @@ const listPlayers: ToolDefinition = {
   description: "lists media players",
   parameters: { type: "object", properties: {} },
   category: "foreground",
+  tier: "read",
 };
 const playMedia: ToolDefinition = {
   name: "ma_play_media",
   description: "plays media",
   parameters: { type: "object", properties: {} },
   category: "foreground",
+  tier: "read",
 };
 
 const NARRATION_1 = "Let me check the players";

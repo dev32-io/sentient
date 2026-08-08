@@ -95,6 +95,16 @@ export const delegateTaskDefinition: ToolDefinition = {
     required: ["agent", "taskPrompt"],
   },
   category: "background",
+  // `confirm`, and not because delegation is a "write": this is the one tool
+  // that hands a free-form instruction to another agent holding its OWN tools
+  // (file system, shell) and lets it run unsupervised until it finishes. That
+  // reaches further outside the house than anything in the catalog, and it is
+  // not undoable once the worker has acted — so adults only.
+  //
+  // Declared HERE rather than in `config.yaml#mcp_catalog` because this tool
+  // is gateway-native: it has no MCP server, so no catalog entry curates it.
+  // That is the exception, not a licence to tier tools in TypeScript.
+  tier: "confirm",
 };
 
 export interface DelegateTaskDeps {

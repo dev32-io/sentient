@@ -142,6 +142,7 @@ const weatherTool: McpToolRef = {
   name: "get_weather",
   description: "gets the weather",
   inputSchema: {},
+  tier: "read",
 };
 
 // ---------------------------------------------------------------------------
@@ -452,7 +453,7 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
 
   it("a registered background tool is not unknown, even though the MCP catalog has never heard of it", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: neverSettles<ToolResult>() }),
     };
     const policy = fakePolicy({ action: "allow" });
@@ -483,7 +484,7 @@ describe("ToolBroker — a hallucinated tool never reaches the permission prompt
 describe("ToolBroker — background dispatch", () => {
   it("returns a taskId synchronously without waiting on the runner", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: neverSettles() }),
     };
     const broker = createToolBroker({
@@ -510,7 +511,7 @@ describe("ToolBroker — background dispatch", () => {
   it("still evaluates the PDP first — a deny never registers or runs the background tool", async () => {
     let runCalls = 0;
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => {
         runCalls += 1;
         return { cancel: () => {}, result: neverSettles() };
@@ -538,7 +539,7 @@ describe("ToolBroker — background dispatch", () => {
 
   it("rejects with 'too many running tasks' once the concurrency cap is reached", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: neverSettles() }),
     };
     const broker = createToolBroker({
@@ -586,7 +587,7 @@ function deferredSinkCall<T>(): { promise: Promise<T>; sink: (value: T) => void 
 describe("ToolBroker — background completion sink", () => {
   it("forwards the settled ToolResult to a bound sink, after freeing the concurrency slot", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: Promise.resolve({ content: "the delegated output", isError: false }) }),
     };
     const broker = createToolBroker({
@@ -634,7 +635,7 @@ describe("ToolBroker — background completion sink", () => {
 
   it("normalizes a rejected runner promise into an isError completion — the sink never sees a rejection", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: Promise.reject(new Error("hermes process crashed")) }),
     };
     const broker = createToolBroker({
@@ -667,7 +668,7 @@ describe("ToolBroker — background completion sink", () => {
 
   it("an unbound sink is a safe no-op — the settled result is dropped, never thrown", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: Promise.resolve({ content: "nobody is listening", isError: false }) }),
     };
     const broker = createToolBroker({
@@ -713,6 +714,7 @@ describe("ToolBroker — delegation.progress producer", () => {
         description: "delegates",
         parameters: { type: "object", properties: {} },
         category: "background",
+        tier: "confirm",
       },
       run: () => ({ cancel: () => {}, result: new Promise<ToolResult>((resolve) => captureResolve(resolve)) }),
     };
@@ -868,7 +870,7 @@ describe("ToolBroker — tool result cap", () => {
   it("INVARIANT: an oversized BACKGROUND completion is truncated before reaching the completion sink", async () => {
     const oversized = `${"B".repeat(500)}Z`;
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "", parameters: {}, category: "background" },
+      definition: { name: "delegateTask", description: "", parameters: {}, category: "background", tier: "confirm" },
       run: () => ({ cancel: () => {}, result: Promise.resolve({ content: oversized, isError: false }) }),
     };
     const broker = createToolBroker({
@@ -909,6 +911,7 @@ const searchTool: McpToolRef = {
   name: "search_web",
   description: "searches the web",
   inputSchema: {},
+  tier: "read",
 };
 
 /** A broker whose ONE catalog tool (`get_weather`, on server `test-mcp`)
@@ -1161,7 +1164,13 @@ describe("ToolBroker — per-tool permissions", () => {
 
   it("never hides a background tool, which belongs to no server and so has no key", async () => {
     const runner: BackgroundToolRunner = {
-      definition: { name: "delegateTask", description: "delegates", parameters: {}, category: "background" },
+      definition: {
+        name: "delegateTask",
+        description: "delegates",
+        parameters: {},
+        category: "background",
+        tier: "confirm",
+      },
       run: () => ({ cancel: () => {}, result: neverSettles<ToolResult>() }),
     };
     const broker = createToolBroker({
@@ -1299,6 +1308,7 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
     name: "web_search",
     description: "searches the web",
     inputSchema: {},
+    tier: "read",
   };
 
   /** Exactly what the web wizard's INITIAL_DRAFT and mobile's

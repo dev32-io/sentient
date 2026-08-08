@@ -23,7 +23,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { McpCatalog, McpServerEntry } from "@sentient/config";
+import type { McpCatalog, McpServerEntry, McpToolDescriptor } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ToolResult } from "./tool-types.js";
 
@@ -172,13 +173,23 @@ export function normalizeToolResult(result: ToolResult): ToolResult {
   };
 }
 
-/** One tool advertised by an MCP server, tagged with the catalog entry it
- *  came from so callers can route a call back to the right server. */
-export interface McpToolRef {
+/** One tool as the SERVER advertises it, tagged with the catalog entry it came
+ *  from so callers can route a call back to the right server. Not yet usable
+ *  by the loop: a tool the operator never curated carries no impact tier, and
+ *  the tier is not the wire's to declare. */
+export interface AdvertisedTool {
   serverName: string;
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+}
+
+/** An advertised tool joined to its catalog entry, so it now carries the
+ *  operator's impact tier. This — never `AdvertisedTool` — is what leaves the
+ *  client, because everything downstream (the role gate, the permission
+ *  table, the settings API) needs the tier and none of them may invent one. */
+export interface McpToolRef extends AdvertisedTool {
+  tier: ImpactTier;
 }
 
 export interface McpClient {
@@ -205,27 +216,45 @@ export interface McpClient {
 /** The result of intersecting a catalog entry's curated `tools.include` list
  *  against what the server actually advertises. */
 export interface AllowlistFilterResult {
-  /** Tools kept — advertised by the server AND named in `include`. */
+  /** Tools kept — advertised by the server AND named in `include`, each
+   *  carrying the tier its `include` entry declared. */
   kept: McpToolRef[];
   /** `include` entries that matched no advertised tool (D19): the operator's
    *  curated surface has drifted from upstream, silently, until something
-   *  reads this. Empty whenever `include` is undefined. */
+   *  reads this. */
   unmatched: string[];
 }
 
-/** Keeps only allowlisted tools when `include` is set; keeps all tools when
- *  `include` is undefined (operator has not curated this server's surface).
+/** Keeps only allowlisted tools, and attaches each one's operator-declared
+ *  impact tier. THE join between "what the server offers" and "what the
+ *  operator curated" — so the tier reaches a tool at the one place its
+ *  membership is decided, and an advertised tool the catalog never named can
+ *  never acquire one.
  *
  *  Pure — reports the diff instead of just dropping it, so the caller can log
  *  the drift (D19: `filterByAllowlist` used to intersect and discard
  *  silently, so a curated surface rotted invisibly as upstream renamed
- *  things while the config kept reading like coverage). */
-export function filterByAllowlist(tools: McpToolRef[], include: string[] | undefined): AllowlistFilterResult {
-  if (include === undefined) return { kept: tools, unmatched: [] };
-  const advertised = new Set(tools.map((tool) => tool.name));
-  const allowed = new Set(include);
-  const kept = tools.filter((tool) => allowed.has(tool.name));
-  const unmatched = include.filter((name) => !advertised.has(name));
+ *  things while the config kept reading like coverage).
+ *
+ *  Emits in `include` order, not in the order the server happened to answer:
+ *  the operator's file is stable across upstream reorderings, and this list
+ *  becomes the model's `tools[]`, whose byte order decides whether the prompt
+ *  cache holds. */
+export function filterByAllowlist(
+  tools: AdvertisedTool[],
+  include: readonly McpToolDescriptor[],
+): AllowlistFilterResult {
+  const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+  const kept: McpToolRef[] = [];
+  const unmatched: string[] = [];
+  for (const curated of include) {
+    const tool = advertised.get(curated.name);
+    if (!tool) {
+      unmatched.push(curated.name);
+      continue;
+    }
+    kept.push({ ...tool, tier: curated.tier });
+  }
   return { kept, unmatched };
 }
 
@@ -312,7 +341,7 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
     return true;
   }
 
-  type ListAttempt = { ok: true; refs: McpToolRef[] } | { ok: false; reason: string; transportEvicted: boolean };
+  type ListAttempt = { ok: true; refs: AdvertisedTool[] } | { ok: false; reason: string; transportEvicted: boolean };
 
   /** One `tools/list` round trip against the cached-or-fresh transport. */
   async function tryListTools(serverName: string, entry: McpHttpEntry, timeoutMs: number): Promise<ListAttempt> {
@@ -338,8 +367,8 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
     }
   }
 
-  function finishListTools(serverName: string, entry: McpHttpEntry, refs: McpToolRef[], startedAt: number) {
-    const { kept, unmatched } = filterByAllowlist(refs, entry.tools?.include);
+  function finishListTools(serverName: string, entry: McpHttpEntry, refs: AdvertisedTool[], startedAt: number) {
+    const { kept, unmatched } = filterByAllowlist(refs, entry.tools.include);
     // D19: an include entry naming a tool the server no longer (or never
     // did) advertise is catalog drift, not a mere zero-hit filter — WARN so
     // it surfaces instead of rotting silently in the allowlist. Note this
