@@ -30,11 +30,9 @@
 // has ever happened", and `createdAt` says exactly that for a record that
 // predates the field.
 
-import { ADMIN_ROLE, USER_ROLES, type UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE, DEFAULT_ROLE, USER_ROLES, type UserRole } from "@sentient/protocol";
 import { NEVER_REVOKED } from "./credential-floor.js";
 import type { UserRecord } from "./types.js";
-
-const DEFAULT_ROLE: UserRole = "adult";
 
 function isKnownRole(value: unknown): value is UserRole {
   return typeof value === "string" && (USER_ROLES as readonly string[]).includes(value);

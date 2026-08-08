@@ -50,6 +50,19 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly ImpactTier[]> = {
  */
 export const ADMIN_ROLE: UserRole = "admin";
 
+/**
+ * The role an account gets when nothing says otherwise, named once for the
+ * same reason `ADMIN_ROLE` is.
+ *
+ * Four places already needed this fact — the record migration, the auth
+ * service, the user provisioner, and now the admin create route, which has to
+ * seed a new member's permission table for the role that route is ABOUT to
+ * store. Four private copies of `"adult"` are four chances for the stored role
+ * and the seeded table to disagree about the same account, which is a
+ * disagreement nothing downstream can detect.
+ */
+export const DEFAULT_ROLE: UserRole = "adult";
+
 export function canExecute(role: UserRole, tier: ImpactTier): boolean {
   return (ROLE_PERMISSIONS[role] as readonly string[]).includes(tier);
 }

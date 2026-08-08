@@ -1,4 +1,5 @@
 import { AUDIO_PREFS_DEFAULT } from "@sentient/audio-prefs";
+import type { McpCatalog } from "@sentient/config";
 import { ADMIN_ROLE } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
@@ -38,6 +39,11 @@ export interface AuthHandlerDeps {
    *  the advance fails — the user is already created and the wizard can
    *  recover via /wizard/finalize (cursor-mismatch UI). */
   installState?: InstallState;
+  /** `config.yaml#mcp_catalog`. REQUIRED, and not optional-with-a-fallback:
+   *  the first admin's permission table is seeded from it, and an empty
+   *  catalog would seed an empty table — i.e. the household's operator would
+   *  come out of setup with no tools at all, silently. */
+  mcpCatalog: McpCatalog;
 }
 
 const PIN_REGEX = /^\d{4}$/;
@@ -107,12 +113,11 @@ async function parseSetupBody(request: Request): Promise<ParsedSetup | Response>
 }
 
 async function createFirstAdmin(
-  auth: AuthService,
+  deps: AuthHandlerDeps,
   provisioner: UserProvisioner,
   data: ParsedSetup,
-  secretsStore?: SecretsStore,
-  installState?: InstallState,
 ): Promise<Response> {
+  const { auth, secretsStore, installState } = deps;
   // Goes through the provisioner so the new admin gets the same materialization
   // a regularly-created user does: slot binding, profile.json, supervisord
   // program with self-bootstrapping `hermes profile create` prefix. Without
@@ -123,13 +128,16 @@ async function createFirstAdmin(
   // schemaVersion is always the current constant.
   const partial = data.profile ?? buildDefaultProfileBody(secretsStore);
   const rawProfile = { ...partial, schemaVersion: PROFILE_SCHEMA_VERSION as 1, userId: "" };
-  const profile = applyProfileDefaults(rawProfile);
+  // First run: this account IS the household's operator, so it gets the one
+  // role that reaches the admin REST surface and the `admin` impact tier. The
+  // SAME role seeds its permission table one line down — the record and the
+  // table cannot disagree about who this person is because they read one
+  // constant.
+  const profile = applyProfileDefaults(rawProfile, { role: ADMIN_ROLE, mcpCatalog: deps.mcpCatalog });
 
   const r = await provisioner.createUser({
     displayName: data.displayName,
     pin: data.pin,
-    // First run: this account IS the household's operator, so it gets the one
-    // role that reaches the admin REST surface and the `admin` impact tier.
     role: ADMIN_ROLE,
     profile,
   });
@@ -175,7 +183,7 @@ async function handleSetup(deps: AuthHandlerDeps, request: Request): Promise<Res
     log.warn("setup.no-provisioner");
     return jsonError(HTTP_INTERNAL, "no-provisioner");
   }
-  return createFirstAdmin(deps.auth, deps.userProvisioner, bodyOrError, deps.secretsStore, deps.installState);
+  return createFirstAdmin(deps, deps.userProvisioner, bodyOrError);
 }
 
 /** Build a profile body when SetupScreen submits without one. Reads the

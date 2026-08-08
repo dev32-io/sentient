@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { ALL_TOOLS_PERMISSION_KEY } from "@sentient/config";
-import type { OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY, mcpCatalogSchema } from "@sentient/config";
+import type { McpCatalog, OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
@@ -1332,6 +1332,16 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
     tier: "read",
   };
 
+  /** The catalog the account is seeded from — the one server this broker's
+   *  fake MCP advertises, so "seeded" and "advertised" are the same universe. */
+  const catalog: McpCatalog = mcpCatalogSchema.parse({
+    searxng: {
+      transport: "http",
+      url: "http://127.0.0.1:9002/mcp",
+      tools: { include: [{ name: "web_search", tier: "read" }] },
+    },
+  });
+
   /** Exactly what the web wizard's INITIAL_DRAFT and mobile's
    *  templateMemberProfile POST, run through the two layers that stand between
    *  the request body and `profile.json`. */
@@ -1346,7 +1356,7 @@ describe("ToolBroker — a freshly created account can see its tools", () => {
       compression: { threshold: 0.5 },
       advanced: { extraSystemPrompt: "", maxTokens: 1024 },
     });
-    return applyProfileDefaults(parsed);
+    return applyProfileDefaults(parsed, { role: "adult", mcpCatalog: catalog });
   }
 
   function definitionsFor(profile: ProfileV1): Promise<string[]> {

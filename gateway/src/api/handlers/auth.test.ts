@@ -1,11 +1,16 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { type McpCatalog, loadConfig, mcpCatalogSchema } from "@sentient/config";
 import type { Result } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type { InstallStateData } from "../../admin/install-state.js";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.js";
+import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import type { AuthError, AuthService, ChangePinError, UpdateDisplayNameError } from "../../user-auth/auth-service.js";
 import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { TokenPayload, TokenResult, UserRecord } from "../../user-auth/types.js";
-import { createAuthHandler } from "./auth.js";
+import { type AuthHandlerDeps, createAuthHandler } from "./auth.js";
 
 function sampleUser(userId = "alice"): UserRecord {
   return {
@@ -46,7 +51,7 @@ function makeInvalidTokens() {
 function makeDeps(
   tokensOverride?: ReturnType<typeof makeValidTokens>,
   userOverride?: UserRecord,
-): { auth: Pick<AuthService, "tokens" | "users" | "updateDisplayName" | "changePin"> } {
+): { auth: Pick<AuthService, "tokens" | "users" | "updateDisplayName" | "changePin">; mcpCatalog: McpCatalog } {
   const user = userOverride ?? sampleUser();
   const tokens = tokensOverride ?? makeValidTokens();
   return {
@@ -64,6 +69,7 @@ function makeDeps(
       ),
       changePin: vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: true, value: undefined })),
     },
+    mcpCatalog: shippedCatalog,
   };
 }
 
@@ -111,7 +117,7 @@ describe("GET /api/v1/auth/me", () => {
   it("mints an identity-only token — no role, no authority of any kind", async () => {
     const tokens = makeValidTokens("alice");
     const deps = makeDeps(tokens, { ...sampleUser(), role: "admin" as const });
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makeGetMeRequest("her-token"));
 
@@ -124,7 +130,7 @@ describe("GET /api/v1/auth/me", () => {
   it("reports the record's CURRENT role in the body, for rendering", async () => {
     const demoted = { ...sampleUser(), role: "adult" as const };
     const deps = makeDeps(makeValidTokens("alice"), demoted);
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const body = await (await handler(makeGetMeRequest("her-token"))).json();
 
@@ -135,7 +141,7 @@ describe("GET /api/v1/auth/me", () => {
 
   it("reports a promotion on the next visit, with no re-login", async () => {
     const deps = makeDeps(makeValidTokens("alice"), { ...sampleUser(), role: "admin" as const });
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const body = await (await handler(makeGetMeRequest("her-token"))).json();
 
@@ -145,7 +151,7 @@ describe("GET /api/v1/auth/me", () => {
 
   it("returns 401 without a bearer token", async () => {
     const deps = makeDeps();
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     expect((await handler(makeGetMeRequest())).status).toBe(401);
   });
@@ -153,7 +159,7 @@ describe("GET /api/v1/auth/me", () => {
   it("returns 401 and mints nothing when the token does not validate", async () => {
     const tokens = makeInvalidTokens();
     const deps = makeDeps(tokens as unknown as ReturnType<typeof makeValidTokens>);
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     expect((await handler(makeGetMeRequest("bad-token"))).status).toBe(401);
     expect(tokens.issue).not.toHaveBeenCalled();
@@ -165,7 +171,7 @@ describe("PUT /api/v1/auth/me", () => {
     const updatedUser = { ...sampleUser(), displayName: "Alicia" };
     const deps = makeDeps(makeValidTokens(), sampleUser());
     deps.auth.updateDisplayName = vi.fn(async () => ({ ok: true as const, value: updatedUser }));
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }, "valid-token"));
 
@@ -177,7 +183,7 @@ describe("PUT /api/v1/auth/me", () => {
 
   it("returns 401 without bearer token", async () => {
     const deps = makeDeps();
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }));
 
@@ -186,7 +192,7 @@ describe("PUT /api/v1/auth/me", () => {
 
   it("returns 422 when displayName is empty", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "" }, "valid-token"));
 
@@ -195,7 +201,7 @@ describe("PUT /api/v1/auth/me", () => {
 
   it("returns 422 when displayName exceeds 64 characters", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "a".repeat(65) }, "valid-token"));
 
@@ -204,7 +210,7 @@ describe("PUT /api/v1/auth/me", () => {
 
   it("returns 405 for non-PUT requests to /api/v1/auth/me when routed through a non-PUT path", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
     const request = new Request("http://localhost/api/v1/auth/me", {
       method: "DELETE",
       headers: new Headers({ authorization: "Bearer valid-token" }),
@@ -217,7 +223,7 @@ describe("PUT /api/v1/auth/me", () => {
 
   it("returns 401 when token is invalid", async () => {
     const deps = makeDeps(makeInvalidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }, "bad-token"));
 
@@ -229,7 +235,7 @@ describe("PUT /api/v1/auth/me", () => {
     deps.auth.updateDisplayName = vi.fn(
       async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({ ok: false, error: "io-error" }),
     );
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }, "valid-token"));
 
@@ -241,7 +247,7 @@ describe("PUT /api/v1/auth/me", () => {
     deps.auth.updateDisplayName = vi.fn(
       async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({ ok: false, error: "not-found" }),
     );
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }, "valid-token"));
 
@@ -254,7 +260,7 @@ describe("PUT /api/v1/auth/me", () => {
 describe("PUT /api/v1/auth/me/pin", () => {
   it("returns 200 when currentPin matches and newPin is valid", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "valid-token"));
 
@@ -267,7 +273,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
   it("returns 401 when currentPin is wrong", async () => {
     const deps = makeDeps(makeValidTokens());
     deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "wrong-pin" }));
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "9999", newPin: "5678" }, "valid-token"));
 
@@ -278,7 +284,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 422 when newPin does not match /^\\d{4}$/ format", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "abc" }, "valid-token"));
     expect(response.status).toBe(422);
@@ -290,7 +296,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 422 when currentPin does not match /^\\d{4}$/ format (schema rejection, not auth)", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     // Non-numeric currentPin: schema rejects before auth check → 422, not 401
     const response = await handler(makePutPinRequest({ currentPin: "abc", newPin: "5678" }, "valid-token"));
@@ -303,7 +309,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 401 without bearer token", async () => {
     const deps = makeDeps();
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }));
 
@@ -312,7 +318,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 405 for non-PUT requests to /api/v1/auth/me/pin", async () => {
     const deps = makeDeps(makeValidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
     const request = new Request("http://localhost/api/v1/auth/me/pin", {
       method: "POST",
       headers: new Headers({ authorization: "Bearer valid-token" }),
@@ -326,7 +332,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 401 when bearer token is invalid", async () => {
     const deps = makeDeps(makeInvalidTokens());
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "bad-token"));
 
@@ -336,7 +342,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
   it("returns 500 when authService.changePin fails with io-error", async () => {
     const deps = makeDeps(makeValidTokens());
     deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "io-error" }));
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "valid-token"));
 
@@ -346,7 +352,7 @@ describe("PUT /api/v1/auth/me/pin", () => {
   it("returns 404 when authService.changePin returns not-found (user deleted)", async () => {
     const deps = makeDeps(makeValidTokens());
     deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "not-found" }));
-    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+    const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "valid-token"));
 
@@ -459,28 +465,51 @@ function makeSetupRequest(): Request {
 // and which nothing else can compensate for afterwards. `makeSetupRequest`
 // already carried the wizard's real `tools: { enabled: {} }` and asserted
 // nothing about it, so a regression here was invisible.
-const SEEDED_PERMISSIONS = {
-  home_assistant: {},
-  gateway: {},
-  music_assistant: {},
-  searxng: {},
-  fetch: {},
-};
+//
+// Asserted against the SHIPPED catalog, not a fixture: the bug this guards is
+// "a genuinely fresh account came out with no tools", and a fixture catalog
+// would have been just as green while the real one seeded nothing.
+const shippedCatalog = loadConfig(
+  readFileSync(join(import.meta.dir, "../../../config.yaml"), "utf-8"),
+  z.object({ mcp_catalog: mcpCatalogSchema }),
+).mcp_catalog;
+
+function seededPermissions(userProvisioner: UserProvisioner): Record<string, Record<string, string>> | undefined {
+  const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+  return call?.profile?.tools?.permissions;
+}
 
 describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
   it("REGRESSION: seeds the starter permissions from the wizard's empty tools.enabled", async () => {
     const userProvisioner = makeSetupProvisioner();
-    const handler = createAuthHandler({ auth: makeSetupAuthService(), userProvisioner });
+    const handler = createAuthHandler({
+      auth: makeSetupAuthService(),
+      userProvisioner,
+      mcpCatalog: shippedCatalog,
+    });
 
     await handler(makeSetupRequest());
 
-    const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(call?.profile?.tools?.permissions).toEqual(SEEDED_PERMISSIONS);
+    const permissions = seededPermissions(userProvisioner);
+    expect(permissions?.gateway).toEqual({
+      identify_user: "allow",
+      pause_audio: "allow",
+      resume_audio: "allow",
+      update_user_settings: "allow",
+    });
+    // The first admin is the household's operator: the confirm tier is theirs,
+    // and it arrives as a prompt rather than as silence in either direction.
+    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
+    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
   });
 
   it("seeds them for a setup submitted with no profile at all", async () => {
     const userProvisioner = makeSetupProvisioner();
-    const handler = createAuthHandler({ auth: makeSetupAuthService(), userProvisioner });
+    const handler = createAuthHandler({
+      auth: makeSetupAuthService(),
+      userProvisioner,
+      mcpCatalog: shippedCatalog,
+    });
 
     // `buildDefaultProfileBody`'s output never passes through the schema, so it
     // never sees the enabled→permissions migration — it has to omit the field
@@ -493,8 +522,26 @@ describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
       }),
     );
 
-    const call = (userProvisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(call?.profile?.tools?.permissions).toEqual(SEEDED_PERMISSIONS);
+    const permissions = seededPermissions(userProvisioner);
+    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
+    expect(permissions?.gateway?.identify_user).toBe("allow");
+  });
+
+  it("seeds the ADMIN role's table — every curated tool, none withheld", async () => {
+    const userProvisioner = makeSetupProvisioner();
+    const handler = createAuthHandler({
+      auth: makeSetupAuthService(),
+      userProvisioner,
+      mcpCatalog: shippedCatalog,
+    });
+
+    await handler(makeSetupRequest());
+
+    // The operator reaches every tier, so their table is the whole catalog —
+    // seeding this account as anything less privileged would show up here as a
+    // missing tool rather than as a mystery months later.
+    expect(seededPermissions(userProvisioner)).toEqual(defaultPermissionsFor("admin", shippedCatalog));
+    expect(seededPermissions(userProvisioner)).not.toEqual(defaultPermissionsFor("guest", shippedCatalog));
   });
 });
 
@@ -505,6 +552,7 @@ describe("POST /api/v1/auth/setup — install-state cursor", () => {
       auth: makeSetupAuthService(),
       userProvisioner: makeSetupProvisioner(),
       installState,
+      mcpCatalog: shippedCatalog,
     });
 
     const response = await handler(makeSetupRequest());
@@ -520,6 +568,7 @@ describe("POST /api/v1/auth/setup — install-state cursor", () => {
       auth: makeSetupAuthService(),
       userProvisioner: makeSetupProvisioner(),
       installState,
+      mcpCatalog: shippedCatalog,
     });
 
     const response = await handler(makeSetupRequest());

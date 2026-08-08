@@ -1,5 +1,5 @@
 import type { AuthConfig } from "@sentient/config";
-import type { Result, UserRole } from "@sentient/protocol";
+import { DEFAULT_ROLE, type Result, type UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { loadOrCreateAuthSecret } from "./auth-secret.js";
 import { NEVER_REVOKED, createCredentialFloor } from "./credential-floor.js";
@@ -20,8 +20,6 @@ export interface CreateUserInput {
   role?: UserRole;
   avatarTint: AvatarTint;
 }
-
-const DEFAULT_ROLE: UserRole = "adult";
 
 export type CreateUserError = "already-exists" | "io-error";
 export type AuthError = "invalid-credentials";

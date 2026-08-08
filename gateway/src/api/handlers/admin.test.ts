@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadConfig, mcpCatalogSchema } from "@sentient/config";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import type {
   CreateError,
   DeleteError,
@@ -7,6 +11,7 @@ import type {
   UserProvisioner,
 } from "../../admin/user-provisioner.js";
 import { PROFILE_SCHEMA_VERSION } from "../../profile-store/profile-types.js";
+import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import { NEVER_REVOKED } from "../../user-auth/credential-floor.js";
 import type { UserRecord } from "../../user-auth/types.js";
 import type { UserStore } from "../../user-auth/user-store.js";
@@ -78,13 +83,38 @@ function makeProvisioner(): UserProvisioner {
   };
 }
 
+/** The SHIPPED catalog, not a fixture: a new member's table is seeded from it,
+ *  and the failure this guards against ("the account came out with no tools")
+ *  is invisible against a stub. */
+const shippedCatalog = loadConfig(
+  readFileSync(join(import.meta.dir, "../../../config.yaml"), "utf-8"),
+  z.object({ mcp_catalog: mcpCatalogSchema }),
+).mcp_catalog;
+
 function makeDeps(overrides?: Partial<AdminDeps>): AdminDeps {
   return {
     adminToken: ADMIN_TOKEN,
     provisioner: makeProvisioner(),
     userStore: makeUserStore(),
+    mcpCatalog: shippedCatalog,
     ...overrides,
   } as AdminDeps;
+}
+
+function seededPermissions(provisioner: UserProvisioner): Record<string, Record<string, string>> | undefined {
+  const call = (provisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+  return call?.profile?.tools?.permissions;
+}
+
+async function createMember(provisioner: UserProvisioner, body: Record<string, unknown>): Promise<Response> {
+  const handler = createAdminHandler(makeDeps({ provisioner }));
+  return handler(
+    new Request(adminUrl("/api/v1/admin/users"), {
+      method: "POST",
+      headers: authHeader(),
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 function authHeader(token = ADMIN_TOKEN): Headers {
@@ -203,53 +233,73 @@ describe("POST /api/v1/admin/users", () => {
   // this exact body and assert nothing about `tools`, which is why it shipped.
   it("REGRESSION: a wizard-shaped empty tools.enabled still seeds the starter permissions", async () => {
     const provisioner = makeProvisioner();
-    const handler = createAdminHandler(makeDeps({ provisioner }));
 
-    await handler(
-      new Request(adminUrl("/api/v1/admin/users"), {
-        method: "POST",
-        headers: authHeader(),
-        body: JSON.stringify({
-          displayName: "Bob",
-          pin: "5678",
-          isAdmin: false,
-          profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
-        }),
-      }),
-    );
-
-    const call = (provisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(call?.profile?.tools?.permissions).toEqual({
-      home_assistant: {},
-      gateway: {},
-      music_assistant: {},
-      searxng: {},
-      fetch: {},
+    await createMember(provisioner, {
+      displayName: "Bob",
+      pin: "5678",
+      isAdmin: false,
+      profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
     });
+
+    const permissions = seededPermissions(provisioner);
+    // Named tools, not just "not empty": a table that came out with the right
+    // SHAPE and the wrong contents is the failure mode this whole plan is
+    // about.
+    expect(permissions?.gateway?.identify_user).toBe("allow");
+    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
+    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
+    expect(permissions?.searxng?.search_web).toBe("allow");
+  });
+
+  // A create call that says nothing about authority confers none: the record
+  // defaults to `adult`, and the table has to be seeded for the SAME role or
+  // the person's settings screen and the model's tool list disagree from
+  // minute one.
+  it("seeds the default role's table when the body names no role", async () => {
+    const provisioner = makeProvisioner();
+
+    await createMember(provisioner, {
+      displayName: "Bob",
+      pin: "5678",
+      profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
+    });
+
+    expect(seededPermissions(provisioner)).toEqual(defaultPermissionsFor("adult", shippedCatalog));
+  });
+
+  it("seeds a CHILD account the child's narrower table, not the default one", async () => {
+    const provisioner = makeProvisioner();
+
+    await createMember(provisioner, {
+      displayName: "Kid",
+      pin: "5678",
+      role: "child",
+      profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
+    });
+
+    const permissions = seededPermissions(provisioner);
+    // The generic HA dispatcher (confirm tier — locks and alarms are inside
+    // its blast radius) is withheld, and the reads below it are not.
+    expect(permissions?.home_assistant?.ha_call_service).toBeUndefined();
+    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
+    expect(permissions).toEqual(defaultPermissionsFor("child", shippedCatalog));
+    expect(permissions).not.toEqual(defaultPermissionsFor("adult", shippedCatalog));
   });
 
   it("REGRESSION: an EXPLICIT empty permissions map is preserved, not re-seeded", async () => {
     const provisioner = makeProvisioner();
-    const handler = createAdminHandler(makeDeps({ provisioner }));
 
-    await handler(
-      new Request(adminUrl("/api/v1/admin/users"), {
-        method: "POST",
-        headers: authHeader(),
-        body: JSON.stringify({
-          displayName: "Bob",
-          pin: "5678",
-          isAdmin: false,
-          // Not the wizard's "not configured yet" — a table naming no server,
-          // i.e. somebody switched every one of them off. Must not collapse
-          // into the case above.
-          profile: { ...SAMPLE_PROFILE, tools: { permissions: {}, toolsets: [] } },
-        }),
-      }),
-    );
+    await createMember(provisioner, {
+      displayName: "Bob",
+      pin: "5678",
+      isAdmin: false,
+      // Not the wizard's "not configured yet" — a table naming no server,
+      // i.e. somebody switched every one of them off. Must not collapse
+      // into the case above.
+      profile: { ...SAMPLE_PROFILE, tools: { permissions: {}, toolsets: [] } },
+    });
 
-    const call = (provisioner.createUser as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(call?.profile?.tools?.permissions).toEqual({});
+    expect(seededPermissions(provisioner)).toEqual({});
   });
 
   it("returns 422 'schema' when displayName is empty", async () => {

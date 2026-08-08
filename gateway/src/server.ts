@@ -100,6 +100,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     ...(services.userProvisioner ? { userProvisioner: services.userProvisioner } : {}),
     ...(services.secretsStore ? { secretsStore: services.secretsStore } : {}),
     installState: services.installState,
+    mcpCatalog: services.mcpCatalog,
   });
   const handleEdit = createProfileEditHandler({
     tokens: services.auth.tokens,
@@ -110,6 +111,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
   const handleProfile = createProfileHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
+    users: services.auth.users,
+    mcpCatalog: services.mcpCatalog,
     runApply: (userId) => runApply(services.applyDeps, userId),
     handleEdit,
   });
@@ -354,5 +357,6 @@ function buildAdminDeps(
     tokenService,
     provisioner: services.userProvisioner ?? makeThrowProxy("UserProvisioner"),
     userStore: services.auth.users,
+    mcpCatalog: services.mcpCatalog,
   };
 }
