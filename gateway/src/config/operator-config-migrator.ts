@@ -919,6 +919,12 @@ function applyAllMigrations(doc: Document): boolean {
       // is precisely the boot where an operator most needs to know a tool was
       // re-tiered, and precisely the boot where the buffer is never flushed.
       // Under launchd this lands in stderr.log (see the prod plist).
+      //
+      // ON A HEALTHY BOOT THIS APPEARS TWICE on stderr — once here, once when
+      // the flush replays it through the logger's console sink. Accepted, and
+      // not a bug to go fixing later: de-duplicating means predicting whether
+      // the flush will happen, which is exactly the thing that cannot be known
+      // from here. The daily log file still carries it exactly once.
       console.warn(
         `[sentient.config.migration] migration:0.1.5:unknown-tools tier=${UNKNOWN_TOOL_TIER} tools=${tools}`,
       );
