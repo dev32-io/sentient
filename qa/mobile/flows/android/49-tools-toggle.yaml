@@ -27,6 +27,26 @@ tags:
     visible: { id: "settings-tools-screen" }
     timeout: 3000
 - assertVisible: { id: "settings-tools-server-fetch" }
+# skill-system (mobile-skill-parity, tag settings-soul): the five gateway-native
+# skill_* permission rows render under the "Gateway tools" card, and the
+# skill_create dropdown is writable. Native rows are testTag'd
+# settings-tools-native-<toolName>; the RowSelect options are
+# settings-select-option-<permission>. Re-selecting the current default (ask)
+# closes the menu and arms an idempotent edit that the Save below round-trips —
+# proving the native namespace reaches the settings PATCH.
+- scrollUntilVisible:
+    element: { id: "settings-tools-native-skill_create" }
+    direction: DOWN
+    timeout: 3000
+- assertVisible: { id: "settings-tools-native-skill_list" }
+- assertVisible: { id: "settings-tools-native-skill_use" }
+- assertVisible: { id: "settings-tools-native-skill_create" }
+- assertVisible: { id: "settings-tools-native-skill_update" }
+- assertVisible: { id: "settings-tools-native-skill_delete" }
+- takeScreenshot: "49-skill-rows"
+- tapOn: { id: "settings-tools-native-skill_create" }
+- assertVisible: { id: "settings-select-option-deny" }   # dropdown writable
+- tapOn: { id: "settings-select-option-ask" }             # current default; closes menu, no net change
 - takeScreenshot: "49-tools-before"
 - tapOn:
     point: "84%,37%"
