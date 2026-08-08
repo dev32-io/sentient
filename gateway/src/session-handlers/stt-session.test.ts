@@ -164,7 +164,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -184,7 +184,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -205,7 +205,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -225,7 +225,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("manual");
@@ -249,7 +249,7 @@ describe("createSttSession", () => {
       factory: () => (queue.shift() ?? healthy).adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -272,7 +272,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -300,7 +300,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -329,7 +329,7 @@ describe("createSttSession", () => {
       factory: () => fake.adapter,
       config: TEST_CONFIG,
       getRuntime: () => stub.runtime,
-      getRuntimeForInput: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
     });
 
     session.start("semantic");
@@ -357,7 +357,7 @@ describe("createSttSession", () => {
       },
       config: TEST_CONFIG,
       getRuntime: () => null,
-      getRuntimeForInput: () => null,
+      getRuntimeForInput: async () => null,
     });
 
     session.start("semantic");

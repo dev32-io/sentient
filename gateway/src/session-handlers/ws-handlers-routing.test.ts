@@ -66,6 +66,9 @@ function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
   data.sessionId = "test-session";
   data.authState = "authed";
   data.principal = createUserPrincipal("u_deadbeef", "adult", "home");
+  // Set beside the principal by the auth gate. The authority re-check at the
+  // mint refuses a socket that cannot say when its credential was issued.
+  data.tokenIssuedAtMs = Date.now() - HOUR_MS;
   data.runtime = runtime;
   const ws: FakeWs = {
     data,
@@ -81,6 +84,18 @@ function fakeAuthedWs(runtime: SessionRuntime | null): FakeWs {
     },
   };
   return ws;
+}
+
+/** The record `bindSessionRuntime` re-resolves this connection's authority
+ *  against before minting a capability (stale-authority.ts). MATCHES
+ *  `fakeAuthedWs`'s principal — the divergent cases are the STALE AUTHORITY
+ *  block below, which overrides it. */
+function liveAuthDouble() {
+  return {
+    users: {
+      get: async (userId: string) => ({ ok: true as const, value: recordOf("adult", NEVER_REVOKED, userId) }),
+    },
+  };
 }
 
 interface StubRuntime {
@@ -164,6 +179,10 @@ function activateServices(runtime?: SessionRuntime): GatewayServices {
     createSynthesizerFor: () => null,
     stt: null,
     createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
+    // Read by every non-recovered `session.ready` — a fixture without it cannot
+    // run a handshake to completion.
+    webui: { playback: { min_eager_end_ms: 3000, preempt_fadeout_ms: 30 } },
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }
 
@@ -181,9 +200,9 @@ const CONFIGURE_FRAME = {
 
 /** The record `fakeAuthedWs`'s principal was minted from, as the store would
  *  answer it NOW — which is the whole question the configure gate asks. */
-function recordOf(role: UserRole, credentialsValidFrom: string): UserRecord {
+function recordOf(role: UserRole, credentialsValidFrom: string, userId = "u_deadbeef"): UserRecord {
   return {
-    userId: "u_deadbeef",
+    userId,
     displayName: "Dee",
     pinHash: "$argon2id$fake",
     role,
@@ -197,23 +216,43 @@ interface StaleAuthorityHarness {
   services: GatewayServices;
   /** What the store answers on the NEXT resolve. `null` models a deletion. */
   setRecord: (record: UserRecord | null) => void;
+  /** A session `u_deadbeef` owns, so the paths under test actually reach the
+   *  mint rather than short-circuiting on an unresolvable id. */
+  ownedSessionId: string;
 }
 
-/** `activateServices` plus the record store the configure gate re-resolves
+/** `activateServices` plus the record store the MINT re-resolves authority
  *  against. Starts matching the socket's principal exactly, so a test only has
  *  to state the divergence it is about. */
 function staleAuthorityServices(): StaleAuthorityHarness {
   let record: UserRecord | null = recordOf("adult", NEVER_REVOKED);
+  const base = activateServices();
   const services = {
-    ...activateServices(),
+    ...base,
+    // Overrides `activateServices`'s matching double: these cases are about
+    // what happens when the record STOPS matching.
     auth: { users: { get: async () => ({ ok: true as const, value: record }) } },
   } as unknown as GatewayServices;
   return {
     services,
+    ownedSessionId: seedActivatableSession(base.accessManager, "u_deadbeef"),
     setRecord(next) {
       record = next;
     },
   };
+}
+
+/** An authenticated socket that has NEVER configured — the state the revoker
+ *  cannot see, because it enumerates attachments and this one has none. */
+function parkedSocket(): FakeWs {
+  const ws = fakeAuthedWs(null);
+  ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS; // nowhere near expiry
+  ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+  return ws;
+}
+
+function activateFrame(sessionId: string): string {
+  return JSON.stringify({ type: "conversation.activate", sessionId });
 }
 
 /** Puts a real session with one entry in [userId]'s own store (opened through
@@ -234,6 +273,7 @@ const cleanupServices = {
   sessionManager: { unbindUser: () => {}, removeSession: () => {} },
   replayRegistry: createReplayRegistry({ maxBytesPerSession: 65536, retentionMs: 1000 }),
   sessionRegistry: createSessionRegistry(),
+  auth: liveAuthDouble(),
 } as unknown as GatewayServices;
 
 interface StubPermissions extends SessionPermissionBroker {
@@ -263,7 +303,7 @@ function stubPermissions(matches = true): StubPermissions {
   };
 }
 
-describe("ws-handlers routing — text.input", () => {
+describe("ws-handlers routing — text.input", async () => {
   it("submits a conversational stimulus with the message text when runtime is set", async () => {
     const { runtime, submitCalls } = stubRuntime();
     const ws = fakeAuthedWs(runtime);
@@ -305,7 +345,7 @@ describe("ws-handlers routing — text.input", () => {
   });
 });
 
-describe("ws-handlers routing — interrupt", () => {
+describe("ws-handlers routing — interrupt", async () => {
   it("calls runtime.interrupt() when runtime is set", async () => {
     const { runtime, interruptCallCount } = stubRuntime();
     const ws = fakeAuthedWs(runtime);
@@ -347,7 +387,7 @@ describe("ws-handlers routing — interrupt", () => {
 // inbound frame" rather than "the mediated subset".
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — expired credential (§3.6)", () => {
+describe("ws-handlers routing — expired credential (§3.6)", async () => {
   it("SECURITY: conversation.activate on an expired socket is refused and the socket closed", async () => {
     // The disclosure this closes: activate answers with the session's snapshot,
     // and it is deliberately outside the command gate (it is how a connection
@@ -418,49 +458,65 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
     expect(discards).toBe(1);
   });
 
-  it("STALE AUTHORITY: a parked socket whose user was demoted is refused at session.configure", async () => {
-    // THE DEMOTION THREAT. The revoker enumerates ATTACHMENTS, so a socket that
-    // authenticated and never configured is invisible to it — and the client
-    // decides when to configure, so the window is attacker-controlled, not
-    // server-bounded. Without this check that socket walks into
-    // `handleSessionConfigure`, which reads the stale `ws.data.principal` and
-    // mints a runtime + ToolBroker capability at the PRE-DEMOTION role, good for
-    // the token's whole remaining TTL.
-    const { services, setRecord } = staleAuthorityServices();
-    const ws = fakeAuthedWs(null);
-    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS; // nowhere near expiry
-    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+  // THE DEMOTION THREAT, and why the check is at the MINT rather than on an arm.
+  //
+  // `conversation.activate` needs NO prior handshake: it guards on
+  // `ws.data.principal` alone, so a socket that authenticated and never
+  // configured reaches `bindSessionRuntime` through it — and the revoker cannot
+  // see that socket, because it enumerates ATTACHMENTS and this one has none.
+  // The client chooses when to send the frame, so the window is
+  // attacker-controlled, not server-bounded. Without the check, the bind hands
+  // the stale principal to `createSessionRuntime`, which mints a `tool-broker`
+  // capability at the PRE-DEMOTION role, frozen and good for the token's whole
+  // remaining TTL.
+  it("STALE AUTHORITY: a demoted user's PARKED socket is refused at conversation.activate", async () => {
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket(); // authed, never configured
     setRecord(recordOf("child", new Date().toISOString())); // demoted; floor moved
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify(CONFIGURE_FRAME),
+      activateFrame(ownedSessionId),
       services,
     );
 
     expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
     expect(ws.sent).toEqual([{ type: "auth.error", code: "expired", message: expect.any(String) }]);
-    // Never reached a runtime, an attachment or a session.
+    // No capability was minted, and nothing was recorded on the connection.
     expect(ws.data.runtime).toBeNull();
     expect(ws.data.attachment).toBeNull();
     expect(ws.data.conversationId).toBeNull();
   });
 
+  it("STALE AUTHORITY: a demoted user re-opening a session at session.configure is refused", async () => {
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket();
+    setRecord(recordOf("child", new Date().toISOString()));
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ ...CONFIGURE_FRAME, conversationId: ownedSessionId }),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.data.runtime).toBeNull();
+    expect(ws.data.attachment).toBeNull();
+  });
+
   it("STALE AUTHORITY: a moved credential floor refuses the socket even when the role is unchanged", async () => {
-    // Isolates the FLOOR half of the predicate. The case above changes the
-    // role too, so the role check alone would carry it — this one cannot be
-    // caught by anything but the floor comparison. Reachable today by
-    // re-applying a member's current role (`setRole` moves the floor on every
-    // successful write, not only on a change of value).
-    const { services, setRecord } = staleAuthorityServices();
-    const ws = fakeAuthedWs(null);
-    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
-    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+    // Isolates the FLOOR half of the predicate. The cases above change the role
+    // too, so the role check alone would carry them — this one cannot be caught
+    // by anything but the floor comparison. Reachable today by re-applying a
+    // member's current role (`setRole` moves the floor on every successful
+    // write, not only on a change of value).
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket();
     setRecord(recordOf("adult", new Date().toISOString()));
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify(CONFIGURE_FRAME),
+      activateFrame(ownedSessionId),
       services,
     );
 
@@ -469,18 +525,15 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
   });
 
   it("STALE AUTHORITY: a role that diverged from the record is refused even with the floor unmoved", async () => {
-    const { services, setRecord } = staleAuthorityServices();
-    const ws = fakeAuthedWs(null);
-    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
-    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
-    // Any write that changes a role WITHOUT moving the floor. `setRole` always
-    // moves both, so this is the belt to that braces — the socket must not
-    // configure at an authority the record no longer grants.
+    // The belt to the floor's braces. `setRole` always moves both, so this
+    // covers any other write that changes a role without moving the floor.
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket();
     setRecord(recordOf("child", NEVER_REVOKED));
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify(CONFIGURE_FRAME),
+      activateFrame(ownedSessionId),
       services,
     );
 
@@ -488,12 +541,31 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
     expect(ws.data.runtime).toBeNull();
   });
 
-  it("STALE AUTHORITY: a socket whose record is gone is refused rather than configured", async () => {
+  it("STALE AUTHORITY: a socket whose record is gone is refused rather than bound", async () => {
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket();
+    setRecord(null); // deleted between auth and this frame
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      activateFrame(ownedSessionId),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.data.runtime).toBeNull();
+  });
+
+  // THE GATE IS AT THE MINT, NOT AT THE FRAME, and this is what that buys: a
+  // DRAFT handshake mints no runtime and therefore no capability, so there is
+  // nothing to refuse and the socket is left alone. The refusal lands on the
+  // first frame that would actually create authority — which the cases above
+  // are. Pinned so a future "check it in the arm too" change has to argue with
+  // a test rather than with a comment.
+  it("STALE AUTHORITY: a DRAFT handshake mints nothing, so it is not refused", async () => {
     const { services, setRecord } = staleAuthorityServices();
-    const ws = fakeAuthedWs(null);
-    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
-    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
-    setRecord(null); // deleted between auth and configure
+    const ws = parkedSocket();
+    setRecord(recordOf("child", new Date().toISOString()));
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
@@ -501,8 +573,8 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
       services,
     );
 
-    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
     expect(ws.data.runtime).toBeNull();
+    expect(ws.data.attachment).toBeNull();
   });
 
   // The let-through half of this gate is pinned in `stale-authority.test.ts`:
@@ -537,12 +609,12 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
 // the old per-socket broker gave for free.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — permission.response", () => {
+describe("ws-handlers routing — permission.response", async () => {
   it("routes the client's decision into the SESSION's broker, naming the answering window", async () => {
     const permissions = stubPermissions();
     const services = attachedCleanupServices(permissions);
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
 
     await handleWebSocketMessage(
       ws as unknown as ServerWebSocket<SessionData>,
@@ -562,7 +634,7 @@ describe("ws-handlers routing — permission.response", () => {
     const permissions = stubPermissions(false);
     const services = attachedCleanupServices(permissions);
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
 
     await expect(
       handleWebSocketMessage(
@@ -582,7 +654,7 @@ describe("ws-handlers routing — permission.response", () => {
     const permissions = stubPermissions();
     const services = attachedCleanupServices(permissions);
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
     detachSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
     await expect(
@@ -614,10 +686,10 @@ describe("ws-handlers routing — permission.response", () => {
     const other = stubPermissions();
     const services = sessionScopedServices((sessionId) => (sessionId === OTHER_SESSION_ID ? other : own));
     // A peer window makes the OTHER session resident, with prompts of its own.
-    attach(fakeAuthedWs(null), services, OTHER_SESSION_ID);
+    await attach(fakeAuthedWs(null), services, OTHER_SESSION_ID);
 
     const ws = fakeAuthedWs(null);
-    attach(ws, services, SESSION_ID);
+    await attach(ws, services, SESSION_ID);
     ws.data.conversationId = OTHER_SESSION_ID;
 
     await handleWebSocketMessage(
@@ -652,7 +724,7 @@ describe("ws-handlers routing — permission.response", () => {
 //     is noise it cannot act on.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers outbound frames — lane discipline", () => {
+describe("ws-handlers outbound frames — lane discipline", async () => {
   it("sends an error unstamped and unjournaled, so it reaches only the connection that asked", async () => {
     const ws = fakeAuthedWs(null);
     const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 65536 });
@@ -702,7 +774,7 @@ describe("ws-handlers outbound frames — lane discipline", () => {
 // file's header for the full reasoning, and its membership/rival-owner checks.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — session.new", () => {
+describe("ws-handlers routing — session.new", async () => {
   it("CONTRACT: an implicit session.new re-attaches the bound session instead of forking one", async () => {
     // Mobile fires this on EVERY launch, twice per launch. Answering it as a
     // new chat is what would hand every relaunch an empty conversation.
@@ -782,7 +854,7 @@ describe("ws-handlers routing — session.new", () => {
   });
 });
 
-describe("ws-handlers routing — conversation.activate", () => {
+describe("ws-handlers routing — conversation.activate", async () => {
   it("CONTRACT: activating a session the caller's store holds answers session.switched", async () => {
     const services = activateServices();
     const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
@@ -936,6 +1008,7 @@ function sessionScopedServices(brokerFor: (sessionId: string) => SessionPermissi
       permissions: brokerFor(conversationId),
       work: IDLE_WORK,
     }),
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }
 
@@ -952,13 +1025,13 @@ function commandFrames(ws: FakeWs): unknown[] {
 }
 
 /** Attach [ws] to [sessionId] through the real bind path. */
-function attach(ws: FakeWs, services: GatewayServices, sessionId: string = SESSION_ID): void {
+async function attach(ws: FakeWs, services: GatewayServices, sessionId: string = SESSION_ID): Promise<void> {
   ws.data.conversationId = sessionId;
-  bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, sessionId);
+  await bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, sessionId);
 }
 
-describe("ws-handlers cleanup — outstanding permission prompts", () => {
-  it("denies every open prompt when the LAST window on the session leaves", () => {
+describe("ws-handlers cleanup — outstanding permission prompts", async () => {
+  it("denies every open prompt when the LAST window on the session leaves", async () => {
     // Each open prompt is a promise the ReAct loop is awaiting inside
     // `broker.dispatch`; an unsettled one parks that turn for the full
     // permission timeout after the socket is already gone. Since task 5 the
@@ -967,7 +1040,7 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
     const permissions = stubPermissions();
     const services = attachedCleanupServices(permissions);
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
 
     cleanupSession(ws as unknown as ServerWebSocket<SessionData>, services);
 
@@ -975,16 +1048,16 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
     expect(ws.data.attachment).toBeNull();
   });
 
-  it("INVARIANT: a closing window does not deny prompts another window can still answer", () => {
+  it("INVARIANT: a closing window does not deny prompts another window can still answer", async () => {
     // The eviction this task deleted, in its permission form: one socket's
     // close used to call `denyAll()` on the broker directly, which under N
     // windows would auto-deny a prompt a second window is looking at.
     const permissions = stubPermissions();
     const services = attachedCleanupServices(permissions);
     const survivor = fakeAuthedWs(null);
-    attach(survivor, services);
+    await attach(survivor, services);
     const leaving = fakeAuthedWs(null);
-    attach(leaving, services);
+    await attach(leaving, services);
 
     cleanupSession(leaving as unknown as ServerWebSocket<SessionData>, services);
 
@@ -1010,7 +1083,7 @@ describe("ws-handlers cleanup — outstanding permission prompts", () => {
 // runtime/session-runtime.test.ts's steer cases) apply to both windows at all.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — two windows, one turn", () => {
+describe("ws-handlers routing — two windows, one turn", async () => {
   /** A runtime double that models the documented `submit` contract: start a
    *  turn when idle, otherwise steer the running one. Counting turn STARTS is
    *  the only way to observe a fork. */
@@ -1126,8 +1199,8 @@ describe("ws-handlers routing — two windows, one turn", () => {
   });
 });
 
-describe("detachSession — leaving a session drops what was captured under it", () => {
-  it("INVARIANT: leaving a session DISCARDS this connection's mic uplink", () => {
+describe("detachSession — leaving a session drops what was captured under it", async () => {
+  it("INVARIANT: leaving a session DISCARDS this connection's mic uplink", async () => {
     // THE COMPENSATING CONTROL FOR UNSTAMPED BINARY AUDIO (spec §3.7). Mic
     // bytes carry no `{sessionId, generation}`; the connection's attachment is
     // authoritative for them. That is only sound if leaving a session provably
@@ -1143,7 +1216,7 @@ describe("detachSession — leaving a session drops what was captured under it",
     let discards = 0;
     const services = attachedCleanupServices(stubPermissions());
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
     ws.data.stt = {
       discard: () => {
         discards += 1;
@@ -1155,14 +1228,14 @@ describe("detachSession — leaving a session drops what was captured under it",
     expect(discards).toBe(1);
   });
 
-  it("keeps the uplink OBJECT — the mic is still on, it is just aimed somewhere else now", () => {
+  it("keeps the uplink OBJECT — the mic is still on, it is just aimed somewhere else now", async () => {
     // `discard()`, never `close()`. The person is still holding the talk
     // button; they have merely changed which conversation they are in. Nulling
     // `ws.data.stt` here would make the next mic frame silently vanish until
     // they released and pressed again.
     const services = attachedCleanupServices(stubPermissions());
     const ws = fakeAuthedWs(null);
-    attach(ws, services);
+    await attach(ws, services);
     ws.data.stt = { discard: () => {} } as unknown as SttSession;
 
     detachSession(ws as unknown as ServerWebSocket<SessionData>, services);
@@ -1171,8 +1244,8 @@ describe("detachSession — leaving a session drops what was captured under it",
   });
 });
 
-describe("ws-handlers cleanup — the session journal", () => {
-  it("drops this connection's HANDLE on the journal without destroying the journal", () => {
+describe("ws-handlers cleanup — the session journal", async () => {
+  it("drops this connection's HANDLE on the journal without destroying the journal", async () => {
     // The journal is the SESSION's since task 6, so a closing window clears its
     // own reference and nothing more; releasing it is the session handles'
     // dispose, and the registry keeps it for the retention window after that.
@@ -1181,6 +1254,7 @@ describe("ws-handlers cleanup — the session journal", () => {
       sessionManager: { unbindUser: () => {}, removeSession: () => {} },
       replayRegistry: registry,
       sessionRegistry: createSessionRegistry(),
+      auth: liveAuthDouble(),
     } as unknown as GatewayServices;
 
     const ws = fakeAuthedWs(null);

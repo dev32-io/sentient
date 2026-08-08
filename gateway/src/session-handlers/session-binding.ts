@@ -29,6 +29,7 @@ import { createInputArbiter } from "./input-arbiter.js";
 import { createMicEchoGuard } from "./mic-echo-guard.js";
 import type { ReplayAcquisition } from "./replay-registry.js";
 import type { Attachment, SessionHandles } from "./session-registry.js";
+import { refuseStaleAuthority } from "./stale-authority.js";
 import { createUserAudioPolicy } from "./user-audio-policy.js";
 import type { SessionData } from "./ws-helpers.js";
 import { errorMessage } from "./ws-helpers.js";
@@ -70,8 +71,46 @@ export function withSessionStore<T>(
 }
 
 /**
+ * What a bind attempt did. THREE outcomes, not two, because "no runtime" and
+ * "this socket may not have one" are opposite instructions to the caller: the
+ * first leaves a usable connection that simply cannot run a turn, the second
+ * means the socket is already CLOSED and everything after it is writing into a
+ * corpse.
+ */
+export type BindOutcome =
+  | { readonly kind: "bound"; readonly runtime: SessionRuntime }
+  /** No runtime could be constructed, and the socket is FINE — the orchestrator
+   *  is absent from config, or this user's per-session construction failed. */
+  | { readonly kind: "no-runtime" }
+  /** This connection's authority no longer matches the record. The socket has
+   *  been told `auth.error` and closed; the caller must STOP, not degrade. */
+  | { readonly kind: "refused" };
+
+/**
  * Attach this connection to [sessionId] and park the session's handles on the
- * socket. Returns the live runtime, or null when none could be produced.
+ * socket.
+ *
+ * COMPLETE MEDIATION AT THE MINT (plan 2026-08-07-tool-permissions task 2c,
+ * review round 2). This is the ONE path on which `ws.data.principal` becomes
+ * AUTHORITY: `buildSessionHandles` hands it to `services.createSessionRuntime`,
+ * which mints the session's `tool-broker` capability with that principal's role
+ * baked in by value (`phase-services.ts`). So the authority re-check belongs
+ * here and nowhere else.
+ *
+ * A GATE PER ARM WOULD NOT HOLD. `session.configure`, `conversation.activate`
+ * and the late re-bind in `ws-handlers.ts` all reach this function, and
+ * `conversation.activate` needs no prior handshake at all — it guards on the
+ * principal alone, so a socket that authenticated and never configured reaches
+ * the mint through it. Checking in each arm means the next arm that touches
+ * `ws.data.principal` silently reopens the hole. Checked HERE, every arm is
+ * covered by construction and a new one cannot skip what it does not call.
+ *
+ * WHY THE ROLE IS THE ONLY THING THAT CAN GO STALE: a principal is
+ * `{userId, role, householdId}`, and identity is immutable — a userId cannot
+ * change under a live socket. `session-store` capabilities are confined by
+ * userId, so a stale one grants exactly what it always did. `tool-broker` is
+ * the capability whose behaviour reads the role (`canExecute`'s impact tier),
+ * and it is minted below.
  *
  * ONE RUNTIME, N ATTACHMENTS. The construction below runs only on the FIRST
  * attachment — the registry hands every later connection the SAME handles back,
@@ -89,12 +128,18 @@ export function withSessionStore<T>(
  * message: the socket stays usable for everything that does not need the
  * orchestrator, and `text.input` surfaces `orchestrator_unavailable` itself at
  * the point the client actually tries to use it.
+ *
+ * ASYNC ONLY FOR THAT RE-CHECK, and the await is at the TOP — before the
+ * attachment check and before any field on `ws.data` is written. Everything
+ * from there to the `session.attached` frame stays one synchronous block, so a
+ * second bind interleaving on this connection still sees a complete attachment
+ * and takes the detach-first path rather than stranding one.
  */
-export function bindSessionRuntime(
+export async function bindSessionRuntime(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   sessionId: string,
-): SessionRuntime | null {
+): Promise<BindOutcome> {
   const connectionId = ws.data.sessionId;
   const principal = ws.data.principal;
   if (connectionId === null || principal === null) {
@@ -102,13 +147,25 @@ export function bindSessionRuntime(
       sessionId,
       reason: "bind attempted on a connection that has not authenticated",
     });
-    return null;
+    return { kind: "no-runtime" };
   }
   const userId = principal.userId;
 
+  const stale = await refuseStaleAuthority(ws, services.auth.users);
+  if (stale !== null) {
+    log.warn("session-binding.authority-refused", {
+      connectionId,
+      userId,
+      sessionId,
+      reason: stale,
+      detail: "the record no longer grants this socket's authority — no capability was minted",
+    });
+    return { kind: "refused" };
+  }
+
   if (!services.createSessionRuntime) {
     log.info("session-binding.no-orchestrator", { connectionId, userId, reason: "orchestrator: absent from config" });
-    return null;
+    return { kind: "no-runtime" };
   }
 
   if (ws.data.attachment !== null) {
@@ -139,7 +196,7 @@ export function bindSessionRuntime(
       sessionId,
       reason: errorMessage(err, "unknown error"),
     });
-    return null;
+    return { kind: "no-runtime" };
   }
 
   const handles = services.sessionRegistry.handlesFor(sessionId);
@@ -153,7 +210,7 @@ export function bindSessionRuntime(
       sessionId,
       reason: "registry accepted the attachment but holds no handles for this session",
     });
-    return null;
+    return { kind: "no-runtime" };
   }
 
   // HELD IMMEDIATELY, in the same synchronous block as the attach — the
@@ -199,7 +256,7 @@ export function bindSessionRuntime(
     sessionId,
     generation: attachment.generation,
   });
-  return handles.runtime;
+  return { kind: "bound", runtime: handles.runtime };
 }
 
 /**

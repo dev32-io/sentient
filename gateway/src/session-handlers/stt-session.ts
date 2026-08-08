@@ -84,8 +84,14 @@ export interface SttSessionDeps {
   readonly getRuntime: () => SessionRuntime | null;
   /** The runtime a TRANSCRIPT goes to. Distinct from `getRuntime` because a
    *  voice-first draft has no session yet: spoken words are a first message
-   *  like any other, and this is the seam that mints one (spec §4.2). */
-  readonly getRuntimeForInput: (text: string) => SessionRuntime | null;
+   *  like any other, and this is the seam that mints one (spec §4.2).
+   *
+   *  ASYNC because minting one goes through `bindSessionRuntime`, which
+   *  re-resolves this connection's authority against the user record before it
+   *  turns a principal into a capability (session-binding.ts). `dispatch`
+   *  awaits it in the event loop, so transcripts still submit strictly in
+   *  order. */
+  readonly getRuntimeForInput: (text: string) => Promise<SessionRuntime | null>;
 }
 
 export function createSttSession(deps: SttSessionDeps): SttSession {
@@ -124,7 +130,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     }
   }
 
-  function dispatch(event: STTEvent): void {
+  async function dispatch(event: STTEvent): Promise<void> {
     if (event.type === "turn_dropped") {
       log.debug("stt.turn-dropped", { sessionId, turnIdx: event.turnIdx });
       return;
@@ -151,7 +157,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       log.debug("stt.transcript.blank", { sessionId, turnIdx: event.turnIdx, reason: "empty after trim" });
       return;
     }
-    const runtime = getRuntimeForInput(text);
+    const runtime = await getRuntimeForInput(text);
     if (!runtime) {
       log.warn("stt.event.no-runtime", {
         sessionId,
@@ -185,7 +191,10 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         // A hook throw must never kill the event loop for the rest of the
         // session — the pre-purge adapter learned this the hard way.
         try {
-          dispatch(event);
+          // AWAITED, so the next event cannot overtake this one: a transcript
+          // that has to mint a session is slower than one that does not, and
+          // two spoken turns arriving back-to-back must still submit in order.
+          await dispatch(event);
         } catch (err: unknown) {
           log.warn("stt.event.dispatch-failed", {
             sessionId,

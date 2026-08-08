@@ -44,11 +44,11 @@ import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "conversation-activate"]);
 
-export function handleConversationActivate(
+export async function handleConversationActivate(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   presented: string,
-): void {
+): Promise<void> {
   const connectionId = ws.data.sessionId;
   const principal = ws.data.principal;
   if (principal === null) {
@@ -92,7 +92,11 @@ export function handleConversationActivate(
   // Attaches AND holds this window (session-binding.ts). Every path out of here
   // must therefore finish the attach, or this connection silently receives
   // nothing from the session it just switched to.
-  const runtime = bindSessionRuntime(ws, services, targetSessionId);
+  const bind = await bindSessionRuntime(ws, services, targetSessionId);
+  // The socket is already closed and told why — say nothing more, and do not
+  // record a session on a connection that is going away.
+  if (bind.kind === "refused") return;
+  const runtime = bind.kind === "bound" ? bind.runtime : null;
   // The id is kept even on a bind failure — deliberately, mirroring
   // handleSessionConfigure: it is the only record of which session the client
   // asked for, and a later text.input's late-bind path (ensureBoundRuntime,

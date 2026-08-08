@@ -46,13 +46,15 @@ const STALE_CODE = "expired";
 const STALE_MESSAGE = "your account changed — please sign in again";
 
 /**
- * Why a socket's authenticated context no longer matches the record.
+ * Why a socket's authenticated context cannot be shown to still match the
+ * record.
  *
- * Three, not one, because they are different incidents in a log even though
- * they take the same remedy: the account is gone, its credentials were revoked,
- * or its role moved without the floor moving with it.
+ * Four, not one, because they are different incidents in a log even though they
+ * take the same remedy: the account is gone, its credentials were revoked, its
+ * role moved without the floor moving with it, or the socket cannot say when
+ * its own credential was issued.
  */
-export type StaleAuthorityReason = "no-record" | "credentials-revoked" | "role-diverged";
+export type StaleAuthorityReason = "no-record" | "credentials-revoked" | "role-diverged" | "no-issue-instant";
 
 /**
  * Re-resolve this socket's authority and eject it if it has gone stale.
@@ -99,9 +101,18 @@ async function findStaleAuthority(
   // establish that this socket's authority is still granted.
   if (!stored.ok || stored.value === null) return "no-record";
 
+  // FAIL CLOSED ON A MISSING ISSUE INSTANT. The auth gate sets
+  // `tokenIssuedAtMs` in the same block it sets the principal, so a socket with
+  // one and not the other is unreachable today — which is exactly why the
+  // default matters: `issuedAtMs !== null && …` would silently DROP the
+  // revocation check if that invariant ever broke, and a fail-open default
+  // inside a fail-closed gate is the kind of thing nobody notices until it is
+  // load-bearing. No issue instant, no way to prove the credential predates
+  // nothing: refuse.
   const issuedAtMs = ws.data.tokenIssuedAtMs;
+  if (issuedAtMs === null) return "no-issue-instant";
   const floorMs = Date.parse(stored.value.credentialsValidFrom);
-  if (issuedAtMs !== null && isRevoked(issuedAtMs, floorMs)) return "credentials-revoked";
+  if (isRevoked(issuedAtMs, floorMs)) return "credentials-revoked";
 
   // BELT TO THAT BRACES. `setRole` writes the role and the floor in one patch,
   // so a role change always trips the check above; this catches any other write

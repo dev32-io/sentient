@@ -105,7 +105,7 @@ const AUDIO_ENCODING = "pcm16";
 // registry this replaced, without tearing the first window down.
 // ---------------------------------------------------------------------------
 
-export function handleSessionConfigure(
+export async function handleSessionConfigure(
   ws: ServerWebSocket<SessionData>,
   capabilities: readonly string[],
   language: "en" | "zh",
@@ -115,7 +115,7 @@ export function handleSessionConfigure(
   configureSurfaceId: string | undefined,
   configureResume: SessionConfigureResume | undefined,
   configureConversationId: string | undefined,
-): void {
+): Promise<void> {
   const sessionId = ws.data.sessionId;
   if (!sessionId) {
     sendError(ws, "protocol_error", "No active session");
@@ -196,7 +196,13 @@ export function handleSessionConfigure(
   // window — it receives nothing until the attach is completed below, which is
   // what makes "the snapshot, then the frames that arrived meanwhile" a single
   // linearization point rather than two steps with a hole between them.
-  const hasRuntime = resolved.sessionId !== null && bindSessionRuntime(ws, services, resolved.sessionId) !== null;
+  const bind = resolved.sessionId === null ? null : await bindSessionRuntime(ws, services, resolved.sessionId);
+  // REFUSED is not a degraded handshake, it is a DEAD socket: the bind found
+  // that the record no longer grants this connection's authority, told the
+  // client so and closed it (session-binding.ts). Everything below writes
+  // frames and opens a store handle, all of it for a corpse.
+  if (bind?.kind === "refused") return;
+  const hasRuntime = bind?.kind === "bound";
   // A resume is honourable only when this connection's cursor is in the same
   // seq space the session's journal is still allocating from.
   const epochMatches = configureResume !== undefined && configureResume.epoch === ws.data.epoch;

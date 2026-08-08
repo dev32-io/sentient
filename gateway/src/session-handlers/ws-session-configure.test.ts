@@ -36,6 +36,7 @@ import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { ToolBroker } from "../tools/tool-broker.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import { type ReplayRegistry, createReplayRegistry } from "./replay-registry.js";
 import { mintSessionId } from "./session-id.js";
 import { createSessionRegistry } from "./session-registry.js";
@@ -98,6 +99,9 @@ function fakeAuthedWs(connectionSessionId = "test-session"): FakeWs {
   data.sessionId = connectionSessionId;
   data.authState = "authed";
   data.principal = createUserPrincipal(USER_ID, "adult", "home");
+  // The auth gate sets this beside the principal; the authority re-check at the
+  // mint refuses a socket that cannot say when its credential was issued.
+  data.tokenIssuedAtMs = Date.now() - 3_600_000;
   const ws: FakeWs = {
     data,
     sent: [],
@@ -121,12 +125,40 @@ function dropSocket(ws: FakeWs, readyState: number = WS_CLOSED): void {
   ws.readyState = readyState;
 }
 
+/** The record `bindSessionRuntime` re-resolves this connection's authority
+ *  against before it mints a capability (stale-authority.ts). These fixtures
+ *  are about routing and handshakes, so the record always MATCHES the socket's
+ *  principal. */
+function liveAuthDouble() {
+  return {
+    users: {
+      get: async (userId: string) => ({
+        ok: true as const,
+        value: {
+          userId,
+          displayName: userId,
+          pinHash: "$argon2id$fake",
+          role: "adult" as const,
+          avatarTint: "terra" as const,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          credentialsValidFrom: NEVER_REVOKED,
+        },
+      }),
+    },
+  };
+}
+
 function asWs(ws: FakeWs): ServerWebSocket<SessionData> {
   return ws as unknown as ServerWebSocket<SessionData>;
 }
 
-function configure(ws: FakeWs, services: GatewayServices, surfaceId: string, conversationId?: string): void {
-  handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, conversationId);
+async function configure(
+  ws: FakeWs,
+  services: GatewayServices,
+  surfaceId: string,
+  conversationId?: string,
+): Promise<void> {
+  await handleSessionConfigure(asWs(ws), [], "en", services, "webui", DEVICE_ID, surfaceId, undefined, conversationId);
 }
 
 /**
@@ -200,12 +232,13 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
     // nothing observable holds the session. These cases never give it work, so
     // it behaves as the old "last one out" did — which is what they were
     // written against.
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
   return spy;
 }
 
-describe("handleSessionConfigure — the SESSION's journal across a re-configure", () => {
-  it("keeps the same journal and epoch when a connection re-configures the same session", () => {
+describe("handleSessionConfigure — the SESSION's journal across a re-configure", async () => {
+  it("keeps the same journal and epoch when a connection re-configures the same session", async () => {
     // The journal follows the SESSION now, not the surface. A reload landing
     // back on the same conversation must continue its seq space, or the client
     // reads the epoch jump as a stream restart and refetches everything.
@@ -215,18 +248,18 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
     const firstJournal = ws.data.journal;
     const firstEpoch = ws.data.epoch;
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
 
     expect(firstJournal).not.toBeNull();
     expect(ws.data.journal).toBe(firstJournal);
     expect(ws.data.epoch).toBe(firstEpoch);
   });
 
-  it("gives two SURFACES of one user on one session the SAME journal", () => {
+  it("gives two SURFACES of one user on one session the SAME journal", async () => {
     // The inversion this task made: `surfaceId` used to partition the journal,
     // which meant two windows on one conversation held two seq spaces over the
     // same frames.
@@ -237,14 +270,14 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
     const spy = servicesWithRuntime(registry, wsA, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(wsA, spy.services, SURFACE_A, sessionId);
-    configure(wsB, spy.services, SURFACE_B, sessionId);
+    await configure(wsA, spy.services, SURFACE_A, sessionId);
+    await configure(wsB, spy.services, SURFACE_B, sessionId);
 
     expect(wsB.data.journal).toBe(wsA.data.journal);
     expect(wsB.data.epoch).toBe(wsA.data.epoch);
   });
 
-  it("hands a DIFFERENT session a different journal and epoch", () => {
+  it("hands a DIFFERENT session a different journal and epoch", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
@@ -252,17 +285,17 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
     const first = seedSession(accessManager, USER_ID, "first");
     const second = seedSession(accessManager, USER_ID, "second");
 
-    configure(ws, spy.services, SURFACE_A, first);
+    await configure(ws, spy.services, SURFACE_A, first);
     const firstJournal = ws.data.journal;
     const firstEpoch = ws.data.epoch;
 
-    configure(ws, spy.services, SURFACE_A, second);
+    await configure(ws, spy.services, SURFACE_A, second);
 
     expect(ws.data.journal).not.toBe(firstJournal);
     expect(ws.data.epoch).not.toBe(firstEpoch);
   });
 
-  it("leaves a DRAFT connection with no journal at all", () => {
+  it("leaves a DRAFT connection with no journal at all", async () => {
     // A draft has no session, so there is no conversation to replay. The client
     // has no cursor at that point either, which is why an unsequenced draft
     // handshake is correct rather than a gap.
@@ -270,7 +303,7 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
     const ws = fakeAuthedWs();
     const spy = servicesWithRuntime(registry, ws, freshAccessManager());
 
-    configure(ws, spy.services, SURFACE_A);
+    await configure(ws, spy.services, SURFACE_A);
 
     expect(ws.data.journal).toBeNull();
     expect(ws.data.epoch).toBe(0);
@@ -278,8 +311,8 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
   });
 });
 
-describe("handleSessionConfigure — committed-feed handshake", () => {
-  it("CONTRACT: re-opening a session sends conversation.snapshot right after session.ready", () => {
+describe("handleSessionConfigure — committed-feed handshake", async () => {
+  it("CONTRACT: re-opening a session sends conversation.snapshot right after session.ready", async () => {
     // Nothing else on the wire carries committed history: `turn.*` is a live
     // stream the client drops on turn.completed. Without this frame the chat
     // is empty on every reload.
@@ -289,13 +322,13 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
 
     expect(frameTypes(ws)).toEqual(["session.attached", "session.ready", "conversation.snapshot"]);
     expect(spy.snapshotCalls).toBe(1);
   });
 
-  it("CONTRACT: a draft connection is told it is a draft — empty snapshot, then the key it will mint under", () => {
+  it("CONTRACT: a draft connection is told it is a draft — empty snapshot, then the key it will mint under", async () => {
     // A draft has no row and no id, so there is no feed to project. The empty
     // snapshot is still mandatory: without it a reload right after "+" leaves
     // the previous session's bubbles on screen with nothing to clear them.
@@ -305,7 +338,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const ws = fakeAuthedWs();
     const spy = servicesWithRuntime(registry, ws, freshAccessManager());
 
-    configure(ws, spy.services, SURFACE_A);
+    await configure(ws, spy.services, SURFACE_A);
 
     expect(frameTypes(ws)).toEqual(["session.ready", "conversation.snapshot", "session.draft"]);
     expect(spy.snapshotCalls).toBe(0); // no runtime was built — there is no session
@@ -313,17 +346,17 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(ws.data.draftKey).toBe(ws.sent[2]?.draftKey as string);
   });
 
-  it("CONTRACT: a RECOVERED resume sends no snapshot — the verbatim replay already restored the mirror", () => {
+  it("CONTRACT: a RECOVERED resume sends no snapshot — the verbatim replay already restored the mirror", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs();
     const accessManager = freshAccessManager();
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
     expect(spy.snapshotCalls).toBe(1);
 
-    handleSessionConfigure(
+    await handleSessionConfigure(
       asWs(ws),
       [],
       "en",
@@ -339,7 +372,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(spy.snapshotCalls).toBe(1); // unchanged
   });
 
-  it("CONTRACT: a non-recovered resume sends stream.resumed, then session.ready, then the snapshot", () => {
+  it("CONTRACT: a non-recovered resume sends stream.resumed, then session.ready, then the snapshot", async () => {
     // recovered:false means the client resets its cursor and has no history —
     // the one reconnect path where the snapshot is the only way back.
     //
@@ -360,7 +393,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    handleSessionConfigure(
+    await handleSessionConfigure(
       asWs(ws),
       [],
       "en",
@@ -377,7 +410,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(spy.snapshotCalls).toBe(1);
   });
 
-  it("CONTRACT: a non-recovered session.configure publishes the task-list strip exactly once", () => {
+  it("CONTRACT: a non-recovered session.configure publishes the task-list strip exactly once", async () => {
     // The strip's own attach-time publish (SessionRuntime.emitTaskList) rides
     // beside conversation.snapshot for the same reason: a fresh joiner has no
     // other way to learn what is already running (runtime/task-list.ts).
@@ -387,12 +420,12 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
 
     expect(spy.taskListCalls).toBe(1);
   });
 
-  it("CONTRACT: a RECOVERED resume does not re-publish the task-list strip", () => {
+  it("CONTRACT: a RECOVERED resume does not re-publish the task-list strip", async () => {
     // Mirrors the snapshot case above: the recovered replay already carries
     // whatever tasklist.state frames were journaled while this window was
     // away, so a second full-state push here would be redundant at best.
@@ -402,10 +435,10 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
     expect(spy.taskListCalls).toBe(1);
 
-    handleSessionConfigure(
+    await handleSessionConfigure(
       asWs(ws),
       [],
       "en",
@@ -421,7 +454,7 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     expect(spy.taskListCalls).toBe(1); // unchanged
   });
 
-  it("CONTRACT: conversation.activate publishes the task-list strip for the session it switched TO", () => {
+  it("CONTRACT: conversation.activate publishes the task-list strip for the session it switched TO", async () => {
     // THE PATH THAT MATTERS MOST, and the one that had no strip publish at all.
     // `conversation.activate` deliberately sends no committed snapshot — the
     // client REST-refetches history — but it CAN land mid-turn, which is why it
@@ -439,16 +472,16 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const first = seedSession(accessManager, USER_ID, "first conversation");
     const second = seedSession(accessManager, USER_ID, "second conversation");
 
-    configure(ws, spy.services, SURFACE_A, first);
+    await configure(ws, spy.services, SURFACE_A, first);
     expect(spy.taskListCalls).toBe(1);
 
-    handleConversationActivate(asWs(ws), spy.services, second);
+    await handleConversationActivate(asWs(ws), spy.services, second);
 
     expect(ws.sent.some((f) => f.type === "session.switched" && f.sessionId === second)).toBe(true);
     expect(spy.taskListCalls).toBe(2);
   });
 
-  it("CONTRACT: a no-op conversation.activate onto the SAME session does not re-publish the strip", () => {
+  it("CONTRACT: a no-op conversation.activate onto the SAME session does not re-publish the strip", async () => {
     // The duplicate-activate short circuit (double-click, a second window
     // opening the row it is already on) returns before any re-attach, so there
     // is no new window to answer and nothing to re-push.
@@ -458,10 +491,10 @@ describe("handleSessionConfigure — committed-feed handshake", () => {
     const spy = servicesWithRuntime(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
     expect(spy.taskListCalls).toBe(1);
 
-    handleConversationActivate(asWs(ws), spy.services, sessionId);
+    await handleConversationActivate(asWs(ws), spy.services, sessionId);
 
     expect(spy.taskListCalls).toBe(1);
   });
@@ -514,12 +547,13 @@ function servicesRecordingPartition(
       spy.partitionIds.push(conversationId);
       return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
   return spy;
 }
 
-describe("handleSessionConfigure — session addressing", () => {
-  it("SECURITY: an id this user's store does not hold is refused, not created", () => {
+describe("handleSessionConfigure — session addressing", async () => {
+  it("SECURITY: an id this user's store does not hold is refused, not created", async () => {
     // The junk-partition vector: the previous handler honoured any
     // well-prefixed string and opened an empty partition for it, so a client
     // could fill a user's database with rows nothing can list, open or delete.
@@ -528,7 +562,7 @@ describe("handleSessionConfigure — session addressing", () => {
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
 
-    configure(ws, spy.services, SURFACE_A, mintSessionId());
+    await configure(ws, spy.services, SURFACE_A, mintSessionId());
 
     expect(spy.partitionIds).toEqual([]);
     expect(ws.data.conversationId).toBeNull();
@@ -539,7 +573,7 @@ describe("handleSessionConfigure — session addressing", () => {
     store.close();
   });
 
-  it("SECURITY: another principal's session id is refused like any unknown id", () => {
+  it("SECURITY: another principal's session id is refused like any unknown id", async () => {
     // The store is one DB per user opened through a Capability, so the id
     // simply is not there — which is exactly why membership is a stronger
     // check than the prefix parse it replaces, and why no code path needs to
@@ -550,13 +584,13 @@ describe("handleSessionConfigure — session addressing", () => {
 
     const ws = fakeAuthedWs();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
-    configure(ws, spy.services, SURFACE_A, foreignId);
+    await configure(ws, spy.services, SURFACE_A, foreignId);
 
     expect(spy.partitionIds).toEqual([]);
     expect(ws.data.conversationId).toBeNull();
   });
 
-  it("INVARIANT: a connection that presents nothing leaves no row behind", () => {
+  it("INVARIANT: a connection that presents nothing leaves no row behind", async () => {
     // "Ten opened tabs leave the session list unchanged" (spec §4.2). A draft
     // is not a session: no row, no id, nothing to list.
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
@@ -571,21 +605,21 @@ describe("handleSessionConfigure — session addressing", () => {
     expect(spy.partitionIds).toEqual([]);
   });
 
-  it("CONTRACT: an id this user's store holds is opened, and it is not the connection id", () => {
+  it("CONTRACT: an id this user's store holds is opened, and it is not the connection id", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const ws = fakeAuthedWs("connection-1");
     const accessManager = freshAccessManager();
     const spy = servicesRecordingPartition(registry, ws, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
 
     expect(spy.partitionIds).toEqual([sessionId]);
     expect(ws.data.conversationId).toBe(sessionId);
     expect(ws.data.sessionId).toBe("connection-1");
   });
 
-  it("CONTRACT: two connections presenting one id open the SAME session, whatever their surfaces", () => {
+  it("CONTRACT: two connections presenting one id open the SAME session, whatever their surfaces", async () => {
     // Surfaces no longer partition anything (§3.4: surfaceId gates nothing).
     // ONE partition is opened, not two: the second connection attaches to the
     // session the first made resident rather than constructing a second
@@ -597,15 +631,15 @@ describe("handleSessionConfigure — session addressing", () => {
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
     const second = fakeAuthedWs("connection-2");
 
-    configure(first, spy.services, SURFACE_A, sessionId);
-    configure(second, spy.services, SURFACE_B, sessionId);
+    await configure(first, spy.services, SURFACE_A, sessionId);
+    await configure(second, spy.services, SURFACE_B, sessionId);
 
     expect(spy.partitionIds).toEqual([sessionId]);
     expect(first.data.conversationId).toBe(sessionId);
     expect(second.data.conversationId).toBe(sessionId);
   });
 
-  it("INVARIANT: a legacy c:: partition that holds entries is still addressable", () => {
+  it("INVARIANT: a legacy c:: partition that holds entries is still addressable", async () => {
     // Existing users' conversations are rows in their own store, reached
     // through the same membership lookup. Both shapes are handled identically
     // and the surfaceId inside a legacy id carries no authority.
@@ -631,12 +665,12 @@ describe("handleSessionConfigure — session addressing", () => {
     });
     store.close();
 
-    configure(ws, spy.services, SURFACE_B, legacyId);
+    await configure(ws, spy.services, SURFACE_B, legacyId);
 
     expect(spy.partitionIds).toEqual([legacyId]);
   });
 
-  it("INVARIANT: a reconnect mid-draft stays on the same draft key", () => {
+  it("INVARIANT: a reconnect mid-draft stays on the same draft key", async () => {
     // The draft key is the mint key. A reconnect that re-minted it would give
     // the retry of a first message a different key, and the lost-ack retry
     // would fork a second session — the exact failure §4.2 names.
@@ -644,11 +678,11 @@ describe("handleSessionConfigure — session addressing", () => {
     const first = fakeAuthedWs("connection-1");
     const spy = servicesRecordingPartition(registry, first, freshAccessManager());
 
-    configure(first, spy.services, SURFACE_A);
+    await configure(first, spy.services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
 
     const second = fakeAuthedWs("connection-2");
-    configure(second, spy.services, SURFACE_A, draftKey);
+    await configure(second, spy.services, SURFACE_A, draftKey);
 
     expect(second.data.draftKey).toBe(draftKey);
     expect(second.data.conversationId).toBeNull();
@@ -714,21 +748,22 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
       } as unknown as SessionRuntime;
       return { runtime, permissions: { denyAll: () => {} }, work: IDLE_WORK };
     },
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
   return spy;
 }
 
-describe("handleSessionConfigure — one live runtime per session", () => {
-  it("INVARIANT: a second connection on a live session shares the runtime instead of evicting it", () => {
+describe("handleSessionConfigure — one live runtime per session", async () => {
+  it("INVARIANT: a second connection on a live session shares the runtime instead of evicting it", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, spy.services, SURFACE_A, sessionId);
+    await configure(first, spy.services, SURFACE_A, sessionId);
     const second = fakeAuthedWs("connection-2");
-    configure(second, spy.services, SURFACE_A, sessionId);
+    await configure(second, spy.services, SURFACE_A, sessionId);
 
     // ONE construction, shared: not one per connection, and not a teardown of
     // the window that got there first.
@@ -741,15 +776,15 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     expect(spy.services.sessionRegistry.subscribers(sessionId)).toHaveLength(2);
   });
 
-  it("keeps the runtime a re-configure on the SAME connection just minted", () => {
+  it("keeps the runtime a re-configure on the SAME connection just minted", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
     const ws = fakeAuthedWs("connection-1");
-    configure(ws, spy.services, SURFACE_A, sessionId);
-    configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
+    await configure(ws, spy.services, SURFACE_A, sessionId);
 
     // The handler disposes the prior runtime itself; the newly minted one must
     // not then be evicted by the claim it just made.
@@ -758,7 +793,7 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     expect(ws.data.runtime).not.toBeNull();
   });
 
-  it("INVARIANT: a superseded connection's teardown cannot detach the live one", () => {
+  it("INVARIANT: a superseded connection's teardown cannot detach the live one", async () => {
     // Mirrors replay-registry's stale-lease guard: the close event of the
     // socket a reload replaced lands AFTER the new socket configured. Detach
     // is keyed on the ATTACHMENT id, minted per attach, so the late close can
@@ -769,9 +804,9 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
     const stale = fakeAuthedWs("connection-1");
-    configure(stale, spy.services, SURFACE_A, sessionId);
+    await configure(stale, spy.services, SURFACE_A, sessionId);
     const live = fakeAuthedWs("connection-2");
-    configure(live, spy.services, SURFACE_A, sessionId);
+    await configure(live, spy.services, SURFACE_A, sessionId);
     const liveRuntime = live.data.runtime;
 
     cleanupSession(asWs(stale), spy.services);
@@ -781,16 +816,16 @@ describe("handleSessionConfigure — one live runtime per session", () => {
     expect(spy.services.sessionRegistry.subscribers(sessionId)).toHaveLength(1);
   });
 
-  it("INVARIANT: the runtime is disposed when the LAST window leaves, not the first", () => {
+  it("INVARIANT: the runtime is disposed when the LAST window leaves, not the first", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
     const spy = servicesTrackingRuntimes(registry, accessManager);
     const sessionId = seedSession(accessManager, USER_ID, "earlier turn");
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, spy.services, SURFACE_A, sessionId);
+    await configure(first, spy.services, SURFACE_A, sessionId);
     const second = fakeAuthedWs("connection-2");
-    configure(second, spy.services, SURFACE_A, sessionId);
+    await configure(second, spy.services, SURFACE_A, sessionId);
 
     cleanupSession(asWs(first), spy.services);
     expect(spy.minted[0]?.disposeCount).toBe(0);
@@ -929,6 +964,7 @@ function servicesWithStoreBackedRuntime(
       permissions: { denyAll: () => {} },
       work: IDLE_WORK,
     }),
+    auth: liveAuthDouble(),
   } as unknown as GatewayServices;
 }
 
@@ -966,7 +1002,7 @@ function entriesFor(accessManager: AccessManager, sessionId: string): { kind: st
   return rows;
 }
 
-describe("handleSessionConfigure — reload rebuilds the conversation", () => {
+describe("handleSessionConfigure — reload rebuilds the conversation", async () => {
   it("CONTRACT: a reload presenting the minted id replays the prior feed and a non-empty model projection", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
@@ -974,7 +1010,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, provider);
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     // A draft: nothing exists until the first message allocates it.
     expect(first.data.conversationId).toBeNull();
     const sessionId = await sendFirstMessage(first, services, "remember the number 41");
@@ -984,7 +1020,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     cleanupSession(asWs(first), services);
 
     const second = fakeAuthedWs("connection-2");
-    configure(second, services, SURFACE_A, sessionId);
+    await configure(second, services, SURFACE_A, sessionId);
 
     const snapshot = second.sent.find((f) => f.type === "conversation.snapshot");
     const items = (snapshot?.items ?? []) as { kind: string; content?: string }[];
@@ -1026,7 +1062,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
     const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
@@ -1038,7 +1074,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
 
     // The retry arrives on a NEW socket carrying the same unspent draft key.
     const retry = fakeAuthedWs("connection-2");
-    configure(retry, services, SURFACE_A, draftKey);
+    await configure(retry, services, SURFACE_A, draftKey);
     expect(retry.data.conversationId).toBeNull();
     const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
@@ -1067,7 +1103,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
     const sessionId = await sendFirstMessage(first, services, "hello");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
@@ -1075,7 +1111,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     cleanupSession(asWs(first), services);
 
     const retry = fakeAuthedWs("connection-2");
-    configure(retry, services, SURFACE_A, draftKey);
+    await configure(retry, services, SURFACE_A, draftKey);
     expect(await sendFirstMessage(retry, services, "hello")).toBe(sessionId);
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
     cleanupSession(asWs(retry), services);
@@ -1096,7 +1132,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
     await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
@@ -1104,7 +1140,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     cleanupSession(asWs(first), services);
 
     const retry = fakeAuthedWs("connection-2");
-    configure(retry, services, SURFACE_A, draftKey);
+    await configure(retry, services, SURFACE_A, draftKey);
     // The draft handshake's own empty snapshot — the thing that would be left
     // standing if the replayed mint sent nothing.
     expect(retry.sent.filter((f) => f.type === "conversation.snapshot")).toHaveLength(1);
@@ -1143,7 +1179,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     };
 
     const ws = fakeAuthedWs("connection-1");
-    configure(ws, services, SURFACE_A);
+    await configure(ws, services, SURFACE_A);
     await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "hello" }), services);
     expect(ws.data.runtime).toBeNull();
     expect(registry.size).toBe(1);
@@ -1177,7 +1213,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     };
 
     const ws = fakeAuthedWs("connection-1");
-    configure(ws, services, SURFACE_A);
+    await configure(ws, services, SURFACE_A);
     const draftKey = ws.data.draftKey as string;
 
     await handleWebSocketMessage(asWs(ws), JSON.stringify({ type: "text.input", text: "hello" }), services);
@@ -1224,7 +1260,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     };
 
     const ws = fakeAuthedWs("connection-1");
-    configure(ws, services, SURFACE_A, sessionId);
+    await configure(ws, services, SURFACE_A, sessionId);
     expect(ws.data.runtime).toBeNull();
     // The id is KEPT despite the failure — it is what the retry re-binds.
     expect(ws.data.conversationId).toBe(sessionId);
@@ -1281,13 +1317,13 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
 
     // 1 + 2: A resolves S, its bind fails, nothing is claimed, and it idles.
     const a = fakeAuthedWs("connection-a");
-    configure(a, services, SURFACE_A, sessionId);
+    await configure(a, services, SURFACE_A, sessionId);
     expect(a.data.runtime).toBeNull();
     expect(a.data.conversationId).toBe(sessionId);
 
     // 3: B opens the same session and binds successfully.
     const b = fakeAuthedWs("connection-b");
-    configure(b, services, SURFACE_B, sessionId);
+    await configure(b, services, SURFACE_B, sessionId);
     const bRuntime = b.data.runtime as SessionRuntime;
     expect(bRuntime).not.toBeNull();
 
@@ -1329,13 +1365,13 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
     const original = fakeAuthedWs("connection-original");
-    configure(original, services, SURFACE_A);
+    await configure(original, services, SURFACE_A);
     const draftKey = original.data.draftKey as string;
 
     // The duplicate carries the copied surfaceId too, which is why it is
     // SURFACE_A here and not a second surface.
     const duplicate = fakeAuthedWs("connection-duplicate");
-    configure(duplicate, services, SURFACE_A, draftKey);
+    await configure(duplicate, services, SURFACE_A, draftKey);
     expect(duplicate.data.draftKey).toBe(draftKey);
 
     const sessionId = await sendFirstMessage(original, services, "first tab types");
@@ -1380,7 +1416,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("ok"));
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     const draftKey = first.data.draftKey as string;
     const sessionId = await sendFirstMessage(first, services, "hello", "pending-1");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
@@ -1389,7 +1425,7 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     dropSocket(first, WS_CLOSING);
 
     const retry = fakeAuthedWs("connection-2");
-    configure(retry, services, SURFACE_A, draftKey);
+    await configure(retry, services, SURFACE_A, draftKey);
     const retriedId = await sendFirstMessage(retry, services, "hello", "pending-1");
     await waitUntilIdle(retry.data.runtime as SessionRuntime);
 
@@ -1411,13 +1447,13 @@ describe("handleSessionConfigure — reload rebuilds the conversation", () => {
     const services = servicesWithStoreBackedRuntime(registry, accessManager, fakeProvider("hello back"));
 
     const first = fakeAuthedWs("connection-1");
-    configure(first, services, SURFACE_A);
+    await configure(first, services, SURFACE_A);
     await sendFirstMessage(first, services, "private to the first session");
     await waitUntilIdle(first.data.runtime as SessionRuntime);
     cleanupSession(asWs(first), services);
 
     const second = fakeAuthedWs("connection-2");
-    configure(second, services, SURFACE_B);
+    await configure(second, services, SURFACE_B);
 
     const snapshot = second.sent.find((f) => f.type === "conversation.snapshot");
     expect(snapshot?.items).toEqual([]);

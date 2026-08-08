@@ -92,6 +92,22 @@ describe("refuseStaleAuthority", () => {
     expect(socket.closes).toEqual([]);
   });
 
+  // FAIL CLOSED ON A MISSING ISSUE INSTANT. Unreachable while the auth gate's
+  // invariant holds — it sets `tokenIssuedAtMs` in the same block as the
+  // principal — which is exactly why the DEFAULT is what is pinned: a socket
+  // that cannot say when its credential was issued cannot be shown to predate
+  // nothing, and a fail-open default inside a fail-closed gate is invisible
+  // until the day it is load-bearing.
+  it("SECURITY: refuses a socket that cannot say when its credential was issued", async () => {
+    const socket = authedSocket();
+    socket.ws.data.tokenIssuedAtMs = null;
+
+    const reason = await refuseStaleAuthority(socket.ws, storeReturning(MATCHING_RECORD));
+
+    expect(reason).toBe("no-issue-instant");
+    expect(socket.closes).toEqual([1008]);
+  });
+
   // The auth gate governs an unauthenticated socket, not this. Closing one here
   // would eject a connection mid-handshake over a record it has not claimed.
   it("does not close a socket that has not authenticated", async () => {
