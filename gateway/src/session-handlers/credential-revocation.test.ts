@@ -69,18 +69,36 @@ function fakeSocket(userId: string, connectionId: string): FakeSocket {
   return { events, ws: ws as unknown as ServerWebSocket<SessionData> };
 }
 
-const IDLE_HANDLES = {
-  runtime: { dispose: () => {} },
-  permissions: { denyAll: () => {} },
-  work: {
-    isTurnInFlight: false,
-    hasPendingForegroundTool: false,
-    hasOutstandingPrompt: false,
-    hasAuxiliaryTaskInFlight: false,
-    newestBackgroundTaskStartedAtMs: null,
-  },
-  dispose: () => {},
-} as unknown as SessionHandles;
+/** One resident session, with a runtime that records every `revokeAuthority` it
+ *  is told and reports [userId] as its owner — `SessionRuntime.userId` is the
+ *  only index `runtimesForUser` has. */
+interface ResidentDouble {
+  readonly revocations: string[];
+  readonly handles: SessionHandles;
+}
+
+function residentSession(userId: string): ResidentDouble {
+  const revocations: string[] = [];
+  const handles = {
+    runtime: {
+      userId,
+      dispose: () => {},
+      revokeAuthority: (reason: string) => {
+        revocations.push(reason);
+      },
+    },
+    permissions: { denyAll: () => {} },
+    work: {
+      isTurnInFlight: false,
+      hasPendingForegroundTool: false,
+      hasOutstandingPrompt: false,
+      hasAuxiliaryTaskInFlight: false,
+      newestBackgroundTaskStartedAtMs: null,
+    },
+    dispose: () => {},
+  } as unknown as SessionHandles;
+  return { revocations, handles };
+}
 
 interface Harness {
   registry: ReturnType<typeof createSessionRegistry>;
@@ -94,7 +112,15 @@ interface Harness {
   authenticate: (socket: FakeSocket, userId: string) => string;
   /** Authenticate, THEN attach — the only order production can produce, and the
    *  reason a live window is in both indexes at once. */
-  attach: (socket: FakeSocket, userId: string, sessionId: string) => string;
+  attach: (socket: FakeSocket, userId: string, sessionId: string) => { connectionId: string; resident: ResidentDouble };
+  /**
+   * A session that is RESIDENT WITH NO WINDOW — attached, then detached, with a
+   * policy that never disposes. Production's shape for exactly one thing:
+   * `session-retention.ts` holding a session open past its last window because
+   * a background task has not reported completion. Neither the attachment walk
+   * nor the authenticated-socket set can see it.
+   */
+  orphanedSession: (userId: string, sessionId: string) => ResidentDouble;
 }
 
 /** A live gateway in miniature: the real registry (which owns the attachment
@@ -125,8 +151,18 @@ function harness(): Harness {
     },
     attach(socket, userId, sessionId) {
       const connectionId = h.authenticate(socket, userId);
-      registry.attach(sessionId, connectionId, socket.ws, () => IDLE_HANDLES);
-      return connectionId;
+      const resident = residentSession(userId);
+      registry.attach(sessionId, connectionId, socket.ws, () => resident.handles);
+      return { connectionId, resident };
+    },
+    orphanedSession(userId, sessionId) {
+      const socket = fakeSocket(userId, `${sessionId}-gone`);
+      const connectionId = h.authenticate(socket, userId);
+      const resident = residentSession(userId);
+      const attachment = registry.attach(sessionId, connectionId, socket.ws, () => resident.handles);
+      registry.detach(sessionId, attachment.attachmentId);
+      sockets.remove(socket.ws);
+      return resident;
     },
   };
   return h;
@@ -175,8 +211,8 @@ describe("CredentialRevoker", () => {
     const h = harness();
     const ada = fakeSocket(ADA, "ada-laptop");
     const grace = fakeSocket(GRACE, "grace-phone");
-    const adaConnectionId = h.attach(ada, ADA, "s_ada_1");
-    const graceConnectionId = h.attach(grace, GRACE, "s_grace_1");
+    const adaConnectionId = h.attach(ada, ADA, "s_ada_1").connectionId;
+    const graceConnectionId = h.attach(grace, GRACE, "s_grace_1").connectionId;
 
     await h.revoker.revokeUser(ADA, "role-changed");
 
@@ -283,5 +319,60 @@ describe("CredentialRevoker", () => {
 
     expect(ejectionOf(departed)).toEqual([]);
     expect(ejectionOf(survivor)).toEqual(EJECTION);
+  });
+
+  // ── THE SESSION THAT OUTLIVES ITS WINDOWS ───────────────────────────────
+  //
+  // Closing the sockets is not the whole job. `session-retention.ts` keeps a
+  // session resident while a background task is unfinished — deliberately,
+  // because nothing cancels one and disposal closes the store handle its result
+  // must land through. That retained `SessionRuntime` holds a `ToolBroker`
+  // whose `Capability` was minted with the OLD role frozen into it, and
+  // `submit` guarded only on `disposed`. So a `delegateTask` settling after the
+  // demotion started a headless follow-up turn at the pre-demotion role, with
+  // no window attached and nobody to see it.
+  //
+  // Both enumerations the revoker already had are blind to this: the session
+  // has no attachment and its socket is long gone. `runtimesForUser` is the
+  // only thing that reaches it.
+
+  it("SECURITY: revokes the authority of a session that is resident with no window left", async () => {
+    const h = harness();
+    const orphaned = h.orphanedSession(ADA, "s_ada_bg");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(orphaned.revocations).toEqual(["role-changed"]);
+  });
+
+  it("SECURITY: leaves another account's windowless session authoritative", async () => {
+    const h = harness();
+    const adaOrphan = h.orphanedSession(ADA, "s_ada_bg");
+    const graceOrphan = h.orphanedSession(GRACE, "s_grace_bg");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(adaOrphan.revocations).toEqual(["role-changed"]);
+    expect(graceOrphan.revocations).toEqual([]);
+  });
+
+  it("SECURITY: revokes an attached session's runtime as well as closing its window", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    const { resident } = h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(ada)).toEqual(EJECTION);
+    expect(resident.revocations).toEqual(["role-changed"]);
+  });
+
+  it("tells the runtime WHICH incident revoked it — a deletion is not a demotion", async () => {
+    const h = harness();
+    const orphaned = h.orphanedSession(ADA, "s_ada_bg");
+
+    await h.revoker.revokeUser(ADA, "user-deleted");
+
+    expect(orphaned.revocations).toEqual(["user-deleted"]);
   });
 });

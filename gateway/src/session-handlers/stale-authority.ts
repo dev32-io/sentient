@@ -30,6 +30,21 @@
 // DETACHING IS NOT THIS MODULE'S JOB, for the same reason it is not the
 // revoker's: the connection-close handler (`cleanupSession`, ws-handlers.ts) is
 // the one owner of that teardown.
+//
+// THIS IS THE SECOND OF THREE SEAMS, not the whole story. A frozen capability
+// can be reached three ways, and each has its own guard:
+//   1. a socket that authenticates AFTER the demotion — the credential floor
+//      refuses the token at `validate()`;
+//   2. a socket that authenticated BEFORE it and configures after — this
+//      module, which re-resolves the record at `session.configure`;
+//   3. a RUNTIME that already exists and has no socket at all — a session
+//      retained past its last window by an unfinished background task, whose
+//      broker still holds the capability minted for the old role. Neither this
+//      module nor the revoker's socket walk can see it; `revokeAuthority`
+//      (session-runtime.ts, driven from credential-revocation.ts) is what stops
+//      it starting another turn.
+// Only a turn already RUNNING when a revocation lands is left, and it is
+// bounded by that turn — see `SessionRuntime.revokeAuthority`.
 
 import type { ServerWebSocket } from "bun";
 import { getLog } from "../logging/logger.js";

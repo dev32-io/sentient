@@ -2893,3 +2893,127 @@ describe("SessionRuntime — task list", () => {
     runtime.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Case: credential revocation — a retained session stops being an authority.
+//
+// SECURITY BOUNDARY. `ToolBroker`'s `Capability` is authority-by-value, minted
+// once with the role frozen in. Revocation closes every socket, but the SESSION
+// outlives its windows: `session-retention.ts` keeps it resident while a
+// background task is unfinished, deliberately, because nothing cancels one and
+// disposal would close the store handle its result must land through. So a
+// `delegateTask` settling after a demotion reached `submit`, found no turn in
+// flight, and started a headless follow-up turn — a whole ReAct loop dispatching
+// tools at the pre-demotion role, with nobody attached to see it.
+//
+// The two halves are asserted together on purpose. "No turn runs" alone is
+// satisfied by disposing the runtime, which drops the completed task's result;
+// "the result is durable" alone is satisfied by the defect. Only the pair
+// describes the fix.
+// ---------------------------------------------------------------------------
+
+describe("SessionRuntime — revoked authority", () => {
+  it("SECURITY: a background completion after revocation is committed but starts no turn", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-revoked` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "this must never be generated" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-revoked",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.revokeAuthority("role-changed");
+    runtime.submit({ kind: "background-completion", note: "Delegated task task-1 completed: the answer" });
+
+    // Synchronous, both of them: `submit` starts a turn before it returns, so
+    // a still-false `running` here is the refusal itself, not a race.
+    expect(runtime.running).toBe(false);
+    expect(provider.calls).toHaveLength(0);
+    expect(emitter.events.filter((e) => e.type === "turnStarted")).toHaveLength(0);
+
+    // ...and the work the retention existed to preserve is durable.
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const trigger = readback.readSession("sess-revoked").find((e) => e.kind === "trigger");
+    expect(trigger?.text).toContain("Delegated task task-1 completed");
+    readback.close();
+
+    runtime.dispose();
+  });
+
+  it("refuses a conversational stimulus on a revoked runtime too", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-revoked-user` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "done", finishReason: "stop" };
+    });
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-revoked-user",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.revokeAuthority("user-deleted");
+    runtime.submit({ kind: "conversational", text: "one more thing" });
+
+    expect(runtime.running).toBe(false);
+    expect(provider.calls).toHaveLength(0);
+
+    runtime.dispose();
+  });
+
+  it("runs turns normally until it is revoked", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-revoked-before` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "sure" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-revoked-before",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "hello" });
+    await waitUntilIdle(runtime);
+    expect(provider.calls).toHaveLength(1);
+
+    runtime.revokeAuthority("role-changed");
+    runtime.submit({ kind: "conversational", text: "hello again" });
+    await waitUntilIdle(runtime);
+
+    // Still one: the guard is the revocation, not a broken runtime.
+    expect(provider.calls).toHaveLength(1);
+
+    runtime.dispose();
+  });
+});

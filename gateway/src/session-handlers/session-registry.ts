@@ -198,6 +198,24 @@ export interface SessionRegistry {
    * once and never rebinds.
    */
   attachmentsForUser(userId: string): readonly Attachment[];
+  /**
+   * Every RESIDENT session's runtime owned by [userId], whether or not a window
+   * is attached to it.
+   *
+   * STRICTLY WIDER THAN `attachmentsForUser`, and that is the whole reason it
+   * exists. A session outlives its windows: `session-retention.ts` keeps one
+   * resident while a background task is unfinished, so an account can hold a
+   * live runtime — and the `Capability` frozen into its `ToolBroker` — with
+   * zero sockets and zero attachments. Enumerating attachments finds none of
+   * them, which is how a revoked account kept an authority nobody could reach
+   * to take away. Owner read off `SessionRuntime.userId`, minted with the
+   * runtime and never rebound.
+   *
+   * A scan, for the same reason `attachmentsForUser` is one: a second index
+   * would have to stay in step through every attach, detach and disposal, and
+   * a divergence would leave a revoked account authoritative.
+   */
+  runtimesForUser(userId: string): readonly SessionRuntime[];
   /** The one runtime serving this session, or null when none is resident. */
   runtimeFor(sessionId: string): SessionRuntime | null;
   /** Everything an attaching connection needs to hold onto — see
@@ -313,6 +331,14 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
         for (const attachment of resident.subscribers.attachments) {
           if (attachment.ws.data.principal?.userId === userId) owned.push(attachment);
         }
+      }
+      return owned;
+    },
+
+    runtimesForUser(userId) {
+      const owned: SessionRuntime[] = [];
+      for (const resident of sessions.values()) {
+        if (resident.handles.runtime.userId === userId) owned.push(resident.handles.runtime);
       }
       return owned;
     },

@@ -155,6 +155,37 @@ export interface SessionRuntime {
    *  makes EVERY subsequent method on this object a logged no-op — including
    *  the settle continuation of a turn that was still in flight. Idempotent. */
   dispose(): void;
+  /**
+   * This account's credentials were revoked (a role change or a deletion —
+   * `session-handlers/credential-revocation.ts`). NO FURTHER TURN STARTS on
+   * this runtime; a stimulus arriving after this is appended to the store and
+   * nothing more. Idempotent.
+   *
+   * WHY THIS IS NOT `dispose()`. Revocation closes every socket, but the
+   * session survives its windows: `session-retention.ts` keeps it resident
+   * while a background task is unfinished, deliberately, because NOTHING
+   * cancels a background task and disposal closes the store handle its result
+   * has to land through. Disposing here would throw away the completed work
+   * this account is still owed. So the runtime lives — it just stops being an
+   * authority.
+   *
+   * WHAT IT CLOSES. `ToolBroker`'s `Capability` is authority-BY-VALUE, minted
+   * once with the role frozen in. A `delegateTask` settling minutes after a
+   * demotion reaches `submit`, finds no turn in flight, and starts a headless
+   * follow-up turn — a whole ReAct loop, dispatching tools through a broker
+   * that still holds the pre-demotion role, with no window attached to notice.
+   * That turn is what this refuses.
+   *
+   * WHAT IT DOES NOT CLOSE, stated so the claim stays honest: a turn ALREADY
+   * RUNNING when the revocation lands finishes under the capability it started
+   * with. Aborting it would need a third cancellation gesture beside barge-in
+   * and interrupt, with no cutoff kind to stamp and no client left to render
+   * one; and the exposure is bounded by that one turn, which was already
+   * running before the admin clicked. The unbounded case — a session that
+   * keeps starting new turns for as long as tasks keep landing — is the one
+   * closed above.
+   */
+  revokeAuthority(reason: string): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).
    *  Aborts the in-flight turn and commits its partial output as an assistant
    *  entry with `cutoff: "barge-in"`. Cuts this session's speech and flushes
@@ -427,6 +458,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     config.compaction.max_backoff_turns,
   );
   let disposed = false;
+  // Why this account's credentials were revoked, or null while they stand. A
+  // REASON rather than a boolean so the WARN on a refused turn says which
+  // incident refused it — a demotion and a deletion look identical from here
+  // otherwise. See `SessionRuntime.revokeAuthority`.
+  let revokedReason: string | null = null;
   // Auxiliary tasks (spec §6) running for this session. A COUNT so a future
   // second task (tags, follow-ups) composes without this becoming a latch.
   let auxiliaryInFlight = 0;
@@ -1057,6 +1093,25 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // Before `startTurn`, so the user's own bubble reaches the client ahead of
     // the `turn.started` it triggers — there is no optimistic client-side echo.
     feed.publishSettled();
+
+    // APPENDED, NOT RUN. The store write above is the whole point of still
+    // being here: a background task this account started is finishing, and its
+    // result has to become durable or the retention that kept this session
+    // resident bought nothing. Running a turn on it is a different act, and
+    // this runtime no longer has the authority for it — see `revokeAuthority`.
+    if (revokedReason !== null) {
+      log.warn("session-runtime.submit.revoked", {
+        userId,
+        sessionId,
+        kind: stimulus.kind,
+        seq: entry.seq,
+        revokedReason,
+        reason:
+          "this account's credentials were revoked — the stimulus is committed, but no turn starts under the capability minted before the revocation",
+      });
+      return;
+    }
+
     log.info("session-runtime.submit.start-turn", { userId, sessionId, kind: stimulus.kind, seq: entry.seq, turnId });
     startTurn(turnId, stimulusTrigger(stimulus));
   }
@@ -1086,6 +1141,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       }
       gesture(...args);
     };
+  }
+
+  function revokeAuthority(reason: string): void {
+    if (revokedReason !== null) return;
+    revokedReason = reason;
+    log.warn("session-runtime.authority-revoked", {
+      userId,
+      sessionId,
+      revokedReason: reason,
+      hadInFlight: inFlight !== null,
+      reason:
+        "this session stays resident so a running background task's result can still land, but starts no further turn under its pre-revocation capability",
+    });
   }
 
   function dispose(): void {
@@ -1131,6 +1199,11 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
       return auxiliaryInFlight > 0;
     },
     dispose,
+    // Deliberately NOT `whenLive`: revoking a runtime that is already disposed
+    // is the ordering revocation-then-teardown produces, and it is a no-op
+    // worth no WARN — `revokeAuthority` is idempotent and `submit` is already
+    // refusing on `disposed`.
+    revokeAuthority,
     bargeIn: whenLive("bargeIn", cancellation.bargeIn),
     interrupt: whenLive("interrupt", cancellation.interrupt),
     emitConversationSnapshot: whenLive("emitConversationSnapshot", () => feed.snapshot()),

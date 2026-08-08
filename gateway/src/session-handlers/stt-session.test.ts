@@ -118,6 +118,7 @@ function stubRuntime(): StubRuntime {
       return false;
     },
     dispose: () => {},
+    revokeAuthority: () => {},
     bargeIn: () => {
       bargeIns.push("barge-in");
     },

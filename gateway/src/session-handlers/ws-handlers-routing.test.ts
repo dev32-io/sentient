@@ -120,6 +120,7 @@ function stubRuntime(): StubRuntime {
       return false;
     },
     dispose: () => {},
+    revokeAuthority: () => {},
     bargeIn: () => {},
     interrupt: () => {
       interruptCalls += 1;

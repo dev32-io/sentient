@@ -21,10 +21,34 @@
 // was wired only to the MCP host, so a deleted account kept a working session
 // until its token expired on the clock.
 //
+// CLOSING THE SOCKETS IS NOT THE WHOLE JOB, because the SESSION outlives them.
+// `session-retention.ts` keeps a session resident while a background task is
+// unfinished — deliberately, since nothing cancels one and disposal closes the
+// store handle its result must land through. That retained `SessionRuntime`
+// holds a `ToolBroker` whose `Capability` was minted with the old role frozen
+// into it, and `submit` guards only on `disposed`. So a `delegateTask` settling
+// after the demotion started a HEADLESS follow-up turn: a full ReAct loop
+// dispatching tools at the pre-demotion role, with no window attached and
+// nobody to see it. Every resident runtime of the account is therefore
+// `revokeAuthority`-ed here, which stops the next turn without disposing the
+// session — the completed task's result still becomes durable, which is the
+// entire reason the session was retained.
+//
+// THE RUNTIME WALK IS WIDER THAN THE ATTACHMENT WALK, and must be: a session
+// retained by a background task has zero attachments and zero sockets, so
+// neither enumeration below would reach it. `runtimesForUser` is the only one
+// that does.
+//
 // WHAT IT DELIBERATELY DOES NOT DO: detach. A socket's attachment is dropped by
 // the connection-close handler (`cleanupSession`, ws-handlers.ts), which is the
 // one owner of that teardown — detaching here too would race it and could
 // dispose a session's handles from underneath its own close path.
+//
+// AND: dispose. See `SessionRuntime.revokeAuthority` — disposing would throw
+// away the very work retention exists to preserve. A turn already RUNNING when
+// the revocation lands also finishes under the capability it started with; that
+// exposure is bounded by one turn, and the doc comment there says why closing
+// it would cost a third cancellation gesture.
 //
 // TWO ENUMERATIONS, ONE EJECTION EACH. The attachment walk answers "which
 // WINDOWS of a live conversation belong to this account?"; the
@@ -72,9 +96,11 @@ export interface CredentialRevoker {
 }
 
 export interface CredentialRevokerDeps {
-  /** Owns the attachment map, so it is the only thing that can answer "which
-   *  windows of a live conversation belong to this user?". */
-  registry: Pick<SessionRegistry, "attachmentsForUser">;
+  /** Owns the attachment map AND the resident-session map, so it is the only
+   *  thing that can answer either "which windows of a live conversation belong
+   *  to this user?" or "which of their sessions are still resident?" — and the
+   *  second set is not a subset of the first. */
+  registry: Pick<SessionRegistry, "attachmentsForUser" | "runtimesForUser">;
   /** Owns every live authenticated socket, attached or not — the enumeration
    *  that reaches a window which has not run `session.configure` yet. */
   sockets: Pick<AuthenticatedSockets, "forUser">;
@@ -138,6 +164,11 @@ export function createCredentialRevoker(deps: CredentialRevokerDeps): Credential
         });
         closeWithAuthError(target.ws, REVOKED_CODE, REVOKED_MESSAGE);
       }
+      // AFTER the sockets, before the bookkeeping drop. The runtimes outlive
+      // both — this is what stops a retained session starting a turn under the
+      // capability the closed sockets were minted with.
+      const runtimes = deps.registry.runtimesForUser(userId);
+      for (const runtime of runtimes) runtime.revokeAuthority(reason);
       deps.sessions.revokeUser(userId);
       log.info("credential.revocation-complete", {
         userId,
@@ -148,6 +179,10 @@ export function createCredentialRevoker(deps: CredentialRevokerDeps): Credential
         // signed in and had not started one, which is the case that used to be
         // missed entirely.
         attachedWindows,
+        // Resident sessions this account still owns. Can EXCEED closedWindows:
+        // a session retained by an unfinished background task has no window at
+        // all, and is exactly the one that could still have run a turn.
+        revokedRuntimes: runtimes.length,
         reason,
       });
     },
