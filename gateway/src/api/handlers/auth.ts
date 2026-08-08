@@ -1,4 +1,5 @@
 import { AUDIO_PREFS_DEFAULT } from "@sentient/audio-prefs";
+import { ADMIN_ROLE } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
 import type { SecretsStore } from "../../admin/secrets-store.js";
@@ -129,7 +130,7 @@ async function createFirstAdmin(
     pin: data.pin,
     // First run: this account IS the household's operator, so it gets the one
     // role that reaches the admin REST surface and the `admin` impact tier.
-    role: "admin",
+    role: ADMIN_ROLE,
     profile,
   });
   if (!r.ok) {
@@ -293,7 +294,7 @@ function readBearer(request: Request): string | null {
 function buildAuthResponse(token: string, user: UserRecord): Response {
   const { userId, displayName, role, avatarTint } = user;
   return Response.json(
-    { token, user: { userId, displayName, role, isAdmin: role === "admin", avatarTint } },
+    { token, user: { userId, displayName, role, isAdmin: role === ADMIN_ROLE, avatarTint } },
     { status: HTTP_OK },
   );
 }
@@ -314,9 +315,27 @@ async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Respon
     log.warn("me.user-vanished", { userId: valid.value.userId });
     return jsonError(HTTP_UNAUTHORIZED, "user-not-found");
   }
-  const refreshed = await deps.auth.tokens.refresh(token);
-  if (!refreshed.ok) return jsonError(HTTP_UNAUTHORIZED, refreshed.error);
-  return buildAuthResponse(refreshed.value, userR.value);
+  // ISSUED FROM THE RECORD, never rolled from the presented token. This route
+  // is where a client's credential is renewed on every boot, so it is also the
+  // only place a role change can reach a long-lived token — and the record is
+  // already in hand two lines up.
+  //
+  // Rolling instead (the retired `TokenService.refresh`) re-issued from the
+  // OLD token's own claims, so a demoted admin's token re-minted itself as
+  // admin forever: the client re-rolls before the 7-day TTL ever lands, so the
+  // staleness was unbounded rather than TTL-bounded, and INVISIBLE — the body
+  // below correctly reported the record's new role while `require-admin-auth`
+  // and the sessions principal kept reading `admin` off the claim.
+  const fresh = await deps.auth.tokens.issue({ userId: userR.value.userId, role: userR.value.role });
+  if (valid.value.role !== userR.value.role) {
+    log.info("me.role-converged", {
+      userId: userR.value.userId,
+      from: valid.value.role,
+      to: userR.value.role,
+      reason: "token claim was stale; re-issued from the user record",
+    });
+  }
+  return buildAuthResponse(fresh, userR.value);
 }
 
 async function handleLogout(_deps: AuthHandlerDeps, request: Request): Promise<Response> {

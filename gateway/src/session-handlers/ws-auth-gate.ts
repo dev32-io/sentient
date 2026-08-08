@@ -19,6 +19,7 @@
 // Callers already hold the real Bun socket; the tests pass a cast fake, which
 // is the normal cost of typing on the real transport.
 
+import { ADMIN_ROLE } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import type { SessionManager } from "../auth/session-manager.js";
@@ -138,7 +139,7 @@ export async function handleAuthMessage(
       role: principal.role,
       // DERIVED, never stored. Kept beside `role` so webui / Android / iOS keep
       // working while they migrate to reading the role (plan tasks 6–9).
-      isAdmin: principal.role === "admin",
+      isAdmin: principal.role === ADMIN_ROLE,
       avatarTint: userR.value.avatarTint,
     },
   });

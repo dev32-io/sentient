@@ -39,6 +39,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly ImpactTier[]> = {
   guest: ["read"],
 } as const;
 
+/**
+ * The household operator's role, named once.
+ *
+ * Six files were about to spell this `"admin"` inline or keep a local copy of
+ * this constant, and they are all asserting the SAME fact — "the operator role
+ * is this one" — not six local policies. One name, one import, so a rename or
+ * a split (`owner`/`admin`, say) is a compile error at every site rather than
+ * a grep.
+ */
+export const ADMIN_ROLE: UserRole = "admin";
+
 export function canExecute(role: UserRole, tier: ImpactTier): boolean {
   return (ROLE_PERMISSIONS[role] as readonly string[]).includes(tier);
 }

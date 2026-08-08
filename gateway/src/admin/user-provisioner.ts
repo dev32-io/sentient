@@ -1,4 +1,4 @@
-import type { Result, UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE, type Result, type UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import { profileV1Schema } from "../profile-store/profile-types.js";
@@ -14,7 +14,6 @@ const AVATAR_TINTS: AvatarTint[] = ["terra", "sage", "amber", "clay"];
 
 /** The owner's default for a new household member. */
 const DEFAULT_ROLE: UserRole = "adult";
-const ADMIN_ROLE: UserRole = "admin";
 
 // --- Error types -----------------------------------------------------------
 

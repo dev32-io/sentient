@@ -90,7 +90,6 @@ function buildFakeAuth(opts: {
     tokens: {
       validate: opts.validate,
       issue: async () => "unused-token",
-      refresh: unused,
     },
     users: {
       get: opts.getUser,

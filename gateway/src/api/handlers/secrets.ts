@@ -1,12 +1,10 @@
-import type { UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE, type UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
 import type { LlmProvider, SecretsStore } from "../../admin/secrets-store.js";
 import { getLog } from "../../logging/logger.js";
 
 const log = getLog(["sentient", "gateway", "api", "secrets"]);
-
-const ADMIN_ROLE: UserRole = "admin";
 
 // --- HTTP status constants ---------------------------------------------------
 

@@ -8,7 +8,6 @@ const FAR_FUTURE = 9_999_999_999;
 function fakeTokenService(validate: (token: string) => TokenResult<TokenPayload>): TokenService {
   return {
     issue: async () => "stub",
-    refresh: async () => ({ ok: false, error: "malformed" }),
     validate: async (token) => validate(token),
   };
 }

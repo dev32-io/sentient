@@ -645,14 +645,22 @@ companions:
 # person's own per-tool permission, a separate table on their profile.
 #
 #   tier: read     answers a question, or acts only on the caller's own
-#                  session                            → adult, child, guest
+#                  session                     → admin, adult, child, guest
 #   tier: write    routine reversible change to HOUSEHOLD state
-#                  (shopping item, speaker grouping)  → adult, child
+#                  (shopping item, speaker grouping)  → admin, adult, child
 #   tier: confirm  irreversible, reaches outside the house, spends, or touches
-#                  a security-relevant device class (locks, alarms) → adult
+#                  a security-relevant device class (locks, alarms)
+#                                                     → admin, adult
 #   tier: admin    reserved for operator-level control of the system itself
 #                  (HA restart/backup/addon management and the like, none of
-#                  which this catalog exposes today)  → adult
+#                  which this catalog exposes today)  → admin ONLY
+#
+# `admin` IS A ROLE, not a flag beside one — the household's operator. An
+# ordinary adult does NOT reach the `admin` tier: that is the whole point of
+# the tier existing. Tier something `admin` and you are saying "only the
+# operator", not "only a grown-up". The table above is the rendering of
+# `ROLE_PERMISSIONS` in shared/protocol/src/roles.ts; that file is the
+# authority, this is the operator-facing copy of it.
 #
 # WHAT TIERING IS FOR, stated once so it is not re-litigated per tool: it
 # governs tools that reach THE HOUSEHOLD — Home Assistant, Music Assistant,

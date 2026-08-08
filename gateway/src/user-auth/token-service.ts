@@ -10,10 +10,16 @@ export interface TokenServiceOptions {
   ttlSeconds: number;
 }
 
+// NO `refresh`. There used to be one — `validate` then `issue` from the
+// validated payload — and `api/handlers/auth.ts#handleMe` was its only caller.
+// It is not merely unused now, it is UNIMPLEMENTABLE correctly: a token roll
+// re-mints authority, and the authority a token should carry lives in the user
+// record, which this service has no access to by design. Rolling from the
+// token's own claims meant a demoted admin's token re-minted itself as admin
+// on every client boot, forever. Renewal reads the record and calls `issue`.
 export interface TokenService {
   issue(subject: { userId: string; role: UserRole }): Promise<string>;
   validate(token: string): Promise<TokenResult<TokenPayload>>;
-  refresh(token: string): Promise<TokenResult<string>>;
 }
 
 const PURPOSE = "sentient.user-session.v1";
@@ -114,13 +120,6 @@ export function createTokenService(opts: TokenServiceOptions): TokenService {
           expiresAt: exp,
         },
       };
-    },
-
-    async refresh(token) {
-      const r = await svc.validate(token);
-      if (!r.ok) return r;
-      const fresh = await svc.issue({ userId: r.value.userId, role: r.value.role });
-      return { ok: true, value: fresh };
     },
   };
 

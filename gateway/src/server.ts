@@ -1,3 +1,4 @@
+import { ADMIN_ROLE } from "@sentient/protocol";
 import type { Server, ServerWebSocket } from "bun";
 import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
@@ -263,7 +264,7 @@ function buildRequireAdmin(tokenService: TokenService, adminToken: string | unde
     const token = header.slice(BEARER_PREFIX.length);
     // The static machine-to-machine token is the operator's own credential, so
     // it resolves to the operator's role rather than a parallel boolean.
-    if (adminToken && token === adminToken) return { ok: true, value: { role: "admin" } };
+    if (adminToken && token === adminToken) return { ok: true, value: { role: ADMIN_ROLE } };
     const result = await tokenService.validate(token);
     if (result.ok) return { ok: true, value: { role: result.value.role } };
     return { ok: false };

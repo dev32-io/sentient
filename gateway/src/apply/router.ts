@@ -1,11 +1,9 @@
-import type { Result, UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE, type Result, type UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { isDockerService } from "../system-orchestrator/types.js";
 import type { ManagedService, OrchestratorStatus, ServiceName } from "../system-orchestrator/types.js";
 
 const log = getLog(["sentient", "apply", "router"]);
-
-const ADMIN_ROLE: UserRole = "admin";
 
 export interface ApplyBody {
   profile: Record<string, unknown> | null;

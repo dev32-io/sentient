@@ -1,7 +1,5 @@
-import type { UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE } from "@sentient/protocol";
 import type { TokenService } from "../../user-auth/token-service.ts";
-
-const ADMIN_ROLE: UserRole = "admin";
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;

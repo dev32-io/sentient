@@ -64,36 +64,16 @@ describe("createTokenService", () => {
     }
   });
 
-  it("refresh extends the expiry without changing userId", async () => {
+  // SECURITY BOUNDARY — there is no token-rolling method, and there must not
+  // be one. A roll re-mints authority, and the authority a token should carry
+  // lives in the user record, which this service cannot see. The one that used
+  // to exist re-issued from the presented token's OWN claims, so a demoted
+  // admin's token re-minted itself as admin on every client boot — unbounded,
+  // not TTL-bounded. Renewal now reads the record and calls `issue`
+  // (`api/handlers/auth.ts#handleMe`), which is asserted there.
+  it("exposes no way to mint a token from another token", () => {
     const svc = createTokenService({ secret, ttlSeconds: 60 });
-    const first = await svc.issue({ userId: "a", role: "admin" });
-    vi.advanceTimersByTime(30_000);
-    const refreshed = await svc.refresh(first);
-    expect(refreshed.ok).toBe(true);
-    if (!refreshed.ok) return;
-    const parsed = await svc.validate(refreshed.value);
-    if (!parsed.ok) throw new Error("expected ok");
-    expect(parsed.value.userId).toBe("a");
-    const now = Math.floor(Date.now() / 1000);
-    expect(parsed.value.expiresAt).toBe(now + 60);
-  });
-
-  it("refresh carries the role forward rather than re-deriving it", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 60 });
-    const first = await svc.issue({ userId: "a", role: "child" });
-    const refreshed = await svc.refresh(first);
-    if (!refreshed.ok) throw new Error("expected ok");
-    const parsed = await svc.validate(refreshed.value);
-    if (!parsed.ok) throw new Error("expected ok");
-    expect(parsed.value.role).toBe("child");
-  });
-
-  it("refresh refuses to extend an already-expired token", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 10 });
-    const token = await svc.issue({ userId: "a", role: "adult" });
-    vi.advanceTimersByTime(15_000);
-    const r = await svc.refresh(token);
-    expect(r).toEqual({ ok: false, error: "expired" });
+    expect(Object.keys(svc).sort()).toEqual(["issue", "validate"]);
   });
 });
 
@@ -143,10 +123,5 @@ describe("a token minted before the role claim existed", () => {
   it("is refused when its role claim is not a known role", async () => {
     const svc = createTokenService({ secret, ttlSeconds: 3600 });
     expect(await svc.validate(legacyToken({ role: "superadmin" }))).toEqual({ ok: false, error: "malformed" });
-  });
-
-  it("cannot be refreshed into a valid one", async () => {
-    const svc = createTokenService({ secret, ttlSeconds: 3600 });
-    expect(await svc.refresh(legacyToken({ isAdmin: true }))).toEqual({ ok: false, error: "malformed" });
   });
 });

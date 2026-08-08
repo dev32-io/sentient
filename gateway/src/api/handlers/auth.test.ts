@@ -25,7 +25,6 @@ function makeValidTokens(userId = "alice", role: UserRole = "adult") {
         value: { userId, role, issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
-    refresh: vi.fn(async (): Promise<TokenResult<string>> => ({ ok: true, value: "refreshed-token" })),
     issue: vi.fn(async (): Promise<string> => "issued-token"),
   };
 }
@@ -38,7 +37,6 @@ function makeInvalidTokens() {
         error: "signature-invalid" as const,
       }),
     ),
-    refresh: vi.fn(async (): Promise<TokenResult<string>> => ({ ok: false, error: "signature-invalid" as const })),
     issue: vi.fn(async (): Promise<string> => "issued-token"),
   };
 }
@@ -86,6 +84,82 @@ function makePutPinRequest(body: unknown, bearerToken?: string): Request {
     body: JSON.stringify(body),
   });
 }
+
+function makeGetMeRequest(bearerToken?: string): Request {
+  const headers = new Headers();
+  if (bearerToken !== undefined) headers.set("authorization", `Bearer ${bearerToken}`);
+  return new Request("http://localhost/api/v1/auth/me", { method: "GET", headers });
+}
+
+// ---------------------------------------------------------------------------
+// SECURITY BOUNDARY — /auth/me is where a credential is RENEWED, so it is the
+// only place a role change can reach a long-lived token.
+//
+// It used to roll the presented token (`TokenService.refresh`: validate, then
+// re-issue from the OLD token's own claims). Both webui and mobile call this
+// route on every boot and persist what comes back, so a demoted admin's token
+// re-minted itself as admin before the TTL could ever expire it — staleness
+// was UNBOUNDED, not TTL-bounded. And it was invisible: the response body
+// reported the record's new role, so her UI hid the admin section while
+// `require-admin-auth` kept reading `admin` off the claim she was still
+// carrying. As of task 2b the token's role also becomes `Capability.role` via
+// `sessions.ts`, so the stale claim would reach an authority object too.
+//
+// The fix is that the record — already fetched one line earlier — is the only
+// input to the new token. Worst-case staleness is now one visit to this route.
+// ---------------------------------------------------------------------------
+describe("GET /api/v1/auth/me", () => {
+  it("issues a token claiming the record's role, not the presented token's", async () => {
+    const tokens = makeValidTokens("alice", "admin"); // token says admin …
+    const demoted = { ...sampleUser(), role: "adult" as const }; // … record says adult
+    const deps = makeDeps(tokens, demoted);
+    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+
+    const response = await handler(makeGetMeRequest("stale-admin-token"));
+
+    expect(response.status).toBe(200);
+    expect(tokens.issue).toHaveBeenCalledWith({ userId: "alice", role: "adult" });
+  });
+
+  it("reports the record's role in the body, so body and token agree", async () => {
+    const demoted = { ...sampleUser(), role: "adult" as const };
+    const deps = makeDeps(makeValidTokens("alice", "admin"), demoted);
+    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+
+    const body = await (await handler(makeGetMeRequest("stale-admin-token"))).json();
+
+    expect(body.user.role).toBe("adult");
+    expect(body.user.isAdmin).toBe(false);
+    expect(body.token).toBe("issued-token");
+  });
+
+  it("promotes too — a newly-made admin is not stuck on the old claim", async () => {
+    const tokens = makeValidTokens("alice", "adult");
+    const promoted = { ...sampleUser(), role: "admin" as const };
+    const deps = makeDeps(tokens, promoted);
+    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+
+    await handler(makeGetMeRequest("stale-adult-token"));
+
+    expect(tokens.issue).toHaveBeenCalledWith({ userId: "alice", role: "admin" });
+  });
+
+  it("returns 401 without a bearer token", async () => {
+    const deps = makeDeps();
+    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+
+    expect((await handler(makeGetMeRequest())).status).toBe(401);
+  });
+
+  it("returns 401 and mints nothing when the token does not validate", async () => {
+    const tokens = makeInvalidTokens();
+    const deps = makeDeps(tokens as unknown as ReturnType<typeof makeValidTokens>);
+    const handler = createAuthHandler(deps as unknown as { auth: AuthService });
+
+    expect((await handler(makeGetMeRequest("bad-token"))).status).toBe(401);
+    expect(tokens.issue).not.toHaveBeenCalled();
+  });
+});
 
 describe("PUT /api/v1/auth/me", () => {
   it("updates displayName on 200 and persists via authService", async () => {

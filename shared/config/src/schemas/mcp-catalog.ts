@@ -27,13 +27,20 @@ import { z } from "zod";
 // per-tool permission, which is a different table.
 //
 //   read    — answers a question, or acts only on the CALLER'S OWN session.
-//             Anyone.
+//             Anyone: admin, adult, child, guest.
 //   write   — a routine, reversible change to HOUSEHOLD state (add a shopping
-//             item, group two speakers). Adults and children.
+//             item, group two speakers). admin, adult, child.
 //   confirm — irreversible, reaches outside the house, spends, or touches a
-//             security-relevant device class. Adults only.
-//   admin   — operator-level control of the system itself. Adults only. No
-//             shipped tool carries it today.
+//             security-relevant device class. admin, adult.
+//   admin   — operator-level control of the system itself. The `admin` ROLE
+//             ONLY — an ordinary household adult does NOT reach it, which is
+//             the whole reason the tier exists. No shipped tool carries it
+//             today.
+//
+// `admin` is a ROLE, not a flag beside one. `ROLE_PERMISSIONS` in
+// @sentient/protocol is the authority for the four lines above; this comment
+// is the copy an operator reads before assigning a tier, so it must not drift
+// from it.
 //
 // Tiering governs tools that reach THE HOUSEHOLD. It does not police a
 // person's own session: every tool the gateway hosts in-process resolves the

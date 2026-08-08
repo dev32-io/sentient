@@ -23,11 +23,10 @@
 // The legacy key is DROPPED rather than carried alongside: two fields that can
 // disagree about the same fact is the defect class this replaced.
 
-import { USER_ROLES, type UserRole } from "@sentient/protocol";
+import { ADMIN_ROLE, USER_ROLES, type UserRole } from "@sentient/protocol";
 import type { UserRecord } from "./types.js";
 
 const DEFAULT_ROLE: UserRole = "adult";
-const ADMIN_ROLE: UserRole = "admin";
 
 function isKnownRole(value: unknown): value is UserRole {
   return typeof value === "string" && (USER_ROLES as readonly string[]).includes(value);
