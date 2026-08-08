@@ -332,4 +332,67 @@ describe("a server's master control can restore role-template defaults without r
       }).permission,
     ).toBe("allow");
   });
+
+  // THE GAP THE TEST ABOVE DID NOT COVER. A wildcard-only write (as above)
+  // only ever reaches a tool with NO named entry. A normal, already-seeded
+  // account has a NAMED entry for EVERY governable tool
+  // (`applyProfileDefaults`, called at account creation) — and a named key
+  // always outranks the wildcard (`storedPermissionFor`). So a wildcard-only
+  // master control is a no-op for a seeded `unlock_door`, which defeats the
+  // control's whole purpose on every account that has ever saved settings.
+  // The actual client write (`tools-pane.tsx`'s `withServerMasterPermission`)
+  // therefore writes an explicit value for every tool the role-narrowed
+  // catalog view enumerates, PLUS the wildcard for whatever it cannot see —
+  // this test proves that shape actually reaches an already-named tool, in
+  // both directions, still without ratcheting privilege.
+  it("the actual write (named tools + wildcard) also hides/restores an ALREADY-NAMED tool", () => {
+    // Seeded exactly as `applyProfileDefaults` would at account creation:
+    // every governable tool already has its own named entry.
+    const seeded = profile({ household: { look_up: "allow", unlock_door: "ask" } });
+
+    const off = applyProfileUpdate(putBody({ household: { look_up: "off", unlock_door: "off", "*": "off" } }), {
+      stored: seeded,
+      permissionDefaults: TEMPLATE_WITH_LOCK,
+    });
+    for (const [toolName, tier] of [
+      ["look_up", "read"],
+      ["unlock_door", "confirm"],
+    ] as const) {
+      expect(
+        resolveToolPermission({
+          toolName,
+          tier,
+          serverName: "household",
+          storedPermissions: off.tools.permissions,
+          roleTemplate: TEMPLATE_WITH_LOCK,
+        }).permission,
+      ).toBe("off");
+    }
+
+    const backOn = applyProfileUpdate(putBody({ household: { look_up: null, unlock_door: null, "*": null } }), {
+      stored: off,
+      permissionDefaults: TEMPLATE_WITH_LOCK,
+    });
+    // Each tool falls back to ITS OWN template answer — not one blanket
+    // value for both. A regression that wrote a single concrete value
+    // instead of clearing would make `unlock_door` observe `allow` here.
+    expect(
+      resolveToolPermission({
+        toolName: "unlock_door",
+        tier: "confirm",
+        serverName: "household",
+        storedPermissions: backOn.tools.permissions,
+        roleTemplate: TEMPLATE_WITH_LOCK,
+      }).permission,
+    ).toBe("ask");
+    expect(
+      resolveToolPermission({
+        toolName: "look_up",
+        tier: "read",
+        serverName: "household",
+        storedPermissions: backOn.tools.permissions,
+        roleTemplate: TEMPLATE_WITH_LOCK,
+      }).permission,
+    ).toBe("allow");
+  });
 });

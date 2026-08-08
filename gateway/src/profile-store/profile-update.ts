@@ -115,6 +115,17 @@ export function seedsPermissionDefaults(base: ProfileUpdateBase): boolean {
  * both define own properties, so neither level can be steered that way — see
  * `mergeServer` below, which applies the identical rule one level down, where
  * a TOOL name is the client-chosen string.
+ *
+ * ONE MORE CONSEQUENCE OF `servers` UNIONING `base` AND `incoming`'S KEYS: a
+ * body naming ONLY clears for a server `base` never had at all (not stdio-
+ * excluded, not zero-tool, genuinely never stored) still materializes that
+ * server as `{}` in the result, because `Object.keys(incoming)` puts its name
+ * into `servers` regardless of what `mergeServer` resolves it to. This flips
+ * that server from "absent ⇒ off forever" (the absent-server rule) to
+ * "present and empty ⇒ the role template decides" — NOT an escalation (the
+ * template and the live role gate still bound what a person can reach), but
+ * worth naming: an all-clear body can turn a server ON for the first time,
+ * same as a body naming one real permission for it always could.
  */
 function mergePermissions(
   base: ToolPermissionMap | undefined,

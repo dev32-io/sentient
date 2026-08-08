@@ -1,10 +1,22 @@
 // gateway/webui/src/components/settings/panes/tool-permission-patch.ts
 //
-// Pure helpers shared by every editable row in the Tools pane (per-tool
-// Select and the server master control alike — the master control is just
-// this same write targeted at the server's wildcard key). Extracted so the
-// one invariant this feature depends on has its own test, independent of
-// rendering: see `tool-permission-patch.test.ts`.
+// Pure helpers shared by every editable row in the Tools pane. Extracted so
+// the invariants this feature depends on have their own tests, independent
+// of rendering: see `tool-permission-patch.test.ts`.
+//
+// WHY THE MASTER CONTROL CANNOT JUST WRITE THE WILDCARD. Every account is
+// seeded with a NAMED permission entry for every catalog tool its role can
+// execute (`gateway/src/profile-store/profile-defaults.ts#applyProfileDefaults`,
+// called at account creation). `resolve-tool-permission.ts`'s
+// `storedPermissionFor` reads a tool's own named key BEFORE the server's
+// wildcard (`perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY]`) —
+// so for a normal, already-seeded account, EVERY tool already has an answer
+// that outranks the wildcard, and writing only `permissions[server]["*"]`
+// changes nothing for any of them. The wildcard only ever governs a tool
+// with NO named entry: one the operator adds to the catalog after this
+// account was seeded, or one a role change newly grants (a promoted/demoted
+// account's table is not re-seeded). `withServerMasterPermission` below is
+// what makes the control actually hide/restore an already-named tool too.
 import type { ToolPermission, ToolPermissionOrClear, ToolPermissionPatchMap } from "@sentient/config";
 import type { McpToolView } from "../../../services/profile-api.js";
 
@@ -40,6 +52,47 @@ export function withToolPermission(
   return {
     ...permissions,
     [serverId]: { ...permissions?.[serverId], [toolName]: permission },
+  };
+}
+
+/**
+ * The server master control's actual write: a NAMED value for every catalog
+ * tool this role can govern (`toolNames`, the role-narrowed list the pane
+ * already renders — `entry.tools.map(t => t.name)`), PLUS the wildcard for
+ * whatever that list cannot enumerate (see the module comment above for why
+ * the wildcard alone is a no-op on a normal, already-seeded account).
+ *
+ * "Off" writes an explicit `"off"` everywhere — a real, stored opinion that
+ * hides every one of this server's tools from the model.
+ *
+ * "On" writes an explicit `null` everywhere instead of a concrete value:
+ * each named tool falls back to ITS OWN role-template answer rather than
+ * one blanket value, which is what keeps a `confirm`-tier tool's `ask` from
+ * becoming an auto-approved `allow` (the bug this whole clearing mechanism
+ * exists to close — see `withToolPermission`'s doc comment).
+ *
+ * "ON" ALSO ERASES ANY PER-TOOL OVERRIDE THE PERSON SET DELIBERATELY ON THIS
+ * SERVER. The stored table records no provenance — a value seeded at
+ * account creation and a value a person typed into this exact tool's own
+ * Select five minutes ago are the same kind of key, indistinguishable once
+ * written. There is no way to clear "everything the template already
+ * agreed with" while preserving "everything the person chose on purpose"
+ * without inventing data the table does not carry, which is why this
+ * control is framed as "Hide all / Reset to role defaults" in the pane's
+ * copy, not "Hide all / Undo my last change".
+ */
+export function withServerMasterPermission(
+  permissions: ToolPermissionPatchMap | undefined,
+  serverId: string,
+  toolNames: readonly string[],
+  wildcardKey: string,
+  turnOn: boolean,
+): ToolPermissionPatchMap {
+  const value: ToolPermissionOrClear = turnOn ? null : "off";
+  const namedWrites = Object.fromEntries(toolNames.map((name) => [name, value]));
+  return {
+    ...permissions,
+    [serverId]: { ...permissions?.[serverId], ...namedWrites, [wildcardKey]: value },
   };
 }
 
