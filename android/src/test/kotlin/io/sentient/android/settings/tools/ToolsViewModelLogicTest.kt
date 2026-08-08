@@ -1,13 +1,29 @@
 // ---------------------------------------------------------------------------
 // ToolsViewModelLogicTest — pins the SECURITY-CRITICAL invariant ToolsViewModel.kt's
-// header documents: turning a tool/server "on" must be a CLEAR (null), never a
-// concrete ALLOW, which would silently escalate a confirm-tier tool's role-template
-// ASK to auto-approved. A regression here previously shipped with zero test coverage
-// (the ViewModel hand-rolled ToolPermission.ALLOW inline instead of calling the shared
-// withServerMasterPermission/withToolPermission helpers) — this test exercises the
-// exact wiring (isServerOn / serverToggleWrite / toolToggleWrite) that decides which
-// direction a toggle writes, independent of the ViewModel/SettingsComponent (which
-// isn't unit-testable without a real HttpClient — see android-testing.md Layer 1).
+// header documents for the server MASTER Switch: turning a server "on" must be a
+// CLEAR (null), never a concrete ALLOW, which would silently escalate a
+// confirm-tier tool's role-template ASK to auto-approved. A regression here
+// previously shipped with zero test coverage (the ViewModel hand-rolled
+// ToolPermission.ALLOW inline instead of calling the shared
+// withServerMasterPermission helper) — this test exercises the exact
+// ViewModel-level wiring (isServerOn / serverToggleWrite) that decides which
+// direction the master Switch writes and which catalog-derived tool names +
+// wildcard key it writes them for, independent of the ViewModel/SettingsComponent
+// (which isn't unit-testable without a real HttpClient — see android-testing.md
+// Layer 1).
+//
+// The per-TOOL write (task 9's four-state RowSelect dropdown) has no equivalent
+// ViewModel-level glue to pin: ToolsViewModel.setToolPermission is a direct,
+// one-line call to the shared withToolPermission helper with values the dropdown
+// already supplies verbatim (serverId, toolName, one of the four concrete
+// ToolPermission values) — no catalog lookup, no derived state, nothing this
+// layer could get wrong that shared/mobile-sdk's own ToolPermissionPatchTest.kt
+// (WithToolPermissionTest) doesn't already pin. The task-7 interim's
+// `toolToggleWrite` — a boolean flip that cleared (null) on the way "on" — was
+// removed along with the per-tool Switch it backed; a per-tool control never
+// clears in the four-state model (only the bulk master write does), so keeping
+// that function or its tests around would pin dead code and describe a write
+// path the dropdown must never take.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.tools
 
@@ -80,31 +96,5 @@ class ToolsViewModelLogicTest {
         val cat = catalog(tool("look_up", ToolPermission.OFF), wildcardKey = "ALL")
         val write = serverToggleWrite(emptyMap(), cat, "household")
         assertEquals(setOf("look_up", "ALL"), write["household"]?.keys)
-    }
-
-    // ── toolToggleWrite: the security-critical direction ──
-
-    @Test
-    fun `tool toggle off-to-on clears the tool never a concrete allow`() {
-        val cat = catalog(tool("look_up", ToolPermission.OFF))
-        val write = toolToggleWrite(emptyMap(), cat, "household", "look_up")
-        assertNull(write["household"]?.get("look_up"))
-        assertFalse(write["household"].orEmpty().values.contains(ToolPermission.ALLOW))
-    }
-
-    @Test
-    fun `tool toggle on-to-off writes an explicit OFF`() {
-        val cat = catalog(tool("look_up", ToolPermission.DENY))
-        val write = toolToggleWrite(emptyMap(), cat, "household", "look_up")
-        assertEquals(ToolPermission.OFF, write["household"]?.get("look_up"))
-    }
-
-    @Test
-    fun `tool toggle preserves a sibling tool's own pending edit`() {
-        val cat = catalog(tool("look_up", ToolPermission.OFF), tool("unlock_door", ToolPermission.ASK))
-        val pending = mapOf("household" to mapOf("unlock_door" to ToolPermission.OFF))
-        val write = toolToggleWrite(pending, cat, "household", "look_up")
-        assertEquals(ToolPermission.OFF, write["household"]?.get("unlock_door"), "sibling edit must survive")
-        assertNull(write["household"]?.get("look_up"))
     }
 }

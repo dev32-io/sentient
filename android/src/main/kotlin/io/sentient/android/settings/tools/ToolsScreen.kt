@@ -1,11 +1,18 @@
 // ---------------------------------------------------------------------------
-// ToolsScreen — Tools settings page: per-MCP-server cards (master toggle + expand to
-// per-tool toggles) and a Hermes built-ins card (per-toolset toggles). SLOW save
-// (restart copy) via the shared SettingsEditChrome. Interim 2-state permission
-// semantics (see ToolsViewModel's file header) live in ToolsViewModel; this screen
-// renders the derived active/total counts reading `state.pendingPermissions`
-// (a patch overlay, NOT the loaded profile's own stored permissions) through the
-// shared effectiveToolPermission helper. Copy mirrors webui tools-pane.
+// ToolsScreen — Tools settings page: per-MCP-server cards (master on/off Switch +
+// expand to per-tool Allow/Ask/Deny/Off dropdowns), a "Gateway tools" card for
+// role-governed native tools with no MCP server (settable: false today —
+// read-only), and a Hermes built-ins card (per-toolset toggles). SLOW save
+// (restart copy) via the shared SettingsEditChrome.
+//
+// The four-state permission semantics (see ToolsViewModel's file header) live in
+// ToolsViewModel; this screen resolves them into RowSelect inputs, reading
+// `state.pendingPermissions` (a patch overlay, NOT the loaded profile's own stored
+// permissions) through the shared effectiveToolPermission helper. A server's tool
+// list stays visible whenever expanded regardless of the master Switch's current
+// reading — there is no "server is off, tools hidden" placeholder, since a tool's
+// own row can independently read anything from Allow to Off. Copy mirrors webui
+// tools-pane.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.tools
 
@@ -32,6 +39,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.ApplyProgress
+import io.sentient.android.settings.components.RowSelect
 import io.sentient.android.settings.components.RowToggle
 import io.sentient.android.settings.components.SettingsCard
 import io.sentient.android.settings.components.SettingsEditScaffold
@@ -44,13 +52,19 @@ import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.settings.McpCatalogEntry
 import io.sentient.mobilesdk.settings.McpCatalogView
+import io.sentient.mobilesdk.settings.McpToolView
 import io.sentient.mobilesdk.settings.ToolPermission
 import io.sentient.mobilesdk.settings.ToolPermissionPatchMap
 import io.sentient.mobilesdk.settings.effectiveToolPermission
 
 private const val HEAD_SUB =
     "Tools available to the assistant each cycle. Toggle a server or built-in group on/off, or " +
-        "expand to gate individual tools. Changes apply after Save — the agent restarts to pick them up."
+        "expand to set individual tools to Allow, Ask, Deny or Off. Changes apply after Save — " +
+        "the agent restarts to pick them up."
+
+private const val NATIVE_TOOLS_SUB =
+    "Built into the gateway itself, not an MCP server — governed by role until a later release " +
+        "lets a person override it."
 
 @Composable
 fun ToolsScreen(
@@ -73,7 +87,7 @@ fun ToolsScreen(
         ToolsBody(
             state = state,
             onToggleServer = vm::toggleServer,
-            onToggleTool = vm::toggleTool,
+            onSetToolPermission = vm::setToolPermission,
             onToggleToolset = vm::toggleToolset,
         )
     }
@@ -83,7 +97,7 @@ fun ToolsScreen(
 private fun ColumnScope.ToolsBody(
     state: ToolsUiState,
     onToggleServer: (String) -> Unit,
-    onToggleTool: (String, String) -> Unit,
+    onSetToolPermission: (String, String, ToolPermission) -> Unit,
     onToggleToolset: (String) -> Unit,
 ) {
     val catalog = state.catalog
@@ -108,11 +122,12 @@ private fun ColumnScope.ToolsBody(
                     permissions = state.pendingPermissions,
                     controlsEnabled = enabled,
                     onToggleServer = { onToggleServer(id) },
-                    onToggleTool = { tool -> onToggleTool(id, tool) },
+                    onSetToolPermission = { toolName, permission -> onSetToolPermission(id, toolName, permission) },
                 )
             }
         }
     }
+    NativeToolsCard(catalog = catalog, controlsEnabled = enabled)
     HermesBuiltinsCard(
         catalog = catalog,
         enabledToolsets = state.pendingToolsets ?: original.tools.toolsets ?: emptyList(),
@@ -128,7 +143,7 @@ private fun McpServerSection(
     permissions: ToolPermissionPatchMap,
     controlsEnabled: Boolean,
     onToggleServer: () -> Unit,
-    onToggleTool: (String) -> Unit,
+    onSetToolPermission: (String, ToolPermission) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     val activeTools = entry.tools.filter { effectiveToolPermission(permissions, id, it) != ToolPermission.OFF }
@@ -145,20 +160,81 @@ private fun McpServerSection(
         onToggle = onToggleServer,
         testTag = "settings-tools-server-$id",
     )
-    if (open && isEnabled) {
-        entry.tools.forEach { tool ->
-            RowToggle(
-                label = tool.name,
-                sub = tool.description.ifBlank { null },
-                checked = tool in activeTools,
-                onCheckedChange = { onToggleTool(tool.name) },
-                enabled = controlsEnabled,
-                testTag = "settings-tools-tool-$id-${tool.name}",
+    if (open) {
+        if (entry.tools.isEmpty()) {
+            EmptyRow("No tools declared for this server.")
+        } else {
+            entry.tools.forEach { tool ->
+                ToolPermissionRow(
+                    tool = tool,
+                    permission = effectiveToolPermission(permissions, id, tool),
+                    controlsEnabled = controlsEnabled,
+                    onSelect = { permission -> onSetToolPermission(tool.name, permission) },
+                    testTag = "settings-tools-tool-$id-${tool.name}",
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeToolsCard(catalog: McpCatalogView, controlsEnabled: Boolean) {
+    val tools = catalog.nativeTools
+    if (tools.isEmpty()) return
+    SettingsCard(title = "Gateway tools", subtitle = NATIVE_TOOLS_SUB, testTag = "settings-tools-native") {
+        tools.forEach { tool ->
+            ToolPermissionRow(
+                tool = tool,
+                // Native tools carry no MCP server, so no key in `pendingPermissions`
+                // can ever address one — read the catalog's own resolved snapshot
+                // directly rather than through effectiveToolPermission (which needs a
+                // serverId). See McpToolView.settable's doc comment: today every
+                // native tool is settable: false anyway, so there is never a pending
+                // edit to read back regardless.
+                permission = tool.permission,
+                controlsEnabled = controlsEnabled,
+                onSelect = {
+                    // Unreachable while settable is false (every native tool today —
+                    // delegateTask): RowSelect renders fully disabled underneath, so
+                    // this can't fire. Kept as a real no-op rather than omitted, so a
+                    // future settable native tool (plus a server-addressable write
+                    // path — resolve-tool-permission.ts's `serverName: null` means
+                    // none exists yet) gets a working handler by flipping `settable`,
+                    // no client change required here.
+                },
+                testTag = "settings-tools-native-${tool.name}",
             )
         }
-    } else if (open) {
-        EmptyRow("Server is off. Toggle on to enable and configure individual tools.")
     }
+}
+
+/**
+ * One tool's four-state permission control: the tool name + description on the
+ * left, a RowSelect (Allow/Ask/Deny/Off) on the right. Shared by
+ * [McpServerSection]'s expanded per-tool list and [NativeToolsCard] — identical
+ * rendering regardless of which catalog array (McpCatalogEntry.tools or
+ * McpCatalogView.nativeTools) a tool came from. [McpToolView.settable] is what
+ * this row branches on to render read-only (a genuinely disabled,
+ * non-interactive RowSelect — Compose's `clickable(enabled = false)` never
+ * opens the menu) — never the tool's name.
+ */
+@Composable
+private fun ToolPermissionRow(
+    tool: McpToolView,
+    permission: ToolPermission,
+    controlsEnabled: Boolean,
+    onSelect: (ToolPermission) -> Unit,
+    testTag: String,
+) {
+    RowSelect(
+        label = tool.name,
+        sub = tool.description.ifBlank { null },
+        options = toolPermissionSelectOptions,
+        selectedValue = permission.wireValue,
+        onSelect = { value -> toolPermissionFromWireValue(value)?.let(onSelect) },
+        enabled = controlsEnabled && tool.settable,
+        testTag = testTag,
+    )
 }
 
 @Composable

@@ -2,32 +2,42 @@
 // ToolsViewModel — Tools settings page. SLOW save: a full-profile PUT whose `tools`
 // changed → PUT then apply (Hermes restart). Loads the profile + the MCP catalog.
 //
-// INTERIM two-state view over the per-tool permission model landed in
-// 2026-08-07-tool-permissions task 7 (ProfileTools.permissions: server -> tool ->
-// ToolPermission, replacing the retired enabled narrowing-array map). A tool/server
-// counts as "on" iff its resolved permission is anything other than OFF — ALLOW, ASK
-// and DENY all read as "on" here, collapsed onto the Switch this screen already has.
-// The real four-state ALLOW/ASK/DENY/OFF dropdown, the settable-disabled row
-// (delegateTask), and the nativeTools section are task 8's per-tool permission UI,
-// not built here.
+// Four-state per-tool permission model (2026-08-07-tool-permissions task 9,
+// replacing task 7's interim two-state Switch): every MCP-server tool AND every
+// gateway-native tool (McpCatalogView.nativeTools, e.g. delegateTask) carries its
+// own ALLOW/ASK/DENY/OFF permission, rendered by ToolsScreen as a RowSelect
+// dropdown (see ToolPermissionOptions.kt). The server header row keeps a two-state
+// master Switch — a bulk convenience over every tool on that server, unchanged
+// from task 7 — while each tool's own row is independently settable to any of the
+// four values and stays visible whenever its server section is expanded,
+// regardless of what the master switch currently reads.
 //
-// SECURITY-CRITICAL: turning a tool/server "on" writes a CLEAR (`null`), NEVER a
-// concrete ALLOW — a blanket ALLOW would silently escalate a confirm-tier tool's
-// role-template ASK to auto-approved (the exact shipped-and-caught-on-web bug
-// withServerMasterPermission exists to prevent; see ToolPermissionPatch.kt). Pending
-// edits therefore live in `pendingPermissions` — a PATCH overlay (nullable leaves) —
-// NEVER folded into a ProfileV1/ProfileTools, which is concrete-only BY DESIGN and
-// structurally cannot hold a clear (see ProfileTools.permissions's doc comment).
-// This mirrors iOS's existing draftEnabled/draftToolsets pattern for the identical
-// reason: the stored KMP type cannot express what a pending edit here needs to. The
-// overlay is merged onto the loaded profile's OWN stored permissions only at save
-// time (mergeToolPermissionPatch), so an untouched server/tool is carried forward
-// rather than dropped (see that function's doc comment for why a naive `base +
-// overlay` at the server level would silently turn every untouched server off).
+// SECURITY-CRITICAL: the master Switch's "on" direction writes a CLEAR (`null`),
+// NEVER a concrete ALLOW — a blanket ALLOW would silently escalate a confirm-tier
+// tool's role-template ASK to auto-approved (the exact shipped-and-caught-on-web
+// bug, then shipped-and-caught again in this ViewModel's own task-7 interim,
+// withServerMasterPermission exists to prevent; see ToolPermissionPatch.kt). A
+// single tool's own dropdown is different: it ALWAYS writes one of the four
+// concrete values it displays — there is no "clear" option in a per-tool control,
+// only the bulk master write ever clears. Pending edits live in
+// `pendingPermissions` — a PATCH overlay (nullable leaves) — NEVER folded into a
+// ProfileV1/ProfileTools, which is concrete-only BY DESIGN and structurally cannot
+// hold a clear (see ProfileTools.permissions's doc comment). This mirrors iOS's
+// draftPermissions pattern for the identical reason: the stored KMP type cannot
+// express what a pending edit here needs to.
+//
+// The overlay is merged onto the loaded profile's OWN stored permissions only at
+// save time (mergeToolPermissionPatch) so `tools.permissions` matches every other
+// ProfileV1PutBody field's full-resend convention — NOT because an omitted
+// server/tool key would be read as "off" by the gateway. `profile-update.ts` does
+// a genuine per-server, per-tool DELTA merge: a key this session never touched is
+// left untouched in storage regardless of whether the PUT body repeats it. See
+// mergeToolPermissionPatch's own doc comment for the corrected reasoning.
 //
 // Reads go through effectiveToolPermission (shared pure helper,
 // io.sentient.mobilesdk.settings.ToolPermissionPatch.kt) so this screen's notion of
-// "is this on" can never drift from what the ToolBroker actually resolves.
+// "what does this tool currently read" can never drift from what the ToolBroker
+// actually resolves.
 // profile.tools.toolsets: List<String>? — Hermes built-ins; a builtin row is ON iff
 // its toolset is in toolsets. Toggling flips the whole toolset (unchanged).
 // ---------------------------------------------------------------------------
@@ -130,10 +140,16 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
         serverToggleWrite(pending, catalog, id)
     }
 
-    /** Flips one tool between "on" (CLEARED to its own role-template answer) and an
-     *  explicit OFF. NEVER a blanket ALLOW — see the file header and [toolToggleWrite]. */
-    fun toggleTool(serverId: String, toolName: String) = editPermissions { pending, catalog ->
-        toolToggleWrite(pending, catalog, serverId, toolName)
+    /** One tool's own permission dropdown: writes [permission] verbatim — always one
+     *  of the four concrete values the dropdown displays, never a clear. See the
+     *  file header: only the server master Switch ([toggleServer]) ever clears back
+     *  to the role template; a single tool's control has no "clear" option. */
+    fun setToolPermission(serverId: String, toolName: String, permission: ToolPermission) = editPermissions { pending, _ ->
+        log.info(
+            "set-tool-permission",
+            mapOf("serverId" to serverId, "tool" to toolName, "permission" to permission.name),
+        )
+        withToolPermission(pending, serverId, toolName, permission)
     }
 
     fun toggleToolset(toolset: String) {
@@ -170,10 +186,13 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
                 "toolsetsChanged" to (state.pendingToolsets != null),
             ),
         )
-        // mergeToolPermissionPatch carries forward every server/tool this session never
-        // touched — sending pendingPermissions alone would drop them, and an absent server
-        // in a non-empty stored table means "off forever" (ProfileTools.permissions's doc
-        // comment), not "unchanged".
+        // mergeToolPermissionPatch flattens this session's pendingPermissions onto the
+        // originally-loaded stored table so tools.permissions matches every other
+        // ProfileV1PutBody field's full-resend convention — NOT because omitting an
+        // untouched server/tool would turn it off. The gateway's PUT handler
+        // (profile-update.ts) does a genuine per-server, per-tool DELTA merge; an
+        // omitted key is left untouched in storage (see mergeToolPermissionPatch's own
+        // doc comment for the corrected reasoning).
         val next = original.toPutBody().copy(
             tools = ProfileToolsPatch(
                 permissions = mergeToolPermissionPatch(original.tools.permissions, state.pendingPermissions),
@@ -222,25 +241,6 @@ internal fun serverToggleWrite(
     val entry = catalog.servers[id] ?: return pending
     val toolNames = entry.tools.map { it.name }
     return withServerMasterPermission(pending, id, toolNames, catalog.wildcardPermissionKey, turnOn = !isServerOn(pending, catalog, id))
-}
-
-/**
- * Pure, directly-testable: the single-tool write given its CURRENT effective state — off →
- * on CLEARS it (`withToolPermission(..., null)`), on → off writes an explicit OFF.
- * SECURITY-CRITICAL: the "on" direction must NEVER be a concrete [ToolPermission.ALLOW] —
- * see the file header.
- */
-internal fun toolToggleWrite(
-    pending: ToolPermissionPatchMap,
-    catalog: McpCatalogView,
-    serverId: String,
-    toolName: String,
-): ToolPermissionPatchMap {
-    val entry = catalog.servers[serverId] ?: return pending
-    val tool = entry.tools.find { it.name == toolName } ?: return pending
-    val current = effectiveToolPermission(pending, serverId, tool)
-    val next: ToolPermission? = if (current == ToolPermission.OFF) null else ToolPermission.OFF
-    return withToolPermission(pending, serverId, toolName, next)
 }
 
 /** Fold one FSM transition into flat progress fields. */

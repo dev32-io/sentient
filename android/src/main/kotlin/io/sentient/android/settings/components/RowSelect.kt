@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
 // RowSelect — label + current value, opens a DropdownMenu on tap. Mirrors the
 // webui ".sel"/".sel-btn"/".sel-menu" custom dropdown (Model provider select,
-// Advanced reasoning-effort select).
+// Advanced reasoning-effort select) and, with `enabled = false`, the Tools
+// screen's per-tool permission control for an unsettable tool (mirrors iOS
+// RowSelect.swift's `isEnabled` + opacity dim for the identical case).
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.components
 
@@ -26,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -40,6 +43,14 @@ import io.sentient.mobilesdk.design.Colors
 
 private val BORDER_WIDTH = 1.dp
 private const val CHEVRON_DOWN = "⌄"
+
+/** Opacity of the value box when [RowSelect.enabled] is false — `clickable(enabled
+ *  = false)` already blocks the tap from ever reaching the menu (genuinely
+ *  non-interactive, not merely styled to look so); the dim is the only visual cue,
+ *  since a custom Box/Row doesn't auto-dim under a disabled state the way a
+ *  Material `Switch`/`Button` does. Matches iOS RowSelect.swift's identical
+ *  `isEnabled ? 1 : 0.5`. */
+private const val DISABLED_VALUE_ALPHA = 0.5f
 
 /** Stable per-option testTag prefix so Maestro can target `settings-select-option-<value>`. */
 private const val OPTION_TAG_PREFIX = "settings-select-option-"
@@ -138,6 +149,7 @@ private fun RowSelectValueBox(
     Box {
         Row(
             modifier = Modifier
+                .alpha(if (enabled) 1f else DISABLED_VALUE_ALPHA)
                 .clip(RoundedCornerShape(tokens.radii.sm))
                 .background(if (expanded) Color(Colors.paper) else Color(Colors.bgElev))
                 .border(BORDER_WIDTH, Color(Colors.lineSoft), RoundedCornerShape(tokens.radii.sm))
@@ -157,15 +169,32 @@ private fun RowSelectValueBox(
 @Composable
 private fun RowSelectPreview() {
     SentientTheme {
-        RowSelect(
-            label = "Reasoning",
-            options = listOf(
-                SelectOption("none", "None"),
-                SelectOption("medium", "Medium"),
-                SelectOption("xhigh", "Extra high"),
-            ),
-            selectedValue = "medium",
-            onSelect = {},
-        )
+        Column {
+            RowSelect(
+                label = "Reasoning",
+                options = listOf(
+                    SelectOption("none", "None"),
+                    SelectOption("medium", "Medium"),
+                    SelectOption("xhigh", "Extra high"),
+                ),
+                selectedValue = "medium",
+                onSelect = {},
+            )
+            // Unsettable-tool case (Tools screen's "Gateway tools" card): dimmed and
+            // genuinely non-interactive via `enabled = false`, never merely styled so.
+            RowSelect(
+                label = "delegateTask",
+                sub = "Hand a task to Hermes in the background.",
+                options = listOf(
+                    SelectOption("allow", "Allow"),
+                    SelectOption("ask", "Ask"),
+                    SelectOption("deny", "Deny"),
+                    SelectOption("off", "Off"),
+                ),
+                selectedValue = "ask",
+                onSelect = {},
+                enabled = false,
+            )
+        }
     }
 }
