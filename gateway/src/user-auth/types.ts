@@ -33,11 +33,20 @@ export interface Argon2Params {
   parallelism: number;
 }
 
+/**
+ * What a validated session token tells the gateway. IDENTITY AND LIFETIME,
+ * NOTHING ELSE.
+ *
+ * THE TOKEN IDENTIFIES, IT NEVER AUTHORIZES (owner ruling, 2026-08-07). It
+ * says who is calling; it does not say what they may do. Every authorization
+ * decision resolves the caller's role from the user record at the moment of
+ * the decision, so a demoted account loses its authority on its very next
+ * request — no refresh, no re-login, no cache to flush. Do not add an
+ * authority-bearing claim to this shape; a claim is a snapshot, and a snapshot
+ * of authority is a stale grant waiting to be trusted.
+ */
 export interface TokenPayload {
   userId: string;
-  /** The role the token was MINTED with. A token issued before the claim
-   *  existed has none and is refused outright — see `token-service.ts`. */
-  role: UserRole;
   issuedAt: number; // unix seconds
   expiresAt: number; // unix seconds
 }

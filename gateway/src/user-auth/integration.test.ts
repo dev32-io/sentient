@@ -44,16 +44,13 @@ describe("phase-0 primitives compose end-to-end", () => {
     if (!fetched.ok || !fetched.value) throw new Error("unreachable");
     const pinOk = await verifyPin("1234", fetched.value.pinHash);
     expect(pinOk).toBe(true);
-    const token = await tokens.issue({
-      userId: fetched.value.userId,
-      role: fetched.value.role,
-    });
+    const token = await tokens.issue({ userId: fetched.value.userId });
 
     const valid = await tokens.validate(token);
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.role).toBe("admin");
+    expect(valid.value.expiresAt).toBeGreaterThan(valid.value.issuedAt);
   });
 
   it("login with wrong PIN does not issue a token", async () => {

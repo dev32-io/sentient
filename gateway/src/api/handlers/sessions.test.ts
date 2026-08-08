@@ -61,7 +61,24 @@ function freshHarness(): Harness {
       async validate(token: string): Promise<TokenResult<TokenPayload>> {
         const userId = tokenToUserId.get(token);
         if (!userId) return { ok: false, error: "malformed" };
-        return { ok: true, value: { userId, role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 } };
+        return { ok: true, value: { userId, issuedAt: 0, expiresAt: 9_999_999_999 } };
+      },
+    },
+    // The route resolves the principal's ROLE here, not from the token — see
+    // the module header. Every user this harness mints is an ordinary adult.
+    users: {
+      async get(userId: string) {
+        return {
+          ok: true as const,
+          value: {
+            userId,
+            displayName: userId,
+            pinHash: "$argon2id$fake",
+            role: "adult" as const,
+            avatarTint: "terra" as const,
+            createdAt: "2026-08-07T00:00:00.000Z",
+          },
+        };
       },
     },
   };

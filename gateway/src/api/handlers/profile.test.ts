@@ -1,4 +1,4 @@
-import type { Result, UserRole } from "@sentient/protocol";
+import type { Result } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { ProfileStore, ProfileStoreError } from "../../profile-store/profile-store.js";
 import type { ProfileV1 } from "../../profile-store/profile-types.js";
@@ -19,12 +19,12 @@ function sampleProfile(userId = "alice"): ProfileV1 {
   };
 }
 
-function makeTokens(userId = "alice", role: UserRole = "adult") {
+function makeTokens(userId = "alice") {
   return {
     validate: vi.fn(
       async (): Promise<TokenResult<TokenPayload>> => ({
         ok: true,
-        value: { userId, role, issuedAt: 0, expiresAt: 9999999999 },
+        value: { userId, issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
   };

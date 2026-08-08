@@ -47,11 +47,13 @@ async function main(): Promise<void> {
         throw new Error(`mint: ${usersPath} has no admin user`);
     }
 
+    // IDENTITY ONLY — the token names the user and confers nothing. The cube
+    // gets whatever this account's record says it may do, resolved per request
+    // by the gateway, so a baked token cannot outlive a role change.
+    // (`gateway/scripts/` is outside tsconfig's `include`, so nothing would
+    // have caught a stale `role:` argument here at build time.)
     const tokens = createTokenService({ secret, ttlSeconds: DEV_TTL_SECONDS });
-    const token = await tokens.issue({
-        userId: String(admin.userId),
-        role: "admin",
-    });
+    const token = await tokens.issue({ userId: String(admin.userId) });
 
     process.stdout.write(token);
     process.stderr.write(`[mint-cube-token] minted for userId=${admin.userId} ttl=${DEV_TTL_SECONDS}s\n`);

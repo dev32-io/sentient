@@ -27,6 +27,7 @@ import { snapshotFeedItems } from "../../runtime/conversation-feed.js";
 import { withSessionStore } from "../../session-handlers/session-binding.js";
 import { resolveSession } from "../../session-handlers/session-id.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
+import type { UserStore } from "../../user-auth/user-store.js";
 
 const log = getLog(["sentient", "api", "sessions"]);
 
@@ -38,11 +39,14 @@ const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
 
 // --- Principal defaults -------------------------------------------------------
-// The ROLE comes off the validated TOKEN, which carries a real `role` claim
-// as of plan 2026-08-07-tool-permissions task 2b — the same claim
-// `require-admin-auth.ts` gates the admin surface on, so the two REST paths
-// agree by construction. A token minted before the claim existed does not
-// validate at all, so there is no roleless caller to default for.
+// The ROLE comes off the USER RECORD, resolved on this request — never off the
+// token, which identifies and nothing more (owner ruling, 2026-08-07). It
+// matters here more than anywhere else on the REST surface: this is where a
+// `UserPrincipal` is minted, and `AccessManager.grant` bakes that principal's
+// role into a `Capability`. A stale claim reaching this line would become a
+// frozen authority object, which is the one thing the ruling exists to prevent.
+// Same record `ws-auth-gate.ts` reads for that user's WS sessions, so the two
+// entry points agree by construction rather than by convention.
 // HOUSEHOLDS are still not modelled; that half keeps its placeholder.
 const REST_HOUSEHOLD_ID = "home";
 
@@ -51,6 +55,8 @@ const MESSAGES_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)\/messages$/;
 
 export interface SessionsHandlerDeps {
   tokens: { validate: (token: string) => Promise<TokenResult<TokenPayload>> };
+  /** Resolves the caller's CURRENT role for the principal minted below. */
+  users: Pick<UserStore, "get">;
   accessManager: AccessManager;
 }
 
@@ -82,9 +88,20 @@ async function handleSessions(deps: SessionsHandlerDeps, request: Request): Prom
     });
   }
 
+  const stored = await deps.users.get(valid.value.userId);
+  if (!stored.ok || stored.value === null) {
+    // FAIL CLOSED. A token naming a user who is not there identifies nobody,
+    // so it is an invalid credential — never a defaulted role.
+    log.warn("sessions.no-record", {
+      userId: valid.value.userId,
+      reason: stored.ok ? "token names a user with no record" : stored.error,
+    });
+    return jsonError(HTTP_UNAUTHORIZED, "user-not-found");
+  }
+
   let principal: UserPrincipal;
   try {
-    principal = createUserPrincipal(valid.value.userId, valid.value.role, REST_HOUSEHOLD_ID);
+    principal = createUserPrincipal(valid.value.userId, stored.value.role, REST_HOUSEHOLD_ID);
   } catch {
     // assertUserId throws on a stored/claimed userId that doesn't match the
     // canonical shape. Reject cleanly rather than let the throw escape.

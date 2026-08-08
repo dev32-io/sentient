@@ -95,7 +95,9 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         log.warn("authenticate.wrong-pin", { userId, reason: "wrong pin" });
         return { ok: false, error: "invalid-credentials" };
       }
-      const token = await tokens.issue({ userId: r.value.userId, role: r.value.role });
+      // The token carries identity only — the role is resolved from this same
+      // record at each authorization decision, never from the credential.
+      const token = await tokens.issue({ userId: r.value.userId });
       log.info("authenticate.ok", { userId: r.value.userId, role: r.value.role });
       return { ok: true, value: { token, user: r.value } };
     },

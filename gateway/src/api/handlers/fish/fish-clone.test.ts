@@ -473,7 +473,7 @@ describe("POST /api/v1/providers/voices/:id/clone (mount)", () => {
         validate: vi.fn(
           async (): Promise<TokenResult<TokenPayload>> => ({
             ok: true,
-            value: { userId: "alice", role: "adult", issuedAt: 0, expiresAt: 9999999999 },
+            value: { userId: "alice", issuedAt: 0, expiresAt: 9999999999 },
           }),
         ),
       },

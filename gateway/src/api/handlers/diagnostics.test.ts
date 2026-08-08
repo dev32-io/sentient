@@ -9,7 +9,7 @@ import { type DiagnosticsDeps, MAX_BYTES, createDiagnosticsHandler } from "./dia
 
 const OK_TOKEN: TokenResult<TokenPayload> = {
   ok: true,
-  value: { userId: "u_test01", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 },
+  value: { userId: "u_test01", issuedAt: 0, expiresAt: 9_999_999_999 },
 };
 
 const FAIL_TOKEN: TokenResult<TokenPayload> = {

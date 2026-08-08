@@ -315,26 +315,12 @@ async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Respon
     log.warn("me.user-vanished", { userId: valid.value.userId });
     return jsonError(HTTP_UNAUTHORIZED, "user-not-found");
   }
-  // ISSUED FROM THE RECORD, never rolled from the presented token. This route
-  // is where a client's credential is renewed on every boot, so it is also the
-  // only place a role change can reach a long-lived token — and the record is
-  // already in hand two lines up.
-  //
-  // Rolling instead (the retired `TokenService.refresh`) re-issued from the
-  // OLD token's own claims, so a demoted admin's token re-minted itself as
-  // admin forever: the client re-rolls before the 7-day TTL ever lands, so the
-  // staleness was unbounded rather than TTL-bounded, and INVISIBLE — the body
-  // below correctly reported the record's new role while `require-admin-auth`
-  // and the sessions principal kept reading `admin` off the claim.
-  const fresh = await deps.auth.tokens.issue({ userId: userR.value.userId, role: userR.value.role });
-  if (valid.value.role !== userR.value.role) {
-    log.info("me.role-converged", {
-      userId: userR.value.userId,
-      from: valid.value.role,
-      to: userR.value.role,
-      reason: "token claim was stale; re-issued from the user record",
-    });
-  }
+  // Renewal mints a fresh IDENTITY token — there is no authority in it to
+  // converge. The `role` in the body below is read off the record on this
+  // request and is display data for the client (draw the admin section or
+  // not); the server re-resolves it from the record on every call regardless,
+  // so a client rendering a stale copy cannot turn that into access.
+  const fresh = await deps.auth.tokens.issue({ userId: userR.value.userId });
   return buildAuthResponse(fresh, userR.value);
 }
 

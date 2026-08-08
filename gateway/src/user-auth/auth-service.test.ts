@@ -61,7 +61,7 @@ describe("createAuthService", () => {
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.role).toBe("adult");
+    expect(valid.value.userId).toBe("kevin");
   });
 
   it("authenticate with wrong pin returns invalid-credentials", async () => {

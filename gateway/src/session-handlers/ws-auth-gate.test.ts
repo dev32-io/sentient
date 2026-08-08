@@ -265,7 +265,7 @@ describe("ws auth gate", () => {
       validate: async (token) =>
         token === "token-a"
           ? validateAPromise
-          : { ok: true, value: { userId: "u_bbbbbbbb", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 } },
+          : { ok: true, value: { userId: "u_bbbbbbbb", issuedAt: 0, expiresAt: 9_999_999_999 } },
       getUser: async (userId) => ({
         ok: true,
         value: { userId, displayName: "X", pinHash: "x", role: "adult", avatarTint: "terra", createdAt: "now" },
@@ -287,7 +287,7 @@ describe("ws auth gate", () => {
 
     resolveValidateA({
       ok: true,
-      value: { userId: "u_aaaaaaaa", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 },
+      value: { userId: "u_aaaaaaaa", issuedAt: 0, expiresAt: 9_999_999_999 },
     });
     await pendingA;
 
@@ -323,7 +323,7 @@ describe("ws auth gate", () => {
     const auth = buildFakeAuth({
       validate: async () => ({
         ok: true,
-        value: { userId: "u_a1b2c3d4", role: "adult", issuedAt: 0, expiresAt: 9_999_999_999 },
+        value: { userId: "u_a1b2c3d4", issuedAt: 0, expiresAt: 9_999_999_999 },
       }),
       getUser: async () => usersGetPromise,
     });

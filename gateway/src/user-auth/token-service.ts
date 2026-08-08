@@ -1,4 +1,30 @@
-import { type UserRole, userRoleSchema } from "@sentient/protocol";
+// Session tokens: the MINIMUM a client needs to identify itself to the gateway.
+//
+// THE TOKEN IDENTIFIES, IT NEVER AUTHORIZES (owner ruling, 2026-08-07):
+//
+//   "a minimum token is simply enough for client to id and communicate with the
+//    server, then server ALWAYS pulls user role/user scope freshly at runtime …
+//    the token is used for server to identify user AND identify what the user
+//    and role scope is internally, not by trusting a token"
+//
+// So the claim set is `sub` + `purpose` + `iat` + `exp` and nothing else. No
+// role, no `isAdmin`, no scope. Whoever decides an authorization question reads
+// the user record at the moment of the decision, which is what makes a demoted
+// account lose its authority on its very next request — no refresh, no
+// re-login, no cache to flush, and no window in which a token out-ranks the
+// record it came from.
+//
+// A brief earlier revision of this file DID mint a `role` claim and refuse a
+// token that lacked one. Both halves are retired: the claim is gone, and a
+// token carrying authority claims from any older revision (`isAdmin`, or that
+// short-lived `role`) is now perfectly VALID — its extra claims are simply
+// never read. Nobody is logged out for holding one, and nobody gains anything
+// by holding one either, which is the point.
+//
+// NO `refresh`, and this ruling is why. A roll re-mints from the presented
+// token's own claims — precisely the "trusting a token" the owner forbids.
+// Renewal (`api/handlers/auth.ts#handleMe`) re-issues from the user record.
+
 import { decrypt, encrypt } from "paseto-ts/v4";
 import { getLog } from "../logging/logger.js";
 import type { TokenError, TokenPayload, TokenResult } from "./types.js";
@@ -10,28 +36,18 @@ export interface TokenServiceOptions {
   ttlSeconds: number;
 }
 
-// NO `refresh`. There used to be one — `validate` then `issue` from the
-// validated payload — and `api/handlers/auth.ts#handleMe` was its only caller.
-// It is not merely unused now, it is UNIMPLEMENTABLE correctly: a token roll
-// re-mints authority, and the authority a token should carry lives in the user
-// record, which this service has no access to by design. Rolling from the
-// token's own claims meant a demoted admin's token re-minted itself as admin
-// on every client boot, forever. Renewal reads the record and calls `issue`.
 export interface TokenService {
-  issue(subject: { userId: string; role: UserRole }): Promise<string>;
+  issue(subject: { userId: string }): Promise<string>;
   validate(token: string): Promise<TokenResult<TokenPayload>>;
 }
 
 const PURPOSE = "sentient.user-session.v1";
 const SECRET_BYTE_LENGTH = 32;
 
+/** The whole claim set. Adding an authority-bearing field here re-creates the
+ *  stale-grant class the ruling above closes — don't. */
 interface PasetoClaims {
   sub: string;
-  /** REPLACED the `isAdmin` claim (plan 2026-08-07-tool-permissions task 2b).
-   *  Typed as `unknown` because it is attacker-adjacent input the moment a
-   *  token predates the claim or was hand-crafted — `validate` parses it
-   *  before anything reads it as a role. */
-  role: unknown;
   purpose: string;
   iat: string; // ISO
   exp: string; // ISO
@@ -66,13 +82,12 @@ export function createTokenService(opts: TokenServiceOptions): TokenService {
       const exp = iat + opts.ttlSeconds;
       const claims: PasetoClaims = {
         sub: subject.userId,
-        role: subject.role,
         purpose: PURPOSE,
         iat: new Date(iat * 1000).toISOString(),
         exp: new Date(exp * 1000).toISOString(),
       };
       const token = encrypt(localKey, claims, { addIat: false, addExp: false });
-      log.debug("issue", { userId: subject.userId, role: subject.role, exp });
+      log.debug("issue", { userId: subject.userId, exp });
       return token;
     },
 
@@ -90,32 +105,16 @@ export function createTokenService(opts: TokenServiceOptions): TokenService {
         log.warn("validate.wrong-purpose", { got: claims.purpose });
         return { ok: false, error: "wrong-purpose" };
       }
-      // A token minted before the role claim existed is otherwise perfectly
-      // valid — right key, right purpose, unexpired — so it has to be REFUSED
-      // explicitly. There is no safe default: `admin` would be a privilege
-      // escalation off a claim the token never made, and `adult` would still
-      // hand a demoted account authority it no longer has. Its holder
-      // re-authenticates and gets a token that says what it means.
-      //
-      // Reported as `malformed`, an EXISTING TokenError, because all three
-      // clients already treat that code as terminal and route to login; a new
-      // code would fall off mobile's sessions-error allow-list and retry
-      // forever instead.
-      const role = userRoleSchema.safeParse(claims.role);
-      if (!role.success) {
-        log.warn("validate.role-claim-missing", {
-          userId: claims.sub,
-          reason: "token carries no usable role claim; refusing rather than defaulting one",
-        });
-        return { ok: false, error: "malformed" };
-      }
+      // Only `sub`, `iat` and `exp` are read. A token minted by an older
+      // revision may also carry `isAdmin` or `role`; those are IGNORED, not
+      // refused — the holder stays logged in and gains nothing, because
+      // nothing downstream reads a claim to decide anything.
       const iat = Math.floor(new Date(claims.iat).getTime() / 1000);
       const exp = Math.floor(new Date(claims.exp).getTime() / 1000);
       return {
         ok: true,
         value: {
           userId: claims.sub,
-          role: role.data,
           issuedAt: iat,
           expiresAt: exp,
         },

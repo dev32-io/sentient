@@ -1,4 +1,4 @@
-import type { Result, UserRole } from "@sentient/protocol";
+import type { Result } from "@sentient/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { InstallStateData } from "../../admin/install-state.js";
 import type { UserProvisioner, UserSummary } from "../../admin/user-provisioner.js";
@@ -17,12 +17,12 @@ function sampleUser(userId = "alice"): UserRecord {
   };
 }
 
-function makeValidTokens(userId = "alice", role: UserRole = "adult") {
+function makeValidTokens(userId = "alice") {
   return {
     validate: vi.fn(
       async (): Promise<TokenResult<TokenPayload>> => ({
         ok: true,
-        value: { userId, role, issuedAt: 0, expiresAt: 9999999999 },
+        value: { userId, issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
     issue: vi.fn(async (): Promise<string> => "issued-token"),
@@ -92,56 +92,53 @@ function makeGetMeRequest(bearerToken?: string): Request {
 }
 
 // ---------------------------------------------------------------------------
-// SECURITY BOUNDARY — /auth/me is where a credential is RENEWED, so it is the
-// only place a role change can reach a long-lived token.
+// /auth/me RENEWS A CREDENTIAL, AND A CREDENTIAL CARRIES NO AUTHORITY.
 //
-// It used to roll the presented token (`TokenService.refresh`: validate, then
-// re-issue from the OLD token's own claims). Both webui and mobile call this
-// route on every boot and persist what comes back, so a demoted admin's token
-// re-minted itself as admin before the TTL could ever expire it — staleness
-// was UNBOUNDED, not TTL-bounded. And it was invisible: the response body
-// reported the record's new role, so her UI hid the admin section while
-// `require-admin-auth` kept reading `admin` off the claim she was still
-// carrying. As of task 2b the token's role also becomes `Capability.role` via
-// `sessions.ts`, so the stale claim would reach an authority object too.
+// The token it hands back names a user and nothing else (owner ruling,
+// 2026-08-07). An intermediate revision minted a `role` claim here and had to
+// work to keep it fresh; that whole problem is deleted rather than narrowed —
+// there is no authority in the token to go stale.
 //
-// The fix is that the record — already fetched one line earlier — is the only
-// input to the new token. Worst-case staleness is now one visit to this route.
+// The `role`/`isAdmin` in the BODY is different in kind: it is display data,
+// read off the record on this request, so the client knows whether to draw the
+// admin section. A client rendering a stale copy of it cannot turn that into
+// access, because every route re-resolves the role from the record anyway
+// (`require-admin-auth.test.ts` pins that).
 // ---------------------------------------------------------------------------
 describe("GET /api/v1/auth/me", () => {
-  it("issues a token claiming the record's role, not the presented token's", async () => {
-    const tokens = makeValidTokens("alice", "admin"); // token says admin …
-    const demoted = { ...sampleUser(), role: "adult" as const }; // … record says adult
-    const deps = makeDeps(tokens, demoted);
+  it("mints an identity-only token — no role, no authority of any kind", async () => {
+    const tokens = makeValidTokens("alice");
+    const deps = makeDeps(tokens, { ...sampleUser(), role: "admin" as const });
     const handler = createAuthHandler(deps as unknown as { auth: AuthService });
 
-    const response = await handler(makeGetMeRequest("stale-admin-token"));
+    const response = await handler(makeGetMeRequest("her-token"));
 
     expect(response.status).toBe(200);
-    expect(tokens.issue).toHaveBeenCalledWith({ userId: "alice", role: "adult" });
+    // Exactly `{userId}` — an extra property here would be a claim, and a
+    // claim is a grant that outlives the record it came from.
+    expect(tokens.issue).toHaveBeenCalledWith({ userId: "alice" });
   });
 
-  it("reports the record's role in the body, so body and token agree", async () => {
+  it("reports the record's CURRENT role in the body, for rendering", async () => {
     const demoted = { ...sampleUser(), role: "adult" as const };
-    const deps = makeDeps(makeValidTokens("alice", "admin"), demoted);
+    const deps = makeDeps(makeValidTokens("alice"), demoted);
     const handler = createAuthHandler(deps as unknown as { auth: AuthService });
 
-    const body = await (await handler(makeGetMeRequest("stale-admin-token"))).json();
+    const body = await (await handler(makeGetMeRequest("her-token"))).json();
 
     expect(body.user.role).toBe("adult");
     expect(body.user.isAdmin).toBe(false);
     expect(body.token).toBe("issued-token");
   });
 
-  it("promotes too — a newly-made admin is not stuck on the old claim", async () => {
-    const tokens = makeValidTokens("alice", "adult");
-    const promoted = { ...sampleUser(), role: "admin" as const };
-    const deps = makeDeps(tokens, promoted);
+  it("reports a promotion on the next visit, with no re-login", async () => {
+    const deps = makeDeps(makeValidTokens("alice"), { ...sampleUser(), role: "admin" as const });
     const handler = createAuthHandler(deps as unknown as { auth: AuthService });
 
-    await handler(makeGetMeRequest("stale-adult-token"));
+    const body = await (await handler(makeGetMeRequest("her-token"))).json();
 
-    expect(tokens.issue).toHaveBeenCalledWith({ userId: "alice", role: "admin" });
+    expect(body.user.role).toBe("admin");
+    expect(body.user.isAdmin).toBe(true);
   });
 
   it("returns 401 without a bearer token", async () => {
@@ -391,7 +388,7 @@ function makeMockInstallState(initial: {
 function makeSetupAuthService(): AuthService {
   const user = sampleUser("u_00000001");
   return {
-    tokens: makeValidTokens("u_00000001", "admin"),
+    tokens: makeValidTokens("u_00000001"),
     users: {
       get: vi.fn(async () => ({ ok: true as const, value: user })),
       list: vi.fn(async () => ({ ok: true as const, value: [user] })),

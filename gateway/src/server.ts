@@ -38,6 +38,7 @@ import {
 } from "./session-handlers/ws-handlers.ts";
 import { errorMessage } from "./session-handlers/ws-helpers.ts";
 import type { TokenService } from "./user-auth/token-service.ts";
+import type { UserStore } from "./user-auth/user-store.ts";
 
 export type { SessionData };
 export type { GatewayTlsMaterial } from "./session-handlers/ws-handlers.ts";
@@ -92,7 +93,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
   const handleSecrets = createSecretsHandler({
     installState: services.installState,
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
-    requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken),
+    requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken, services.auth.users),
   });
   const handleAuth = createAuthHandler({
     auth: services.auth,
@@ -184,6 +185,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,
+    users: services.auth.users,
     accessManager: services.accessManager,
   });
 
@@ -256,18 +258,32 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
 }
 
 /** Builds a requireAdmin function for the secrets handler from TokenService + static admin token. */
-function buildRequireAdmin(tokenService: TokenService, adminToken: string | undefined): RequireAdminFn {
+function buildRequireAdmin(
+  tokenService: TokenService,
+  adminToken: string | undefined,
+  userStore: Pick<UserStore, "get">,
+): RequireAdminFn {
   const BEARER_PREFIX = "Bearer ";
   return async (req) => {
     const header = req.headers.get("Authorization") ?? "";
     if (!header.startsWith(BEARER_PREFIX)) return { ok: false };
     const token = header.slice(BEARER_PREFIX.length);
-    // The static machine-to-machine token is the operator's own credential, so
-    // it resolves to the operator's role rather than a parallel boolean.
+    // The static machine-to-machine token is the operator's own out-of-band
+    // credential, not a user — there is no record behind it to resolve.
     if (adminToken && token === adminToken) return { ok: true, value: { role: ADMIN_ROLE } };
     const result = await tokenService.validate(token);
-    if (result.ok) return { ok: true, value: { role: result.value.role } };
-    return { ok: false };
+    if (!result.ok) return { ok: false };
+    // The token said WHO. The record says WHAT THEY MAY DO, as of now — a
+    // demoted account is refused on its next call with nothing to invalidate.
+    const stored = await userStore.get(result.value.userId);
+    if (!stored.ok || stored.value === null) {
+      log.warn("require-admin.no-record", {
+        userId: result.value.userId,
+        reason: stored.ok ? "token names a user with no record" : stored.error,
+      });
+      return { ok: false };
+    }
+    return { ok: true, value: { role: stored.value.role } };
   };
 }
 
