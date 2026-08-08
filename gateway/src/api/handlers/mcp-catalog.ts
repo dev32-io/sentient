@@ -2,6 +2,7 @@ import {
   ALL_TOOLS_PERMISSION_KEY,
   type HermesBuiltinTools,
   type McpCatalog,
+  NATIVE_TOOL_SERVER_KEY,
   type ToolPermission,
   type ToolPermissionMap,
 } from "@sentient/config";
@@ -11,6 +12,7 @@ import type { ProfileStore } from "../../profile-store/profile-store.js";
 import { delegateTaskDefinition } from "../../tools/delegate-task.js";
 import { resolveToolPermission } from "../../tools/resolve-tool-permission.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
+import { SKILL_TOOL_SETTINGS } from "../../tools/skill-tools.js";
 import { createToolPermissionsReader } from "../../tools/user-tool-permissions.js";
 import type { TokenService } from "../../user-auth/token-service.js";
 import type { UserStore } from "../../user-auth/user-store.js";
@@ -332,16 +334,37 @@ function projectNativeTools(
   roleTemplate: ToolPermissionMap,
   storedPermissions: ToolPermissionMap | undefined,
 ): McpToolView[] {
+  const views: McpToolView[] = [];
+
+  // Skill tools (`tools/skill-tools.ts`) — gateway-native FOREGROUND tools that,
+  // UNLIKE `delegateTask`, ARE overridable: they resolve under the reserved
+  // `"native"` namespace, so a stored `native[tool]` answers and a client CAN
+  // change them. `settable: true`, and the namespace the projection reads is the
+  // SAME one the broker's `serverOf` returns for them (`NATIVE_TOOL_SERVER_KEY`)
+  // — the round-trip a later task proves. Role-gated like everything else: the
+  // read-tier list/use tools reach every role, the confirm-tier mutating tools
+  // reach only adult+.
+  for (const meta of SKILL_TOOL_SETTINGS) {
+    if (!canExecute(role, meta.tier)) continue;
+    const { permission } = resolveToolPermission({
+      toolName: meta.name,
+      tier: meta.tier,
+      serverName: NATIVE_TOOL_SERVER_KEY,
+      storedPermissions,
+      roleTemplate,
+    });
+    views.push({ name: meta.name, description: meta.description, tier: meta.tier, permission, settable: true });
+  }
+
+  // `delegateTask` — serverless (`serverName: null`) and structurally NOT
+  // overridable, so `settable: false`; see this function's own header comment.
   const { name, tier } = delegateTaskDefinition;
-  if (!canExecute(role, tier)) return [];
-  const { permission } = resolveToolPermission({
-    toolName: name,
-    tier,
-    serverName: null,
-    storedPermissions,
-    roleTemplate,
-  });
-  return [{ name, description: DELEGATE_TASK_SETTINGS_DESCRIPTION, tier, permission, settable: false }];
+  if (canExecute(role, tier)) {
+    const { permission } = resolveToolPermission({ toolName: name, tier, serverName: null, storedPermissions, roleTemplate });
+    views.push({ name, description: DELEGATE_TASK_SETTINGS_DESCRIPTION, tier, permission, settable: false });
+  }
+
+  return views;
 }
 
 interface AuthOk {

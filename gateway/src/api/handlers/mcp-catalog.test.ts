@@ -148,6 +148,16 @@ function permissionOf(view: McpCatalogView, server: string, tool: string) {
   return view.servers[server]?.tools.find((t) => t.name === tool)?.permission;
 }
 
+/** A native tool by name — the projection carries several now (five skill tools
+ *  plus `delegateTask`), so index-based lookups are no longer stable. */
+function nativeTool(view: McpCatalogView, name: string) {
+  return view.nativeTools.find((t) => t.name === name);
+}
+
+function nativeToolNames(view: McpCatalogView): string[] {
+  return view.nativeTools.map((t) => t.name).sort();
+}
+
 describe("GET /api/v1/mcp-catalog — auth", () => {
   it("returns 401 when the bearer token is missing", async () => {
     const handler = createMcpCatalogHandler(makeDeps({}));
@@ -415,8 +425,7 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
 
     const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
 
-    expect(view.nativeTools).toHaveLength(1);
-    expect(view.nativeTools[0]).toMatchObject({ name: "delegateTask", tier: "confirm", permission: "ask" });
+    expect(nativeTool(view, "delegateTask")).toMatchObject({ name: "delegateTask", tier: "confirm", permission: "ask" });
   });
 
   it("projects 'settable: false' — the wire signal a client must render read-only, since servers[x].tools carries the identical shape", async () => {
@@ -424,7 +433,7 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
 
     const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
 
-    expect(view.nativeTools[0]?.settable).toBe(false);
+    expect(nativeTool(view, "delegateTask")?.settable).toBe(false);
   });
 
   it("is absent for roles that never reach 'confirm' (child, guest) — paired with the household check above", async () => {
@@ -435,8 +444,8 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
       await createMcpCatalogHandler(makeDeps({ role: "guest" }))(makeGetRequest("valid-token"))
     ).json()) as McpCatalogView;
 
-    expect(childView.nativeTools).toEqual([]);
-    expect(guestView.nativeTools).toEqual([]);
+    expect(nativeTool(childView, "delegateTask")).toBeUndefined();
+    expect(nativeTool(guestView, "delegateTask")).toBeUndefined();
   });
 
   it("cannot be moved off its role-template answer by ANY stored table — no server key ever addresses it", async () => {
@@ -446,7 +455,64 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
 
     const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
 
-    expect(view.nativeTools[0]?.permission).toBe("ask");
+    expect(nativeTool(view, "delegateTask")?.permission).toBe("ask");
+  });
+});
+
+describe("GET /api/v1/mcp-catalog — the five skill tools are native, settable, and role-gated", () => {
+  it("an adult sees all five, each 'settable', with read tools 'allow' and mutating tools 'ask'", async () => {
+    const view = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "adult" }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+
+    // All five present alongside delegateTask.
+    expect(nativeToolNames(view)).toEqual([
+      "delegateTask",
+      "skill_create",
+      "skill_delete",
+      "skill_list",
+      "skill_update",
+      "skill_use",
+    ]);
+    // Read tools: friction-free.
+    expect(nativeTool(view, "skill_list")).toMatchObject({ tier: "read", permission: "allow", settable: true });
+    expect(nativeTool(view, "skill_use")).toMatchObject({ tier: "read", permission: "allow", settable: true });
+    // Mutating tools: confirm tier, prompt by default, and STILL settable
+    // (unlike delegateTask) — they live under the "native" namespace a client
+    // can address.
+    expect(nativeTool(view, "skill_create")).toMatchObject({ tier: "confirm", permission: "ask", settable: true });
+    expect(nativeTool(view, "skill_update")).toMatchObject({ tier: "confirm", permission: "ask", settable: true });
+    expect(nativeTool(view, "skill_delete")).toMatchObject({ tier: "confirm", permission: "ask", settable: true });
+  });
+
+  it("honours a stored override under the reserved 'native' namespace — proving the projection and broker agree on the key", async () => {
+    const view = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "adult", permissions: { native: { skill_create: "deny" } } }))(
+        makeGetRequest("valid-token"),
+      )
+    ).json()) as McpCatalogView;
+
+    // The stored native[skill_create] override wins over the role-template
+    // default — which is exactly what `settable: true` promises a client.
+    expect(nativeTool(view, "skill_create")?.permission).toBe("deny");
+    // A sibling native tool with no override still falls to its default.
+    expect(nativeTool(view, "skill_use")?.permission).toBe("allow");
+  });
+
+  it("a child reaches only the read-tier skill tools, never the confirm-tier mutators or delegateTask", async () => {
+    const childView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "child" }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+
+    expect(nativeToolNames(childView)).toEqual(["skill_list", "skill_use"]);
+  });
+
+  it("a guest reaches only the read-tier skill tools", async () => {
+    const guestView = (await (
+      await createMcpCatalogHandler(makeDeps({ role: "guest" }))(makeGetRequest("valid-token"))
+    ).json()) as McpCatalogView;
+
+    expect(nativeToolNames(guestView)).toEqual(["skill_list", "skill_use"]);
   });
 });
 

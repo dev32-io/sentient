@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { riskConfigSchema } from "@sentient/config";
+import { catalogTools, riskConfigSchema } from "@sentient/config";
 import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
+import { createFileScope } from "../access/file-scope.js";
 import { archiveUserDir } from "../admin/archive-user-dir.js";
 import { renderConfigsForExistingUsers } from "../admin/boot-migration.js";
 import { createHermesProfileProvisioner } from "../admin/hermes-profile-provisioner.js";
@@ -36,7 +37,9 @@ import { createConfirmHook, createSessionPermissionBroker } from "../runtime/ses
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
+import { scanContent } from "../security/injection-scanner.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
+import { createSkillStore } from "../skills/skill-store.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
@@ -47,6 +50,7 @@ import type { HermesRunner } from "../tools/hermes-runner.js";
 import { createMcpClient } from "../tools/mcp-client.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { createPromptClassifier } from "../tools/prompt-classifier.js";
+import { SKILL_TOOL_NAMES, createSkillTools } from "../tools/skill-tools.js";
 import { createToolBroker } from "../tools/tool-broker.js";
 import type { BackgroundToolRunner } from "../tools/tool-broker.js";
 import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
@@ -602,6 +606,31 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       attachedWindows,
     });
 
+    // The per-user SKILL STORE, rooted THROUGH the user's FileScope grant
+    // rather than a bare `join(userDir, "skills")`: `AccessManager.grant(...,
+    // "file-scope")` mints the capability, and `createFileScope(...).resolve`
+    // confines the root to that grant (and, since this task, refuses a
+    // capability of the wrong resource class). One store per session — a mkdir
+    // and a realpath, cheap — mirroring the per-session ToolBroker beside it.
+    //
+    // `knownTools` is the universe a skill's `tools:` frontmatter may name:
+    // every catalog tool ∪ the five native skill tools ∪ `delegateTask`. The
+    // SAME set is handed to `createSkillTools` so its `validate` hook can answer
+    // `unknown_tools` before the PDP, not only inside `store.write`.
+    //
+    // `skillStore` is kept in this factory scope on purpose: Task 10 (system
+    // prompt) reads it here to render the skills index — no new services-bag
+    // type is introduced.
+    const skillsRoot = createFileScope(accessManager.grant(principal, "file-scope")).resolve("skills");
+    const knownTools = new Set<string>([
+      ...catalogTools(mcpCatalog).map((tool) => tool.name),
+      ...SKILL_TOOL_NAMES,
+      delegateTaskDefinition.name,
+    ]);
+    const maxBodyChars = orchestratorCfg.skills.max_body_chars;
+    const skillStore = createSkillStore(skillsRoot, { maxBodyChars, knownTools });
+    const skillTools = createSkillTools(skillStore, { scan: scanContent, knownTools, maxBodyChars });
+
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(
       delegateTaskDefinition.name,
@@ -684,6 +713,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // so a tool dispatch stays traceable to the one socket that made it.
       sessionId: connectionId,
       backgroundTools,
+      // The five gateway-native FOREGROUND skill tools, keyed under the reserved
+      // `"native"` namespace by the broker's `serverOf` — so a stored
+      // `native[tool]` override bites and a parent's `off` is honoured.
+      nativeTools: skillTools,
       config: orchestratorCfg.tools,
       // Real L3 confirm round-trip (spec §5.3): fans `permission.request` to
       // EVERY window attached to this session and blocks the dispatch until

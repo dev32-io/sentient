@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import type { Capability } from "./capability.js";
-import { PathOutsideScopeError, createFileScope } from "./file-scope.js";
+import { PathOutsideScopeError, WrongResourceClassError, createFileScope } from "./file-scope.js";
 
 const ROOT = "/tmp/sentient-filescope-test";
 const aliceRoot = `${ROOT}/u_aaaaaaaa`;
@@ -39,5 +39,17 @@ describe("FileScope", () => {
   it("SECURITY: refuses an absolute path outside the grant", () => {
     const scope = createFileScope(aliceCap);
     expect(() => scope.resolve("/etc/passwd")).toThrow(PathOutsideScopeError);
+  });
+
+  it("SECURITY: refuses a capability minted for a DIFFERENT resource class (confused-deputy)", () => {
+    // A `session-store` capability for the same user shares aliceRoot exactly,
+    // so the path guard alone would pass — the class check is what refuses it.
+    const sessionStoreCap: Capability = Object.freeze({
+      ownerUserId: "u_aaaaaaaa",
+      resource: "session-store",
+      rootPath: aliceRoot,
+      role: "adult",
+    });
+    expect(() => createFileScope(sessionStoreCap)).toThrow(WrongResourceClassError);
   });
 });
