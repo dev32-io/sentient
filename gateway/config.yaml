@@ -1139,7 +1139,7 @@ security:
   inbound_scan:
     enabled: true            # master switch for scanning non-person text entering model context
     channels:                # per-channel toggles; a channel off = that text passes unscanned (logged at boot)
-      tool_result: true
-      background_completion: true
-      skill_body: true
-      delegation_prompt: true
+      tool_result: true            # screen MCP + native tool results before they reach the model
+      background_completion: true  # screen delegated-agent payloads before the completion note
+      skill_body: true             # use-time screening of skill bodies loaded by skill_use; write-time authoring scan is unconditional and not governed by this
+      delegation_prompt: true      # CURRENTLY INERT — the delegation prompt is always scanned via prompt-classifier directly, not the gate; see docs/native-todo.md

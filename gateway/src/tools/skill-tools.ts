@@ -356,6 +356,8 @@ function createSkillCreateRunner(store: SkillStore, deps: SkillToolsDeps): Nativ
     async run(args): Promise<ToolResult> {
       const parsed = parseCreateArgs(args);
       if (!parsed.ok) return fail(parsed.message);
+      const invalid = validateSkillFile(parsed.value, deps);
+      if (invalid) return invalid;
       return writeOutcomeResult(store.write(parsed.value, { overwrite: false }), parsed.value.name, "created");
     },
   };
@@ -379,6 +381,8 @@ function createSkillUpdateRunner(store: SkillStore, deps: SkillToolsDeps): Nativ
       if (!existing) return noSkillError(name, "update");
       const merged = mergeUpdateArgs(existing, args);
       if (!merged.ok) return fail(merged.message);
+      const invalid = validateSkillFile(merged.value, deps);
+      if (invalid) return invalid;
       return writeOutcomeResult(store.write(merged.value, { overwrite: true }), merged.value.name, "updated");
     },
   };

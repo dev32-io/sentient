@@ -1,6 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { mcpCatalogSchema } from "./schemas/mcp-catalog.ts";
-import { NATIVE_TOOL_SERVER_KEY } from "./schemas/tool-permission.ts";
 import {
   companionsConfigSchema,
   gatewayConfigSchema,
@@ -9,6 +7,8 @@ import {
   sttConfigSchema,
   ttsConfigSchema,
 } from "./schema.ts";
+import { mcpCatalogSchema } from "./schemas/mcp-catalog.ts";
+import { NATIVE_TOOL_SERVER_KEY } from "./schemas/tool-permission.ts";
 
 // Shared session fields required in every gateway config (no code defaults —
 // YAML is the source of truth per config rules).

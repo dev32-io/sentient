@@ -10,7 +10,6 @@
 // carry user-authored prompt content. Callers (delegation-guard.ts) log
 // `findings.length` and these category names, never the prompt itself.
 
-import type { RiskConfig } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
 import { type ScanSeverity, scanContent } from "../security/injection-scanner.js";
 
@@ -32,13 +31,6 @@ export interface PromptClassifier {
   classify(prompt: string): PromptClassification;
 }
 
-export interface PromptClassifierDeps {
-  /** Retained for constructor compatibility with the composition root; the v2
-   *  scanner's severity is authoritative for tiering, so no accumulator is
-   *  threaded here. */
-  riskConfig: RiskConfig;
-}
-
 /** Maps the scanner's max severity onto the classifier's 3-tier scale:
  *  no findings → `low`; any `notice`/`suspicious` finding → `medium`; a
  *  `hostile` finding (a structural tool-envelope) → `high`. The hostile→high
@@ -50,7 +42,7 @@ function tierFromSeverity(severity: ScanSeverity | null): PromptRiskTier {
   return "medium";
 }
 
-export function createPromptClassifier(_deps: PromptClassifierDeps): PromptClassifier {
+export function createPromptClassifier(): PromptClassifier {
   function classify(prompt: string): PromptClassification {
     const result = scanContent(prompt, { channel: "delegation_prompt", source: DELEGATION_SOURCE });
     const tier = tierFromSeverity(result.maxSeverity);

@@ -64,6 +64,16 @@ describe("renderSkillIndex — description sanitization", () => {
     expect(bulletLines[0]).toBe("- real-skill — Do the real thing - fake-skill — evil");
     expect(rendered).not.toContain("\n- fake-skill");
   });
+
+  it("strips invisible unicode from the description so it cannot hide a spoofed boundary", () => {
+    const zeroWidthSpace = "​";
+    const metas = [meta({ name: "real-skill", description: `Plan${zeroWidthSpace} family dinners` })];
+
+    const rendered = renderSkillIndex(metas, 10, PREAMBLE);
+
+    expect(rendered).toContain("- real-skill — Plan family dinners");
+    expect(rendered).not.toContain(zeroWidthSpace);
+  });
 });
 
 describe("renderSkillIndex — over the cap", () => {

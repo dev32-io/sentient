@@ -3149,4 +3149,14 @@ describe("inbound gate mode descriptor (Task 10)", () => {
     expect(desc.mode).toBe("passthrough");
     expect(desc.channels).toBe("");
   });
+
+  it("reports passthrough when only delegation_prompt is on — that channel never reaches the gate", () => {
+    const cfg = inboundScanConfigSchema.parse({
+      enabled: true,
+      channels: { tool_result: false, background_completion: false, skill_body: false, delegation_prompt: true },
+    });
+    const desc = describeInboundGateMode(cfg);
+    expect(desc.mode).toBe("passthrough"); // gate-passthrough in truth: delegation_prompt is scanned via prompt-classifier, not this gate
+    expect(desc.channels).toBe("delegation_prompt"); // still reported as enabled, just not counted toward "real"
+  });
 });

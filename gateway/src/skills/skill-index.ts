@@ -13,9 +13,16 @@
 // keeping this module free of I/O.
 
 import { getLog } from "../logging/logger.js";
+import { INVISIBLE_CHARS } from "../security/text-normalizer.js";
 import type { SkillMeta } from "./skill-store.js";
 
 const log = getLog(["sentient", "skills", "index"]);
+
+/** Global variant of `INVISIBLE_CHARS` for `replace`-all use — the shared
+ *  regex is single-match (no `g` flag), which is correct for the boolean
+ *  lint `text-normalizer.ts` uses it for but would only strip the FIRST
+ *  invisible character here. */
+const INVISIBLE_CHARS_GLOBAL = new RegExp(INVISIBLE_CHARS.source, "gu");
 
 /** Byte-stable ascending compare — deliberately NOT `localeCompare`, whose
  *  collation can vary by host locale and would make the "same skill set"
@@ -45,9 +52,12 @@ function compareNewestThenName(a: SkillMeta, b: SkillMeta): number {
  *  second bullet line: a forged sibling skill entry injected into the system
  *  prompt by whoever wrote that description. Collapsing every whitespace run
  *  to a single space, before interpolation, is what keeps one `SkillMeta`
- *  worth exactly one bullet line, always. */
+ *  worth exactly one bullet line, always. Invisible unicode (zero-width
+ *  joiners, bidi overrides, tag characters) is stripped first — those
+ *  characters survive the whitespace collapse below untouched and could
+ *  otherwise hide a spoofed boundary inside a rendered bullet line. */
 function sanitizeDescription(description: string): string {
-  return description.replace(/\s+/g, " ").trim();
+  return description.replace(INVISIBLE_CHARS_GLOBAL, "").replace(/\s+/g, " ").trim();
 }
 
 /**

@@ -62,7 +62,11 @@ export const DEFAULT_COMPACTION_SUMMARIZER = readFileSync(
  *  summarizer without a rebuild. */
 export function loadCompactionSummarizerPrompt(opts: { runtimeDir?: string } = {}): string {
   const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
-  const override = tryRead(join(runtimeDir, "system_prompts", "compaction_summarizer.md"), "compaction-summarizer");
+  const override = tryRead(
+    join(runtimeDir, "system_prompts", "compaction_summarizer.md"),
+    "compaction-summarizer",
+    "debug",
+  );
   return override ?? DEFAULT_COMPACTION_SUMMARIZER;
 }
 
@@ -83,7 +87,11 @@ export const DEFAULT_SKILL_INDEX_PREAMBLE = readFileSync(
  *  function of its inputs — easy to test, no filesystem in the render path. */
 export function loadSkillIndexPreamble(opts: { runtimeDir?: string } = {}): string {
   const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
-  const override = tryRead(join(runtimeDir, "system_prompts", "skill_index_preamble.md"), "skill-index-preamble");
+  const override = tryRead(
+    join(runtimeDir, "system_prompts", "skill_index_preamble.md"),
+    "skill-index-preamble",
+    "debug",
+  );
   return override ?? DEFAULT_SKILL_INDEX_PREAMBLE;
 }
 

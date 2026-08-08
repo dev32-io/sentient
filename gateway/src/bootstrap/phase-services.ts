@@ -144,11 +144,21 @@ export function composeSessionSystemPrompt(
  * passthrough. `channels` is the comma-joined set of enabled channel names, for
  * the log trail.
  */
+/** `delegation_prompt` never reaches `inbound-gate.ts` — the delegation prompt
+ *  is scanned directly via `prompt-classifier.ts`'s own `scanContent` call, not
+ *  the gate (see CLAUDE.md's security bullet and the `delegation_prompt`
+ *  comment in `config.yaml#security.inbound_scan.channels`). So it does not
+ *  count toward the gate's own "real" mode: a config where it is the ONLY
+ *  channel on is gate-passthrough in truth, and reporting `"real"` there would
+ *  be a false "the gate is doing something" signal at boot. */
+const GATE_CHANNELS = ["tool_result", "background_completion", "skill_body"] as const;
+
 export function describeInboundGateMode(cfg: InboundScanConfig): { mode: "real" | "passthrough"; channels: string } {
   const enabledChannels = Object.entries(cfg.channels)
     .filter(([, on]) => on)
     .map(([name]) => name);
-  const mode = cfg.enabled && enabledChannels.length > 0 ? "real" : "passthrough";
+  const enabledGateChannels = enabledChannels.filter((name) => (GATE_CHANNELS as readonly string[]).includes(name));
+  const mode = cfg.enabled && enabledGateChannels.length > 0 ? "real" : "passthrough";
   return { mode, channels: enabledChannels.join(",") };
 }
 
@@ -436,7 +446,7 @@ export async function buildOrchestratorServices(
 
   const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
   const delegationFrontmatter = loadDelegationFrontmatterDir(frontmatterDir);
-  const promptClassifier = createPromptClassifier({ riskConfig: riskConfigSchema.parse({}) });
+  const promptClassifier = createPromptClassifier();
   const delegationGuard = createDelegationGuard({ frontmatter: delegationFrontmatter, classifier: promptClassifier });
   const hermesRunner = createHermesRunner({
     profile: orchestratorCfg.delegation.hermes_delegation_profile,
