@@ -425,7 +425,11 @@ describe("GET /api/v1/mcp-catalog — delegateTask (decision: it IS projected)",
 
     const view = (await (await handler(makeGetRequest("valid-token"))).json()) as McpCatalogView;
 
-    expect(nativeTool(view, "delegateTask")).toMatchObject({ name: "delegateTask", tier: "confirm", permission: "ask" });
+    expect(nativeTool(view, "delegateTask")).toMatchObject({
+      name: "delegateTask",
+      tier: "confirm",
+      permission: "ask",
+    });
   });
 
   it("projects 'settable: false' — the wire signal a client must render read-only, since servers[x].tools carries the identical shape", async () => {

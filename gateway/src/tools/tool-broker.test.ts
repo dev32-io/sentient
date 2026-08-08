@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY, mcpCatalogSchema } from "@sentient/config";
-import type { InboundScanConfig, McpCatalog, OrchestratorConfig, ToolPermission, ToolPermissionMap } from "@sentient/config";
+import type {
+  InboundScanConfig,
+  McpCatalog,
+  OrchestratorConfig,
+  ToolPermission,
+  ToolPermissionMap,
+} from "@sentient/config";
 import type { ImpactTier, Result, UserRole } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
 import type { Capability } from "../access/capability.js";
@@ -8,10 +14,10 @@ import { createUserPrincipal } from "../identity/user-principal.js";
 import { applyProfileDefaults } from "../profile-store/profile-defaults.js";
 import type { ProfileStore, ProfileStoreError } from "../profile-store/profile-store.js";
 import { type ProfileV1, profileV1Schema } from "../profile-store/profile-types.js";
-import type { SessionStore } from "../store/session-store.js";
 import { createInboundGate } from "../security/inbound-gate.js";
 import type { InboundGate } from "../security/inbound-gate.js";
 import type { RiskEvent, RiskLevel } from "../security/risk-accumulator.js";
+import type { SessionStore } from "../store/session-store.js";
 import type { McpClient, McpToolRef } from "./mcp-client.js";
 import type { BackgroundToolRunner, NativeToolRunner } from "./tool-broker.js";
 import { createToolBroker } from "./tool-broker.js";
@@ -2077,7 +2083,13 @@ const SCAN_ALL_ON: InboundScanConfig = {
 
 /** A risk accumulator whose level is fixed, so a broker test can force the PDP
  *  escalation branch deterministically. */
-function fixedRisk(level: RiskLevel): { score(): number; level(): RiskLevel; record(e: RiskEvent): { score: number; level: RiskLevel }; reset(): void; recorded: RiskEvent[] } {
+function fixedRisk(level: RiskLevel): {
+  score(): number;
+  level(): RiskLevel;
+  record(e: RiskEvent): { score: number; level: RiskLevel };
+  reset(): void;
+  recorded: RiskEvent[];
+} {
   const recorded: RiskEvent[] = [];
   return {
     recorded,

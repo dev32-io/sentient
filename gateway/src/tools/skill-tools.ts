@@ -46,13 +46,7 @@ const log = getLog(["sentient", "tools", "skill-tools"]);
  *  `createSkillTools(store)` exists — the store's `knownTools` set must include
  *  them, and `knownTools` is a store constructor input — so this const breaks
  *  the cycle (the names do not depend on the store). */
-export const SKILL_TOOL_NAMES = [
-  "skill_list",
-  "skill_use",
-  "skill_create",
-  "skill_update",
-  "skill_delete",
-] as const;
+export const SKILL_TOOL_NAMES = ["skill_list", "skill_use", "skill_create", "skill_update", "skill_delete"] as const;
 export type SkillToolName = (typeof SKILL_TOOL_NAMES)[number];
 
 const READ_TIER: ImpactTier = "read";
@@ -322,9 +316,7 @@ function createSkillListRunner(store: SkillStore): NativeToolRunner {
     async run(): Promise<ToolResult> {
       const metas = store.list();
       if (metas.length === 0) return ok("You have no skills yet.");
-      const lines = metas.map(
-        (m) => `${m.name} — ${m.description} (updated ${formatUpdatedDate(m.updatedAt)})`,
-      );
+      const lines = metas.map((m) => `${m.name} — ${m.description} (updated ${formatUpdatedDate(m.updatedAt)})`);
       log.info("skill-tools.list", { count: metas.length });
       return ok(lines.join("\n"));
     },

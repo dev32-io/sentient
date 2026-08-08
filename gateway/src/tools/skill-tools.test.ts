@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scanContent } from "../security/injection-scanner.js";
 import { createSkillStore } from "../skills/skill-store.js";
 import type { SkillStore } from "../skills/skill-store.js";

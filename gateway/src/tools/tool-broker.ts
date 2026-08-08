@@ -612,8 +612,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     // finding into a prompt storm that trains the person to click through; and
     // the read tier's real blast radius (the camera/playback residual) is owned
     // elsewhere, not by this confirm.
-    const riskEscalates =
-      permission === "allow" && SIDE_EFFECTING_TIERS.has(tier) && isRiskElevated();
+    const riskEscalates = permission === "allow" && SIDE_EFFECTING_TIERS.has(tier) && isRiskElevated();
     if (riskEscalates) {
       permission = "ask";
       source = RISK_ESCALATION_SOURCE;

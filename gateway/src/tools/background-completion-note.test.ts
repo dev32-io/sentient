@@ -1,5 +1,5 @@
-import type { InboundScanConfig } from "@sentient/config";
 import { describe, expect, it } from "bun:test";
+import type { InboundScanConfig } from "@sentient/config";
 import { createInboundGate } from "../security/inbound-gate.js";
 import type { RiskEvent } from "../security/risk-accumulator.js";
 import type { SessionEntry } from "../store/entry-types.js";

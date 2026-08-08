@@ -360,7 +360,13 @@ function projectNativeTools(
   // overridable, so `settable: false`; see this function's own header comment.
   const { name, tier } = delegateTaskDefinition;
   if (canExecute(role, tier)) {
-    const { permission } = resolveToolPermission({ toolName: name, tier, serverName: null, storedPermissions, roleTemplate });
+    const { permission } = resolveToolPermission({
+      toolName: name,
+      tier,
+      serverName: null,
+      storedPermissions,
+      roleTemplate,
+    });
     views.push({ name, description: DELEGATE_TASK_SETTINGS_DESCRIPTION, tier, permission, settable: false });
   }
 
