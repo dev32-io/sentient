@@ -644,14 +644,28 @@ companions:
 # decides WHO may reach the tool at all. What happens when they do is the
 # person's own per-tool permission, a separate table on their profile.
 #
-#   tier: read     answers a question, changes nothing → adult, child, guest
-#   tier: write    routine reversible change to household/session state
+#   tier: read     answers a question, or acts only on the caller's own
+#                  session                            → adult, child, guest
+#   tier: write    routine reversible change to HOUSEHOLD state
 #                  (shopping item, speaker grouping)  → adult, child
-#   tier: confirm  irreversible, reaches outside the house, spends, touches a
-#                  security-relevant device class (locks, alarms), or changes
-#                  who the assistant acts for          → adult
-#   tier: admin    role-restricted control that is NOT about asking first —
-#                  the gate is the whole point         → adult
+#   tier: confirm  irreversible, reaches outside the house, spends, or touches
+#                  a security-relevant device class (locks, alarms) → adult
+#   tier: admin    reserved for operator-level control of the system itself
+#                  (HA restart/backup/addon management and the like, none of
+#                  which this catalog exposes today)  → adult
+#
+# WHAT TIERING IS FOR, stated once so it is not re-litigated per tool: it
+# governs tools that reach THE HOUSEHOLD — Home Assistant, Music Assistant,
+# searxng, fetch. That is where a guest or a child genuinely may not go.
+#
+# It does NOT police someone's own session. Every tool the gateway hosts
+# itself (the `gateway:` entry below — `gateway/src/mcp-host/tools/`) resolves
+# the CALLER's own session and acts only on that: their TTS playback, their
+# settings, their identity. A person is by definition allowed to govern their
+# own session, so all of those are `read`, as a rule and not as a per-tool
+# judgement. Tiering one of them up buys no safety and costs the model a
+# utility it needs to work — an assistant that cannot pause or mute itself on
+# request is broken, not safe.
 #
 # There is no default and no fallback. Guessing `read` hands a guest a tool
 # nobody meant to give them; guessing higher silently takes one away from an
@@ -730,16 +744,28 @@ mcp_catalog:
     args: ["-U", "${HOME}/.sentient/run/mcp-{{userId}}.sock"]
     description: Sentient gateway tools (identify, audio, channel).
     tools:
+      # EVERY tool here is `read`, and that is a RULE about this server, not a
+      # judgement made four times (see the tier legend above). All of them are
+      # implemented in `gateway/src/mcp-host/tools/` and all of them resolve
+      # `ctx.userId` to the CALLER's own session before doing anything:
+      #
+      #   identify_user         inert — looks a name up in the household list
+      #                         and returns text telling that person to sign
+      #                         in. It never rebinds; the session's identity is
+      #                         fixed by the auth token at connect.
+      #   pause_audio           pauses the caller's own TTS playback.
+      #   resume_audio          resumes it.
+      #   update_user_settings  the caller's own ttsEnabled / channel / voice /
+      #                         model.
+      #
+      # None reaches the household, so there is nothing for a tier to defend.
+      # These are the model's own utility tools: an assistant that cannot pause
+      # or mute itself on request is broken, not safe.
       include:
-        # An identity rebind changes WHO the assistant acts for — the
-        # confused-deputy case. Adult-only, and asked for even then.
-        - { name: identify_user, tier: confirm }
-        # `admin` and not `read`, though it is session-local and prompt-free:
-        # the tier is what stops a child silencing the house. Nothing about
-        # it wants a permission dialog — the gate is the whole restriction.
-        - { name: pause_audio, tier: admin }
+        - { name: identify_user, tier: read }
+        - { name: pause_audio, tier: read }
         - { name: resume_audio, tier: read }
-        - { name: update_user_settings, tier: confirm }
+        - { name: update_user_settings, tier: read }
 
   # Music Assistant — dockerized HTTP MCP at gateway/mcp/ma-mcp/.
   # Built from the davidpadbury/music-assistant-mcp fork (the upstream

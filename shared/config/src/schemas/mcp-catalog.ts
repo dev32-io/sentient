@@ -26,15 +26,20 @@ import { z } from "zod";
 // WHO may reach the tool at all; what happens when they do is the person's
 // per-tool permission, which is a different table.
 //
-//   read    — answers a question. No state changes anywhere. Anyone.
-//   write   — a routine, reversible change to household or session state
-//             (add a shopping item, group two speakers). Adults and children.
-//   confirm — irreversible, reaches outside the house, spends, touches a
-//             security-relevant device class, or changes who the assistant
-//             acts for. Adults only.
-//   admin   — operator/role-restricted control that is NOT about asking first.
-//             Adults only. (`pause_audio` is the shipped example: no prompt
-//             wanted, but a child must not silence the house.)
+//   read    — answers a question, or acts only on the CALLER'S OWN session.
+//             Anyone.
+//   write   — a routine, reversible change to HOUSEHOLD state (add a shopping
+//             item, group two speakers). Adults and children.
+//   confirm — irreversible, reaches outside the house, spends, or touches a
+//             security-relevant device class. Adults only.
+//   admin   — operator-level control of the system itself. Adults only. No
+//             shipped tool carries it today.
+//
+// Tiering governs tools that reach THE HOUSEHOLD. It does not police a
+// person's own session: every tool the gateway hosts in-process resolves the
+// caller's own session and acts only on that, so all of those are `read` — see
+// the `gateway:` entry in config.yaml, which states the rule once rather than
+// re-deciding it per tool.
 //
 // There is NO default. An operator who adds a tool without a tier gets a
 // config-load failure naming it (see `tieredToolSchema` below), because the
