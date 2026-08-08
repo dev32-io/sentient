@@ -54,8 +54,10 @@ template/role/settings surfaces; the two scanner deliverables.
 ~/.sentient/gateway/users/<userId>/skills/<slug>/SKILL.md
 ```
 
-- `<slug>`: kebab-case, `[a-z0-9-]{1,64}`, validated at write; no traversal, no
-  symlink following (opened via the user's `FileScope`).
+- `<slug>`: kebab-case, `^[a-z0-9][a-z0-9-]{0,63}$` (alphanumeric first char —
+  no leading hyphen), validated at write; no traversal, no symlink following
+  (store paths realpath-checked against the root; composed via the user's
+  `FileScope` grant).
 - SKILL.md = YAML frontmatter + markdown body, per the Agent Skills standard:
 
 ```yaml
@@ -122,7 +124,9 @@ The five tools ride every surface the tool-permissions wave built, as
   user's skills dir, through the existing two-tier loader
   (`context/system-prompt-loader.ts` shape: template + rendered content).
   ~20–100 tokens per skill. Cap `orchestrator.skills.max_index_entries`
-  (config), WARN + deterministic truncation (newest first) on overflow.
+  (config), WARN + deterministic truncation on overflow (SELECT the newest by
+  updated time; RENDER the kept set sorted by name so the emitted index is
+  byte-stable).
 - **Session-stable, cache-safe:** the index is computed once per session at
   runtime construction, not per turn. Mid-session `skill_create` does not
   re-render the prefix — the authoring session already holds the content in
@@ -143,10 +147,13 @@ One module, many callers (DelegationGuard today; the inbound boundary below;
 the future import gate). Contract sketch:
 
 ```
-scan(text, provenance) → { findings[], normalizedText, maxSeverity }
-provenance: { channel: "tool_result" | "delegation_prompt" | "skill_body" | ...,
-              source: string /* tool/server name */ }
+scanContent(text, provenance) → { findings[], sanitizedText, maxSeverity }
+provenance: { channel: "tool_result" | "background_completion" | "skill_body" | "delegation_prompt",
+              source: string /* tool/server/skill/agent name */ }
 ```
+
+(`sanitizedText` is the ORIGINAL text minus stripped envelopes — the
+normalized form is a matching artifact only and is never shown to the model.)
 
 - **Layer 0 — normalization before any matching:** Unicode NFKC, homoglyph
   folding, zero-width strip, case fold; base64/hex payload detection.
@@ -178,7 +185,11 @@ The native-todo "shape of the fix", now built:
   legitimate page is worse than prompting; the published guidance (judge the
   action against original user intent) is implemented as tier escalation, not
   content suppression.
-- **Fail-closed only where cheap:** Layer-2 envelope smuggling is stripped.
+- **Fail-closed only where cheap — two acts exactly:** (1) Layer-2 envelope
+  smuggling is stripped from any inbound text; (2) a skill body containing
+  invisible unicode (zero-width, Tags block, bidi controls) is rejected at
+  WRITE time — self-authored instructions have no legitimate use for invisible
+  characters, and this is the documented skill-file attack channel.
 - **Config:** `security.inbound_scan.*` — enabled, thresholds, per-channel
   toggles. The false `config.yaml:832` comment ("handled by the injection
   scanner") finally becomes true and is reworded to point at the real module.
