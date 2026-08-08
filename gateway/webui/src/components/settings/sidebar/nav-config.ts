@@ -23,9 +23,16 @@ export interface NavItem {
 export interface NavGroup {
   group: "Soul" | "User" | "Admin";
   items: NavItem[];
+  /** Offered only to an admin. The panes behind it (Members, Secrets) are the
+   *  only two whose API is gated by `require-admin-auth`, so this group is the
+   *  whole admin surface — nothing outside it needs the same treatment. */
+  adminOnly?: boolean;
 }
 
-export const NAV_GROUPS: readonly NavGroup[] = [
+/** Private on purpose: the ungated table is what the defect was. Every caller
+ *  goes through `navGroupsFor` and therefore has to say which role it is
+ *  drawing for. */
+const ALL_NAV_GROUPS: readonly NavGroup[] = [
   {
     group: "Soul",
     items: [
@@ -48,12 +55,31 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   },
   {
     group: "Admin",
+    adminOnly: true,
     items: [
       { key: "members", label: "Members", icon: "users-group" },
       { key: "secrets", label: "Secrets", icon: "key" },
     ],
   },
 ] as const;
+
+/**
+ * The groups to DRAW for a viewer whose current record says admin (or not).
+ *
+ * RENDER DATA, NOT AUTHORITY. `isAdmin` comes off `AuthUser`, which the gateway
+ * derives from the user record and re-derives on every login and `/me` — the
+ * client is deciding what to show, never what is allowed. Each pane's own calls
+ * are still resolved against the record server-side (`require-admin-auth.ts`),
+ * so a stale `true` here buys a viewer nothing but a pane full of 403s. What a
+ * stale `false` costs is nothing at all, which is the right way round.
+ *
+ * The group is dropped whole rather than emptied: a heading with no items under
+ * it reads as a surface that failed to load.
+ */
+export function navGroupsFor(isAdmin: boolean): readonly NavGroup[] {
+  if (isAdmin) return ALL_NAV_GROUPS;
+  return ALL_NAV_GROUPS.filter((group) => group.adminOnly !== true);
+}
 
 /** Soul-group tabs — render dirty dot in the sidebar. */
 export const SOUL_KEYS: ReadonlySet<SidebarKey> = new Set([

@@ -74,6 +74,13 @@ export function SettingsView({
 
   const isAuthed = auth.status === "authenticated";
   const token = isAuthed ? auth.token : "";
+  // DERIVED from the record the gateway sent with this session's `auth.ok` /
+  // `/me` — never latched, never stored, and re-derived on every sign-in. It
+  // decides what the sidebar DRAWS; every admin call it leads to is still
+  // resolved against the record server-side. Defaults to false when the view
+  // renders before auth settles, so the admin surface appears only once the
+  // record has actually said so.
+  const isAdmin = isAuthed && auth.user.isAdmin;
 
   useEffect(() => {
     if (!isAuthed || profileOriginal) return;
@@ -226,7 +233,7 @@ export function SettingsView({
   return (
     <div class="settings-v2">
       <aside class="s-side">
-        <SidebarNav active={tab} onChange={setTab} dirtyKeys={dirtyKeys} />
+        <SidebarNav active={tab} onChange={setTab} dirtyKeys={dirtyKeys} isAdmin={isAdmin} />
         <SidebarStatus token={isAuthed ? auth.token : null} />
       </aside>
 
