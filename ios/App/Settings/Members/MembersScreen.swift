@@ -1,8 +1,10 @@
 // ---------------------------------------------------------------------------
 // MembersScreen — Admin "Members" category page. Household roster: avatar tint +
-// name + role pill, per-member Promote/Demote + Delete (confirm), and Add user
-// (name + PIN; disabled at the 3/3 slot cap). The self row hides its role/delete
-// actions (self-demote guard, mirroring the webui members-pane).
+// name + role pill, per-member Promote/Demote (confirm) + Delete (confirm), and Add
+// user (name + PIN; disabled at the 3/3 slot cap). The self row hides its role/delete
+// actions (self-demote guard, mirroring the webui members-pane). Promote/demote both
+// confirm because either one force-signs the target out everywhere; demote's copy
+// additionally warns that only another admin can restore the access it removes.
 //
 // Owns the @Observable MembersViewModel via @State; MembersBody is stateless
 // (previewable per Access state). Admin-gated: a non-admin sees a guard message.
@@ -32,7 +34,7 @@ struct MembersScreen: View {
             canAdd: vm.canAdd,
             mutatingUserId: vm.mutatingUserId,
             onAdd: { vm.openAddSheet() },
-            onToggle: { user in Task { await vm.toggleAdmin(user) } },
+            onToggleConfirmed: { user in Task { await vm.toggleAdmin(user) } },
             onDelete: { user in Task { await vm.deleteUser(user) } }
         )
         .task { await vm.load() }
@@ -46,7 +48,7 @@ struct MembersScreen: View {
     }
 }
 
-/// Stateless roster body; owns only the transient delete-confirm target.
+/// Stateless roster body; owns only the transient delete/role-change confirm targets.
 private struct MembersBody: View {
     let access: MembersViewModel.Access
     let users: [UserSummary]
@@ -55,10 +57,11 @@ private struct MembersBody: View {
     let canAdd: Bool
     let mutatingUserId: String?
     let onAdd: () -> Void
-    let onToggle: (UserSummary) -> Void
+    let onToggleConfirmed: (UserSummary) -> Void
     let onDelete: (UserSummary) -> Void
 
     @State private var pendingDelete: UserSummary?
+    @State private var pendingToggle: UserSummary?
 
     var body: some View {
         SettingsPageScaffold(title: "Members", screenId: "settings-members-screen") {
@@ -75,6 +78,19 @@ private struct MembersBody: View {
         } message: { _ in
             Text("This signs them out and removes their agent. This cannot be undone.")
         }
+        .confirmationDialog(
+            toggleTitle,
+            isPresented: toggleDialogBinding,
+            titleVisibility: .visible,
+            presenting: pendingToggle
+        ) { user in
+            Button(user.isAdmin ? "Demote" : "Promote", role: user.isAdmin ? .destructive : nil) {
+                onToggleConfirmed(user)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { user in
+            Text(toggleMessage(for: user))
+        }
     }
 
     private var deleteTitle: String {
@@ -83,6 +99,26 @@ private struct MembersBody: View {
 
     private var deleteDialogBinding: Binding<Bool> {
         Binding(get: { pendingDelete != nil }, set: { open in if !open { pendingDelete = nil } })
+    }
+
+    private var toggleTitle: String {
+        guard let user = pendingToggle else { return "Change role?" }
+        return user.isAdmin ? "Demote \(user.displayName)?" : "Promote \(user.displayName)?"
+    }
+
+    private var toggleDialogBinding: Binding<Bool> {
+        Binding(get: { pendingToggle != nil }, set: { open in if !open { pendingToggle = nil } })
+    }
+
+    /// Signing-out is true for both directions; only demote also warns that the
+    /// target can't restore their own admin access — only another admin can.
+    private func toggleMessage(for user: UserSummary) -> String {
+        if user.isAdmin {
+            return "This signs \(user.displayName) out on every device, right now. Once demoted, "
+                + "they can't restore their own admin access — only another admin can promote them back."
+        }
+        return "This signs \(user.displayName) out on every device, right now. "
+            + "They'll need to log back in before they can use their new admin access."
     }
 
     @ViewBuilder
@@ -114,7 +150,7 @@ private struct MembersBody: View {
                     user: user,
                     isSelf: user.userId == meId,
                     isMutating: mutatingUserId == user.userId,
-                    onToggle: { onToggle(user) },
+                    onToggle: { pendingToggle = user },
                     onDelete: { pendingDelete = user }
                 )
             }
@@ -222,7 +258,7 @@ private let sampleUsers: [UserSummary] = [
     NavigationStack {
         MembersBody(
             access: .ready, users: sampleUsers, meId: "u1", slotsFree: 1, canAdd: true,
-            mutatingUserId: nil, onAdd: {}, onToggle: { _ in }, onDelete: { _ in }
+            mutatingUserId: nil, onAdd: {}, onToggleConfirmed: { _ in }, onDelete: { _ in }
         )
     }
     .preferredColorScheme(.dark)
@@ -232,7 +268,7 @@ private let sampleUsers: [UserSummary] = [
     NavigationStack {
         MembersBody(
             access: .notAdmin, users: [], meId: "", slotsFree: 0, canAdd: false,
-            mutatingUserId: nil, onAdd: {}, onToggle: { _ in }, onDelete: { _ in }
+            mutatingUserId: nil, onAdd: {}, onToggleConfirmed: { _ in }, onDelete: { _ in }
         )
     }
     .preferredColorScheme(.dark)
