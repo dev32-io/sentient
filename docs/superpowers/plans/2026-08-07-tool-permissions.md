@@ -220,6 +220,21 @@ Both produce absence, for the same reason: the model must not see, or spend cont
 
 `resolveDecision()` becomes: the role gate again (defensive — a model can hallucinate a tool name that was never advertised), then the person's permission, exhaustively. No policy engine, no fallthrough.
 
+**The role template is the resolution FLOOR, not a one-time copy.** Resolution reads:
+
+```
+storedTable[server]?[tool]  ??  defaultPermissionsFor(role, catalog)[server]?[tool]  ??  "off"
+```
+
+Task 3 seeds the table so a person sees and edits real values, but the template answers underneath it forever. "Absent" therefore becomes well-defined rather than a bug — which is what this task needed, and a one-time copy could not give it. Four things this closes that seeding alone does not:
+
+- **Profiles that predate Task 3.** Every account on disk today has `permissions` unset; a copy-only rule strands them the moment the fallthrough is deleted, until each one saves settings once.
+- **A role change.** Promote a child to adult and their table still holds the child's answers. The floor moves with the role; the stored entries stay as the person's explicit overrides.
+- **A tool the operator adds to `config.yaml` tomorrow.** It has no stored entry on any existing profile and must not therefore be unanswerable.
+- **A partial write from any client**, present or future.
+
+The final `?? "off"` is the fail-closed backstop for a tool in neither table — it must never be `"allow"`. Note this does NOT re-introduce "absent = inherit everything": the floor is a server-computed, role-derived value, not a permissive default.
+
 **The one genuine leftover.** `no_identify_user_outside_voice` is conditioned on `session.channel`, which is per-session, not per-user or per-role — no permission table can express it. It is a constraint on when the tool is meaningful, not on who may use it. Implement it as a guard the tool itself owns and say where you put it.
 
 **Keep intact from rev 1:** the fail-closed permission reader, and the invariant that `allow`/`ask`/`deny` produce a BYTE-IDENTICAL `tools[]` while only `off` (and now the role gate) may change it. Re-run that mutation.
