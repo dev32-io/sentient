@@ -269,19 +269,39 @@ had to agree with the catalog's tiers and eventually would not.
 ### Risk accumulator
 
 `gateway/src/security/risk-accumulator.ts` runs an exponential-decay
-score over weighted security events (`injection_pattern`,
-`repeated_offense`, `role_violation`, `ha_name_prompt_like`,
-`mutating_sensitive_domain`, `policy_rejection`). Half-life and per-event
-weights are config-driven. Score thresholds map to `none` / `warn` /
-`escalate` / `block` levels, surfaced in logs.
+score over weighted security events. Half-life and per-event weights are
+config-driven (`shared/config/src/schemas/risk-config.ts`). Score
+thresholds map to `none` / `warn` / `escalate` / `block` levels.
 
-**Nothing consumes those levels yet.** They were read by the retired
-policy engine; the two gates above do not read them, and no other caller
-does. The intended consumer is the inbound-content trust model
-(`docs/native-todo.md` § "untrusted content enters the model context
-completely unscanned"), where a raised session risk makes the PDP
-require `ask` for a tool it would otherwise allow. Until that lands this
-is a scorer with no reader — do not describe it as enforcing anything.
+**Those levels are live, on one path.** `prompt-classifier.ts`'s
+`tierFromRiskLevel` maps `escalate`/`block` → `high` and everything else
+with at least one hit → `medium`; `delegation-guard.ts` turns `high` into
+`deny` or `confirm` per the agent's `confirm_class`, and `medium` into
+`confirm`. So the levels change the outcome of a `delegateTask`
+dispatch today, with shipped defaults (`enabled: true`,
+`injection_pattern: 30`, `threshold_escalate: 80` — three pattern hits in
+one `taskPrompt` reach `escalate`). Do not describe this as inert.
+
+Three things about it that a reader will otherwise assume wrongly, all
+checkable by grep:
+
+- **Only one of the six `RiskEvent` members is ever recorded.**
+  `injection_pattern`, by `prompt-classifier.ts`. `repeated_offense`,
+  `role_violation`, `ha_name_prompt_like`, `mutating_sensitive_domain`
+  and `policy_rejection` are declared in the union and weighted in config
+  and have no emitter anywhere. `policy_rejection` is named after the
+  retired policy engine.
+- **It is not session-scoped where it runs.** `prompt-classifier.ts`
+  constructs a *fresh* accumulator inside `classify()`, so its only live
+  use is a per-prompt counter over one scan's hits — every event lands in
+  the same tick, the decay factor is ~1, and `ttl_seconds` never bites.
+  The decay machinery is built for a session-scoped consumer that does
+  not exist yet.
+- **The tool PDP does not read it.** The two gates above resolve from the
+  role and the permission table only. Coupling session risk to the PDP —
+  a raised score making it require `ask` for a tool it would otherwise
+  allow — is the intended next consumer, tracked in `docs/native-todo.md`
+  § "untrusted content enters the model context completely unscanned".
 
 ### Log sanitizer
 

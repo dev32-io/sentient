@@ -80,6 +80,15 @@ import type { DelegationProgress, PdpDecision, ToolDefinition, ToolInvocation, T
 
 const log = getLog(["sentient", "tools", "tool-broker"]);
 
+// EVERY log property in this file is a scalar or a pre-joined string, never an
+// array of objects. `logging/format.ts`'s `formatValue` stringifies any
+// non-string with `String(value)`, so `[{tool, permission}]` renders as the
+// literal `[object Object]` — the payload silently disappears at exactly the
+// moment somebody is reading the log to find out why a tool vanished. An array
+// of STRINGS survives (`String(["a","b"])` is `"a,b"`), but a joined string
+// says so explicitly and pairs with a `…Count` field that survives the
+// formatter's 200-char truncation.
+
 const TOO_MANY_BACKGROUND_TASKS = "too many running tasks";
 
 /** Client-facing failure-note budget on a `delegation.progress` error frame.
@@ -860,16 +869,16 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
     const visible: ToolDefinition[] = [];
     const roleWithheld: string[] = [];
-    const permissionWithheld: Array<{ tool: string; permission: ToolPermission; source: PermissionSource }> = [];
+    const permissionWithheld: string[] = [];
 
     for (const def of [...mcpDefs, ...backgroundDefs]) {
       if (!canExecute(role, def.tier)) {
-        roleWithheld.push(def.name);
+        roleWithheld.push(`${def.name}:${def.tier}`);
         continue;
       }
       const { permission, source } = resolvePermission(def.name, def.tier);
       if (!isVisibleToModel(permission)) {
-        permissionWithheld.push({ tool: def.name, permission, source });
+        permissionWithheld.push(`${def.name}:${permission}/${source}`);
         continue;
       }
       visible.push(def);
@@ -880,7 +889,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
         sessionId,
         role,
         toolCount: visible.length,
-        withheld: roleWithheld,
+        withheldCount: roleWithheld.length,
+        withheld: roleWithheld.join(" "),
         reason: "this role cannot execute these tools' impact tiers, so the model is never told they exist",
       });
     }
@@ -894,7 +904,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       log.info("tool-broker.definitions.permission-withheld", {
         sessionId,
         toolCount: visible.length,
-        withheld: permissionWithheld,
+        withheldCount: permissionWithheld.length,
+        withheld: permissionWithheld.join(" "),
         reason: "resolved to a permission that is not advertised to the model — see each entry's source",
       });
     }

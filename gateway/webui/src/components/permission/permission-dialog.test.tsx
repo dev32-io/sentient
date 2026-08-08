@@ -1,11 +1,16 @@
 // SECURITY BOUNDARY — what this dialog shows IS the authorization.
 //
-// `delegateTask` is mediated by the gateway's tool PDP: it is `confirm`-tier in
-// `config.yaml#mcp_catalog`, which the role permission template resolves to
-// `ask` (gateway/src/tools/{tool-broker,role-defaults}.ts), so every dispatch
-// raises this dialog. The thing being authorized is not the tool name: it is
-// the `taskPrompt`, which a background agent then acts on unsupervised with its
-// own tool surface.
+// `delegateTask` is mediated by the gateway's tool PDP. It is gateway-native,
+// so no catalog entry curates it — it declares `tier: "confirm"` on its own
+// `ToolDefinition` (gateway/src/tools/delegate-task.ts), which the role
+// permission template resolves to `ask` (tool-broker.ts, role-defaults.ts).
+// That tier is also a ROLE gate: `admin` and `adult` reach it and get this
+// dialog; `child` and `guest` do not reach it at all and are refused before any
+// prompt, so this dialog is what an adult sees, not what everyone sees.
+//
+// The thing being authorized is not the tool name: it is the `taskPrompt`,
+// which a background agent then acts on unsupervised with its own tool
+// surface.
 // Approving "run a delegated task" without seeing that instruction is not
 // consent. The dialog used to fold every argument onto one line and elide each
 // value at 80 characters, so the dangerous tail of a long instruction was

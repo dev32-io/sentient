@@ -423,7 +423,12 @@ Framing correction: it is **not** left behind by a delete. `personality-store.re
 
 That is false. `grep -rn "scanForInjection" gateway/src` returns one non-test caller — `prompt-classifier.ts`, the outbound path. A reader auditing why `search_web` and `fetch` are auto-allowed found a named file and a plausible mechanism, and stopped looking.
 
-**Status of the false comment: GONE with the file** (plan 2026-08-07-tool-permissions task 4 retired `mcp-policy.yaml` and the policy engine). `search_web` and `fetch` are now `tier: read` in `config.yaml#mcp_catalog`, whose comment claims only that they are read-only — which is true — and makes no claim about scanning. **The underlying defect is unchanged and still open:** the content they return still enters the model context unscanned. Only the misleading justification is gone. **This is the second instance of the same failure mode on this branch**, after `delegateTask`'s *"a blanket PDP confirm here would double-prompt"* rationale, which justified an `allow` by deferring to a guard that never prompted and survived a whole branch of review on the strength of its own comment.
+**Status of the false comment: it MOVED, it did not go.** Plan 2026-08-07-tool-permissions task 4 retired `mcp-policy.yaml` and the policy engine, so the rules that carried this rationale are gone — but the rationale itself now lives in the file that replaced them. `gateway/config.yaml:832-833`, directly above `- { name: fetch, tier: read }`:
+
+> `# Read-only: what it returns is untrusted content, handled by the`
+> `# injection scanner (gateway/src/security/), not by a permission tier.`
+
+Same claim, same falsity, one layer down and now attached to the *tier* rather than to a policy rule. `grep -n injection gateway/config.yaml` returns exactly that one line — `search_web`'s searxng entry lost its stated rationale entirely in the move and now has none, which is the other half of the same problem. **The defect is unchanged and fully open:** the content both tools return still enters the model context unscanned, and the config that grants `fetch` the friction-free tier still tells a reader a control exists that does not. **This is the second instance of the same failure mode on this branch**, after `delegateTask`'s *"a blanket PDP confirm here would double-prompt"* rationale, which justified an `allow` by deferring to a guard that never prompted and survived a whole branch of review on the strength of its own comment.
 
 Fix the comment when the boundary lands, not before — deleting it now would leave the auto-allow with no stated rationale at all. Until then it is the strongest single argument for the boundary's priority: the control is already assumed to exist by the file that grants the authority.
 

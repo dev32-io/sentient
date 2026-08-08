@@ -30,7 +30,7 @@ export type ToolPermission = z.infer<typeof toolPermissionSchema>;
  * schema all have to spell it.
  *
  * An empty table is NOT "everything off" — see the ToolBroker's
- * `permissionFor`, which documents how presence and absence are read.
+ * `storedPermissionFor`, which documents how presence and absence are read.
  */
 export type ToolPermissionMap = Record<string, Record<string, ToolPermission>>;
 

@@ -77,17 +77,21 @@ function isDelegatable(tier: ImpactTier): boolean {
  */
 export function selectDelegatedTools<T extends DelegatableTool>(tools: readonly T[]): T[] {
   const allowed: T[] = [];
-  const withheld: Array<{ tool: string; tier: ImpactTier }> = [];
+  // `name:tier` tokens, not objects: `logging/format.ts`'s `formatValue` runs
+  // `String(value)` on any non-string, so an array of objects renders as the
+  // literal `[object Object]`.
+  const withheld: string[] = [];
   for (const tool of tools) {
     if (isDelegatable(tool.tier)) {
       allowed.push(tool);
       continue;
     }
-    withheld.push({ tool: tool.name, tier: tool.tier });
+    withheld.push(`${tool.name}:${tool.tier}`);
   }
   if (withheld.length > 0) {
     log.info("delegated-tier.withheld", {
-      withheld,
+      withheldCount: withheld.length,
+      withheld: withheld.join(" "),
       reason: "above the read tier, so a delegated call would need a person to confirm it and none is attached",
     });
   }
