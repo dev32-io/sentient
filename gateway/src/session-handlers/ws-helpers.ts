@@ -86,6 +86,20 @@ export interface SessionData {
    */
   tokenExpiresAtMs: number | null;
   /**
+   * When THIS connection's token was ISSUED (epoch ms, the start of its
+   * `issuedAt` second), or null before auth.
+   *
+   * The counterpart to `tokenExpiresAtMs`, and it exists for one question the
+   * expiry cannot answer: has this account's CREDENTIAL FLOOR moved past the
+   * credential this socket authenticated with? A revocation writes an instant
+   * to the record; comparing it needs the token's issue time, and the token
+   * itself is long gone by then — it is validated once, at the gate, and never
+   * held. `stale-authority.ts` compares the two at `session.configure`, using
+   * the same predicate `token-service.validate` uses, so a socket cannot
+   * survive a revocation that its own token would not.
+   */
+  tokenIssuedAtMs: number | null;
+  /**
    * The chat surface this connection is a window of — one browser tab, one
    * mobile app instance. Client-supplied (`session.configure.surfaceId`, falling
    * back to `deviceId`), and per §3.4 it GATES NOTHING: it is not in the
@@ -200,6 +214,7 @@ export function createEmptySessionData(): SessionData {
     authState: "pending",
     principal: null,
     tokenExpiresAtMs: null,
+    tokenIssuedAtMs: null,
     surfaceId: null,
     authTimeout: null,
     grantedCapabilities: new Set(),

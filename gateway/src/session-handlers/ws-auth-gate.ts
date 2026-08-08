@@ -126,6 +126,10 @@ export async function handleAuthMessage(
   // token-service.ts — and every consumer compares it against `Date.now()`, so
   // it is converted here, once, rather than at each comparison.
   ws.data.tokenExpiresAtMs = r.value.expiresAt * MS_PER_SECOND;
+  // Kept for the same reason and in the same units: `stale-authority.ts` needs
+  // it to ask whether a revocation has since passed THIS credential, and the
+  // token is not held anywhere after this line.
+  ws.data.tokenIssuedAtMs = r.value.issuedAt * MS_PER_SECOND;
   ws.data.authState = "authed";
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
@@ -175,6 +179,7 @@ function reject(ws: ServerWebSocket<SessionData>, code: string, reason: string):
   ws.data.authState = "rejected";
   ws.data.principal = null;
   ws.data.tokenExpiresAtMs = null;
+  ws.data.tokenIssuedAtMs = null;
   if (ws.data.authTimeout) {
     clearTimeout(ws.data.authTimeout);
     ws.data.authTimeout = null;

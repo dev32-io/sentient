@@ -33,7 +33,7 @@
 
 import { decrypt, encrypt } from "paseto-ts/v4";
 import { getLog } from "../logging/logger.js";
-import type { CredentialFloor } from "./credential-floor.js";
+import { type CredentialFloor, isRevoked } from "./credential-floor.js";
 import type { TokenError, TokenPayload, TokenResult } from "./types.js";
 
 const log = getLog(["sentient", "gateway", "user-auth", "token-service"]);
@@ -145,15 +145,21 @@ export function createTokenService(opts: TokenServiceOptions): TokenService {
       // a caller can forget it.
       const floorMs = await opts.credentialFloor.validFromMsFor(claims.sub);
       if (floorMs === null) {
-        // Two incidents, logged apart, refused identically: "revoked" is a
-        // demotion or a deletion, "no-record" is a token naming nobody.
-        log.warn("validate.refused", { userId: claims.sub, reason: "no-record" });
+        // NO FLOOR, so no credential: the user has no record, or the store
+        // could not be read. Refused identically either way — a token naming
+        // nobody identifies nobody, and an unreadable store must never resolve
+        // to a permissive default. WHICH of the two it was is logged by
+        // `credential-floor.ts` (`floor.no-record` vs `floor.unreadable`); this
+        // line must not assert a deletion it cannot distinguish, because during
+        // a users.json incident it is the seam an operator greps first.
+        log.warn("validate.refused", {
+          userId: claims.sub,
+          reason: "no-floor",
+          detail: "no record, or the store could not be read — see credential-floor for which",
+        });
         return { ok: false, error: REVOKED_ERROR };
       }
-      // FAIL CLOSED ON THE TIE. `iat` is unix SECONDS and the floor is a
-      // millisecond instant, so a token minted in the same second as the
-      // revocation is indistinguishable from one minted just before it.
-      if (iat * MS_PER_SECOND <= floorMs) {
+      if (isRevoked(iat * MS_PER_SECOND, floorMs)) {
         log.warn("validate.refused", { userId: claims.sub, issuedAt: iat, floorMs, reason: "revoked" });
         return { ok: false, error: REVOKED_ERROR };
       }

@@ -8,6 +8,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
 import { gatewayMessageSchema } from "@sentient/protocol";
+import type { UserRole } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
@@ -18,6 +19,8 @@ import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
 import { openSessionStore } from "../store/session-store.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
+import type { UserRecord } from "../user-auth/types.js";
 import { createFanOutTurnEmitter } from "./fan-out-emitter.js";
 import { createFrameJournal } from "./frame-journal.js";
 import { createReplayRegistry } from "./replay-registry.js";
@@ -162,6 +165,55 @@ function activateServices(runtime?: SessionRuntime): GatewayServices {
     stt: null,
     createSessionRuntime: () => ({ runtime: runtimeStub, permissions: { denyAll: () => {} }, work: IDLE_WORK }),
   } as unknown as GatewayServices;
+}
+
+const HOUR_MS = 3_600_000;
+
+/** A SCHEMA-VALID configure frame — these cases run past the parser, unlike the
+ *  expired-credential ones above, which are refused before it. */
+const CONFIGURE_FRAME = {
+  type: "session.configure",
+  capabilities: { supports: ["text"] },
+  clientType: "webui",
+  deviceId: "device-1",
+  surfaceId: "surface-1",
+} as const;
+
+/** The record `fakeAuthedWs`'s principal was minted from, as the store would
+ *  answer it NOW — which is the whole question the configure gate asks. */
+function recordOf(role: UserRole, credentialsValidFrom: string): UserRecord {
+  return {
+    userId: "u_deadbeef",
+    displayName: "Dee",
+    pinHash: "$argon2id$fake",
+    role,
+    avatarTint: "terra",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    credentialsValidFrom,
+  };
+}
+
+interface StaleAuthorityHarness {
+  services: GatewayServices;
+  /** What the store answers on the NEXT resolve. `null` models a deletion. */
+  setRecord: (record: UserRecord | null) => void;
+}
+
+/** `activateServices` plus the record store the configure gate re-resolves
+ *  against. Starts matching the socket's principal exactly, so a test only has
+ *  to state the divergence it is about. */
+function staleAuthorityServices(): StaleAuthorityHarness {
+  let record: UserRecord | null = recordOf("adult", NEVER_REVOKED);
+  const services = {
+    ...activateServices(),
+    auth: { users: { get: async () => ({ ok: true as const, value: record }) } },
+  } as unknown as GatewayServices;
+  return {
+    services,
+    setRecord(next) {
+      record = next;
+    },
+  };
 }
 
 /** Puts a real session with one entry in [userId]'s own store (opened through
@@ -365,6 +417,97 @@ describe("ws-handlers routing — expired credential (§3.6)", () => {
     // an expired credential must not transcribe into the session on its way out.
     expect(discards).toBe(1);
   });
+
+  it("STALE AUTHORITY: a parked socket whose user was demoted is refused at session.configure", async () => {
+    // THE DEMOTION THREAT. The revoker enumerates ATTACHMENTS, so a socket that
+    // authenticated and never configured is invisible to it — and the client
+    // decides when to configure, so the window is attacker-controlled, not
+    // server-bounded. Without this check that socket walks into
+    // `handleSessionConfigure`, which reads the stale `ws.data.principal` and
+    // mints a runtime + ToolBroker capability at the PRE-DEMOTION role, good for
+    // the token's whole remaining TTL.
+    const { services, setRecord } = staleAuthorityServices();
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS; // nowhere near expiry
+    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+    setRecord(recordOf("child", new Date().toISOString())); // demoted; floor moved
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify(CONFIGURE_FRAME),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.sent).toEqual([{ type: "auth.error", code: "expired", message: expect.any(String) }]);
+    // Never reached a runtime, an attachment or a session.
+    expect(ws.data.runtime).toBeNull();
+    expect(ws.data.attachment).toBeNull();
+    expect(ws.data.conversationId).toBeNull();
+  });
+
+  it("STALE AUTHORITY: a moved credential floor refuses the socket even when the role is unchanged", async () => {
+    // Isolates the FLOOR half of the predicate. The case above changes the
+    // role too, so the role check alone would carry it — this one cannot be
+    // caught by anything but the floor comparison. Reachable today by
+    // re-applying a member's current role (`setRole` moves the floor on every
+    // successful write, not only on a change of value).
+    const { services, setRecord } = staleAuthorityServices();
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
+    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+    setRecord(recordOf("adult", new Date().toISOString()));
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify(CONFIGURE_FRAME),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.data.runtime).toBeNull();
+  });
+
+  it("STALE AUTHORITY: a role that diverged from the record is refused even with the floor unmoved", async () => {
+    const { services, setRecord } = staleAuthorityServices();
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
+    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+    // Any write that changes a role WITHOUT moving the floor. `setRole` always
+    // moves both, so this is the belt to that braces — the socket must not
+    // configure at an authority the record no longer grants.
+    setRecord(recordOf("child", NEVER_REVOKED));
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify(CONFIGURE_FRAME),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.data.runtime).toBeNull();
+  });
+
+  it("STALE AUTHORITY: a socket whose record is gone is refused rather than configured", async () => {
+    const { services, setRecord } = staleAuthorityServices();
+    const ws = fakeAuthedWs(null);
+    ws.data.tokenExpiresAtMs = Date.now() + HOUR_MS;
+    ws.data.tokenIssuedAtMs = Date.now() - HOUR_MS;
+    setRecord(null); // deleted between auth and configure
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify(CONFIGURE_FRAME),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    expect(ws.data.runtime).toBeNull();
+  });
+
+  // The let-through half of this gate is pinned in `stale-authority.test.ts`:
+  // proving it here would mean driving the whole configure handshake, which is
+  // a different unit's contract (and a much larger fixture).
 
   it("a LIVE credential is untouched — the gate must not break every session", async () => {
     // The over-correction guard. A wrong reading of `tokenExpiresAtMs` (unit

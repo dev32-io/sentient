@@ -23,17 +23,33 @@ import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 const ADA = "u_aaaaaaaa";
 const GRACE = "u_bbbbbbbb";
 
+/** The code all three clients already classify as a TERMINAL auth failure, so
+ *  a kicked window shows its login screen instead of retrying forever. */
+const REVOKED_CODE = "expired";
+
+/** What a revoked window sees, IN ORDER. */
+const EJECTION = [`auth.error:${REVOKED_CODE}`, `close:${WS_CLOSE_POLICY}`];
+
 interface FakeSocket {
-  readonly sent: string[];
-  readonly closes: { code: number; reason: string }[];
+  /**
+   * ONE ordered log of everything that happened to this socket.
+   *
+   * Not two arrays. The contract is `auth.error` **then** close — a bare close
+   * is indistinguishable from a lost network, and both SDKs would reconnect
+   * with the same dead token forever instead of showing the login screen.
+   * Recording sends and closes separately makes a close-before-send regression
+   * pass, because both still happened.
+   */
+  readonly events: SocketEvent[];
   readonly ws: ServerWebSocket<SessionData>;
 }
+
+type SocketEvent = { kind: "sent"; frame: { type: string; code?: string } } | { kind: "closed"; code: number };
 
 /** A socket authenticated as [userId] — a principal on `ws.data` is what makes
  *  it enumerable, which is the registry's only index into who owns a window. */
 function fakeSocket(userId: string, connectionId: string): FakeSocket {
-  const sent: string[] = [];
-  const closes: { code: number; reason: string }[] = [];
+  const events: SocketEvent[] = [];
   const data = createEmptySessionData();
   data.sessionId = connectionId;
   data.authState = "authed";
@@ -41,15 +57,15 @@ function fakeSocket(userId: string, connectionId: string): FakeSocket {
   const ws = {
     data,
     send: (text: string) => {
-      sent.push(text);
+      events.push({ kind: "sent", frame: JSON.parse(text) as { type: string; code?: string } });
       return text.length;
     },
-    close: (code: number, reason: string) => {
-      closes.push({ code, reason });
+    close: (code: number) => {
+      events.push({ kind: "closed", code });
     },
     getBufferedAmount: () => 0,
   };
-  return { sent, closes, ws: ws as unknown as ServerWebSocket<SessionData> };
+  return { events, ws: ws as unknown as ServerWebSocket<SessionData> };
 }
 
 const IDLE_HANDLES = {
@@ -98,11 +114,11 @@ function harness(): Harness {
   };
 }
 
-function authErrorCodesIn(sent: string[]): string[] {
-  return sent
-    .map((raw) => JSON.parse(raw) as { type: string; code?: string })
-    .filter((frame) => frame.type === "auth.error")
-    .map((frame) => frame.code ?? "");
+/** The full ordered story of one socket's ejection, as one comparable value:
+ *  `["auth.error:expired", "close:1008"]`. Order is the contract, so it is
+ *  asserted as a sequence rather than as two independent facts. */
+function ejectionOf(socket: FakeSocket): string[] {
+  return socket.events.map((e) => (e.kind === "sent" ? `${e.frame.type}:${e.frame.code ?? ""}` : `close:${e.code}`));
 }
 
 describe("CredentialRevoker", () => {
@@ -117,10 +133,10 @@ describe("CredentialRevoker", () => {
 
     await h.revoker.revokeUser(ADA, "role-changed");
 
-    expect(adaLaptop.closes).toHaveLength(1);
-    expect(adaPhone.closes).toHaveLength(1);
-    expect(gracePhone.closes).toHaveLength(0);
-    expect(gracePhone.sent).toHaveLength(0);
+    expect(ejectionOf(adaLaptop)).toEqual(EJECTION);
+    expect(ejectionOf(adaPhone)).toEqual(EJECTION);
+    // Untouched: not closed, and not even spoken to.
+    expect(ejectionOf(gracePhone)).toEqual([]);
   });
 
   // WIRE CONTRACT. `auth.error` FIRST, then the close: a bare close is
@@ -134,8 +150,7 @@ describe("CredentialRevoker", () => {
 
     await h.revoker.revokeUser(ADA, "role-changed");
 
-    expect(authErrorCodesIn(ada.sent)).toEqual(["expired"]);
-    expect(ada.closes[0]?.code).toBe(WS_CLOSE_POLICY);
+    expect(ejectionOf(ada)).toEqual([`auth.error:${REVOKED_CODE}`, `close:${WS_CLOSE_POLICY}`]);
   });
 
   it("SECURITY: drops the revoked account's bound sessions, and only those", async () => {
@@ -161,8 +176,7 @@ describe("CredentialRevoker", () => {
 
     await h.revoker.revokeUser(ADA, "user-deleted");
 
-    expect(authErrorCodesIn(ada.sent)).toEqual(["expired"]);
-    expect(ada.closes[0]?.code).toBe(WS_CLOSE_POLICY);
+    expect(ejectionOf(ada)).toEqual(EJECTION);
   });
 
   it("is a no-op for an account with nothing open", async () => {
@@ -172,6 +186,6 @@ describe("CredentialRevoker", () => {
 
     await h.revoker.revokeUser(ADA, "role-changed");
 
-    expect(grace.closes).toHaveLength(0);
+    expect(ejectionOf(grace)).toEqual([]);
   });
 });

@@ -37,6 +37,7 @@ function fakeWs(): FakeWs {
     authState: "pending",
     principal: null,
     tokenExpiresAtMs: null,
+    tokenIssuedAtMs: null,
     surfaceId: null,
     authTimeout: null,
     grantedCapabilities: new Set(),

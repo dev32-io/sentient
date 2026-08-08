@@ -156,6 +156,15 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         return { ok: false, error: "wrong-pin" };
       }
       const newHash = await hashPin(newPin, argon2Params);
+      // THE CREDENTIAL FLOOR DOES NOT MOVE HERE — deliberate, and an OPEN
+      // QUESTION for the owner (plan 2026-08-07-tool-permissions task 2c
+      // review). `credentialsValidFrom` reads like it should, but this write is
+      // `pinHash` alone, so tokens minted under the OLD pin keep validating. The
+      // reason it is not simply added: the floor is per-user and global, so
+      // moving it would log the user out of the very session they are changing
+      // their pin from, plus every other device they own. Same open question at
+      // `admin/user-provisioner.ts#resetPinFlow`, where an operator resets
+      // someone else's pin.
       const r = await users.update(userId, { pinHash: newHash });
       if (!r.ok) {
         log.warn("changePin.io-error", { userId });

@@ -42,6 +42,24 @@ export interface CredentialFloor {
 }
 
 /**
+ * Is a credential issued at [issuedAtMs] dead against [floorMs]?
+ *
+ * ONE COMPARISON, TWO CALLERS — `token-service.validate` (per request) and
+ * `session-handlers/stale-authority.ts` (per `session.configure`, for a socket
+ * whose token was validated once and is long gone). They must never disagree:
+ * a socket surviving a revocation its own token would not is precisely the hole
+ * this exists to close.
+ *
+ * FAILS CLOSED ON THE TIE. A token's `issuedAt` is unix SECONDS and the floor
+ * is a millisecond instant, so [issuedAtMs] is the START of the issuing second
+ * and "issued in the same second as the revocation" is indistinguishable from
+ * "issued just before it". The token loses.
+ */
+export function isRevoked(issuedAtMs: number, floorMs: number): boolean {
+  return issuedAtMs <= floorMs;
+}
+
+/**
  * Read the floor off the user record, every time.
  *
  * `null` for a user with no record AND for a store that cannot answer — a

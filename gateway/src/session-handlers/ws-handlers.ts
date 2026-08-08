@@ -16,6 +16,7 @@ import {
   withSessionStore,
 } from "./session-binding.js";
 import { mintOnFirstMessage } from "./session-id.js";
+import { refuseStaleAuthority } from "./stale-authority.js";
 import { createSttSession } from "./stt-session.js";
 import type { SttSession } from "./stt-session.js";
 import { handleAuthMessage, scheduleAuthTimeout } from "./ws-auth-gate.js";
@@ -179,7 +180,17 @@ export async function handleWebSocketMessage(
       sendConnectionFrame(ws, { type: "pong" });
       return;
 
-    case "session.configure":
+    case "session.configure": {
+      // AUTHORITY, RE-RESOLVED (stale-authority.ts). The entry gate above only
+      // asks whether this socket's token has run out of clock; it cannot see a
+      // REVOCATION, and the revoker cannot see this socket — it enumerates
+      // attachments, and a connection has none until the line below gives it
+      // one. Since the client chooses when to send this frame, that window is
+      // attacker-controlled, so a demoted member could park an authenticated
+      // socket and configure afterwards at the old role. Checked HERE because
+      // this is where `ws.data.principal` becomes a runtime and a ToolBroker
+      // capability; the socket is closed rather than rebound.
+      if ((await refuseStaleAuthority(ws, services.auth.users)) !== null) return;
       // Resume params ride INSIDE the configure frame (msg.resume) — the
       // handler acquires this surface's frame journal and answers with the
       // stream.resumed decision (Plan 3 Task 10, see ws-session-configure.ts).
@@ -198,6 +209,7 @@ export async function handleWebSocketMessage(
         msg.conversationId,
       );
       return;
+    }
 
     case "text.input": {
       if (!mediate(ws, services, msg, "text.input", msg.pendingId)) return;

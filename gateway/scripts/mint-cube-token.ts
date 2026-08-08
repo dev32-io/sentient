@@ -52,19 +52,19 @@ async function main(): Promise<void> {
     // by the gateway, so a baked token cannot outlive a role change.
     // (`gateway/scripts/` is outside tsconfig's `include`, so nothing would
     // have caught a stale `role:` argument here at build time.)
-    // The floor is answered from the users.json read above, not from the
-    // gateway's own store: this dev path deliberately reads a different root
-    // (see the dataDir comment). Only `issue` runs here, but the option is
-    // required precisely so no caller can assemble a service that would
-    // validate without one.
+    // This script ONLY issues. The floor is required so that nothing can
+    // assemble a token service that would validate without one — and a script
+    // that never validates has no business owning a second implementation of
+    // the `credentialsValidFrom ?? createdAt` precedence, which would be a
+    // third copy free to drift (and to fail OPEN on an unparseable instant).
+    // It throws instead: if this ever runs, the assumption above is wrong and
+    // the caller should hear so loudly.
     const tokens = createTokenService({
         secret,
         ttlSeconds: DEV_TTL_SECONDS,
         credentialFloor: {
-            async validFromMsFor(userId: string): Promise<number | null> {
-                const rec = users.find((u) => u && String(u.userId) === userId);
-                if (!rec) return null;
-                return Date.parse(rec.credentialsValidFrom ?? rec.createdAt ?? new Date(0).toISOString());
+            validFromMsFor(): Promise<number | null> {
+                throw new Error("mint-cube-token never validates");
             },
         },
     });
