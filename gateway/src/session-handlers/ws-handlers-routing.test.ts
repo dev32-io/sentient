@@ -303,7 +303,7 @@ function stubPermissions(matches = true): StubPermissions {
   };
 }
 
-describe("ws-handlers routing — text.input", async () => {
+describe("ws-handlers routing — text.input", () => {
   it("submits a conversational stimulus with the message text when runtime is set", async () => {
     const { runtime, submitCalls } = stubRuntime();
     const ws = fakeAuthedWs(runtime);
@@ -345,7 +345,7 @@ describe("ws-handlers routing — text.input", async () => {
   });
 });
 
-describe("ws-handlers routing — interrupt", async () => {
+describe("ws-handlers routing — interrupt", () => {
   it("calls runtime.interrupt() when runtime is set", async () => {
     const { runtime, interruptCallCount } = stubRuntime();
     const ws = fakeAuthedWs(runtime);
@@ -387,7 +387,7 @@ describe("ws-handlers routing — interrupt", async () => {
 // inbound frame" rather than "the mediated subset".
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — expired credential (§3.6)", async () => {
+describe("ws-handlers routing — expired credential (§3.6)", () => {
   it("SECURITY: conversation.activate on an expired socket is refused and the socket closed", async () => {
     // The disclosure this closes: activate answers with the session's snapshot,
     // and it is deliberately outside the command gate (it is how a connection
@@ -556,13 +556,42 @@ describe("ws-handlers routing — expired credential (§3.6)", async () => {
     expect(ws.data.runtime).toBeNull();
   });
 
+  // WIRE HONESTY. A refused bind has already told this socket `auth.error` and
+  // closed it. Collapsing `refused` into "no runtime" would answer
+  // `orchestrator_unavailable` on top — a second, false explanation for the same
+  // event — and log a construction failure that never happened, which is the
+  // exact line an operator greps during a revocation.
+  it("STALE AUTHORITY: a refused late re-bind is not also reported as orchestrator_unavailable", async () => {
+    const { services, setRecord, ownedSessionId } = staleAuthorityServices();
+    const ws = parkedSocket();
+    // The state the late re-bind branch exists for: a session resolved at
+    // handshake time whose runtime never constructed.
+    ws.data.conversationId = ownedSessionId;
+    ws.data.draftKey = mintDraftKey();
+    setRecord(recordOf("child", new Date().toISOString()));
+
+    await handleWebSocketMessage(
+      ws as unknown as ServerWebSocket<SessionData>,
+      JSON.stringify({ type: "text.input", text: "hello" }),
+      services,
+    );
+
+    expect(ws.closes).toEqual([WS_CLOSE_POLICY]);
+    // ONE explanation, not two.
+    expect(ws.sent).toEqual([{ type: "auth.error", code: "expired", message: expect.any(String) }]);
+  });
+
   // THE GATE IS AT THE MINT, NOT AT THE FRAME, and this is what that buys: a
   // DRAFT handshake mints no runtime and therefore no capability, so there is
   // nothing to refuse and the socket is left alone. The refusal lands on the
   // first frame that would actually create authority — which the cases above
   // are. Pinned so a future "check it in the arm too" change has to argue with
   // a test rather than with a comment.
-  it("STALE AUTHORITY: a DRAFT handshake mints nothing, so it is not refused", async () => {
+  //
+  // ASSERTS WHAT DID HAPPEN, not only what did not. "No runtime, no attachment"
+  // is equally true of a REFUSED handshake, so on its own it would stay green
+  // against the very change it exists to catch.
+  it("STALE AUTHORITY: a DRAFT handshake mints nothing, so it completes instead of being refused", async () => {
     const { services, setRecord } = staleAuthorityServices();
     const ws = parkedSocket();
     setRecord(recordOf("child", new Date().toISOString()));
@@ -573,6 +602,13 @@ describe("ws-handlers routing — expired credential (§3.6)", async () => {
       services,
     );
 
+    // The socket is alive and was never told its credential is bad …
+    expect(ws.closes).toEqual([]);
+    expect(ws.sent.some((f) => (f as { type?: string }).type === "auth.error")).toBe(false);
+    // … and the handshake actually RAN to completion on it.
+    expect(ws.sent.some((f) => (f as { type?: string }).type === "session.ready")).toBe(true);
+    expect(ws.data.draftKey).not.toBeNull();
+    // Still no authority anywhere: a draft has no session to mint one for.
     expect(ws.data.runtime).toBeNull();
     expect(ws.data.attachment).toBeNull();
   });
@@ -609,7 +645,7 @@ describe("ws-handlers routing — expired credential (§3.6)", async () => {
 // the old per-socket broker gave for free.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — permission.response", async () => {
+describe("ws-handlers routing — permission.response", () => {
   it("routes the client's decision into the SESSION's broker, naming the answering window", async () => {
     const permissions = stubPermissions();
     const services = attachedCleanupServices(permissions);
@@ -724,7 +760,7 @@ describe("ws-handlers routing — permission.response", async () => {
 //     is noise it cannot act on.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers outbound frames — lane discipline", async () => {
+describe("ws-handlers outbound frames — lane discipline", () => {
   it("sends an error unstamped and unjournaled, so it reaches only the connection that asked", async () => {
     const ws = fakeAuthedWs(null);
     const journal = createFrameJournal({ sessionId: SESSION_ID, maxBytes: 65536 });
@@ -774,7 +810,7 @@ describe("ws-handlers outbound frames — lane discipline", async () => {
 // file's header for the full reasoning, and its membership/rival-owner checks.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — session.new", async () => {
+describe("ws-handlers routing — session.new", () => {
   it("CONTRACT: an implicit session.new re-attaches the bound session instead of forking one", async () => {
     // Mobile fires this on EVERY launch, twice per launch. Answering it as a
     // new chat is what would hand every relaunch an empty conversation.
@@ -854,7 +890,7 @@ describe("ws-handlers routing — session.new", async () => {
   });
 });
 
-describe("ws-handlers routing — conversation.activate", async () => {
+describe("ws-handlers routing — conversation.activate", () => {
   it("CONTRACT: activating a session the caller's store holds answers session.switched", async () => {
     const services = activateServices();
     const sessionId = seedActivatableSession(services.accessManager, "u_deadbeef");
@@ -1030,7 +1066,7 @@ async function attach(ws: FakeWs, services: GatewayServices, sessionId: string =
   await bindSessionRuntime(ws as unknown as ServerWebSocket<SessionData>, services, sessionId);
 }
 
-describe("ws-handlers cleanup — outstanding permission prompts", async () => {
+describe("ws-handlers cleanup — outstanding permission prompts", () => {
   it("denies every open prompt when the LAST window on the session leaves", async () => {
     // Each open prompt is a promise the ReAct loop is awaiting inside
     // `broker.dispatch`; an unsettled one parks that turn for the full
@@ -1083,7 +1119,7 @@ describe("ws-handlers cleanup — outstanding permission prompts", async () => {
 // runtime/session-runtime.test.ts's steer cases) apply to both windows at all.
 // ---------------------------------------------------------------------------
 
-describe("ws-handlers routing — two windows, one turn", async () => {
+describe("ws-handlers routing — two windows, one turn", () => {
   /** A runtime double that models the documented `submit` contract: start a
    *  turn when idle, otherwise steer the running one. Counting turn STARTS is
    *  the only way to observe a fork. */
@@ -1199,7 +1235,7 @@ describe("ws-handlers routing — two windows, one turn", async () => {
   });
 });
 
-describe("detachSession — leaving a session drops what was captured under it", async () => {
+describe("detachSession — leaving a session drops what was captured under it", () => {
   it("INVARIANT: leaving a session DISCARDS this connection's mic uplink", async () => {
     // THE COMPENSATING CONTROL FOR UNSTAMPED BINARY AUDIO (spec §3.7). Mic
     // bytes carry no `{sessionId, generation}`; the connection's attachment is
@@ -1244,7 +1280,7 @@ describe("detachSession — leaving a session drops what was captured under it",
   });
 });
 
-describe("ws-handlers cleanup — the session journal", async () => {
+describe("ws-handlers cleanup — the session journal", () => {
   it("drops this connection's HANDLE on the journal without destroying the journal", async () => {
     // The journal is the SESSION's since task 6, so a closing window clears its
     // own reference and nothing more; releasing it is the session handles'

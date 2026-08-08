@@ -3,12 +3,12 @@ import { clientMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
-import type { SessionRuntime } from "../runtime/session-runtime.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
 import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
 import {
+  type BindOutcome,
   bindSessionRuntime,
   completeAttach,
   completeAttachWithSnapshot,
@@ -212,11 +212,16 @@ export async function handleWebSocketMessage(
       // written. Idempotent by mint key, so a retry after a lost
       // `session.created` reaches the session it already created rather than
       // forking a second one.
-      const runtime = await ensureBoundRuntime(ws, services, msg.text);
-      if (runtime === null) {
+      const bound = await ensureBoundRuntime(ws, services, msg.text);
+      // A refused bind already told this socket `auth.error` and closed it.
+      // Answering `orchestrator_unavailable` on top would be a second, false
+      // explanation for the same event.
+      if (bound.kind === "refused") return;
+      if (bound.kind !== "bound") {
         sendError(ws, "orchestrator_unavailable", "Native orchestrator is not available for this session");
         return;
       }
+      const runtime = bound.runtime;
       // `pendingId` is threaded, NOT acted on here: the idempotency decision
       // belongs where the store append happens (SessionRuntime), so a resend
       // is recorded and re-echoed rather than silently swallowed by the router.
@@ -472,17 +477,22 @@ function answerPermissionPrompt(
  *     learns the id without re-attaching. Task 6 turns this single send into a
  *     session-lane fan-out; the frame and its position are already correct.
  *
- * Returns null when no runtime could be produced — the orchestrator is absent
- * from config, or its per-session construction failed (no active LLM key). The
- * caller answers `orchestrator_unavailable`, which is the only signal that a
- * `text.input` went nowhere.
+ * Returns the bind's OWN outcome, not a nullable runtime, and the third case is
+ * why: `no-runtime` means the orchestrator is absent from config or its
+ * per-session construction failed (no active LLM key), and the caller answers
+ * `orchestrator_unavailable` — the only signal that a `text.input` went
+ * nowhere. `refused` means the mint found this socket's authority no longer
+ * matches the record and CLOSED it. Collapsing the two would send
+ * `orchestrator_unavailable` to a socket that has already been told
+ * `auth.error`, and log a construction failure that never happened — the very
+ * line an operator greps during a revocation.
  */
 async function ensureBoundRuntime(
   ws: ServerWebSocket<SessionData>,
   services: GatewayServices,
   text: string,
-): Promise<SessionRuntime | null> {
-  if (ws.data.runtime) return ws.data.runtime;
+): Promise<BindOutcome> {
+  if (ws.data.runtime) return { kind: "bound", runtime: ws.data.runtime };
 
   const principal = ws.data.principal;
   const draftKey = ws.data.draftKey;
@@ -491,7 +501,7 @@ async function ensureBoundRuntime(
       sessionId: ws.data.sessionId,
       reason: "no principal or draft key on this connection — session.configure has not run",
     });
-    return null;
+    return { kind: "no-runtime" };
   }
 
   if (ws.data.conversationId !== null) {
@@ -514,17 +524,17 @@ async function ensureBoundRuntime(
     // takes nothing from anyone: if a second tab opened the same session while
     // this one was wedged, this connection joins that session's runtime and
     // both windows are live in it.
-    // A REFUSED bind has already closed the socket; null is the right answer
-    // either way, and the caller's `orchestrator_unavailable` lands on a
-    // connection that is going away (writes to it are dropped, not thrown).
     const rebound = await bindSessionRuntime(ws, services, ws.data.conversationId);
+    // A REFUSED bind is propagated verbatim: it has already told the client
+    // `auth.error` and closed the socket, and it is NOT a construction failure.
+    if (rebound.kind === "refused") return rebound;
     if (rebound.kind !== "bound") {
       log.warn("text.input.no-runtime", {
         sessionId: ws.data.sessionId,
         conversationId: ws.data.conversationId,
         reason: "session is bound but a runtime still could not be constructed for it",
       });
-      return null;
+      return rebound;
     }
     // The handshake could not send a feed (it had no runtime to project one
     // from) and sent nothing at all — not even the draft's empty snapshot. This
@@ -543,7 +553,7 @@ async function ensureBoundRuntime(
       conversationId: ws.data.conversationId,
       reason: "runtime construction failed at session.configure and succeeded on this message",
     });
-    return rebound.runtime;
+    return rebound;
   }
 
   const { sessionId, replayed } = withSessionStore(services, principal, (store) =>
@@ -574,6 +584,7 @@ async function ensureBoundRuntime(
   // retrying the bind. Leaving it null costs nothing: the mint is idempotent,
   // so the next message re-resolves the SAME row under the same draft key.
   const bind = await bindSessionRuntime(ws, services, sessionId);
+  if (bind.kind === "refused") return bind;
   if (bind.kind !== "bound") {
     log.error("text.input.mint-without-runtime", {
       sessionId: ws.data.sessionId,
@@ -581,7 +592,7 @@ async function ensureBoundRuntime(
       reason:
         "session minted but no runtime could be constructed — connection stays a draft so the next message retries",
     });
-    return null;
+    return bind;
   }
   ws.data.conversationId = sessionId;
 
@@ -609,7 +620,7 @@ async function ensureBoundRuntime(
   } else {
     completeAttach(ws, services);
   }
-  return bind.runtime;
+  return bind;
 }
 
 /**
@@ -643,8 +654,9 @@ function ensureSttSession(ws: ServerWebSocket<SessionData>, services: GatewaySer
     // (session-binding.ts); it is not this call, and it cannot be.
     getRuntimeForInput: async (text) => {
       if (!mediate(ws, services, {}, "transcript")) return null;
-      const runtime = await ensureBoundRuntime(ws, services, text);
-      if (runtime === null) return null;
+      const bound = await ensureBoundRuntime(ws, services, text);
+      if (bound.kind !== "bound") return null;
+      const runtime = bound.runtime;
       // Same ordering as `text.input`: the floor is claimed only once there is
       // a runtime to submit to.
       if (!claimInputFloor({ type: "transcript" }, ws, services.sessionRegistry)) return null;

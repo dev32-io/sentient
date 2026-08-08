@@ -130,7 +130,10 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     }
   }
 
-  async function dispatch(event: STTEvent): Promise<void> {
+  /** [active] is the adapter this event was read from — carried in so the
+   *  post-await re-check below can ask the SAME question the loop asks before
+   *  dispatching, rather than a second one that could drift from it. */
+  async function dispatch(event: STTEvent, active: STTAdapter): Promise<void> {
     if (event.type === "turn_dropped") {
       log.debug("stt.turn-dropped", { sessionId, turnIdx: event.turnIdx });
       return;
@@ -158,6 +161,30 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       return;
     }
     const runtime = await getRuntimeForInput(text);
+    // RE-CHECKED AFTER THE AWAIT, and this is the second half of the guard the
+    // loop below performs before dispatching — not a duplicate of it.
+    //
+    // `getRuntimeForInput` is genuinely async: on a voice-first draft it MINTS
+    // the session (a SQLite write) and then re-resolves this connection's
+    // authority against the user record (`bindSessionRuntime`), so the window
+    // between the loop's check and this line spans real I/O. A
+    // `conversation.activate` landing inside it runs `discard()`, which clears
+    // `adapter` — and without this line the resumed dispatch would submit words
+    // captured in the session the user just LEFT into the one they switched to,
+    // or into a runtime the registry has since disposed. That is precisely the
+    // hazard `discard()` exists to prevent, arriving through the back door the
+    // await opened.
+    //
+    // `close()` nulls `adapter` too, so this covers a socket that went away
+    // mid-mint by the same predicate.
+    if (adapter !== active) {
+      log.info("stt.transcript.after-discard", {
+        sessionId,
+        turnIdx: event.turnIdx,
+        reason: "the uplink was discarded while this transcript was resolving a runtime — dropping it",
+      });
+      return;
+    }
     if (!runtime) {
       log.warn("stt.event.no-runtime", {
         sessionId,
@@ -194,7 +221,11 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
           // AWAITED, so the next event cannot overtake this one: a transcript
           // that has to mint a session is slower than one that does not, and
           // two spoken turns arriving back-to-back must still submit in order.
-          await dispatch(event);
+          //
+          // `active` goes with it: the check above is only good for the instant
+          // it runs, and `dispatch` suspends. It re-asks the same question on
+          // the other side of its await.
+          await dispatch(event, active);
         } catch (err: unknown) {
           log.warn("stt.event.dispatch-failed", {
             sessionId,

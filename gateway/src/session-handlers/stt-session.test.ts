@@ -321,6 +321,51 @@ describe("createSttSession", () => {
     session.close();
   });
 
+  // THE OTHER HALF OF THAT INVARIANT, and the half the case above cannot reach.
+  //
+  // It emits AFTER the discard, so the loop's pre-dispatch guard catches it and
+  // the transcript never gets as far as resolving a runtime. This one emits
+  // BEFORE the discard — the event is already inside `dispatch`, suspended on
+  // `getRuntimeForInput`, when the user switches conversations. That await is
+  // real work on a voice-first draft (mint the session, then re-resolve this
+  // connection's authority against the user record), so the window is wide, and
+  // on the far side of it the runtime belongs to the session the user LEFT.
+  it("INVARIANT: an uplink discarded WHILE a transcript is resolving a runtime commits nothing", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    let releaseRuntime = (): void => {};
+    const runtimeResolving = new Promise<void>((resolve) => {
+      releaseRuntime = resolve;
+    });
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      // Suspends exactly where the real one does — mid-mint, mid-record-read.
+      getRuntimeForInput: async () => {
+        await runtimeResolving;
+        return stub.runtime;
+      },
+    });
+
+    session.start("semantic");
+    await settle();
+    // The transcript enters `dispatch` and parks on the runtime lookup.
+    fake.emit({ type: "transcript", turnIdx: 1, text: "meant for the other chat" });
+    await settle();
+    expect(stub.submitted).toEqual([]); // still resolving
+
+    // The user clicks another conversation: conversation.activate → unbind →
+    // detachSession → discard(). Only THEN does the runtime lookup land.
+    session.discard();
+    releaseRuntime();
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    session.close();
+  });
+
   it("INVARIANT: a discarded uplink barges into nothing — a mic onset in the old session must not abort the new one", async () => {
     const fake = lingeringAdapter();
     const stub = stubRuntime();

@@ -237,7 +237,7 @@ function servicesWithRuntime(replayRegistry: ReplayRegistry, ws: FakeWs, accessM
   return spy;
 }
 
-describe("handleSessionConfigure — the SESSION's journal across a re-configure", async () => {
+describe("handleSessionConfigure — the SESSION's journal across a re-configure", () => {
   it("keeps the same journal and epoch when a connection re-configures the same session", async () => {
     // The journal follows the SESSION now, not the surface. A reload landing
     // back on the same conversation must continue its seq space, or the client
@@ -311,7 +311,7 @@ describe("handleSessionConfigure — the SESSION's journal across a re-configure
   });
 });
 
-describe("handleSessionConfigure — committed-feed handshake", async () => {
+describe("handleSessionConfigure — committed-feed handshake", () => {
   it("CONTRACT: re-opening a session sends conversation.snapshot right after session.ready", async () => {
     // Nothing else on the wire carries committed history: `turn.*` is a live
     // stream the client drops on turn.completed. Without this frame the chat
@@ -552,7 +552,7 @@ function servicesRecordingPartition(
   return spy;
 }
 
-describe("handleSessionConfigure — session addressing", async () => {
+describe("handleSessionConfigure — session addressing", () => {
   it("SECURITY: an id this user's store does not hold is refused, not created", async () => {
     // The junk-partition vector: the previous handler honoured any
     // well-prefixed string and opened an empty partition for it, so a client
@@ -753,7 +753,7 @@ function servicesTrackingRuntimes(replayRegistry: ReplayRegistry, accessManager:
   return spy;
 }
 
-describe("handleSessionConfigure — one live runtime per session", async () => {
+describe("handleSessionConfigure — one live runtime per session", () => {
   it("INVARIANT: a second connection on a live session shares the runtime instead of evicting it", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
@@ -1002,7 +1002,7 @@ function entriesFor(accessManager: AccessManager, sessionId: string): { kind: st
   return rows;
 }
 
-describe("handleSessionConfigure — reload rebuilds the conversation", async () => {
+describe("handleSessionConfigure — reload rebuilds the conversation", () => {
   it("CONTRACT: a reload presenting the minted id replays the prior feed and a non-empty model projection", async () => {
     const registry = createReplayRegistry({ maxBytesPerSession: 1_000_000, retentionMs: 60_000 });
     const accessManager = freshAccessManager();
