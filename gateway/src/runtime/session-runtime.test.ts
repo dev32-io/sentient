@@ -1,8 +1,11 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
+import { inboundScanConfigSchema } from "@sentient/config";
 import type { OrchestratorConfig } from "@sentient/config";
 import type { ConversationFeedItem, TaskListItem } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
+import { composeSessionSystemPrompt, describeInboundGateMode } from "../bootstrap/phase-services.js";
+import { loadSkillIndexPreamble } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
@@ -10,6 +13,8 @@ import { projectForClient } from "../store/client-projection.js";
 import type { CutoffKind } from "../store/entry-types.js";
 import { projectForModel } from "../store/model-projection.js";
 import type { TitleProvenance } from "../store/session-metadata.js";
+import type { SkillFile } from "../skills/skill-file.js";
+import { createSkillStore } from "../skills/skill-store.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
 import type { BackgroundToolRunner, ToolBroker } from "../tools/tool-broker.js";
@@ -3016,5 +3021,132 @@ describe("SessionRuntime — revoked authority", () => {
     expect(provider.calls).toHaveLength(1);
 
     runtime.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10: the per-session system prompt gains THIS user's skill index, and the
+// inbound gate's mode is composed visibly at build. These pin the composition
+// seam phase-services.ts builds ONCE per SessionRuntime construction (Invariant
+// A: the skill-index prefix is byte-stable within a session).
+// ---------------------------------------------------------------------------
+
+const SKILL_STORE_OPTS = { maxBodyChars: 20000, knownTools: new Set<string>() };
+
+function makeSkillFile(name: string, description: string): SkillFile {
+  return { name, description, body: `# ${name}\n\nSteps.` };
+}
+
+describe("SessionRuntime system prompt — per-user skill index (Task 10)", () => {
+  it("appends both skills' index lines and the preamble to the base prompt", () => {
+    const store = createSkillStore(`${ROOT}/skills-two/skills`, SKILL_STORE_OPTS);
+    expect(store.write(makeSkillFile("alpha-skill", "Plan the alpha"), { overwrite: false })).toBeNull();
+    expect(store.write(makeSkillFile("beta-skill", "Handle the beta"), { overwrite: false })).toBeNull();
+
+    const base = "you are a test assistant";
+    const preamble = loadSkillIndexPreamble({});
+    const prompt = composeSessionSystemPrompt(base, store.list(), 50, preamble);
+
+    expect(prompt.startsWith(`${base}\n\n`)).toBe(true);
+    expect(prompt).toContain(preamble.trim());
+    expect(prompt).toContain("- alpha-skill — Plan the alpha");
+    expect(prompt).toContain("- beta-skill — Handle the beta");
+  });
+
+  it("is byte-identical to the base prompt for a user with zero skills", () => {
+    const store = createSkillStore(`${ROOT}/skills-none/skills`, SKILL_STORE_OPTS);
+    const base = "you are a test assistant";
+    const prompt = composeSessionSystemPrompt(base, store.list(), 50, loadSkillIndexPreamble({}));
+    expect(prompt).toBe(base);
+  });
+
+  it("holds the prompt byte-stable across two turns even when a skill is written between them", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/skills-stable` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const store = createSkillStore(`${ROOT}/skills-stable/skills`, SKILL_STORE_OPTS);
+    expect(store.write(makeSkillFile("alpha-skill", "Plan the alpha"), { overwrite: false })).toBeNull();
+
+    // Composed ONCE at construction — exactly as phase-services.ts does.
+    const composedOnce = composeSessionSystemPrompt(
+      "you are a test assistant",
+      store.list(),
+      50,
+      loadSkillIndexPreamble({}),
+    );
+
+    const provider = fakeProvider(async function* () {
+      yield { type: "text", content: "ok" };
+      yield { type: "done", finishReason: "stop" };
+    });
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-skill-stable",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: composedOnce,
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "first" });
+    await waitFor(() => provider.calls.length >= 1);
+    await waitUntilIdle(runtime);
+
+    // A skill taught mid-session must NOT alter this session's live prefix.
+    expect(store.write(makeSkillFile("gamma-skill", "Late arrival"), { overwrite: false })).toBeNull();
+
+    runtime.submit({ kind: "conversational", text: "second" });
+    await waitFor(() => provider.calls.length >= 2);
+    await waitUntilIdle(runtime);
+
+    const firstSystem = provider.calls[0]?.messages[0];
+    const secondSystem = provider.calls[1]?.messages[0];
+    expect(firstSystem?.role).toBe("system");
+    expect(firstSystem?.content).toBe(composedOnce);
+    // Byte-identical across turns, and the mid-session write did not leak in.
+    expect(secondSystem?.content).toBe(firstSystem?.content);
+    expect(secondSystem?.content).not.toContain("gamma-skill");
+
+    runtime.dispose();
+  });
+});
+
+describe("inbound gate mode descriptor (Task 10)", () => {
+  it("reports real mode with every channel when scanning is enabled (secure default)", () => {
+    const desc = describeInboundGateMode(inboundScanConfigSchema.parse({}));
+    expect(desc.mode).toBe("real");
+    expect(desc.channels.split(",").sort()).toEqual([
+      "background_completion",
+      "delegation_prompt",
+      "skill_body",
+      "tool_result",
+    ]);
+  });
+
+  it("reports passthrough when the master switch is off", () => {
+    const desc = describeInboundGateMode(inboundScanConfigSchema.parse({ enabled: false }));
+    expect(desc.mode).toBe("passthrough");
+  });
+
+  it("reflects an operator-disabled channel: still real, but that channel drops out of the log line", () => {
+    const cfg = inboundScanConfigSchema.parse({ enabled: true, channels: { tool_result: false } });
+    const desc = describeInboundGateMode(cfg);
+    expect(desc.mode).toBe("real"); // other channels still scan
+    expect(desc.channels.split(",")).not.toContain("tool_result");
+    expect(desc.channels.split(",").sort()).toEqual(["background_completion", "delegation_prompt", "skill_body"]);
+  });
+
+  it("reports passthrough when the master switch is on but every channel is off", () => {
+    const cfg = inboundScanConfigSchema.parse({
+      enabled: true,
+      channels: { tool_result: false, background_completion: false, skill_body: false, delegation_prompt: false },
+    });
+    const desc = describeInboundGateMode(cfg);
+    expect(desc.mode).toBe("passthrough");
+    expect(desc.channels).toBe("");
   });
 });

@@ -8,6 +8,7 @@ import type {
   HermesBuiltinTools,
   HermesConfig as HermesYaml,
   InboundProxyConfig as InboundProxyYaml,
+  InboundScanConfig as InboundScanYaml,
   McpCatalog,
   OrchestratorConfig as OrchestratorYaml,
   ProvidersConfig as ProvidersYaml,
@@ -147,6 +148,14 @@ export interface StartupConfig {
   /** Public /download page + mobile OTA artifact serving. Always present;
    *  defaults to the standard docker-compose layout when not overridden. */
   downloads: DownloadsYaml;
+
+  /** Inbound prompt-injection scanning boundary (security/inbound-gate.ts).
+   *  Always present (schema `.default({})`, every field secure-by-default true).
+   *  Threaded so an operator's `security.inbound_scan` block in config.yaml —
+   *  e.g. `channels.tool_result: false` — actually reaches the per-session gate
+   *  and the `inbound-gate.composed` boot log, rather than being silently
+   *  overridden by a code-side `parse({})`. */
+  inboundScan: InboundScanYaml;
 }
 
 export function loadLoggingConfig(): LoggingConfig {
@@ -234,5 +243,6 @@ export function loadStartupConfig(): StartupConfig {
     managedServices: cfg.managed_services,
     systemOrchestrator: cfg.system_orchestrator,
     downloads: cfg.downloads,
+    inboundScan: cfg.security.inbound_scan,
   };
 }

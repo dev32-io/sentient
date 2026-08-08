@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { catalogTools, riskConfigSchema } from "@sentient/config";
-import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
+import type { InboundScanConfig, McpCatalog, OrchestratorConfig } from "@sentient/config";
 import { ensureTlsMaterial } from "@sentient/tls";
 import { type AccessManager, createAccessManager } from "../access/access-manager.js";
 import { createFileScope } from "../access/file-scope.js";
@@ -25,7 +25,7 @@ import type { StartupConfig } from "../config/startup-config.ts";
 import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
-import { loadSystemPrompt } from "../context/system-prompt-loader.ts";
+import { loadSkillIndexPreamble, loadSystemPrompt } from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
@@ -37,9 +37,13 @@ import { createConfirmHook, createSessionPermissionBroker } from "../runtime/ses
 import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
+import { createInboundGate } from "../security/inbound-gate.js";
 import { scanContent } from "../security/injection-scanner.js";
+import { createRiskAccumulator } from "../security/risk-accumulator.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
+import { renderSkillIndex } from "../skills/skill-index.js";
 import { createSkillStore } from "../skills/skill-store.js";
+import type { SkillMeta } from "../skills/skill-store.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
@@ -111,6 +115,41 @@ function resolveSystemPrompt(): string {
   systemPrompt = loadSystemPrompt({});
   log.info("system-prompt.resolved", { chars: systemPrompt.length });
   return systemPrompt;
+}
+
+/**
+ * The per-session system prompt (Skill System spec, Task 10): the process-wide
+ * `base` followed by this user's rendered skill index. `renderSkillIndex`
+ * returns `""` for a user with no skills, and an empty index appends NOTHING —
+ * a zero-skill user's prompt is byte-identical to the base. This is composed
+ * ONCE at session-services construction (Invariant A: the prefix is byte-stable
+ * within a session, so a skill taught mid-session lands in the NEXT session's
+ * build and never mutates a live session's cache-stable prefix).
+ */
+export function composeSessionSystemPrompt(
+  base: string,
+  skills: SkillMeta[],
+  maxIndexEntries: number,
+  preamble: string,
+): string {
+  const index = renderSkillIndex(skills, maxIndexEntries, preamble);
+  return index === "" ? base : `${base}\n\n${index}`;
+}
+
+/**
+ * Boot/build visibility for the inbound gate (defect D18: a silent passthrough
+ * reading as "covered" is a false-green, so the mode is logged, not assumed).
+ * `mode` is `"real"` only when scanning actually runs — the master switch is on
+ * AND at least one channel is enabled; anything else is an effective
+ * passthrough. `channels` is the comma-joined set of enabled channel names, for
+ * the log trail.
+ */
+export function describeInboundGateMode(cfg: InboundScanConfig): { mode: "real" | "passthrough"; channels: string } {
+  const enabledChannels = Object.entries(cfg.channels)
+    .filter(([, on]) => on)
+    .map(([name]) => name);
+  const mode = cfg.enabled && enabledChannels.length > 0 ? "real" : "passthrough";
+  return { mode, channels: enabledChannels.join(",") };
 }
 
 export interface PhaseServicesInput {
@@ -416,6 +455,7 @@ export async function buildOrchestratorServices(
     delegatedExternalTool,
     profileStore,
     auth: auth ?? null,
+    inboundScan: cfg.inboundScan,
   });
 
   return { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool };
@@ -533,6 +573,10 @@ interface CreateSessionRuntimeFactoryDeps {
   /** Names the household for the `<session>` block; null in a headless
    *  harness, which then renders the block without those lines. */
   auth: AuthService | null;
+  /** Operator's `security.inbound_scan` block (T1), threaded from config.yaml
+   *  through StartupConfig so a disabled channel actually reaches the gate — no
+   *  code-side `parse({})` that would silently ignore the operator's YAML. */
+  inboundScan: InboundScanConfig;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -545,7 +589,19 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool, profileStore, auth } = deps;
+  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg } = deps;
+
+  // Inbound-scan boundary config (T1), threaded from the operator's
+  // `security.inbound_scan` YAML through StartupConfig — so a channel the
+  // operator disabled in config.yaml reaches `createInboundGate` and the
+  // `inbound-gate.composed` log line, never silently overridden by a code-side
+  // default. The risk config has NO operator YAML surface (no `security.risk`
+  // key exists in the schema), so `riskConfigSchema.parse({})` here is a true
+  // code default, not an ignored knob — nothing to thread. Config and the log
+  // descriptor are shared across sessions; each session gets its OWN risk
+  // accumulator + gate below, since injection risk is per-session.
+  const riskCfg = riskConfigSchema.parse({});
+  const gateMode = describeInboundGateMode(inboundScanCfg);
 
   return ({
     principal,
@@ -704,6 +760,24 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // one invoking it synchronously during construction, and nothing does.
     let runtimeRef: SessionRuntime | null = null;
 
+    // One inbound gate + risk accumulator PER SESSION (T9/T10). The gate screens
+    // every untrusted string on its way into model context — foreground tool
+    // results (inside the broker) and background-task completions (the
+    // completion-note sink below) — and feeds a per-session risk accumulator the
+    // PDP can escalate on. Replaces the broker's disabled passthrough default.
+    // The INFO line makes the mode visible in the trail (defect D18): a silent
+    // passthrough reading as covered is the false-green this log exists to
+    // prevent.
+    const riskAccumulator = createRiskAccumulator(riskCfg);
+    const inboundGate = createInboundGate(inboundScanCfg, riskAccumulator);
+    log.info("inbound-gate.composed", {
+      userId: principal.userId,
+      conversationId,
+      connectionId,
+      mode: gateMode.mode,
+      channels: gateMode.channels,
+    });
+
     const broker = createToolBroker({
       mcp: mcpClient,
       store: brokerStore,
@@ -717,6 +791,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // `"native"` namespace by the broker's `serverOf` — so a stored
       // `native[tool]` override bites and a parent's `off` is honoured.
       nativeTools: skillTools,
+      // The per-session inbound gate (T10): every foreground tool result is
+      // screened through it before the result cap, and its risk level feeds the
+      // PDP's escalation on side-effecting tools.
+      inboundGate,
       config: orchestratorCfg.tools,
       // Real L3 confirm round-trip (spec §5.3): fans `permission.request` to
       // EVERY window attached to this session and blocks the dispatch until
@@ -749,6 +827,18 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
 
     log.info("session-runtime.factory.build", { userId: principal.userId, conversationId, connectionId });
 
+    // Per-session system prompt = process-wide base + THIS user's skill index,
+    // composed ONCE here (Invariant A: byte-stable within a session). `list()`
+    // is read now, at construction — NOT per turn; a skill written mid-session
+    // is picked up by the NEXT session's build, keeping the cache-stable prefix
+    // fixed for every turn of this one.
+    const sessionSystemPrompt = composeSessionSystemPrompt(
+      resolveSystemPrompt(),
+      skillStore.list(),
+      orchestratorCfg.skills.max_index_entries,
+      loadSkillIndexPreamble({}),
+    );
+
     const runtime = buildSessionRuntime({
       principal,
       // The store's own vocabulary for a partition is `sessionId`; the value
@@ -765,7 +855,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // Already wrapping `emitter` above — handed in so the runtime does not
       // wrap a second time and double every delta into `textSoFar`.
       turnState,
-      systemPrompt: resolveSystemPrompt(),
+      systemPrompt: sessionSystemPrompt,
       timeZone: resolveTimeZone(),
       // Prompt tiers 3 and 5 (context/session-block.ts, situation-block.ts).
       // Composed HERE because this is the only scope holding all of their
@@ -865,6 +955,12 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         output: result.content,
         isError: result.isError,
         requestEchoChars: orchestratorCfg.tools.background_completion_request_echo_chars,
+        // The SAME per-session gate the broker screens tool results with:
+        // a delegated payload is the lowest-trust input there is (spec §5.3),
+        // so it is screened under the `background_completion` channel before it
+        // is fenced into the note.
+        inboundGate,
+        sessionId: conversationId,
       });
       runtime.submit({ kind: "background-completion", note });
     });
