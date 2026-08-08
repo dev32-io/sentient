@@ -37,6 +37,8 @@ interface HandlesSpy {
   runtime: SessionRuntime;
   /** Every reason this runtime was told its authority was revoked. */
   revocations: () => readonly string[];
+  /** How many times this session's still-draining speech was cut. */
+  speechCuts: () => number;
 }
 
 /** A build callback that counts its calls and records disposal — the two
@@ -48,11 +50,15 @@ interface HandlesSpy {
  *  cases are about. */
 function handlesSpy(userId = "u_aaaaaaaa", work: SessionWorkSignals = IDLE_WORK): HandlesSpy {
   const revocations: string[] = [];
+  let speechCuts = 0;
   const runtime = {
     userId,
     dispose: () => {},
     revokeAuthority: (reason: string) => {
       revocations.push(reason);
+    },
+    cutUnheardSpeech: () => {
+      speechCuts += 1;
     },
   } as unknown as SessionRuntime;
   let buildCalls = 0;
@@ -62,6 +68,7 @@ function handlesSpy(userId = "u_aaaaaaaa", work: SessionWorkSignals = IDLE_WORK)
     buildCallCount: () => buildCalls,
     disposed: () => disposed,
     revocations: () => revocations,
+    speechCuts: () => speechCuts,
     build: () => {
       buildCalls += 1;
       return {
@@ -272,6 +279,93 @@ describe("SessionRegistry — orphaning a revoked account's sessions", () => {
 
     // The evaluation the orphaning itself triggers sees no windows left.
     expect(residentCount).toBe(0);
+  });
+
+  // The revoker closes the sockets, but their close handlers — which is where
+  // `cleanupSession` normally cuts the drain — run a tick later, by which time
+  // this session has no id to be found under and that call is a no-op. Cutting
+  // here is the last chance: without it a member demoted mid-reply keeps pulling
+  // frames from local-tts and writing them at closed sockets until disposal,
+  // minutes later, occupying the single-threaded on-host TTS for nobody.
+  it("cuts the orphan's still-draining speech, which no close handler can still reach", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    expect(spy.speechCuts()).toBe(0);
+
+    registry.orphanSessionsForUser("u_child");
+
+    expect(spy.speechCuts()).toBe(1);
+  });
+
+  // A session that was ALREADY windowless (retained by a background task, its
+  // last window long gone) had its drain cut when that window left. Cutting
+  // again would be a second gesture on a session nothing is draining for.
+  it("does not cut speech for a session that had no window left", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    const a = registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    registry.detach("s_1", a.attachmentId);
+    registry.orphanSessionsForUser("u_child");
+
+    expect(spy.speechCuts()).toBe(0);
+  });
+
+  // THE POLICY'S ENTRY FOR THE OLD ID MUST BE ABLE TO EXPIRE. For the ordinary
+  // revocation — a session that HAD a window — the policy cleared that entry's
+  // timer when the window attached, and it deletes its own tracking only from
+  // the disposal path. Orphaning without re-evaluating the old id leaves it
+  // timer-less and un-deletable, holding this whole handles graph for the life
+  // of the process. Asserted through the policy's own view: it must be told
+  // about the old id again, with no windows left, so it can arm one.
+  it("re-evaluates the OLD id with no windows, so its retention entry can expire", () => {
+    const seen: { sessionId: string; subscriberCount: number }[] = [];
+    const registry = createSessionRegistry((input) => {
+      seen.push({ sessionId: input.sessionId, subscriberCount: input.subscriberCount });
+    });
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    seen.length = 0;
+    registry.orphanSessionsForUser("u_child");
+
+    const oldId = seen.filter((e) => e.sessionId === "s_1");
+    expect(oldId).toHaveLength(1);
+    expect(oldId[0]?.subscriberCount).toBe(0);
+    // ...and the orphan's own entry, under a key no attach can reach.
+    const orphan = seen.filter((e) => e.sessionId !== "s_1");
+    expect(orphan).toHaveLength(1);
+    expect(orphan[0]?.sessionId).toContain("#orphaned-");
+  });
+
+  // ONE ACCOUNT, TWO CONVERSATIONS — the everyday shape (a chat on the phone, a
+  // chat on the laptop) and the one the cross-account cases below cannot reach.
+  // Each needs its own orphan key, or the second would overwrite the first in
+  // the resident map and silently drop a runtime still waiting on a task.
+  it("orphans every one of an account's sessions, each under its own key", () => {
+    const seen: string[] = [];
+    const registry = createSessionRegistry((input) => {
+      seen.push(input.sessionId);
+    });
+    const first = handlesSpy("u_child", WORK_IN_FLIGHT);
+    const second = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, first.build);
+    registry.attach("s_2", "conn-b", SOCKET, second.build);
+    const orphaned = registry.orphanSessionsForUser("u_child");
+
+    expect(orphaned).toEqual([first.runtime, second.runtime]);
+    expect(registry.runtimeFor("s_1")).toBeNull();
+    expect(registry.runtimeFor("s_2")).toBeNull();
+    // Both still resident, under two DISTINCT keys — a shared key would have
+    // evicted the first from the map with nothing left to dispose it.
+    expect(first.disposed()).toBe(false);
+    expect(second.disposed()).toBe(false);
+    const keys = new Set(seen.filter((id) => id.includes("#orphaned-")));
+    expect(keys.size).toBe(2);
+    expect(registry.size).toBe(2);
   });
 
   it("leaves another account's sessions attachable", () => {

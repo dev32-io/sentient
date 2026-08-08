@@ -71,7 +71,7 @@ function fakeSocket(userId: string, connectionId: string): FakeSocket {
 
 /** One resident session, with a runtime that records every `revokeAuthority` it
  *  is told and reports [userId] as its owner — `SessionRuntime.userId` is the
- *  only index `runtimesForUser` has. */
+ *  only index `orphanSessionsForUser` has. */
 interface ResidentDouble {
   readonly revocations: string[];
   readonly handles: SessionHandles;
@@ -83,6 +83,7 @@ function residentSession(userId: string): ResidentDouble {
     runtime: {
       userId,
       dispose: () => {},
+      cutUnheardSpeech: () => {},
       revokeAuthority: (reason: string) => {
         revocations.push(reason);
       },
@@ -333,7 +334,7 @@ describe("CredentialRevoker", () => {
   // no window attached and nobody to see it.
   //
   // Both enumerations the revoker already had are blind to this: the session
-  // has no attachment and its socket is long gone. `runtimesForUser` is the
+  // has no attachment and its socket is long gone. `orphanSessionsForUser` is the
   // only thing that reaches it.
 
   it("SECURITY: revokes the authority of a session that is resident with no window left", async () => {

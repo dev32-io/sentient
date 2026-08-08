@@ -309,23 +309,46 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
    * close handlers would remove nothing, `hasSubscribers` would hold forever,
    * and the orphan would never be disposed.
    *
-   * Then it is re-filed under an unreachable key and re-evaluated under it, so
-   * the disposal policy governs it exactly as it governs any windowless session
-   * held by work: a recheck timer re-derives it, and it is torn down once the
-   * background task it is waiting for reports. Without that second `evaluate`
-   * the policy's entry for the old id would be claimed by the next attach and
-   * nothing would ever dispose this one.
+   * Dropping them is also the LAST chance to cut this session's still-draining
+   * speech. Normally the connection-close path does it (`cleanupSession` ->
+   * `handlesFor(sessionId)?.runtime.cutUnheardSpeech()`), but those close
+   * handlers run a tick after the revoker returns, by which time this session
+   * has no id to be found under and that call resolves to a no-op. Without the
+   * cut here, a member demoted mid-reply keeps pulling frames from local-tts
+   * and writing them at closed sockets until disposal — minutes of synthesis on
+   * the single-threaded on-host TTS, for nobody.
    *
-   * The policy briefly tracks it twice — under the old id and the new — until
-   * the old entry is either claimed by the next attach or self-deletes on its
-   * own timer. Harmless: both entries re-derive the same live state, and only
-   * the new one can pass the identity guard in `dispose` above.
+   * THEN THE RE-FILING, and the order below is load-bearing:
+   *
+   *   1. Re-file under the unreachable key FIRST, so `sessions[sessionId]` is
+   *      already free for both evaluations that follow. Evaluating before this
+   *      would let a policy that disposes eagerly tear the orphan down through
+   *      the OLD key's identity guard, and then `evaluate(key, ...)` would
+   *      dispose the same handles a second time.
+   *   2. Evaluate the OLD id, so the policy's existing entry for it gets a
+   *      timer and can eventually delete itself. It has none otherwise: for the
+   *      ordinary revocation — a session that HAD a window — the policy cleared
+   *      its timer when that window attached (`hasSubscribers` needs none), and
+   *      `tracked.delete` only ever runs inside `disposeIfStillIdle`. So the
+   *      entry, and through it this whole handles graph, would persist for the
+   *      life of the process. This evaluation sees zero subscribers, so the
+   *      policy arms a recheck or a disposal, and the disposal that eventually
+   *      fires is refused by the identity guard above (the id no longer maps to
+   *      these handles) — it deletes its own tracking and tears down nothing.
+   *   3. Evaluate the NEW key, which is the entry that actually governs this
+   *      orphan's disposal.
+   *
+   * So the policy tracks it twice on purpose, and the two are not equals: the
+   * old entry exists only to expire, the new one owns the teardown. Both
+   * re-derive the same live state, and only the new one can pass the identity
+   * guard, so exactly one real disposal happens.
    */
   function orphanResident(sessionId: string, resident: ResidentSession): SessionRuntime {
     // `attachments` is documented to be a copy, so removing while iterating is
     // safe.
     const dropped = resident.subscribers.attachments;
     for (const attachment of dropped) resident.subscribers.remove(attachment.attachmentId);
+    if (dropped.length > 0) resident.handles.runtime.cutUnheardSpeech();
 
     const key = orphanKey(sessionId);
     sessions.delete(sessionId);
@@ -337,6 +360,7 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
         "this session's account lost its credentials — the runtime stays alive so a running background task's result can still land, but the id is free again so the next attach builds a runtime with a fresh capability",
     });
 
+    evaluate(sessionId, resident);
     evaluate(key, resident);
     return resident.handles.runtime;
   }
