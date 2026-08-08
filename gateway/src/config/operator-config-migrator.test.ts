@@ -795,8 +795,11 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     migrateOperatorConfigYamlSync(p);
     const migrated = readTmp(p);
 
-    expect(tierIn(migrated, "home_assistant", "ha_bulk_control")).not.toBe("read");
-    expect(tierIn(migrated, "home_assistant", "ha_config_remove_calendar_event")).not.toBe("read");
+    // POSITIVE, not `not.toBe("read")`. `tierIn` returns `undefined` for an
+    // entry it cannot find, so the absence form passes for a tool the migration
+    // dropped entirely — it could never tell "correctly tiered" from "gone".
+    expect(tierIn(migrated, "home_assistant", "ha_bulk_control")).toBe("confirm");
+    expect(tierIn(migrated, "home_assistant", "ha_config_remove_calendar_event")).toBe("confirm");
   });
 
   it("keeps the operator's own comments on the tool list", () => {
