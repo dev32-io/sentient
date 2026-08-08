@@ -60,3 +60,20 @@ typealias ToolPermissionMap = Map<String, Map<String, ToolPermission>>
  * Mirrors gateway/shared/config's `ToolPermissionPatchMap` exactly.
  */
 typealias ToolPermissionPatchMap = Map<String, Map<String, ToolPermission?>>
+
+/**
+ * Reserved MCP-server key for the gateway's own FOREGROUND-NATIVE tools (skill
+ * tools et al.) inside a person's permission table. Mirrors
+ * gateway/shared/config's `NATIVE_TOOL_SERVER_KEY` ("native") EXACTLY — the
+ * SAME namespace `McpCatalogView.nativeTools` entries resolve their stored
+ * overrides under server-side (`resolve-tool-permission.ts`), so a control
+ * that writes `permissions[NATIVE_TOOL_SERVER_KEY][toolName]` is read back on
+ * the very next dispatch exactly like an MCP tool's own server key.
+ *
+ * `delegateTask` is the one exception: it also lives in `nativeTools`, but
+ * `settable: false` — its resolved `serverName` is `null`, not this key, so no
+ * client write is ever read back for it. Branch on `McpToolView.settable`,
+ * never on the tool's name, to tell the two apart (see [McpToolView]'s own
+ * doc comment).
+ */
+const val NATIVE_TOOL_SERVER_KEY: String = "native"

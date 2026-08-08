@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // ToolsScreen — Soul-group "Tools" category page. A per-MCP-server card (master
 // on/off toggle + expandable per-tool Allow/Ask/Deny/Off dropdowns) for each
-// catalog server, a "Gateway tools" card for role-governed native tools with no
-// MCP server (settable: false today — read-only), and the Hermes built-in
-// toolsets card. SLOW save (PUT profile → apply-with-restart).
+// catalog server, a "Gateway tools" card for native tools with no MCP server —
+// most (skill tools) are per-person settable under the reserved "native"
+// permission namespace, delegateTask stays role-governed/read-only — and the
+// Hermes built-in toolsets card. SLOW save (PUT profile → apply-with-restart).
 //
 // The permission-resolution semantics live in ToolsViewModel (pinned to the
 // webui tools-pane); this view resolves them into stateless ToolsServerCard /
@@ -14,6 +15,16 @@ import SwiftUI
 import MobileData
 
 struct ToolsScreen: View {
+    /// Reserved MCP-server key the gateway resolves the "Gateway tools" card's
+    /// SETTABLE rows (skill tools) under — mirrors
+    /// `io.sentient.mobilesdk.settings.NATIVE_TOOL_SERVER_KEY` (shared/mobile-sdk)
+    /// EXACTLY, which mirrors gateway/shared/config's `NATIVE_TOOL_SERVER_KEY`
+    /// ("native") in turn. Kept as a local literal rather than importing the
+    /// Kotlin `const val` because SKIE only re-exports it after a fresh
+    /// `ios-setup.sh` framework build; if the gateway's sentinel ever changes,
+    /// this must change with it.
+    private static let nativeToolServerKey = "native"
+
     let settings: SettingsComponent
     let onBack: () -> Void
 
@@ -122,7 +133,7 @@ struct ToolsScreen: View {
         if !nativeTools.isEmpty {
             SettingsCard(
                 title: "Gateway tools",
-                sub: "Built into the gateway itself, not an MCP server — governed by role until a later release lets a person override it."
+                sub: "Built into the gateway itself, not an MCP server. Most rows (skill tools) are governed per-person like any other tool; delegateTask is governed by role only — no stored key can address it yet."
             ) {
                 ForEach(nativeTools, id: \.name) { tool in
                     ToolPermissionRow(
@@ -130,25 +141,30 @@ struct ToolsScreen: View {
                             id: tool.name,
                             name: tool.name,
                             description: tool.description,
-                            permission: tool.permission,
+                            // Most native rows (skill tools) resolve their stored
+                            // override under `nativeToolServerKey` — read pending
+                            // edits through `vm.toolPermission` exactly like an MCP
+                            // server's own tool, never `tool.permission` directly.
+                            // That was the bug: reading the catalog snapshot
+                            // unconditionally was safe only while every native tool
+                            // was `settable: false`, and silently ignored this
+                            // session's edits once skill_* tools became settable.
+                            // delegateTask (`settable: false`) has no stored address
+                            // at all, so it always falls back to its catalog-resolved
+                            // snapshot regardless.
+                            permission: vm.toolPermission(Self.nativeToolServerKey, tool),
                             settable: tool.settable
                         ),
                         accessibilityId: "settings-tools-native-\(tool.name)",
-                        onChange: { _ in
-                            // Unreachable: `settable` is false for every native tool
-                            // today (delegateTask), and ToolPermissionRow renders a
-                            // disabled RowSelect underneath.
-                            //
-                            // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A
-                            // native tool has no MCP server, and
-                            // `resolveToolPermission`'s `serverName: null` branch
-                            // returns before any stored table is consulted — so no key
-                            // a client can write is ever read back for one. Flipping
-                            // the flag alone would make this row tappable and silently
-                            // discard every selection. Making a native tool settable
-                            // needs a gateway-side address for it first (a reserved
-                            // server key, or a second map keyed by tool name) plus a
-                            // resolver branch that reads it; then a real write here.
+                        onChange: { permission in
+                            // ToolPermissionRow already renders delegateTask fully
+                            // non-interactive (isEnabled: row.settable), but this
+                            // guard stays explicit: a serverless native tool
+                            // (serverName: nil) has no resolver branch that would
+                            // ever read a write back, so writing one anyway would be
+                            // silently discarded, not merely redundant.
+                            guard tool.settable else { return }
+                            vm.setToolPermission(Self.nativeToolServerKey, tool.name, permission)
                         }
                     )
                 }

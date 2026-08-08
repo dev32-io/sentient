@@ -2,7 +2,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
-import type { ToolPermission } from "@sentient/config";
+import { NATIVE_TOOL_SERVER_KEY, type ToolPermission } from "@sentient/config";
 import type {
   HermesBuiltinToolView,
   McpCatalogView,
@@ -175,7 +175,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
       {catalog.nativeTools.length > 0 && (
         <Card
           title="Gateway tools"
-          sub="Built into the gateway itself, not an MCP server — governed by role until a later release lets a person override it."
+          sub="Built into the gateway itself, not an MCP server. Most rows (skill tools) are governed per-person like any other tool; delegateTask is governed by role only — no stored key can address it yet."
           padding={false}
         >
           <PermissionToolTable
@@ -183,22 +183,23 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
               key: t.name,
               name: t.name,
               description: t.description,
-              permission: t.permission,
+              // `NATIVE_TOOL_SERVER_KEY` ("native") is the reserved server key
+              // the gateway resolves these tools' stored overrides under
+              // (`resolve-tool-permission.ts`) — the SAME namespace for every
+              // row here, settable or not, so this can read pending/stored
+              // edits exactly like an MCP server's tool table.
+              permission: effectiveToolPermission(permissions, NATIVE_TOOL_SERVER_KEY, t),
               settable: t.settable,
-              onChange: () => {
-                // Unreachable: `settable` is false for every row rendered here
-                // today, and the Select underneath is disabled.
-                //
-                // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A native
-                // tool has no MCP server, and `resolveToolPermission`'s
-                // `serverName: null` branch returns before any stored table is
-                // consulted — so no key any client can write is ever read back
-                // for one. Flipping the flag alone would make this row tappable
-                // and silently discard every selection. Making a native tool
-                // settable needs a gateway-side address for it first (a
-                // reserved server key in the stored table, or a second
-                // permission map keyed by tool name) and a resolver branch that
-                // reads it; then this handler and a real `onChange` write.
+              onChange: (permission: ToolPermission) => {
+                // `settable: false` (today, only `delegateTask`) renders the
+                // Select natively `disabled` — no click reaches here — but the
+                // guard stays explicit rather than relying on that alone: a
+                // `serverName: null` native tool (delegateTask) has no stored
+                // address at all, so writing it under NATIVE_TOOL_SERVER_KEY
+                // would be silently discarded by the resolver, not merely
+                // redundant.
+                if (!t.settable) return;
+                handleToolPermissionChange(NATIVE_TOOL_SERVER_KEY, t.name, permission);
               },
             }))}
           />

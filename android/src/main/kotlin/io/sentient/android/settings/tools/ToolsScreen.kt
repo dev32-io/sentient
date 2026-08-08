@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // ToolsScreen — Tools settings page: per-MCP-server cards (master on/off Switch +
 // expand to per-tool Allow/Ask/Deny/Off dropdowns), a "Gateway tools" card for
-// role-governed native tools with no MCP server (settable: false today —
-// read-only), and a Hermes built-ins card (per-toolset toggles). SLOW save
-// (restart copy) via the shared SettingsEditChrome.
+// native tools with no MCP server — most (skill tools) are per-person settable
+// under the reserved NATIVE_TOOL_SERVER_KEY namespace, delegateTask stays
+// role-governed/read-only — and a Hermes built-ins card (per-toolset toggles).
+// SLOW save (restart copy) via the shared SettingsEditChrome.
 //
 // The four-state permission semantics (see ToolsViewModel's file header) live in
 // ToolsViewModel; this screen resolves them into RowSelect inputs, reading
@@ -53,6 +54,7 @@ import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.settings.McpCatalogEntry
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.McpToolView
+import io.sentient.mobilesdk.settings.NATIVE_TOOL_SERVER_KEY
 import io.sentient.mobilesdk.settings.ToolPermission
 import io.sentient.mobilesdk.settings.ToolPermissionPatchMap
 import io.sentient.mobilesdk.settings.effectiveToolPermission
@@ -63,8 +65,9 @@ private const val HEAD_SUB =
         "the agent restarts to pick them up."
 
 private const val NATIVE_TOOLS_SUB =
-    "Built into the gateway itself, not an MCP server — governed by role until a later release " +
-        "lets a person override it."
+    "Built into the gateway itself, not an MCP server. Most rows (skill tools) are governed " +
+        "per-person like any other tool; delegateTask is governed by role only — no stored key " +
+        "can address it yet."
 
 @Composable
 fun ToolsScreen(
@@ -130,7 +133,14 @@ private fun ColumnScope.ToolsBody(
             }
         }
     }
-    NativeToolsCard(catalog = catalog, controlsEnabled = enabled)
+    NativeToolsCard(
+        catalog = catalog,
+        permissions = state.pendingPermissions,
+        controlsEnabled = enabled,
+        onSetToolPermission = { toolName, permission ->
+            onSetToolPermission(NATIVE_TOOL_SERVER_KEY, toolName, permission)
+        },
+    )
     HermesBuiltinsCard(
         catalog = catalog,
         enabledToolsets = state.pendingToolsets ?: original.tools.toolsets ?: emptyList(),
@@ -184,35 +194,37 @@ private fun McpServerSection(
 }
 
 @Composable
-private fun NativeToolsCard(catalog: McpCatalogView, controlsEnabled: Boolean) {
+private fun NativeToolsCard(
+    catalog: McpCatalogView,
+    permissions: ToolPermissionPatchMap,
+    controlsEnabled: Boolean,
+    onSetToolPermission: (String, ToolPermission) -> Unit,
+) {
     val tools = catalog.nativeTools
     if (tools.isEmpty()) return
     SettingsCard(title = "Gateway tools", subtitle = NATIVE_TOOLS_SUB, testTag = "settings-tools-native") {
         tools.forEach { tool ->
             ToolPermissionRow(
                 tool = tool,
-                // Native tools carry no MCP server, so no key in `pendingPermissions`
-                // can ever address one — read the catalog's own resolved snapshot
-                // directly rather than through effectiveToolPermission (which needs a
-                // serverId). See McpToolView.settable's doc comment: today every
-                // native tool is settable: false anyway, so there is never a pending
-                // edit to read back regardless.
-                permission = tool.permission,
+                // Most native rows (skill tools) resolve their stored override under
+                // the reserved NATIVE_TOOL_SERVER_KEY namespace — read pending edits
+                // through effectiveToolPermission exactly like an MCP server's own
+                // tool, never the catalog snapshot directly. Reading `tool.permission`
+                // unconditionally here was the bug: it was safe only while every
+                // native tool was settable: false, and silently ignored this
+                // session's edits once skill_* tools became settable. delegateTask
+                // (settable: false) has no stored address at all, so it always falls
+                // back to its catalog-resolved snapshot regardless — there is never a
+                // pending edit under its own name to find.
+                permission = effectiveToolPermission(permissions, NATIVE_TOOL_SERVER_KEY, tool),
                 controlsEnabled = controlsEnabled,
-                onSelect = {
-                    // Unreachable while settable is false (every native tool today —
-                    // delegateTask): RowSelect renders fully disabled underneath, so
-                    // this can't fire.
-                    //
-                    // FLIPPING `settable` SERVER-SIDE WOULD NOT BE ENOUGH. A native
-                    // tool has no MCP server, and resolve-tool-permission.ts's
-                    // `serverName: null` branch returns before any stored table is
-                    // consulted — so no key a client can write is ever read back for
-                    // one. Flipping the flag alone would make this row tappable and
-                    // silently discard every selection. Making a native tool settable
-                    // needs a gateway-side address for it first (a reserved server
-                    // key, or a second map keyed by tool name) plus a resolver branch
-                    // that reads it; then a real write here.
+                onSelect = { permission ->
+                    // RowSelect already renders delegateTask fully non-interactive
+                    // (enabled = controlsEnabled && tool.settable), but this guard
+                    // stays explicit: a serverless native tool (serverName: null) has
+                    // no resolver branch that would ever read a write back, so writing
+                    // one anyway would be silently discarded, not merely redundant.
+                    if (tool.settable) onSetToolPermission(tool.name, permission)
                 },
                 testTag = "settings-tools-native-${tool.name}",
             )
