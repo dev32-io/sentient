@@ -17,6 +17,57 @@ import { writeFileAtomic } from "../user-auth/atomic-write.ts";
 const log = getLog(["sentient", "config", "migration", "operator-config"]);
 
 // ---------------------------------------------------------------------------
+// Deferred logging — this module runs BEFORE the logger exists
+// ---------------------------------------------------------------------------
+//
+// `main.ts` calls `loadLoggingConfig()` to learn where the log file goes, and
+// THAT is what runs this migration (startup-config.ts). So `createGatewayLogger`
+// has not run yet, and a `log.warn` from here reaches nothing at all — verified
+// empirically: no console line, no file line, silently dropped. The second
+// migration call inside `loadStartupConfig` cannot re-emit it either, because
+// the version is already bumped by then and the whole chain no-ops.
+//
+// That matters because deploy/README.md tells an operator to grep for
+// `migration:0.1.5:unknown-tools` after an upgrade. A signal nobody can receive
+// is worse than no signal, since it reads as "nothing happened".
+//
+// So every line is BUFFERED here and replayed by `flushMigrationLog`, which
+// `loadStartupConfig` calls once the logger is up. The buffer is bounded by the
+// number of migration steps, and drained on flush.
+
+type LogFields = Record<string, string | number | boolean | null>;
+
+interface DeferredLogLine {
+  readonly level: "info" | "warn";
+  readonly event: string;
+  readonly fields: LogFields;
+}
+
+const deferred: DeferredLogLine[] = [];
+
+function noteInfo(event: string, fields: LogFields): void {
+  deferred.push({ level: "info", event, fields });
+}
+
+function noteWarn(event: string, fields: LogFields): void {
+  deferred.push({ level: "warn", event, fields });
+}
+
+/**
+ * Replay every line the migration buffered, now that the logger exists. Called
+ * once, by `loadStartupConfig`, which main.ts runs well after
+ * `createGatewayLogger`. Idempotent: the buffer is drained, so a second call
+ * emits nothing.
+ */
+export function flushMigrationLog(): void {
+  const pending = deferred.splice(0, deferred.length);
+  for (const line of pending) {
+    if (line.level === "warn") log.warn(line.event, line.fields);
+    else log.info(line.event, line.fields);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // migrateOperatorConfigYaml
 //
 // Runs BEFORE the zod schema validates the operator's config.yaml.
@@ -782,7 +833,7 @@ function applyAllMigrations(doc: Document): boolean {
   const schema015Result = applySchema015Migration(doc);
 
   if (webToolsResult !== null) {
-    log.info("migration:web-tools", {
+    noteInfo("migration:web-tools", {
       providerRewritten: webToolsResult.providerRewritten,
       duckduckgoDropped: webToolsResult.duckduckgoDropped,
       searxngAdded: webToolsResult.searxngAdded,
@@ -790,26 +841,26 @@ function applyAllMigrations(doc: Document): boolean {
   }
 
   if (schema011Result !== null) {
-    log.info("migration:0.1.1", {
+    noteInfo("migration:0.1.1", {
       addedPerUserMaxSessions: schema011Result.addedPerUserMaxSessions,
       addedIdleTimeoutMs: schema011Result.addedIdleTimeoutMs,
-      removedKeys: schema011Result.removedKeys,
+      removedKeys: schema011Result.removedKeys.join(", "),
     });
   }
 
   if (schema012Result !== null) {
-    log.info("migration:0.1.2", {
+    noteInfo("migration:0.1.2", {
       languagePrev: schema012Result.languagePrev,
       languageSetToAuto: schema012Result.languageSetToAuto,
     });
   }
 
   if (schema013Result !== null) {
-    log.info("migration:0.1.3", {
+    noteInfo("migration:0.1.3", {
       replayJournalRetentionMsPrev: schema013Result.replayJournalRetentionMsPrev,
       retentionMs: RETENTION_MS_DEFAULT,
       retentionMsAdded: schema013Result.retentionMsAdded,
-      removedKeys: schema013Result.removedKeys,
+      removedKeys: schema013Result.removedKeys.join(", "),
       reason:
         "the key now governs SESSION lifetime, not journal bytes — the previous value was not carried across the rename",
     });
@@ -825,14 +876,14 @@ function applyAllMigrations(doc: Document): boolean {
         : schema014Result.hostRewritten
           ? "the gateway now binds loopback; inbound-proxy owns the LAN-facing 443"
           : "host was customised — left as-is; set it to 127.0.0.1 manually to sit behind inbound-proxy";
-    log.info("migration:0.1.4", {
+    noteInfo("migration:0.1.4", {
       hostPrev: schema014Result.hostPrev,
       hostRewritten: schema014Result.hostRewritten,
       reason: hostReason,
     });
     // Logged separately from the host rewrite so the two halves of the step are
     // both visible: the door that closed AND the door that opened.
-    log.info("migration:0.1.4:inbound-proxy", {
+    noteInfo("migration:0.1.4:inbound-proxy", {
       serviceEntryAdded: schema014Result.inboundProxyServiceAdded,
       managedServicesBlockCreated: schema014Result.managedServicesBlockCreated,
       certDirBlockAdded: schema014Result.inboundProxyConfigAdded,
@@ -843,7 +894,7 @@ function applyAllMigrations(doc: Document): boolean {
   }
 
   if (schema015Result !== null) {
-    log.info("migration:0.1.5", {
+    noteInfo("migration:0.1.5", {
       tieredCount: schema015Result.tieredTools.length,
       tieredTools: schema015Result.tieredTools.join(", "),
       reason:
@@ -853,13 +904,24 @@ function applyAllMigrations(doc: Document): boolean {
     // on: a tool the shipped catalog cannot describe kept its NAME but not its
     // reach, and only they know what it actually does.
     if (schema015Result.unknownTools.length > 0) {
-      log.warn("migration:0.1.5:unknown-tools", {
+      const tools = schema015Result.unknownTools.join(", ");
+      noteWarn("migration:0.1.5:unknown-tools", {
         count: schema015Result.unknownTools.length,
-        tools: schema015Result.unknownTools.join(", "),
+        tools,
         tier: UNKNOWN_TOOL_TIER,
         reason:
           "the shipped catalog does not describe these tools, so their blast radius is unknown — each got the operator-only `admin` tier rather than a silent `read`, and each is marked in config.yaml for a deliberate re-tier",
       });
+      // A BARE CONSOLE WRITE, deliberately, and the ONE in this module.
+      // Everything above is buffered for `flushMigrationLog`, which only runs
+      // if boot gets that far — and the very next thing after this migration is
+      // the schema parse, which THROWS on a config it still cannot accept. That
+      // is precisely the boot where an operator most needs to know a tool was
+      // re-tiered, and precisely the boot where the buffer is never flushed.
+      // Under launchd this lands in stderr.log (see the prod plist).
+      console.warn(
+        `[sentient.config.migration] migration:0.1.5:unknown-tools tier=${UNKNOWN_TOOL_TIER} tools=${tools}`,
+      );
     }
   }
 
@@ -885,7 +947,7 @@ export function migrateOperatorConfigYamlSync(configPath: string): void {
   try {
     raw = readFileSync(configPath, "utf-8");
   } catch (e: unknown) {
-    log.warn("read-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("read-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
@@ -893,7 +955,7 @@ export function migrateOperatorConfigYamlSync(configPath: string): void {
   try {
     doc = parseDocument(raw);
   } catch (e: unknown) {
-    log.warn("parse-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("parse-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
@@ -904,11 +966,11 @@ export function migrateOperatorConfigYamlSync(configPath: string): void {
   try {
     writeFileSync(configPath, updated, { encoding: "utf-8" });
   } catch (e: unknown) {
-    log.warn("write-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("write-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
-  log.info("migrated", { path: configPath });
+  noteInfo("migrated", { path: configPath });
 }
 
 /**
@@ -920,7 +982,7 @@ export async function migrateOperatorConfigYaml(configPath: string): Promise<voi
   try {
     raw = readFileSync(configPath, "utf-8");
   } catch (e: unknown) {
-    log.warn("read-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("read-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
@@ -928,7 +990,7 @@ export async function migrateOperatorConfigYaml(configPath: string): Promise<voi
   try {
     doc = parseDocument(raw);
   } catch (e: unknown) {
-    log.warn("parse-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("parse-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
@@ -939,9 +1001,9 @@ export async function migrateOperatorConfigYaml(configPath: string): Promise<voi
   try {
     await writeFileAtomic(configPath, updated);
   } catch (e: unknown) {
-    log.warn("write-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("write-failed", { path: configPath, reason: (e as Error).message });
     return;
   }
 
-  log.info("migrated", { path: configPath });
+  noteInfo("migrated", { path: configPath });
 }

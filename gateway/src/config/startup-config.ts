@@ -22,7 +22,7 @@ import type {
 import { getLog } from "../logging/logger.ts";
 import { resolveWebDistDir } from "./asset-root.ts";
 import { loadGatewayConfig } from "./gateway-config.ts";
-import { migrateOperatorConfigYamlSync } from "./operator-config-migrator.ts";
+import { flushMigrationLog, migrateOperatorConfigYamlSync } from "./operator-config-migrator.ts";
 
 /**
  * Expand a single leading `~` path segment to the user's home directory.
@@ -170,6 +170,12 @@ export function loadStartupConfig(): StartupConfig {
 
   migrateOperatorConfigYamlSync(configPath);
   const cfg = loadGatewayConfig(configPath);
+  // THE MIGRATION ALREADY RAN, back in `loadLoggingConfig` — which main.ts
+  // calls BEFORE `createGatewayLogger`, so every line it logged reached nothing
+  // at all. The call above is a no-op (the version is bumped), so this is the
+  // only place those lines can still be emitted. Anything deploy/README.md
+  // tells an operator to grep for depends on it.
+  flushMigrationLog();
   log.info("config-loaded", { path: configPath });
 
   return {

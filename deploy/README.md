@@ -230,7 +230,9 @@ by hand is never overwritten.
 
 **A tool the shipped catalog does not describe** — one you added for your own
 MCP — gets `tier: admin`, the operator-only tier, plus an inline marker comment
-naming it and a `WARN migration:0.1.5:unknown-tools` line at boot. It does
+naming it and a `WARN migration:0.1.5:unknown-tools` line in
+`~/.sentient/gateway/logs/$(date +%F).log` (and on stderr, so it survives a boot
+that dies before the logger). It does
 **not** get `read`. The migration cannot know an unknown tool's blast radius,
 and the two ways of guessing fail asymmetrically: `read` would hand a guest
 something nobody vetted and say nothing, while `admin` costs you one edit that
