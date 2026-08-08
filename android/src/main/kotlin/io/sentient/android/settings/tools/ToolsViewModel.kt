@@ -50,12 +50,14 @@ import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobiledata.usecase.settings.ApplyState
 import io.sentient.mobiledata.usecase.settings.ProfileMutation
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.settings.McpCatalogEntry
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.ProfileToolsPatch
 import io.sentient.mobilesdk.settings.ProfileV1
 import io.sentient.mobilesdk.settings.ToolPermission
 import io.sentient.mobilesdk.settings.ToolPermissionPatchMap
 import io.sentient.mobilesdk.settings.effectiveToolPermission
+import io.sentient.mobilesdk.settings.effectiveWildcardPermission
 import io.sentient.mobilesdk.settings.mergeToolPermissionPatch
 import io.sentient.mobilesdk.settings.toPutBody
 import io.sentient.mobilesdk.settings.withServerMasterPermission
@@ -103,31 +105,41 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
     }
 
     private fun load() {
-        viewModelScope.launch {
-            _ui.update { it.copy(loading = true, loadError = null) }
-            val profile = component.profileRepository.getProfile()
-            if (profile !is SentientResult.Success) {
-                val msg = (profile as? SentientResult.Failure)?.error?.userMessage ?: "Couldn't load profile."
-                log.warn("load.profile.failed")
-                _ui.update { it.copy(loading = false, loadError = msg) }
-                return@launch
+        viewModelScope.launch { reload() }
+    }
+
+    /** Re-reads BOTH server-truth inputs — the profile AND the catalog — and drops this
+     *  session's pending edits. Every row on this screen renders from
+     *  `catalog.servers[*].tools[*].permission` and `catalog.servers[*].wildcardPermission`,
+     *  which are the RESOLVED values the gateway computed at fetch time; reloading only the
+     *  profile would leave the whole screen showing pre-save permissions after a successful
+     *  save, and the master Switch reading a stale wildcard while the server is genuinely
+     *  off on the gateway. iOS's `save()` already re-runs its whole `load()` for this
+     *  reason. */
+    private suspend fun reload() {
+        _ui.update { it.copy(loading = true, loadError = null) }
+        val profile = component.profileRepository.getProfile()
+        if (profile !is SentientResult.Success) {
+            val msg = (profile as? SentientResult.Failure)?.error?.userMessage ?: "Couldn't load profile."
+            log.warn("load.profile.failed")
+            _ui.update { it.copy(loading = false, loadError = msg) }
+            return
+        }
+        val catalog = when (val r = component.profileRepository.getMcpCatalog()) {
+            is SentientResult.Success -> r.data
+            else -> {
+                log.warn("load.catalog.degraded")
+                McpCatalogView()
             }
-            val catalog = when (val r = component.profileRepository.getMcpCatalog()) {
-                is SentientResult.Success -> r.data
-                else -> {
-                    log.warn("load.catalog.degraded")
-                    McpCatalogView()
-                }
-            }
-            _ui.update {
-                it.copy(
-                    loading = false,
-                    original = profile.data,
-                    catalog = catalog,
-                    pendingPermissions = emptyMap(),
-                    pendingToolsets = null,
-                )
-            }
+        }
+        _ui.update {
+            it.copy(
+                loading = false,
+                original = profile.data,
+                catalog = catalog,
+                pendingPermissions = emptyMap(),
+                pendingToolsets = null,
+            )
         }
     }
 
@@ -202,30 +214,51 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
         viewModelScope.launch {
             component.applyProfileChange(ProfileMutation.PutProfile(original, next)).collect { st ->
                 _ui.update { it.foldApply(st) }
-                if (st is ApplyState.Ready) refetch()
+                // The FULL reload, not a profile-only refetch: see [reload]. Matches iOS,
+                // which awaits its own `load()` here for the same reason.
+                if (st is ApplyState.Ready) reload()
             }
-        }
-    }
-
-    private suspend fun refetch() {
-        when (val r = component.profileRepository.getProfile()) {
-            is SentientResult.Success ->
-                _ui.update { it.copy(original = r.data, pendingPermissions = emptyMap(), pendingToolsets = null) }
-            is SentientResult.Failure -> log.warn("refetch.failed", mapOf("kind" to r.error.kind))
-            is SentientResult.Loading -> Unit
         }
     }
 }
 
 /**
  * Pure, directly-testable (no ViewModel / SettingsComponent needed): whether [id]'s server
- * currently resolves "on" — any of its role-governable tools reads as anything other than
- * OFF — given [pending] edits layered over the catalog's resolved snapshot.
+ * master control currently reads "on", given [pending] edits layered over the catalog's
+ * snapshot. This is BOTH what the Switch renders and what [serverToggleWrite] inverts, so
+ * the two can never disagree about which direction a tap is going.
+ *
+ * Reads the WILDCARD via [effectiveWildcardPermission], exactly as web's tools-pane and
+ * iOS's `isServerMasterOn` do — NOT "does any tool read as on" over
+ * [effectiveToolPermission]. The difference is the whole bug: `effectiveToolPermission`
+ * falls back with `?:`, which cannot tell a pending `null` CLEAR apart from "no edit here"
+ * and so resurrects the catalog snapshot. On a server whose tools all resolve OFF at load,
+ * the master's "on" write is exactly a set of `null` clears — so a `?:`-based read saw no
+ * change, left the Switch unchecked, and recomputed `turnOn = true` on every subsequent
+ * tap. The state could not be left. [effectiveWildcardPermission] exists precisely to make
+ * that distinction, via `containsKey`.
  */
 internal fun isServerOn(pending: ToolPermissionPatchMap, catalog: McpCatalogView, id: String): Boolean {
     val entry = catalog.servers[id] ?: return false
-    return entry.tools.any { effectiveToolPermission(pending, id, it) != ToolPermission.OFF }
+    return effectiveWildcardPermission(
+        pending,
+        id,
+        catalog.wildcardPermissionKey,
+        entry.wildcardPermission,
+    ) != ToolPermission.OFF
 }
+
+/**
+ * How many of [id]'s tools currently read as anything other than OFF, for the header's
+ * "n/total tools" label. Distinct from [isServerOn] on purpose: the master control's state
+ * is the wildcard, while the count is a per-tool tally, and web renders exactly this pair.
+ *
+ * A pending master "on" clear does NOT move this number until the save round-trips —
+ * `effectiveToolPermission` deliberately does not re-simulate the resolver's cascade
+ * client-side, so a cleared tool's role-template answer is not knowable here.
+ */
+internal fun activeToolCount(pending: ToolPermissionPatchMap, id: String, entry: McpCatalogEntry): Int =
+    entry.tools.count { effectiveToolPermission(pending, id, it) != ToolPermission.OFF }
 
 /**
  * Pure, directly-testable: the master-control write for [id] given its CURRENT effective

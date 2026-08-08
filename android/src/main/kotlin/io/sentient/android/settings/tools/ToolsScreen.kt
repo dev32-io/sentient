@@ -120,6 +120,9 @@ private fun ColumnScope.ToolsBody(
                     id = id,
                     entry = entry,
                     permissions = state.pendingPermissions,
+                    // Read through the SAME function the ViewModel's toggle inverts, so the
+                    // Switch and the write can never disagree about which way a tap goes.
+                    masterOn = isServerOn(state.pendingPermissions, catalog, id),
                     controlsEnabled = enabled,
                     onToggleServer = { onToggleServer(id) },
                     onSetToolPermission = { toolName, permission -> onSetToolPermission(id, toolName, permission) },
@@ -141,20 +144,23 @@ private fun McpServerSection(
     id: String,
     entry: McpCatalogEntry,
     permissions: ToolPermissionPatchMap,
+    masterOn: Boolean,
     controlsEnabled: Boolean,
     onToggleServer: () -> Unit,
     onSetToolPermission: (String, ToolPermission) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
-    val activeTools = entry.tools.filter { effectiveToolPermission(permissions, id, it) != ToolPermission.OFF }
-    val isEnabled = activeTools.isNotEmpty()
-    val count = if (isEnabled) "${activeTools.size}/${entry.tools.size} tools" else "off"
+    // Always "n/total tools", never a bare "off" — the count is a per-tool tally and the
+    // Switch is the wildcard, and the two legitimately disagree between a master tap and
+    // the save that resolves it. Collapsing the count to "off" made that disagreement read
+    // as a contradiction. Mirrors webui tools-pane and the Hermes card below.
+    val count = "${activeToolCount(permissions, id, entry)}/${entry.tools.size} tools"
     SectionHeaderRow(
         title = id,
         description = entry.description,
         countLabel = count,
         open = open,
-        checked = isEnabled,
+        checked = masterOn,
         controlsEnabled = controlsEnabled,
         onExpand = { open = !open },
         onToggle = onToggleServer,
