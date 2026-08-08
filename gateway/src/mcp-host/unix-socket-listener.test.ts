@@ -34,7 +34,7 @@ const registry: ToolRegistry = {
 
 const listener = createUnixSocketListener(SOCKET_PATH, "alice", {
   registry,
-  contextFor: () => ({ sessionId: null, userId: "alice", role: "user", sessionChannel: "voice" }),
+  contextFor: () => ({ sessionId: null, userId: "alice", sessionChannel: "voice" }),
 });
 
 describe("UnixSocketListener", () => {
@@ -78,7 +78,7 @@ describe("UnixSocketListener", () => {
     const unusable = "/dev/null/nope/mcp-carol.sock";
     const carol = createUnixSocketListener(unusable, "carol", {
       registry,
-      contextFor: () => ({ sessionId: null, userId: "carol", role: "user", sessionChannel: "voice" }),
+      contextFor: () => ({ sessionId: null, userId: "carol", sessionChannel: "voice" }),
     });
 
     await expect(carol.start()).resolves.toBeUndefined();
@@ -107,7 +107,7 @@ describe("UnixSocketListener", () => {
     const bigSocket = join(tmpdir(), `sentient-mcp-big-${process.pid}.sock`);
     const bigListener = createUnixSocketListener(bigSocket, "dave", {
       registry: bigRegistry,
-      contextFor: () => ({ sessionId: null, userId: "dave", role: "user", sessionChannel: "voice" }),
+      contextFor: () => ({ sessionId: null, userId: "dave", sessionChannel: "voice" }),
       // Real I/O before the reply, exactly like the proxied-tier refresh: it
       // pushes the write past the socket callback's cork and into the
       // backpressure path this test exists for.
@@ -170,7 +170,7 @@ describe("UnixSocketListener", () => {
     const bobSocket = join(tmpdir(), `sentient-mcp-bob-${process.pid}.sock`);
     const bobListener = createUnixSocketListener(bobSocket, "bob", {
       registry: contextRegistry,
-      contextFor: () => ({ sessionId: null, userId: "bob", role: "user", sessionChannel: "voice" }),
+      contextFor: () => ({ sessionId: null, userId: "bob", sessionChannel: "voice" }),
     });
 
     try {

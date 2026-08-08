@@ -351,6 +351,24 @@ type ResolvedTarget =
   | { kind: "background"; runner: BackgroundToolRunner; tier: ImpactTier }
   | { kind: "foreground"; serverName: string; tier: ImpactTier };
 
+/** Which of the three tables answered, for the log. They are three different
+ *  facts and only the first two are things a person or an operator chose:
+ *
+ *    profile           the person's own stored setting (a tool key, a `"*"`
+ *                      wildcard, or the absent-server rule)
+ *    role-template     their role's starter table, or — for a gateway-native
+ *                      tool with no server — the same tier→permission mapping
+ *                      that table is built from
+ *    catalog-backstop  NOTHING answered. Fail-closed `off`, not a choice
+ *                      anybody made; means the live tool surface and
+ *                      `config.yaml#mcp_catalog` have drifted apart. */
+type PermissionSource = "profile" | "role-template" | "catalog-backstop";
+
+interface ResolvedPermission {
+  readonly permission: ToolPermission;
+  readonly source: PermissionSource;
+}
+
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const {
     mcp,
@@ -427,7 +445,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   // `definitions()` is synchronous by contract and the table lives in a file;
   // every asynchronous reader re-reads it first (see `ready` and
   // `resolveDecision`). Starts unset, which is the honest state before the
-  // first read — and `undefined` is NOT `{}`; see `permissionFor`.
+  // first read — and `undefined` is NOT `{}`; see `storedPermissionFor`.
   let permissions: ToolPermissionMap | undefined;
 
   async function refreshPermissions(): Promise<void> {
@@ -492,32 +510,38 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   }
 
   /**
-   * THE FLOOR — the role's own template, and the fail-closed backstop under it.
+   * THE RESOLUTION, total by construction — every tool has exactly one answer,
+   * `undefined` is not one of them, and the answer says WHICH table produced it.
+   *
+   * ONE FUNCTION FOR BOTH CHOKE POINTS. `definitions()` and `resolveDecision()`
+   * both call this, so the permission a tool is advertised under and the one it
+   * is dispatched under cannot drift, and the two log lines cannot disagree
+   * about where the value came from.
    *
    * `defaultPermissionsFor` is server-addressed because it is built from the
    * catalog, so it cannot answer for a GATEWAY-NATIVE tool (`delegateTask`),
    * which belongs to no server: `serverOf` returns null for it structurally.
    * That tool declares its own `tier`, and the SAME tier→permission mapping the
    * template is built from answers for it — one rule, asked at two
-   * granularities, never two rules. Applying the `?? "off"` backstop to it
+   * granularities, never two rules. Falling to the `"off"` backstop for it
    * instead would delete delegation from every profile in the product.
    *
-   * The backstop itself must never be `allow`: a tool in neither the person's
-   * table nor the role template is one the operator's catalog does not curate,
-   * and nobody tiered it. Note this is NOT "absent = inherit everything" — the
-   * value underneath is a server-computed, role-derived template, not a
-   * permissive default.
+   * The backstop must never be `allow`: a tool in neither the person's table nor
+   * the role template is one the operator's catalog does not curate, and nobody
+   * tiered it. Note this is NOT "absent = inherit everything" — the value
+   * underneath is a server-computed, role-derived template, not a permissive
+   * default. It is reported as its own `source` rather than folded into
+   * `role-template`, because "the template said so" and "no table said anything"
+   * are different facts and only the first is something a person can change.
    */
-  function floorFor(toolName: string, tier: ImpactTier): ToolPermission {
+  function resolvePermission(toolName: string, tier: ImpactTier): ResolvedPermission {
+    const stored = storedPermissionFor(toolName);
+    if (stored !== undefined) return { permission: stored, source: "profile" };
     const serverName = serverOf(toolName);
-    if (serverName === null) return defaultPermissionForTier(tier);
-    return roleTemplate[serverName]?.[toolName] ?? "off";
-  }
-
-  /** THE resolution, total by construction — every tool has exactly one answer
-   *  and `undefined` is not one of them. */
-  function permissionFor(toolName: string, tier: ImpactTier): ToolPermission {
-    return storedPermissionFor(toolName) ?? floorFor(toolName, tier);
+    if (serverName === null) return { permission: defaultPermissionForTier(tier), source: "role-template" };
+    const templated = roleTemplate[serverName]?.[toolName];
+    if (templated !== undefined) return { permission: templated, source: "role-template" };
+    return { permission: "off", source: "catalog-backstop" };
   }
 
   /**
@@ -552,8 +576,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { action: "deny", reason: roleDeniedReason(inv.name) };
     }
 
-    const stored = storedPermissionFor(inv.name);
-    const permission = stored ?? floorFor(inv.name, tier);
+    const { permission, source } = resolvePermission(inv.name, tier);
     log.info("tool-broker.pdp.decision", {
       sessionId,
       tool: inv.name,
@@ -562,8 +585,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       tier,
       permission,
       // WHICH table answered. The difference matters when a person swears they
-      // set something: "role-template" means their profile is silent on it.
-      source: stored === undefined ? "role-template" : "profile",
+      // set something: `role-template` means their profile is silent on it, and
+      // `catalog-backstop` means nothing answered at all.
+      source,
     });
     return applyUserPermission(inv, permission);
   }
@@ -836,15 +860,16 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
     const visible: ToolDefinition[] = [];
     const roleWithheld: string[] = [];
-    const switchedOff: string[] = [];
+    const permissionWithheld: Array<{ tool: string; permission: ToolPermission; source: PermissionSource }> = [];
 
     for (const def of [...mcpDefs, ...backgroundDefs]) {
       if (!canExecute(role, def.tier)) {
         roleWithheld.push(def.name);
         continue;
       }
-      if (!isVisibleToModel(permissionFor(def.name, def.tier))) {
-        switchedOff.push(def.name);
+      const { permission, source } = resolvePermission(def.name, def.tier);
+      if (!isVisibleToModel(permission)) {
+        permissionWithheld.push({ tool: def.name, permission, source });
         continue;
       }
       visible.push(def);
@@ -859,12 +884,18 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
         reason: "this role cannot execute these tools' impact tiers, so the model is never told they exist",
       });
     }
-    if (switchedOff.length > 0) {
-      log.info("tool-broker.definitions.switched-off", {
+    if (permissionWithheld.length > 0) {
+      // Each entry carries its own `source`, because they are not all the same
+      // fact: `profile` IS a setting the person made, but `catalog-backstop` is
+      // a tool no table answered for — fail-closed, and a sign the live tool
+      // surface has drifted from `config.yaml#mcp_catalog`. Reporting the whole
+      // set as "switched off in this user's settings" would send somebody
+      // hunting through Settings for a toggle that does not exist.
+      log.info("tool-broker.definitions.permission-withheld", {
         sessionId,
         toolCount: visible.length,
-        off: switchedOff,
-        reason: "tools switched off in this user's settings are not advertised to the model",
+        withheld: permissionWithheld,
+        reason: "resolved to a permission that is not advertised to the model — see each entry's source",
       });
     }
     return visible;

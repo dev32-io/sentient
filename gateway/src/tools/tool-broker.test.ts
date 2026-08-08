@@ -1764,7 +1764,7 @@ describe("ToolBroker — a gateway-native tool resolves from its own declared ti
   });
 
   it("is NOT switched off by a table that names every other server", async () => {
-    // The regression the old `permissionFor` guarded with an early `undefined`:
+    // The regression `resolvePermission`'s serverless branch guards:
     // a `?? "off"` backstop applied blindly to a serverless tool would delete
     // delegation from every profile in the product.
     expect(

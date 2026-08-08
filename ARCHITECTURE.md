@@ -273,8 +273,15 @@ score over weighted security events (`injection_pattern`,
 `repeated_offense`, `role_violation`, `ha_name_prompt_like`,
 `mutating_sensitive_domain`, `policy_rejection`). Half-life and per-event
 weights are config-driven. Score thresholds map to `none` / `warn` /
-`escalate` / `block` levels, consumed by the policy engine and surfaced
-in logs.
+`escalate` / `block` levels, surfaced in logs.
+
+**Nothing consumes those levels yet.** They were read by the retired
+policy engine; the two gates above do not read them, and no other caller
+does. The intended consumer is the inbound-content trust model
+(`docs/native-todo.md` § "untrusted content enters the model context
+completely unscanned"), where a raised session risk makes the PDP
+require `ask` for a tool it would otherwise allow. Until that lands this
+is a scorer with no reader — do not describe it as enforcing anything.
 
 ### Log sanitizer
 
