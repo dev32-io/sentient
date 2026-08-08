@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml } from "yaml";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { gatewayConfigSchema } from "./schema.ts";
 import { loadConfig, resolveEnvVars, resolveEnvVarsDeep } from "./loader.ts";
+import { gatewayConfigSchema } from "./schema.ts";
 import type { GatewayConfig } from "./schema.ts";
 
 // Repo template config — the same file every fresh operator install ships

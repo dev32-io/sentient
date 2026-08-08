@@ -40,6 +40,7 @@ const MIN_PRINTABLE_ASCII_RATIO = 0.85;
 // ---------------------------------------------------------------------------
 
 /** Zero-width chars: U+200B-U+200D, U+FEFF, U+2060. */
+// biome-ignore lint/suspicious/noMisleadingCharacterClass: matching the ZWJ/ZWNJ codepoints individually is the point \u2014 this strips invisible chars, it never matches grapheme clusters
 const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF\u2060]/gu;
 
 /** Unicode Tags block: U+E0000-U+E007F — invisible-ASCII payload channel. */
@@ -57,8 +58,8 @@ const BIDI_OVERRIDE_CHARS = /[\u202A-\u202E\u2066-\u2069]/gu;
  * logic uses its own separately-scoped `g`-flagged regexes below instead of
  * this export.
  */
-export const INVISIBLE_CHARS =
-  /[\u200B-\u200D\uFEFF\u2060\u{E0000}-\u{E007F}\u202A-\u202E\u2066-\u2069]/u;
+// biome-ignore lint/suspicious/noMisleadingCharacterClass: matching the ZWJ/ZWNJ codepoints individually is the point \u2014 this detects invisible chars, it never matches grapheme clusters
+export const INVISIBLE_CHARS = /[\u200B-\u200D\uFEFF\u2060\u{E0000}-\u{E007F}\u202A-\u202E\u2066-\u2069]/u;
 
 /** Candidate base64 run: 4-char alphabet, optional padding, at least MIN_BASE64_RUN_CHARS. */
 const BASE64_RUN = new RegExp(`[A-Za-z0-9+/]{${MIN_BASE64_RUN_CHARS},}={0,2}`, "g");
@@ -96,7 +97,11 @@ const CONFUSABLES_MAP: ReadonlyMap<string, string> = new Map([
 // Steps
 // ---------------------------------------------------------------------------
 
-function stripAndCount(text: string, pattern: RegExp, kind: NormalizationSignalKind): {
+function stripAndCount(
+  text: string,
+  pattern: RegExp,
+  kind: NormalizationSignalKind,
+): {
   text: string;
   signal: NormalizationSignal | null;
 } {

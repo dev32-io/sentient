@@ -41,6 +41,7 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       site_name: "Sentient",
       reasoning_effort: "low",
     },
+    skills: { max_index_entries: 50, max_body_chars: 20000 },
     loop: { max_iterations: maxIterations },
     permission: { request_timeout_ms: 120000 },
     tools: {
