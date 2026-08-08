@@ -29,15 +29,25 @@
 // into it, and `submit` guards only on `disposed`. So a `delegateTask` settling
 // after the demotion started a HEADLESS follow-up turn: a full ReAct loop
 // dispatching tools at the pre-demotion role, with no window attached and
-// nobody to see it. Every resident runtime of the account is therefore
-// `revokeAuthority`-ed here, which stops the next turn without disposing the
-// session — the completed task's result still becomes durable, which is the
-// entire reason the session was retained.
+// nobody to see it.
 //
-// THE RUNTIME WALK IS WIDER THAN THE ATTACHMENT WALK, and must be: a session
+// TWO THINGS CLOSE THAT, AND ONE ALONE IS A BUG EITHER WAY.
+//
+//   `orphanSessionsForUser` takes every one of the account's sessions out of
+//   the registry's ATTACH INDEX. Marking the runtime alone would not do it:
+//   `attach` returns an existing resident and never rebuilds, so the member who
+//   was just kicked, signs back in and re-opens the same conversation would land
+//   straight back on the revoked runtime and find a chat that commits every
+//   message and answers none — silently, for the rest of the retention window.
+//
+//   `revokeAuthority` then stops the ORPHAN starting a turn. It is still live,
+//   because a background task may still report into it, and its capability is
+//   still the pre-demotion one.
+//
+// THE SESSION WALK IS WIDER THAN THE ATTACHMENT WALK, and must be: a session
 // retained by a background task has zero attachments and zero sockets, so
-// neither enumeration below would reach it. `runtimesForUser` is the only one
-// that does.
+// neither enumeration below would reach it. `orphanSessionsForUser` is the only
+// one that does.
 //
 // WHAT IT DELIBERATELY DOES NOT DO: detach. A socket's attachment is dropped by
 // the connection-close handler (`cleanupSession`, ws-handlers.ts), which is the
@@ -46,9 +56,11 @@
 //
 // AND: dispose. See `SessionRuntime.revokeAuthority` — disposing would throw
 // away the very work retention exists to preserve. A turn already RUNNING when
-// the revocation lands also finishes under the capability it started with; that
-// exposure is bounded by one turn, and the doc comment there says why closing
-// it would cost a third cancellation gesture.
+// the revocation lands also finishes under the capability it started with,
+// INCLUDING anything that steers it: a background completion landing mid-turn
+// still reaches that loop and adds an iteration. Bounded by the running turn,
+// though not by its original length; the doc comment there says why closing it
+// would cost a third cancellation gesture.
 //
 // TWO ENUMERATIONS, ONE EJECTION EACH. The attachment walk answers "which
 // WINDOWS of a live conversation belong to this account?"; the
@@ -100,7 +112,7 @@ export interface CredentialRevokerDeps {
    *  thing that can answer either "which windows of a live conversation belong
    *  to this user?" or "which of their sessions are still resident?" — and the
    *  second set is not a subset of the first. */
-  registry: Pick<SessionRegistry, "attachmentsForUser" | "runtimesForUser">;
+  registry: Pick<SessionRegistry, "attachmentsForUser" | "orphanSessionsForUser">;
   /** Owns every live authenticated socket, attached or not — the enumeration
    *  that reaches a window which has not run `session.configure` yet. */
   sockets: Pick<AuthenticatedSockets, "forUser">;
@@ -164,10 +176,12 @@ export function createCredentialRevoker(deps: CredentialRevokerDeps): Credential
         });
         closeWithAuthError(target.ws, REVOKED_CODE, REVOKED_MESSAGE);
       }
-      // AFTER the sockets, before the bookkeeping drop. The runtimes outlive
-      // both — this is what stops a retained session starting a turn under the
-      // capability the closed sockets were minted with.
-      const runtimes = deps.registry.runtimesForUser(userId);
+      // AFTER the sockets, before the bookkeeping drop. The sessions outlive
+      // both, so both halves are needed: taking them out of the attach index
+      // stops the next sign-in landing back on one, and revoking each runtime
+      // stops the one still waiting on a background task starting a turn under
+      // the capability the closed sockets were minted with.
+      const runtimes = deps.registry.orphanSessionsForUser(userId);
       for (const runtime of runtimes) runtime.revokeAuthority(reason);
       deps.sessions.revokeUser(userId);
       log.info("credential.revocation-complete", {

@@ -199,23 +199,32 @@ export interface SessionRegistry {
    */
   attachmentsForUser(userId: string): readonly Attachment[];
   /**
-   * Every RESIDENT session's runtime owned by [userId], whether or not a window
-   * is attached to it.
+   * Take every one of [userId]'s resident sessions OUT OF SERVICE and return
+   * their runtimes. Each stays alive — no disposal, no teardown — but is no
+   * longer reachable by `attach`, `runtimeFor` or `handlesFor`, so the next
+   * attach on its id BUILDS A FRESH ONE.
    *
-   * STRICTLY WIDER THAN `attachmentsForUser`, and that is the whole reason it
-   * exists. A session outlives its windows: `session-retention.ts` keeps one
-   * resident while a background task is unfinished, so an account can hold a
-   * live runtime — and the `Capability` frozen into its `ToolBroker` — with
-   * zero sockets and zero attachments. Enumerating attachments finds none of
-   * them, which is how a revoked account kept an authority nobody could reach
-   * to take away. Owner read off `SessionRuntime.userId`, minted with the
-   * runtime and never rebound.
+   * THE SEAM A CREDENTIAL REVOCATION REACHES A RUNTIME THROUGH
+   * (credential-revocation.ts), and STRICTLY WIDER THAN `attachmentsForUser`,
+   * which is the whole reason it exists. A session outlives its windows:
+   * `session-retention.ts` keeps one resident while a background task is
+   * unfinished, so an account can hold a live runtime — and the `Capability`
+   * frozen into its `ToolBroker` — with zero sockets and zero attachments.
+   * Enumerating attachments finds none of them.
+   *
+   * TAKING IT OUT OF THE INDEX IS NOT OPTIONAL, and marking the runtime alone
+   * is not enough. `attach` returns the EXISTING resident and never calls
+   * `build`, so a member who is demoted, kicked, signs back in and re-opens the
+   * same conversation would land back on the revoked runtime and find a chat
+   * that commits every message and answers none of them, for the rest of the
+   * retention window. Out of the index, that re-attach builds a runtime with a
+   * capability minted from the record as it now stands.
    *
    * A scan, for the same reason `attachmentsForUser` is one: a second index
    * would have to stay in step through every attach, detach and disposal, and
    * a divergence would leave a revoked account authoritative.
    */
-  runtimesForUser(userId: string): readonly SessionRuntime[];
+  orphanSessionsForUser(userId: string): readonly SessionRuntime[];
   /** The one runtime serving this session, or null when none is resident. */
   runtimeFor(sessionId: string): SessionRuntime | null;
   /** Everything an attaching connection needs to hold onto — see
@@ -240,6 +249,21 @@ interface ResidentSession {
 function disposeWhenNoWorkRemains(input: SessionDisposalInput): void {
   if (isRetained(livenessInputsOf(input.work, input.subscriberCount > 0))) return;
   input.dispose();
+}
+
+/**
+ * The key an ORPHANED resident is re-filed under, so it stays a resident the
+ * disposal policy governs while being unreachable by its session id.
+ *
+ * `#` cannot appear in a minted session id (a fixed prefix over CSPRNG hex —
+ * session-id.ts) nor in a legacy `c::` one, and the UUID makes two orphans of
+ * the same session distinct. So this collides with neither a real id nor
+ * another orphan, and no client-presented id can ever address one: presented
+ * ids are resolved against the caller's own store before they reach `attach`,
+ * and nothing writes a key of this shape into a store.
+ */
+function orphanKey(sessionId: string): string {
+  return `${sessionId}#orphaned-${crypto.randomUUID()}`;
 }
 
 export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhenNoWorkRemains): SessionRegistry {
@@ -274,6 +298,47 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
         resident.handles.dispose();
       },
     });
+  }
+
+  /**
+   * Move one resident out of the attach index, keeping it resident.
+   *
+   * Its windows are dropped first. They are dead sockets by now — the revoker
+   * closes every one before it gets here — and they MUST go, because `detach`
+   * finds a resident by session id and this one no longer has one: their
+   * close handlers would remove nothing, `hasSubscribers` would hold forever,
+   * and the orphan would never be disposed.
+   *
+   * Then it is re-filed under an unreachable key and re-evaluated under it, so
+   * the disposal policy governs it exactly as it governs any windowless session
+   * held by work: a recheck timer re-derives it, and it is torn down once the
+   * background task it is waiting for reports. Without that second `evaluate`
+   * the policy's entry for the old id would be claimed by the next attach and
+   * nothing would ever dispose this one.
+   *
+   * The policy briefly tracks it twice — under the old id and the new — until
+   * the old entry is either claimed by the next attach or self-deletes on its
+   * own timer. Harmless: both entries re-derive the same live state, and only
+   * the new one can pass the identity guard in `dispose` above.
+   */
+  function orphanResident(sessionId: string, resident: ResidentSession): SessionRuntime {
+    // `attachments` is documented to be a copy, so removing while iterating is
+    // safe.
+    const dropped = resident.subscribers.attachments;
+    for (const attachment of dropped) resident.subscribers.remove(attachment.attachmentId);
+
+    const key = orphanKey(sessionId);
+    sessions.delete(sessionId);
+    sessions.set(key, resident);
+    log.warn("session-registry.orphaned", {
+      sessionId,
+      droppedWindows: dropped.length,
+      reason:
+        "this session's account lost its credentials — the runtime stays alive so a running background task's result can still land, but the id is free again so the next attach builds a runtime with a fresh capability",
+    });
+
+    evaluate(key, resident);
+    return resident.handles.runtime;
   }
 
   return {
@@ -335,12 +400,14 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
       return owned;
     },
 
-    runtimesForUser(userId) {
-      const owned: SessionRuntime[] = [];
-      for (const resident of sessions.values()) {
-        if (resident.handles.runtime.userId === userId) owned.push(resident.handles.runtime);
+    orphanSessionsForUser(userId) {
+      const orphaned: SessionRuntime[] = [];
+      // A copy: `orphanResident` mutates `sessions` (twice) while this runs.
+      for (const [sessionId, resident] of [...sessions.entries()]) {
+        if (resident.handles.runtime.userId !== userId) continue;
+        orphaned.push(orphanResident(sessionId, resident));
       }
-      return owned;
+      return orphaned;
     },
 
     runtimeFor(sessionId) {

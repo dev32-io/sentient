@@ -176,14 +176,17 @@ export interface SessionRuntime {
    * that still holds the pre-demotion role, with no window attached to notice.
    * That turn is what this refuses.
    *
-   * WHAT IT DOES NOT CLOSE, stated so the claim stays honest: a turn ALREADY
-   * RUNNING when the revocation lands finishes under the capability it started
-   * with. Aborting it would need a third cancellation gesture beside barge-in
+   * WHAT IT DOES NOT CLOSE, stated so the claim stays honest: the RUNNING
+   * TURN, INCLUDING ANYTHING THAT STEERS IT. This guard sits after `submit`'s
+   * in-flight branch, so a background completion landing while a turn is
+   * running still steers that loop under the pre-revocation capability and adds
+   * an iteration — and a chain of completions can extend it past its original
+   * work. Bounded by that turn, but not by the turn's original length.
+   *
+   * Aborting it instead would need a third cancellation gesture beside barge-in
    * and interrupt, with no cutoff kind to stamp and no client left to render
-   * one; and the exposure is bounded by that one turn, which was already
-   * running before the admin clicked. The unbounded case — a session that
-   * keeps starting new turns for as long as tasks keep landing — is the one
-   * closed above.
+   * one. The unbounded case — a session that keeps starting NEW turns for as
+   * long as tasks keep landing — is the one closed above.
    */
   revokeAuthority(reason: string): void;
   /** Mic onset — the user starts speaking over the assistant (spec §4.7).

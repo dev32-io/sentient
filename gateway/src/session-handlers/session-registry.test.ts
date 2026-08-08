@@ -35,24 +35,39 @@ interface HandlesSpy {
   buildCallCount: () => number;
   disposed: () => boolean;
   runtime: SessionRuntime;
+  /** Every reason this runtime was told its authority was revoked. */
+  revocations: () => readonly string[];
 }
 
 /** A build callback that counts its calls and records disposal — the two
- *  things every case below asserts on. The runtime itself is never driven. */
-function handlesSpy(): HandlesSpy {
-  const runtime = { dispose: () => {} } as unknown as SessionRuntime;
+ *  things every case below asserts on. The runtime itself is never driven.
+ *
+ *  [userId] is the only index `orphanSessionsForUser` has, so it is real even
+ *  though nothing else here reads it. [work] lets a case make the session look
+ *  like one held by a running background task, which is the state the orphaning
+ *  cases are about. */
+function handlesSpy(userId = "u_aaaaaaaa", work: SessionWorkSignals = IDLE_WORK): HandlesSpy {
+  const revocations: string[] = [];
+  const runtime = {
+    userId,
+    dispose: () => {},
+    revokeAuthority: (reason: string) => {
+      revocations.push(reason);
+    },
+  } as unknown as SessionRuntime;
   let buildCalls = 0;
   let disposed = false;
   return {
     runtime,
     buildCallCount: () => buildCalls,
     disposed: () => disposed,
+    revocations: () => revocations,
     build: () => {
       buildCalls += 1;
       return {
         runtime,
         permissions: { denyAll: () => {} },
-        work: IDLE_WORK,
+        work,
         dispose: () => {
           disposed = true;
         },
@@ -60,6 +75,11 @@ function handlesSpy(): HandlesSpy {
     },
   };
 }
+
+/** A session that looks like one holding a still-running background task —
+ *  the ONLY state that keeps a session resident with no window, and therefore
+ *  the state every orphaning case below is about. */
+const WORK_IN_FLIGHT: SessionWorkSignals = { ...IDLE_WORK, newestBackgroundTaskStartedAtMs: 1 };
 
 describe("SessionRegistry — one runtime per session, N attachments", () => {
   it("INVARIANT: a second connection to one session shares the runtime, never forks or evicts it", () => {
@@ -145,5 +165,157 @@ describe("SessionRegistry — one runtime per session, N attachments", () => {
 
     expect(spy.disposed()).toBe(false);
     expect(registry.runtimeFor("s_1")).toBe(spy.runtime);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Orphaning — taking a revoked account's sessions out of the attach index.
+//
+// THE DEFECT THIS CLOSES IS USER-VISIBLE AND SILENT. `attach` returns an
+// EXISTING resident and never calls `build`, and a session outlives its windows
+// by `session.retention_ms` (15 min) while a background task is unfinished. So
+// marking the runtime revoked and stopping there produced: parent demotes child
+// → child is kicked → child signs in with a fresh principal → re-opens the same
+// conversation → passes `refuseStaleAuthority`, because the record now matches
+// → and lands back on the REVOKED runtime, which commits every message and
+// answers none of them. A new conversation worked fine, which is exactly what
+// makes it read as "the assistant is broken" rather than as a permission
+// change.
+//
+// The fix is that the id must be free again, so the next attach BUILDS — with a
+// capability minted from the record as it now stands. That the fresh runtime
+// then actually runs a turn is pinned one layer down, in
+// runtime/session-runtime.test.ts ("runs turns normally until it is revoked"):
+// these cases pin that the attach reaches a fresh, unrevoked runtime at all,
+// which is the half that was missing.
+// ---------------------------------------------------------------------------
+
+describe("SessionRegistry — orphaning a revoked account's sessions", () => {
+  it("SECURITY: the next attach on the same id BUILDS a fresh runtime", () => {
+    const registry = createSessionRegistry(() => {});
+    const before = handlesSpy("u_child", WORK_IN_FLIGHT);
+    const after = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, before.build);
+    registry.orphanSessionsForUser("u_child");
+    registry.attach("s_1", "conn-b", SOCKET, after.build);
+
+    expect(after.buildCallCount()).toBe(1);
+    expect(registry.runtimeFor("s_1")).toBe(after.runtime);
+    expect(registry.runtimeFor("s_1")).not.toBe(before.runtime);
+  });
+
+  // The runtime the re-attach lands on must be one the revocation never
+  // touched — a fresh build that inherited the revoked flag would be the same
+  // dead chat with more steps.
+  it("SECURITY: the rebuilt runtime carries no revocation", () => {
+    const registry = createSessionRegistry(() => {});
+    const before = handlesSpy("u_child", WORK_IN_FLIGHT);
+    const after = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, before.build);
+    for (const runtime of registry.orphanSessionsForUser("u_child")) runtime.revokeAuthority("role-changed");
+    registry.attach("s_1", "conn-b", SOCKET, after.build);
+
+    // POSITIVE FIRST. `after.revocations()` is empty whenever `after.build` was
+    // never called, so on its own it passes for the very defect this pins — a
+    // re-attach that handed back the OLD runtime. Asserting the registry serves
+    // `after.runtime` is what makes the emptiness below mean something.
+    expect(registry.runtimeFor("s_1")).toBe(after.runtime);
+    expect(before.revocations()).toEqual(["role-changed"]);
+    expect(after.revocations()).toEqual([]);
+  });
+
+  // NOT disposed: the orphan is the only thing that can still receive the
+  // background task's completion, and disposing it closes the store handle that
+  // result has to land through. Orphaning is not a teardown.
+  it("keeps the orphan alive rather than disposing it", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    const orphaned = registry.orphanSessionsForUser("u_child");
+
+    expect(orphaned).toEqual([spy.runtime]);
+    expect(spy.disposed()).toBe(false);
+  });
+
+  // Unreachable by every read seam, not just `attach` — `runtimeFor` and
+  // `handlesFor` are how `ws-session-configure` and the command mediator find a
+  // session, and either one handing back the orphan reopens the defect.
+  it("makes the orphan unreachable by session id", () => {
+    const registry = createSessionRegistry(() => {});
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    registry.orphanSessionsForUser("u_child");
+
+    expect(registry.runtimeFor("s_1")).toBeNull();
+    expect(registry.handlesFor("s_1")).toBeNull();
+    expect(registry.subscribers("s_1")).toHaveLength(0);
+  });
+
+  // The orphan's windows are dead sockets by now (the revoker closed them), and
+  // they MUST be dropped: `detach` finds a resident by SESSION ID, which the
+  // orphan no longer has, so their close handlers would remove nothing,
+  // `hasSubscribers` would hold forever, and the orphan would never be disposed.
+  it("drops the orphan's windows, so its disposal is still reachable", () => {
+    let residentCount = 0;
+    const registry = createSessionRegistry((input) => {
+      residentCount = input.subscriberCount;
+    });
+    const spy = handlesSpy("u_child", WORK_IN_FLIGHT);
+
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    registry.attach("s_1", "conn-b", SOCKET, spy.build);
+    registry.orphanSessionsForUser("u_child");
+
+    // The evaluation the orphaning itself triggers sees no windows left.
+    expect(residentCount).toBe(0);
+  });
+
+  it("leaves another account's sessions attachable", () => {
+    const registry = createSessionRegistry(() => {});
+    const child = handlesSpy("u_child", WORK_IN_FLIGHT);
+    const parent = handlesSpy("u_parent", WORK_IN_FLIGHT);
+
+    registry.attach("s_child", "conn-a", SOCKET, child.build);
+    registry.attach("s_parent", "conn-b", SOCKET, parent.build);
+    const orphaned = registry.orphanSessionsForUser("u_child");
+
+    expect(orphaned).toEqual([child.runtime]);
+    expect(registry.runtimeFor("s_parent")).toBe(parent.runtime);
+    expect(registry.runtimeFor("s_child")).toBeNull();
+  });
+
+  it("is a no-op for an account with nothing resident", () => {
+    const registry = createSessionRegistry(() => {});
+    const parent = handlesSpy("u_parent", WORK_IN_FLIGHT);
+
+    registry.attach("s_parent", "conn-a", SOCKET, parent.build);
+
+    expect(registry.orphanSessionsForUser("u_child")).toEqual([]);
+    expect(registry.runtimeFor("s_parent")).toBe(parent.runtime);
+  });
+
+  // The orphan is still governed by the disposal policy under its new key — it
+  // is not leaked. Under the default policy (dispose as soon as nothing holds
+  // it) an orphan with NO work in flight is torn down immediately, which is the
+  // observable proof that the policy still reaches it.
+  it("still disposes an orphan that nothing is holding", () => {
+    const registry = createSessionRegistry();
+    const spy = handlesSpy("u_child", IDLE_WORK);
+
+    // A window attached, so `hasSubscribers` holds it — the shape a revocation
+    // actually finds.
+    registry.attach("s_1", "conn-a", SOCKET, spy.build);
+    expect(spy.disposed()).toBe(false);
+
+    registry.orphanSessionsForUser("u_child");
+
+    // Orphaning dropped the window and re-evaluated UNDER THE NEW KEY. Without
+    // that second evaluation the policy's entry for `s_1` would be claimed by
+    // the next attach and nothing would ever release this one.
+    expect(spy.disposed()).toBe(true);
   });
 });
