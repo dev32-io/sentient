@@ -106,7 +106,13 @@ The five tools ride every surface the tool-permissions wave built, as
   all five appear with human-facing copy, per-tool permission + tier, honest
   writability. Unlike `delegateTask` (structurally pinned), skill tools are
   genuinely overridable — a person may set `skill_create` to `deny`, or a
-  parent may set a child's `skill_use` to `off`.
+  parent may set a child's `skill_use` to `off`. **Mechanism note:** stored
+  overrides for serverless tools are unreachable through the existing
+  resolution chain (`storedPermissionFor` needs a server key), so skill tools
+  resolve their stored permission under the reserved synthetic server key
+  **`"native"`** — `permissions["native"]["skill_create"]` — and `"native"`
+  is refused as a real MCP server name at config load. Without this the
+  toggle would save successfully and change nothing.
 - **Role template**: gateway-native tools resolve through
   `defaultPermissionForTier` at the broker (not the catalog-seeded table) —
   same path `delegateTask` uses; no template migration needed. Verify the
@@ -185,11 +191,20 @@ The native-todo "shape of the fix", now built:
   legitimate page is worse than prompting; the published guidance (judge the
   action against original user intent) is implemented as tier escalation, not
   content suppression.
-- **Fail-closed only where cheap — two acts exactly:** (1) Layer-2 envelope
-  smuggling is stripped from any inbound text; (2) a skill body containing
-  invisible unicode (zero-width, Tags block, bidi controls) is rejected at
-  WRITE time — self-authored instructions have no legitimate use for invisible
-  characters, and this is the documented skill-file attack channel.
+- **Fail-closed only where cheap — three acts exactly:** (1) Layer-2 envelope
+  smuggling is stripped from any inbound text (envelope-shaped objects only,
+  never substring matches inside quoted documentation); (2) a skill text
+  containing invisible unicode (zero-width, Tags block, bidi controls) is
+  rejected at WRITE time — self-authored instructions have no legitimate use
+  for invisible characters, and this is the documented skill-file attack
+  channel; (3) a skill name/description/body carrying a suspicious-or-worse
+  scan finding is rejected at WRITE time — the **description** is rendered
+  into every future session's system prompt and never transits the inbound
+  gate (it is not a tool result), so authoring is its only scan point; a
+  crafted description would otherwise be a persistent cross-session injection
+  in the highest-trust role. Self-authored text is cheap to rephrase, so
+  rejection here does not violate the annotate-don't-block posture, which
+  governs FETCHED content.
 - **Config:** `security.inbound_scan.*` — enabled, thresholds, per-channel
   toggles. The false `config.yaml:832` comment ("handled by the injection
   scanner") finally becomes true and is reworded to point at the real module.
@@ -199,16 +214,16 @@ The native-todo "shape of the fix", now built:
 | Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
 |---|---|---|---|---|---|
 | skill-create-chat | desktop 1280×900 | authed adult | "make yourself a skill for X" | confirm dialog w/ full body; approve → created; assistant confirms | PDP ask on `skill_create`; validation ok; file written under user dir |
-| skill-trigger-fresh | desktop | skill exists; NEW session | ask something matching description only | model calls `skill_use`, follows instructions; tool pill renders | index rendered in prompt; `skill_use` tool_call+result appended |
+| skill-trigger-fresh | desktop | skill SEEDED on disk (no LLM setup step); NEW session | ask something matching description only | model calls `skill_use`, follows instructions; tool pill renders | index rendered in prompt; `skill_use` tool_call+result appended |
 | skill-list-chat | desktop | ≥2 skills | "what skills do you have" | names+descriptions in reply | `skill_list` allow (read) |
 | skill-update-delete | desktop | skill exists | ask edit, then delete | confirm each; list reflects | PDP ask ×2; dir removed |
 | skill-role-gate | desktop | child user | child asks to create skill | refused; tool absent from model | role gate withholds `skill_create` from `tools[]` |
 | skill-settings-toggle | desktop + mobile 390×844 | admin in settings | set `skill_create` → Deny; retry create | tool absent / denied for that user | stored permission wins over template |
-| skill-dup-invalid | desktop | skill exists | create same name; create 2000-char description | model relays legible errors; nothing written | validation errors as tool errors, no PDP prompt spent |
+| skill-dup-invalid | desktop + mobile 390×844 | skill exists | create same name; create 2000-char description | model relays legible errors, readable at 390px; nothing written | validation errors as tool errors, no PDP prompt spent |
 | skill-index-cap | desktop | > cap skills | new session | prompt carries cap-many entries | WARN overflow, deterministic truncation |
-| inbound-scan-annotate | desktop | stack up | fetch a page seeded with an injection phrase | reply unaffected or hedged; NO tool execution from injected text | scanner findings logged; risk recorded; escalation if threshold crossed |
-| inbound-scan-escalate | desktop | risk ≥ escalate | model attempts a write-tier tool | permission dialog where allow was expected | PDP tier escalation logged with risk snapshot |
-| mobile-skill-parity | Maestro android+ios (`settings-tools` tag) | skills exist | settings tools screen | five native tool rows render; dropdown writes persist | settings PATCH round-trip |
+| inbound-scan-annotate | desktop | stack up | the `fetch` MCP tool (never browser navigation — the text must transit the ToolBroker gate) reads a locally-served page seeded with an injection phrase | reply unaffected or hedged; NO tool execution from injected text | scanner findings logged w/ sessionId; risk recorded; escalation if threshold crossed |
+| inbound-scan-escalate | desktop | risk ≥ escalate | model attempts a write-tier tool resolved Allow | permission dialog where allow was expected | `pdp.decision … source="risk-escalation"` with risk snapshot |
+| mobile-skill-parity | Maestro android+ios (`settings-soul` tag — the tag that exists on the tools-screen flows) | skills exist | settings tools screen | five native tool rows render; `skill_create` dropdown writes persist | settings PATCH round-trip |
 
 Native-mobile via Maestro tags, web via Playwright MCP, local stack only.
 
