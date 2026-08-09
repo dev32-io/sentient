@@ -48,6 +48,12 @@ export interface InFlightWork {
   backgroundTaskCount(): number;
 }
 
+/** The current turn's spark block (Memory System spec §6) — "possibly relevant
+ *  past memories", primed at turn start and read here SYNCHRONOUSLY. Returns
+ *  null / "" when nothing was recalled (or spark is off), in which case no
+ *  memory section is rendered. */
+export type MemorySpark = () => string | null;
+
 export interface SituationBlockRenderer {
   /** The block, or null when nothing volatile is worth saying — a `<situation>`
    *  with no content costs tokens and tells the model nothing. */
@@ -59,6 +65,10 @@ export interface SituationBlockDeps {
   readonly surfaces: AttachedSurfaces;
   readonly work: InFlightWork;
   readonly sessionId: string;
+  /** Optional per-turn spark (spec §6). Absent for text-only / memory-off
+   *  sessions; when present and non-empty, its block is appended as the tail's
+   *  memory section. */
+  readonly memory?: MemorySpark;
 }
 
 export function createSituationBlockRenderer(deps: SituationBlockDeps): SituationBlockRenderer {
@@ -90,13 +100,23 @@ export function createSituationBlockRenderer(deps: SituationBlockDeps): Situatio
         lines.push(`background tasks: ${running} still running — their results will arrive as system messages`);
       }
 
-      if (lines.length === 0) {
+      // The spark (spec §6) is a self-contained labeled block ("possibly
+      // relevant past memories: …"). It carries its own header, so it is
+      // appended AFTER </situation> as its own section rather than folded into
+      // the volatile lines — and it can be the ONLY thing rendered when nothing
+      // volatile is worth saying. Content NEVER logged (only presence).
+      const memory = deps.memory?.() ?? null;
+      const hasMemory = memory !== null && memory.length > 0;
+
+      if (lines.length === 0 && !hasMemory) {
         log.debug("situation-block.empty", { sessionId: deps.sessionId, reason: "nothing volatile to report" });
         return null;
       }
 
-      log.debug("situation-block.rendered", { sessionId: deps.sessionId, lineCount: lines.length });
-      return `<situation>\n${lines.join("\n")}\n</situation>`;
+      const situation = lines.length > 0 ? `<situation>\n${lines.join("\n")}\n</situation>` : null;
+      const parts = [situation, hasMemory ? memory : null].filter((part): part is string => part !== null);
+      log.debug("situation-block.rendered", { sessionId: deps.sessionId, lineCount: lines.length, hasMemory });
+      return parts.join("\n\n");
     },
   };
 }

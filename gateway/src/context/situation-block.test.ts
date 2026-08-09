@@ -68,4 +68,39 @@ describe("createSituationBlockRenderer", () => {
 
     expect(block).toBeNull();
   });
+
+  const SPARK = "possibly relevant past memories:\n- [private · 2026-08-01] Kevin's dog is Rex";
+
+  it("appends the spark memory section when the closure returns a block", async () => {
+    const block = await deps({ memory: () => SPARK }).render();
+    expect(block).toContain("spoken aloud"); // volatile lines still there
+    expect(block).toContain("possibly relevant past memories:");
+    expect(block).toContain("Kevin's dog is Rex");
+  });
+
+  it("omits the memory section when the closure returns an empty block", async () => {
+    // A withheld spark ("") must add nothing — no dangling header, no blank tail.
+    const block = await deps({ memory: () => "" }).render();
+    expect(block).not.toContain("possibly relevant past memories:");
+  });
+
+  it("omits the memory section when the closure returns null", async () => {
+    const block = await deps({ memory: () => null }).render();
+    expect(block).not.toContain("possibly relevant past memories:");
+  });
+
+  it("renders the memory section even when nothing volatile is worth saying", async () => {
+    // Spark alone is enough to render — it is not gated on the volatile lines.
+    const block = await deps({
+      speech: {
+        spoken: async () => {
+          throw new Error("no audio path");
+        },
+      },
+      memory: () => SPARK,
+    }).render();
+    expect(block).not.toBeNull();
+    expect(block).not.toContain("<situation>");
+    expect(block).toContain("possibly relevant past memories:");
+  });
 });

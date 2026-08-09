@@ -6,7 +6,7 @@ import type { UserRole } from "@sentient/protocol";
 import type { Capability } from "../access/capability.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createGatewayLogger } from "../logging/logger.js";
-import type { ClientError, DeepMemoryClient, Hit, IndexEntry } from "../memory/deep-memory-client.js";
+import type { ClientError, DeepMemoryClient, Hit, IndexEntry, SearchRequest } from "../memory/deep-memory-client.js";
 import { type MemoryConfig, type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import { scanContent } from "../security/injection-scanner.js";
 import type { SessionEntry } from "../store/entry-types.js";
@@ -408,7 +408,7 @@ describe("memory_recall — wired deep memory", () => {
         ),
       ],
     });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "where did we go in july" });
 
@@ -428,7 +428,7 @@ describe("memory_recall — wired deep memory", () => {
       ok: true,
       value: [hit(indexEntry({ id: "e_long", text: "x".repeat(500) }))],
     });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "anything" });
 
@@ -442,7 +442,7 @@ describe("memory_recall — wired deep memory", () => {
       ok: true,
       value: [hit(indexEntry({ id: "e_old", status: "superseded", text: "An outdated plan." }))],
     });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "old plan", includeHistorical: true });
 
@@ -452,7 +452,7 @@ describe("memory_recall — wired deep memory", () => {
 
   it("returns an ok no-match line when the search is empty", async () => {
     const client = fakeDeepClient({ ok: true, value: [] });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "nothing here" });
 
@@ -463,7 +463,7 @@ describe("memory_recall — wired deep memory", () => {
 
   it("maps an unavailable client error to deep_memory_unavailable", async () => {
     const client = fakeDeepClient({ ok: false, error: { kind: "unavailable" } });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "q" });
 
@@ -474,7 +474,7 @@ describe("memory_recall — wired deep memory", () => {
 
   it("maps a timeout client error to deep_memory_unavailable", async () => {
     const client = fakeDeepClient({ ok: false, error: { kind: "timeout" } });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "q" });
 
@@ -483,12 +483,59 @@ describe("memory_recall — wired deep memory", () => {
 
   it("maps a rebuild_required client error to deep_memory_rebuild_required", async () => {
     const client = fakeDeepClient({ ok: false, error: { kind: "rebuild_required" } });
-    const tools = build("adult", false, { deepMemory: { client, scopeIds: ["scope-private"] } });
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
 
     const res = await invoke(tools, "memory_recall", { query: "q" });
 
     expect(res.isError).toBe(true);
     expect(res.content).toContain("deep_memory_rebuild_required");
+  });
+
+  /** A client that RECORDS the last search request, so scope-narrowing can be
+   *  asserted on the wire the recall runner actually builds. */
+  function capturingClient(): { client: DeepMemoryClient; last: () => SearchRequest | null } {
+    let seen: SearchRequest | null = null;
+    const client = {
+      ...fakeDeepClient({ ok: true, value: [] }),
+      search: async (req: SearchRequest) => {
+        seen = req;
+        return { ok: true as const, value: [] as Hit[] };
+      },
+    } as unknown as DeepMemoryClient;
+    return { client, last: () => seen };
+  }
+
+  it("narrows the search to the family index when the scope arg asks for it", async () => {
+    const { client, last } = capturingClient();
+    const tools = build("adult", false, {
+      deepMemory: { client, scopeIds: { private: "scope-private", family: "scope-family" } },
+    });
+
+    await invoke(tools, "memory_recall", { query: "q", scope: "family" });
+
+    expect(last()?.scopeIds).toEqual(["scope-family"]);
+  });
+
+  it("searches every granted scope when no scope arg is given", async () => {
+    const { client, last } = capturingClient();
+    const tools = build("adult", false, {
+      deepMemory: { client, scopeIds: { private: "scope-private", family: "scope-family" } },
+    });
+
+    await invoke(tools, "memory_recall", { query: "q" });
+
+    expect(last()?.scopeIds).toEqual(["scope-private", "scope-family"]);
+  });
+
+  it("returns family_scope_unavailable when family recall is asked for but not granted", async () => {
+    const tools = build("adult", false, {
+      deepMemory: { client: fakeDeepClient({ ok: true, value: [] }), scopeIds: { private: "scope-private" } },
+    });
+
+    const res = await invoke(tools, "memory_recall", { query: "q", scope: "family" });
+
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("family_scope_unavailable");
   });
 });
 

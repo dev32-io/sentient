@@ -29,7 +29,15 @@ import { loadMemoryPreamble, loadSkillIndexPreamble, loadSystemPrompt } from "..
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.ts";
+import {
+  type DeepMemoryApp,
+  type SessionSpark,
+  createDeepMemoryApp,
+  createSessionSpark,
+  withIndexSync,
+} from "../memory/deep-memory-wiring.js";
 import { composeMemoryBlock } from "../memory/memory-prompt.js";
+import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
@@ -41,12 +49,14 @@ import type { SessionWorkSignals } from "../runtime/session-retention.js";
 import { type SessionRuntime, createSessionRuntime as buildSessionRuntime } from "../runtime/session-runtime.js";
 import { createTurnStateTracker } from "../runtime/turn-state-snapshot.js";
 import { createInboundGate } from "../security/inbound-gate.js";
+import type { InboundGate } from "../security/inbound-gate.js";
 import { scanContent } from "../security/injection-scanner.js";
 import { createRiskAccumulator } from "../security/risk-accumulator.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import { renderSkillIndex } from "../skills/skill-index.js";
 import { createSkillStore } from "../skills/skill-store.js";
 import type { SkillMeta } from "../skills/skill-store.js";
+import type { SessionEntry } from "../store/entry-types.js";
 import { type SessionStore, openSessionStore } from "../store/session-store.js";
 import { composeBackgroundCompletionNote } from "../tools/background-completion-note.js";
 import { createDelegateTaskRunner, delegateTaskDefinition } from "../tools/delegate-task.js";
@@ -57,6 +67,7 @@ import type { HermesRunner } from "../tools/hermes-runner.js";
 import { createMcpClient } from "../tools/mcp-client.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { MEMORY_TOOL_NAMES, buildMemoryTools } from "../tools/memory-tools.js";
+import type { DeepMemoryDeps } from "../tools/memory-tools.js";
 import { createPromptClassifier } from "../tools/prompt-classifier.js";
 import { SKILL_TOOL_NAMES, createSkillTools } from "../tools/skill-tools.js";
 import { createToolBroker } from "../tools/tool-broker.js";
@@ -184,7 +195,37 @@ export interface SessionMemory {
   /** Appends the memory block after `skillPrompt` and emits
    *  `memory.prompt.rendered` — the once-per-session render point. */
   augmentPrompt(skillPrompt: string): string;
+  /** Per-turn spark (spec §6), or null when the deep-memory app is not wired
+   *  (file memory only). Handed to the runtime (primed at turn start) and read
+   *  by the situation block's memory closure. */
+  readonly spark: SessionSpark | null;
 }
+
+/** Optional deep-memory wiring for ONE session — supplied by the composition
+ *  root only when the deep-memory app is live (`memory.enabled` + both env
+ *  tokens present). Absent ⇒ file memory only: no spark, no `memory_recall`, no
+ *  index sync. Kept out of the T6 tests that call `buildSessionMemory` with the
+ *  first four args alone. */
+export interface SessionMemoryWiring {
+  app: DeepMemoryApp;
+  /** The SESSION'S inbound gate — the retriever screens its spark block through
+   *  the SAME instance the broker holds, so a hostile indexed memory raises the
+   *  risk the PDP escalates on. */
+  gate: InboundGate;
+  profileStore: ProfileStore;
+}
+
+/** Opaque index scope id for a user's PRIVATE scope (S1/S2). The household
+ *  scope (`household:<householdId>`) arrives at T24. Mirrors the deep-memory
+ *  service's own fixture shape (`user:alice`). */
+function privateScopeId(userId: string): string {
+  return `user:${userId}`;
+}
+
+/** The gateway-side dir holding a scope's sync cursor + the service's index.db
+ *  (spec §2, §5.3) — a SIBLING of `memory/`, both under the memory grant root. */
+const DEEP_MEMORY_DIRNAME = "deep-memory";
+const DEEP_MEMORY_INDEX_FILE = "index.db";
 
 /**
  * Builds ONE session's memory wiring, gated on `orchestrator.memory.enabled`
@@ -201,12 +242,12 @@ export function buildSessionMemory(
   accessManager: AccessManager,
   principal: UserPrincipal,
   ids: { conversationId: string; connectionId: string },
+  wiring?: SessionMemoryWiring | null,
 ): SessionMemory | null {
   if (!orchestratorCfg.memory.enabled) return null;
 
-  const store = openMemoryStore(accessManager.grant(principal, "memory-private"), orchestratorCfg.memory, {
-    scan: scanContent,
-  });
+  const memoryCap = accessManager.grant(principal, "memory-private");
+  const store = openMemoryStore(memoryCap, orchestratorCfg.memory, { scan: scanContent });
   const reingest = store.reingestEdits();
   if (reingest.quarantined.length > 0) {
     log.warn("memory.reingest.quarantined", {
@@ -218,16 +259,66 @@ export function buildSessionMemory(
     });
   }
 
+  // Deep memory (spark + recall + index sync), only when the app is wired. The
+  // private scope's index + cursor live in `<memoryCap.rootPath>/deep-memory`;
+  // the register-scope indexPath is the `index.db` inside it. `ensureScope`
+  // registers the scope idempotently (before its first search) and returns the
+  // single-writer outbox + a registration-gated client.
+  let scopedStore = store;
+  let spark: SessionSpark | null = null;
+  let deepMemory: DeepMemoryDeps | undefined;
+  let readSession: ((sessionId: string) => SessionEntry[]) | undefined;
+
+  if (wiring) {
+    const scopeId = privateScopeId(principal.userId);
+    const indexDir = join(memoryCap.rootPath, DEEP_MEMORY_DIRNAME);
+    const scope = wiring.app.ensureScope({
+      scopeId,
+      indexDir,
+      indexPath: join(indexDir, DEEP_MEMORY_INDEX_FILE),
+      store,
+    });
+    // Writes flow through the sync-wrapped store so a successful edit enqueues +
+    // flushes; the PROMPT block below reads the RAW store (a render, not a write).
+    scopedStore = withIndexSync(store, scope.sync);
+    deepMemory = { client: scope.client, scopeIds: { private: scopeId } };
+    // `memory_read({sessionId})` drill-down — this user's own past sessions,
+    // capability-scoped; a short-lived handle per read (the continuity precedent).
+    readSession = (sessionId) => {
+      const sessionStore = openSessionStore(accessManager.grant(principal, "session-store"));
+      try {
+        return sessionStore.readSession(sessionId);
+      } finally {
+        sessionStore.close();
+      }
+    };
+    const retriever = createMemoryRetriever({
+      client: scope.client,
+      gate: wiring.gate,
+      profileStore: wiring.profileStore,
+      cfg: orchestratorCfg.memory,
+    });
+    spark = createSessionSpark(retriever, {
+      userId: principal.userId,
+      scopeIds: [scopeId],
+      childPrincipal: principal.role === "child",
+      sessionId: ids.conversationId,
+    });
+  }
+
   const tools = buildMemoryTools({
-    storeFor: (scope) => (scope === "private" ? store : null),
+    storeFor: (scope) => (scope === "private" ? scopedStore : null),
     scan: scanContent,
     cfg: orchestratorCfg.memory,
     principal,
+    ...(deepMemory ? { deepMemory } : {}),
+    ...(readSession ? { readSession } : {}),
   });
 
   return {
     tools,
     augmentPrompt: (skillPrompt) => composeMemoryPrompt(skillPrompt, store, orchestratorCfg.memory, principal, ids),
+    spark,
   };
 }
 
@@ -550,6 +641,12 @@ export async function buildOrchestratorServices(
   const orchestratorCfg = cfg.orchestrator;
   const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore);
 
+  // App-lifetime deep-memory wiring (spec §5/§6) — one client + one per-scope
+  // outbox ledger for the whole process. Null when memory is off OR its two env
+  // tokens are unset (memory tools + spark degrade to unavailable; file memory
+  // still works). See buildDeepMemoryApp.
+  const deepMemoryApp = buildDeepMemoryApp(orchestratorCfg.memory);
+
   const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
   const delegationFrontmatter = loadDelegationFrontmatterDir(frontmatterDir);
   const promptClassifier = createPromptClassifier();
@@ -572,9 +669,41 @@ export async function buildOrchestratorServices(
     profileStore,
     auth: auth ?? null,
     inboundScan: cfg.inboundScan,
+    deepMemoryApp,
   });
 
   return { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool };
+}
+
+/**
+ * Builds the app-lifetime deep-memory wiring, or null. Off when memory is
+ * disabled, or when either bearer token is unset — the two tokens are gateway
+ * PROCESS ENVIRONMENT (deploy/README.md §Token provisioning), never config.yaml
+ * or on-disk service config, and an unset one means the service refuses every
+ * call, so the honest state is "deep memory unavailable" while file memory
+ * (MEMORY.md + topic notes + the prompt block) keeps working. baseUrl +
+ * timeout come from `orchestrator.memory.service`.
+ */
+function buildDeepMemoryApp(memoryCfg: OrchestratorConfig["memory"]): DeepMemoryApp | null {
+  if (!memoryCfg.enabled) return null;
+  const adminToken = process.env.DEEP_MEMORY_ADMIN_TOKEN ?? "";
+  const dataToken = process.env.DEEP_MEMORY_DATA_TOKEN ?? "";
+  if (adminToken === "" || dataToken === "") {
+    log.warn("deep-memory.app.no-tokens", {
+      reason:
+        "DEEP_MEMORY_ADMIN_TOKEN / DEEP_MEMORY_DATA_TOKEN unset — spark + memory_recall degrade to unavailable (file memory still works)",
+    });
+    return null;
+  }
+  const app = createDeepMemoryApp({
+    baseUrl: memoryCfg.service.url,
+    adminToken,
+    dataToken,
+    requestTimeoutMs: memoryCfg.service.request_timeout_ms,
+    cfg: memoryCfg,
+  });
+  log.info("deep-memory.app.ready", { baseUrlHost: safeUrlHost(memoryCfg.service.url) });
+  return app;
 }
 
 /** Warms the shared MCP client's per-server transport connections. Never
@@ -693,6 +822,10 @@ interface CreateSessionRuntimeFactoryDeps {
    *  through StartupConfig so a disabled channel actually reaches the gate — no
    *  code-side `parse({})` that would silently ignore the operator's YAML. */
   inboundScan: InboundScanConfig;
+  /** App-lifetime deep-memory wiring (spec §5/§6), or null when memory is off /
+   *  tokens unset. Each session's memory build threads its private scope through
+   *  `ensureScope` for spark + recall + index sync. */
+  deepMemoryApp: DeepMemoryApp | null;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -705,7 +838,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg } = deps;
+  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg, deepMemoryApp } = deps;
 
   // Inbound-scan boundary config (T1), threaded from the operator's
   // `security.inbound_scan` YAML through StartupConfig — so a channel the
@@ -813,15 +946,42 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     const skillStore = createSkillStore(skillsRoot, { maxBodyChars, knownTools });
     const skillTools = createSkillTools(skillStore, { scan: scanContent, knownTools, maxBodyChars });
 
-    // Per-user FILE memory (Memory System spec §4, T6). `buildSessionMemory`
-    // returns null when the master switch is off — no grant, no store, no
-    // reingest, no tools, no prompt block — and otherwise mints the private
-    // grant, opens the store, runs edit-reingest, and builds the four memory
-    // tools. PRIVATE scope only in S1; the household scope is minted in T24.
-    const sessionMemory = buildSessionMemory(orchestratorCfg, accessManager, principal, {
+    // One inbound gate + risk accumulator PER SESSION (T9/T10). The gate screens
+    // every untrusted string on its way into model context — foreground tool
+    // results (inside the broker), background-task completions (the
+    // completion-note sink below), AND the spark's recalled-memory block (via the
+    // retriever, below) — and feeds a per-session risk accumulator the PDP can
+    // escalate on. Replaces the broker's disabled passthrough default. Built
+    // HERE, before `buildSessionMemory`, because the retriever screens its spark
+    // through this SAME instance. The INFO line makes the mode visible in the
+    // trail (defect D18): a silent passthrough reading as covered is the
+    // false-green this log exists to prevent.
+    const riskAccumulator = createRiskAccumulator(riskCfg);
+    const inboundGate = createInboundGate(inboundScanCfg, riskAccumulator);
+    log.info("inbound-gate.composed", {
+      userId: principal.userId,
       conversationId,
       connectionId,
+      mode: gateMode.mode,
+      channels: gateMode.channels,
     });
+
+    // Per-user memory (Memory System spec §4/§5/§6, T6+T15). `buildSessionMemory`
+    // returns null when the master switch is off — no grant, no store, no
+    // reingest, no tools, no prompt block, no spark — and otherwise mints the
+    // private grant, opens the store, runs edit-reingest, and builds the memory
+    // tools + prompt block. When the deep-memory app is wired (memory on + tokens
+    // present) it ALSO registers the private scope, sync-wraps the write path,
+    // and builds the per-turn spark bound to this session's gate. PRIVATE scope
+    // only in S1; the household scope is minted in T24.
+    const sessionMemory = buildSessionMemory(
+      orchestratorCfg,
+      accessManager,
+      principal,
+      { conversationId, connectionId },
+      deepMemoryApp ? { app: deepMemoryApp, gate: inboundGate, profileStore } : null,
+    );
+    const spark = sessionMemory?.spark ?? null;
 
     // The single `native` namespace map the broker resolves under
     // `NATIVE_TOOL_SERVER_KEY`: the skill tools plus (when memory is on) the
@@ -903,24 +1063,6 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // before the assignment; the only caller who could observe `null` here is
     // one invoking it synchronously during construction, and nothing does.
     let runtimeRef: SessionRuntime | null = null;
-
-    // One inbound gate + risk accumulator PER SESSION (T9/T10). The gate screens
-    // every untrusted string on its way into model context — foreground tool
-    // results (inside the broker) and background-task completions (the
-    // completion-note sink below) — and feeds a per-session risk accumulator the
-    // PDP can escalate on. Replaces the broker's disabled passthrough default.
-    // The INFO line makes the mode visible in the trail (defect D18): a silent
-    // passthrough reading as covered is the false-green this log exists to
-    // prevent.
-    const riskAccumulator = createRiskAccumulator(riskCfg);
-    const inboundGate = createInboundGate(inboundScanCfg, riskAccumulator);
-    log.info("inbound-gate.composed", {
-      userId: principal.userId,
-      conversationId,
-      connectionId,
-      mode: gateMode.mode,
-      channels: gateMode.channels,
-    });
 
     const broker = createToolBroker({
       mcp: mcpClient,
@@ -1052,9 +1194,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         surfaces: { count: attachedWindows },
         work: { backgroundTaskCount: () => broker.background.count() },
         sessionId: conversationId,
+        // The per-turn spark's memory closure — reads THIS turn's cached recall
+        // synchronously (primed by the runtime at turn start). Omitted when the
+        // deep-memory app is not wired, so the block renders exactly as before.
+        ...(spark ? { memory: () => spark.current() } : {}),
       }),
       config: orchestratorCfg,
       voice: voice ?? null,
+      // Primed at turn start, before the first provider call, feeding the memory
+      // closure above. Null when the deep-memory app is not wired.
+      spark,
       onWorkSettled,
     });
     // Fills the slot `onDelegationProgress` above closed over — see that

@@ -69,6 +69,11 @@ export interface SparkTurn {
   userId: string;
   scopeIds: string[];
   childPrincipal: boolean;
+  /** The DURABLE session id, for the gate's trace line only. Optional so the
+   *  retriever stays usable without it (the memo key is `turnId`); when the
+   *  wiring supplies it, the `memory_body` screen correlates on the real
+   *  session rather than the turn (T15 carried item — T13 passed `turnId`). */
+  sessionId?: string;
 }
 
 export interface MemoryRetriever {
@@ -222,7 +227,11 @@ export function createMemoryRetriever(deps: MemoryRetrieverDeps): MemoryRetrieve
    *  text differs — a never-legitimate envelope form was removed) withholds the
    *  whole block; the gate has already raised risk on the shared accumulator. */
   function screenBlock(block: string, turn: SparkTurn): string | null {
-    const screened = gate.screen(block, { channel: GATE_CHANNEL, source: GATE_SOURCE }, { sessionId: turn.turnId });
+    const screened = gate.screen(
+      block,
+      { channel: GATE_CHANNEL, source: GATE_SOURCE },
+      { sessionId: turn.sessionId ?? turn.turnId },
+    );
     if (screened.text !== block) {
       return null;
     }

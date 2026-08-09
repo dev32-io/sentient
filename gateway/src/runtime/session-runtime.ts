@@ -101,6 +101,7 @@ import type { SituationBlockRenderer } from "../context/situation-block.js";
 import { loadAuxiliaryTemplate, loadCompactionSummarizerPrompt } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import type { SessionSpark } from "../memory/deep-memory-wiring.js";
 import type { ProviderClient } from "../provider/provider-client.js";
 import type { CutoffKind, NewSessionEntry, SessionEntry } from "../store/entry-types.js";
 import { openSessionStore } from "../store/session-store.js";
@@ -344,6 +345,15 @@ export interface SessionRuntimeDeps {
    */
   voice?: TurnVoice | null;
   /**
+   * Per-turn associative recall (Memory System spec §6). PRIMED at turn start on
+   * the finalized user utterance, BEFORE the first provider call, so the
+   * situation block's synchronous memory closure sees this turn's recall. The
+   * prime is deadline-bounded inside the retriever, so it cannot stall a turn.
+   * Absent/null for text-only, headless, or memory-off sessions — in which case
+   * the turn launches synchronously, exactly as before.
+   */
+  spark?: SessionSpark | null;
+  /**
    * Fired when a turn settles and the follow-up decision has been made — the
    * seam the session registry's retention policy re-derives on (task 8). See
    * `SessionRuntimeRequest.onWorkSettled`. Absent for a headless harness.
@@ -560,6 +570,19 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     const entries = store.readSession(sessionId);
     const last = entries[entries.length - 1];
     return last ? last.seq : 0;
+  }
+
+  /** This turn's finalized user utterance — the newest `user` entry's text, or
+   *  "" when the turn was triggered by a background completion (a `trigger`
+   *  entry) with no user message. Feeds the spark prime; an empty string is the
+   *  retriever's own no-op signal. */
+  function latestUtterance(): string {
+    const entries = store.readSession(sessionId);
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
+      const entry = entries[i];
+      if (entry && entry.kind === "user" && entry.text) return entry.text;
+    }
+    return "";
   }
 
   /** The trigger for the next back-to-back turn (spec §4.5), or null when
@@ -933,13 +956,51 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     const speech = voice ? voice.begin(turnId, controller.signal) : null;
     inFlight = { turnId, controller, settled: false, speech, replyId: crypto.randomUUID() };
     lastTurnId = turnId;
-    // Synchronous snapshot, no await between this and the `runTurn` call
-    // below — guarantees the turn's first iteration sees everything ≤ this.
-    lastProcessedSeq = currentMaxSeq();
     turnText = ""; // fresh accumulator for this turn — see the field's doc comment above.
 
+    // `inFlight` is set and `turnStarted` fires SYNCHRONOUSLY here — the
+    // one-turn lock and `running` are true before this returns, whether or not
+    // spark is in the picture. Only the store-snapshot + `runTurn` launch is
+    // deferred behind the spark prime.
     emitter.turnStarted(turnId, trigger);
     if (taskList.onTurnStarted(turnId)) publishTaskList();
+
+    // SPARK (spec §6): prime this turn's associative recall BEFORE the first
+    // provider call, so the situation block's synchronous memory closure reads
+    // it. Deadline-bounded inside the retriever, so this await cannot stall a
+    // turn. No spark dep (text-only / memory-off) launches synchronously,
+    // byte-for-byte the prior behaviour. A barge-in/interrupt/dispose landing
+    // during the prime aborts `controller`, and `launchTurn` still runs
+    // `runTurn` on the already-aborted signal — a fast no-op the settle path
+    // handles exactly as any cut-off turn.
+    if (deps.spark) {
+      void deps.spark
+        .prime(turnId, latestUtterance())
+        .catch((err: unknown) => {
+          log.warn("session-runtime.spark.threw", {
+            userId,
+            sessionId,
+            turnId,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => launchTurn(turnId, trigger, controller, speech));
+      return;
+    }
+    launchTurn(turnId, trigger, controller, speech);
+  }
+
+  function launchTurn(
+    turnId: string,
+    trigger: TurnTrigger,
+    controller: AbortController,
+    speech: TurnVoiceStream | null,
+  ): void {
+    // Synchronous snapshot, no await between this and the `runTurn` call
+    // below — guarantees the turn's first iteration sees everything ≤ this.
+    // Taken HERE (after any spark prime) rather than in `startTurn` so a
+    // stimulus that steered in during the prime is inside this turn's mark.
+    lastProcessedSeq = currentMaxSeq();
     log.info("session-runtime.turn.start", { userId, sessionId, turnId, trigger, lastProcessedSeq });
 
     const loopDeps: ReactLoopDeps = {

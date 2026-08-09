@@ -2318,7 +2318,7 @@ function memoryToolMap(client: DeepMemoryClient): Map<string, NativeToolRunner> 
     scan: scanContent,
     cfg: MEMORY_CFG,
     principal: createUserPrincipal("u_aaaaaaaa", "adult", "home"),
-    deepMemory: { client, scopeIds: ["scope-private"] },
+    deepMemory: { client, scopeIds: { private: "scope-private" } },
   });
   return new Map(runners.map((r) => [r.definition.name, r]));
 }

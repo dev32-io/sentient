@@ -466,7 +466,7 @@ orchestrator:
       url: http://127.0.0.1:8772
       request_timeout_ms: 5000       # deadline on every DeepMemoryClient call. Range 200-60000
     spark:
-      enabled: false                 # SLICE STAGING — off until T15; zod default is true
+      enabled: true                  # S2 activation (T15): per-turn associative recall is live; zod default is true
       min_similarity: 0.60           # relevance gate (cosine, 0-1) — gates alone; prefer empty over weak. Range 0-1
       max_snippets: 3                # hard cap on injected snippets. Range 1-10
       token_budget: 250              # hard cap on the injected spark section. Range 50-2000

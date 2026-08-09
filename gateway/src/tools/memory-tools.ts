@@ -433,7 +433,11 @@ const memoryReadDefinition = definitionFor(
           file: { type: "string", description: '"MEMORY.md", "topics/<slug>", or "journal/<date>".' },
           sessionId: { type: "string", description: "A past session id from a memory_recall hit (deep memory)." },
           around: { type: "number", description: "Entry sequence to center a session excerpt on (optional)." },
-          offset: { type: "number", description: "Continuation offset into a session excerpt (optional)." },
+          offset: {
+            type: "number",
+            description:
+              'Continuation offset into a session excerpt (optional) — use the value from a prior excerpt\'s "continue with offset K" marker to page forward.',
+          },
         },
       },
     },
@@ -500,9 +504,12 @@ const memoryRecallDefinition = definitionFor(
  *  as the S1 stub did. */
 export interface DeepMemoryDeps {
   client: DeepMemoryClient;
-  /** Opaque index scope ids to search across — already narrowed to what this
-   *  session may read. */
-  scopeIds: string[];
+  /** The LABELED index scope ids this session may search. `private` is always
+   *  present; `family` only when the household scope is granted (T24). The
+   *  recall/read `scope` arg narrows the search to one label; absent ⇒ every
+   *  granted scope. Keeping the map (not a flat array) is what lets a
+   *  `scope: "private"` call actually exclude the family index. */
+  scopeIds: { private: string; family?: string };
 }
 
 export interface MemoryToolsDeps {
@@ -825,14 +832,29 @@ function parseTimeRange(args: Record<string, unknown>): { from?: string; to?: st
   return { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
 }
 
-function buildSearchRequest(deep: DeepMemoryDeps, args: Record<string, unknown>, k: number): SearchRequest {
+/** The scope ids a recall/read searches: the requested label alone when one is
+ *  given (and granted), otherwise every granted scope. `family` requested but
+ *  ungranted yields `[]`, which the caller turns into `family_scope_unavailable`
+ *  rather than a silent private-only search. */
+function resolveScopeIds(deep: DeepMemoryDeps, scope: MemoryScope | undefined): string[] {
+  if (scope === "private") return [deep.scopeIds.private];
+  if (scope === "family") return deep.scopeIds.family ? [deep.scopeIds.family] : [];
+  return deep.scopeIds.family ? [deep.scopeIds.private, deep.scopeIds.family] : [deep.scopeIds.private];
+}
+
+function buildSearchRequest(
+  deep: DeepMemoryDeps,
+  args: Record<string, unknown>,
+  k: number,
+  scope: MemoryScope | undefined,
+): SearchRequest {
   const timeRange = parseTimeRange(args);
   const filters: SearchFilters = {};
   if (timeRange) filters.timeRange = timeRange;
   if (args.includeHistorical === true) filters.statuses = [...HISTORICAL_STATUSES];
   const query = stringArg(args, "query") ?? "";
   return {
-    scopeIds: deep.scopeIds,
+    scopeIds: resolveScopeIds(deep, scope),
     query,
     k,
     ...(Object.keys(filters).length > 0 ? { filters } : {}),
@@ -857,7 +879,12 @@ function createMemoryRecallRunner(deps: MemoryToolsDeps): NativeToolRunner {
         log.warn("memory-tools.recall.unavailable", { reason: ERR_DEEP_MEMORY_UNAVAILABLE });
         return typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
       }
-      const request = buildSearchRequest(deep, args, deps.cfg.recall.k);
+      // The `scope` arg narrows which index(es) the search reaches (validate has
+      // already rejected an invalid literal, so this is private|family|absent).
+      const scopeArg = parseScope(args);
+      const scope = scopeArg === "invalid" ? undefined : scopeArg;
+      if (scope === "family" && !deep.scopeIds.family) return typedError(ERR_FAMILY_SCOPE_UNAVAILABLE);
+      const request = buildSearchRequest(deep, args, deps.cfg.recall.k, scope);
       const result = await deep.client.search(request);
       if (!result.ok) {
         log.warn("memory-tools.recall.unavailable", { reason: result.error.kind });

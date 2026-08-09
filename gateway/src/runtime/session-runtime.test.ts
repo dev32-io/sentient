@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { inboundScanConfigSchema } from "@sentient/config";
+import { inboundScanConfigSchema, riskConfigSchema } from "@sentient/config";
 import type { OrchestratorConfig } from "@sentient/config";
 import type { ConversationFeedItem, TaskListItem } from "@sentient/protocol";
 import { createAccessManager } from "../access/access-manager.js";
@@ -10,11 +10,17 @@ import {
   composeSessionSystemPrompt,
   describeInboundGateMode,
 } from "../bootstrap/phase-services.js";
+import { createSituationBlockRenderer } from "../context/situation-block.js";
 import { loadSkillIndexPreamble } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createGatewayLogger } from "../logging/logger.js";
+import type { DeepMemoryClient, Hit } from "../memory/deep-memory-client.js";
+import { createDeepMemoryApp } from "../memory/deep-memory-wiring.js";
+import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
+import { createInboundGate } from "../security/inbound-gate.js";
+import { createRiskAccumulator } from "../security/risk-accumulator.js";
 import type { SkillFile } from "../skills/skill-file.js";
 import { createSkillStore } from "../skills/skill-store.js";
 import { projectForClient } from "../store/client-projection.js";
@@ -3399,5 +3405,176 @@ describe("SessionRuntime system prompt — per-user memory block (Task 6)", () =
     expect(logLines.some((l) => l.includes("memory-tools.write.ok") && l.includes("lines="))).toBe(true);
     expect(logLines.some((l) => l.includes("memory.prompt.rendered") && l.includes("chars="))).toBe(true);
     expect(logLines.some((l) => l.includes("memory-tools.write.refused") && l.includes("kind="))).toBe(true);
+  });
+});
+
+const HEALTH_OK = { status: "ok", version: "1", embeddingModel: null, indexSchemaVersion: 1 } as const;
+
+/** A deterministic profile store: memory toggles ON, no filesystem read — so the
+ *  spark's `memoryTogglesFor` gate never depends on a real profile.json. */
+function sparkOnProfileStore(): ProfileStore {
+  return {
+    get: async () => ({ ok: true, value: { memory: { spark: true, dreaming: true } } }),
+  } as unknown as ProfileStore;
+}
+
+/** A DeepMemoryClient whose search always returns one hit carrying `canary`. */
+function canaryDeepClient(canary: string): DeepMemoryClient {
+  const hit: Hit = {
+    entry: {
+      id: "e_canary",
+      kind: "episode",
+      text: canary,
+      timestamp: "2026-08-01T09:30:00.000Z",
+      scope: "private",
+      sourceRef: {},
+      provenance: "assistant",
+      status: "active",
+      createdAt: "2026-08-01T09:30:00.000Z",
+      statusChangedAt: "2026-08-01T09:30:00.000Z",
+    },
+    similarity: 0.92,
+    rank: 0,
+  };
+  return {
+    registerScope: async () => ({ ok: true, value: undefined }),
+    search: async () => ({ ok: true, value: [hit] }),
+    upsert: async () => ({ ok: true, value: undefined }),
+    setStatus: async () => ({ ok: true, value: undefined }),
+    purge: async () => ({ ok: true, value: undefined }),
+    rebuild: async () => ({ ok: true, value: undefined }),
+    health: async () => ({ ok: true, value: HEALTH_OK }),
+  } as unknown as DeepMemoryClient;
+}
+
+describe("SessionRuntime memory — spark + recall wiring (Task 15)", () => {
+  it("returns no spark, no deep tools wiring when memory is disabled — even with an app passed", () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-off-wired` });
+    const alice = ADULT();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const app = createDeepMemoryApp({
+      baseUrl: "http://127.0.0.1:0",
+      adminToken: "a",
+      dataToken: "d",
+      requestTimeoutMs: 1000,
+      cfg: testConfig().memory,
+      client: canaryDeepClient("unused"),
+      pollMs: 0,
+    });
+    const gate = createInboundGate(
+      inboundScanConfigSchema.parse({}),
+      createRiskAccumulator(riskConfigSchema.parse({})),
+    );
+    const mem = buildSessionMemory(
+      memoryDisabledConfig(),
+      am,
+      alice,
+      { conversationId: "sess-off-wired", connectionId: "conn-off-wired" },
+      { app, gate, profileStore: sparkOnProfileStore() },
+    );
+    expect(mem).toBeNull();
+    app.stop();
+  });
+
+  it("CANARY: spark + recall never leak memory content to logs, while counts do", async () => {
+    const logLines: string[] = [];
+    await createGatewayLogger({ testSink: (line) => logLines.push(line), logLevel: "debug" });
+
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-spark-canary` });
+    const alice = ADULT();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const CANARY = "CANARYsp4rkD0gRex";
+    const app = createDeepMemoryApp({
+      baseUrl: "http://127.0.0.1:0",
+      adminToken: "a",
+      dataToken: "d",
+      requestTimeoutMs: 1000,
+      cfg: testConfig().memory,
+      client: canaryDeepClient(CANARY),
+      pollMs: 0,
+    });
+    const gate = createInboundGate(
+      inboundScanConfigSchema.parse({}),
+      createRiskAccumulator(riskConfigSchema.parse({})),
+    );
+    const mem = buildSessionMemory(
+      testConfig(),
+      am,
+      alice,
+      { conversationId: "sess-spark", connectionId: "conn-spark" },
+      { app, gate, profileStore: sparkOnProfileStore() },
+    );
+
+    // Spark: the canary rides into the block (model-facing) …
+    await mem?.spark?.prime("turn-spark", "what did we decide about the dog");
+    expect(mem?.spark?.current()).toContain(CANARY);
+
+    // Recall: same canary in the model-facing hit line …
+    const recall = mem?.tools.find((t) => t.definition.name === "memory_recall");
+    const res = await recall?.run({ query: "the dog" }, NO_SIGNAL());
+    expect(res?.content).toContain(CANARY);
+
+    // … but NOT one log line carries it, while the count trail IS present.
+    for (const line of logLines) expect(line).not.toContain(CANARY);
+    expect(logLines.some((l) => l.includes("memory-tools.recall.ok") && l.includes("hits="))).toBe(true);
+
+    app.stop();
+  });
+
+  it("primes the spark on the newest user utterance BEFORE the first provider call", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-spark-prime` });
+    const alice = ADULT();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const primed: Array<{ turnId: string; utterance: string }> = [];
+    const spark = {
+      prime: async (turnId: string, utterance: string): Promise<void> => {
+        primed.push({ turnId, utterance });
+      },
+      current: (): string | null =>
+        primed.length > 0 ? "possibly relevant past memories:\n- [private · 2026-08-01] the dog is Rex" : null,
+    };
+    const situationBlock = createSituationBlockRenderer({
+      speech: { spoken: async () => false },
+      surfaces: { count: () => 1 },
+      work: { backgroundTaskCount: () => 0 },
+      sessionId: "sess-prime",
+      memory: () => spark.current(),
+    });
+
+    let primedAtFirstCall = -1;
+    const provider = fakeProvider(async function* () {
+      primedAtFirstCall = primed.length;
+      yield { type: "text", content: "ok" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-prime",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter: recordingEmitter(),
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+      situationBlock,
+      spark,
+    });
+
+    runtime.submit({ kind: "conversational", text: "remember the dog" });
+    await waitUntilIdle(runtime);
+
+    // The prime ran, on THIS turn's utterance, before the provider was called.
+    expect(primedAtFirstCall).toBe(1);
+    expect(primed).toHaveLength(1);
+    expect(primed[0]?.utterance).toBe("remember the dog");
+    // The primed block is now visible through the situation tail's memory closure.
+    expect(await situationBlock.render()).toContain("possibly relevant past memories:");
+
+    runtime.dispose();
   });
 });
