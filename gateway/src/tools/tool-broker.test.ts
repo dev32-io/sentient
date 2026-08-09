@@ -67,6 +67,7 @@ function profileFixture(permissions: ProfileV1["tools"]["permissions"]): Profile
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions, toolsets: [] },
     compression: { threshold: 0.5 },

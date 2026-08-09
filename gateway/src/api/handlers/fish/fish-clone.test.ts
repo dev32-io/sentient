@@ -115,6 +115,7 @@ function sampleProfile(userId = "alice", voiceId = "old-voice"): ProfileV1 {
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: voiceId },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions: {} },
     compression: { threshold: 0.5 },

@@ -16,6 +16,8 @@ export interface ProfileStore {
   remove(userId: string): Promise<Result<void, ProfileStoreError>>;
 }
 
+const MEMORY_TOGGLES_DEFAULT = { spark: true, dreaming: true } as const;
+
 function profilePath(userId: string): string {
   return join(getUserProfileDir(userId), "profile.json");
 }
@@ -81,4 +83,34 @@ export function createProfileStore(): ProfileStore {
       }
     },
   };
+}
+
+/**
+ * The two memory toggles (spark, dreaming) for a user, read at the moment a
+ * caller is about to act on them — no snapshot, same rationale as
+ * `UserAudioPolicy` (`session-handlers/user-audio-policy.ts`). Defaults to
+ * `{spark: true, dreaming: true}` on any unreadable profile (missing,
+ * corrupt, or a schema-valid profile predating this field) — a preference
+ * that cannot be read must not silently turn a household feature off.
+ *
+ * A standalone function taking `store` rather than a fourth `ProfileStore`
+ * interface method: `ProfileStore` is implemented ad hoc by dozens of test
+ * doubles across the gateway (`{get, save, remove}` object literals) that
+ * this task must not force open. `store.get` is already public, so nothing
+ * new needs to be exposed to build this on top of it.
+ */
+export async function memoryTogglesFor(
+  store: ProfileStore,
+  userId: string,
+): Promise<{ spark: boolean; dreaming: boolean }> {
+  const result = await store.get(userId);
+  if (!result.ok) {
+    log.warn("memoryTogglesFor.fallback", {
+      userId,
+      reason: result.error,
+      fallback: MEMORY_TOGGLES_DEFAULT,
+    });
+    return { ...MEMORY_TOGGLES_DEFAULT };
+  }
+  return result.value.memory;
 }

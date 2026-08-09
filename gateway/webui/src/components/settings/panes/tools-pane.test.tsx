@@ -23,6 +23,7 @@ function draft(): ProfileV1 {
     model: { provider: "openrouter", id: "test-model" },
     voice: { provider: "local-tts", id: "test-voice" },
     audio: { ttsEnabled: true, channel: "voice" },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: {},
     compression: { threshold: 0 },

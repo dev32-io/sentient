@@ -69,6 +69,8 @@ const INITIAL_DRAFT: Omit<DraftAccount, "isAdmin"> = {
     model: { provider: "ollama-cloud", id: "" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" },
+    // Mirrors the gateway schema's own `.default({spark: true, dreaming: true})`.
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     // No `permissions` key at all — a fresh account has never touched a
     // dropdown, so every tool resolves from its role template (see

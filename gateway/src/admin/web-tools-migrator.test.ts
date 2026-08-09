@@ -9,6 +9,7 @@ function makeProfile(overrides: Partial<ProfileV1["tools"]["permissions"]>): Pro
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "v1" },
     audio: { ttsEnabled: true, channel: "voice" },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions: overrides as ProfileV1["tools"]["permissions"], toolsets: [] },
     compression: { threshold: 0.8 },

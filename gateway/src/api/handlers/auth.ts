@@ -209,6 +209,10 @@ function buildDefaultProfileBody(secretsStore?: SecretsStore): Omit<ProfileV1, "
     // local-tts grows a multi-voice catalog.
     voice: { provider: "local-tts", id: "default" },
     audio: AUDIO_PREFS_DEFAULT,
+    // Mirrors profileV1Schema's own `.default({spark: true, dreaming: true})` —
+    // this body is hand-built, not zod-parsed, so the schema default never
+    // gets a chance to fill it in.
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     // `permissions` is OMITTED, not `{}`: an empty table is a table naming no
     // server, which the ToolBroker reads as every server off. Absent means

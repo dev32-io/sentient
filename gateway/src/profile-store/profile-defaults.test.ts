@@ -28,6 +28,7 @@ test("applyProfileDefaults seeds tools.permissions and tools.toolsets when calle
     model: { provider: "openrouter" as const, id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts" as const, id: "abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     // OMITTED, not `{}` — an empty table is a table naming no server, which
     // the ToolBroker reads as every server off, so it is preserved rather than
@@ -52,6 +53,7 @@ test("applyProfileDefaults seeds the ACCOUNT'S OWN role, not one default table f
     model: { provider: "openrouter" as const, id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts" as const, id: "abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { toolsets: [] },
     compression: { threshold: 0.5 },
@@ -72,6 +74,7 @@ test("applyProfileDefaults preserves caller-provided tools.permissions overrides
     model: { provider: "openrouter" as const, id: "x" },
     voice: { provider: "local-tts" as const, id: "y" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions: { searxng: { web_search: "allow" as const } }, toolsets: ["memory"] },
     compression: { threshold: 0.5 },
@@ -89,6 +92,7 @@ test("applyProfileDefaults preserves an EMPTY tools.permissions — that is 'eve
     model: { provider: "openrouter" as const, id: "x" },
     voice: { provider: "local-tts" as const, id: "y" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions: {}, toolsets: ["memory"] },
     compression: { threshold: 0.5 },

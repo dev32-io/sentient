@@ -51,6 +51,7 @@ const BRIDGE_PROFILE: ProfileV1 = {
   model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
   voice: { provider: "local-tts", id: "default" },
   audio: { ttsEnabled: true, channel: "voice" as const },
+  memory: { spark: true, dreaming: true },
   persona: { template: "default", overrides: "" },
   tools: {
     permissions: { home_assistant: {}, gateway: {}, music_assistant: {}, searxng: {}, fetch: {} },

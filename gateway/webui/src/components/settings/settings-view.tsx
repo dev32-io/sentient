@@ -97,10 +97,11 @@ export function SettingsView({
 
   const profileDiff = useMemo(() => {
     if (!profileDraft || !profileOriginal) {
-      return { audio: false, model: false, tools: false, advanced: false };
+      return { audio: false, memory: false, model: false, tools: false, advanced: false };
     }
     return {
       audio: !eq(profileDraft.audio, profileOriginal.audio),
+      memory: !eq(profileDraft.memory, profileOriginal.memory),
       model: !eq(profileDraft.model, profileOriginal.model),
       tools: !eq(profileDraft.tools, profileOriginal.tools),
       advanced:
@@ -129,10 +130,13 @@ export function SettingsView({
   // Profile sub-trees coalesce into one op so Apply does a single PUT.
   const derivedOps = useMemo<PendingOpWithPayload[]>(() => {
     const ops: PendingOpWithPayload[] = [];
-    if (profileDraft && (profileDiff.audio || profileDiff.model || profileDiff.tools || profileDiff.advanced)) {
-      // Audio is gateway-side — it never touches the Hermes profile
-      // render/write, so it stays "fast". Voice is no longer part of this
-      // draft/apply flow at all (see VoicesPanel — immediate ops).
+    if (
+      profileDraft &&
+      (profileDiff.audio || profileDiff.memory || profileDiff.model || profileDiff.tools || profileDiff.advanced)
+    ) {
+      // Audio and memory toggles are gateway-side — neither touches the
+      // Hermes profile render/write, so both stay "fast". Voice is no longer
+      // part of this draft/apply flow at all (see VoicesPanel — immediate ops).
       const needsProfileRewrite = profileDiff.model || profileDiff.tools || profileDiff.advanced;
       ops.push({ key: "profile", kind: needsProfileRewrite ? "slow" : "fast", payload: profileDraft });
     }
@@ -160,7 +164,7 @@ export function SettingsView({
     if (profileDiff.tools) s.add("tools");
     if (profileDiff.advanced) s.add("advanced");
     if (soulDirty) s.add("systemPrompt");
-    if (memoryDirty.memory || memoryDirty.user) s.add("memory");
+    if (profileDiff.memory || memoryDirty.memory || memoryDirty.user) s.add("memory");
     if (imperativeOps.some((op) => op.key.startsWith("personalities."))) s.add("personalities");
     if (imperativeOps.some((op) => op.key === "secrets.changed")) s.add("secrets");
     return s;
@@ -239,7 +243,7 @@ export function SettingsView({
 
       <main class="s-main">
         <div class="s-pane" key={tab}>
-          {tab === "memory" && (
+          {tab === "memory" && profileDraft && (
             <MemoryPane
               api={profileApi}
               token={token}
@@ -247,6 +251,8 @@ export function SettingsView({
               originals={memoryOriginals}
               setOriginal={setMemoryOriginalSlot}
               setDraft={setMemoryDraftSlot}
+              memoryToggles={profileDraft.memory}
+              onDraftMemoryToggles={(memory) => setProfileDraft({ ...profileDraft, memory })}
             />
           )}
           {tab === "systemPrompt" && profileDraft && (

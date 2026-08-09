@@ -49,6 +49,7 @@ function sampleProfile(userId: string, permissions?: ProfileV1["tools"]["permiss
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: { permissions, toolsets: [] },
     compression: { threshold: 0.5 },

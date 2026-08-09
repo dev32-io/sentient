@@ -3,12 +3,14 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { MEMORY_MD_CHAR_LIMIT, USER_MD_CHAR_LIMIT } from "../../../constants.ts";
-import type { MemoryDoc, MemorySlot, ProfileApi } from "../../../services/profile-api.js";
+import type { MemoryDoc, MemorySlot, ProfileApi, ProfileV1 } from "../../../services/profile-api.js";
 import { renderMarkdown } from "../../../lib/render-markdown.ts";
 import { Card } from "../primitives/card.tsx";
 import { PaneHead } from "../primitives/pane-head.tsx";
+import { Row } from "../primitives/row.tsx";
 import { Segmented } from "../primitives/segmented.tsx";
 import { Textarea } from "../primitives/textarea.tsx";
+import { Toggle } from "../primitives/toggle.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "memory-pane"]);
 
@@ -40,10 +42,15 @@ export interface MemoryPaneProps {
   originals: Record<MemorySlot, MemoryDoc | null>;
   setOriginal: (slot: MemorySlot, doc: MemoryDoc) => void;
   setDraft: (slot: MemorySlot, content: string) => void;
+  /** Current draft value of the two per-user memory toggles (S1: storage
+   *  only — the spark/dreamer consumers land in later slices). Sourced from
+   *  `profileDraft.memory`, same profile draft/apply flow as `AudioPane`. */
+  memoryToggles: ProfileV1["memory"];
+  onDraftMemoryToggles: (memory: ProfileV1["memory"]) => void;
 }
 
 export function MemoryPane({
-  api, token, drafts, originals, setOriginal, setDraft,
+  api, token, drafts, originals, setOriginal, setDraft, memoryToggles, onDraftMemoryToggles,
 }: MemoryPaneProps): JSX.Element {
   const [slot, setSlot] = useState<MemorySlot>("memory");
   const [view, setView] = useState<"edit" | "preview">("edit");
@@ -79,6 +86,35 @@ export function MemoryPane({
     setDraft(slot, v.length > cap ? v.slice(0, cap) : v);
   };
 
+  const handleSparkToggle = () => {
+    const next = !memoryToggles.spark;
+    log.debug("memory.spark.change", { spark: next });
+    onDraftMemoryToggles({ ...memoryToggles, spark: next });
+  };
+
+  const handleDreamingToggle = () => {
+    const next = !memoryToggles.dreaming;
+    log.debug("memory.dreaming.change", { dreaming: next });
+    onDraftMemoryToggles({ ...memoryToggles, dreaming: next });
+  };
+
+  const toggles = (
+    <Card title="Toggles" sub="Applies on the next Apply — no restart needed.">
+      <Row
+        label="Memory sparking"
+        hint="Bring up relevant past memories in conversation."
+      >
+        <Toggle on={memoryToggles.spark} onChange={handleSparkToggle} />
+      </Row>
+      <Row
+        label="Nightly dreaming"
+        hint="Let Sentient reflect on the day and update its notes."
+      >
+        <Toggle on={memoryToggles.dreaming} onChange={handleDreamingToggle} />
+      </Row>
+    </Card>
+  );
+
   const headSub =
     "Persistent context Hermes carries between conversations. The agent " +
     "writes and prunes this autonomously; you can hand-edit. Apply saves " +
@@ -88,6 +124,7 @@ export function MemoryPane({
     return (
       <>
         <PaneHead title="Memory" sub={headSub} />
+        {toggles}
         <p class="pane-error">{loadError}</p>
       </>
     );
@@ -99,6 +136,8 @@ export function MemoryPane({
   return (
     <>
       <PaneHead title="Memory" sub={headSub} />
+
+      {toggles}
 
       <div class="md-wrap">
         <Segmented

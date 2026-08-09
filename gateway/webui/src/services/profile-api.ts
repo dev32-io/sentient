@@ -31,6 +31,17 @@ export interface ProfileV1 {
     ttsEnabled: boolean;
     channel: "voice" | "text";
   };
+  /**
+   * Per-user memory toggles. Gateway-side only, like `audio` above — a
+   * change here is a "fast" apply-bar op, never the Hermes profile rewrite.
+   * S1: storage only; the spark/dreamer consumers land in later slices.
+   */
+  memory: {
+    /** Bring up relevant past memories in conversation. */
+    spark: boolean;
+    /** Nightly reflection — Sentient reviews the day and updates its notes. */
+    dreaming: boolean;
+  };
   persona: {
     template: string;
     overrides: string;

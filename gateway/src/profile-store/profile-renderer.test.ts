@@ -61,6 +61,7 @@ function buildTestProfile(userId: string): ProfileV1 {
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: {
       permissions: {},

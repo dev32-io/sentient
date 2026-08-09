@@ -121,6 +121,20 @@ export const profileV1Schema = z.object({
     }),
   ),
   audio: audioPrefsSchema.default({ ttsEnabled: true, channel: "voice" }),
+  // Per-user memory toggles (S1: storage + read helper only — the spark and
+  // dreamer consumers land in later slices, T15/T20). Defaulted true on both:
+  // missing-field resilience for every profile written before this field
+  // existed, same pattern as `audio` above and `advanced.reasoningEffort`
+  // below. Gateway-side only, like `audio` — never rendered into the Hermes
+  // profile, so a change here never needs the "slow" apply-pipeline rewrite.
+  memory: z
+    .object({
+      // Bring up relevant past memories in conversation (recall/spark).
+      spark: z.boolean(),
+      // Nightly reflection — Sentient reviews the day and updates its notes.
+      dreaming: z.boolean(),
+    })
+    .default({ spark: true, dreaming: true }),
   persona: z.object({
     template: z.string().min(1),
     overrides: z.string().max(8192),
