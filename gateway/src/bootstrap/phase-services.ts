@@ -25,9 +25,12 @@ import type { StartupConfig } from "../config/startup-config.ts";
 import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
-import { loadSkillIndexPreamble, loadSystemPrompt } from "../context/system-prompt-loader.ts";
+import { loadMemoryPreamble, loadSkillIndexPreamble, loadSystemPrompt } from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.ts";
+import { composeMemoryBlock } from "../memory/memory-prompt.js";
+import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
@@ -53,10 +56,11 @@ import { createHermesRunner } from "../tools/hermes-runner.js";
 import type { HermesRunner } from "../tools/hermes-runner.js";
 import { createMcpClient } from "../tools/mcp-client.js";
 import type { McpClient } from "../tools/mcp-client.js";
+import { MEMORY_TOOL_NAMES, buildMemoryTools } from "../tools/memory-tools.js";
 import { createPromptClassifier } from "../tools/prompt-classifier.js";
 import { SKILL_TOOL_NAMES, createSkillTools } from "../tools/skill-tools.js";
 import { createToolBroker } from "../tools/tool-broker.js";
-import type { BackgroundToolRunner } from "../tools/tool-broker.js";
+import type { BackgroundToolRunner, NativeToolRunner } from "../tools/tool-broker.js";
 import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import type { AuthService } from "../user-auth/auth-service.js";
@@ -136,6 +140,97 @@ export function composeSessionSystemPrompt(
   return index === "" ? base : `${base}\n\n${index}`;
 }
 
+/** The scopes rendered into the memory block in S1 — private only (the
+ *  household scope is minted in T24). A log-field value, not a tunable, so it
+ *  is a code constant rather than YAML. */
+const MEMORY_PROMPT_SCOPES_S1 = "private";
+
+/**
+ * Appends the per-scope file-memory block (Memory System spec §4.5) after the
+ * skill index, forming the session-stable prefix's memory tier, and emits
+ * `memory.prompt.rendered` (chars + scopes, NEVER content — logging rule) once
+ * per session build. Composed ONCE at construction, exactly like the skill
+ * index: byte-stable within a session, so a `memory_write` mid-turn lands in
+ * the NEXT session's build and never mutates this one's cache-stable prefix. A
+ * child principal's block omits `@adults`-tagged content. Private scope only in
+ * S1 — `stores.household` stays undefined until T24.
+ */
+function composeMemoryPrompt(
+  skillPrompt: string,
+  store: MemoryStore,
+  memoryCfg: OrchestratorConfig["memory"],
+  principal: UserPrincipal,
+  ids: { conversationId: string; connectionId: string },
+): string {
+  const block = composeMemoryBlock({ private: store }, memoryCfg, {
+    childPrincipal: principal.role === "child",
+    preamble: loadMemoryPreamble({}),
+  });
+  log.info("memory.prompt.rendered", {
+    userId: principal.userId,
+    conversationId: ids.conversationId,
+    connectionId: ids.connectionId,
+    chars: block.length,
+    scopes: MEMORY_PROMPT_SCOPES_S1,
+  });
+  return `${skillPrompt}\n\n${block}`;
+}
+
+/** The per-session memory wiring the composition root attaches: the memory
+ *  tools (merged into the broker's `native` map) and the prompt-augment seam
+ *  (appends the memory block after the skill index). Null when memory is off. */
+export interface SessionMemory {
+  readonly tools: NativeToolRunner[];
+  /** Appends the memory block after `skillPrompt` and emits
+   *  `memory.prompt.rendered` — the once-per-session render point. */
+  augmentPrompt(skillPrompt: string): string;
+}
+
+/**
+ * Builds ONE session's memory wiring, gated on `orchestrator.memory.enabled`
+ * (Memory System spec §11, T6). Off ⇒ `null`: no `memory-private` grant, no
+ * store, no edit-reingest, no tools, no prompt block. On ⇒ mints the private
+ * grant, opens the store, runs `reingestEdits()` (WARN with COUNTS only — no
+ * content — when anything quarantines), and builds the four memory tools bound
+ * to the private scope (`storeFor("family")` is null in S1; the household scope
+ * is minted in T24). Exported so the composition seam is unit-testable without
+ * standing up the whole orchestrator.
+ */
+export function buildSessionMemory(
+  orchestratorCfg: OrchestratorConfig,
+  accessManager: AccessManager,
+  principal: UserPrincipal,
+  ids: { conversationId: string; connectionId: string },
+): SessionMemory | null {
+  if (!orchestratorCfg.memory.enabled) return null;
+
+  const store = openMemoryStore(accessManager.grant(principal, "memory-private"), orchestratorCfg.memory, {
+    scan: scanContent,
+  });
+  const reingest = store.reingestEdits();
+  if (reingest.quarantined.length > 0) {
+    log.warn("memory.reingest.quarantined", {
+      userId: principal.userId,
+      conversationId: ids.conversationId,
+      connectionId: ids.connectionId,
+      quarantined: reingest.quarantined.length,
+      rescanned: reingest.rescanned.length,
+    });
+  }
+
+  const tools = buildMemoryTools({
+    storeFor: (scope) => (scope === "private" ? store : null),
+    scan: scanContent,
+    cfg: orchestratorCfg.memory,
+    principal,
+  });
+
+  return {
+    tools,
+    augmentPrompt: (skillPrompt) => composeMemoryPrompt(skillPrompt, store, orchestratorCfg.memory, principal, ids),
+  };
+}
+
 /**
  * Boot/build visibility for the inbound gate (defect D18: a silent passthrough
  * reading as "covered" is a false-green, so the mode is logged, not assumed).
@@ -151,7 +246,7 @@ export function composeSessionSystemPrompt(
  *  count toward the gate's own "real" mode: a config where it is the ONLY
  *  channel on is gate-passthrough in truth, and reporting `"real"` there would
  *  be a false "the gate is doing something" signal at boot. */
-const GATE_CHANNELS = ["tool_result", "background_completion", "skill_body"] as const;
+const GATE_CHANNELS = ["tool_result", "background_completion", "skill_body", "memory_body"] as const;
 
 export function describeInboundGateMode(cfg: InboundScanConfig): { mode: "real" | "passthrough"; channels: string } {
   const enabledChannels = Object.entries(cfg.channels)
@@ -414,7 +509,18 @@ export async function buildOrchestratorServices(
    *  then renders without those two lines. */
   auth?: AuthService | null,
 ): Promise<OrchestratorServices> {
-  const accessManager = createAccessManager({ userDataRoot: cfg.access.user_data_root });
+  // `sharedDataRoot` is optional (T24 activates the household scope); when the
+  // operator leaves `access.shared_data_root` unset the AccessManager derives it
+  // as a sibling of `user_data_root`. Threaded here so a household grant lands
+  // under the operator-chosen root the moment T24 mints one.
+  const accessManager = createAccessManager({
+    userDataRoot: cfg.access.user_data_root,
+    // Conditional spread, not `sharedDataRoot: cfg.access.shared_data_root`:
+    // under `exactOptionalPropertyTypes` an OPTIONAL field may be absent or a
+    // string but never explicitly `undefined`. When the operator leaves the key
+    // unset the AccessManager derives the shared root itself.
+    ...(cfg.access.shared_data_root !== undefined ? { sharedDataRoot: cfg.access.shared_data_root } : {}),
+  });
   const mcpClient = createMcpClient(cfg.mcpCatalog, {});
   const delegatedExternalTool = createExternalToolSlot();
 
@@ -687,15 +793,43 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // `skillStore` is kept in this factory scope on purpose: Task 10 (system
     // prompt) reads it here to render the skills index — no new services-bag
     // type is introduced.
+    //
+    // The per-user memory master switch (Memory System spec §11, T1). Off ⇒ no
+    // grant, no store, no reingest, no tools, no prompt block — every memory
+    // effect below is gated on this one flag.
+    const memoryEnabled = orchestratorCfg.memory.enabled;
+
     const skillsRoot = createFileScope(accessManager.grant(principal, "file-scope")).resolve("skills");
     const knownTools = new Set<string>([
       ...catalogTools(mcpCatalog).map((tool) => tool.name),
       ...SKILL_TOOL_NAMES,
+      // The four memory tools join the universe a skill's `tools:` frontmatter
+      // may name — only when memory is on, so a skill can't reference a tool
+      // this session will never build (memory-tools.ts's MEMORY_TOOL_NAMES doc).
+      ...(memoryEnabled ? MEMORY_TOOL_NAMES : []),
       delegateTaskDefinition.name,
     ]);
     const maxBodyChars = orchestratorCfg.skills.max_body_chars;
     const skillStore = createSkillStore(skillsRoot, { maxBodyChars, knownTools });
     const skillTools = createSkillTools(skillStore, { scan: scanContent, knownTools, maxBodyChars });
+
+    // Per-user FILE memory (Memory System spec §4, T6). `buildSessionMemory`
+    // returns null when the master switch is off — no grant, no store, no
+    // reingest, no tools, no prompt block — and otherwise mints the private
+    // grant, opens the store, runs edit-reingest, and builds the four memory
+    // tools. PRIVATE scope only in S1; the household scope is minted in T24.
+    const sessionMemory = buildSessionMemory(orchestratorCfg, accessManager, principal, {
+      conversationId,
+      connectionId,
+    });
+
+    // The single `native` namespace map the broker resolves under
+    // `NATIVE_TOOL_SERVER_KEY`: the skill tools plus (when memory is on) the
+    // four memory tools, each keyed by its definition name. `createSkillTools`
+    // already returns the map, copied here so we never mutate its result;
+    // `buildSessionMemory` hands back an ARRAY of runners.
+    const nativeTools = new Map(skillTools);
+    for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(
@@ -797,10 +931,11 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // so a tool dispatch stays traceable to the one socket that made it.
       sessionId: connectionId,
       backgroundTools,
-      // The five gateway-native FOREGROUND skill tools, keyed under the reserved
-      // `"native"` namespace by the broker's `serverOf` — so a stored
+      // The gateway-native FOREGROUND tools — the five skill tools plus (when
+      // memory is on) the four memory tools — keyed under the reserved
+      // `"native"` namespace by the broker's `serverOf`, so a stored
       // `native[tool]` override bites and a parent's `off` is honoured.
-      nativeTools: skillTools,
+      nativeTools,
       // The per-session inbound gate (T10): every foreground tool result is
       // screened through it before the result cap, and its risk level feeds the
       // PDP's escalation on side-effecting tools.
@@ -842,12 +977,19 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // is read now, at construction — NOT per turn; a skill written mid-session
     // is picked up by the NEXT session's build, keeping the cache-stable prefix
     // fixed for every turn of this one.
-    const sessionSystemPrompt = composeSessionSystemPrompt(
+    const skillPrompt = composeSessionSystemPrompt(
       resolveSystemPrompt(),
       skillStore.list(),
       orchestratorCfg.skills.max_index_entries,
       loadSkillIndexPreamble({}),
     );
+    // The memory block (Memory System spec §4.5) sits AFTER the skill index in
+    // the session-stable prefix, composed ONCE here (same Invariant A: byte-
+    // stable within a session, so a memory_write mid-turn lands in the NEXT
+    // session's build, never mutating this one's cache-stable prefix). A child
+    // principal never sees `@adults`-tagged content. Private scope only in S1.
+    // Null `sessionMemory` (master switch off) leaves the skill prompt as-is.
+    const sessionSystemPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
 
     const runtime = buildSessionRuntime({
       principal,
