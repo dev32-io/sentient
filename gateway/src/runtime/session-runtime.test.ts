@@ -11,10 +11,9 @@ import {
   describeInboundGateMode,
 } from "../bootstrap/phase-services.js";
 import { loadSkillIndexPreamble } from "../context/system-prompt-loader.js";
-import { createGatewayLogger } from "../logging/logger.js";
-import { MEMORY_TOOL_NAMES } from "../tools/memory-tools.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createGatewayLogger } from "../logging/logger.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
 import type { SkillFile } from "../skills/skill-file.js";
 import { createSkillStore } from "../skills/skill-store.js";
@@ -24,6 +23,7 @@ import { projectForModel } from "../store/model-projection.js";
 import type { TitleProvenance } from "../store/session-metadata.js";
 import { openSessionStore } from "../store/session-store.js";
 import type { BackgroundRegistry } from "../tools/background-registry.js";
+import { MEMORY_TOOL_NAMES } from "../tools/memory-tools.js";
 import type { BackgroundToolRunner, ToolBroker } from "../tools/tool-broker.js";
 import { createToolBroker } from "../tools/tool-broker.js";
 import type { ToolDefinition, ToolInvocation, ToolResult } from "../tools/tool-types.js";
