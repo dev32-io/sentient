@@ -537,6 +537,24 @@ describe("memory_recall — wired deep memory", () => {
     expect(res.isError).toBe(true);
     expect(res.content).toContain("family_scope_unavailable");
   });
+
+  it("filters the default search to active memories only — no superseded/stale leak", async () => {
+    const { client, last } = capturingClient();
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
+
+    await invoke(tools, "memory_recall", { query: "q" });
+
+    expect(last()?.filters?.statuses).toEqual(["active"]);
+  });
+
+  it("widens to active + historical statuses only when includeHistorical is set", async () => {
+    const { client, last } = capturingClient();
+    const tools = build("adult", false, { deepMemory: { client, scopeIds: { private: "scope-private" } } });
+
+    await invoke(tools, "memory_recall", { query: "q", includeHistorical: true });
+
+    expect(last()?.filters?.statuses).toEqual(["active", "superseded", "stale"]);
+  });
 });
 
 describe("memory_read — session drill-down (wired)", () => {

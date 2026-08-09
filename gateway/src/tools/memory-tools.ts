@@ -92,9 +92,13 @@ const ERR_REMOVE_LINES_NOT_FOUND = "remove_lines_not_found";
  *  never longer than this. */
 const RECALL_SNIPPET_MAX = 200;
 
+/** Statuses `memory_recall` searches by default (spec §4.4/§5.4): current
+ *  memories only. A superseded/stale entry never surfaces unless the model
+ *  explicitly asks for history. */
+const ACTIVE_STATUSES: readonly EntryStatus[] = ["active"];
+
 /** Statuses `memory_recall` searches when `includeHistorical` is set — active
- *  PLUS the two historical statuses, which are then labelled in the output. The
- *  default search (no filter) is active-only, the service's own default. */
+ *  PLUS the two historical statuses, which are then labelled in the output. */
 const HISTORICAL_STATUSES: readonly EntryStatus[] = ["active", "superseded", "stale"];
 
 /** Prefix a historical (superseded/stale) hit carries so the model can weigh it
@@ -849,15 +853,18 @@ function buildSearchRequest(
   scope: MemoryScope | undefined,
 ): SearchRequest {
   const timeRange = parseTimeRange(args);
-  const filters: SearchFilters = {};
+  // A status filter is ALWAYS sent (spec §4.4/§5.4): default is active-only, so
+  // a superseded/stale entry never surfaces unless the model asks for history.
+  const filters: SearchFilters = {
+    statuses: args.includeHistorical === true ? [...HISTORICAL_STATUSES] : [...ACTIVE_STATUSES],
+  };
   if (timeRange) filters.timeRange = timeRange;
-  if (args.includeHistorical === true) filters.statuses = [...HISTORICAL_STATUSES];
   const query = stringArg(args, "query") ?? "";
   return {
     scopeIds: resolveScopeIds(deep, scope),
     query,
     k,
-    ...(Object.keys(filters).length > 0 ? { filters } : {}),
+    filters,
   };
 }
 
