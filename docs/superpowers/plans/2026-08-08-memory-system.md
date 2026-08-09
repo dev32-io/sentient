@@ -1,108 +1,107 @@
-# Memory System — Implementation Plan
+# Memory System — Implementation Plan (rev 2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **PARALLEL EXECUTION MODEL (identical to the skill-system plan):** tasks are
-> grouped into WAVES. Tasks inside a wave own DISJOINT file sets and may run as
-> concurrent subagents on this one branch. TDD is preserved *inside* each task.
-> Hard rules that make same-branch parallelism safe:
-> 1. **Workers never run `git add`/`git commit`.** The orchestrator commits each
->    task's exact file set serially when the task is accepted (atomic commit per
->    task; no index-lock races).
+> Rev 2 folds the dual plan review (Codex 6 blockers/18 majors + fleet 8 headlines,
+> `docs/superpowers/reviews/2026-08-08-memory-system.md`): wave-1 dependency fix,
+> real repo paths (user_data_root, profile-store settings, venv conventions),
+> edit-ingest quarantine owner, trigger-entry taint classifier, dreamer transaction
+> boundary, commit protocol, contract pins.
+>
+> **PARALLEL EXECUTION MODEL:** tasks are grouped into WAVES. Tasks dispatched
+> CONCURRENTLY own DISJOINT file sets. TDD is preserved *inside* each task.
+> Hard rules:
+> 1. **Workers never run `git add`/`git commit`.** On acceptance the orchestrator
+>    runs `git add -- <exact task paths>`, verifies `git diff --cached --name-only`
+>    equals the task's file list (untracked files included via the add), commits,
+>    then verifies the index is empty. Atomic commit per task.
 > 2. **Workers run only their own task's test files** (`bun run test -- <file>`
->    from `gateway/`, or `./venv/bin/pytest <file>` inside the service dir),
->    never the whole suite; **never `bun run typecheck`/`bun run ci` mid-wave** —
->    a repo-wide check sees siblings' half-written files and its red is noise.
+>    from `gateway/`, or `.venv/bin/pytest <file>` inside the service dir),
+>    never the whole suite; **never `bun run typecheck`/`bun run ci` mid-wave.**
 > 3. **A worker touches ONLY the files its task lists.** A needed-but-unlisted
 >    edit is a task-boundary bug: stop and report to the orchestrator.
-> 4. **Orchestrator commits use an explicit pathspec and skip the hook
->    mid-wave:** `git status --porcelain -- <task files>` must show ONLY that
->    task's changes, then `git commit --no-verify -m "…" -- <task files>`.
->    `--no-verify` is safe ONLY because rule 5 is the real gate.
-> 5. **The wave boundary IS the gate:** after a wave's last task commits, the
->    orchestrator runs `bun run ci` (and, once the service exists,
->    `capabilityServices/DeepMemoryService/venv/bin/pytest`) and fixes or
->    reverts before dispatching the next wave. No wave starts on a red gate.
-> 6. **No task imports a module authored by a same-wave sibling.** Cross-wave
->    imports are safe only because the source wave's gate was green.
-> 7. **Model sizing:** each task carries a `Model:` line — `sonnet` for
->    mechanical/config/docs/copy work, `opus` for standard module
->    implementation, `fable` (inherit) for security-critical or
->    architecture-heavy tasks (dreamer runner, reconciler, search pipeline)
->    and for the serial E2E tasks. The orchestrator passes it to the Agent
->    call; when in doubt, size UP.
+> 4. **Orchestrator commits use the rule-1 protocol and skip the hook mid-wave**
+>    (`--no-verify`); safe ONLY because rule 5 is the real gate.
+> 5. **Every sub-wave boundary is a gate:** before dispatching any task that
+>    consumes a predecessor, the orchestrator runs `bun run ci` (+ service
+>    `.venv/bin/pytest` from wave 3 on) and fixes or reverts. No dispatch on red.
+> 6. **No task imports a module authored by a CONCURRENTLY DISPATCHED sibling.**
+>    Serial lanes inside a wave are legal: the dependent starts only after its
+>    predecessor is accepted, committed, and the lane-local tests are green.
+> 7. **Model sizing:** `sonnet` = mechanical/config/docs/templates/copy;
+>    `opus` = everything else, including security-critical modules and the
+>    serial E2E tasks. The orchestrator (fable) never delegates orchestration.
 
-**Goal:** Per-user + shared-family memory: dumb markdown note files rendered into the system prompt, a native MLX deep-memory index service with per-turn spark and two-step recall, and a nightly dreamer that distills sessions into journal + notes — per `docs/superpowers/specs/2026-08-08-memory-system-design.md` (rev 2). **Read the spec first; it is the contract.**
+**Goal:** Per-user + shared-family memory per `docs/superpowers/specs/2026-08-08-memory-system-design.md` (rev 2). **The spec is the contract — read it first.**
 
-**Architecture:** `gateway/src/memory/` (store, retriever, dreamer, client) + 4 native tools + `capabilityServices/DeepMemoryService/` (Python+MLX, scope-registry API) + `memory_body` inbound-gate channel. Skill system is the pattern precedent throughout.
+**Architecture:** `gateway/src/memory/` (store, retriever, dreamer, client) + 4 native tools + `capabilityServices/DeepMemoryService/` (Python+MLX) + `memory_body` gate channel. Skill system is the precedent throughout.
 
-**Tech Stack:** Bun/TypeScript strict + vitest + zod (gateway); Python 3.11 + pytest + MLX + sqlite-vec + FTS5 (service); no new gateway deps.
+**Tech Stack:** Bun/TS strict + vitest + zod (gateway); Python (version pinned in T9a after wheel-availability check, expect 3.11) + pytest + aiohttp + MLX + sqlite-vec + FTS5 (service).
 
 ## Global Constraints
 
-- Topic slug: `^[a-z0-9][a-z0-9-]{0,63}$` — protocol constant in code, not config.
-- All tunables in `orchestrator.memory` (spec §11) — block AND every sub-block `.default({})`, leaf zod defaults, YAML comments with ranges. Defaults verbatim from spec §11.
-- Dreamer does NOT use the auxiliary seam (spec §8) — its own `ProviderClient` runner, compaction precedent.
-- No recall-time LLM synthesis. Recall = hit list; drill-down = capped `memory_read` (spec §7).
-- Provenance taint propagation (spec §3.1); write-time scan fail-closed; `memory_body` gate channel read-time; no memory content in logs (lengths/ids/counts/scores only).
-- Note files are dumb (spec §4.2): no per-line IDs; model may remove lines; history lives in journal/archive/index.
-- Every new TS file: tagged logger, hierarchy-true tags. Service: its own tagged logging per the Python services' convention.
-- Spark: similarity gates, recency only orders (spec §5.3). Situation-block only; never the cached prefix.
-- All unit tests zero-cost. `@live` suites env-gated (`DEEP_MEMORY_LIVE`, `DREAMER_LIVE`); the dreamer smoke is the ONLY paid test.
-- Pinned-versions rule: T9 verifies the MLX embedding model + sqlite-vec versions against current releases before pinning.
+- Topic slug `^[a-z0-9][a-z0-9-]{0,63}$` — code constant. Frontmatter via the existing `yaml` package + zod (skill-file.ts precedent — NOT hand-rolled).
+- All tunables in `orchestrator.memory` (spec §11): block + every sub-block `.default({})`, leaf zod defaults, YAML comments with ranges.
+- **Slice staging:** shipped YAML starts `spark.enabled: false`, `dreamer.enabled: false` (zod defaults stay `true` for missing-block resilience). T15 flips spark on; T20 flips dreamer on. `memory.enabled` is a real master switch consumed by T6.
+- Dreamer: own `ProviderClient` runner (compaction precedent), never the auxiliary seam. No recall-time LLM synthesis.
+- Provenance taint (spec §3.1) covers `tool_result` AND background-completion `trigger` entries. Write-time scan fail-closed on `suspicious` AND `hostile`. `memory_body` gate channel read-time. No memory content in logs.
+- Note files are dumb (spec §4.2). Spark: similarity gates, recency only orders. Situation-block only.
+- Household dir name = the principal's `householdId` (live value today: `"home"`, minted in `ws-auth-gate.ts` — spec §2's `family` is illustrative).
+- Every new TS file: tagged logger. All unit tests zero-cost; `@live` env-gated (`DEEP_MEMORY_LIVE` free, `DREAMER_LIVE` paid — the only paid test). E2E rows run against a local/Ollama provider config — zero paid tokens.
 
 ## File Ownership Matrix (conflict guard)
 
 | File set | Task | Wave | Model |
 |---|---|---|---|
-| `shared/config/src/schemas/orchestrator-config.ts` + `shared/config/src/schema.ts` (inbound channels) + `gateway/src/security/injection-scanner.ts` (`ScanChannel` union only) + `gateway/config.yaml` keys + loader test | T1 | 0 | sonnet |
+| `shared/config/src/schemas/orchestrator-config.ts`, `shared/config/src/schema.ts` (inbound channel + `access.shared_data_root`), `gateway/src/security/injection-scanner.ts` (`ScanChannel` union line only), `gateway/config.yaml` keys, loader test | T1 | 0 | sonnet |
 | `gateway/src/access/capability.ts`, `access/access-manager.ts` (+tests) | T2 | 0 | opus |
 | `gateway/src/memory/memory-file.ts` (+test) | T3a | 0 | sonnet |
-| `gateway/src/memory/memory-store.ts` (+test) | T3b | 1 (after T2+T3a) | opus |
-| `gateway/src/memory/memory-prompt.ts` (+test), `context/system-prompt-loader.ts` (loader fn only), `gateway/system_prompts/memory-preamble.md` | T4 | 1 | opus |
-| `gateway/src/tools/memory-tools.ts` (+test), `api/handlers/mcp-catalog.ts` (rows only) | T5 | 1 | opus |
-| `gateway/src/bootstrap/phase-services.ts` + `runtime/session-runtime.ts` (S1 wiring: store, tools, prompt) | T6 | 1b (sole owner) | opus |
-| webui per-user toggles (settings pane + store) + `shared/protocol` settings fields | T7 | 2 | sonnet |
-| E2E: S1 matrix rows (no source edits) | T8 | 2 (serial, owns stack) | fable |
-| `capabilityServices/DeepMemoryService/` (entire dir: server, registry, auth, health, pytest) | T9a | 3 | opus |
-| `capabilityServices/DeepMemoryService/` index engine (sqlite+vec+FTS+RRF+embed) — same lane as T9a | T9b | 3 (after T9a) | fable |
-| `gateway/src/memory/deep-memory-client.ts` (+test, mock server) | T10 | 3 | opus |
-| `gateway/config.yaml` `managed_services.deep-memory` + `deploy/mac-prod/setup-prod.py` allowlist + `deploy/README.md` + service `config.example.yaml`/`CONTRACT.md` | T11 | 3 | sonnet |
-| `gateway/src/memory/index-sync.ts` (outbox/cursor, +test) | T12 | 4 | opus |
-| `gateway/src/memory/memory-retriever.ts` (+test), `context/situation-block.ts` (collaborator slot) | T13 | 4 | fable |
-| `gateway/src/tools/memory-tools.ts` (recall/read real impl), `store/` excerpt projection helper, `tools/tool-broker.ts` (`provenanceFor` memory_body) | T14 | 4 | opus |
-| `bootstrap/phase-services.ts` (S2 wiring: client, retriever, sync) | T15 | 4b (sole owner) | opus |
-| E2E: S2 rows + `@live` service round-trip | T16 | 4b (serial) | fable |
+| `gateway/src/memory/memory-store.ts` (+test) | T3b | 1a (sole) | opus |
+| `gateway/src/memory/memory-prompt.ts` (+test), `context/system-prompt-loader.ts` (loader fn), `gateway/system_prompts/memory-preamble.md` | T4 | 1b | opus |
+| `gateway/src/tools/memory-tools.ts` (+test), `api/handlers/mcp-catalog.ts` (rows) | T5 | 1b | opus |
+| `bootstrap/phase-services.ts` (S1 slots incl. `GATE_CHANNELS`), `runtime/session-runtime.ts` (S1: reingest at build), composition test | T6 | 1c (sole) | opus |
+| `gateway/src/profile-store/profile-types.ts` (+defaults), profile update path, `gateway/webui/src/services/profile-api.ts`, `webui/.../panes/memory-pane.tsx` (add toggles; existing Hermes editor stays), round-trip test | T7 | 2 | sonnet |
+| E2E S1 (Files: `agents/docs/testing-knowledge.md` rows + Playwright evidence dir) | T8 | 2b (serial) | opus |
+| `capabilityServices/DeepMemoryService/`: `pyproject.toml`, `requirements.txt`, `src/deep_memory/{__main__.py,server.py,scopes.py,auth.py,config.py,logging.py}`, `config/config.example.yaml`, `tests/test_server.py`, protocol fixtures `tests/fixtures/*.json` | T9a | 3 | opus |
+| same dir: `src/deep_memory/{index.py,embedder.py,search.py}`, `tests/{test_index.py,test_search.py}`, version pins into `config.example.yaml`/`requirements.txt` | T9b | 3 (lane, after T9a) | opus |
+| `gateway/src/memory/deep-memory-client.ts` (+test using T9a's committed fixtures) | T10 | 3 | opus |
+| `gateway/config.yaml` `managed_services.deep-memory`, `deploy/mac-prod/setup-prod.py` (`SERVICE_SOURCES` ~169-178), `scripts/build-python-wheels.sh`, `scripts/dev-stage-code.sh`, `deploy/README.md`, service `CONTRACT.md`, `capabilityServices/DeepMemoryService/tests/test_live_roundtrip.py` (DEEP_MEMORY_LIVE-gated) | T11 | 3b (after T9b) | sonnet |
+| `gateway/src/memory/index-sync.ts` (+test) | T12 | 4 | opus |
+| `gateway/src/memory/memory-retriever.ts` (+test), `context/situation-block.ts` (optional `memory` dep) | T13 | 4 | opus |
+| `gateway/src/tools/memory-tools.ts` (recall/read real), `gateway/src/store/session-excerpt.ts` (+test), `tools/tool-broker.ts` (`provenanceFor` routing), broker-level gate test | T14 | 4 | opus |
+| `bootstrap/phase-services.ts` + `runtime/session-runtime.ts` (S2 slots: client, scopes, sync, spark turn-start hook) + `gateway/config.yaml` (`spark.enabled: true`) | T15 | 4b (sole) | opus |
+| E2E S2 (Files: testing-knowledge rows + evidence) | T16 | 4c (serial) | opus |
 | `gateway/src/store/project-for-dreaming.ts` (+test) | T17 | 5 | opus |
 | `gateway/system_prompts/dreamer/{map.md,reduce.md}` | T18a | 5 | sonnet |
-| `gateway/src/memory/dreamer/dreamer-runner.ts` (+test: checkpoint, idempotency, yield) | T18b | 5 (after T17) | fable |
-| `gateway/src/memory/dreamer/episode-writer.ts` (journal+episodes, +test) | T19 | 5 (same lane, after T18b) | opus |
-| `gateway/src/memory/dreamer/scheduler.ts` (+test) + `phase-services.ts` (S3 wiring; sole owner in its slot) | T20 | 5b | opus |
-| `gateway/src/memory/dreamer/reconciler.ts` (+test: ops, rail, archive) | T21 | 6 | fable |
-| `@live` dreamer smoke (`*.live.test.ts`) + reduce-call integration | T22 | 6 (after T21) | opus |
-| `qa/mobile/flows/*` memory flows + E2E S3 rows | T23 | 6b (serial) | fable |
-| household grant + shared-scope instantiation + audience filter (`access/`, `memory-prompt.ts`, `memory-retriever.ts`, `memory-tools.ts` validate) | T24 | 7 | opus |
-| deep-dream trigger + operator purge runbook + `docs/native-todo.md`/`agents/docs/learnings.md`/`testing-knowledge.md` updates | T25 | 7 | sonnet |
-| E2E: S4 rows + full-matrix regression | T26 | 7b (serial, final) | fable |
+| `gateway/src/memory/dreamer/dreamer-runner.ts` (+test) | T18b | 5 (lane, after T17) | opus |
+| `gateway/src/memory/dreamer/episode-writer.ts` (+test) | T19 | 5 (lane, after T18b) | opus |
+| `gateway/src/memory/dreamer/scheduler.ts` (+test), `phase-services.ts` (S3a slot), `gateway/config.yaml` (`dreamer.enabled: true`) | T20 | 5b (sole) | opus |
+| E2E S3a mini (spark-episode-happy, dream-reflects episodic) | T20b | 5c (serial) | opus |
+| `gateway/src/memory/dreamer/reconciler.ts` (+test) | T21 | 6 | opus |
+| `dreamer-runner.ts` (reduce+ops in transaction), `dreamer.live.test.ts` + `tests fixture dreamer.fixture.json`, reconciler replay test | T22 | 6 (lane, after T21) | opus |
+| E2E S3 full + Maestro memory flows (`qa/mobile/flows/{android,ios}/*memory*.yaml`, testing-knowledge rows) | T23 | 6b (serial) | opus |
+| household activation: `phase-services.ts` (its slot), `memory-prompt.ts`, `memory-retriever.ts`, `memory-tools.ts`, `index-sync.ts` (audience/author metadata), tests re-run list | T24 | 7 | opus |
+| deep-dream trigger (`scheduler.ts`), `docs/native-todo.md`, `agents/docs/learnings.md`, `deploy/README.md` runbook | T25 | 7 | sonnet |
+| E2E S4 + full-matrix regression (testing-knowledge family rows + evidence) | T26 | 7b (serial, final) | opus |
 
-Waves: **0** T1∥T2∥T3a → gate. **1** T3b∥T4∥T5 → gate, **1b** T6 → gate. **2** T7, then T8 (serial) → S1 done. **3** (T9a→T9b)∥T10∥T11 → gate + `@live` service. **4** T12∥T13∥T14 → gate, **4b** T15 → T16 (serial) → S2 done. **5** T17∥T18a, then T18b→T19; **5b** T20 → gate. **6** T21→T22, **6b** T23 (serial) → S3 done. **7** T24∥T25, **7b** T26 → S4 done. Gate = orchestrator runs `bun run ci` (+ service pytest from wave 3 on).
+Waves: **0** T1∥T2∥T3a → gate. **1a** T3b → gate. **1b** T4∥T5 → gate. **1c** T6 → gate. **2** T7 → gate, **2b** T8. **3** (T9a→T9b) ∥ T10 → gate, **3b** T11 → gate + live round-trip. **4** T12∥T13∥T14 → gate, **4b** T15 → gate, **4c** T16. **5** T17∥T18a, lane T17→T18b→T19 → gate, **5b** T20 → gate, **5c** T20b. **6** T21→T22 → gate, **6b** T23. **7** T24∥T25 → gate, **7b** T26.
 
 ---
 
-### Task 1: Config schema + channels + YAML
+### Task 1: Config schema + channels + shared root + YAML
 
 **Model:** sonnet
-**Files:** Modify `shared/config/src/schemas/orchestrator-config.ts`, `shared/config/src/schema.ts` (security.inbound_scan.channels), `gateway/src/security/injection-scanner.ts` (add `"memory_body"` to the `ScanChannel` union — one line, no logic), `gateway/config.yaml`; Test: extend `shared/config/src/loader.test.ts`.
-**Interfaces — Produces:** `config.orchestrator.memory` exactly as spec §11 (keys, defaults, ranges); `config.security.inbound_scan.channels.memory_body: boolean` (default true); `ScanChannel` includes `"memory_body"`.
+**Files:** Modify `shared/config/src/schemas/orchestrator-config.ts`, `shared/config/src/schema.ts` (add `memory_body` channel boolean beside the four at ~:391-394 AND `access.shared_data_root` — optional string beside `user_data_root`), `gateway/src/security/injection-scanner.ts` (`ScanChannel` union at :11 — add `"memory_body"`, no logic), `gateway/config.yaml`; Test: extend `shared/config/src/loader.test.ts`.
+**Interfaces — Produces:** `config.orchestrator.memory` per spec §11 **plus** `memory.service.url` (string, default `http://127.0.0.1:8771`, loopback comment); `config.security.inbound_scan.channels.memory_body: boolean` default true; `config.access.shared_data_root?: string` (optional; consumers derive `join(dirname(user_data_root), "shared")` when absent — comment says so); `ScanChannel` includes `"memory_body"`.
 
-- [ ] **Step 1: Failing test** — two cases, upgrade-safety is the important one:
+- [ ] **Step 1: Failing test:**
 
 ```ts
 it("parses orchestrator.memory with spec defaults", () => {
   const cfg = loadConfigFixture();
   expect(cfg.orchestrator.memory.core_max_lines).toBe(300);
   expect(cfg.orchestrator.memory.spark.min_similarity).toBe(0.6);
-  expect(cfg.orchestrator.memory.dreamer.preservation_pct).toBe(75);
+  expect(cfg.orchestrator.memory.service.url).toBe("http://127.0.0.1:8771");
   expect(cfg.security.inbound_scan.channels.memory_body).toBe(true);
 });
 it("boots a pre-upgrade config missing orchestrator.memory entirely", () => {
@@ -112,32 +111,32 @@ it("boots a pre-upgrade config missing orchestrator.memory entirely", () => {
 ```
 
 - [ ] **Step 2:** `bun run test -- loader` from `shared/config` — FAIL.
-- [ ] **Step 3:** Implement zod per spec §11 — every sub-block (`service`, `spark`, `recall`, `dreamer`) `.default({})`, every leaf `.default(<spec value>)` with `.min/.max` from the spec's ranges. Add `memory_body: z.boolean().default(true)` beside the four existing channel booleans. Add the full YAML block from spec §11 verbatim (comments + ranges are part of the deliverable).
-- [ ] **Step 4:** PASS (own test file only). **Step 5:** Report; orchestrator commits `feat(config): orchestrator.memory + memory_body channel`.
+- [ ] **Step 3:** Implement per spec §11 (every sub-block `.default({})`, leaf `.default()` + `.min/.max` from ranges). **Shipped YAML sets `spark.enabled: false` and `dreamer.enabled: false`** (staging, Global Constraints) — zod defaults remain `true`. Full YAML block with per-key comments + ranges.
+- [ ] **Step 4:** PASS. **Step 5:** report; orchestrator commits `feat(config): orchestrator.memory + memory_body channel + shared root`.
 
 ---
 
 ### Task 2: Memory capabilities
 
 **Model:** opus
-**Files:** Modify `gateway/src/access/capability.ts` (ResourceClass union), `gateway/src/access/access-manager.ts`; Test: extend `gateway/src/access/access-manager.test.ts`.
-**Interfaces — Produces:** `ResourceClass` gains `"memory-private" | "memory-household"`; `AccessManager.grant(principal, "memory-private")` → capability rooted at `<user_data_root>/users/<userId>/`; `grant(principal, "memory-household")` → capability rooted at `<user_data_root>/shared/<householdId>/` (dir name = householdId; the spec's `shared/family/` is household id `family`). Existing grants untouched.
+**Files:** Modify `gateway/src/access/capability.ts` (ResourceClass union at :12), `gateway/src/access/access-manager.ts`; Test: extend `gateway/src/access/access-manager.test.ts`.
+**Interfaces — Consumes:** T1's `config.access.shared_data_root` (via `AccessManagerConfig` — add optional `sharedDataRoot` field; when absent derive `join(dirname(userDataRoot), "shared")`). **Produces:** `ResourceClass` gains `"memory-private" | "memory-household"`; `grant(principal, "memory-private")` → cap rooted `join(userDataRoot, principal.userId)` (the EXISTING `userHomeDir` — `user_data_root` is already `~/.sentient/gateway/users`, config.yaml:197; no extra segment); `grant(principal, "memory-household")` → cap rooted `join(sharedDataRoot, principal.householdId)`. Field name is **`cap.resource`** (capability.ts:17).
 
-- [ ] **Step 1: Failing tests** — household root derivation; cross-class rejection material for T3b:
+- [ ] **Step 1: Failing tests:**
 
 ```ts
-it("mints a household memory capability rooted in the shared dir", () => {
-  const cap = manager.grant(principal({ userId: "kevin", householdId: "family" }), "memory-household");
-  expect(cap.resourceClass).toBe("memory-household");
-  expect(cap.rootPath).toBe(join(root, "shared", "family"));
+it("memory-private roots in the existing user home dir", () => {
+  const cap = manager.grant(p({ userId: "kevin" }), "memory-private");
+  expect(cap.resource).toBe("memory-private");
+  expect(cap.rootPath).toBe(join(userDataRoot, "kevin"));
 });
-it("memory-private capability roots in the user dir, not shared", () => {
-  const cap = manager.grant(principal({ userId: "kevin" }), "memory-private");
-  expect(cap.rootPath).toBe(join(root, "users", "kevin"));
+it("memory-household roots in the shared sibling dir keyed by householdId", () => {
+  const cap = manager.grant(p({ userId: "kevin", householdId: "home" }), "memory-household");
+  expect(cap.rootPath).toBe(join(dirname(userDataRoot), "shared", "home"));
 });
 ```
 
-- [ ] **Step 2:** FAIL. **Step 3:** Extend the grant map (union + switch); mkdir-on-grant consistent with existing classes. **Step 4:** PASS. **Step 5:** commit `feat(access): memory-private + memory-household resource classes`.
+- [ ] Steps: FAIL → implement (mkdir-on-grant consistent with existing classes) → PASS → commit `feat(access): memory resource classes + shared root derivation`.
 
 ---
 
@@ -145,307 +144,311 @@ it("memory-private capability roots in the user dir, not shared", () => {
 
 **Model:** sonnet
 **Files:** Create `gateway/src/memory/memory-file.ts` (+test).
-**Interfaces — Produces:** `MEMORY_SLUG_RE`; `parseTopicFile(raw): {name, description, body} | {error}`; `serializeTopicFile(meta, body)`; `validateMemoryText(text, {maxLines, maxChars}): {ok} | {error: "cap_lines"|"cap_chars"|"invisible_chars", lines, chars}`; `countUsage(text): {lines, chars}`. Mirror `skill-file.ts` (hand-rolled frontmatter, invisible-char rejection).
-
-- [ ] Steps: failing tests (slug regex reject `../evil`, invisible-char reject `"fact​"`, cap counting exact at boundary) → implement → PASS → commit `feat(memory): memory file format + validation`.
+**Interfaces — Produces:** `MEMORY_SLUG_RE`; `parseTopicFile(raw)` / `serializeTopicFile(meta, body)` using the `yaml` package + zod discriminated result (mirror `gateway/src/skills/skill-file.ts:12,51` — read it first); `validateMemoryText(text, {maxLines, maxChars}): {ok:true} | {ok:false; error:"cap_lines"|"cap_chars"|"invisible_chars"; lines; chars}`; `countUsage(text)`.
+- [ ] Steps: failing tests (slug traversal reject, invisible-char reject, exact cap boundary) → implement → PASS → commit `feat(memory): memory file format + validation`.
 
 ---
 
-### Task 3b: MemoryStore
+### Task 3b: MemoryStore (wave 1a, sole)
 
 **Model:** opus
-**Files:** Create `gateway/src/memory/memory-store.ts` (+test). (Same lane as T3a; starts after T2+T3a accepted.)
-**Interfaces — Consumes:** T2 capabilities, T3a validators. **Produces:**
+**Files:** Create `gateway/src/memory/memory-store.ts` (+test).
+**Interfaces — Consumes:** T2 caps, T3a validators, `scanContent` type (`import type { ScanResult } from "../security/injection-scanner"`; constructor dep `scan: typeof scanContent`). **Produces:**
 
 ```ts
-openMemoryStore(cap: Capability, cfg: MemoryConfig): MemoryStore
+openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: {scan: typeof scanContent}): MemoryStore
 interface MemoryStore {
-  readCore(): string | null;                     // MEMORY.md
-  writeCore(next: string): WriteResult;          // caps + scan hook + atomic tmp+rename
-  listTopics(): TopicMeta[]; readTopic(slug): string | null;
-  writeTopic(slug, meta, body): WriteResult;
-  listJournal(): string[]; readJournal(date): string | null;
-  writeJournal(date, content): WriteResult;      // dreamer only (not exposed as a tool)
-  archiveCore(): void;                           // timestamped snapshot into archive/
-  changedSinceLastSeen(): ChangedFile[];         // content-hash edit-ingest detection (spec §3.2)
+  readCore(): string | null; writeCore(next: string): WriteResult;
+  listTopics(): TopicMeta[]; readTopic(slug: string): string | null;
+  writeTopic(slug: string, meta: TopicMeta, body: string): WriteResult;
+  listJournal(): string[]; readJournal(date: string): string | null;
+  writeJournal(date: string, content: string): WriteResult;
+  archiveCore(): void;
+  reingestEdits(): { rescanned: string[]; quarantined: string[] }; // hash-detect + re-validate + re-scan; quarantined files render absent from readCore/readTopic until re-written
 }
-type WriteResult = { ok: true; usage: {lines,chars} } | { ok: false; error: "cap_lines"|"cap_chars"|"scan_rejected"|"path_refused"; usage? }
+type WriteResult = { ok: true; usage: {lines: number; chars: number} }
+  | { ok: false; error: "cap_lines"|"cap_chars"|"scan_rejected"|"path_refused"; usage?: {lines: number; chars: number} }
 ```
 
-Rooted at `cap.rootPath + "/memory"`. Rejects wrong-class capability FIRST (class check before path), own `guardedRealpath` symlink guard (skill-store precedent), scan injected as `scan: (text) => ScanVerdict` constructor dep. Hash state file `.ingest-hashes.json` inside the memory dir.
+Rooted `cap.rootPath + "/memory"`. Wrong-class capability rejected FIRST (accepts `memory-private` or `memory-household`); `guardedRealpath` symlink guard (skill-store.ts:85-97 precedent); scan fail-closed on `suspicious` AND `hostile`; hash + quarantine state in `memory/.ingest-state.json`; atomic tmp+rename.
 
-- [ ] **Step 1: Failing tests** (the security ones are the point):
-
-```ts
-it("rejects a session-store capability outright", () => {
-  expect(() => openMemoryStore(sessionStoreCap, cfg)).toThrow(/resource class/);
-});
-it("refuses a symlinked topics dir escaping the root", () => { /* mk symlink out of root; writeTopic → path_refused */ });
-it("refuses a write that would exceed core_max_lines with usage numbers", () => { /* 300-line file + append → cap_lines, usage.lines === 301 */ });
-it("detects an out-of-band human edit by content hash", () => { /* write; mutate file directly via fs; changedSinceLastSeen() lists it */ });
-it("fail-closed on hostile scan verdict", () => { /* scan stub → hostile; writeCore → scan_rejected; file untouched */ });
-```
-
-- [ ] Steps: FAIL → implement → PASS → commit `feat(memory): capability-rooted MemoryStore with caps, scan, edit-ingest`.
+- [ ] **Step 1: Failing tests** (security is the point): wrong-class rejection (`sessionStoreCap` → throw /resource class/); symlink escape → `path_refused`; cap refusal with usage; **quarantine round-trip** — write clean file, mutate on disk to injection text, `reingestEdits()` quarantines it, `readCore()` returns null + WARN logged, re-`writeCore` clears quarantine; `suspicious` verdict → `scan_rejected`, file untouched.
+- [ ] Steps: FAIL → implement → PASS → commit `feat(memory): MemoryStore — caps, scan, symlink guard, edit-ingest quarantine`.
 
 ---
 
-### Task 4: Prompt rendering
+### Task 4: Prompt rendering (wave 1b)
 
 **Model:** opus
-**Files:** Create `gateway/src/memory/memory-prompt.ts` (+test), `gateway/system_prompts/memory-preamble.md`; Modify `gateway/src/context/system-prompt-loader.ts` (add `loadMemoryPreamble()`, two-tier baked/override like `loadSkillIndexPreamble` — locate with `grep -n loadSkillIndexPreamble`).
-**Interfaces — Consumes:** T3b `MemoryStore`. **Produces:** `composeMemoryBlock(stores: {private: MemoryStore, household?: MemoryStore}, cfg, opts: {childPrincipal: boolean}): string` — preamble + labeled data envelopes per scope + topic index lines (byte-stable sort, invisible-char strip), aggregate `prompt_budget_chars` with the spec §4.5 drop order (each truncation WARN-logged), `@adults`-tagged household lines filtered when `childPrincipal`. Pure: reads stores once, returns a string; called once per session build.
-
-- [ ] **Step 1: Failing tests** — byte-stability (`compose(x) === compose(x)`), drop order under a tiny budget (family topic index vanishes first), `@adults` line filtered for child, empty-memory renders preamble only.
-- [ ] Steps: FAIL → implement → PASS → commit `feat(memory): system-prompt memory block renderer + preamble`.
-
-**Preamble content (write it, don't stub):** what memory is; style contract (one fact per line, concise, no prose); cap contract (usage in every write result; consolidate when refused); latency etiquette ("before memory_recall, speak a short acknowledgment so the user isn't waiting in silence"); "don't write ambiently — explicit requests and clearly durable facts only; the nightly dreamer does the rest."
+**Files:** Create `gateway/src/memory/memory-prompt.ts` (+test), `gateway/system_prompts/memory-preamble.md`; Modify `gateway/src/context/system-prompt-loader.ts` (add `loadMemoryPreamble()` mirroring `loadSkillIndexPreamble` at :88).
+**Interfaces — Consumes:** T3b `MemoryStore`. **Produces:** `composeMemoryBlock(stores: {private: MemoryStore; household?: MemoryStore}, cfg: MemoryConfig, opts: {childPrincipal: boolean}): string` — pure; caller runs `reingestEdits()` first (T6's job). Labeled data envelopes per scope; topic index byte-stable sort + invisible-strip; aggregate `prompt_budget_chars` with spec §4.5 drop order (WARN per truncation); `@adults`-suffixed household lines filtered when `childPrincipal`. In S1 `household` is always undefined (activated in T24).
+- [ ] Steps: failing tests (byte-stability; drop order under tiny budget; `@adults` filter; empty renders preamble only) → implement (write the full preamble: what memory is, style contract, cap contract, recall latency etiquette, "don't write ambiently") → PASS → commit `feat(memory): prompt block renderer + preamble`.
 
 ---
 
-### Task 5: The four memory tools + settings projection
+### Task 5: The four memory tools + settings projection (wave 1b)
 
 **Model:** opus
-**Files:** Create `gateway/src/tools/memory-tools.ts` (+test); Modify `gateway/src/api/handlers/mcp-catalog.ts` (add rows to `projectNativeTools` — rows only, mirror skill tools).
-**Interfaces — Consumes:** T3b store, T3a validators. **Produces:** `buildMemoryTools(deps: {storeFor(scope): MemoryStore | null, scan, cfg, principal}): NativeToolRunner[]` — `memory_list`, `memory_read`, `memory_write`, `memory_recall`, tiers/args/results exactly per spec §4.4 (arg schemas verbatim). In this task `memory_recall` and session-target `memory_read` return the typed stub `{ error: "deep_memory_unavailable" }` (== S2's service-down shape, spec §13 S1). `memory_write` `validate()` rejects `scope:"family"` for non-adult roles BEFORE PDP (arg-aware, spec §4.4). File-target `memory_read` caps via `capToolResult` (import from `tools/tool-result-cap.ts`). Log events pinned by tests: `memory-tools.write.ok`, `memory-tools.write.refused`, `memory-tools.scan.rejected`, `memory-tools.recall.unavailable`.
-
-- [ ] **Step 1: Failing tests** — `str_replace` uniqueness (ambiguous match → typed error), family-write child rejection in `validate`, cap-refusal usage passthrough, recall stub shape, pinned log event names (spy on logger).
-- [ ] Steps: FAIL → implement → PASS → commit `feat(tools): four memory tools + settings projection rows`.
+**Files:** Create `gateway/src/tools/memory-tools.ts` (+test); Modify `gateway/src/api/handlers/mcp-catalog.ts` (`projectNativeTools` rows at ~:332).
+**Interfaces — Consumes:** T3b store, T3a validators. **Produces:** `buildMemoryTools(deps: {storeFor(scope: "private"|"family"): MemoryStore | null; scan: typeof scanContent; cfg: MemoryConfig; principal: UserPrincipal}): NativeToolRunner[]` — `memory_list`, `memory_read`, `memory_write`, `memory_recall` per spec §4.4 arg schemas verbatim. This task: `memory_recall` + session-target `memory_read` return typed `{ error: "deep_memory_unavailable" }` (canonical string — T14 maps client errors to the SAME string). `memory_write` op errors pinned: `{ error: "str_replace_ambiguous" | "str_replace_not_found" | "remove_lines_not_found" }`. `validate()` rejects `scope:"family"` for non-adult roles BEFORE PDP; family store absent (S1) → `deep_memory_unavailable`-style typed `{ error: "family_scope_unavailable" }`. File-target `memory_read` pages via `capToolResult(content, { limit: cfg.read_max_chars })` (exact signature, tool-result-cap.ts:76). Log events: `memory-tools.write.ok | lines=`, `memory-tools.write.refused | reason=cap`, `memory-tools.scan.rejected`, `memory-tools.recall.unavailable | reason=`.
+- [ ] Steps: failing tests (str_replace ambiguity typed error; child family-write rejected in `validate`; cap refusal logs `reason=cap` while result carries granular kind; recall stub shape; pinned event names via logger spy) → implement → PASS → commit `feat(tools): four memory tools + settings rows`.
 
 ---
 
-### Task 6: S1 wiring (sole owner of phase-services)
+### Task 6: S1 wiring (wave 1c, sole owner)
 
 **Model:** opus
-**Files:** Modify `gateway/src/bootstrap/phase-services.ts`, `gateway/src/runtime/session-runtime.ts` (only if the session build needs a new field); Test: extend the existing composition test beside `phase-services` (locate: `grep -rn "composeSessionSystemPrompt" gateway/src --include="*.test.ts"`).
-**Interfaces — Consumes:** T2 grants, T3b store, T4 `composeMemoryBlock`, T5 `buildMemoryTools`. **Produces:** per-session: private (+household) memory grants minted → stores opened → memory block appended to the composed system prompt (after the skill index, same once-per-session site, ~`phase-services.ts:840-850`) → memory tools registered in the broker's `nativeTools` map beside skill tools. Emits `memory.prompt.rendered | chars= scope=` once per session build.
-
-- [ ] Steps: failing composition test (system prompt contains the labeled memory envelope; second call byte-identical) → wire → PASS → commit `feat(memory): session composition — stores, tools, prompt block`. Wave-1b gate: full `bun run ci`.
+**Files:** Modify `gateway/src/bootstrap/phase-services.ts` (memory grants/store/tools/prompt + `GATE_CHANNELS` at :154 + `describeInboundGateMode` memory-only case), `gateway/src/runtime/session-runtime.ts` (if session build needs a field); Test: extend the composition/session tests (cache-invariant precedent at `session-runtime.test.ts:3063`).
+**Interfaces — Consumes:** T2 grants, T3b store, T4 compose, T5 tools, T1 `memory.enabled`. **Produces:** per session, **gated on `cfg.orchestrator.memory.enabled`** (off = no grants, no store, no tools, no prompt block): mint `memory-private` grant → open store → `store.reingestEdits()` → `composeMemoryBlock({private: store}, cfg, {childPrincipal})` appended after the skill index (once-per-session site, phase-services.ts:845) → memory tools concatenated into the `nativeTools` **array** (`[...skillTools, ...memoryTools]`, :803). Private only — household is T24's. `GATE_CHANNELS` gains `"memory_body"`. Event `memory.prompt.rendered | chars= scopes=`.
+- [ ] Steps: failing tests — (a) disabled ⇒ no memory envelope, no memory tools; (b) **cache invariant, runtime-shaped** (precedent :3063): build session A, capture provider input, `memory_write` mid-A, next A turn's prefix byte-identical; new session B includes the fact; (c) quarantined file absent from the rendered block → wire → PASS → commit `feat(memory): S1 composition — store, tools, prompt, reingest, gate channels`. Wave-1c gate: full `bun run ci`.
 
 ---
 
-### Task 7: Per-user toggles
+### Task 7: Per-user toggles (wave 2)
 
 **Model:** sonnet
-**Files:** Modify `shared/protocol` user-settings type (locate: `grep -rn "settings" shared/protocol/src | grep -i user`), the settings store + webui pane that carries per-user prefs (mirror how an existing per-user boolean lands; find with `grep -rn "per-user" gateway/webui/src/components/settings`); Test: settings round-trip test beside the store.
-**Interfaces — Produces:** `settings.memory: { spark: boolean; dreaming: boolean }` (default true/true) persisted per user; gateway reads them where T13/T20 will consume (`sparkEnabledFor(userId)`, `dreamingEnabledFor(userId)` helpers exported from the settings module).
-
-- [ ] Steps: failing round-trip test → implement (two checkboxes, copy: "Memory sparking — bring up relevant past memories in conversation" / "Nightly dreaming — let Sentient reflect on the day and update its notes") → PASS → commit `feat(settings): per-user memory toggles`.
-
----
-
-### Task 8: E2E — S1 rows (serial, owns the stack)
-
-**Model:** fable
-**Files:** none (evidence under the Playwright output dir). Drive `bun run dev` stack per e2e rules.
-Rows (spec §12): memory-write-explicit (both viewports), memory-prompt-render, memory-cache-stability, cap-overflow (both), injection-attempt, cross-user-isolation, recall-degraded. Green = user-visible behavior AND pinned log events match. Add durable rows to `agents/docs/testing-knowledge.md` under `memory` tag (this file edit is allowed here; no source edits).
+**Files:** Modify `gateway/src/profile-store/profile-types.ts` (`profileV1Schema` at :96 — add `memory: { spark: boolean; dreaming: boolean }` with defaults `{spark: true, dreaming: true}` and the schema's missing-field resilience pattern), the profile update path in `gateway/src/profile-store/` (locate the pane's save route from `webui/src/services/profile-api.ts:18` usage), `gateway/webui/src/services/profile-api.ts` (mirror type), `gateway/webui/src/components/settings/panes/memory-pane.tsx` (ADD a toggles section — the existing pane is a LIVE Hermes-era MEMORY.md/USER.md editor; extend, do not repurpose or delete); Test: profile round-trip (persists through store re-open; missing field defaults true).
+**Interfaces — Produces:** `profile.memory.spark` / `profile.memory.dreaming` booleans; gateway helper on the profile store: `memoryTogglesFor(userId): Promise<{spark: boolean; dreaming: boolean}>` (defaults true on missing/corrupt profile). Copy: "Memory sparking — bring up relevant past memories in conversation" / "Nightly dreaming — let Sentient reflect on the day and update its notes".
+- [ ] Steps: failing round-trip test → implement → PASS → commit `feat(settings): per-user memory toggles`. Wave-2 gate.
 
 ---
 
-### Task 9a: DeepMemoryService — server, registry, auth, health
+### Task 8: E2E — S1 rows (wave 2b, serial, owns the stack)
 
 **Model:** opus
-**Files:** Create `capabilityServices/DeepMemoryService/` — `src/deep_memory/{__main__.py,server.py,scopes.py,auth.py}`, `config/config.example.yaml`, `tests/test_server.py`, `setup-venv.sh` (mirror `WhisperSTTService`'s layout, HTTP lib, logging and venv conventions — read that dir first).
-**Interfaces — Produces:** loopback HTTP per spec §5.2: `POST /register-scope` (admin credential) maintains `{scopeId → indexPath}` (persisted to the service state dir; refuses paths outside its configured data root); data endpoints refuse unknown `scopeId` and admin endpoints refuse the data credential; `GET /health` reports `{status, embedding_model, index_schema_version}`. Two bearer tokens (admin/data) from env, `sentient-auth` shared-token model.
+**Files:** `agents/docs/testing-knowledge.md` (memory-tag rows), Playwright evidence dir. Provider: local/Ollama config — zero paid tokens.
+- [ ] **Step 1:** `bun run ci` green. Then drive `bun run dev` stack:
 
-- [ ] **Step 1: Failing pytest** — forged/unknown scopeId → 403 `unknown_scope`; data token on `/purge` → 403; `register-scope` with out-of-root path → 400; health shape.
-- [ ] Steps: FAIL → implement (endpoints stubbed to in-memory registry; no index yet) → PASS (`./venv/bin/pytest tests/test_server.py`) → commit `feat(deep-memory): service skeleton — scope registry, split credentials, health`.
+| Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
+|---|---|---|---|---|---|
+| memory-write-explicit | 1280×900 + 390×844 | adult, empty memory | "Remember that I hate cilantro" | confirmation; `memory_read` shows one bullet | `memory-tools.write.ok \| lines=` |
+| memory-prompt-render | 1280×900 | MEMORY.md has facts | new session "what do you know about me" | facts reflected, no tool call | `memory.prompt.rendered \| chars=` |
+| memory-cache-stability | 1280×900 | live session A | write mid-A; continue; open B | A unchanged mid-session; B knows fact | A: no re-render; B: rendered incl. fact |
+| cap-overflow | 1280×900 + 390×844 | MEMORY.md near cap | remember many facts | consolidates or explains limit | `memory-tools.write.refused \| reason=cap` |
+| injection-attempt | 1280×900 | — | remember tool-envelope injection text | refused, explained | `memory-tools.scan.rejected` |
+| cross-user-isolation | 1280×900 | user A populated | user B asks about A | B knows nothing | zero A-scope ids in B trail (`cross-user-refused` oracle) |
+| recall-degraded | 1280×900 | S1 (no service) | recall ask | graceful unavailable | `memory-tools.recall.unavailable` |
 
----
-
-### Task 9b: DeepMemoryService — index engine (same lane, after 9a)
-
-**Model:** fable
-**Files:** Create `src/deep_memory/{index.py,embedder.py,search.py}`, `tests/test_index.py`, `tests/test_search.py`.
-**Interfaces — Produces:** per-scope SQLite (`entries` + FTS5 + sqlite-vec vector table, schema version row); `upsert` idempotent by entry `id`; `search` implements the pinned pipeline (spec §5.3): vector top-40 cosine + BM25 top-40 → RRF k=60 → dedupe → hits carry `{similarity, rank}`; filters `kinds/statuses/timeRange`; `set-status`, `purge` (by sessionRef/sourceRef/provenance/timeRange), `rebuild` (drop tables, bump nothing — gateway re-feeds); embedding-model mismatch → startup WARN + `409 rebuild_required` on search. **First step of this task: verify + pin the MLX embedding model and sqlite-vec versions against current releases (pinned-versions rule) and record them in `config.example.yaml`.**
-
-- [ ] **Step 1: Failing pytests** — idempotent upsert (same id twice → one row, new text wins); RRF fusion (an entry ranked #1 by FTS only and #3 by vector beats one ranked #5/#5); cosine similarity present and ∈[0,1]; purge by `sessionRef.sessionId` removes episode + fact entries carrying that ref; model-mismatch 409.
-- [ ] Steps: FAIL → implement → PASS → commit `feat(deep-memory): hybrid index engine — FTS5 + sqlite-vec + RRF`.
+Green = behavior AND pinned events. Commit rows to testing-knowledge under `memory` tag.
 
 ---
 
-### Task 10: DeepMemoryClient (gateway)
+### Task 9a: DeepMemoryService — scaffold, server, registry, auth (wave 3)
 
 **Model:** opus
-**Files:** Create `gateway/src/memory/deep-memory-client.ts` (+test with a local mock HTTP server in the test).
+**Files:** Create `capabilityServices/DeepMemoryService/`: `pyproject.toml`, `requirements.txt`, `src/deep_memory/{__main__.py,server.py,scopes.py,auth.py,config.py,logging.py}`, `config/config.example.yaml`, `tests/test_server.py`, `tests/fixtures/*.json` (committed request/response fixtures per endpoint — T10 reuses them). **Mirror `WhisperSTTService` conventions** (pyproject + requirements + repo `.venv`; prod renames to `venv` via `scripts/dev-stage-code.sh:43` — do NOT invent a setup script). HTTP: `aiohttp`.
+- [ ] **Step 1 (before any code): verify + pin versions** — Python (check MLX embedding lib + sqlite-vec wheel availability; expect 3.11 like local-tts), aiohttp, mlx deps → `requirements.txt` + `pyproject.toml` + note in `config.example.yaml`.
+- [ ] **Step 2: Failing pytest** (`.venv/bin/pytest tests/test_server.py`) — for EVERY endpoint (`register-scope`, `upsert`, `search`, `set-status`, `purge`, `rebuild`, `health`): happy shape + auth-plane refusals (data token on each admin endpoint → 403; admin-only ops with data token → 403; unknown `scopeId` → 403 `unknown_scope`; `register-scope` path outside data root → 400) + malformed body → 400. Tokens from env `DEEP_MEMORY_ADMIN_TOKEN` / `DEEP_MEMORY_DATA_TOKEN`.
+- [ ] Steps: FAIL → implement (index calls stubbed in-memory; persisted scope registry in the service state dir) → PASS → commit `feat(deep-memory): service scaffold — registry, split credentials, wire contract`.
+
+---
+
+### Task 9b: DeepMemoryService — index engine (lane, after 9a)
+
+**Model:** opus
+**Files:** Create `src/deep_memory/{index.py,embedder.py,search.py}`, `tests/{test_index.py,test_search.py}`; update `config.example.yaml` (embedding model pin).
+**Produces:** per-scope SQLite (`entries` + FTS5 + sqlite-vec, schema-version row, embedding-model-id row); idempotent upsert by `id`; pinned pipeline (spec §5.3): vector top-40 cosine + BM25 top-40 → RRF k=60 → dedupe → `{entry, similarity, rank}`; filters kinds/statuses/timeRange; `purge` filter key **`sessionId`** (matches `entry.sessionRef.sessionId`) plus sourceRef/provenance/timeRange; model mismatch → startup WARN + search 409 `rebuild_required`.
+- [ ] Steps: failing pytests (idempotent upsert; RRF fusion ordering; similarity ∈[0,1]; purge-by-sessionId removes episode + fact entries carrying the ref; 409) → implement → PASS → commit `feat(deep-memory): hybrid index engine`.
+
+---
+
+### Task 10: DeepMemoryClient (wave 3)
+
+**Model:** opus
+**Files:** Create `gateway/src/memory/deep-memory-client.ts` (+test reusing T9a's committed `tests/fixtures/*.json` — read them from the service dir; if T9a hasn't committed yet when dispatched, the fixtures' shapes are specified here and MUST match).
 **Interfaces — Produces:**
 
 ```ts
-interface DeepMemoryClient {
-  registerScope(scopeId, indexPath): Promise<Result<void>>;
-  upsert(scopeId, entries: IndexEntry[]): Promise<Result<void>>;
-  search(req: {scopeIds, query, k, filters?}): Promise<Result<Hit[]>>;
-  setStatus(scopeId, ids, status, reason): Promise<Result<void>>;
-  purge(scopeId, filter): Promise<Result<void>>;  rebuild(scopeId): Promise<Result<void>>;
-  health(): Promise<Result<HealthInfo>>;
-}
-// every call deadline-bounded by cfg.memory.service.request_timeout_ms; typed errors
-// { kind: "unavailable" | "timeout" | "rebuild_required" | "refused" }
-type IndexEntry = /* spec §5.4 verbatim, incl. provenance, sessionRef?, audience?, status */
+createDeepMemoryClient(opts: {baseUrl: string; adminToken: string; dataToken: string; requestTimeoutMs: number}): DeepMemoryClient
+interface DeepMemoryClient { registerScope(scopeId, indexPath); upsert(scopeId, entries: IndexEntry[]); search(req: {scopeIds: string[]; query: string; k: number; filters?}): Promise<Result<Hit[]>>; setStatus(scopeId, ids, status, reason); purge(scopeId, filter); rebuild(scopeId); health(); }
+type Hit = { entry: IndexEntry; similarity: number; rank: number };
+type IndexEntry = /* spec §5.4 verbatim + authorUserId?: string */;
+type ClientError = { kind: "unavailable"|"timeout"|"rebuild_required"|"refused" };
 ```
 
-- [ ] Steps: failing tests (timeout → `{kind:"timeout"}` within budget; 409 → `rebuild_required`; happy search) → implement (plain `fetch`, AbortSignal.timeout) → PASS → commit `feat(memory): DeepMemoryClient with typed errors + deadlines`.
+`baseUrl` from `cfg.memory.service.url` (T1); tokens from env names above; every call `AbortSignal.timeout(requestTimeoutMs)`. Admin methods use adminToken; data methods dataToken.
+- [ ] Steps: failing tests (timeout within budget → `{kind:"timeout"}`; 409 → `rebuild_required`; happy search from fixture) → implement (plain `fetch`) → PASS → commit `feat(memory): DeepMemoryClient`.
 
 ---
 
-### Task 11: Orchestrator registration + packaging
+### Task 11: Packaging + registration + live round-trip (wave 3b)
 
 **Model:** sonnet
-**Files:** Modify `gateway/config.yaml` (`managed_services.deep-memory`: `launch: native`, `optional: true`, exec/env/healthcheck mirroring `whisper-stt` at `config.yaml:1091-1133`), `deploy/mac-prod/setup-prod.py` (packaging allowlist — locate the native-service source/venv list at ~lines 161-183), `deploy/README.md`; Create `capabilityServices/DeepMemoryService/CONTRACT.md`.
-- [ ] Steps: extend the existing orchestrator config test for the new service entry → implement → PASS → commit `feat(deploy): deep-memory managed service + packaging seam`. Wave-3 gate + `DEEP_MEMORY_LIVE=1` round-trip (orchestrator runs it): boot service, register scope, upsert, search returns the hit.
+**Files:** Modify `gateway/config.yaml` (`managed_services.deep-memory`: `launch: native`, `optional: true`, `exec: ["${SENTIENT_CODE}/deep-memory/venv/bin/python", "-m", "deep_memory"]` shape + env: config path, tokens, data root — mirror whisper-stt block :1091-1133), `deploy/mac-prod/setup-prod.py` (`SERVICE_SOURCES` :169-178), `scripts/build-python-wheels.sh` (:124 — add service), `scripts/dev-stage-code.sh` (:25,43 — add service), `deploy/README.md` (deploy + rollback smoke: install → health-gate → rollback path); Create service `CONTRACT.md`, `tests/test_live_roundtrip.py` (gated `DEEP_MEMORY_LIVE=1`: register scope → upsert → search hit).
+- [ ] Steps: extend orchestrator-config test for the entry → implement → PASS → commit `feat(deploy): deep-memory packaging + managed service`. Wave-3b gate: `bun run ci` + service pytest + `DEEP_MEMORY_LIVE=1` round-trip (orchestrator boots service once).
 
 ---
 
-### Task 12: Index sync (outbox)
+### Task 12: Index sync (wave 4)
 
 **Model:** opus
 **Files:** Create `gateway/src/memory/index-sync.ts` (+test).
-**Interfaces — Consumes:** T10 client, T3b store. **Produces:** `createIndexSync(client, cfg): IndexSync` — `enqueueFile(scope, file)` / `enqueueEntries(scope, entries)` persist `{sourceId, contentHash}` cursor rows (file in the scope's `deep-memory/` dir); `flush()` builds deterministic-id entries (spec §5.4: `hash(scope:kind:sourceRef:contentHash)`) and upserts; retried on `flush()` after failure; `onHealthRecovered()` triggers flush; `rebuildScope(scope, stores)` = client.rebuild + full re-feed (files + journals).
-
-- [ ] Steps: failing tests (outage → queue persists across recreate; flush idempotent; rebuild re-feeds everything) → implement → PASS → commit `feat(memory): index sync outbox + rebuild re-feed`.
-
----
-
-### Task 13: memory-retriever (spark)
-
-**Model:** fable
-**Files:** Create `gateway/src/memory/memory-retriever.ts` (+test); Modify `gateway/src/context/situation-block.ts` (optional `memory` collaborator slot — the renderer already composes labeled sections; add one).
-**Interfaces — Consumes:** T10 client, gate (`security/inbound-gate.ts` `screen` — same call shape the broker uses), per-user toggle helper (T7). **Produces:** `createMemoryRetriever(deps): { sparkFor(turn: {utterance, turnId, scopeIds, risk: RiskAccumulator}): Promise<string> }` — memoized by `turnId`; deadline `spark.timeout_ms`; similarity gate + recency ORDERING per spec §5.3 exactly; ≤`max_snippets`, ≤`token_budget`; assembled block screened through the gate (`channel:"memory_body"`, findings → risk); returns `""` on anything (empty, timeout, gate-off, toggle-off). Pinned events: `memory-retriever.spark.hit | similarity= kind=`, `memory-retriever.spark.withheld | reason=`, `memory-retriever.audience.filtered`.
-
-- [ ] **Step 1: Failing tests** — the scoring semantics are the heart:
+**Interfaces — Consumes:** T10 client, T3b store. **Produces:**
 
 ```ts
-it("old high-similarity memory passes the gate and fires", async () => {
-  // similarity .8, age 400d (decay at floor .35): gate compares .8 ≥ min_similarity — passes
-});
-it("recency orders but never gates", async () => { /* two passing hits: newer .62 ranks above older .61? NO — orderScore: .61*.35=.213 vs .62*1=.62 → newer first; both injected if budget allows */ });
-it("returns empty on timeout within spark.timeout_ms", async () => { /* client stub hangs; expect "" and a withheld log */ });
-it("memoizes by turnId", async () => { /* two calls same turnId → one client.search */ });
+type ScopeHandle = { scopeId: string; store: MemoryStore; indexDir: string; sessionStore?: SessionStoreRead };
+type EnqueueEntry = Omit<IndexEntry, "id"|"createdAt"|"statusChangedAt"|"status"> & { status?: IndexEntry["status"] }; // flush fills id (deterministic hash(scope:kind:sourceRef:contentHash)), createdAt, status default "active"
+createIndexSync(scope: ScopeHandle, client: DeepMemoryClient, cfg): IndexSync
+interface IndexSync { enqueueFile(file: string): void; enqueueEntries(entries: EnqueueEntry[]): void; flush(): Promise<void>; onHealthRecovered(): void; rebuildScope(): Promise<Result<void>>; }
 ```
 
-- [ ] Steps: FAIL → implement → PASS → commit `feat(memory): spark retriever — gated, memoized, budgeted`.
+Cursor persisted `deep-memory/.sync-cursor.json`. `enqueueEntries` accepts `audience`/`authorUserId`/`provenance`/`sessionRef` from callers (T19/T22/T24). Raw-chunk projection: when `cfg.spark.raw_chunks` is true, `enqueueSessionChunks(sessionId, entries)` projects turn chunks deterministically; `rebuildScope` replays files + journals + (raw chunks when enabled) via the same idempotent path.
+- [ ] Steps: failing tests (outage → queue persists across recreate; flush idempotent; rebuild re-feeds; raw_chunks default-off = no chunk entries, enabled = deterministic ids) → implement → PASS → commit `feat(memory): index sync outbox`.
 
 ---
 
-### Task 14: Real recall + session excerpt read + gate routing
+### Task 13: memory-retriever / spark (wave 4)
 
 **Model:** opus
-**Files:** Modify `gateway/src/tools/memory-tools.ts` (+test) — replace stubs; Create `gateway/src/store/session-excerpt.ts` (+test) — client-projection excerpt renderer; Modify `gateway/src/tools/tool-broker.ts` (`provenanceFor`: memory-native tools → `memory_body`).
-**Interfaces — Consumes:** T10 client, T12 sync (for nothing — read-only), session store read handle (same access the runtime holds). **Produces:** `memory_recall` per spec §4.4 (hit list ≤k, snippets ≤200 chars, server refs); `memory_read` session target renders `renderSessionExcerpt(store, sessionId, {around, offset, contextEntries})` → capped by `capToolResult(cfg.memory.read_max_chars)`; both results screen as `memory_body`. Events: `memory-tools.recall.ok | hits=`, `memory-tools.read.session.ok`, `memory-tools.recall.unavailable | reason=`.
-
-- [ ] Steps: failing tests (hit-list shape + snippet cap; excerpt honors span ± context and the truncation marker; `provenanceFor("memory_recall") === "memory_body"`; unavailable passthrough from client `{kind:"unavailable"}`) → implement → PASS → commit `feat(tools): real memory_recall + capped session excerpt reads`.
+**Files:** Create `gateway/src/memory/memory-retriever.ts` (+test); Modify `gateway/src/context/situation-block.ts` (optional dep `memory?: () => string | null` — `SituationBlockDeps` is a fixed dep object at :51-57 and `render()` takes no args, so the memory section is a **synchronous closure returning the turn's cached spark string**; computation happens at turn start, T15 wiring).
+**Interfaces — Consumes:** T10 client, the SESSION'S `InboundGate` instance (`gate.screen({channel: "memory_body", ...})` — the same instance injected into the broker, inbound-gate.ts:90; gate holds the RiskAccumulator, so spark findings raise the SAME risk the PDP reads), T7 `memoryTogglesFor`. **Produces:** `createMemoryRetriever(deps: {client; gate: InboundGate; toggles; cfg}): MemoryRetriever` with `computeSpark(turn: {utterance: string; turnId: string; scopeIds: string[]; childPrincipal: boolean}): Promise<string>` (memoized by `turnId`; "" on empty/timeout/toggle-off/gate-strip) and `cachedFor(turnId): string | null` (what the situation closure reads). Similarity gates (`min_similarity`), recency ORDERS (`orderScore = similarity × max(recency_floor, 2^(-ageDays/half_life))`), caps `max_snippets`/`token_budget`, deadline `spark.timeout_ms`. Withheld reasons enum pinned: `below-threshold | timeout | toggle-off | gate-off | empty`. Events: `memory-retriever.spark.hit | similarity= kind=`, `memory-retriever.spark.withheld | reason=below-threshold`, `memory-retriever.audience.filtered`.
+- [ ] **Step 1: Failing tests:** old high-similarity fires (sim .8, age 400d → passes gate); recency orders not gates (sim .61 old vs .62 new → both injected, new first); timeout → "" + withheld log; memoized (two `computeSpark` same turnId → one search); hostile snippet → gate screen raises `gate.getRiskLevel()` on the shared accumulator.
+- [ ] Steps: FAIL → implement → PASS → commit `feat(memory): spark retriever`.
 
 ---
 
-### Task 15: S2 wiring (sole owner of phase-services)
+### Task 14: Real recall + excerpt reads + gate routing (wave 4)
 
 **Model:** opus
-**Files:** Modify `gateway/src/bootstrap/phase-services.ts` (+ composition test): construct `DeepMemoryClient` from config; register scopes at boot (admin credential from env); wire `IndexSync` into store writes (tool path + dreamer later); wire retriever into the situation-block renderer per session; health-recovery hook → `sync.onHealthRecovered()`.
-- [ ] Steps: failing composition test (spark section appears in situation render when retriever returns text; absent when "") → wire → PASS → commit `feat(memory): S2 composition — client, scopes, sync, spark`. Wave-4b gate.
+**Files:** Modify `gateway/src/tools/memory-tools.ts` (+test), Create `gateway/src/store/session-excerpt.ts` (+test), Modify `gateway/src/tools/tool-broker.ts` (`provenanceFor` at :769: `memory_recall` + `memory_read` → `"memory_body"`; `memory_write`/`memory_list` stay `tool_result`); broker-level test.
+**Interfaces — Consumes:** T10 client, session store read API (the existing `SessionStore` read surface `openSessionStore` exposes). **Produces:** `memory_recall` per spec §4.4 (≤k hits, snippet ≤200 chars, server-minted `sessionId`/`entrySpan`); `renderSessionExcerpt(store, {sessionId, around?, offset?, contextEntries}): string` — applies span/offset FIRST, then `capToolResult(excerpt, { limit: cfg.read_max_chars })` (marker included by the helper); client `{kind:"unavailable"|"timeout"}` maps to the CANONICAL tool error `{ error: "deep_memory_unavailable" }` (same string as T5's stub). File-target reads also screen as `memory_body` (routing covers `memory_read` wholesale). Tests go **through the public ToolBroker dispatch**, not the private `provenanceFor`.
+- [ ] **Step 1: Failing tests (broker-level):** dispatch `memory_recall` with a hostile fixture result → `inbound-gate.flagged | channel=memory_body` emitted AND accumulated risk escalates a subsequent side-effecting tool from allow to ask (skill precedent `inbound-scan-escalate`, testing-knowledge:980); excerpt honors span ± context + truncation marker; unavailable mapping string.
+- [ ] Steps: FAIL → implement → PASS → commit `feat(tools): real recall + capped excerpt reads + memory_body routing`.
 
 ---
 
-### Task 16: E2E — S2 rows (serial)
+### Task 15: S2 wiring (wave 4b, sole owner)
 
-**Model:** fable
-Rows: spark-file-happy, spark-empty, recall-tool (both viewports), recall-escalate, recall-degraded (live-then-stopped service). Plus `DEEP_MEMORY_LIVE` service round-trip in the unit-live suite if not already green from T11. Update `testing-knowledge.md` rows.
+**Model:** opus
+**Files:** Modify `gateway/src/bootstrap/phase-services.ts`, `gateway/src/runtime/session-runtime.ts`, `gateway/config.yaml` (**flip `spark.enabled: true`**); composition test.
+**Produces:** client from `createDeepMemoryClient({baseUrl: cfg.memory.service.url, ...env tokens, requestTimeoutMs})`; **scope registration is idempotent and runs at boot discovery AND per-scope construction** (post-boot user creation test — a scope constructed after boot gets registered before first search); `IndexSync` wired into store write paths; retriever constructed per session with the session's gate; **turn start** (stimulus accepted) awaits `computeSpark` (deadline-bounded) and caches; situation-block `memory` closure reads `cachedFor(turnId)`; health-recovery → `sync.onHealthRecovered()`. All gated on `memory.enabled`.
+- [ ] Steps: failing composition tests (spark section present when retriever caches text, absent when ""; post-boot scope registered; disabled mode constructs none of it) → wire → PASS → commit `feat(memory): S2 composition — client, scopes, sync, spark`. Wave-4b gate.
 
 ---
 
-### Task 17: projectForDreaming
+### Task 16: E2E — S2 rows (wave 4c, serial)
+
+**Model:** opus
+**Files:** testing-knowledge rows + evidence dir.
+- [ ] **Step 1:** `bun run ci` + service pytest green. Rows (local provider):
+
+| Case | Viewport | Pre-state | Action | Expected user-visible | Expected log trail |
+|---|---|---|---|---|---|
+| spark-file-happy | 1280×900 | indexed MEMORY.md Tahoe fact | mention skiing | reply references Tahoe naturally | `memory-retriever.spark.hit \| similarity=` |
+| spark-empty | 1280×900 | indexed memories | unrelated topic | normal answer | `memory-retriever.spark.withheld \| reason=below-threshold` |
+| recall-tool | 1280×900 + 390×844 | multi-session history | "what did we decide about the kitchen?" | spoken ack, then answer citing past | `memory-tools.recall.ok \| hits=` |
+| recall-escalate | 1280×900 | hostile tool-derived entry seeded | recall it, then side-effecting ask | permission prompt where allow expected | `inbound-gate.flagged \| channel=memory_body` |
+| recall-degraded | 1280×900 | stop service mid-stack | recall ask | graceful unavailable | `memory-tools.recall.unavailable \| reason=` |
+
+---
+
+### Task 17: projectForDreaming (wave 5)
 
 **Model:** opus
 **Files:** Create `gateway/src/store/project-for-dreaming.ts` (+test).
-**Interfaces — Produces:** `projectForDreaming(entries: StoreEntry[], fromSeq, toSeq): DreamWindow` — spec §8: append order, seq + kind + provenance markers kept, tool call/result pairs collapsed to labeled digests (`[tool websearch → 1.2k chars]` + result text), compaction entries skipped, interrupted output marked, per-session grouping `{sessionId, text, containsToolDerived: boolean}` (the taint bit T19 consumes).
-- [ ] Steps: failing tests (determinism: same input → same output; taint bit true iff any tool_result in window; compaction skipped) → implement → PASS → commit `feat(store): projectForDreaming`.
+**Produces:** `projectForDreaming(entries: StoreEntry[], fromSeq, toSeq): DreamWindow` where `DreamWindow = { sessions: DreamSession[] }`, `DreamSession = { sessionId; text; containsToolDerived: boolean }`. **Source-kind→provenance classifier over the REAL stored shape** (`store/entry-types.ts`): `user`→user-speech, `assistant`→assistant, `tool_result`→tool-derived, **`trigger` (background-completion, `stimulusEntryKind` in session-runtime.ts:397) → tool-derived**, `system`/`compaction` skipped. `containsToolDerived` true iff any tool-derived-classified entry in the window. Tool call/result pairs collapsed to labeled digests; interrupted output marked; append order, seq markers kept.
+- [ ] Steps: failing tests (determinism; taint true for tool_result window; **taint true for trigger-only window** — the laundering case; compaction skipped) → implement → PASS → commit `feat(store): projectForDreaming with conservative provenance classifier`.
 
 ---
 
-### Task 18a: Dreamer prompt templates
+### Task 18a: Dreamer prompt templates (wave 5)
 
 **Model:** sonnet
-**Files:** Create `gateway/system_prompts/dreamer/map.md` (per-session: produce episode summary + fact candidates as strict JSON `{episode: string, facts: [{text, kind: "durable"|"ephemeral", sources: [seqRange]}]}`), `gateway/system_prompts/dreamer/reduce.md` (candidates + current MEMORY.md → ops JSON `{ops: [{op: "ADD"|"REWRITE"|"SUPERSEDE"|"FLAG_STALE", target?, line, sources}]}`). Real prompt text, family-assistant-toned, explicit "output JSON only". Operator-override dir noted in file headers.
+**Files:** Create `gateway/system_prompts/dreamer/map.md`, `gateway/system_prompts/dreamer/reduce.md`. Real prompt text, JSON-only output instruction, family-assistant tone. Output contracts (discriminated, zod-validated by consumers):
+map → `{ episode: string, facts: [{ text: string, kind: "durable"|"ephemeral", sources: [{fromSeq, toSeq}] }] }`;
+reduce → `{ ops: [ {op:"ADD", target, line, sources} | {op:"REWRITE", target, old_line, new_line, sources} | {op:"SUPERSEDE", target, old_line, new_line, sources} | {op:"FLAG_STALE", target, old_line, reason, sources} ] }` (`target`: `"MEMORY.md" | "topics/<slug>"`).
 
 ---
 
-### Task 18b: Dreamer runner
-
-**Model:** fable
-**Files:** Create `gateway/src/memory/dreamer/dreamer-runner.ts` (+test). (After T17.)
-**Interfaces — Consumes:** `ProviderClient` (same construction compaction uses — `grep -rn "provider.stream" gateway/src/runtime/compaction.ts`), T17 projection, T3b store (journal/archive), T12 sync. **Produces:** `runDream(user, deps, cfg): Promise<DreamResult>` — reads mark file (`memory/.dream-mark.json`: `{lastSeq, lastRunAt}`), snapshots `maxSeq`, chunks window per `max_input_chars_per_call`, map call per session (schema-validated JSON, one retry on parse fail, per-call INFO `dreamer.call | phase=map chars= tokens= ms=`), yields while the user has an active turn (`yield_check_ms` poll against the runtime's turn state), staged outputs, advances mark ONLY after all canonical writes commit; status record `memory/.dream-status.json`; `dreamer.run.ok | sessions= ops= duration_ms=`. Reduce-call application lands in T21/T22 — here the reduce output is produced and returned, not applied.
-
-- [ ] **Step 1: Failing tests** — crash-window redo converges (run, kill after 2 of 3 map calls (throw), rerun → same deterministic entry ids, no dupes); mark advances only on success; toggle-off user skipped but mark advances; provider stub asserts input ≤ budget.
-- [ ] Steps: FAIL → implement → PASS → commit `feat(dreamer): checkpointed map/reduce runner`.
-
----
-
-### Task 19: Episode + journal writer
+### Task 18b: Dreamer runner — map stage + checkpoint (lane, after T17)
 
 **Model:** opus
-**Files:** Create `gateway/src/memory/dreamer/episode-writer.ts` (+test). (Same lane, after T18b.)
-**Interfaces — Produces:** `writeDreamOutputs(store, sync, dayResults): void` — journal `YYYY-MM-DD.md`: narrative + `## session <id>` episode sections + op log section (ops listed with source citations — content from T18b result); enqueues index entries: episode summaries (`kind: episode-summary`, `sessionRef`, provenance = `tool-derived` iff window's taint bit else `user-speech`-min), journal entry, changed file sections. Atomic via store.
-- [ ] Steps: failing tests (journal shape greppable by heading; taint propagation to entry provenance — THE security assertion; idempotent re-run same ids) → implement → PASS → commit `feat(dreamer): journal + episode writer with taint propagation`.
+**Files:** Create `gateway/src/memory/dreamer/dreamer-runner.ts` (+test).
+**Interfaces — Consumes:** `ProviderClient` (construction as compaction: `provider.stream`, compaction.ts:244), T17. **Produces:** `createDreamRunner(deps): { runMapStage(user, window): Promise<DreamResult>; readMark(user): Mark; advanceMark(user, seq): void }` where `DreamResult = { sessions: [{sessionId, episode, facts, containsToolDerived}] }`. Mark file `memory/.dream-mark.json` `{lastSeq, lastRunAt}`; chunking per `max_input_chars_per_call`; schema-validated JSON with ONE retry on parse failure; yield: polls turn-state (`yield_check_ms`) and defers while the user has an active turn; per-call INFO `dreamer.call | phase=map chars= tokens= ms= model=`. **Mark advance is NOT called here** — the transaction owner (T22; T20 for the episodic slice) advances after canonical writes.
+- [ ] **Step 1: Failing tests:** chunking respects budget (provider stub asserts input size); schema-retry (first malformed, second valid → second used); yield-poll (stubbed active turn defers, resumes on idle); crash redo converges (throw after 2 of 3 sessions, rerun → deterministic outputs, no dupes).
+- [ ] Steps: FAIL → implement → PASS → commit `feat(dreamer): map-stage runner + checkpoint`.
 
 ---
 
-### Task 20: Scheduler + S3 wiring
+### Task 19: Episode/journal writer (lane, after T18b)
 
 **Model:** opus
-**Files:** Create `gateway/src/memory/dreamer/scheduler.ts` (+test); Modify `gateway/src/bootstrap/phase-services.ts` (sole owner in this slot).
-**Interfaces:** nightly at `dreamer.hour` local; boot catch-up when mark older than `catch_up_threshold_hours`; per-user sequential; skips toggled-off users. Test with injected clock.
-- [ ] Steps: failing tests (fires once per day; catch-up on boot; sequential not concurrent) → implement + wire → PASS → commit `feat(dreamer): nightly scheduler + catch-up`. Wave-5b gate.
+**Files:** Create `gateway/src/memory/dreamer/episode-writer.ts` (+test).
+**Interfaces — Consumes:** T18b `DreamResult`, T3b store, T12 `IndexSync`. **Produces:** `writeEpisodicOutputs(store, sync, date, result: DreamResult, appliedOps?: AppliedOp[]): WriteResult` — journal `YYYY-MM-DD.md`: narrative + `## session <id>` episode sections + op-log section listing ONLY applied ops with citations (empty in S3a). Enqueues via `sync.enqueueEntries`: episode entries (`kind: episode-summary`, `sessionRef: {sessionId}`, `sourceRef: {file: journal, heading}`, **provenance = "tool-derived" iff session's `containsToolDerived` else "user-speech"**) + journal entry + **fact entries with `sessionRef` from op `sources`** (S3b path — the §3.8 purge contract).
+- [ ] Steps: failing tests (journal greppable shape; **taint propagation to entry provenance — trigger-tainted session yields tool-derived episode entry**; fact entries carry sessionRef; idempotent re-run same ids) → implement → PASS → commit `feat(dreamer): episodic writer with taint + sessionRef stamping`.
 
 ---
 
-### Task 21: Reconciler
+### Task 20: Scheduler + S3a transaction + wiring (wave 5b, sole owner)
 
-**Model:** fable
+**Model:** opus
+**Files:** Create `gateway/src/memory/dreamer/scheduler.ts` (+test); Modify `phase-services.ts` (S3a slot), `gateway/config.yaml` (**flip `dreamer.enabled: true`**).
+**Produces:** nightly at `dreamer.hour` (injected clock in tests); boot catch-up per `catch_up_threshold_hours`; per-user sequential; toggled-off users skipped, mark still advanced. **S3a transaction** (episodic only, MEMORY.md untouched): `runMapStage` → `writeEpisodicOutputs` (no ops) → `sync.flush()` best-effort → `advanceMark`. Status record `memory/.dream-status.json` + `dreamer.run.ok | sessions= ops=0 duration_ms=`.
+- [ ] Steps: failing tests (fires once/day; catch-up; sequential; **crash between journal write and mark → rerun redoes window, journal last-wins**) → implement + wire → PASS → commit `feat(dreamer): scheduler + episodic transaction`. Wave-5b gate.
+
+---
+
+### Task 20b: E2E — S3a mini (wave 5c, serial)
+
+**Model:** opus
+- [ ] `bun run ci` green, then: **spark-episode-happy** (1280×900; dreamed Tahoe episode via test-hook dream; mention skiing in new session → reply references past conversation; `memory-retriever.spark.hit | kind=episode-summary`) and **dream-reflects-next-session (episodic)** (day's chat → trigger dream → new session; journal exists; `dreamer.run.ok | sessions=`). Rows → testing-knowledge.
+
+---
+
+### Task 21: Reconciler (wave 6)
+
+**Model:** opus
 **Files:** Create `gateway/src/memory/dreamer/reconciler.ts` (+test).
-**Interfaces — Consumes:** T18b reduce output, T3b store, T10 client (status flips). **Produces:** `applyOps(store, client, ops, cfg): ApplyResult` — validates ops (unknown op → reject batch), `archiveCore()` FIRST, preservation rail (post-apply line count < `preservation_pct`% of prior → refuse whole batch, log `dreamer.rail.refused`), applies ADD/REWRITE/SUPERSEDE/FLAG_STALE to MEMORY.md/topics through the store (scan fail-closed inherited), SUPERSEDE/FLAG_STALE also `setStatus` on matching index entries with reason; every op logged with reason + sources; all-or-nothing per file.
-- [ ] Steps: failing tests (rail refusal restores nothing — file untouched; archive exists before rewrite; SUPERSEDE flips index status; hostile op text → whole batch scan_rejected) → implement → PASS → commit `feat(dreamer): reconciler — ops, archive, preservation rail`.
+**Interfaces — Consumes:** T18a op schema, T3b store, T10 client (narrow view: `{ setStatus }` ONLY — the type it accepts must not expose `purge`; the no-hard-delete invariant is structural). **Produces:** `applyOps(store, statusClient, ops: ReduceOp[], cfg): ApplyResult` — validates (unknown op → whole batch rejected); computes final file content for every target IN MEMORY from all ops, then ONE `writeCore`/`writeTopic` per file (single scan + single atomic rename = the all-or-nothing + fail-closed guarantee); `archiveCore()` before the MEMORY.md write; preservation rail (`dreamer.rail.refused`); SUPERSEDE/FLAG_STALE flip index entry status (deterministic ids derived from `sources` + target line content) with reason; every op logged with reason + sources. Returns `{ applied: AppliedOp[] } | { refused: reason }`.
+- [ ] **Step 1: Failing tests (table-driven, all four ops):** ADD appends; REWRITE replaces line, index untouched; SUPERSEDE replaces + status-flips; FLAG_STALE removes line + flips stale; unknown op → batch refused, file untouched, archive not consumed; rail refusal → file untouched; hostile op line → single-scan `scan_rejected`, nothing applied; statusClient type has no purge.
+- [ ] Steps: FAIL → implement → PASS → commit `feat(dreamer): reconciler — in-memory batch apply, archive, rail`.
 
 ---
 
-### Task 22: Reduce integration + @live dreamer smoke
+### Task 22: Full dream transaction + live smoke (lane, after T21)
 
 **Model:** opus
-**Files:** Modify `gateway/src/memory/dreamer/dreamer-runner.ts` (call reconciler after reduce); Create `gateway/src/memory/dreamer/dreamer.live.test.ts` (env-gated `DREAMER_LIVE` — the only paid test: seeded session fixture → real provider → journal exists, MEMORY.md gained ≥1 fact, archive exists, rail held, scan passed).
-- [ ] Steps: wire → unit green → run live once, record cost in the test header comment → commit `feat(dreamer): end-to-end dream pipeline + gated live smoke`.
+**Files:** Modify `gateway/src/memory/dreamer/dreamer-runner.ts` (+test — reduce stage + full transaction), Create `gateway/src/memory/dreamer/dreamer.live.test.ts` (`DREAMER_LIVE=1`), `gateway/src/memory/dreamer/fixtures/dreamer.fixture.json`.
+**Produces:** full transaction replacing S3a's: map → reduce call (`reduce.md`, schema-validated, one retry) → `applyOps` → `writeEpisodicOutputs(..., appliedOps)` (journal op log = APPLIED ops only) → `sync.flush()` → `advanceMark`. **Crash tests at every boundary:** after map / after reduce-before-apply / after apply-before-journal / after journal-before-mark — rerun redoes the window and converges (idempotent ids, journal last-wins, ops re-derived). Live smoke: seeded session → real provider → journal + MEMORY.md fact + archive + rail held + scan pass; **capture the provider request/response into `dreamer.fixture.json` on first success** and add a zero-cost replay test through `applyOps` so rail/reconciler bugs re-verify free. Record cost in the test header.
+- [ ] Steps: unit red → wire → green → live once → commit `feat(dreamer): full dream transaction + gated live smoke`.
 
 ---
 
-### Task 23: E2E — S3 rows + mobile memory flows (serial)
-
-**Model:** fable
-**Files:** Create `qa/mobile/flows/{android,ios}/…-memory-write.yaml` + `…-memory-recall.yaml` (tags: `memory` + surface; conditional login subflow; visibility waits ≤3000ms) — prompt-driven chat flows ("remember I hate cilantro" → confirmation bubble; recall question → answer references it). Drive web rows: spark-episode-happy, dream-reflects-next-session (test-hook dream trigger). Update `testing-knowledge.md`.
-
----
-
-### Task 24: Family scope + audience
+### Task 23: E2E — S3 full + Maestro memory flows (wave 6b, serial)
 
 **Model:** opus
-**Files:** Modify `gateway/src/bootstrap/phase-services.ts` (household store per session — established owner pattern), `gateway/src/memory/memory-prompt.ts` (audience filter already from T4 — verify + extend tests), `gateway/src/memory/memory-retriever.ts` (household scopeId in search + `audience` filter for child principals), `gateway/src/tools/memory-tools.ts` (family target writes `@adults` tag passthrough; `authorUserId` into index entries via sync).
-- [ ] Steps: failing tests (child search excludes `audience: adults` entries; family write by adult lands in shared store; child family-write still rejected) → implement → PASS → commit `feat(memory): household scope live + audience filtering`.
+**Files:** Create `qa/mobile/flows/android/60-memory-write.yaml`, `61-memory-recall.yaml` + iOS twins (tags: `memory` + surface tag; conditional login subflow `runFlow: {when: ..., file: _helpers/login.yaml}`; visibility waits ≤3000ms); testing-knowledge rows.
+- [ ] **Step 1:** `bun run ci` + pytest green. **Step 2:** author flows via Maestro MCP `inspect_screen` ONCE per screen, then batch-run `./qa/mobile/run-e2e.sh android --tags memory` (and iOS). **Step 3:** web rows: dream-reflects-next-session (full: overnight facts in new session, `dreamer.run.ok | sessions= ops=`), family rows deferred to T26. Evidence + rows committed.
 
 ---
 
-### Task 25: Deep-dream trigger + docs
+### Task 24: Household activation + audience (wave 7)
+
+**Model:** opus
+**Files:** Modify `phase-services.ts` (household grant + store + scope registration — ITS slot), `memory-prompt.ts` (household render live), `memory-retriever.ts` (household scopeId + audience filter for child principals), `memory-tools.ts` (family target: `@adults` suffix passthrough, `authorUserId` on writes), `index-sync.ts` (parse `@adults` → `audience: "adults"`, accept `authorUserId` on file-section enqueue); tests in each.
+- [ ] Steps: failing tests (child search excludes `audience: adults`; adult family write lands in shared store + entry carries authorUserId; child family write still rejected) → implement → **re-run `memory-tools.test`, `memory-prompt.test`, `memory-retriever.test`, `index-sync.test`** → PASS → commit `feat(memory): household scope live + audience filtering`.
+
+---
+
+### Task 25: Deep-dream trigger + docs (wave 7)
 
 **Model:** sonnet
-**Files:** Modify `gateway/src/memory/dreamer/scheduler.ts` (exported `triggerDeepDream(user, windowDays)` — same runner, journal/episode sources, no schedule), `docs/native-todo.md` (check off what landed; keep deferrals accurate), `agents/docs/learnings.md`, `agents/docs/testing-knowledge.md` (final row sync), `deploy/README.md` (operator purge runbook: identify session → `purge` via admin endpoint → journal op-log line references → note edit).
-- [ ] Steps: small test for trigger → implement → docs → commit `feat(memory): deep-dream trigger + operator runbook + docs`.
+**Files:** Modify `scheduler.ts` (+test), `docs/native-todo.md`, `agents/docs/learnings.md`, `deploy/README.md` (operator purge runbook: identify poisoned session → admin `purge` by sessionId → journal op-log citations → note edits → `rebuild`).
+**Produces:** `triggerDeepDream(user, windowDays)` — same runner, window = journals + episode summaries (not raw sessions), on-demand only. Pinned invariants in the test: correct journal/episode window selection; nightly mark NOT advanced; no shared-scope writes.
+- [ ] Steps: failing test → implement → docs → commit `feat(memory): deep-dream trigger + operator runbook`.
 
 ---
 
-### Task 26: E2E — S4 rows + full regression (serial, final)
+### Task 26: E2E — S4 + full regression (wave 7b, serial, final)
 
-**Model:** fable
-Rows: family-scope, family-audience, then the FULL matrix regression (all rows, both-viewport rows at both sizes). Pre-handover gate: every case green, evidence captured, `bun run ci` + service pytest clean.
+**Model:** opus
+**Files:** testing-knowledge family rows + evidence.
+- [ ] **Step 1:** `bun run ci` + pytest. **Step 2:** family rows: **family-scope** (fact by A → B's session knows it; `memory.prompt.rendered | scopes=private,family`) + **family-audience** (`@adults` fact → child session never surfaces it; `memory-retriever.audience.filtered`). **Step 3:** FULL matrix regression — every row from T8/T16/T20b/T23 + both-viewport rows at both sizes. **Step 4:** commit family rows to testing-knowledge. Pre-handover gate: all green, evidence captured, deployable artifacts build.
 
 ---
 
 ## Self-Review Notes
 
-- Spec coverage: §3 defenses → T1 (channel), T2/T3b (capability+symlink), T5 (validate/scan/log events), T9a (registry+credentials), T13 (gate+risk), T14 (provenance routing), T19 (taint), T21 (rail+no-delete), T8/T16/T23/T26 (matrix). §5.6 outbox → T12. §8 checkpoint/yield → T18b. §9 → T24. §11 → T1+T7. §13 slice mapping preserved as waves.
-- Deliberately NOT in this plan: dreamer-to-shared, viewer UI, session-close summarization — spec §14 deferrals.
-- Type consistency: `MemoryStore`/`WriteResult` (T3b) consumed by T4/T5/T19/T21; `DeepMemoryClient`/`IndexEntry` (T10) by T12/T13/T14/T21; `DreamWindow` (T17) by T18b/T19. Names match across tasks.
+- Review closures: wave-1 dependency (1a/1b split); commit protocol (rule 1); T2 real paths + `cap.resource` + shared-root plumbing (T1→T2→T6); edit-ingest quarantine (T3b `reingestEdits` + T6 call + test); trigger-entry taint (T17 classifier + T19 test); fact `sessionRef` (T19); dreamer transaction + mark ownership (T20 episodic, T22 full, crash tests at every boundary); log-sweep canary (below); S1 staging flags (T1 ships false/false, T15/T20 flip); household front-load removed (T4 undefined household, T5 typed family-unavailable, T24 sole activation); `memory.enabled` consumed (T6); venv/packaging reality (T9a conventions, T11 owns wheels+stage+SERVICE_SOURCES); T7 real profile-store files; client factory + env names + fixtures (T9a/T10); `Hit`/`EnqueueEntry`/`DreamResult`/op-schema pinned; `capToolResult(content,{limit})` exact; unavailable-string unified; broker-level gate tests (T14); GATE_CHANNELS (T6); post-boot scope registration (T15); e2e Files/ci-step/inline tables/local-provider; T21 full op table + structural no-purge; T22 fixture replay; S3a e2e at 5c.
+- **Log-sweep canary owner: T6** — add to T6's test list: run a unique canary string through write→render→refusal paths with all loggers captured at DEBUG; assert canary absent, ids/lengths present. (T15 extends the same test through spark/recall paths; T22 through dreamer paths — each extends the shared canary helper.)
+- Types cross-checked: `MemoryStore`/`WriteResult` (T3b → T4/T5/T12/T19/T21), `Hit`/`IndexEntry`/`ClientError` (T10 → T12/T13/T14/T21/T24), `DreamWindow`/`DreamSession` (T17 → T18b), `DreamResult` (T18b → T19/T20/T22), `ReduceOp`/`AppliedOp` (T18a/T21 → T19/T22), `ScopeHandle`/`EnqueueEntry` (T12 → T15/T19/T24).
