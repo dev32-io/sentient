@@ -95,6 +95,26 @@ export function loadSkillIndexPreamble(opts: { runtimeDir?: string } = {}): stri
   return override ?? DEFAULT_SKILL_INDEX_PREAMBLE;
 }
 
+// Baked-in default for the memory preamble (Memory System spec §4.5). Read at
+// module init, exactly like DEFAULT_SKILL_INDEX_PREAMBLE above: a missing baked
+// template is a build error, and failing loudly at boot beats discovering an
+// empty preamble mid-conversation, the first time memory renders into a session.
+export const DEFAULT_MEMORY_PREAMBLE = readFileSync(
+  assetPath("templates", "prompts", "memory-preamble.md"),
+  "utf8",
+).trim();
+
+/** Operator override first, baked-in template as the fallback — same two-tier
+ *  shape as `loadCompactionSummarizerPrompt` / `loadSkillIndexPreamble`, so an
+ *  operator can retune the memory preamble without a rebuild. Loaded separately
+ *  from `composeMemoryBlock` (memory/memory-prompt.ts) so the renderer stays a
+ *  pure function of its inputs — no filesystem in the render path. */
+export function loadMemoryPreamble(opts: { runtimeDir?: string } = {}): string {
+  const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
+  const override = tryRead(join(runtimeDir, "system_prompts", "memory_preamble.md"), "memory-preamble", "debug");
+  return override ?? DEFAULT_MEMORY_PREAMBLE;
+}
+
 // ---------------------------------------------------------------------------
 // Auxiliary-task templates (spec §6)
 // ---------------------------------------------------------------------------
