@@ -554,7 +554,7 @@ What task 15 fixed and this keeps: a completion can land mid-dispatch via the st
   - **`session.new` returns the surface's existing conversation id**, deliberately, because mobile fires it on every launch. See `gateway/src/session-handlers/ws-session-new.ts`.
 - **Hermes-shaped settings are expected-inert on 2.0** — soul, personality and long-term memory were built against Hermes as the agent runtime. The gateway owns the loop now, so those screens render and persist but do not change behaviour. Keep the UI; the functionality transitions to gateway-owned in a later spec. An operator testing personality and finding it does nothing must be able to tell "as designed, for now" from "broken" — this is the single most likely thing to be misfiled as a bug.
 - **Signal** — removed outright as dead weight. Nothing to verify, nothing to restore.
-- **Per-user long-term memory, recursive sub-agents** — named in the 2.0 design, specified in their own later specs. Out of scope for the walking skeleton. **Skills landed 2026-08-08** (`docs/superpowers/specs/2026-08-08-skill-system-design.md`) — see the follow-ups it created, immediately below.
+- **Recursive sub-agents** — named in the 2.0 design, specified in their own later spec. Out of scope for the walking skeleton. **Skills landed 2026-08-08** (`docs/superpowers/specs/2026-08-08-skill-system-design.md`) — see the follow-ups it created, immediately below. **Per-user long-term memory is now specified** (`docs/superpowers/specs/2026-08-08-memory-system-design.md`) — see its deferrals, below the skill follow-ups.
 
 ### Skill system follow-ups (2026-08-08 spec §8) — loudest first
 
@@ -567,6 +567,18 @@ The skill system (per-user `SKILL.md` skills, five gateway-native tools, lazy-lo
 5. **Discovery at scale.** The index (system-prompt level 1) is a flat `name — description` list capped by `orchestrator.skills.max_index_entries`, with deterministic truncation (newest-first select, name-sorted render) as the interim behavior. A household with dozens of skills needs a real discovery/routing mechanism (search, RAG, categories) instead of "hope it fits under the cap."
 6. **Scanner Layer 3 — model-based classifier.** The injection scanner (`gateway/src/security/injection-scanner.ts`) ships Layers 0–2 (normalization, bilingual pattern bank, structural envelope detection) as deterministic regex/parse logic. Layer 3 — an LLM-based classifier for paraphrases and non-English/non-Chinese renderings the pattern bank cannot reach — is a designed-for config extension (the pattern table's shape already anticipates it), not implemented. See the HIGH-PRIORITY SECURITY closure above for what Layers 0–2 do and do not catch.
 7. **Multi-file reference bundles (progressive-disclosure level 3).** v1 is a single `SKILL.md` per skill; the Agent Skills standard's level-3 shape (a skill referencing companion files loaded on demand) is not built.
+
+### Memory system deferrals (2026-08-08 spec §14) — recorded by that spec
+
+The memory system (file memory + deep-memory service + spark/recall + nightly dreamer) is specified in `docs/superpowers/specs/2026-08-08-memory-system-design.md`. Its spec names these as deliberately deferred:
+
+1. **Communal-device audience problem — hard prerequisite for the ambient-device (ESP32 cube) era.** v1 surfaces are personally authenticated (web login, mobile app), so "whose memory may this session speak" == the session principal. A shared room speaker breaks that: it would voice the *authenticated* user's private memory to whoever is in the room, and the actual speaker may not be the principal at all. Before any communal surface ships, retrieval policy must carry an audience/privacy mode (e.g. shared-scope-only spark on communal sessions, explicit profile switch for private listening) — in the retriever, not merely the prompt.
+2. **Richer audience / sensitivity policy for shared memory.** v1 ships a cheap `audience: all | adults` tag filtered at render + search. Per-member audiences, sensitivity classes (medical/financial/surprises), and consent-shaped "promote this to family memory?" flows are not designed.
+3. **Child-specific memory policy.** Children get full private-scope memory (memory is a core feature) and are excluded from `@adults` shared content and family-scope writes. Anything richer — parental review of a child's memory, transparency defaults, child-dreaming policy — is deliberately unscoped (no child at home yet).
+4. **Per-user memory controls beyond two toggles.** v1: per-user spark on/off + dreaming on/off. Pause-and-review of what the dreamer learned, undo of a bad consolidation, and per-memory management UX ride on the future memory viewer (which repurposes the inert Hermes-era memory settings surface against the new files + service API).
+5. **Backup / durability tooling.** Canonical memory is plain markdown + the session store under `~/.sentient/gateway/`; the index is rebuildable. Operator backup guidance, export, restore verification, and format-migration tooling are not built.
+6. **Session-close episode summarization.** Episode summaries are written by the nightly dreamer, so same-day sessions don't spark via episodes until the next morning (file-section sparks still work). An earlier summarization pass on the idle-archive hook would close the gap.
+7. **Retrieval-during-STT overlap.** Spark runs on the finalized utterance; overlapping the search with STT finalization is a latency optimization available later without design change.
 
 ---
 
