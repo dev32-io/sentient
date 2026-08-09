@@ -9,7 +9,12 @@ import path from "node:path";
 import type { UserRole } from "@sentient/protocol";
 import type { UserId } from "../user-auth/user-id.js";
 
-export type ResourceClass = "session-store" | "file-scope" | "tool-broker";
+export type ResourceClass =
+  | "session-store"
+  | "file-scope"
+  | "tool-broker"
+  | "memory-private"
+  | "memory-household";
 
 export interface Capability {
   /** Whose authority this grant derives from. Stamped at mint, never rewritten. */

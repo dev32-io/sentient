@@ -28,6 +28,18 @@ export interface AccessManagerConfig {
    * `$HOME`, since neither `path.join` nor `path.resolve` expands `~`.
    */
   userDataRoot: string;
+  /**
+   * Root under which each household gets <root>/<householdId>/ for shared
+   * (household-scoped) memory. Sibling of `userDataRoot` by convention: mirrors
+   * `access.shared_data_root` in `gateway/config.yaml`. Absolute, same
+   * load-boundary contract as `userDataRoot`.
+   *
+   * Optional: when absent it is derived as `join(dirname(userDataRoot),
+   * "shared")` so household grants work whether or not the operator has set the
+   * config key. If `userDataRoot` is `~/.sentient/gateway/users`, the derived
+   * shared root is `~/.sentient/gateway/shared`.
+   */
+  sharedDataRoot?: string;
 }
 
 export interface AccessManager {
@@ -40,13 +52,23 @@ export interface AccessManager {
 export function createAccessManager(config: AccessManagerConfig): AccessManager {
   const userHomeDir = (principal: UserPrincipal): string => path.join(config.userDataRoot, principal.userId);
 
+  // Sibling of userDataRoot when the operator has not set `access.shared_data_root`.
+  const sharedDataRoot = config.sharedDataRoot ?? path.join(path.dirname(config.userDataRoot), "shared");
+
+  // Where a given resource class confines its grant. All classes except
+  // household memory root at the principal's own home dir; household memory
+  // roots at the shared, householdId-keyed dir so members of one household
+  // share a scope no other household can reach.
+  const rootPathFor = (principal: UserPrincipal, resource: ResourceClass): string =>
+    resource === "memory-household" ? path.join(sharedDataRoot, principal.householdId) : userHomeDir(principal);
+
   return {
     userHomeDir,
     grant(principal, resource) {
       const cap: Capability = Object.freeze({
         ownerUserId: principal.userId,
         resource,
-        rootPath: userHomeDir(principal),
+        rootPath: rootPathFor(principal, resource),
         // Baked in at mint, not read again later — this IS the principal
         // becoming authority (spec §2.1/L1). See Capability.role's doc comment.
         role: principal.role,
