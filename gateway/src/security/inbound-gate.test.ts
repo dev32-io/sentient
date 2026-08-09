@@ -32,6 +32,7 @@ const ALL_ON: InboundScanConfig = {
     background_completion: true,
     skill_body: true,
     delegation_prompt: true,
+    memory_body: true,
   },
 };
 

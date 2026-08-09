@@ -892,6 +892,36 @@ function testOrchestratorConfig(): OrchestratorConfig {
       max_consecutive_failures: 3,
       max_backoff_turns: 16,
     },
+    memory: {
+      enabled: true,
+      core_max_lines: 300,
+      core_max_chars: 12000,
+      topic_max_lines: 2000,
+      topic_max_chars: 80000,
+      read_max_chars: 8000,
+      prompt_budget_chars: 20000,
+      service: { url: "http://127.0.0.1:8771", request_timeout_ms: 5000 },
+      spark: {
+        enabled: true,
+        min_similarity: 0.6,
+        max_snippets: 3,
+        token_budget: 250,
+        recency_half_life_days: 90,
+        recency_floor: 0.35,
+        timeout_ms: 500,
+        raw_chunks: false,
+      },
+      recall: { k: 5, context_entries: 2 },
+      dreamer: {
+        enabled: true,
+        hour: 3,
+        preservation_pct: 75,
+        max_input_chars_per_call: 60000,
+        max_output_tokens: 3000,
+        catch_up_threshold_hours: 24,
+        yield_check_ms: 5000,
+      },
+    },
   };
 }
 

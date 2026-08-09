@@ -1,5 +1,5 @@
-import { dirname, join } from "node:path";
 import { describe, expect, it } from "bun:test";
+import { dirname, join } from "node:path";
 import type { UserRole } from "@sentient/protocol";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";

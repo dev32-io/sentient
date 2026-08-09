@@ -89,6 +89,36 @@ function testConfig(maxIterations = 10): OrchestratorConfig {
       max_consecutive_failures: 3,
       max_backoff_turns: 16,
     },
+    memory: {
+      enabled: true,
+      core_max_lines: 300,
+      core_max_chars: 12000,
+      topic_max_lines: 2000,
+      topic_max_chars: 80000,
+      read_max_chars: 8000,
+      prompt_budget_chars: 20000,
+      service: { url: "http://127.0.0.1:8771", request_timeout_ms: 5000 },
+      spark: {
+        enabled: true,
+        min_similarity: 0.6,
+        max_snippets: 3,
+        token_budget: 250,
+        recency_half_life_days: 90,
+        recency_floor: 0.35,
+        timeout_ms: 500,
+        raw_chunks: false,
+      },
+      recall: { k: 5, context_entries: 2 },
+      dreamer: {
+        enabled: true,
+        hour: 3,
+        preservation_pct: 75,
+        max_input_chars_per_call: 60000,
+        max_output_tokens: 3000,
+        catch_up_threshold_hours: 24,
+        yield_check_ms: 5000,
+      },
+    },
   };
 }
 
@@ -3122,6 +3152,7 @@ describe("inbound gate mode descriptor (Task 10)", () => {
     expect(desc.channels.split(",").sort()).toEqual([
       "background_completion",
       "delegation_prompt",
+      "memory_body",
       "skill_body",
       "tool_result",
     ]);
@@ -3137,7 +3168,12 @@ describe("inbound gate mode descriptor (Task 10)", () => {
     const desc = describeInboundGateMode(cfg);
     expect(desc.mode).toBe("real"); // other channels still scan
     expect(desc.channels.split(",")).not.toContain("tool_result");
-    expect(desc.channels.split(",").sort()).toEqual(["background_completion", "delegation_prompt", "skill_body"]);
+    expect(desc.channels.split(",").sort()).toEqual([
+      "background_completion",
+      "delegation_prompt",
+      "memory_body",
+      "skill_body",
+    ]);
   });
 
   it("reports passthrough when the master switch is on but every channel is off", () => {
@@ -3147,7 +3183,7 @@ describe("inbound gate mode descriptor (Task 10)", () => {
     });
     const desc = describeInboundGateMode(cfg);
     expect(desc.mode).toBe("passthrough");
-    expect(desc.channels).toBe("");
+    expect(desc.channels).toBe("memory_body"); // memory_body ships on-by-default; counted toward "real" once T6 adds it to GATE_CHANNELS
   });
 
   it("reports passthrough when only delegation_prompt is on — that channel never reaches the gate", () => {
@@ -3157,6 +3193,6 @@ describe("inbound gate mode descriptor (Task 10)", () => {
     });
     const desc = describeInboundGateMode(cfg);
     expect(desc.mode).toBe("passthrough"); // gate-passthrough in truth: delegation_prompt is scanned via prompt-classifier, not this gate
-    expect(desc.channels).toBe("delegation_prompt"); // still reported as enabled, just not counted toward "real"
+    expect(desc.channels).toBe("delegation_prompt,memory_body"); // still reported as enabled, just not counted toward "real"
   });
 });

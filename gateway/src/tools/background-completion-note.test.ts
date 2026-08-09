@@ -111,7 +111,13 @@ describe("composeBackgroundCompletionNote", () => {
 
 const ALL_ON: InboundScanConfig = {
   enabled: true,
-  channels: { tool_result: true, background_completion: true, skill_body: true, delegation_prompt: true },
+  channels: {
+    tool_result: true,
+    background_completion: true,
+    skill_body: true,
+    delegation_prompt: true,
+    memory_body: true,
+  },
 };
 
 function fakeRisk() {

@@ -2078,7 +2078,13 @@ describe("ToolBroker — foreground-native tools", () => {
 
 const SCAN_ALL_ON: InboundScanConfig = {
   enabled: true,
-  channels: { tool_result: true, background_completion: true, skill_body: true, delegation_prompt: true },
+  channels: {
+    tool_result: true,
+    background_completion: true,
+    skill_body: true,
+    delegation_prompt: true,
+    memory_body: true,
+  },
 };
 
 /** A risk accumulator whose level is fixed, so a broker test can force the PDP

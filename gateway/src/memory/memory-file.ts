@@ -185,9 +185,7 @@ export interface MemoryCapOptions {
 
 export type MemoryCapError = "cap_lines" | "cap_chars" | "invisible_chars";
 
-export type MemoryValidationResult =
-  | { ok: true }
-  | { ok: false; error: MemoryCapError; lines: number; chars: number };
+export type MemoryValidationResult = { ok: true } | { ok: false; error: MemoryCapError; lines: number; chars: number };
 
 /** Validates a memory text (MEMORY.md body or topic body) against the
  *  dual line/char caps and the invisible-char lint — the write-time gate
