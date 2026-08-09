@@ -24,8 +24,9 @@ from aiohttp import web
 from . import __version__
 from .auth import Plane, Tokens, authenticate, plane_satisfies
 from .config import Config
+from .index import RebuildRequiredError
 from .logging import get_logger
-from .scopes import InMemoryIndex, ScopePathError, ScopeRegistry
+from .scopes import IndexEngine, ScopePathError, ScopeRegistry
 
 log = get_logger("server")
 
@@ -40,7 +41,7 @@ class ServiceContext:
 
     config: Config
     registry: ScopeRegistry
-    index: InMemoryIndex
+    index: IndexEngine
     tokens: Tokens
 
 
@@ -159,7 +160,16 @@ async def _handle_search(
             return _error(403, "unknown_scope")
     kinds = _opt_str_list(filters, "kinds")
     statuses = _opt_str_list(filters, "statuses")
-    hits = ctx.index.search(scope_ids, k, kinds, statuses)
+    time_range = filters.get("timeRange")
+    if time_range is not None and not isinstance(time_range, dict):
+        return _error(400, "bad_request")
+    try:
+        hits = ctx.index.search(scope_ids, query, k, kinds, statuses, time_range)
+    except RebuildRequiredError:
+        # Stored vectors were produced by a different embedding model; the gateway
+        # must rebuild (re-feed) the scope before search can compare them.
+        log.warning("search refused reason=rebuild_required scope_count=%d", len(scope_ids))
+        return _error(409, "rebuild_required")
     log.info("search scope_count=%d hit_count=%d", len(scope_ids), len(hits))
     return web.json_response({"hits": hits, "count": len(hits)})
 
@@ -209,18 +219,19 @@ async def _handle_rebuild(
 
 async def _handle_health(request: web.Request) -> web.StreamResponse:
     ctx: ServiceContext = request.app[_CTX_KEY]
-    # embeddingModel is null until the real engine loads a model (next task).
+    # The real engine reports its loaded model id; the stub (wire tests) has no
+    # model and reports null. The contract field is a nullable string either way.
     return web.json_response(
         {
             "status": "ok",
             "version": __version__,
-            "embeddingModel": None,
+            "embeddingModel": ctx.index.embedding_model_id,
             "indexSchemaVersion": ctx.config.index.schema_version,
         }
     )
 
 
-def build_app(config: Config, registry: ScopeRegistry, index: InMemoryIndex, tokens: Tokens) -> web.Application:
+def build_app(config: Config, registry: ScopeRegistry, index: IndexEngine, tokens: Tokens) -> web.Application:
     """Assemble the aiohttp application with its context and routes."""
     app = web.Application()
     app[_CTX_KEY] = ServiceContext(config=config, registry=registry, index=index, tokens=tokens)
@@ -239,9 +250,21 @@ def build_app(config: Config, registry: ScopeRegistry, index: InMemoryIndex, tok
 
 
 def run_server(config: Config, tokens: Tokens) -> None:
-    """Blocking entry point — build the app and serve on the configured loopback."""
+    """Blocking entry point — build the app and serve on the configured loopback.
+
+    Production wiring: the real SQLite/FTS5/sqlite-vec engine backed by the MLX
+    embedder. The model loads eagerly here so ``/health`` reports it and the
+    first query isn't cold; startup then WARNs on any scope whose stored model id
+    no longer matches (those scopes refuse search until rebuilt).
+    """
+    from .embedder import MlxEmbedder
+    from .index import SqliteIndexEngine
+
     registry = ScopeRegistry(config.storage.data_root)
-    index = InMemoryIndex()
-    app = build_app(config, registry, index, tokens)
+    embedder = MlxEmbedder(config.embedding.model)
+    embedder.load()
+    engine = SqliteIndexEngine(registry, embedder, config.index.schema_version)
+    engine.check_scopes_on_startup()
+    app = build_app(config, registry, engine, tokens)
     log.info("deep-memory listening host=%s port=%d", config.server.host, config.server.port)
     web.run_app(app, host=config.server.host, port=config.server.port, print=None)

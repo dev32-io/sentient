@@ -6,12 +6,12 @@
 # to pyproject.toml [project.dependencies] goes here too.
 #
 # PINNED VERSIONS verified against current PyPI releases at implementation time
-# (pinned-versions rule). Validated interpreter: Python 3.14 (same as sibling
-# whisper-stt). The 3.11 pin on local-tts is a mlx-AUDIO limitation only; it does
-# not apply here — mlx has cp314 arm64 wheels and sqlite-vec / mlx-embeddings are
-# pure py3 wheels.
+# (pinned-versions rule). Validated interpreter: Python 3.14.6 — the full engine
+# stack (mlx, mlx-embeddings, sqlite-vec + transitive sentencepiece/tokenizers)
+# installs and imports on cp314 arm64, proven end-to-end in T9b. The 3.11 pin on
+# local-tts is a mlx-AUDIO limitation only; it does not apply here.
 
-# --- Runtime (used now) -------------------------------------------------------
+# --- Runtime ------------------------------------------------------------------
 
 # Async HTTP server (aiohttp.web). 3.x is the current major; cp314 wheels exist.
 aiohttp>=3.14,<4
@@ -19,12 +19,12 @@ aiohttp>=3.14,<4
 # YAML config loader.
 pyyaml>=6
 
-# --- Index engine (NEXT task, T9b) — pinned, NOT yet imported -----------------
-# This scaffold keeps index ops in an in-memory stub, so these are intentionally
-# left commented: uncommenting them (or `pip install .[index]`, see pyproject)
-# pulls multi-GB MLX weights that the scaffold does not need. Versions below are
-# verified-current pins the T9b engine will activate.
-#   sqlite-vec>=0.1.9,<0.2       # loadable SQLite vector extension (py3 wheels)
-#   mlx>=0.32,<0.34              # Apple-Silicon array framework (cp314 arm64 wheels)
-#   mlx-embeddings>=0.1.0,<0.2   # candidate MLX embedding lib (T9b confirms final choice)
-#   numpy>=1.26
+# --- Index engine (T9b) — ACTIVE ----------------------------------------------
+# The real engine (SQLite + FTS5 + sqlite-vec + MLX embeddings) uses these.
+# mlx-embeddings pulls a broad MLX toolchain (mlx-lm/vlm/audio, transformers,
+# tokenizers, sentencepiece) transitively — expected. Loading the pinned model
+# downloads a few hundred MB of weights on first run.
+sqlite-vec>=0.1.9,<0.2       # loadable SQLite vector extension (py3 wheels)
+mlx>=0.32,<0.34              # Apple-Silicon array framework (cp314 arm64 wheels)
+mlx-embeddings>=0.1.0,<0.2   # MLX embedding runtime (multilingual e5 model)
+numpy>=1.26

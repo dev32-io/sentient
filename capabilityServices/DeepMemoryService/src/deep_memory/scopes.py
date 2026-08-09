@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from .logging import get_logger
 
@@ -116,11 +116,51 @@ class ScopeRegistry:
         return list(self._records.values())
 
 
+@runtime_checkable
+class IndexEngine(Protocol):
+    """Structural surface the HTTP server drives, independent of the backend.
+
+    Both :class:`InMemoryIndex` (the zero-cost wire-test double) and the real
+    :class:`deep_memory.index.SqliteIndexEngine` satisfy this, so the server is
+    engine-agnostic. ``embedding_model_id`` is ``None`` for the stub (no model)
+    and the loaded model id for the real engine — reported by ``/health``.
+    """
+
+    embedding_model_id: str | None
+
+    def upsert(self, scope_id: str, entries: list[dict[str, Any]]) -> int: ...
+
+    def search(
+        self,
+        scope_ids: list[str],
+        query: str,
+        k: int,
+        kinds: list[str] | None,
+        statuses: list[str] | None,
+        time_range: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]: ...
+
+    def set_status(self, scope_id: str, ids: list[str], status: str, reason: str) -> int: ...
+
+    def purge(self, scope_id: str, entry_filter: dict[str, Any]) -> int: ...
+
+    def rebuild(self, scope_id: str) -> int: ...
+
+
 class InMemoryIndex:
-    """Stub index engine. Real SQLite/vec/FTS engine replaces this next task."""
+    """Stub index engine — a zero-cost test double for the wire-contract tests.
+
+    The real engine (:class:`deep_memory.index.SqliteIndexEngine`) is what
+    production runs; this stays only to pin the HTTP/auth/validation contract
+    without loading a model. Search returns a constant ``similarity`` of 1.0 and
+    insertion-order ranks, ignoring ``query`` / ``time_range`` — enough for the
+    wire shape, never for real scoring.
+    """
 
     def __init__(self) -> None:
         self._by_scope: dict[str, dict[str, dict[str, Any]]] = {}
+        # No model behind the stub — /health reports null for it.
+        self.embedding_model_id: str | None = None
 
     def _scope(self, scope_id: str) -> dict[str, dict[str, Any]]:
         return self._by_scope.setdefault(scope_id, {})
@@ -135,17 +175,20 @@ class InMemoryIndex:
     def search(
         self,
         scope_ids: list[str],
+        query: str,
         k: int,
         kinds: list[str] | None,
         statuses: list[str] | None,
+        time_range: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Return up to ``k`` stored entries across scopes as ranked hits.
 
         Stub semantics: no vector/FTS scoring. Filter by ``kinds`` / ``statuses``
         when given, then return matches with a constant ``similarity`` and
-        sequential ``rank``. ``query`` and ``timeRange`` are accepted upstream
-        but not applied here (the real engine implements them).
+        sequential ``rank``. ``query`` and ``time_range`` are accepted (the wire
+        signature) but not applied here — the real engine implements them.
         """
+        del query, time_range  # accepted for signature parity; unused by the stub
         hits: list[dict[str, Any]] = []
         rank = 1
         for scope_id in scope_ids:

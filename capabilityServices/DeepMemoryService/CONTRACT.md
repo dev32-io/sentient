@@ -6,11 +6,13 @@ nothing about users or sessions — the gateway owns all of that and reaches thi
 service through a named `DeepMemoryClient` interface. Design: `docs/superpowers/
 specs/2026-08-08-memory-system-design.md` §5.
 
-> **Scaffold status.** The HTTP surface, the split-credential auth plane, and
-> the persisted scope registry are real. The index operations run against an
-> **in-memory stub** (constant `similarity`, insertion-order ranks); the real
-> engine (SQLite + FTS5 + sqlite-vec + MLX embeddings) lands in the next task.
-> `GET /health` reports `embeddingModel: null` until that engine loads a model.
+> **Engine status.** Fully live. Index operations run on the real engine —
+> per-scope SQLite with FTS5 + sqlite-vec, MLX multilingual embeddings, and the
+> pinned §5.3 pipeline (vector top-40 cosine + BM25 top-40 → RRF k=60 → dedupe →
+> `{entry, similarity, rank}`). `GET /health` reports the loaded `embeddingModel`
+> id. A scope whose stored model id differs from the configured one refuses
+> `/search` with `409 rebuild_required` (see §4). The in-memory stub survives
+> only as a zero-cost test double for the wire-contract tests.
 
 ## 1. Connection
 
@@ -59,3 +61,4 @@ schema: spec §5.4. Canonical request/response bodies per endpoint live in
 | 403    | `unknown_scope`         | a data/admin op names an unregistered scope      |
 | 400    | `bad_request`           | malformed JSON / missing / wrong-typed field     |
 | 400    | `path_outside_data_root`| register-scope indexPath escapes `data_root`     |
+| 409    | `rebuild_required`      | search on a scope whose stored embedding model != configured; gateway must `rebuild` |
