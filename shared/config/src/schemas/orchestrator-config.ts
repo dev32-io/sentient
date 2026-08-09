@@ -229,5 +229,95 @@ export const orchestratorConfigSchema = z.object({
       max_backoff_turns: z.number().int().min(1).max(256).default(16),
     })
     .default({}),
+  // MEMORY (memory-system spec §11) — MEMORY.md + topic files + spark recall +
+  // the dreamer consolidation pass. Every sub-block defaults to `{}` and every
+  // leaf carries its own zod default, same as the other blocks in this file:
+  // an operator config predating this key must still boot.
+  memory: z
+    .object({
+      // Master switch for the whole memory module.
+      enabled: z.boolean().default(true),
+      // MEMORY.md line cap; injected every session. Range 50-2000.
+      core_max_lines: z.number().int().min(50).max(2000).default(300),
+      // MEMORY.md char cap, dual with the line cap — first hit wins. Range 2000-100000.
+      core_max_chars: z.number().int().min(2000).max(100000).default(12000),
+      // Topic files are read on demand, not injected every turn. Range 100-10000.
+      topic_max_lines: z.number().int().min(100).max(10000).default(2000),
+      // Range 10000-500000.
+      topic_max_chars: z.number().int().min(10000).max(500000).default(80000),
+      // Per memory_read page, head-and-tail capped. Range 1000-40000.
+      read_max_chars: z.number().int().min(1000).max(40000).default(8000),
+      // Aggregate memory block budget in the system prompt. Range 5000-100000.
+      prompt_budget_chars: z.number().int().min(5000).max(100000).default(20000),
+      service: z
+        .object({
+          // OPTIONAL deep-memory service base URL. LOOPBACK ONLY — the
+          // service is a native managed addon (like whisper-stt/local-tts),
+          // never LAN- or internet-reachable.
+          url: z.string().url().default("http://127.0.0.1:8771"),
+          // Deadline on every DeepMemoryClient call. Range 200-60000.
+          request_timeout_ms: z.number().int().min(200).max(60000).default(5000),
+        })
+        .default({}),
+      spark: z
+        .object({
+          // Per-user toggle overrides downward. Slice-staged: zod default
+          // stays `true` for missing-block resilience; the SHIPPED config.yaml
+          // sets this `false` until T15 flips it on.
+          enabled: z.boolean().default(true),
+          // Relevance gate (cosine similarity, 0-1) — gates alone; recency
+          // only orders passed hits. Prefer empty over weak. Range 0-1.
+          min_similarity: z.number().min(0).max(1).default(0.6),
+          // Hard cap on injected snippets. Range 1-10.
+          max_snippets: z.number().int().min(1).max(10).default(3),
+          // Hard cap on the injected spark section, in tokens. Range 50-2000.
+          token_budget: z.number().int().min(50).max(2000).default(250),
+          // Ordering decay half-life, in days. Range 7-3650.
+          recency_half_life_days: z.number().int().min(7).max(3650).default(90),
+          // Decay floor — orders passed hits, never gates them. Range 0-1.
+          recency_floor: z.number().min(0).max(1).default(0.35),
+          // Per-turn search deadline; expiry = spark withheld. Range 50-5000.
+          timeout_ms: z.number().int().min(50).max(5000).default(500),
+          // Index raw transcript chunks in addition to memory text — noisy
+          // and costly; off by default.
+          raw_chunks: z.boolean().default(false),
+        })
+        .default({}),
+      recall: z
+        .object({
+          // Hits per memory_recall. Range 1-20.
+          k: z.number().int().min(1).max(20).default(5),
+          // Entries of context around a drill-down hit. Range 0-10.
+          context_entries: z.number().int().min(0).max(10).default(2),
+        })
+        .default({}),
+      dreamer: z
+        .object({
+          // Per-user toggle overrides downward. Slice-staged: zod default
+          // stays `true` for missing-block resilience; the SHIPPED config.yaml
+          // sets this `false` until T20 flips it on.
+          enabled: z.boolean().default(true),
+          // Local time hour the nightly consolidation pass runs. Range 0-23.
+          hour: z.number().int().min(0).max(23).default(3),
+          // Refuse op batches that would shrink MEMORY.md below this percent
+          // of its current size. Range 0-100.
+          preservation_pct: z.number().int().min(0).max(100).default(75),
+          // Per-map-call session window, in chars. Range 4000-400000.
+          max_input_chars_per_call: z.number().int().min(4000).max(400000).default(60000),
+          // Output cap for one dreamer LLM call. Range 200-16000.
+          max_output_tokens: z.number().int().min(200).max(16000).default(3000),
+          // Boot catch-up fires when the last consolidation mark is older
+          // than this many hours. Range 1-168.
+          catch_up_threshold_hours: z.number().int().min(1).max(168).default(24),
+          // Defer while the user has an active turn; re-checked on this
+          // interval. Range 500-60000.
+          yield_check_ms: z.number().int().min(500).max(60000).default(5000),
+        })
+        .default({}),
+    })
+    // Block-level default: operator configs are edited in place and predate
+    // this key — a missing block must never brick boot for a gateway that
+    // was working yesterday.
+    .default({}),
 });
 export type OrchestratorConfig = z.output<typeof orchestratorConfigSchema>;

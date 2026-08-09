@@ -8,7 +8,7 @@ const log = getLog(["sentient", "security", "injection-scanner"]);
 // set; InjectionCategory here MUST match those eight literals exactly).
 // ---------------------------------------------------------------------------
 
-export type ScanChannel = "tool_result" | "background_completion" | "skill_body" | "delegation_prompt";
+export type ScanChannel = "tool_result" | "background_completion" | "skill_body" | "delegation_prompt" | "memory_body";
 
 export interface ScanProvenance {
   channel: ScanChannel;

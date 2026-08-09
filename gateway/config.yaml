@@ -199,6 +199,11 @@ access:
   # <user_data_root>/<userId>/ holds that user's session DB, files, and scratch.
   # Per-user physical separation is defense-in-depth beneath the capability model.
   user_data_root: ~/.sentient/gateway/users
+  # OPTIONAL root for household-shared state (memory-system spec §2), keyed by
+  # householdId under it: <shared_data_root>/<householdId>/. Left unset here —
+  # consumers derive join(dirname(user_data_root), "shared") when absent, so
+  # this key only needs setting to relocate the shared root elsewhere.
+  # shared_data_root: ~/.sentient/gateway/shared
 
 # ---------------------------------------------------------------------------
 # Store — durable per-user session history (spec §3)
@@ -439,6 +444,44 @@ orchestrator:
     # the cap the ERROR line carries backoffCapped=true, so a stalled summarizer
     # stays visible. Range 1-256.
     max_backoff_turns: 16
+  # MEMORY (memory-system spec §11) — MEMORY.md + topic files + spark recall +
+  # the dreamer nightly consolidation pass. SLICE STAGING: spark.enabled and
+  # dreamer.enabled ship false here even though their zod defaults are true
+  # (missing-block resilience); later slices flip each on (T15 spark, T20
+  # dreamer) once their consumers land.
+  memory:
+    enabled: true                    # master switch for the whole memory module
+    core_max_lines: 300              # MEMORY.md line cap; injected every session. Range 50-2000
+    core_max_chars: 12000            # dual cap with lines, first hit wins. Range 2000-100000
+    topic_max_lines: 2000            # topic files are read on demand. Range 100-10000
+    topic_max_chars: 80000           # Range 10000-500000
+    read_max_chars: 8000             # per memory_read page, head-and-tail capped. Range 1000-40000
+    prompt_budget_chars: 20000       # aggregate memory block budget in the system prompt. Range 5000-100000
+    service:
+      # LOOPBACK ONLY — the deep-memory service is a native managed addon
+      # (like whisper-stt/local-tts), never LAN- or internet-reachable.
+      url: http://127.0.0.1:8771
+      request_timeout_ms: 5000       # deadline on every DeepMemoryClient call. Range 200-60000
+    spark:
+      enabled: false                 # SLICE STAGING — off until T15; zod default is true
+      min_similarity: 0.60           # relevance gate (cosine, 0-1) — gates alone; prefer empty over weak. Range 0-1
+      max_snippets: 3                # hard cap on injected snippets. Range 1-10
+      token_budget: 250              # hard cap on the injected spark section. Range 50-2000
+      recency_half_life_days: 90     # ordering decay half-life. Range 7-3650
+      recency_floor: 0.35            # decay floor — orders passed hits, never gates them. Range 0-1
+      timeout_ms: 500                # per-turn search deadline; expiry = spark withheld. Range 50-5000
+      raw_chunks: false              # index raw transcript chunks (noisy; costly)
+    recall:
+      k: 5                           # hits per memory_recall. Range 1-20
+      context_entries: 2             # entries of context around a drill-down hit. Range 0-10
+    dreamer:
+      enabled: false                 # SLICE STAGING — off until T20; zod default is true
+      hour: 3                        # local time, nightly. Range 0-23
+      preservation_pct: 75           # refuse op batches shrinking MEMORY.md below this. Range 0-100
+      max_input_chars_per_call: 60000  # per map-call session window. Range 4000-400000
+      max_output_tokens: 3000        # per dreamer LLM call. Range 200-16000
+      catch_up_threshold_hours: 24   # boot catch-up when last mark older. Range 1-168
+      yield_check_ms: 5000           # defer while user has an active turn. Range 500-60000
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -1143,3 +1186,4 @@ security:
       background_completion: true  # screen delegated-agent payloads before the completion note
       skill_body: true             # use-time screening of skill bodies loaded by skill_use; write-time authoring scan is unconditional and not governed by this
       delegation_prompt: true      # CURRENTLY INERT — the delegation prompt is always scanned via prompt-classifier directly, not the gate; see docs/native-todo.md
+      memory_body: true            # read-time screening of sparked snippets, memory_recall hits, and drill-down session reads (memory-system spec §3.1); MEMORY.md rendered into the system prompt is NOT gated here — write-time + edit-ingest scanning cover it instead

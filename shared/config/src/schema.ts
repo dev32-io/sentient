@@ -392,6 +392,12 @@ export const inboundScanConfigSchema = z
         background_completion: z.boolean().default(true),
         skill_body: z.boolean().default(true),
         delegation_prompt: z.boolean().default(true),
+        // Read-time gate on sparked snippets, memory_recall hits, and
+        // drill-down session reads (memory-system spec §3.1). MEMORY.md
+        // rendered into the system prompt does NOT transit this gate at
+        // read time (same as skill descriptions) — it relies on write-time
+        // + edit-ingest scanning instead.
+        memory_body: z.boolean().default(true),
       })
       .default({}),
   })

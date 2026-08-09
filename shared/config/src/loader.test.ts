@@ -151,3 +151,18 @@ describe("loadConfigFixture — orchestrator.skills + security.inbound_scan", ()
     expect(cfg.security.inbound_scan.enabled).toBe(true); // missing block = scanning ON — secure by default
   });
 });
+
+describe("loadConfigFixture — orchestrator.memory", () => {
+  it("parses orchestrator.memory with spec defaults", () => {
+    const cfg = loadConfigFixture();
+    expect(cfg.orchestrator?.memory.core_max_lines).toBe(300);
+    expect(cfg.orchestrator?.memory.spark.min_similarity).toBe(0.6);
+    expect(cfg.orchestrator?.memory.service.url).toBe("http://127.0.0.1:8771");
+    expect(cfg.security.inbound_scan.channels.memory_body).toBe(true);
+  });
+
+  it("boots a pre-upgrade config missing orchestrator.memory entirely", () => {
+    const cfg = loadConfigFixture({ stripKeys: ["orchestrator.memory"] });
+    expect(cfg.orchestrator?.memory.enabled).toBe(true); // block-level .default({})
+  });
+});
