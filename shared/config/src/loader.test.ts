@@ -157,12 +157,29 @@ describe("loadConfigFixture — orchestrator.memory", () => {
     const cfg = loadConfigFixture();
     expect(cfg.orchestrator?.memory.core_max_lines).toBe(300);
     expect(cfg.orchestrator?.memory.spark.min_similarity).toBe(0.6);
-    expect(cfg.orchestrator?.memory.service.url).toBe("http://127.0.0.1:8771");
+    // 8772: whisper-stt owns 8768/8769 and local-tts owns 8770/8771
+    // (WS/health pairs each) — must stay off both.
+    expect(cfg.orchestrator?.memory.service.url).toBe("http://127.0.0.1:8772");
     expect(cfg.security.inbound_scan.channels.memory_body).toBe(true);
   });
 
   it("boots a pre-upgrade config missing orchestrator.memory entirely", () => {
     const cfg = loadConfigFixture({ stripKeys: ["orchestrator.memory"] });
     expect(cfg.orchestrator?.memory.enabled).toBe(true); // block-level .default({})
+  });
+});
+
+describe("loadConfigFixture — managed_services.deep-memory", () => {
+  it("parses as a native, optional entry whose healthcheck matches orchestrator.memory.service.url", () => {
+    const cfg = loadConfigFixture();
+    const services = cfg.managed_services as Record<string, Record<string, unknown>> | undefined;
+    const deepMemory = services?.["deep-memory"];
+    expect(deepMemory?.launch).toBe("native");
+    expect(deepMemory?.optional).toBe(true);
+    const healthcheck = deepMemory?.healthcheck as { url?: string } | undefined;
+    // The addon's own health port must be the SAME port the gateway's
+    // DeepMemoryClient dials — a drift here is exactly the 8771 collision
+    // this test guards against.
+    expect(healthcheck?.url).toBe(`${cfg.orchestrator?.memory.service.url}/health`);
   });
 });

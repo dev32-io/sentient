@@ -2,16 +2,25 @@
 # =====================================
 #
 # Copy this file to ~/.sentient/deep-memory/config/config.yaml. The service
-# loads it ONCE at startup. To change a value, edit and restart the service
-# (the native launcher: `deploy/mac-prod/native/deep-memory.sh restart`, laid
-# down by the S2 packaging task).
+# loads it ONCE at startup. To change a value, edit and restart the GATEWAY
+# (not this service standalone): the gateway is the sole supervisor of every
+# native addon (managed_services.deep-memory in gateway/config.yaml) — prod:
+# `sudo launchctl kickstart -k system/io.sentient.gateway`; dev: restart the
+# gateway process. There is no separate deep-memory launchd unit.
 #
 # Every key below is required — the service fails loud at startup if anything
 # is missing or the wrong type. There are no silent defaults.
 #
 # Secrets are NOT in this file. The two bearer tokens the service checks live
 # in the process environment (DEEP_MEMORY_ADMIN_TOKEN / DEEP_MEMORY_DATA_TOKEN),
-# injected by the launcher, never on disk in cleartext YAML.
+# injected by the gateway (managed_services.deep-memory.env in
+# gateway/config.yaml), never on disk in cleartext YAML.
+#
+# One more env var besides those two + DEEP_MEMORY_CONFIG_PATH /
+# DEEP_MEMORY_LOG_DIR: PYTHONPATH="${SENTIENT_CODE}/deep-memory/src" —
+# REQUIRED, since this package is never pip-installed into the venv (only its
+# dependencies are). Missing it is a ModuleNotFoundError at every launch. See
+# CONTRACT.md §5 for the full env-var table.
 #
 # ------------------------------------------------------------------------------
 # PINNED VERSIONS (verified at implementation time — pinned-versions rule).
@@ -42,9 +51,13 @@ server:
   # to be reachable off-host.
   host: 127.0.0.1
 
-  # HTTP port. If you move this, update the gateway's DeepMemoryClient config
-  # (gateway/config.yaml `orchestrator.memory.service.url`) to match.
-  port: 8770
+  # HTTP port. 8772 — whisper-stt owns 8768/8769 and local-tts owns
+  # 8770/8771 (WS/health pairs each), so this is the next free loopback port
+  # in the native-addon sequence. If you move this, update BOTH the
+  # gateway's DeepMemoryClient config (gateway/config.yaml
+  # `orchestrator.memory.service.url`) AND its
+  # `managed_services.deep-memory.healthcheck.url` to match.
+  port: 8772
 
 # =============================================================================
 # Storage — where per-scope indexes and the scope registry live on disk.

@@ -16,8 +16,9 @@ VENV="${2:?venv dir required}"
 WHEELS="${3:?wheels dir required}"
 
 case "$SERVICE" in
-  whisper-stt) PYVER=3.14; OVERRIDE_VAR=WHISPER_STT_PYTHON ;;
-  local-tts)   PYVER=3.11; OVERRIDE_VAR=LOCAL_TTS_PYTHON ;;   # mlx-audio has no 3.14 wheels
+  whisper-stt)  PYVER=3.14; OVERRIDE_VAR=WHISPER_STT_PYTHON ;;
+  local-tts)    PYVER=3.11; OVERRIDE_VAR=LOCAL_TTS_PYTHON ;;   # mlx-audio has no 3.14 wheels
+  deep-memory)  PYVER=3.14; OVERRIDE_VAR=DEEP_MEMORY_PYTHON ;; # mlx/mlx-embeddings/sqlite-vec verified on 3.14 in T9b
   *) echo "FAIL: unknown service $SERVICE" >&2; exit 1 ;;
 esac
 

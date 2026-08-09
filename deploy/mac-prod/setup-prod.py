@@ -174,6 +174,10 @@ SERVICE_SOURCES = {
         "src": "capabilityServices/LocalTTSService/src",
         "module": "local_tts",
     },
+    "deep-memory": {
+        "src": "capabilityServices/DeepMemoryService/src",
+        "module": "deep_memory",
+    },
 }
 SERVICE_SRC_DIR = "src"
 SERVICE_VENV_DIR = "venv"

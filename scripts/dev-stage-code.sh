@@ -25,6 +25,7 @@ STAGE="${SENTIENT_DEV_CODE:-$HOME/.sentient/dev-code}"
 SERVICES=(
   "whisper-stt:capabilityServices/WhisperSTTService"
   "local-tts:capabilityServices/LocalTTSService"
+  "deep-memory:capabilityServices/DeepMemoryService"
 )
 
 mkdir -p "$STAGE"

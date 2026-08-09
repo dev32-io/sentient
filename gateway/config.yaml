@@ -460,7 +460,10 @@ orchestrator:
     service:
       # LOOPBACK ONLY — the deep-memory service is a native managed addon
       # (like whisper-stt/local-tts), never LAN- or internet-reachable.
-      url: http://127.0.0.1:8771
+      # 8772: whisper-stt owns 8768/8769 (WS/health) and local-tts owns
+      # 8770/8771 (WS/health) — must match managed_services.deep-memory's
+      # healthcheck below and the service's own server.port.
+      url: http://127.0.0.1:8772
       request_timeout_ms: 5000       # deadline on every DeepMemoryClient call. Range 200-60000
     spark:
       enabled: false                 # SLICE STAGING — off until T15; zod default is true
@@ -1174,6 +1177,47 @@ managed_services:
     healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port; must match tts.url above
     depends_on: []
     optional: false
+
+  deep-memory:
+    launch: native
+    # Plain HTTP (aiohttp), not WS — one port serves every §5.2 endpoint
+    # including /health, unlike whisper-stt/local-tts's separate WS+health
+    # ports. Same ${VAR} resolution rule as the two native entries above:
+    # every placeholder here is resolved from the gateway's own process env
+    # at config-load time, and an unset var becomes the empty string.
+    exec: ["${SENTIENT_CODE}/deep-memory/venv/bin/python", "-m", "deep_memory"]
+    python: "3.14"                                  # pinned; whole engine stack (mlx/mlx-embeddings/sqlite-vec) verified on 3.14 in T9b
+    env:
+      # REQUIRED — mirrors whisper-stt/local-tts above. The service's own
+      # package is never pip-installed into the venv (only its dependencies
+      # are, from vendored wheels); `-m deep_memory` resolves the package via
+      # PYTHONPATH pointing at the staged src/ tree, not site-packages.
+      # Without this, `-m deep_memory` is a ModuleNotFoundError at every
+      # launch. Cross-process contract: deploy/mac-prod/setup-prod.py:161-165,
+      # guarded by test_setup_prod.py::test_release_layout_matches_the_native_exec_contract.
+      PYTHONPATH: "${SENTIENT_CODE}/deep-memory/src"
+      DEEP_MEMORY_CONFIG_PATH: "${HOST_HOME}/.sentient/deep-memory/config/config.yaml"
+      DEEP_MEMORY_LOG_DIR: "${HOST_HOME}/.sentient/deep-memory/logs"
+      # Two bearer tokens (admin/data plane — CONTRACT.md §2), never on disk
+      # in this file. The operator (or setup-prod.py at first install) must
+      # generate them and set them as real process env vars on the GATEWAY
+      # itself (launchd plist EnvironmentVariables in prod, exported before
+      # `bun run dev` in dev) — the same ${VAR}-against-process-env mechanism
+      # SENTIENT_CODE/HOST_HOME use above, not the docker `secrets:` store
+      # (which only ever renders into container templates, never into a
+      # native service's env). See deploy/README.md#deep-memory for the
+      # provisioning note. An unset var resolves to "", and the service
+      # refuses to boot on an empty token (auth.py) rather than come up open.
+      DEEP_MEMORY_ADMIN_TOKEN: "${DEEP_MEMORY_ADMIN_TOKEN}"
+      DEEP_MEMORY_DATA_TOKEN: "${DEEP_MEMORY_DATA_TOKEN}"
+    # Optional: the memory system (orchestrator.memory) degrades non-fatally
+    # when this addon is absent or unhealthy — memory_recall/memory tools
+    # simply go unavailable rather than blocking boot or voice traffic (spec
+    # §11 degradation model). Mirrors ha-mcp/ma-mcp's optional:true, not
+    # whisper-stt/local-tts's optional:false (those are voice-path critical).
+    healthcheck: { url: "http://127.0.0.1:8772/health", timeout_ms: 30000 }
+    depends_on: []
+    optional: true
 
 # ---------------------------------------------------------------------------
 # Security — inbound prompt-injection scanning (gateway/src/security/)

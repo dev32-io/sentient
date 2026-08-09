@@ -5,7 +5,7 @@ not a Docker container. It is the host orchestrator: it creates, starts,
 health-checks and recreates every sibling addon itself, over the host docker
 socket for docker addons (MCP tool servers, searxng,
 egress-proxy/ingress-proxy) and via `Bun.spawn` for native addons
-(whisper-stt, local-tts). Hermes is never a managed service — it's a one-shot
+(whisper-stt, local-tts, deep-memory). Hermes is never a managed service — it's a one-shot
 exec invoked only via `delegateTask`. **All provider keys, voice IDs, and
 admin secrets are entered through the webui setup wizard** on first launch —
 there is nothing to configure on disk.
@@ -29,7 +29,9 @@ It was a single-service compose that ran the gateway itself from
 that Dockerfile, the supervisord/per-user-hermes env it wired up, and the
 containerised `stt-service` are all gone. Linux is not a target either way: two
 `optional: false` services (`whisper-stt`, `local-tts`) run natively on
-Metal/MLX, which is Apple-silicon only. Recover it from git history if you want
+Metal/MLX, which is Apple-silicon only — and the third native service,
+`deep-memory` (optional, MLX embeddings), is Apple-silicon-only for the same
+reason even though its absence does not block boot. Recover it from git history if you want
 the old containerised-gateway layout as a starting point (same as the retired
 `deploy/pi/` compose).
 
@@ -166,6 +168,92 @@ IP or name is in `tls.hostnames` (`config.yaml`) — a SAN mismatch produces a
 hard browser warning *and* refuses mic access, since browsers gate `getUserMedia`
 on a fully-trusted origin. Native mobile apps are unaffected; they use platform
 mic permission, not browser origin rules.
+
+---
+
+## deep-memory (optional memory-recall addon)
+
+A native, loopback-only HTTP index engine (SQLite + FTS5 + sqlite-vec + MLX
+multilingual embeddings) that backs the assistant's long-term memory
+(`orchestrator.memory` — MEMORY.md, spark recall, `memory_recall`). Full
+wire contract: `capabilityServices/DeepMemoryService/CONTRACT.md`.
+
+**Optional, not voice-path-critical.** Unlike whisper-stt/local-tts
+(`optional: false` — the mini refuses to come up healthy without them),
+`managed_services.deep-memory` is `optional: true`: if it is absent, fails
+its venv build, or fails its health gate, the gateway still comes up and
+serves voice traffic — memory tools (`memory_recall`, etc.) simply go
+unavailable rather than blocking boot. This is the spec §11 degradation
+model, not a bug.
+
+### Install / upgrade
+
+No separate step — it rides the same native-service pipeline as
+whisper-stt/local-tts:
+
+```bash
+docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build   # addon images, unrelated but usually run together
+./scripts/build-python-wheels.sh                                                  # vendors deep-memory's wheels too
+./scripts/build-gateway.sh --release
+sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+```
+
+`setup-prod.py install` stages `<release>/deep-memory/{src,venv}` and builds
+its offline venv from vendored wheels exactly as it does for the other two
+native services (`SERVICE_SOURCES` in `setup-prod.py`); `deep-memory`'s
+schema-versioned data lives under `~/.sentient/deep-memory/`, mutable and
+operator-owned, untouched by the release swap.
+
+**Before the first real wheel build**, `deploy/mac-prod/native/requirements/
+deep-memory.lock` must exist — it does not ship yet. Generate it via the
+recipe documented in the header of the sibling `whisper-stt.lock` /
+`local-tts.lock` files (`uv pip freeze` against the tested
+`capabilityServices/DeepMemoryService/.venv/bin/python`, then `uv pip
+compile`, then `scripts/build-python-wheels.sh` to fill in the wheel
+hashes) before running `build-python-wheels.sh` for a release.
+
+### Token provisioning
+
+The service speaks two bearer tokens (`DEEP_MEMORY_ADMIN_TOKEN` /
+`DEEP_MEMORY_DATA_TOKEN` — CONTRACT.md §2), injected as **gateway process
+environment**, never written to `config.yaml` or to the service's own
+on-disk config. Generate two high-entropy random strings and add them to the
+gateway's `EnvironmentVariables` (the launchd plist,
+`deploy/mac-prod/io.sentient.gateway.plist`, alongside `SENTIENT_CODE` /
+`HOST_HOME`):
+
+```bash
+openssl rand -hex 32   # run twice — one value per token
+```
+
+An unset or empty token is a hard startup failure for deep-memory
+(`auth.py` — the service never comes up accepting an empty bearer), which is
+non-fatal for the gateway as a whole (see "optional" above) but means memory
+tools stay unavailable until the tokens are set and the gateway restarted.
+In local dev, export the same two vars before `bun run dev` (`scripts/env.sh`
+does not set them — they are per-operator secrets, not repo-shape config).
+
+### Rollback smoke (install → health-gate → rollback)
+
+Same shape as any other release, exercised end-to-end on a real install:
+
+1. `sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<good-version>.tar.gz`
+   — confirm `managed_services.deep-memory` reaches `ready` (health-check
+   passes at `GET http://127.0.0.1:8772/health`):
+   `docker compose ...` is irrelevant here since this is a native service —
+   check via the gateway's own service-status API/webui, or
+   `curl -s http://127.0.0.1:8772/health` directly on the mini.
+2. Install a deliberately broken build (e.g. a tarball missing the
+   `deep_memory` package under `capabilityServices/DeepMemoryService/src`) —
+   `stage_native_services` raises `InstallError` before the venv step, and
+   `setup-prod.py` rolls the `current` symlink back to the previous release
+   automatically. Confirm the gateway is still serving on the last-known-good
+   binary and `deep-memory` is still healthy at 8772.
+3. Because `deep-memory` is `optional: true`, a health-gate failure isolated
+   to `deep-memory` alone (service up but `/health` never turns green) does
+   **not** by itself fail the release's overall health gate the way a
+   whisper-stt/local-tts failure would — verify the gateway still installs
+   successfully and simply logs the addon as degraded, memory tools absent.
 
 ---
 
@@ -327,7 +415,7 @@ To bake the addon images by hand (rarely needed — preflight does this too):
 docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 ```
 
-The native driver launches whisper-stt/local-tts from repo-local venvs; the
+The native driver launches whisper-stt/local-tts/deep-memory from repo-local venvs; the
 orchestrator creates every addon container — `inbound-proxy` included — from
 the images baked above.
 

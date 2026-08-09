@@ -124,5 +124,11 @@ build() {
 build whisper-stt 3.14 WHISPER_STT_PYTHON capabilityServices/WhisperSTTService/requirements.txt
 # 3.11 REQUIRED: mlx-audio ships no 3.14 wheels
 build local-tts 3.11 LOCAL_TTS_PYTHON capabilityServices/LocalTTSService/requirements.txt
+# 3.14: mlx/mlx-embeddings/sqlite-vec all ship cp314 arm64 wheels, verified in T9b.
+# NOTE: deploy/mac-prod/native/requirements/deep-memory.lock does not exist yet —
+# generate it via the recipe in the sibling whisper-stt.lock/local-tts.lock
+# headers (uv pip freeze against the tested .venv, then uv pip compile) before
+# running this for a real release build.
+build deep-memory 3.14 DEEP_MEMORY_PYTHON capabilityServices/DeepMemoryService/requirements.txt
 
 echo "✓ wheels in $OUT"

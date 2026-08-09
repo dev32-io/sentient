@@ -39,6 +39,31 @@ test("a native entry needs neither allowed_images nor networks", () => {
   expect(parsed.exec[0]).toContain("whisper-stt");
 });
 
+// CONTRACT: deep-memory is the first native entry that is (a) plain HTTP
+// (`url` healthcheck, not `tcp` — whisper-stt/local-tts probe a WS port) and
+// (b) `optional: true` (whisper-stt/local-tts are voice-path-critical and
+// default `optional` to false). Both must round-trip through the same
+// discriminated-union schema whisper-stt uses above.
+test("a native HTTP entry (deep-memory shape) parses with url healthcheck and optional:true", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    launch: "native",
+    exec: ["/opt/sentient/current/deep-memory/venv/bin/python", "-m", "deep_memory"],
+    python: "3.14",
+    env: {
+      DEEP_MEMORY_CONFIG_PATH: "/Users/op/.sentient/deep-memory/config/config.yaml",
+      DEEP_MEMORY_ADMIN_TOKEN: "tok-admin",
+      DEEP_MEMORY_DATA_TOKEN: "tok-data",
+    },
+    healthcheck: { url: "http://127.0.0.1:8772/health", timeout_ms: 30000 },
+    optional: true,
+  });
+  expect(parsed.launch).toBe("native");
+  if (parsed.launch !== "native") throw new Error("unreachable");
+  expect(parsed.exec[0]).toContain("deep-memory");
+  expect(parsed.optional).toBe(true);
+  expect(parsed.healthcheck).toEqual({ url: "http://127.0.0.1:8772/health", timeout_ms: 30000 });
+});
+
 test("rejects a native entry with an empty exec argv", () => {
   const r = ManagedServiceConfigSchema.safeParse({
     launch: "native",
