@@ -32,9 +32,19 @@
 import type { ImpactTier, UserRole } from "@sentient/protocol";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
+import type {
+  ClientError,
+  DeepMemoryClient,
+  EntryStatus,
+  Hit,
+  SearchFilters,
+  SearchRequest,
+} from "../memory/deep-memory-client.js";
 import { MEMORY_SLUG_RE } from "../memory/memory-file.js";
 import type { MemoryConfig, MemoryStore, MemoryWriteUsage, TopicMeta, WriteResult } from "../memory/memory-store.js";
 import type { scanContent } from "../security/injection-scanner.js";
+import type { SessionEntry } from "../store/entry-types.js";
+import { renderSessionExcerpt } from "../store/session-excerpt.js";
 import type { NativeToolRunner } from "./tool-broker.js";
 import { capToolResult } from "./tool-result-cap.js";
 import type { ToolDefinition, ToolResult } from "./tool-types.js";
@@ -71,10 +81,28 @@ function isAdultRole(role: UserRole): boolean {
  *  the `str_replace_*` / `remove_lines_*` codes are the pinned op-failure
  *  vocabulary (task brief). */
 const ERR_DEEP_MEMORY_UNAVAILABLE = "deep_memory_unavailable";
+const ERR_DEEP_MEMORY_REBUILD_REQUIRED = "deep_memory_rebuild_required";
 const ERR_FAMILY_SCOPE_UNAVAILABLE = "family_scope_unavailable";
 const ERR_STR_REPLACE_AMBIGUOUS = "str_replace_ambiguous";
 const ERR_STR_REPLACE_NOT_FOUND = "str_replace_not_found";
 const ERR_REMOVE_LINES_NOT_FOUND = "remove_lines_not_found";
+
+/** A recall hit's snippet is capped so the whole list stays a ~≤600-token
+ *  digest (spec §4.4). The ellipsis is counted IN the cap, so the snippet is
+ *  never longer than this. */
+const RECALL_SNIPPET_MAX = 200;
+
+/** Statuses `memory_recall` searches when `includeHistorical` is set — active
+ *  PLUS the two historical statuses, which are then labelled in the output. The
+ *  default search (no filter) is active-only, the service's own default. */
+const HISTORICAL_STATUSES: readonly EntryStatus[] = ["active", "superseded", "stale"];
+
+/** Prefix a historical (superseded/stale) hit carries so the model can weigh it
+ *  against a current one (spec §4.4: "labeled"). */
+const HISTORICAL_LABEL = "[historical]";
+
+/** ISO-8601 date prefix length (`YYYY-MM-DD`). A recall hit shows only the day. */
+const ISO_DATE_LEN = 10;
 
 // ---------------------------------------------------------------------------
 // Result helpers
@@ -465,6 +493,18 @@ const memoryRecallDefinition = definitionFor(
 // Deps
 // ---------------------------------------------------------------------------
 
+/** The deep-memory retrieval surface `memory_recall` searches over. The wiring
+ *  task supplies the T10 client and the scope index ids this session is granted
+ *  (private, plus family when granted). ABSENT ⇒ deep memory is not wired and
+ *  `memory_recall` degrades to the canonical `deep_memory_unavailable`, exactly
+ *  as the S1 stub did. */
+export interface DeepMemoryDeps {
+  client: DeepMemoryClient;
+  /** Opaque index scope ids to search across — already narrowed to what this
+   *  session may read. */
+  scopeIds: string[];
+}
+
 export interface MemoryToolsDeps {
   /** Resolves the store for a scope, or null when that scope is not granted /
    *  not yet available (family in S1). */
@@ -472,12 +512,19 @@ export interface MemoryToolsDeps {
   /** The injection scanner (T3b) — injected so the module stays a pure consumer
    *  of the security surface and the scan is observable in a test. */
   scan: typeof scanContent;
-  /** `orchestrator.memory` — caps + `read_max_chars` for the read page. */
+  /** `orchestrator.memory` — caps + `read_max_chars` for the read page,
+   *  `recall.k` / `recall.context_entries` for the deep-memory surfaces. */
   cfg: MemoryConfig;
   /** The session owner (L0). Only the ROLE is read, and only for the
    *  family-scope adult gate; authority still flows through the broker's
    *  capability, never this value. */
   principal: UserPrincipal;
+  /** Deep-memory search backend for `memory_recall`. Absent ⇒ unavailable. */
+  deepMemory?: DeepMemoryDeps;
+  /** Reads a past session's entries for a `memory_read({sessionId})` drill-down.
+   *  Supplied by the wiring task from the session-store read surface. Absent ⇒
+   *  session drill-down degrades to `deep_memory_unavailable`. */
+  readSession?: (sessionId: string) => SessionEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +605,37 @@ function readFileTarget(store: MemoryStore, target: FileTarget): string | null {
   }
 }
 
+function numberArg(args: Record<string, unknown>, key: string): number | undefined {
+  const value = args[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** Renders a past session's transcript excerpt for a `{sessionId}` drill-down,
+ *  applying the span/offset window FIRST (renderSessionExcerpt) and THEN the
+ *  head-and-tail char cap — so `read_max_chars` bounds what the model finally
+ *  sees and the marker names any continuation. Degrades to the canonical
+ *  `deep_memory_unavailable` when no session read handle is wired. */
+function readSessionExcerpt(deps: MemoryToolsDeps, target: Record<string, unknown>, sessionId: string): ToolResult {
+  if (!deps.readSession) {
+    log.info("memory-tools.read.deep-unavailable", {});
+    return typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
+  }
+  const entries = deps.readSession(sessionId);
+  const around = numberArg(target, "around");
+  const offset = numberArg(target, "offset");
+  const excerpt = renderSessionExcerpt(entries, {
+    contextEntries: deps.cfg.recall.context_entries,
+    ...(around !== undefined ? { around } : {}),
+    ...(offset !== undefined ? { offset } : {}),
+  });
+  if (excerpt.length === 0) {
+    return fail("That past conversation could not be found, or it has no readable messages.");
+  }
+  const capped = capToolResult(excerpt, { limit: deps.cfg.read_max_chars });
+  log.info("memory-tools.read.session.ok", { entries: entries.length });
+  return ok(capped);
+}
+
 function createMemoryReadRunner(deps: MemoryToolsDeps): NativeToolRunner {
   return {
     definition: memoryReadDefinition,
@@ -580,10 +658,10 @@ function createMemoryReadRunner(deps: MemoryToolsDeps): NativeToolRunner {
       const scope: MemoryScope = scopeArg && scopeArg !== "invalid" ? scopeArg : DEFAULT_WRITE_SCOPE;
       const target = args.target as Record<string, unknown>;
 
-      // Session drill-down is deep memory — unavailable in S1.
+      // Session drill-down is deep memory — the recall two-step's second round
+      // trip (spec §7). Bounded by the store read handle; absent ⇒ unavailable.
       if (typeof target.sessionId === "string") {
-        log.info("memory-tools.read.deep-unavailable", { scope });
-        return typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
+        return readSessionExcerpt(deps, target, target.sessionId);
       }
 
       const store = deps.storeFor(scope);
@@ -694,6 +772,73 @@ function createMemoryWriteRunner(deps: MemoryToolsDeps): NativeToolRunner {
   };
 }
 
+/** `unavailable`/`timeout`/`refused` all read as the one canonical degraded
+ *  answer the client maps identically everywhere; a `rebuild_required` (index
+ *  schema / embedding-model mismatch, spec §5.3) is its own code so an operator
+ *  can act on it. */
+function mapRecallClientError(error: ClientError): ToolResult {
+  return error.kind === "rebuild_required"
+    ? typedError(ERR_DEEP_MEMORY_REBUILD_REQUIRED)
+    : typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
+}
+
+/** Collapses whitespace and caps to `RECALL_SNIPPET_MAX` chars INCLUSIVE of the
+ *  ellipsis, so a hit line stays one compact row. */
+function snippetOf(text: string): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= RECALL_SNIPPET_MAX) return oneLine;
+  return `${oneLine.slice(0, RECALL_SNIPPET_MAX - 1)}…`;
+}
+
+function isHistoricalStatus(status: EntryStatus): boolean {
+  return status === "superseded" || status === "stale";
+}
+
+/** The day portion of an ISO timestamp; the raw value if it is not ISO-shaped. */
+function dayOf(timestamp: string): string {
+  return timestamp.length >= ISO_DATE_LEN && timestamp[ISO_DATE_LEN] === "T"
+    ? timestamp.slice(0, ISO_DATE_LEN)
+    : timestamp;
+}
+
+/** One hit → one line: server-minted ids only (`hitId`, `sessionId`/`entrySpan`
+ *  from the store), never a model-invented reference. A historical hit leads
+ *  with the label so the model can weigh it. */
+function renderHit(hit: Hit): string {
+  const entry = hit.entry;
+  const parts: string[] = [];
+  if (isHistoricalStatus(entry.status)) parts.push(HISTORICAL_LABEL);
+  parts.push(`hitId=${entry.id}`, `kind=${entry.kind}`, `scope=${entry.scope}`, `date=${dayOf(entry.timestamp)}`);
+  const ref = entry.sessionRef;
+  if (ref?.sessionId) parts.push(`sessionId=${ref.sessionId}`);
+  if (ref?.entrySpan) parts.push(`entrySpan=${ref.entrySpan[0]}-${ref.entrySpan[1]}`);
+  return `${parts.join(" ")} — ${snippetOf(entry.text)}`;
+}
+
+function parseTimeRange(args: Record<string, unknown>): { from?: string; to?: string } | undefined {
+  const value = args.timeRange;
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const from = typeof record.from === "string" ? record.from : undefined;
+  const to = typeof record.to === "string" ? record.to : undefined;
+  if (from === undefined && to === undefined) return undefined;
+  return { ...(from !== undefined ? { from } : {}), ...(to !== undefined ? { to } : {}) };
+}
+
+function buildSearchRequest(deep: DeepMemoryDeps, args: Record<string, unknown>, k: number): SearchRequest {
+  const timeRange = parseTimeRange(args);
+  const filters: SearchFilters = {};
+  if (timeRange) filters.timeRange = timeRange;
+  if (args.includeHistorical === true) filters.statuses = [...HISTORICAL_STATUSES];
+  const query = stringArg(args, "query") ?? "";
+  return {
+    scopeIds: deep.scopeIds,
+    query,
+    k,
+    ...(Object.keys(filters).length > 0 ? { filters } : {}),
+  };
+}
+
 function createMemoryRecallRunner(deps: MemoryToolsDeps): NativeToolRunner {
   return {
     definition: memoryRecallDefinition,
@@ -705,17 +850,23 @@ function createMemoryRecallRunner(deps: MemoryToolsDeps): NativeToolRunner {
       return null;
     },
     async run(args): Promise<ToolResult> {
-      // Deep memory (DeepMemoryService) is not wired in S1 — the honest,
-      // client-mapped degraded answer (spec §10). `deps` is read for parity
-      // with the other runners; the scope only annotates the log.
-      void deps;
-      const scopeArg = parseScope(args);
-      const scope = scopeArg && scopeArg !== "invalid" ? scopeArg : "both";
-      log.warn("memory-tools.recall.unavailable", {
-        scope,
-        reason: ERR_DEEP_MEMORY_UNAVAILABLE,
-      });
-      return typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
+      const deep = deps.deepMemory;
+      if (!deep) {
+        // No deep-memory backend wired — the honest, client-mapped degraded
+        // answer (spec §10), identical to the pre-wiring stub.
+        log.warn("memory-tools.recall.unavailable", { reason: ERR_DEEP_MEMORY_UNAVAILABLE });
+        return typedError(ERR_DEEP_MEMORY_UNAVAILABLE);
+      }
+      const request = buildSearchRequest(deep, args, deps.cfg.recall.k);
+      const result = await deep.client.search(request);
+      if (!result.ok) {
+        log.warn("memory-tools.recall.unavailable", { reason: result.error.kind });
+        return mapRecallClientError(result.error);
+      }
+      const hits = result.value;
+      log.info("memory-tools.recall.ok", { hits: hits.length });
+      if (hits.length === 0) return ok("No past conversations matched that search.");
+      return ok(hits.map(renderHit).join("\n"));
     },
   };
 }

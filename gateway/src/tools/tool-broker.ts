@@ -106,6 +106,14 @@ const NOTE_PREVIEW_LEN = 120;
  *  name. Every other tool's result is generic `tool_result` content. */
 const SKILL_USE_TOOL_NAME = "skill_use";
 
+/** The gateway-native memory tools whose RESULT is untrusted stored text —
+ *  `memory_recall` hit snippets and `memory_read` session excerpts carry
+ *  historical, possibly tool-derived content, so they screen on the read-time
+ *  `memory_body` channel (spec §7). `memory_write`/`memory_list` produce only
+ *  the gateway's own confirmation copy and stay on the generic `tool_result`
+ *  channel. */
+const MEMORY_BODY_TOOL_NAMES: ReadonlySet<string> = new Set(["memory_recall", "memory_read"]);
+
 /** Impact tiers that DO something — the only tiers an elevated risk level
  *  escalates. `read` is excluded on purpose (see `resolveDecision`). */
 const SIDE_EFFECTING_TIERS: ReadonlySet<ImpactTier> = new Set<ImpactTier>(["write", "confirm", "admin"]);
@@ -770,6 +778,9 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     if (inv.name === SKILL_USE_TOOL_NAME) {
       const skillName = typeof inv.args.name === "string" && inv.args.name.length > 0 ? inv.args.name : inv.name;
       return { channel: "skill_body", source: skillName };
+    }
+    if (MEMORY_BODY_TOOL_NAMES.has(inv.name)) {
+      return { channel: "memory_body", source: inv.name };
     }
     return { channel: "tool_result", source: inv.name };
   }
