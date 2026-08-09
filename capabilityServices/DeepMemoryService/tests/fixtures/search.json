@@ -1,0 +1,37 @@
+{
+  "endpoint": "/search",
+  "method": "POST",
+  "plane": "data",
+  "note": "Precondition: the two entries in upsert.json are already upserted into scope user:alice. filters.kinds/statuses narrow the result. Each hit carries the stored entry verbatim, a cosine similarity in [0,1], and a 1-based rank. STUB NOTE: this scaffold returns a constant similarity of 1.0 and insertion-order ranks; the real engine (next task) supplies RRF-fused cosine scores.",
+  "request": {
+    "scopeIds": ["user:alice"],
+    "query": "hiking",
+    "k": 5,
+    "filters": {
+      "kinds": ["episode-summary"],
+      "statuses": ["active"]
+    }
+  },
+  "response": {
+    "hits": [
+      {
+        "entry": {
+          "id": "user-alice:episode-summary:sess-42:c0ffee",
+          "kind": "episode-summary",
+          "text": "Discussed weekend hiking plans and packing a rain jacket.",
+          "timestamp": "2026-08-08T18:03:00Z",
+          "scope": "user:alice",
+          "sourceRef": { "file": "journal/2026-08-08.md", "heading": "Hiking plans" },
+          "sessionRef": { "sessionId": "sess-42", "entrySpan": [10, 24] },
+          "provenance": "trusted",
+          "status": "active",
+          "createdAt": "2026-08-08T18:03:01Z",
+          "statusChangedAt": "2026-08-08T18:03:01Z"
+        },
+        "similarity": 1.0,
+        "rank": 1
+      }
+    ],
+    "count": 1
+  }
+}

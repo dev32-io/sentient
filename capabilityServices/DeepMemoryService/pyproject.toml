@@ -1,0 +1,54 @@
+# pyproject.toml — the modern Python project manifest.
+#
+# Mirrors the sibling WhisperSTTService / LocalTTSService structure. If you add
+# a runtime dependency, add it both here AND in requirements.txt (see the
+# requirements.txt header for why both exist).
+#
+# PINNED VERSIONS were verified against current PyPI releases at implementation
+# time (pinned-versions rule). Validated interpreter: Python 3.14 — the same as
+# sibling whisper-stt. local-tts pins 3.11 ONLY because mlx-audio lacks 3.14
+# wheels; that constraint does NOT apply here: mlx ships cp314 arm64 wheels, and
+# sqlite-vec / mlx-embeddings are pure py3 wheels. Each service owns its own
+# .venv, so the interpreters coexist.
+
+[project]
+name = "deep-memory"
+version = "0.1.0"
+description = "Deep-memory service — dumb index engine (SQLite + FTS5 + sqlite-vec + MLX embeddings) over loopback HTTP"
+requires-python = ">=3.11"
+dependencies = [
+    # HTTP server. 3.x is the current major line; cp314 arm64 wheels present.
+    "aiohttp>=3.14,<4",
+    # YAML config loader.
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+# The index engine lands in the NEXT task (T9b). Pinned here now (verified
+# against current releases) but not yet imported — this scaffold keeps index
+# ops in an in-memory stub. Install with `pip install .[index]` once the engine
+# exists. Kept OUT of the default runtime deps so the scaffold install stays
+# light and does not pull multi-GB MLX weights.
+index = [
+    "sqlite-vec>=0.1.9,<0.2",   # loadable SQLite vector extension; py3 wheels
+    "mlx>=0.32,<0.34",          # Apple-Silicon array framework; cp314 arm64 wheels
+    "mlx-embeddings>=0.1.0,<0.2",  # candidate MLX embedding lib; T9b confirms final choice
+    "numpy>=1.26",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "live: exercises a real network/model dependency; run explicitly with `-m live`",
+]

@@ -1,0 +1,13 @@
+{
+  "endpoint": "/health",
+  "method": "GET",
+  "plane": "none",
+  "note": "No auth. embeddingModel is null until the real index engine loads a model (next task); version is the service __version__ and indexSchemaVersion comes from config.index.schema_version.",
+  "request": null,
+  "response": {
+    "status": "ok",
+    "version": "0.1.0",
+    "embeddingModel": null,
+    "indexSchemaVersion": 1
+  }
+}

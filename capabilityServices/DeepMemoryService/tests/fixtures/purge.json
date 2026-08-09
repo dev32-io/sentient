@@ -1,0 +1,16 @@
+{
+  "endpoint": "/purge",
+  "method": "POST",
+  "plane": "admin",
+  "note": "Precondition: the two entries in upsert.json are already upserted. Hard removal of every entry matching the filter (all provided keys must match). Only the episode-summary carries sessionRef.sessionId=sess-42, so exactly one entry is purged. An empty filter matches nothing (use /rebuild to drop a scope).",
+  "request": {
+    "scopeId": "user:alice",
+    "filter": {
+      "sessionId": "sess-42"
+    }
+  },
+  "response": {
+    "scopeId": "user:alice",
+    "purged": 1
+  }
+}

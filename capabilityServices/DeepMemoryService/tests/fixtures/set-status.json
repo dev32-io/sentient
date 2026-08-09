@@ -1,0 +1,16 @@
+{
+  "endpoint": "/set-status",
+  "method": "POST",
+  "plane": "data",
+  "note": "Precondition: the two entries in upsert.json are already upserted. Transitions active -> superseded|stale (dreamer/operator). Response reports how many of the given ids were found and updated.",
+  "request": {
+    "scopeId": "user:alice",
+    "ids": ["user-alice:episode-summary:sess-42:c0ffee"],
+    "status": "superseded",
+    "reason": "dreamer-merge"
+  },
+  "response": {
+    "scopeId": "user:alice",
+    "updated": 1
+  }
+}

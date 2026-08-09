@@ -1,0 +1,40 @@
+{
+  "endpoint": "/upsert",
+  "method": "POST",
+  "plane": "data",
+  "note": "entries follow the index entry schema (spec §5.4). id is deterministic from source; upsert is idempotent by id. Response reports the number of entries accepted.",
+  "request": {
+    "scopeId": "user:alice",
+    "entries": [
+      {
+        "id": "user-alice:episode-summary:sess-42:c0ffee",
+        "kind": "episode-summary",
+        "text": "Discussed weekend hiking plans and packing a rain jacket.",
+        "timestamp": "2026-08-08T18:03:00Z",
+        "scope": "user:alice",
+        "sourceRef": { "file": "journal/2026-08-08.md", "heading": "Hiking plans" },
+        "sessionRef": { "sessionId": "sess-42", "entrySpan": [10, 24] },
+        "provenance": "trusted",
+        "status": "active",
+        "createdAt": "2026-08-08T18:03:01Z",
+        "statusChangedAt": "2026-08-08T18:03:01Z"
+      },
+      {
+        "id": "user-alice:journal:journal-2026-08-08:beef01",
+        "kind": "journal",
+        "text": "Bought hiking boots.",
+        "timestamp": "2026-08-08T17:00:00Z",
+        "scope": "user:alice",
+        "sourceRef": { "file": "journal/2026-08-08.md", "heading": "Errands" },
+        "provenance": "trusted",
+        "status": "active",
+        "createdAt": "2026-08-08T17:00:01Z",
+        "statusChangedAt": "2026-08-08T17:00:01Z"
+      }
+    ]
+  },
+  "response": {
+    "scopeId": "user:alice",
+    "upserted": 2
+  }
+}

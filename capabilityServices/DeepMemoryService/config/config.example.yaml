@@ -1,0 +1,93 @@
+# Deep-memory Service — runtime tuning
+# =====================================
+#
+# Copy this file to ~/.sentient/deep-memory/config/config.yaml. The service
+# loads it ONCE at startup. To change a value, edit and restart the service
+# (the native launcher: `deploy/mac-prod/native/deep-memory.sh restart`, laid
+# down by the S2 packaging task).
+#
+# Every key below is required — the service fails loud at startup if anything
+# is missing or the wrong type. There are no silent defaults.
+#
+# Secrets are NOT in this file. The two bearer tokens the service checks live
+# in the process environment (DEEP_MEMORY_ADMIN_TOKEN / DEEP_MEMORY_DATA_TOKEN),
+# injected by the launcher, never on disk in cleartext YAML.
+#
+# ------------------------------------------------------------------------------
+# PINNED VERSIONS (verified at implementation time — pinned-versions rule).
+# Validated interpreter: Python 3.14 (same as sibling whisper-stt). Unlike
+# local-tts (pinned to 3.11 because mlx-AUDIO lacks 3.14 wheels), the whole
+# deep-memory stack ships working wheels on 3.14:
+#   mlx            0.32.x  — cp314 arm64 wheels present
+#   mlx-embeddings 0.1.x   — pure py2.py3-none-any wheel (candidate embed lib; T9b confirms)
+#   sqlite-vec     0.1.9   — py3-none-macosx_11_0_arm64 wheel
+#   aiohttp        3.14.x  — cp314 arm64 wheels present
+# The index engine (SQLite + FTS5 + sqlite-vec + MLX embeddings) lands in the
+# NEXT task (T9b); this scaffold keeps index ops in an in-memory stub, so those
+# heavy deps are pinned (requirements.txt / pyproject `index` extra) but not yet
+# imported. `embedding.model` below is therefore reported as null by /health
+# until the engine loads it.
+# ------------------------------------------------------------------------------
+
+# =============================================================================
+# Schema version — bumped by deploy migrations. Do not hand-edit.
+# =============================================================================
+schema_version: "0.1.0"
+
+# =============================================================================
+# HTTP server
+# =============================================================================
+server:
+  # Loopback ONLY. The gateway is the sole consumer and runs on the same host.
+  # NEVER bind to 0.0.0.0 or a LAN address — the deep-memory index holds raw
+  # per-user memory text and speaks two shared bearer tokens; it is not meant
+  # to be reachable off-host.
+  host: 127.0.0.1
+
+  # HTTP port. If you move this, update the gateway's DeepMemoryClient config
+  # (gateway/config.yaml `orchestrator.memory.service.url`) to match.
+  port: 8770
+
+# =============================================================================
+# Storage — where per-scope indexes and the scope registry live on disk.
+# =============================================================================
+storage:
+  # The ONE directory tree under which every registered scope index path must
+  # live. `POST /register-scope` refuses (400) any indexPath that resolves
+  # outside this root — the path-traversal boundary for the whole service.
+  # The scope registry itself is persisted here as `scope-registry.json`.
+  # Absolute path. Default under the service state root.
+  data_root: "~/.sentient/deep-memory/scopes"
+
+# =============================================================================
+# Embedding model — the MLX embedding model the index engine loads (T9b).
+# Config-pinned + swappable; a dimension/model change forces a `rebuild`
+# (schema records the model id; a mismatch refuses search with
+# `rebuild_required`). Reported by /health once the engine loads it — this
+# scaffold has no engine yet, so /health reports embeddingModel: null.
+# =============================================================================
+embedding:
+  # HuggingFace repo id for the MLX embedding weights. Candidate pinned during
+  # version verification; the T9b index-engine task confirms the final choice.
+  model: "mlx-community/bge-small-en-v1.5-bf16"
+
+# =============================================================================
+# Index — versioned index schema. Reported by /health as indexSchemaVersion.
+# =============================================================================
+index:
+  # Integer schema version of the on-disk index layout. Bumped when the SQLite
+  # / FTS5 / sqlite-vec schema changes in a way that requires a rebuild.
+  schema_version: 1
+
+# =============================================================================
+# Logging
+# =============================================================================
+logging:
+  # stdout log level. One of: debug | info | warning | error.
+  # NOTE: this service NEVER logs memory content (entry text, queries) at any
+  # level — only ids, kinds, counts, and scope ids. Raising to debug is safe.
+  level: "info"
+
+  # Days to retain rotated log files. Files older than this are deleted at
+  # startup. Set to 0 to disable pruning. Range: 0-365.
+  retention_days: 7
