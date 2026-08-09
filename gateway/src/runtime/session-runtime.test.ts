@@ -15,7 +15,7 @@ import { loadSkillIndexPreamble } from "../context/system-prompt-loader.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { createGatewayLogger } from "../logging/logger.js";
-import type { DeepMemoryClient, Hit } from "../memory/deep-memory-client.js";
+import type { DeepMemoryClient, Hit, IndexEntry } from "../memory/deep-memory-client.js";
 import { createDeepMemoryApp } from "../memory/deep-memory-wiring.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
@@ -3520,6 +3520,69 @@ describe("SessionRuntime memory — spark + recall wiring (Task 15)", () => {
     for (const line of logLines) expect(line).not.toContain(CANARY);
     expect(logLines.some((l) => l.includes("memory-tools.recall.ok") && l.includes("hits="))).toBe(true);
 
+    app.stop();
+  });
+
+  it("wires an out-of-band file edit into the index: supersede prior id + upsert new content", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-edit-sync` });
+    const alice = ADULT();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    const memoryDir = join(am.userHomeDir(alice), "memory");
+    mkdirSync(memoryDir, { recursive: true });
+    // A directly-edited MEMORY.md (bypassing the store) — exactly the T16 case.
+    writeFileSync(join(memoryDir, "MEMORY.md"), "Kevin's dog is Rex.", "utf8");
+
+    // A client that RECORDS upserts + status changes; search unused here.
+    const upserts: IndexEntry[][] = [];
+    const statuses: Array<{ ids: string[]; status: string }> = [];
+    const client = {
+      registerScope: async () => ({ ok: true, value: undefined }),
+      search: async () => ({ ok: true, value: [] }),
+      upsert: async (_scopeId: string, entries: IndexEntry[]) => {
+        upserts.push(entries);
+        return { ok: true, value: undefined };
+      },
+      setStatus: async (_scopeId: string, ids: string[], status: string) => {
+        statuses.push({ ids, status });
+        return { ok: true, value: undefined };
+      },
+      purge: async () => ({ ok: true, value: undefined }),
+      rebuild: async () => ({ ok: true, value: undefined }),
+      health: async () => ({ ok: true, value: HEALTH_OK }),
+    } as unknown as DeepMemoryClient;
+
+    const app = createDeepMemoryApp({
+      baseUrl: "http://127.0.0.1:0",
+      adminToken: "a",
+      dataToken: "d",
+      requestTimeoutMs: 1000,
+      cfg: testConfig().memory,
+      client,
+      pollMs: 0,
+    });
+    const gate = createInboundGate(
+      inboundScanConfigSchema.parse({}),
+      createRiskAccumulator(riskConfigSchema.parse({})),
+    );
+    const wiring = { app, gate, profileStore: sparkOnProfileStore() };
+
+    // Build 1: the store meets MEMORY.md for the first time → reingest rescans it
+    // → enqueue + flush establishes the prior id (lastIdBySource).
+    buildSessionMemory(testConfig(), am, alice, { conversationId: "s1", connectionId: "c1" }, wiring);
+    await waitFor(() => upserts.length >= 1);
+    const priorIds = upserts[0]?.map((e) => e.id) ?? [];
+    expect(priorIds.length).toBeGreaterThan(0);
+
+    // An out-of-band edit changes the content on disk.
+    writeFileSync(join(memoryDir, "MEMORY.md"), "Kevin's dog is Fido now.", "utf8");
+
+    // Build 2: reingest detects the change → enqueue + flush → supersede the prior
+    // id and upsert the new content.
+    buildSessionMemory(testConfig(), am, alice, { conversationId: "s2", connectionId: "c2" }, wiring);
+    await waitFor(() => statuses.length >= 1 && upserts.length >= 2);
+
+    expect(statuses.some((s) => s.status === "superseded" && s.ids.some((id) => priorIds.includes(id)))).toBe(true);
+    expect(upserts.length).toBeGreaterThanOrEqual(2);
     app.stop();
   });
 

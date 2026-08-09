@@ -156,7 +156,7 @@ describe("loadConfigFixture — orchestrator.memory", () => {
   it("parses orchestrator.memory with spec defaults", () => {
     const cfg = loadConfigFixture();
     expect(cfg.orchestrator?.memory.core_max_lines).toBe(300);
-    expect(cfg.orchestrator?.memory.spark.min_similarity).toBe(0.6);
+    expect(cfg.orchestrator?.memory.spark.min_similarity).toBe(0.78);
     // 8772: whisper-stt owns 8768/8769 and local-tts owns 8770/8771
     // (WS/health pairs each) — must stay off both.
     expect(cfg.orchestrator?.memory.service.url).toBe("http://127.0.0.1:8772");

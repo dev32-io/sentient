@@ -248,7 +248,7 @@ orchestrator:
       request_timeout_ms: 5000    # deadline on every DeepMemoryClient call. Range 200-60000
     spark:
       enabled: true               # per-user toggle overrides downward
-      min_similarity: 0.60        # relevance gate (cosine, 0-1) — gates alone; prefer empty over weak. Range 0-1
+      min_similarity: 0.78        # relevance gate (cosine, 0-1) — gates alone; prefer empty over weak. Calibrated for multilingual-e5-small: unrelated ~0.74, related ~0.86+; a different embedding model needs recalibration. Range 0-1
       max_snippets: 3             # hard cap on injected snippets. Range 1-10
       token_budget: 250           # hard cap on the injected spark section. Range 50-2000
       recency_half_life_days: 90  # ordering decay half-life. Range 7-3650

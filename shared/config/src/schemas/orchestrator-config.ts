@@ -267,7 +267,12 @@ export const orchestratorConfigSchema = z.object({
           enabled: z.boolean().default(true),
           // Relevance gate (cosine similarity, 0-1) — gates alone; recency
           // only orders passed hits. Prefer empty over weak. Range 0-1.
-          min_similarity: z.number().min(0).max(1).default(0.6),
+          // CALIBRATED FOR multilingual-e5-small (the pinned embedding model):
+          // unrelated text floors around ~0.74 cosine, a genuine match measures
+          // ~0.86+ (0.866 observed live in S2 e2e), so 0.60 never withheld
+          // anything. A DIFFERENT embedding model has a different floor and needs
+          // recalibration here.
+          min_similarity: z.number().min(0).max(1).default(0.78),
           // Hard cap on injected snippets. Range 1-10.
           max_snippets: z.number().int().min(1).max(10).default(3),
           // Hard cap on the injected spark section, in tokens. Range 50-2000.

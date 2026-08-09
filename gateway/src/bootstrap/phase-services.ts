@@ -281,6 +281,25 @@ export function buildSessionMemory(
     // Writes flow through the sync-wrapped store so a successful edit enqueues +
     // flushes; the PROMPT block below reads the RAW store (a render, not a write).
     scopedStore = withIndexSync(store, scope.sync);
+
+    // OUT-OF-BAND EDIT → INDEX (spec §5.6). `reingestEdits` above catches files
+    // changed on disk since the last ingest and rescanned them clean, but nothing
+    // wired those changes into the index — so a directly-edited MEMORY.md left its
+    // PRE-edit entry active (a stale duplicate, observed live in T16). Enqueue each
+    // rescanned (non-quarantined) file now and flush best-effort: the outbox's
+    // supersede-on-edit (lastIdBySource) retires the stale prior id and upserts the
+    // new content. Quarantined files are deliberately NOT enqueued — they must not
+    // reach the index.
+    for (const relPath of reingest.rescanned) scope.sync.enqueueFile(relPath);
+    if (reingest.rescanned.length > 0) {
+      log.info("memory.reingest.enqueued", {
+        userId: principal.userId,
+        conversationId: ids.conversationId,
+        rescanned: reingest.rescanned.length,
+      });
+      void scope.sync.flush();
+    }
+
     deepMemory = { client: scope.client, scopeIds: { private: scopeId } };
     // `memory_read({sessionId})` drill-down — this user's own past sessions,
     // capability-scoped; a short-lived handle per read (the continuity precedent).
