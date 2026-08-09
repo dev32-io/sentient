@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  MAX_DESCRIPTION_CHARS,
   MEMORY_SLUG_RE,
   type TopicFile,
   countUsage,
@@ -76,6 +77,34 @@ describe("parseTopicFile", () => {
     expect(parseTopicFile(raw)).toMatchObject({
       ok: false,
       error: { kind: "invisible_chars", count: 3 },
+    });
+  });
+
+  it("rejects a description over the length cap (description_too_long)", () => {
+    // The description is rendered into the system-prompt topic index, so an
+    // unbounded one is a prompt-budget and injection surface — cap it like the
+    // skill-file description.
+    const longDescription = "d".repeat(MAX_DESCRIPTION_CHARS + 1);
+    const raw = serializeTopicFile({ name: "x", description: longDescription }, "body");
+    expect(parseTopicFile(raw)).toMatchObject({
+      ok: false,
+      error: { kind: "description_too_long", length: MAX_DESCRIPTION_CHARS + 1 },
+    });
+  });
+
+  it("accepts a description exactly at the length cap", () => {
+    const atCap = "d".repeat(MAX_DESCRIPTION_CHARS);
+    const raw = serializeTopicFile({ name: "x", description: atCap }, "body");
+    expect(parseTopicFile(raw)).toMatchObject({ ok: true });
+  });
+
+  it("rejects invisible characters in the description fail-closed", () => {
+    // Zero-width char smuggled into the description — unscanned + rendered into
+    // the prompt if we did not reject it here.
+    const raw = serializeTopicFile({ name: "x", description: "hi​there" }, "clean body");
+    expect(parseTopicFile(raw)).toMatchObject({
+      ok: false,
+      error: { kind: "invisible_chars", count: 1 },
     });
   });
 

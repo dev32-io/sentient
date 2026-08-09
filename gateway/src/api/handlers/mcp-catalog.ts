@@ -10,6 +10,7 @@ import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
 import { getLog } from "../../logging/logger.js";
 import type { ProfileStore } from "../../profile-store/profile-store.js";
 import { delegateTaskDefinition } from "../../tools/delegate-task.js";
+import { MEMORY_TOOL_SETTINGS } from "../../tools/memory-tools.js";
 import { resolveToolPermission } from "../../tools/resolve-tool-permission.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import { SKILL_TOOL_SETTINGS } from "../../tools/skill-tools.js";
@@ -345,6 +346,26 @@ function projectNativeTools(
   // read-tier list/use tools reach every role, the confirm-tier mutating tools
   // reach only adult+.
   for (const meta of SKILL_TOOL_SETTINGS) {
+    if (!canExecute(role, meta.tier)) continue;
+    const { permission } = resolveToolPermission({
+      toolName: meta.name,
+      tier: meta.tier,
+      serverName: NATIVE_TOOL_SERVER_KEY,
+      storedPermissions,
+      roleTemplate,
+    });
+    views.push({ name: meta.name, description: meta.description, tier: meta.tier, permission, settable: true });
+  }
+
+  // Memory tools (`tools/memory-tools.ts`) — gateway-native FOREGROUND tools,
+  // overridable under the SAME `"native"` namespace as the skill tools, so a
+  // stored `native[tool]` answers and a client CAN change them. `settable:
+  // true`. Role-gated like everything else: the read-tier list/read/recall
+  // tools reach every role, the write-tier editor reaches child+ (the write
+  // tier), with the shared family scope further gated adult-only inside the
+  // tool's own `validate()` (not visible here — this projection is per-tool,
+  // not per-scope).
+  for (const meta of MEMORY_TOOL_SETTINGS) {
     if (!canExecute(role, meta.tier)) continue;
     const { permission } = resolveToolPermission({
       toolName: meta.name,

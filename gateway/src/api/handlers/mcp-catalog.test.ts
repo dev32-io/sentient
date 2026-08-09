@@ -469,9 +469,13 @@ describe("GET /api/v1/mcp-catalog — the five skill tools are native, settable,
       await createMcpCatalogHandler(makeDeps({ role: "adult" }))(makeGetRequest("valid-token"))
     ).json()) as McpCatalogView;
 
-    // All five present alongside delegateTask.
+    // All five skill tools + all four memory tools + delegateTask.
     expect(nativeToolNames(view)).toEqual([
       "delegateTask",
+      "memory_list",
+      "memory_read",
+      "memory_recall",
+      "memory_write",
       "skill_create",
       "skill_delete",
       "skill_list",
@@ -508,15 +512,34 @@ describe("GET /api/v1/mcp-catalog — the five skill tools are native, settable,
       await createMcpCatalogHandler(makeDeps({ role: "child" }))(makeGetRequest("valid-token"))
     ).json()) as McpCatalogView;
 
-    expect(nativeToolNames(childView)).toEqual(["skill_list", "skill_use"]);
+    // memory_write is present because child HOLDS the write tier — the
+    // family-scope restriction is argument-level in memory_write's validate()
+    // (adult-only per scope), not tool-visibility, so a child still sees the
+    // tool for editing its own private memory.
+    expect(nativeToolNames(childView)).toEqual([
+      "memory_list",
+      "memory_read",
+      "memory_recall",
+      "memory_write",
+      "skill_list",
+      "skill_use",
+    ]);
   });
 
-  it("a guest reaches only the read-tier skill tools", async () => {
+  it("a guest reaches only the read-tier tools", async () => {
     const guestView = (await (
       await createMcpCatalogHandler(makeDeps({ role: "guest" }))(makeGetRequest("valid-token"))
     ).json()) as McpCatalogView;
 
-    expect(nativeToolNames(guestView)).toEqual(["skill_list", "skill_use"]);
+    // No memory_write (write tier); the three read-tier memory tools + the two
+    // read-tier skill tools only.
+    expect(nativeToolNames(guestView)).toEqual([
+      "memory_list",
+      "memory_read",
+      "memory_recall",
+      "skill_list",
+      "skill_use",
+    ]);
   });
 });
 

@@ -22,6 +22,15 @@ const log = getLog(["sentient", "memory", "memory-file"]);
  *  than needing a separate path check. */
 export const MEMORY_SLUG_RE: RegExp = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** Description length cap, mirroring `skill-file.ts`'s `MAX_DESCRIPTION_CHARS`.
+ *  A topic `description` is rendered verbatim into the system-prompt topic
+ *  index (spec §4.5) yet — unlike the body — is neither line/char-capped by
+ *  `validateMemoryText` nor invisible-char linted anywhere else, so an
+ *  unbounded or zero-width-laden description is a prompt-budget and injection
+ *  surface. Bounding it here (the read/re-ingest parse gate) makes a poisoned
+ *  description render ABSENT rather than reach the prompt. */
+export const MAX_DESCRIPTION_CHARS = 1024;
+
 const FRONTMATTER_FENCE = "---";
 
 /** Longest error `detail` string returned to a caller, mirroring the
@@ -40,6 +49,7 @@ export interface TopicFile extends TopicFrontmatter {
 
 export type TopicFileError =
   | { kind: "bad_name"; name: string }
+  | { kind: "description_too_long"; length: number }
   | { kind: "invisible_chars"; count: number }
   | { kind: "malformed_frontmatter"; detail: string };
 
@@ -130,6 +140,23 @@ export function parseTopicFile(raw: string): { ok: true; topic: TopicFile } | { 
   if (!MEMORY_SLUG_RE.test(fmResult.data.name)) {
     const error: TopicFileError = { kind: "bad_name", name: fmResult.data.name };
     log.warn("memory-file.parse.invalid", { kind: error.kind });
+    return { ok: false, error };
+  }
+
+  // Description guard (folded-in review): the description is rendered into the
+  // prompt topic index, so it is length-capped and invisible-char linted here
+  // exactly as the body is — the ONE frontmatter field that otherwise reaches
+  // the prompt unscanned.
+  if (fmResult.data.description.length > MAX_DESCRIPTION_CHARS) {
+    const error: TopicFileError = { kind: "description_too_long", length: fmResult.data.description.length };
+    log.warn("memory-file.parse.invalid", { name: fmResult.data.name, kind: error.kind });
+    return { ok: false, error };
+  }
+
+  const descriptionInvisibleCount = countInvisibleChars(fmResult.data.description);
+  if (descriptionInvisibleCount > 0) {
+    const error: TopicFileError = { kind: "invisible_chars", count: descriptionInvisibleCount };
+    log.warn("memory-file.parse.invalid", { name: fmResult.data.name, kind: error.kind, field: "description" });
     return { ok: false, error };
   }
 
