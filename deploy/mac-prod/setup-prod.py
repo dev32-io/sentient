@@ -2,11 +2,17 @@
 """
 Sentient — native production installer (Apple-silicon Mac mini).
 
-Installs the compiled gateway from a release tarball into the
-`/opt/sentient/<version>/` tree, points the `current` symlink at it, restarts
-the `io.sentient.gateway` launchd job and health-gates the result. A release
-that fails its health gate is rolled back automatically to the version that was
-running before.
+Installs the compiled gateway from a release tarball into the release tree
+(`<release_root>/releases/<version>/`), points the `current` symlink at it,
+restarts the `io.sentient.gateway` launchd job and health-gates the result. A
+release that fails its health gate is rolled back automatically to the version
+that was running before.
+
+The release root is domain-specific: `system` uses `/opt/sentient` (root-owned,
+unchanged from the original design); `gui` uses `~/.sentient/gateway`
+(operator-writable, already where state lives). In both domains, versioned
+releases live under `<release_root>/releases/<version>/` and the `current`
+symlink lives directly under `<release_root>`.
 
 Two domains:
 
@@ -27,8 +33,8 @@ Invariants this script exists to hold:
 
   * CODE IS IMMUTABLE; STATE IS USER-OWNED AND MUTABLE.
     In `system` domain: `/opt/sentient/**` is root:wheel; `~/.sentient/**`
-    belongs to the operator. In `gui` domain: `/opt/sentient/**` is
-    operator-owned and `chmod a-w`; `~/.sentient/**` is also operator-owned.
+    belongs to the operator. In `gui` domain: `~/.sentient/gateway/releases/**`
+    is operator-owned and `chmod a-w`; `~/.sentient/**` is also operator-owned.
     Nothing executable lives under $HOME in either domain.
   * NOTHING FETCHES AT DEPLOY TIME. The gateway binary embeds its JS
     dependencies; python services install from vendored wheels with
@@ -174,6 +180,16 @@ LAUNCHD_DIR_GUI = Path.home() / "Library" / "LaunchAgents"
 # The plist ships with this literal standing in for the operator's account name;
 # the installer substitutes it. See deploy/mac-prod/io.sentient.gateway.plist.
 OPERATOR_PLACEHOLDER = "OPERATOR"
+# The plist ships with this literal standing in for the release tree root
+# (e.g. /opt/sentient for system, ~/.sentient/gateway for gui); the installer
+# substitutes it at install time alongside OPERATOR. See
+# deploy/mac-prod/io.sentient.gateway.plist.
+RELEASE_ROOT_PLACEHOLDER = "RELEASE_ROOT"
+# Versioned release directories live under <release_root>/releases/, and the
+# `current` symlink lives directly under <release_root>. This keeps code
+# separate from state dirs when the release root IS the state root (gui
+# domain: ~/.sentient/gateway).
+RELEASES_SUBDIR = "releases"
 # system domain: root-owned plist — anyone who can WRITE this file chooses what
 # root launches at boot, so group/world write is a privilege-escalation hole.
 PLIST_OWNER_SYSTEM = "root:wheel"
@@ -321,6 +337,19 @@ class DomainPolicy:
         self.is_gui = is_gui_domain(domain)
         self.launchd_dir = launchd_dir_for(domain, home)
         self.launchd_target = launchd_domain_target(domain)
+
+    @property
+    def release_root(self) -> Path:
+        """Root of the release tree: where `releases/` and the `current` symlink live.
+
+        `system`: /opt/sentient (root-owned, unchanged from the original design).
+        `gui`: ~/.sentient/gateway (operator-writable — already where state lives,
+        so no new writable path is introduced). Code goes under `releases/`,
+        keeping it separate from the state dirs (config, logs, data, etc.).
+        """
+        if self.is_gui:
+            return self.home / STATE_ROOT / "gateway"
+        return OPT
 
     @property
     def plist_owner(self) -> str | None:
@@ -509,22 +538,29 @@ def read_release_version(tarball: Path) -> str:
 
 
 class RealFs:
-    """The `/opt/sentient` release tree.
+    """The release tree.
 
-    Code lives here and nowhere else: root-owned and immutable, so the
+    Code lives under `<release_root>/releases/<version>/` and nowhere else:
+    root-owned and immutable (system domain) or chmod a-w (gui domain), so the
     unprivileged service user cannot rewrite the binary it runs. `current` is a
-    symlink, swapped atomically, because launchd's ProgramArguments points at
-    the fixed `current/bin/sentient-gateway` path — the version flip IS the
-    symlink swap.
+    symlink at `<release_root>/current`, swapped atomically, because launchd's
+    ProgramArguments points at the fixed `current/bin/sentient-gateway` path —
+    the version flip IS the symlink swap.
 
-    In `gui` domain the tree is operator-owned (not root), and immutability is
-    `chmod a-w` rather than chown root — see DomainPolicy.
+    In `gui` domain the release root is ~/.sentient/gateway (operator-writable),
+    and `releases/` keeps code separate from the state dirs that also live there.
+    In `system` domain the release root is /opt/sentient (root-owned), and
+    immutability is chown root:wheel rather than chmod a-w — see DomainPolicy.
     """
 
-    def __init__(self, opt_root: Path = OPT, runner=subprocess.run, domain_policy: DomainPolicy | None = None):
-        self._root = Path(opt_root)
-        self._run = runner
+    def __init__(self, opt_root: Path | None = None, runner=subprocess.run, domain_policy: DomainPolicy | None = None):
         self._policy = domain_policy or DomainPolicy(DOMAIN_SYSTEM, "", Path.home())
+        self._root = Path(opt_root) if opt_root is not None else self._policy.release_root
+        # Versioned release directories live one level below the root, under
+        # `releases/`. This keeps code separate from state dirs when the release
+        # root IS the state root (gui domain: ~/.sentient/gateway).
+        self._releases_dir = self._root / RELEASES_SUBDIR
+        self._run = runner
 
     @property
     def current(self) -> str | None:
@@ -533,8 +569,12 @@ class RealFs:
             return None
         return Path(os.readlink(link)).name
 
+    def release_dir(self, version: str) -> Path:
+        """The directory a version unpacks into: <release_root>/releases/<version>."""
+        return self._releases_dir / version
+
     def has_version(self, version: str) -> bool:
-        return (self._root / version).is_dir()
+        return (self._releases_dir / version).is_dir()
 
     def unpack(self, version: str, tarball: Path) -> None:
         contained = read_release_version(tarball)
@@ -544,10 +584,10 @@ class RealFs:
                 f"{version} — refusing to install a version that is not there"
             )
 
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._run(["tar", "-xzf", str(tarball), "-C", str(self._root)], check=True)
+        self._releases_dir.mkdir(parents=True, exist_ok=True)
+        self._run(["tar", "-xzf", str(tarball), "-C", str(self._releases_dir)], check=True)
 
-        release = self._root / version
+        release = self._releases_dir / version
         binary = release / GATEWAY_BINARY
         if not binary.is_file():
             raise InstallError(
@@ -575,20 +615,21 @@ class RealFs:
         # retry into a retry rather than an outage.
         if staging.is_symlink() or staging.exists():
             staging.unlink()
-        staging.symlink_to(self._root / version)
+        staging.symlink_to(self._releases_dir / version)
         staging.replace(self._root / CURRENT_LINK)
 
     def _releases(self) -> list[Path]:
         """Release directories only.
 
-        `current` resolves as a directory but is a SYMLINK living in the same
-        parent. Including it would let `rmtree` delete straight through it and
-        take out the live release — so real directories only, symlinks excluded.
+        `current` resolves as a directory but is a SYMLINK living in the
+        parent of `releases/`, not inside it. Including it would let `rmtree`
+        delete straight through it and take out the live release — so real
+        directories only, symlinks excluded.
         """
-        if not self._root.is_dir():
+        if not self._releases_dir.is_dir():
             return []
         return [
-            path for path in self._root.iterdir()
+            path for path in self._releases_dir.iterdir()
             if path.is_dir() and not path.is_symlink()
         ]
 
@@ -708,6 +749,7 @@ class RealLaunchd:
         runner=subprocess.run,
         domain: str = DOMAIN_SYSTEM,
         domain_policy: DomainPolicy | None = None,
+        release_root: Path | None = None,
     ):
         self._source = Path(plist_source)
         self._operator = operator
@@ -718,6 +760,11 @@ class RealLaunchd:
         # `system` in production, `gui` on a desktop mini. The domain target
         # string is "system" or "gui/<uid>" — see launchd_domain_target().
         self._domain = self._policy.launchd_target
+        # The release tree root, substituted into the plist's RELEASE_ROOT
+        # placeholders (ProgramArguments, GATEWAY_RUNTIME_DIR, SENTIENT_CODE).
+        # None means: do not substitute (the caller knows the plist has no
+        # RELEASE_ROOT placeholders, e.g. a rehearsal that replaces those keys).
+        self._release_root = str(release_root) if release_root is not None else None
 
     @property
     def installed_plist(self) -> Path:
@@ -730,10 +777,17 @@ class RealLaunchd:
             raise InstallError(f"cannot read the launchd plist {self._source}: {e}") from e
 
         rendered = template.replace(OPERATOR_PLACEHOLDER, self._operator)
+        if self._release_root is not None:
+            rendered = rendered.replace(RELEASE_ROOT_PLACEHOLDER, self._release_root)
         if OPERATOR_PLACEHOLDER in rendered:
             raise InstallError(
                 f"plist still contains {OPERATOR_PLACEHOLDER} after substitution — "
                 "refusing to install a daemon whose user and paths are placeholders"
+            )
+        if RELEASE_ROOT_PLACEHOLDER in rendered:
+            raise InstallError(
+                f"plist still contains {RELEASE_ROOT_PLACEHOLDER} after substitution — "
+                "refusing to install a daemon whose release paths are placeholders"
             )
 
         target = self.installed_plist
@@ -1192,8 +1246,9 @@ def parse_args(argv):
     # Overrides exist for staging a release somewhere other than the live tree.
     # There is deliberately no flag that skips verification, the health gate or
     # the rollback — those are the reasons this script exists.
-    install.add_argument("--opt-root", type=Path, default=OPT,
-                         help=f"release tree root (default {OPT})")
+    install.add_argument("--opt-root", type=Path, default=None,
+                         help="release tree root (default: domain-specific — "
+                              "gui ~/.sentient/gateway, system /opt/sentient)")
     install.add_argument("--repo", type=Path, default=REPO_ROOT,
                          help="checkout supplying service sources and the plist")
     install.add_argument("--wheels", type=Path, default=None,
@@ -1234,8 +1289,9 @@ def parse_args(argv):
 
     uninstall = commands.add_parser("uninstall", help="unload the launchd job and remove the plist")
     _add_domain_flag(uninstall)
-    uninstall.add_argument("--opt-root", type=Path, default=OPT,
-                            help=f"release tree root (default {OPT})")
+    uninstall.add_argument("--opt-root", type=Path, default=None,
+                            help="release tree root (default: domain-specific — "
+                                 "gui ~/.sentient/gateway, system /opt/sentient)")
     uninstall.add_argument("--repo", type=Path, default=REPO_ROOT,
                             help="checkout supplying the plist")
     uninstall.add_argument("--plist", type=Path, default=None,
@@ -1249,8 +1305,9 @@ def parse_args(argv):
 
     rollback = commands.add_parser("rollback", help="roll back to the previous release on disk")
     _add_domain_flag(rollback)
-    rollback.add_argument("--opt-root", type=Path, default=OPT,
-                           help=f"release tree root (default {OPT})")
+    rollback.add_argument("--opt-root", type=Path, default=None,
+                           help="release tree root (default: domain-specific — "
+                                "gui ~/.sentient/gateway, system /opt/sentient)")
     rollback.add_argument("--repo", type=Path, default=REPO_ROOT,
                            help="checkout supplying service sources and the plist")
     rollback.add_argument("--plist", type=Path, default=None,
@@ -1312,12 +1369,13 @@ def run_install(args) -> None:
         (warn if cert_is_fallback else info)(cert_reason)
 
     info(f"installing the launchd job (domain: {domain})")
+    release_root = args.opt_root or policy.release_root
     launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
-                          domain_policy=policy)
+                          domain_policy=policy, release_root=release_root)
     launchd.install_plist()
     ok(f"{launchd.installed_plist}")
 
-    fs = RealFs(args.opt_root, domain_policy=policy)
+    fs = RealFs(release_root, domain_policy=policy)
     previous = fs.current
     probe = HealthProbe(args.health_url, ca_bundle,
                         attempts=args.health_attempts,
@@ -1339,7 +1397,7 @@ def run_install(args) -> None:
 
     def prepare(staged: str) -> None:
         info(f"staging native services into {version}")
-        stage_native_services(repo, args.opt_root / staged, wheels)
+        stage_native_services(repo, fs.release_dir(staged), wheels)
         ok("whisper-stt + local-tts venvs built from vendored wheels")
 
     def health() -> tuple[bool, str | None]:
@@ -1429,7 +1487,8 @@ def run_rollback(args) -> None:
     policy = DomainPolicy(domain, operator, home)
     launchd_dir = args.launchd_dir or policy.launchd_dir
 
-    fs = RealFs(args.opt_root, domain_policy=policy)
+    release_root = args.opt_root or policy.release_root
+    fs = RealFs(release_root, domain_policy=policy)
     current = fs.current
     if current is None:
         raise InstallError("no `current` symlink — nothing to roll back from")
@@ -1511,7 +1570,9 @@ def main(argv=None) -> int:
     except OSError as e:
         # In `system` domain: almost always "not running under sudo" — writing
         # /opt/sentient and /Library/LaunchDaemons both need root. In `gui`
-        # domain this is a genuine filesystem error, not a missing-sudo error.
+        # domain this is a genuine filesystem error (the release root is
+        # ~/.sentient/gateway, which the operator already owns), not a
+        # missing-sudo error.
         domain = getattr(args, "domain", DEFAULT_DOMAIN)
         if domain == DOMAIN_SYSTEM:
             fail(f"{e} — run this with sudo, or point --opt-root/--launchd-dir at a writable tree")

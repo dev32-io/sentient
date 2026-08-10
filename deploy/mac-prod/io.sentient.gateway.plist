@@ -17,6 +17,11 @@
   substitutes the operator's account name at install time and REFUSES to install
   a plist that still contains the placeholder — never install this file by hand.
 
+  Every literal `RELEASE_ROOT` below is likewise a placeholder. The installer
+  substitutes the domain-specific release root at install time: `/opt/sentient`
+  for `system` domain, `~/.sentient/gateway` for `gui` domain. The same
+  refuse-if-placeholder-survives guard applies.
+
   ProgramArguments points at the fixed `current/` symlink, so a version flip is a
   symlink swap plus `launchctl kickstart -k`; the plist itself is installed once.
 -->
@@ -26,7 +31,7 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/sentient/current/bin/sentient-gateway</string>
+    <string>RELEASE_ROOT/current/bin/sentient-gateway</string>
   </array>
 
   <!-- Root-owned plist, unprivileged execution. The gateway needs no root: it
@@ -47,13 +52,13 @@
     <!-- Staged assets: templates/, system_prompts/, persona.md, webui/. The
          compiled binary embeds no assets, so this must point at the unpacked
          share/ dir or asset resolution fails loudly at boot. -->
-    <key>GATEWAY_RUNTIME_DIR</key>            <string>/opt/sentient/current/share</string>
+    <key>GATEWAY_RUNTIME_DIR</key>            <string>RELEASE_ROOT/current/share</string>
     <!-- Operator-editable config, deliberately in mutable state, not in code. -->
     <key>GATEWAY_CONFIG_PATH</key>            <string>/Users/OPERATOR/.sentient/gateway/config/config.yaml</string>
     <!-- Root of the root-owned release tree. config.yaml#managed_services
          expands ${SENTIENT_CODE} into each native addon's argv[0] and
          PYTHONPATH; unset, those stay literal and prepare() refuses to spawn. -->
-    <key>SENTIENT_CODE</key>                  <string>/opt/sentient/current</string>
+    <key>SENTIENT_CODE</key>                  <string>RELEASE_ROOT/current</string>
 
     <!-- HOME is what os.homedir() reads, and ~/.sentient is derived from it:
          state.yaml, secrets/keys.yaml, certs/, users, per-user data. Set
