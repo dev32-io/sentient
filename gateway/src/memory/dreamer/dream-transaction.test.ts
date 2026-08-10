@@ -17,7 +17,7 @@ import type { SessionEntry } from "../../store/entry-types.js";
 import type { UserId } from "../../user-auth/user-id.js";
 import type { EnqueueEntry, IndexSync } from "../index-sync.js";
 import { type MemoryStore, openMemoryStore } from "../memory-store.js";
-import { createDreamTransaction } from "./dream-transaction.js";
+import { buildDeepDreamWindow, createDreamTransaction } from "./dream-transaction.js";
 import type { DreamScopeHandle } from "./dream-transaction.js";
 import type { DreamResult } from "./dreamer-runner.js";
 import { type WriteDreamOutputsResult, writeDreamOutputs } from "./episode-writer.js";
@@ -72,6 +72,8 @@ interface HandleOverrides {
   advanceMark?: () => void;
   retireEntry?: (target: string, lineText: string, reason: string) => void;
   order?: string[];
+  listJournal?: () => string[];
+  readJournal?: (date: string) => string | null;
 }
 
 function makeHandle(
@@ -98,11 +100,15 @@ function makeHandle(
     // Default: a quiet night (no ops) — the semantic half is a clean `ok` no-op.
     runReduceStage: o.runReduceStage ?? vi.fn(async () => []),
   };
-  // Minimal store: the reduce stage reads current memory off it (all absent).
+  // Minimal store: the reduce stage reads current memory off it (all absent);
+  // listJournal/readJournal back `triggerDeepDream`'s window build (empty by
+  // default — a deep-dream test overrides them with seeded journal days).
   const store = {
     readCore: () => null,
     listTopics: () => [],
     readTopic: () => null,
+    listJournal: o.listJournal ?? (() => []),
+    readJournal: o.readJournal ?? (() => null),
   } as unknown as MemoryStore;
   const sync = { flush, retireEntry: o.retireEntry ?? vi.fn(() => {}) } as unknown as IndexSync;
   return {
@@ -579,5 +585,212 @@ describe("createDreamTransaction.runDreamFor — crash at every boundary redoes 
     const key = (batch: EnqueueEntry[]): string =>
       JSON.stringify(batch.map((e) => [e.kind, e.text, e.sourceRef]).sort());
     expect(key(enqueued[0] as EnqueueEntry[])).toBe(key(enqueued[1] as EnqueueEntry[]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deep dreaming (spec §8 "later slice"): on-demand consolidation over journals,
+// not raw session-store entries. Pinned invariants: correct journal/episode
+// window selection; the nightly checkpoint mark is NEVER advanced; no writes
+// land outside the private scope the handle was opened on.
+// ---------------------------------------------------------------------------
+
+/** A journal file byte-for-byte compatible with `parseJournalEpisodes` (the
+ *  real `## session <id>[ [tool-derived]]` heading contract). */
+function journalFixture(sessionId: string, tainted: boolean, episode: string): string {
+  return [
+    "# heading",
+    "narrative",
+    `## session ${sessionId}${tainted ? " [tool-derived]" : ""}`,
+    "",
+    episode,
+    "## memory updates",
+    "",
+    "No memory updates this night.",
+  ].join("\n\n");
+}
+
+function readDeepDreamStatus(dir: string): { result: string; sessions: number; ops: number; reason?: string } {
+  return JSON.parse(readFileSync(join(dir, ".deep-dream-status.json"), "utf8"));
+}
+
+describe("buildDeepDreamWindow", () => {
+  const NOW = Date.parse("2026-08-09T12:00:00Z");
+
+  it("selects only journal days within [today - windowDays, today], one pseudo-session per day", () => {
+    const files = new Map<string, string>([
+      ["2026-08-01", journalFixture("s-old", false, "too old to matter")],
+      ["2026-08-05", journalFixture("s1", false, "in range, clean")],
+      ["2026-08-07", journalFixture("s2", true, "in range, tainted")],
+      ["2026-08-09", journalFixture("s3", false, "today")],
+    ]);
+    const store = { listJournal: () => [...files.keys()].sort(), readJournal: (d: string) => files.get(d) ?? null };
+
+    const window = buildDeepDreamWindow(store, 3, NOW); // cutoff = 2026-08-06
+
+    expect(window.sessions.map((s) => s.sessionId)).toEqual(["journal-2026-08-07", "journal-2026-08-09"]);
+    expect(window.sessions[0]?.containsToolDerived).toBe(true); // taint recovered via parseJournalEpisodes
+    expect(window.sessions[1]?.containsToolDerived).toBe(false);
+  });
+
+  it("skips a day whose journal cannot be read (missing/quarantined) rather than fabricating one", () => {
+    const store = { listJournal: () => ["2026-08-08", "2026-08-09"], readJournal: () => null };
+    expect(buildDeepDreamWindow(store, 7, NOW).sessions).toEqual([]);
+  });
+
+  it("includes today's own journal day when in range", () => {
+    const store = {
+      listJournal: () => ["2026-08-09"],
+      readJournal: () => journalFixture("s-today", false, "today's episode"),
+    };
+    expect(buildDeepDreamWindow(store, 1, NOW).sessions).toHaveLength(1);
+  });
+});
+
+describe("createDreamTransaction.triggerDeepDream", () => {
+  const NOW = Date.parse("2026-08-09T12:00:00Z");
+  const DEEP_DREAM_RESULT: DreamResult = {
+    sessions: [
+      { sessionId: "journal-2026-08-07", episode: "consolidated week", facts: [], containsToolDerived: false },
+    ],
+  };
+
+  function seededHandle(dir: string, o: HandleOverrides = {}): ReturnType<typeof makeHandle> {
+    return makeHandle(dir, {
+      listJournal: () => ["2026-08-07"],
+      readJournal: () => journalFixture("s1", false, "the week's episode"),
+      runMapStage: vi.fn(async () => DEEP_DREAM_RESULT),
+      ...o,
+    });
+  }
+
+  it("consolidates journal days into a journal entry dated TODAY with a 'deep dream over N days' narrative", async () => {
+    const dir = memoryDir();
+    const handle = seededHandle(dir);
+    let capturedArgs: unknown[] = [];
+    const writeOutputs = vi.fn((...args: unknown[]): WriteDreamOutputsResult => {
+      capturedArgs = args;
+      return WRITE_OK;
+    });
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+      now: () => NOW,
+    });
+
+    const outcome = await tx.triggerDeepDream("u_alice", 7);
+
+    expect(outcome.result).toBe("ok");
+    expect(writeOutputs).toHaveBeenCalledTimes(1);
+    expect(capturedArgs[2]).toBe(handle.scopeId); // date, and narrative override
+    expect(capturedArgs[3]).toBe("2026-08-09"); // dated TODAY, not the window's last day
+    expect(capturedArgs[4]).toBe(DEEP_DREAM_RESULT);
+    expect(capturedArgs[6]).toBe("Deep dream over 7 days.");
+    expect(readDeepDreamStatus(dir)).toMatchObject({ result: "ok" });
+  });
+
+  it("selects the map-stage window from journals, not the session-store readWindow", async () => {
+    const dir = memoryDir();
+    let windowSeen: unknown;
+    const handle = seededHandle(dir, {
+      runMapStage: vi.fn(async (_user, window) => {
+        windowSeen = window;
+        return DEEP_DREAM_RESULT;
+      }),
+    });
+    const writeOutputs = vi.fn((): WriteDreamOutputsResult => WRITE_OK);
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+      now: () => NOW,
+    });
+
+    await tx.triggerDeepDream("u_alice", 7);
+
+    // The seeded journal day (2026-08-07), NOT the readWindow's raw session "s1".
+    expect(windowSeen).toEqual({
+      sessions: [{ sessionId: "journal-2026-08-07", text: expect.any(String), containsToolDerived: false }],
+    });
+  });
+
+  it("NEVER advances the nightly checkpoint mark — deep dreaming re-reads already-dreamed journals", async () => {
+    const dir = memoryDir();
+    const handle = seededHandle(dir, { runReduceStage: vi.fn(async () => [ONE_OP]) });
+    const writeOutputs = vi.fn((): WriteDreamOutputsResult => WRITE_OK);
+    const applyOps = vi.fn(async (): Promise<ApplyResult> => APPLY_OK);
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+      applyOps,
+      now: () => NOW,
+    });
+
+    const outcome = await tx.triggerDeepDream("u_alice", 30);
+
+    expect(outcome.result).toBe("ok");
+    expect(outcome.ops).toBe(1); // ops WERE applied
+    expect(handle.advanceMark).not.toHaveBeenCalled(); // yet the mark never moved
+  });
+
+  it("writes only to the handle's own (private) scope — never a different scopeId", async () => {
+    const dir = memoryDir();
+    const handle = seededHandle(dir);
+    const seenScopeIds = new Set<string>();
+    const writeOutputs = vi.fn((...args: unknown[]): WriteDreamOutputsResult => {
+      seenScopeIds.add(args[2] as string);
+      return WRITE_OK;
+    });
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+      now: () => NOW,
+    });
+
+    await tx.triggerDeepDream("u_alice", 7);
+
+    expect([...seenScopeIds]).toEqual([handle.scopeId]);
+    expect(handle.scopeId.startsWith("family")).toBe(false); // never the shared scope
+  });
+
+  it("does NOT advance the mark on a journal-refused (scan-rejected) write", async () => {
+    const dir = memoryDir();
+    const handle = seededHandle(dir);
+    const writeOutputs = vi.fn((): WriteDreamOutputsResult => ({ ok: false, error: "scan_rejected" }));
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+      now: () => NOW,
+    });
+
+    const outcome = await tx.triggerDeepDream("u_alice", 7);
+
+    expect(outcome.result).toBe("failed");
+    expect(outcome.reason).toBe("journal-refused");
+    expect(handle.advanceMark).not.toHaveBeenCalled();
+    expect(readDeepDreamStatus(dir)).toMatchObject({ result: "failed", reason: "journal-refused" });
+  });
+
+  it("returns failed without touching the mark when the scope cannot be opened", async () => {
+    const tx = createDreamTransaction({
+      openDreamScope: () => null,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      now: () => NOW,
+    });
+
+    const outcome = await tx.triggerDeepDream("u_alice", 7);
+
+    expect(outcome.result).toBe("failed");
+    expect(outcome.reason).toBe("scope-unavailable");
   });
 });

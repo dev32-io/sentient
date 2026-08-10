@@ -255,6 +255,100 @@ Same shape as any other release, exercised end-to-end on a real install:
    whisper-stt/local-tts failure would — verify the gateway still installs
    successfully and simply logs the addon as degraded, memory tools absent.
 
+### Deploy alignment — `storage.data_root` must cover the gateway's `user_data_root`
+
+The gateway registers each user's private scope at indexPath
+`<user_data_root>/<userId>/deep-memory/index.db` (memory-system design §5.3,
+T15 review). deep-memory's OWN `config.yaml`
+(`~/.sentient/deep-memory/config/config.yaml`, `storage.data_root`) must be
+set so that path resolves inside it — in practice, `storage.data_root` should
+equal the gateway's `user_data_root` (`gateway/config.yaml`'s
+`access.user_data_root`, default `~/.sentient/gateway/users`). A mismatch
+does not crash either process: `register-scope` refuses with
+`path_outside_data_root` (CONTRACT.md §4), and the memory system degrades
+non-fatally per the §11 model — `memory_recall` and the memory tools simply
+report unavailable, silently, with no boot failure to flag it. Verify this
+alignment explicitly after any change to either root (fresh install, `~/
+.sentient` relocation, multi-tenant reconfiguration) — `curl` a `/register-
+scope` call or check the gateway log for `path_outside_data_root` after
+restart.
+
+### Dreamer uses the gateway's global provider model, not a per-user one
+
+The nightly/on-demand dreamer (`gateway/src/memory/dreamer/`) calls the LLM
+through the same `orchestrator.provider.model` every live session falls back
+to (`phase-services.ts` wires `createDreamRunner({ model:
+orchestratorCfg.provider.model, ... })`) — there is no separate "background
+model" tier and no per-user override; whatever model backs live chat also
+backs every dreamer map/reduce call, for every user. Two operational
+consequences: (1) provider rate limits and per-token cost must be sized for
+dreamer traffic on top of live chat — a household with `dreaming: true` for
+every member adds one map call per session-window plus one reduce call, per
+user, per night; (2) swapping `orchestrator.provider.model` (e.g. moving to a
+cheaper/local model) changes dreamer output quality identically to live chat
+— there is no way to pin the dreamer to a different model without a code
+change today.
+
+### Operator purge runbook — remediating a poisoned session
+
+A tool-derived or trigger-sourced session can carry hostile content that the
+dreamer distilled into MEMORY.md before anyone noticed (the inbound-gate
+raises risk on read, it does not retroactively unwrite a fact already
+committed the prior night). Memory's file layer never hard-deletes
+automatically (spec §3.6 no-hard-delete invariant) — remediation is a
+deliberate operator action, not something a tool call can trigger. Steps:
+
+1. **Identify the poisoned session.** Every fact op the dreamer applies is
+   logged in that night's `journal/YYYY-MM-DD.md` under `## memory updates`
+   with its source citations: `- ADD MEMORY.md: <line>  [sessions: <id>,
+   ...; seqs: <fromSeq>-<toSeq>, ...]`. Grep the affected user's journal
+   directory for the suspect fact text, or work backward from an
+   `inbound-gate.flagged` / `memory-tools.scan.rejected` log line's
+   `sessionId` (`~/.sentient/gateway/logs/YYYY-MM-DD.log`) to the journal
+   entries citing it.
+2. **Purge the session from the index** via the deep-memory admin plane —
+   `POST /purge` with the admin token (`DEEP_MEMORY_ADMIN_TOKEN`, §"Token
+   provisioning" above), scoped to the user's private scope id
+   (`user:<userId>`) and filtered by the poisoned `sessionId`:
+
+   ```bash
+   curl -s -X POST http://127.0.0.1:8772/purge \
+     -H "Authorization: Bearer ${DEEP_MEMORY_ADMIN_TOKEN}" \
+     -H "Content-Type: application/json" \
+     -d '{"scopeId": "user:<userId>", "filter": {"sessionId": "<poisonedSessionId>"}}'
+   ```
+
+   This drops every indexed entry (episode summaries, fact/`file-section`
+   entries, the journal entry itself) whose `sessionRef.sessionId` matches —
+   the reason episode-writer.ts pins every fact's `sessionRef` to its
+   MOST-TAINTED contributing session (§3.8): a fact distilled from a mixed
+   `[clean, poison]` window purges correctly rather than surviving under the
+   clean session's id.
+3. **Fix the file layer.** `/purge` only removes the SEARCH index — the
+   canonical MEMORY.md/topic files and the journal itself are untouched (the
+   index is derived and rebuildable; the files are the source of truth,
+   spec §2). Use the journal's op-log citations from step 1 to find the exact
+   MEMORY.md/topic line(s) the poisoned session contributed, then either:
+   - have the assistant `memory_write` a `SUPERSEDE`/removal of the
+     compromised line (routes through the normal write-time scan), or
+   - hand-edit `~/.sentient/gateway/users/<userId>/memory/MEMORY.md` (or the
+     relevant `topics/<slug>.md`) directly as the operator — a human edit is
+     the one path allowed to bypass the model, but it still passes through
+     the store's write-time scan on next read/render.
+4. **Rebuild if the index looks inconsistent** after multiple purges or a
+   suspected broader compromise — `POST /rebuild` with the same admin token
+   drops and re-derives the WHOLE scope's index from the (now-fixed) files:
+
+   ```bash
+   curl -s -X POST http://127.0.0.1:8772/rebuild \
+     -H "Authorization: Bearer ${DEEP_MEMORY_ADMIN_TOKEN}" \
+     -H "Content-Type: application/json" \
+     -d '{"scopeId": "user:<userId>"}'
+   ```
+
+   `rebuild` is also the fix for `409 rebuild_required` (an embedding-model
+   change) — same call, different trigger.
+
 ---
 
 ## Updates

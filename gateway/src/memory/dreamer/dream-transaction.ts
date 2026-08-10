@@ -45,13 +45,14 @@ import { getLog } from "../../logging/logger.js";
 import { scanContent } from "../../security/injection-scanner.js";
 import type { SessionEntry } from "../../store/entry-types.js";
 import { projectForDreaming } from "../../store/project-for-dreaming.js";
+import type { DreamSession, DreamWindow } from "../../store/project-for-dreaming.js";
 import { writeFileAtomic } from "../../user-auth/atomic-write.js";
 import type { UserId } from "../../user-auth/user-id.js";
 import type { IndexSync } from "../index-sync.js";
 import type { MemoryStore } from "../memory-store.js";
 import type { CurrentMemory, DreamMark, DreamResult, DreamRunner } from "./dreamer-runner.js";
 import type { AppliedOpLog } from "./episode-writer.js";
-import { writeDreamOutputs as realWriteDreamOutputs } from "./episode-writer.js";
+import { parseJournalEpisodes, writeDreamOutputs as realWriteDreamOutputs } from "./episode-writer.js";
 import { applyOps as realApplyOps } from "./reconciler.js";
 import type { ReconcilerDeps, SessionIndexEntry } from "./reconciler.js";
 
@@ -64,7 +65,17 @@ const log = getLog(["sentient", "memory", "dreamer", "transaction"]);
 /** The greppable per-user status record (spec §8): a future viewer surface, an
  *  operator `cat` today. Sibling of the mark in the scope's memory dir. */
 const STATUS_FILENAME = ".dream-status.json";
+/** The deep-dream's OWN status record — deliberately a separate file from
+ *  `STATUS_FILENAME` so an on-demand deep dream never clobbers the nightly
+ *  run's observability record (they are different kinds of run; conflating
+ *  them would make the nightly `lastRunAt` lie). */
+const DEEP_DREAM_STATUS_FILENAME = ".deep-dream-status.json";
 const MS_PER_HOUR = 3_600_000;
+
+/** Sessions built from a journal day carry this synthetic id prefix (spec §8
+ *  "Deep dreaming") — never a real session-store id, so it can never collide
+ *  with (or be mistaken for) a purge-by-sessionId target from a nightly dream. */
+const DEEP_DREAM_PSEUDO_SESSION_PREFIX = "journal-";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -155,6 +166,13 @@ export interface DreamTransaction {
    *  mark is missing / `lastRunAt` null / unparseable; `dream` when it exists and
    *  is stale; `skip` when it exists and is recent. */
   bootDecisionFor(userId: string): Promise<BootDecision>;
+  /** ON-DEMAND ONLY — never scheduled (spec §8 "Deep dreaming"). A
+   *  consolidation-of-consolidations over the last `windowDays`: same runner,
+   *  same reduce/reconcile/write mechanics as `runDreamFor`, but the window is
+   *  built from JOURNALS (`buildDeepDreamWindow`), not the session-store mark
+   *  window — so the nightly checkpoint mark is deliberately left untouched.
+   *  NEVER throws. */
+  triggerDeepDream(userId: string, windowDays: number): Promise<DreamOutcome>;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,10 +190,11 @@ interface DreamStatusRecord {
 
 /** Best-effort persisted status (spec §8). A write failure here must never sink
  *  a dream that otherwise succeeded — the mark is the durable checkpoint, this
- *  is an observability surface — so it only WARNs. */
-async function writeStatus(memoryDir: string, record: DreamStatusRecord): Promise<void> {
+ *  is an observability surface — so it only WARNs. `filename` defaults to the
+ *  nightly record; `triggerDeepDream` passes `DEEP_DREAM_STATUS_FILENAME`. */
+async function writeStatus(memoryDir: string, record: DreamStatusRecord, filename = STATUS_FILENAME): Promise<void> {
   try {
-    await writeFileAtomic(join(memoryDir, STATUS_FILENAME), JSON.stringify(record, null, 2), { mode: 0o600 });
+    await writeFileAtomic(join(memoryDir, filename), JSON.stringify(record, null, 2), { mode: 0o600 });
   } catch (err) {
     log.warn("dreamer.status.write-failed", { reason: err instanceof Error ? err.message : String(err) });
   }
@@ -207,6 +226,73 @@ function buildSessionsIndex(result: DreamResult): SessionIndexEntry[] {
   }));
 }
 
+/** `YYYY-MM-DD` in LOCAL time (matches logging/format.ts's local-clock rule so
+ *  the journal date lines up with "today's log"). Pure — top-level so both the
+ *  nightly transaction and `buildDeepDreamWindow` share one definition. */
+function localDate(ms: number): string {
+  const d = new Date(ms);
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** `ms` shifted back `days` LOCAL calendar days via `Date`'s own day
+ *  arithmetic (DST-safe) rather than a flat `days * 24h` subtraction. */
+function daysAgo(ms: number, days: number): Date {
+  const d = new Date(ms);
+  d.setDate(d.getDate() - days);
+  return d;
+}
+
+/**
+ * The deep-dream window (spec §8 "Deep dreaming": "same runner, window =
+ * journals + episode summaries over a week/month"). Pseudo-sessions built from
+ * JOURNALS, not raw session-store entries: one pseudo-session per journal day
+ * in `[today - windowDays, today]` (inclusive), sourced via
+ * `listJournal`/`readJournal`. A missing/unreadable day (quarantined,
+ * deleted) is skipped, not fabricated.
+ *
+ * Per-day taint is recovered via `parseJournalEpisodes` — the exact hook
+ * episode-writer.ts's header names for this ("the rebuild path (and future
+ * deep-dream) can re-derive per-session taint from the canonical file alone"):
+ * a day is tainted iff ANY of its parsed per-session episodes was
+ * `tool-derived`. A day with no parseable session headings (a quiet night, or
+ * an episodic-only refusal) still contributes its raw text untainted — the
+ * narrative and op-log sections are real content even without episodes.
+ *
+ * Pure and deterministic: same store contents + `nowMs` in, same window out.
+ * Exported so the window-selection invariant is testable directly, without
+ * standing up a full transaction.
+ */
+export function buildDeepDreamWindow(
+  store: Pick<MemoryStore, "listJournal" | "readJournal">,
+  windowDays: number,
+  nowMs: number,
+): DreamWindow {
+  const today = localDate(nowMs);
+  const cutoff = localDate(daysAgo(nowMs, windowDays).getTime());
+  const dates = store.listJournal().filter((date) => date >= cutoff && date <= today);
+
+  const sessions: DreamSession[] = [];
+  for (const date of dates) {
+    const text = store.readJournal(date);
+    if (text === null) continue;
+    const episodes = parseJournalEpisodes(text);
+    const containsToolDerived = episodes.some((e) => e.provenance === "tool-derived");
+    sessions.push({ sessionId: `${DEEP_DREAM_PSEUDO_SESSION_PREFIX}${date}`, text, containsToolDerived });
+  }
+
+  log.debug("dreamer.deepdream.window", {
+    windowDays,
+    cutoff,
+    today,
+    daysInRange: dates.length,
+    sessions: sessions.length,
+  });
+  return { sessions };
+}
+
 // ---------------------------------------------------------------------------
 // Transaction
 // ---------------------------------------------------------------------------
@@ -215,16 +301,6 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
   const now = deps.now ?? ((): number => Date.now());
   const writeOutputs = deps.writeOutputs ?? realWriteDreamOutputs;
   const applyOps = deps.applyOps ?? realApplyOps;
-
-  /** `YYYY-MM-DD` in LOCAL time (matches logging/format.ts's local-clock rule so
-   *  the journal date lines up with "today's log"). */
-  function localDate(ms: number): string {
-    const d = new Date(ms);
-    const y = d.getFullYear();
-    const m = `${d.getMonth() + 1}`.padStart(2, "0");
-    const day = `${d.getDate()}`.padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  }
 
   async function runDreamFor(userId: string): Promise<DreamOutcome> {
     const startedAt = now();
@@ -444,5 +520,122 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
     return ageMs > deps.cfg.dreamer.catch_up_threshold_hours * MS_PER_HOUR ? "dream" : "skip";
   }
 
-  return { runDreamFor, skipAndAdvance, initialize, bootDecisionFor };
+  /**
+   * ON-DEMAND deep dream (spec §8 "Deep dreaming — later slice, seam
+   * reserved"): "same runner, window = journals + episode summaries over a
+   * week/month (consolidation of consolidations)". Reuses EVERY mechanic of
+   * `runDreamFor`'s semantic half unchanged (`runMapStage`, `reconcileMemory`,
+   * `writeOutputs`, `sync.flush`) — the only two differences are (1) the input
+   * window (`buildDeepDreamWindow` over journals, not `readWindow` +
+   * `projectForDreaming` over the session-store mark range) and (2) the
+   * checkpoint: `advanceMark` is NEVER called here. The nightly mark tracks
+   * "what raw session history has been dreamed"; a deep dream re-reads
+   * ALREADY-dreamed journal output and does not touch that accounting — a
+   * deep-dream run must never cause a stale mark to look caught-up, nor must a
+   * failed one force redoing real session history it never looked at.
+   */
+  async function triggerDeepDream(userId: string, windowDays: number): Promise<DreamOutcome> {
+    const startedAt = now();
+    const handle = deps.openDreamScope(userId);
+    if (handle === null) {
+      log.warn("dreamer.deepdream.failed", { userId, reason: "scope-unavailable" });
+      return { result: "failed", sessions: 0, ops: 0, durationMs: now() - startedAt, reason: "scope-unavailable" };
+    }
+
+    const runAtIso = new Date(now()).toISOString();
+    const window = buildDeepDreamWindow(handle.store, windowDays, now());
+
+    let result: DreamResult;
+    try {
+      result = await handle.runner.runMapStage({ userId: handle.userId, memoryDir: handle.memoryDir }, window);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn("dreamer.deepdream.failed", { userId, reason: "map-stage", detail: reason });
+      const durationMs = now() - startedAt;
+      await writeStatus(
+        handle.memoryDir,
+        { lastRunAt: runAtIso, result: "failed", sessions: 0, ops: 0, durationMs, reason: "map-stage" },
+        DEEP_DREAM_STATUS_FILENAME,
+      );
+      return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "map-stage" };
+    }
+
+    try {
+      const applied = await reconcileMemory(handle, result, userId);
+
+      // The deep dream is dated TODAY, on the same scope the nightly writes to
+      // (spec: no separate shared-scope path — `handle` is opened once, private
+      // scope only). Narrative is fixed-format, not another LLM call — mirrors
+      // episode-writer's own `buildNarrative` (a dumb, deterministic renderer).
+      const date = localDate(now());
+      const narrative = `Deep dream over ${windowDays} days.`;
+      const written = writeOutputs(handle.store, handle.sync, handle.scopeId, date, result, applied.ops, narrative);
+      if (!written.ok) {
+        log.warn("dreamer.deepdream.failed", { userId, reason: "journal-refused", error: written.error });
+        const durationMs = now() - startedAt;
+        await writeStatus(
+          handle.memoryDir,
+          { lastRunAt: runAtIso, result: "failed", sessions: 0, ops: 0, durationMs, reason: "journal-refused" },
+          DEEP_DREAM_STATUS_FILENAME,
+        );
+        return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "journal-refused" };
+      }
+
+      try {
+        await handle.sync.flush();
+      } catch (err) {
+        log.warn("dreamer.deepdream.flush-deferred", {
+          userId,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      // NO advanceMark CALL — the nightly checkpoint is deliberately untouched
+      // (spec §8; see the function doc comment above).
+
+      const sessions = written.episodeEntries;
+      const opsCount = applied.ops.length;
+      const durationMs = now() - startedAt;
+      const result_ = applied.refusedReason === undefined ? "ok" : "ok-episodic-only";
+      await writeStatus(
+        handle.memoryDir,
+        {
+          lastRunAt: runAtIso,
+          result: result_,
+          sessions,
+          ops: opsCount,
+          durationMs,
+          ...(applied.refusedReason === undefined ? {} : { reason: applied.refusedReason }),
+        },
+        DEEP_DREAM_STATUS_FILENAME,
+      );
+      log.info("dreamer.deepdream.ok", {
+        userId,
+        windowDays,
+        sessions,
+        ops: opsCount,
+        episodicOnly: result_ === "ok-episodic-only",
+        duration_ms: durationMs,
+      });
+      return {
+        result: result_,
+        sessions,
+        ops: opsCount,
+        durationMs,
+        ...(applied.refusedReason === undefined ? {} : { reason: applied.refusedReason }),
+      };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      log.warn("dreamer.deepdream.failed", { userId, reason: "crash", detail });
+      const durationMs = now() - startedAt;
+      await writeStatus(
+        handle.memoryDir,
+        { lastRunAt: runAtIso, result: "failed", sessions: 0, ops: 0, durationMs, reason: "crash" },
+        DEEP_DREAM_STATUS_FILENAME,
+      );
+      return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "crash" };
+    }
+  }
+
+  return { runDreamFor, skipAndAdvance, initialize, bootDecisionFor, triggerDeepDream };
 }

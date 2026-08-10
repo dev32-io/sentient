@@ -313,6 +313,13 @@ function factEntries(scopeId: string, date: string, result: DreamResult, applied
  * caller can decide retry/skip WITHOUT advancing the dream mark. `appliedOps`
  * is undefined/empty in S3a (episodic-only): the op-log section says "no
  * updates" and no fact entries are enqueued.
+ *
+ * `narrativeOverride` (deep-dreaming, spec §8 "later slice") replaces the
+ * fixed first-sentence-per-episode narrative with a caller-supplied one (e.g.
+ * "Deep dream over 7 days.") — the ONLY thing that differs between a nightly
+ * and a deep-dream write; everything else (headings, taint markers, op log,
+ * enqueued entries) is identical, which is the whole point of reusing this
+ * writer rather than a second pipeline.
  */
 export function writeDreamOutputs(
   store: MemoryStore,
@@ -321,9 +328,10 @@ export function writeDreamOutputs(
   date: string,
   result: DreamResult,
   appliedOps?: AppliedOpLog[],
+  narrativeOverride?: string,
 ): WriteDreamOutputsResult {
   const ops = appliedOps ?? [];
-  const narrative = buildNarrative(result);
+  const narrative = narrativeOverride ?? buildNarrative(result);
   const journalText = buildJournal(date, result, narrative, ops);
 
   const written = store.writeJournal(date, journalText);
