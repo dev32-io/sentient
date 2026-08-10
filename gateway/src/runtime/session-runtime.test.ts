@@ -3641,3 +3641,133 @@ describe("SessionRuntime memory — spark + recall wiring (Task 15)", () => {
     runtime.dispose();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Household (shared family) scope activation — the composition seam T24 wires:
+// every member's session gets the household grant + store + tools scope, a
+// family write lands in the SHARED store both members read, the child WRITE
+// gate + audience render-filter hold, and a family tool write carries the
+// writing member's authorUserId into the index.
+// ---------------------------------------------------------------------------
+
+const BOB = () => createUserPrincipal("u_bbbbbbbb", "adult", "home");
+const KID = () => createUserPrincipal("u_cccccccc", "child", "home");
+
+describe("buildSessionMemory — household (family) scope (Task 24)", () => {
+  it("a family write by one member renders in another member's session prompt (shared scope)", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-household/users` });
+    const alice = ADULT();
+    const bob = BOB();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    mkdirSync(am.userHomeDir(bob), { recursive: true });
+    const cfg = testConfig();
+
+    const memA = buildSessionMemory(cfg, am, alice, { conversationId: "s-alice", connectionId: "c-alice" });
+    const aliceWrite = memA?.tools.find((t) => t.definition.name === "memory_write");
+    const wrote = await aliceWrite?.run(
+      { scope: "family", target: "MEMORY.md", op: "append", content: "Taco night is Friday" },
+      NO_SIGNAL(),
+    );
+    expect(wrote?.isError).toBe(false);
+
+    // Bob — same household "home", different user — sees the shared fact and the
+    // family envelope in HIS freshly-composed prompt.
+    const memB = buildSessionMemory(cfg, am, bob, { conversationId: "s-bob", connectionId: "c-bob" });
+    const promptB = memB?.augmentPrompt("BASE") ?? "";
+    expect(promptB).toContain("Taco night is Friday");
+    expect(promptB).toContain('<memory scope="family">');
+  });
+
+  it("rejects a child's family write but still renders the shared block, @adults-filtered", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-household-kid/users` });
+    const alice = ADULT();
+    const kid = KID();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+    mkdirSync(am.userHomeDir(kid), { recursive: true });
+    const cfg = testConfig();
+
+    // Alice seeds an all-audience family fact AND an @adults-tagged one.
+    const memA = buildSessionMemory(cfg, am, alice, { conversationId: "s-a2", connectionId: "c-a2" });
+    const aliceWrite = memA?.tools.find((t) => t.definition.name === "memory_write");
+    await aliceWrite?.run(
+      { scope: "family", target: "MEMORY.md", op: "append", content: "Movie night Saturday" },
+      NO_SIGNAL(),
+    );
+    await aliceWrite?.run(
+      { scope: "family", target: "MEMORY.md", op: "append", content: "the wifi password is hunter2 @adults" },
+      NO_SIGNAL(),
+    );
+
+    const memK = buildSessionMemory(cfg, am, kid, { conversationId: "s-kid", connectionId: "c-kid" });
+    // The child cannot write the family scope — the role gate holds in run() too.
+    const kidWrite = memK?.tools.find((t) => t.definition.name === "memory_write");
+    const denied = await kidWrite?.run(
+      { scope: "family", target: "MEMORY.md", op: "append", content: "candy for dinner" },
+      NO_SIGNAL(),
+    );
+    expect(denied?.isError).toBe(true);
+
+    // …but the child's prompt still renders the shared block, with the @adults
+    // line filtered out and the all-audience line kept.
+    const promptK = memK?.augmentPrompt("BASE") ?? "";
+    expect(promptK).toContain("Movie night Saturday");
+    expect(promptK).not.toContain("hunter2");
+  });
+
+  it("stamps the writing member's authorUserId on the family index entry", async () => {
+    const am = createAccessManager({ userDataRoot: `${ROOT}/mem-household-author/users` });
+    const alice = ADULT();
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    const upserts: { scopeId: string; entries: IndexEntry[] }[] = [];
+    const client = {
+      registerScope: async () => ({ ok: true, value: undefined }),
+      search: async () => ({ ok: true, value: [] }),
+      upsert: async (scopeId: string, entries: IndexEntry[]) => {
+        upserts.push({ scopeId, entries });
+        return { ok: true, value: undefined };
+      },
+      setStatus: async () => ({ ok: true, value: undefined }),
+      purge: async () => ({ ok: true, value: undefined }),
+      rebuild: async () => ({ ok: true, value: undefined }),
+      health: async () => ({ ok: true, value: HEALTH_OK }),
+    } as unknown as DeepMemoryClient;
+
+    const app = createDeepMemoryApp({
+      baseUrl: "http://127.0.0.1:0",
+      adminToken: "a",
+      dataToken: "d",
+      requestTimeoutMs: 1000,
+      cfg: testConfig().memory,
+      client,
+      pollMs: 0,
+    });
+    const gate = createInboundGate(
+      inboundScanConfigSchema.parse({}),
+      createRiskAccumulator(riskConfigSchema.parse({})),
+    );
+    const wiring = { app, gate, profileStore: sparkOnProfileStore() };
+
+    const mem = buildSessionMemory(
+      testConfig(),
+      am,
+      alice,
+      { conversationId: "s-author", connectionId: "c-author" },
+      wiring,
+    );
+    const write = mem?.tools.find((t) => t.definition.name === "memory_write");
+    const wrote = await write?.run(
+      { scope: "family", target: "MEMORY.md", op: "append", content: "the summer plan" },
+      NO_SIGNAL(),
+    );
+    expect(wrote?.isError).toBe(false);
+
+    // The family write flushed to the household scope, and every projected entry
+    // carries Alice's id (spec §9 attribution) — private writes would carry none.
+    await waitFor(() => upserts.some((u) => u.scopeId === "household:home"));
+    const familyUpsert = upserts.find((u) => u.scopeId === "household:home");
+    expect(familyUpsert?.entries.length).toBeGreaterThan(0);
+    expect(familyUpsert?.entries.every((e) => e.authorUserId === alice.userId)).toBe(true);
+    app.stop();
+  });
+});

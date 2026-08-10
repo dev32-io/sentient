@@ -118,16 +118,26 @@ export function createSessionSpark(retriever: MemoryRetriever, ctx: SessionSpark
 // Store write → index-sync enqueue
 // ---------------------------------------------------------------------------
 
+/** Options for `withIndexSync`. `authorUserId` attributes every enqueued
+ *  section to the writing member — set ONLY for the shared household scope
+ *  (spec §9); private scopes have a single owner and pass nothing. */
+export interface WithIndexSyncOptions {
+  authorUserId?: string;
+}
+
 /**
  * Wraps a MemoryStore so every SUCCESSFUL file write enqueues the changed file
  * into the scope's outbox and kicks a (fire-and-forget) flush. This is the S2
  * seam that keeps the derived index following the canonical notes: a `memory_write`
  * lands in the file, the wrapper projects its sections into pending index rows,
- * and flush upserts them — deferring silently when the service is down.
+ * and flush upserts them — deferring silently when the service is down. For the
+ * household scope (T24), `opts.authorUserId` stamps each projected entry so a
+ * shared fact carries who wrote it.
  */
-export function withIndexSync(store: MemoryStore, sync: IndexSync): MemoryStore {
+export function withIndexSync(store: MemoryStore, sync: IndexSync, opts: WithIndexSyncOptions = {}): MemoryStore {
+  const enqueueOpts = opts.authorUserId !== undefined ? { authorUserId: opts.authorUserId } : undefined;
   const enqueue = (relPath: string): void => {
-    sync.enqueueFile(relPath);
+    sync.enqueueFile(relPath, enqueueOpts);
     void sync.flush();
   };
   return {

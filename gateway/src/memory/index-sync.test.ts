@@ -392,6 +392,58 @@ describe("raw chunks — gated by cfg.spark.raw_chunks", () => {
   });
 });
 
+describe("enqueueFile — @adults audience + authorUserId (T24, spec §9)", () => {
+  it("stamps audience:adults on an @adults-tagged section and none on an untagged one", async () => {
+    store.writeCore("## Safe\ndinner is at 6\n## Secret\nthe safe code is 1234 @adults");
+    const fake = makeFakeClient();
+    const sync = createIndexSync(makeScope(), fake.client, memCfg(false), { now });
+
+    sync.enqueueFile("MEMORY.md");
+    await sync.flush();
+
+    const entries = at(fake.upserts, 0).entries;
+    const byHeading = new Map(entries.map((e) => [e.sourceRef.heading, e]));
+    expect(byHeading.get("Secret")?.audience).toBe("adults");
+    // An untagged section carries NO audience field — `all` is the absence default.
+    expect(byHeading.get("Safe")?.audience).toBeUndefined();
+  });
+
+  it("stamps authorUserId on every projected section when supplied, none otherwise", async () => {
+    store.writeCore("## Alpha\nfact one\n## Beta\nfact two");
+    const fake = makeFakeClient();
+    const sync = createIndexSync(makeScope(), fake.client, memCfg(false), { now });
+
+    sync.enqueueFile("MEMORY.md", { authorUserId: "u_alice" });
+    await sync.flush();
+    for (const e of at(fake.upserts, 0).entries) expect(e.authorUserId).toBe("u_alice");
+
+    // Distinct content (author is NOT part of the deterministic id, so the same
+    // text would dedup) enqueued with no author stamps nothing.
+    store.writeCore("## Gamma\nprivate fact");
+    sync.enqueueFile("MEMORY.md");
+    await sync.flush();
+    for (const e of at(fake.upserts, 1).entries) expect(e.authorUserId).toBeUndefined();
+  });
+
+  it("keeps the entry id independent of authorUserId — attribution is metadata, not identity", async () => {
+    store.writeCore("## Alpha\nfact one");
+    const authored = makeFakeClient();
+    const anon = makeFakeClient();
+
+    const syncA = createIndexSync(makeScope(), authored.client, memCfg(false), { now });
+    syncA.enqueueFile("MEMORY.md", { authorUserId: "u_alice" });
+    await syncA.flush();
+
+    const syncB = createIndexSync(makeScope(), anon.client, memCfg(false), { now });
+    syncB.enqueueFile("MEMORY.md");
+    await syncB.flush();
+
+    // Same scope + kind + sourceRef + content ⇒ same deterministic id, whether or
+    // not an author was stamped (so re-feeds still converge / dedup).
+    expect(at(at(authored.upserts, 0).entries, 0).id).toBe(at(at(anon.upserts, 0).entries, 0).id);
+  });
+});
+
 describe("enqueueEntries — caller-supplied provenance and refs", () => {
   it("carries audience, authorUserId, sessionRef, and provenance onto the upserted entry", async () => {
     const fake = makeFakeClient();

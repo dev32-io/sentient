@@ -49,6 +49,47 @@ security:
       delegation_prompt: true
 `;
 
+// The household scope (memory spec §9) roots at `access.shared_data_root`; the
+// operator comment in config.yaml uses a leading `~`. A raw `~` reaching the
+// AccessManager lands the shared root under `<cwd>/~/` — this guards the
+// load-boundary expansion (carried item, T24).
+const CONFIG_WITH_TILDE_SHARED_ROOT = `
+port: 3000
+host: 0.0.0.0
+max_sessions: 10
+auth_timeout_ms: 5000
+session:
+  ws_idle_timeout_ms: 255000
+  per_user_max_sessions: 40
+access:
+  user_data_root: ~/.sentient/gateway/users
+  shared_data_root: ~/.sentient/gateway/shared
+stt:
+  provider: local-stt
+tts: {}
+`;
+
+describe("loadStartupConfig — access root expansion", () => {
+  it("expands a leading ~ in access.shared_data_root, same as user_data_root", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sentient-startup-shared-"));
+    const path = join(dir, "config.yaml");
+    writeFileSync(path, CONFIG_WITH_TILDE_SHARED_ROOT);
+
+    const prev = process.env.GATEWAY_CONFIG_PATH;
+    process.env.GATEWAY_CONFIG_PATH = path;
+    try {
+      const cfg = loadStartupConfig();
+      expect(cfg.access.user_data_root).toBe(`${homedir()}/.sentient/gateway/users`);
+      // The shared root is absolute — no literal `~` left to resolve under cwd.
+      expect(cfg.access.shared_data_root).toBe(`${homedir()}/.sentient/gateway/shared`);
+      expect(cfg.access.shared_data_root?.startsWith("~")).toBe(false);
+    } finally {
+      if (prev === undefined) process.env.GATEWAY_CONFIG_PATH = undefined;
+      else process.env.GATEWAY_CONFIG_PATH = prev;
+    }
+  });
+});
+
 describe("loadStartupConfig — security.inbound_scan carry-through", () => {
   it("threads an operator-disabled channel into StartupConfig.inboundScan", () => {
     const dir = mkdtempSync(join(tmpdir(), "sentient-startup-config-"));

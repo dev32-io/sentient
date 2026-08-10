@@ -36,6 +36,7 @@ import { type UserPrincipal, createUserPrincipal } from "../identity/user-princi
 import { getLog } from "../logging/logger.ts";
 import {
   type DeepMemoryApp,
+  type ScopeWiring,
   type SessionSpark,
   createDeepMemoryApp,
   createSessionSpark,
@@ -161,10 +162,11 @@ export function composeSessionSystemPrompt(
   return index === "" ? base : `${base}\n\n${index}`;
 }
 
-/** The scopes rendered into the memory block in S1 — private only (the
- *  household scope is minted in T24). A log-field value, not a tunable, so it
- *  is a code constant rather than YAML. */
-const MEMORY_PROMPT_SCOPES_S1 = "private";
+/** Scope-label log-field values for `memory.prompt.rendered` — private-only
+ *  before the household scope is wired, both once it is (T24). Log fields, not
+ *  tunables, so code constants rather than YAML. */
+const MEMORY_PROMPT_SCOPES_PRIVATE = "private";
+const MEMORY_PROMPT_SCOPES_BOTH = "private,family";
 
 /**
  * Appends the per-scope file-memory block (Memory System spec §4.5) after the
@@ -173,17 +175,19 @@ const MEMORY_PROMPT_SCOPES_S1 = "private";
  * per session build. Composed ONCE at construction, exactly like the skill
  * index: byte-stable within a session, so a `memory_write` mid-turn lands in
  * the NEXT session's build and never mutates this one's cache-stable prefix. A
- * child principal's block omits `@adults`-tagged content. Private scope only in
- * S1 — `stores.household` stays undefined until T24.
+ * child principal's block omits `@adults`-tagged content. The household scope
+ * (T24) renders its `family` envelope after the private one when present; a
+ * child's household envelope is audience-filtered.
  */
 function composeMemoryPrompt(
   skillPrompt: string,
   store: MemoryStore,
+  household: MemoryStore | null,
   memoryCfg: OrchestratorConfig["memory"],
   principal: UserPrincipal,
   ids: { conversationId: string; connectionId: string },
 ): string {
-  const block = composeMemoryBlock({ private: store }, memoryCfg, {
+  const block = composeMemoryBlock({ private: store, ...(household ? { household } : {}) }, memoryCfg, {
     childPrincipal: principal.role === "child",
     preamble: loadMemoryPreamble({}),
   });
@@ -192,7 +196,7 @@ function composeMemoryPrompt(
     conversationId: ids.conversationId,
     connectionId: ids.connectionId,
     chars: block.length,
-    scopes: MEMORY_PROMPT_SCOPES_S1,
+    scopes: household ? MEMORY_PROMPT_SCOPES_BOTH : MEMORY_PROMPT_SCOPES_PRIVATE,
   });
   return `${skillPrompt}\n\n${block}`;
 }
@@ -225,11 +229,17 @@ export interface SessionMemoryWiring {
   profileStore: ProfileStore;
 }
 
-/** Opaque index scope id for a user's PRIVATE scope (S1/S2). The household
- *  scope (`household:<householdId>`) arrives at T24. Mirrors the deep-memory
- *  service's own fixture shape (`user:alice`). */
+/** Opaque index scope id for a user's PRIVATE scope (S1/S2). Mirrors the
+ *  deep-memory service's own fixture shape (`user:alice`). */
 function privateScopeId(userId: string): string {
   return `user:${userId}`;
+}
+
+/** Opaque index scope id for a household's SHARED scope (T24). Keyed by
+ *  `householdId` so every member of one household resolves the same id (and
+ *  thus the same registered index), while another household never can. */
+function householdScopeId(householdIdValue: string): string {
+  return `household:${householdIdValue}`;
 }
 
 /** The gateway-side dir holding a scope's sync cursor + the service's index.db
@@ -237,14 +247,78 @@ function privateScopeId(userId: string): string {
 const DEEP_MEMORY_DIRNAME = "deep-memory";
 const DEEP_MEMORY_INDEX_FILE = "index.db";
 
+type ReingestResult = { rescanned: string[]; quarantined: string[] };
+
+/** Runs `reingestEdits()` on a freshly-opened store and WARNs (COUNTS only, no
+ *  content — logging rule) if a hostile out-of-band edit quarantined. Returns
+ *  the result so the caller can wire the clean rescanned files into the index. */
+function reingestWithWarn(
+  store: MemoryStore,
+  scopeLabel: string,
+  principal: UserPrincipal,
+  ids: { conversationId: string; connectionId: string },
+): ReingestResult {
+  const reingest = store.reingestEdits();
+  if (reingest.quarantined.length > 0) {
+    log.warn("memory.reingest.quarantined", {
+      userId: principal.userId,
+      conversationId: ids.conversationId,
+      connectionId: ids.connectionId,
+      scope: scopeLabel,
+      quarantined: reingest.quarantined.length,
+      rescanned: reingest.rescanned.length,
+    });
+  }
+  return reingest;
+}
+
+/**
+ * Wires ONE memory scope into deep memory (spec §5.6): registers it idempotently
+ * (before its first search — `ensureScope` is memoized per scopeId), wraps the
+ * store so a successful write enqueues + flushes into the scope's single-writer
+ * outbox, and replays any out-of-band edits `reingestEdits` rescanned clean so a
+ * directly-edited file's stale prior index entry is superseded (the T16 fix).
+ * `authorUserId` stamps SHARED-scope (household) tool writes for attribution
+ * (spec §9); the out-of-band reingest enqueue carries no author (the on-disk
+ * edit has no known writer). Quarantined files are never enqueued.
+ */
+function wireScopeIndex(
+  app: DeepMemoryApp,
+  input: { scopeId: string; rootPath: string; store: MemoryStore },
+  reingest: ReingestResult,
+  logCtx: { userId: string; conversationId: string },
+  authorUserId?: string,
+): { scope: ScopeWiring; scopedStore: MemoryStore } {
+  const indexDir = join(input.rootPath, DEEP_MEMORY_DIRNAME);
+  const scope = app.ensureScope({
+    scopeId: input.scopeId,
+    indexDir,
+    indexPath: join(indexDir, DEEP_MEMORY_INDEX_FILE),
+    store: input.store,
+  });
+  const scopedStore = withIndexSync(input.store, scope.sync, authorUserId !== undefined ? { authorUserId } : {});
+  for (const relPath of reingest.rescanned) scope.sync.enqueueFile(relPath);
+  if (reingest.rescanned.length > 0) {
+    log.info("memory.reingest.enqueued", {
+      userId: logCtx.userId,
+      conversationId: logCtx.conversationId,
+      scopeId: input.scopeId,
+      rescanned: reingest.rescanned.length,
+    });
+    void scope.sync.flush();
+  }
+  return { scope, scopedStore };
+}
+
 /**
  * Builds ONE session's memory wiring, gated on `orchestrator.memory.enabled`
- * (Memory System spec §11, T6). Off ⇒ `null`: no `memory-private` grant, no
- * store, no edit-reingest, no tools, no prompt block. On ⇒ mints the private
- * grant, opens the store, runs `reingestEdits()` (WARN with COUNTS only — no
- * content — when anything quarantines), and builds the four memory tools bound
- * to the private scope (`storeFor("family")` is null in S1; the household scope
- * is minted in T24). Exported so the composition seam is unit-testable without
+ * (Memory System spec §11, T6). Off ⇒ `null`: no grants, no store, no
+ * edit-reingest, no tools, no prompt block. On ⇒ mints the private AND household
+ * grants (spec §3.5/§9: EVERY household member's session gets the shared scope —
+ * adults and children alike; children READ the family scope, audience-filtered,
+ * while the family WRITE gate stays arg-level in memory-tools), opens both
+ * stores, runs `reingestEdits()` on each, and builds the four memory tools bound
+ * to both scopes. Exported so the composition seam is unit-testable without
  * standing up the whole orchestrator.
  */
 export function buildSessionMemory(
@@ -258,59 +332,53 @@ export function buildSessionMemory(
 
   const memoryCap = accessManager.grant(principal, "memory-private");
   const store = openMemoryStore(memoryCap, orchestratorCfg.memory, { scan: scanContent });
-  const reingest = store.reingestEdits();
-  if (reingest.quarantined.length > 0) {
-    log.warn("memory.reingest.quarantined", {
-      userId: principal.userId,
-      conversationId: ids.conversationId,
-      connectionId: ids.connectionId,
-      quarantined: reingest.quarantined.length,
-      rescanned: reingest.rescanned.length,
-    });
-  }
+  const reingest = reingestWithWarn(store, "private", principal, ids);
 
-  // Deep memory (spark + recall + index sync), only when the app is wired. The
-  // private scope's index + cursor live in `<memoryCap.rootPath>/deep-memory`;
-  // the register-scope indexPath is the `index.db` inside it. `ensureScope`
-  // registers the scope idempotently (before its first search) and returns the
-  // single-writer outbox + a registration-gated client.
+  // Household (shared family) scope — rooted at the shared, householdId-keyed dir
+  // the `memory-household` grant confines to, so every member of one household
+  // opens the SAME physical store. Opened for every session (adults and children)
+  // — the read side is universal; only the write is adult-gated (memory-tools).
+  const householdCap = accessManager.grant(principal, "memory-household");
+  const householdStore = openMemoryStore(householdCap, orchestratorCfg.memory, { scan: scanContent });
+  const householdReingest = reingestWithWarn(householdStore, "family", principal, ids);
+
+  // Deep memory (spark + recall + index sync), only when the app is wired. Each
+  // scope's index + cursor live in `<cap.rootPath>/deep-memory`; the household
+  // scope's is under the SHARED root, so the whole household shares one index.
   let scopedStore = store;
+  let householdScopedStore = householdStore;
   let spark: SessionSpark | null = null;
   let deepMemory: DeepMemoryDeps | undefined;
   let readSession: ((sessionId: string) => SessionEntry[]) | undefined;
 
   if (wiring) {
-    const scopeId = privateScopeId(principal.userId);
-    const indexDir = join(memoryCap.rootPath, DEEP_MEMORY_DIRNAME);
-    const scope = wiring.app.ensureScope({
-      scopeId,
-      indexDir,
-      indexPath: join(indexDir, DEEP_MEMORY_INDEX_FILE),
-      store,
-    });
-    // Writes flow through the sync-wrapped store so a successful edit enqueues +
-    // flushes; the PROMPT block below reads the RAW store (a render, not a write).
-    scopedStore = withIndexSync(store, scope.sync);
+    const logCtx = { userId: principal.userId, conversationId: ids.conversationId };
+    const privateId = privateScopeId(principal.userId);
+    const familyId = householdScopeId(principal.householdId);
 
-    // OUT-OF-BAND EDIT → INDEX (spec §5.6). `reingestEdits` above catches files
-    // changed on disk since the last ingest and rescanned them clean, but nothing
-    // wired those changes into the index — so a directly-edited MEMORY.md left its
-    // PRE-edit entry active (a stale duplicate, observed live in T16). Enqueue each
-    // rescanned (non-quarantined) file now and flush best-effort: the outbox's
-    // supersede-on-edit (lastIdBySource) retires the stale prior id and upserts the
-    // new content. Quarantined files are deliberately NOT enqueued — they must not
-    // reach the index.
-    for (const relPath of reingest.rescanned) scope.sync.enqueueFile(relPath);
-    if (reingest.rescanned.length > 0) {
-      log.info("memory.reingest.enqueued", {
-        userId: principal.userId,
-        conversationId: ids.conversationId,
-        rescanned: reingest.rescanned.length,
-      });
-      void scope.sync.flush();
-    }
+    const wiredPrivate = wireScopeIndex(
+      wiring.app,
+      { scopeId: privateId, rootPath: memoryCap.rootPath, store },
+      reingest,
+      logCtx,
+    );
+    scopedStore = wiredPrivate.scopedStore;
 
-    deepMemory = { client: scope.client, scopeIds: { private: scopeId } };
+    // Family tool writes carry the writing member's id (spec §9 attribution).
+    const wiredHousehold = wireScopeIndex(
+      wiring.app,
+      { scopeId: familyId, rootPath: householdCap.rootPath, store: householdStore },
+      householdReingest,
+      logCtx,
+      principal.userId,
+    );
+    householdScopedStore = wiredHousehold.scopedStore;
+
+    // The recall/spark client gates on the PRIVATE scope's registration; the
+    // household scope is registered eagerly here (before any turn's first search)
+    // and its id is memoized process-wide by `ensureScope`, so a combined search
+    // finds both scopes registered. (Per-call gating on BOTH is a later refinement.)
+    deepMemory = { client: wiredPrivate.scope.client, scopeIds: { private: privateId, family: familyId } };
     // `memory_read({sessionId})` drill-down — this user's own past sessions,
     // capability-scoped; a short-lived handle per read (the continuity precedent).
     readSession = (sessionId) => {
@@ -322,21 +390,23 @@ export function buildSessionMemory(
       }
     };
     const retriever = createMemoryRetriever({
-      client: scope.client,
+      client: wiredPrivate.scope.client,
       gate: wiring.gate,
       profileStore: wiring.profileStore,
       cfg: orchestratorCfg.memory,
     });
     spark = createSessionSpark(retriever, {
       userId: principal.userId,
-      scopeIds: [scopeId],
+      // Spark + recall search BOTH scopes in one call; hits label their own scope
+      // and a child session's `@adults` household hits are filtered (spec §9).
+      scopeIds: [privateId, familyId],
       childPrincipal: principal.role === "child",
       sessionId: ids.conversationId,
     });
   }
 
   const tools = buildMemoryTools({
-    storeFor: (scope) => (scope === "private" ? scopedStore : null),
+    storeFor: storeSelector(scopedStore, householdScopedStore),
     scan: scanContent,
     cfg: orchestratorCfg.memory,
     principal,
@@ -346,8 +416,23 @@ export function buildSessionMemory(
 
   return {
     tools,
-    augmentPrompt: (skillPrompt) => composeMemoryPrompt(skillPrompt, store, orchestratorCfg.memory, principal, ids),
+    augmentPrompt: (skillPrompt) =>
+      composeMemoryPrompt(skillPrompt, store, householdStore, orchestratorCfg.memory, principal, ids),
     spark,
+  };
+}
+
+/** The `storeFor` the memory tools read: private and family both resolve their
+ *  scope's store (family is always present in T24 — the shared household store).
+ *  The role gate on a family WRITE lives in memory-tools, not here. */
+function storeSelector(
+  privateStore: MemoryStore,
+  householdStore: MemoryStore,
+): (scope: "private" | "family") => MemoryStore | null {
+  return (scope) => {
+    if (scope === "private") return privateStore;
+    if (scope === "family") return householdStore;
+    return null;
   };
 }
 

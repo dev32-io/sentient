@@ -26,7 +26,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Result } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
-import type { ClientError, DeepMemoryClient, IndexEntry, SourceRef } from "./deep-memory-client.js";
+import type { ClientError, DeepMemoryClient, EntryAudience, IndexEntry, SourceRef } from "./deep-memory-client.js";
 import { MEMORY_SLUG_RE } from "./memory-file.js";
 import type { MemoryConfig, MemoryStore } from "./memory-store.js";
 
@@ -63,6 +63,23 @@ const DEFAULT_FILE_PROVENANCE = "assistant";
 /** Markdown ATX heading — captures the heading text (sans `#`). */
 const HEADING_RE = /^#{1,6}\s+(.+?)\s*$/;
 
+/** Audience line-suffix tag (spec §9, shared scope). A projected file-section
+ *  whose text carries this suffix on ANY line is stamped `audience: "adults"`,
+ *  which a child-principal session filters at search time (memory-retriever) —
+ *  the coarse, section-level counterpart to memory-prompt's per-line render
+ *  filter. Deliberately dumb: a trailing suffix match, no structured parse. */
+const ADULTS_TAG = "@adults";
+const AUDIENCE_ADULTS: EntryAudience = "adults";
+
+/** `"adults"` when any line of a section is `@adults`-tagged, else undefined
+ *  (an untagged section carries no audience field — `all` is the absence
+ *  default). Over-filters rather than under-filters: one tagged line marks the
+ *  whole section adults-only for a child's SEARCH, which is fail-safe. */
+function sectionAudience(text: string): EntryAudience | undefined {
+  const tagged = text.split("\n").some((line) => line.trim().endsWith(ADULTS_TAG));
+  return tagged ? AUDIENCE_ADULTS : undefined;
+}
+
 // --- Public contract ---------------------------------------------------------
 
 /**
@@ -93,10 +110,20 @@ export type ScopeHandle = {
   replayRawChunks?: () => EnqueueEntry[];
 };
 
+/** Per-file enqueue options. `authorUserId` attributes a SHARED-scope write to
+ *  the member who made it (spec §9): the family `withIndexSync` wrapper passes
+ *  the session principal's id; private-scope enqueues (single owner) and
+ *  out-of-band reingest (no known author) pass nothing. */
+export interface EnqueueFileOptions {
+  authorUserId?: string;
+}
+
 export interface IndexSync {
   /** Project file-section (or journal) entries from the store's CURRENT
-   *  content and queue them. One entry per markdown heading. */
-  enqueueFile(file: string): void;
+   *  content and queue them. One entry per markdown heading. `@adults`-tagged
+   *  sections carry `audience: "adults"`; `opts.authorUserId` (when supplied)
+   *  attributes each projected entry (shared-scope writes, spec §9). */
+  enqueueFile(file: string, opts?: EnqueueFileOptions): void;
   /** Queue caller-authored entries verbatim (provenance/refs already set). */
   enqueueEntries(entries: EnqueueEntry[]): void;
   /** Retire the index entry a dreamer fact line produced (the reconciler's
@@ -272,7 +299,7 @@ export function createIndexSync(
     return added;
   }
 
-  function enqueueFile(file: string): void {
+  function enqueueFile(file: string, opts: EnqueueFileOptions = {}): void {
     const target = parseFileTarget(file);
     if (target === null) {
       log.warn("index-sync.enqueue-file.unrecognized", { reason: "not a memory relPath" });
@@ -287,6 +314,7 @@ export function createIndexSync(
     const entries: EnqueueEntry[] = splitIntoSections(content).map((section) => {
       // `exactOptionalPropertyTypes` forbids an explicit `heading: undefined`.
       const sourceRef: SourceRef = section.heading === undefined ? { file } : { file, heading: section.heading };
+      const audience = sectionAudience(section.text);
       return {
         kind,
         text: section.text,
@@ -294,6 +322,10 @@ export function createIndexSync(
         scope: scope.scopeId,
         sourceRef,
         provenance: DEFAULT_FILE_PROVENANCE,
+        // Both are absent-by-default under `exactOptionalPropertyTypes`, so
+        // spread conditionally rather than assigning `undefined`.
+        ...(audience !== undefined ? { audience } : {}),
+        ...(opts.authorUserId !== undefined ? { authorUserId: opts.authorUserId } : {}),
       };
     });
     addToPending(entries);

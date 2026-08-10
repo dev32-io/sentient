@@ -345,6 +345,24 @@ describe("memory_write — family scope role gate (before PDP)", () => {
     expect(res.isError).toBe(true);
     expect(res.content).toContain("family_scope_unavailable");
   });
+
+  it("writes an @adults line to the family scope verbatim — dumb suffix passthrough (spec §9)", async () => {
+    const tools = build("adult", true);
+    const line = "- the safe code is 1234 @adults";
+    const wrote = await invoke(tools, "memory_write", {
+      scope: "family",
+      target: "MEMORY.md",
+      op: "append",
+      content: line,
+    });
+    expect(wrote.isError).toBe(false);
+
+    // The tag is neither interpreted nor stripped at write time — it lands in the
+    // file so index-sync can later project it to `audience: adults`.
+    const read = await invoke(tools, "memory_read", { scope: "family", target: { file: "MEMORY.md" } });
+    expect(read.content).toContain("@adults");
+    expect(read.content).toContain("the safe code is 1234");
+  });
 });
 
 describe("memory_read — file target paging", () => {

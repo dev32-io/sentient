@@ -220,7 +220,20 @@ export function loadStartupConfig(): StartupConfig {
 
     session: cfg.session,
 
-    access: { ...cfg.access, user_data_root: expandHome(cfg.access.user_data_root) },
+    // Both roots are YAML-sourced and may carry a leading `~` (the operator
+    // comment in config.yaml uses exactly that shape). Expand each here — a raw
+    // `~` reaching the AccessManager lands data under `<cwd>/~/`, since `path.*`
+    // never expands it. `shared_data_root` is optional (household scope, spec
+    // §2): expand it only when the operator set it, or the derived sibling
+    // default in the AccessManager applies. Conditional spread, not an explicit
+    // `undefined`, under `exactOptionalPropertyTypes`.
+    access: {
+      ...cfg.access,
+      user_data_root: expandHome(cfg.access.user_data_root),
+      ...(cfg.access.shared_data_root !== undefined
+        ? { shared_data_root: expandHome(cfg.access.shared_data_root) }
+        : {}),
+    },
     store: cfg.store,
     orchestrator: cfg.orchestrator,
 
