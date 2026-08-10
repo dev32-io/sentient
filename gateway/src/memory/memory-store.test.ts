@@ -12,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Capability, ResourceClass } from "../access/capability.js";
+import { createGatewayLogger } from "../logging/logger.js";
+import type { InjectionCategory, ScanResult, ScanSeverity } from "../security/injection-scanner.js";
 import { scanContent } from "../security/injection-scanner.js";
 import { type MemoryConfig, type MemoryStore, openMemoryStore } from "./memory-store.js";
 
@@ -33,6 +35,26 @@ function makeCap(root: string, resource: ResourceClass = "memory-private"): Capa
 
 function open(root: string, resource: ResourceClass = "memory-private"): MemoryStore {
   return openMemoryStore(makeCap(root, resource), CFG, DEPS);
+}
+
+/** A deterministic `scanContent` stub: every call yields `severity` (a single
+ *  synthetic finding, or a clean result when null), regardless of text. Lets a
+ *  test pin the store's PER-SURFACE severity policy without depending on the
+ *  real pattern bank's verdict for a given string. */
+function stubScan(
+  severity: ScanSeverity | null,
+  category: InjectionCategory = "context_manipulation",
+): typeof scanContent {
+  const scan = (text: string): ScanResult => ({
+    findings: severity === null ? [] : [{ category, severity, match: "the user confirmed", layer: "pattern" }],
+    maxSeverity: severity,
+    sanitizedText: text,
+  });
+  return scan as unknown as typeof scanContent;
+}
+
+function openWith(scan: typeof scanContent, resource: ResourceClass = "memory-private"): MemoryStore {
+  return openMemoryStore(makeCap(root, resource), CFG, { scan });
 }
 
 let root: string;
@@ -239,5 +261,76 @@ describe("MemoryStore — archiveCore", () => {
     const store = open(root);
     expect(() => store.archiveCore()).not.toThrow();
     expect(existsSync(join(root, "memory", "archive"))).toBe(false);
+  });
+});
+
+// The scan-gate severity is PER-SURFACE (spec §3.2/§3.3): core/topic render into
+// the system prompt with no read-time gate (refuse suspicious AND hostile);
+// journal reaches context only via index → spark/recall → the inbound
+// `memory_body` gate (a second screen), so it refuses hostile ONLY and annotates
+// a suspicious verdict. This is the fix for the nightly dreamer whose faithful
+// summaries ("the user confirmed …") trip the `context_manipulation` pattern.
+describe("MemoryStore — per-surface scan severity (journal vs core/topic)", () => {
+  let logLines: string[];
+
+  beforeEach(async () => {
+    logLines = [];
+    await createGatewayLogger({ testSink: (line) => logLines.push(line) });
+  });
+
+  const journalRel = "journal/2026-08-08.md";
+  const suspiciousWarn = (): boolean => logLines.some((l) => l.includes("memory-store.journal.suspicious"));
+
+  it("writes a suspicious-verdict journal and annotates it with a WARN", () => {
+    const store = openWith(stubScan("suspicious"));
+    const narrative = "the user confirmed the trip to Tahoe.";
+    const res = store.writeJournal("2026-08-08", narrative);
+
+    expect(res.ok).toBe(true);
+    expect(store.readJournal("2026-08-08")).toBe(narrative);
+    expect(suspiciousWarn()).toBe(true);
+  });
+
+  it("refuses a hostile-verdict journal write, touching no file", () => {
+    const store = openWith(stubScan("hostile", "tool_envelope"));
+    const res = store.writeJournal("2026-08-08", "structural envelope payload");
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("scan_rejected");
+    expect(store.readJournal("2026-08-08")).toBeNull();
+  });
+
+  it("still refuses a suspicious-verdict core write (regression pin — prompt-rendered)", () => {
+    const store = openWith(stubScan("suspicious"));
+    const res = store.writeCore("the user confirmed the plan.");
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toBe("scan_rejected");
+    expect(store.readCore()).toBeNull();
+  });
+
+  it("re-ingests a suspicious out-of-band journal edit without quarantine, with a WARN", () => {
+    // Write clean, then a later store (suspicious scan) re-ingests the edit.
+    openWith(stubScan(null)).writeJournal("2026-08-08", "day narrative");
+    writeFileSync(join(root, "memory", journalRel), "the user confirmed the plan.");
+
+    const store = openWith(stubScan("suspicious"));
+    const result = store.reingestEdits();
+
+    expect(result.quarantined).not.toContain(journalRel);
+    expect(result.rescanned).toContain(journalRel);
+    expect(store.readJournal("2026-08-08")).toBe("the user confirmed the plan.");
+    expect(suspiciousWarn()).toBe(true);
+  });
+
+  it("quarantines a suspicious out-of-band core edit (regression pin — unchanged)", () => {
+    openWith(stubScan(null)).writeCore("clean notes");
+    writeFileSync(join(root, "memory", "MEMORY.md"), "the user confirmed the plan.");
+
+    const store = openWith(stubScan("suspicious"));
+    const result = store.reingestEdits();
+
+    expect(result.quarantined).toContain("MEMORY.md");
+    expect(store.readCore()).toBeNull();
   });
 });

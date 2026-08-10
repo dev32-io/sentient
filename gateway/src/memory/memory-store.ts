@@ -10,9 +10,19 @@
 // This file owns only the filesystem surface: the wrong-class capability
 // rejection, the symlink-escape guard (skill-store.ts:85-97 precedent —
 // `capabilityCoversPath` is LEXICAL, which is why the realpath guard is
-// rebuilt here), atomic tmp+rename writes, write-time cap + scan gating
-// (fail-closed on `suspicious` AND `hostile`), and edit-ingest quarantine.
-// Format parsing / cap counting is delegated to `memory-file.ts` (T3a).
+// rebuilt here), atomic tmp+rename writes, write-time cap + scan gating, and
+// edit-ingest quarantine. Format parsing / cap counting is delegated to
+// `memory-file.ts` (T3a).
+//
+// Scan-gate severity is PER-SURFACE (spec §3.2/§3.3): core + topic files render
+// straight into the system prompt with no read-time gate, so their writes
+// fail-closed on `suspicious` AND `hostile`. Journal files never render into a
+// prompt — their content reaches model context exclusively via the deep-memory
+// index → spark/`memory_recall` → inbound gate (`memory_body`) re-screening with
+// RiskAccumulator escalation (a SECOND gate), so a journal write fails-closed on
+// `hostile` ONLY; a `suspicious` verdict is annotated (WARN, counts/categories
+// only) and written. Taint provenance still marks tool-derived episodes. The
+// same split governs edit-ingest re-scan (`isContentClean`).
 //
 // The store owns `mkdir` lazily at write time — the grant (T2) is pure and
 // creates nothing, mirroring the FileScope precedent. A rejected write
@@ -72,10 +82,20 @@ const MD_EXT = ".md";
  *  same role for topic slugs). */
 const JOURNAL_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Fail-closed severities — a write is refused when the scan's max severity is
- *  at or above `suspicious` (skill-tools `injectionScanError` precedent). */
+/** Fail-closed severities for PROMPT-RENDERED surfaces (core + topic) — a write
+ *  is refused when the scan's max severity is at or above `suspicious`
+ *  (skill-tools `injectionScanError` precedent). These files render into the
+ *  system prompt with no read-time gate, so the write is the only gate. */
 function isScanRejected(result: ScanResult): boolean {
   return result.maxSeverity === "suspicious" || result.maxSeverity === "hostile";
+}
+
+/** Fail-closed severity for the JOURNAL surface — refused only at `hostile`. A
+ *  `suspicious` verdict is annotated and written: journal content transits the
+ *  inbound `memory_body` gate on every read-time path (spec §3.2/§3.3), so it is
+ *  re-screened downstream, unlike the prompt-rendered core/topic files. */
+function isJournalScanRejected(result: ScanResult): boolean {
+  return result.maxSeverity === "hostile";
 }
 
 // ---------------------------------------------------------------------------
@@ -302,8 +322,13 @@ export function openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: Memory
     return { ok: false, error: "scan_rejected", usage };
   }
 
-  /** Runs the injection scan (fail-closed on suspicious/hostile). Returns a
-   *  `scan_rejected` WriteResult on rejection, or null to proceed. */
+  function scanCategories(result: ScanResult): string[] {
+    return [...new Set(result.findings.map((f) => f.category))];
+  }
+
+  /** Runs the injection scan for a PROMPT-RENDERED surface (core/topic;
+   *  fail-closed on suspicious/hostile). Returns a `scan_rejected` WriteResult
+   *  on rejection, or null to proceed. */
   function scanError(
     scanText: string,
     relPath: string,
@@ -314,9 +339,40 @@ export function openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: Memory
     log.warn("store.write.scan-rejected", {
       relPath,
       maxSeverity: result.maxSeverity,
-      categories: [...new Set(result.findings.map((f) => f.category))],
+      categories: scanCategories(result),
     });
     return { ok: false, error: "scan_rejected", usage };
+  }
+
+  /** Journal-surface scan gate — fail-closed on `hostile` ONLY. A `suspicious`
+   *  verdict is annotated (WARN, counts/categories only — never content) and the
+   *  write proceeds, because journal content is re-screened at every read-time
+   *  path by the inbound `memory_body` gate (spec §3.2/§3.3), unlike the
+   *  prompt-rendered core/topic files. Returns a `scan_rejected` WriteResult on
+   *  hostile, or null to proceed. */
+  function journalScanError(
+    content: string,
+    relPath: string,
+    usage: MemoryWriteUsage,
+  ): Extract<WriteResult, { ok: false }> | null {
+    const result = deps.scan(content, { channel: "memory_body", source: relPath });
+    if (isJournalScanRejected(result)) {
+      log.warn("store.write.scan-rejected", {
+        relPath,
+        maxSeverity: result.maxSeverity,
+        categories: scanCategories(result),
+      });
+      return { ok: false, error: "scan_rejected", usage };
+    }
+    if (result.maxSeverity === "suspicious") {
+      log.warn("memory-store.journal.suspicious", {
+        relPath,
+        maxSeverity: result.maxSeverity,
+        categories: scanCategories(result),
+        findings: result.findings.length,
+      });
+    }
+    return null;
   }
 
   // -- re-ingest helpers -----------------------------------------------------
@@ -335,8 +391,19 @@ export function openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: Memory
       if (capError(parsed.topic.body, { maxLines: cfg.topic_max_lines, maxChars: cfg.topic_max_chars })) return false;
       return !isScanRejected(deps.scan(topicScanText(parsed.topic), { channel: "memory_body", source: relPath }));
     }
-    // journal — scan only (dreamer-authored; no config cap)
-    return !isScanRejected(deps.scan(content, { channel: "memory_body", source: relPath }));
+    // journal — scan only (dreamer-authored; no config cap). Quarantine on
+    // `hostile` ONLY; a `suspicious` re-ingest is annotated and kept, mirroring
+    // the write-time journal gate (spec §3.2/§3.3 — read-time gate re-screens).
+    const result = deps.scan(content, { channel: "memory_body", source: relPath });
+    if (result.maxSeverity === "suspicious") {
+      log.warn("memory-store.journal.suspicious", {
+        relPath,
+        maxSeverity: result.maxSeverity,
+        categories: scanCategories(result),
+        findings: result.findings.length,
+      });
+    }
+    return !isJournalScanRejected(result);
   }
 
   function topicScanText(topic: { name: string; description: string; body: string }): string {
@@ -487,7 +554,7 @@ export function openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: Memory
       if (!JOURNAL_DATE_RE.test(date)) return { ok: false, error: "path_refused" };
       const rel = journalRel(date);
       const usage = countUsage(content);
-      const scan = scanError(content, rel, usage);
+      const scan = journalScanError(content, rel, usage);
       if (scan) return scan;
 
       const result = writeGuarded(rel, journalPath(date), content);
