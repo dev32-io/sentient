@@ -93,8 +93,13 @@ See `docs/mobile-release.md` for one-time setup (keystore, `scripts/release.loca
 ## Gateway deploy
 
     ./scripts/build-gateway.sh [--release]   — compiled native binary -> dist/gateway/<version>.tar.gz
-    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+    python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
                                               — install/upgrade; health-gated, auto-rollback on failure
+                                                (default --domain gui: LaunchAgent, no sudo, operator-owned)
+    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz --domain system
+                                              — headless server: LaunchDaemon, root-owned, requires sudo
+    python3 deploy/mac-prod/setup-prod.py uninstall                      — unload + remove plist
+    python3 deploy/mac-prod/setup-prod.py rollback                       — roll back to the previous release
 
 Addon images (MCPs, searxng, ingress-proxy) still build via compose — see `deploy/README.md`.
 

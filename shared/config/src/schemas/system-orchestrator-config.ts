@@ -33,6 +33,18 @@ export const systemOrchestratorConfigSchema = z.object({
   // How often the port is re-checked while waiting above. Range 50-5000. Each
   // check costs one `lsof`, so smaller values buy responsiveness at process cost.
   native_port_settle_poll_ms: z.number().int().min(50).max(5000).default(250),
+  // How long the boot path waits for the docker daemon to be reachable before
+  // starting boot-reconcile. Range 0-600000 (0 = skip the wait entirely). On a
+  // rebooted mini where launchd starts the gateway before Docker Desktop has
+  // finished auto-starting, the first apply would fail against an absent
+  // daemon; this bounded wait covers that race. On timeout the boot proceeds
+  // anyway — the health-watchdog retries later, so a slow docker start is a
+  // degraded boot, not a fatal one. See phase-orchestrator.ts waitForDocker.
+  docker_wait_timeout_ms: z.number().int().min(0).max(600000).default(60000),
+  // How often to poll docker's ping() while waiting above. Range 500-30000.
+  // Each poll is one docker.ping() round-trip, so smaller values buy
+  // responsiveness at the cost of more socket traffic during the wait.
+  docker_wait_poll_ms: z.number().int().min(500).max(30000).default(2000),
 });
 
 export type SystemOrchestratorConfig = z.output<typeof systemOrchestratorConfigSchema>;

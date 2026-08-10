@@ -2,19 +2,34 @@
 """
 Sentient — native production installer (Apple-silicon Mac mini).
 
-Installs the compiled gateway from a release tarball into the root-owned
+Installs the compiled gateway from a release tarball into the
 `/opt/sentient/<version>/` tree, points the `current` symlink at it, restarts
-the `io.sentient.gateway` LaunchDaemon and health-gates the result. A release
+the `io.sentient.gateway` launchd job and health-gates the result. A release
 that fails its health gate is rolled back automatically to the version that was
 running before.
 
-    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.13.1.tar.gz
+Two domains:
+
+  * `gui` (DEFAULT, no sudo): a LaunchAgent in ~/Library/LaunchAgents, owned by
+    the operator. Code-immutability is `chmod a-w` (the operator can undo it —
+    deliberate, not accidental, on a single-operator mini). The job runs in the
+    user's GUI session and survives reboot via RunAtLoad+KeepAlive on a mini
+    that auto-logs-in.
+
+  * `system` (sudo, headless server): a LaunchDaemon in /Library/LaunchDaemons,
+    root-owned. The original design — the gateway must be up with nobody logged
+    in.
+
+    python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.13.1.tar.gz
+    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.13.1.tar.gz --domain system
 
 Invariants this script exists to hold:
 
-  * CODE IS ROOT-OWNED AND IMMUTABLE; STATE IS USER-OWNED AND MUTABLE.
-    `/opt/sentient/**` is root:wheel; `~/.sentient/**` belongs to the operator.
-    Nothing executable lives under $HOME.
+  * CODE IS IMMUTABLE; STATE IS USER-OWNED AND MUTABLE.
+    In `system` domain: `/opt/sentient/**` is root:wheel; `~/.sentient/**`
+    belongs to the operator. In `gui` domain: `/opt/sentient/**` is
+    operator-owned and `chmod a-w`; `~/.sentient/**` is also operator-owned.
+    Nothing executable lives under $HOME in either domain.
   * NOTHING FETCHES AT DEPLOY TIME. The gateway binary embeds its JS
     dependencies; python services install from vendored wheels with
     `pip install --no-index`.
@@ -143,17 +158,26 @@ APPLEDOUBLE_PREFIX = "._"
 RELEASES_TO_KEEP = 3
 
 # --- launchd -----------------------------------------------------------------
-# A LaunchDaemon in the `system` domain, not a LaunchAgent: the gateway must be
-# up with nobody logged in.
+# Two domains: `system` (LaunchDaemon, root-owned, headless server) and `gui`
+# (LaunchAgent, operator-owned, desktop mini). The default is `gui` — the common
+# case is a Mac mini that auto-logs-in the operator, and a LaunchAgent there is
+# simpler (no sudo) while still surviving reboot via RunAtLoad+KeepAlive. The
+# `system` domain remains for a true headless server where nobody logs in.
 LAUNCHD_LABEL = "io.sentient.gateway"
-LAUNCHD_DOMAIN = "system"
-LAUNCHD_DIR = Path("/Library/LaunchDaemons")
+DOMAIN_SYSTEM = "system"
+DOMAIN_GUI = "gui"
+# Default domain — `gui` needs no sudo and matches the desktop-mini prod shape.
+DEFAULT_DOMAIN = DOMAIN_GUI
+# Per-domain launchd targets.
+LAUNCHD_DIR_SYSTEM = Path("/Library/LaunchDaemons")
+LAUNCHD_DIR_GUI = Path.home() / "Library" / "LaunchAgents"
 # The plist ships with this literal standing in for the operator's account name;
 # the installer substitutes it. See deploy/mac-prod/io.sentient.gateway.plist.
 OPERATOR_PLACEHOLDER = "OPERATOR"
-PLIST_OWNER = "root:wheel"
-# 0644: root writes, everyone reads. Anyone who can WRITE this file chooses what
+# system domain: root-owned plist — anyone who can WRITE this file chooses what
 # root launches at boot, so group/world write is a privilege-escalation hole.
+PLIST_OWNER_SYSTEM = "root:wheel"
+# 0644: root writes, everyone reads.
 PLIST_MODE = 0o644
 SUDO_USER_VAR = "SUDO_USER"
 ROOT_USER = "root"
@@ -236,6 +260,110 @@ STATE_DIRS = (
 SECRETS_DIR_MODE = 0o700
 SECRETS_FILE_MODE = 0o600
 SECRET_FILENAMES = ("keys.yaml",)
+
+
+# --- domain model ------------------------------------------------------------
+# A domain bundles three choices that must stay consistent:
+#   * where the plist lives (LaunchDaemons vs LaunchAgents)
+#   * who owns the plist and the release tree (root vs the operator)
+#   * which launchd target bootstraps/kickstarts the job (system vs gui/<uid>)
+#
+# `gui` is the default: the operator owns everything, no sudo is required, and
+# code-immutability is enforced by `chmod a-w` rather than root ownership. The
+# operator CAN undo it (chmod +w), deliberately — on a single-operator mini that
+# is the same trust boundary, and it beats a root-owned tree the operator cannot
+# inspect without sudo. `system` is the headless-server path, unchanged from the
+# original design: root owns code and plist, and the daemon runs with nobody
+# logged in.
+def launchd_dir_for(domain: str, home: Path) -> Path:
+    """Where the plist is installed for the given domain.
+
+    `gui` uses ~/Library/LaunchAgents (operator-owned); `system` uses
+    /Library/LaunchDaemons (root-owned). The home argument lets tests point
+    this at a temp tree instead of the real one.
+    """
+    if domain == DOMAIN_GUI:
+        return home / "Library" / "LaunchAgents"
+    return LAUNCHD_DIR_SYSTEM
+
+
+def launchd_domain_target(domain: str, uid: int | None = None) -> str:
+    """The launchd target string for bootstrap/bootout/kickstart.
+
+    `system` is just "system"; `gui` is "gui/<uid>" — e.g. "gui/501". The uid
+    defaults to the current process's, which is the operator's in gui mode
+    (no sudo).
+    """
+    if domain == DOMAIN_GUI:
+        return f"gui/{uid if uid is not None else os.getuid()}"
+    return DOMAIN_SYSTEM
+
+
+def is_gui_domain(domain: str) -> bool:
+    return domain == DOMAIN_GUI
+
+
+class DomainPolicy:
+    """Per-domain hardening and ownership policy.
+
+    `system`: root owns the code tree and the plist — the service user cannot
+    rewrite its own binary, and anyone who can edit the plist chooses what root
+    launches at boot.
+    `gui`: the operator owns everything. Code-immutability is `chmod a-w`
+    (operator can undo with `chmod +w` — deliberate, not accidental, since on a
+    single-operator mini that is the same trust boundary). No sudo required.
+    """
+
+    def __init__(self, domain: str, operator: str, home: Path):
+        self.domain = domain
+        self.operator = operator
+        self.home = home
+        self.is_gui = is_gui_domain(domain)
+        self.launchd_dir = launchd_dir_for(domain, home)
+        self.launchd_target = launchd_domain_target(domain)
+
+    @property
+    def plist_owner(self) -> str | None:
+        """None means: do not chown the plist (operator already owns it)."""
+        return None if self.is_gui else PLIST_OWNER_SYSTEM
+
+    @property
+    def code_owner(self) -> str | None:
+        """None means: do not chown the release tree (operator already owns it)."""
+        return None if self.is_gui else CODE_OWNER
+
+    def harden_code(self, runner, release: Path) -> None:
+        """Make the release tree immutable.
+
+        `system`: chown root:wheel + chmod 755 — root writes, everyone executes.
+        `gui`: chmod a-w — operator owns it, but nobody can write it. The
+        operator can undo this with `chmod +w` if they need to, which is the
+        right trade for a single-operator host: it beats a root-owned tree the
+        operator cannot inspect.
+        """
+        if self.is_gui:
+            # a-w on the whole tree: removes write for user, group, and other.
+            # The operator can undo this (chmod -R u+w), deliberately.
+            runner(["chmod", "-R", "a-w", str(release)], check=True)
+        else:
+            runner(["chown", "-R", CODE_OWNER, str(release)], check=True)
+            runner(["chmod", "-R", CODE_MODE, str(release)], check=True)
+
+    def harden_plist(self, runner, target: Path) -> None:
+        """Set plist ownership and permissions.
+
+        `system`: chown root:wheel — anyone who can write this file chooses what
+        root launches at boot.
+        `gui`: no chown (operator owns it), just chmod for read-only.
+        """
+        owner = self.plist_owner
+        if owner is not None:
+            runner(["chown", owner, str(target)], check=True)
+        target.chmod(PLIST_MODE)
+
+    def requires_root(self) -> bool:
+        """Whether the install needs to run as root (sudo)."""
+        return not self.is_gui
 
 
 class InstallError(Exception):
@@ -388,11 +516,15 @@ class RealFs:
     symlink, swapped atomically, because launchd's ProgramArguments points at
     the fixed `current/bin/sentient-gateway` path — the version flip IS the
     symlink swap.
+
+    In `gui` domain the tree is operator-owned (not root), and immutability is
+    `chmod a-w` rather than chown root — see DomainPolicy.
     """
 
-    def __init__(self, opt_root: Path = OPT, runner=subprocess.run):
+    def __init__(self, opt_root: Path = OPT, runner=subprocess.run, domain_policy: DomainPolicy | None = None):
         self._root = Path(opt_root)
         self._run = runner
+        self._policy = domain_policy or DomainPolicy(DOMAIN_SYSTEM, "", Path.home())
 
     @property
     def current(self) -> str | None:
@@ -425,11 +557,11 @@ class RealFs:
         self._harden(release)
 
     def _harden(self, release: Path) -> None:
-        # CODE IS ROOT-OWNED: the service runs as the operator and must not be
-        # able to rewrite its own binary. This is the whole reason code does not
-        # live under $HOME.
-        self._run(["chown", "-R", CODE_OWNER, str(release)], check=True)
-        self._run(["chmod", "-R", CODE_MODE, str(release)], check=True)
+        # CODE IS IMMUTABLE: the service runs as the operator (or root) and must
+        # not be able to rewrite its own binary. In `system` domain this is
+        # enforced by root ownership; in `gui` domain by chmod a-w (the operator
+        # owns the tree but cannot write it). See DomainPolicy.harden_code.
+        self._policy.harden_code(self._run, release)
 
     def point_current_at(self, version: str) -> None:
         """Swap `current` via rename, so it is never momentarily absent.
@@ -523,14 +655,28 @@ def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=s
         )
 
 
-def resolve_operator(environ) -> str:
+def resolve_operator(environ, domain: str = DOMAIN_SYSTEM) -> str:
     """The unprivileged user the daemon runs as.
 
     Substituted into the plist's `UserName`, so `root` here would run the whole
     gateway privileged — and a privileged gateway can rewrite its own binary
     under /opt, which is precisely what the root-owned code tree exists to
     prevent. There is no fallback: guessing an operator is worse than refusing.
+
+    In `gui` domain the script runs as the operator (no sudo), so $SUDO_USER is
+    not set — the operator IS the current user. In `system` domain the script
+    runs under sudo and $SUDO_USER names the operator.
     """
+    if domain == DOMAIN_GUI:
+        # No sudo — the current user is the operator.
+        operator = environ.get("USER") or ""
+        if not operator or operator == ROOT_USER:
+            raise InstallError(
+                f"cannot determine the operator account from $USER (got "
+                f"{operator or 'nothing'!r}). The gateway must never run as root."
+            )
+        return operator
+
     operator = str(environ.get(SUDO_USER_VAR) or "").strip()
     if not operator or operator == ROOT_USER:
         raise InstallError(
@@ -542,11 +688,15 @@ def resolve_operator(environ) -> str:
 
 
 class RealLaunchd:
-    """The `io.sentient.gateway` LaunchDaemon.
+    """The `io.sentient.gateway` launchd job.
 
-    A LaunchDaemon, not a LaunchAgent: the gateway must be up with no one logged
-    in. The plist is root-owned and points at the fixed `current/` path, so it is
-    installed once and a version flip is just a restart.
+    In the `system` domain this is a LaunchDaemon: the gateway must be up with
+    no one logged in, and the plist is root-owned. In the `gui` domain it is a
+    LaunchAgent: the operator owns the plist, and the job runs in the user's
+    GUI session (which survives reboot via RunAtLoad+KeepAlive on a mini that
+    auto-logs-in). The plist content is identical across domains — `UserName`
+    is harmless in the gui domain (launchd ignores it, the agent runs as the
+    logged-in user).
     """
 
     def __init__(
@@ -554,22 +704,20 @@ class RealLaunchd:
         plist_source: Path,
         operator: str,
         label: str = LAUNCHD_LABEL,
-        daemon_dir: Path = LAUNCHD_DIR,
+        daemon_dir: Path = LAUNCHD_DIR_SYSTEM,
         runner=subprocess.run,
-        domain: str = LAUNCHD_DOMAIN,
+        domain: str = DOMAIN_SYSTEM,
+        domain_policy: DomainPolicy | None = None,
     ):
         self._source = Path(plist_source)
         self._operator = operator
         self._label = label
         self._dir = Path(daemon_dir)
         self._run = runner
-        # `system` in production, and deliberately NOT a CLI flag — a gateway
-        # loaded into a per-user domain would die at logout. It is a constructor
-        # argument so the rehearsal in tests/test_launchd_live.py can exercise
-        # this exact code against the REAL launchctl in an unprivileged domain,
-        # which is the only way to verify the bootstrap/kickstart branch without
-        # root. See deploy/mac-prod/README.md.
-        self._domain = domain
+        self._policy = domain_policy or DomainPolicy(domain, operator, Path.home())
+        # `system` in production, `gui` on a desktop mini. The domain target
+        # string is "system" or "gui/<uid>" — see launchd_domain_target().
+        self._domain = self._policy.launchd_target
 
     @property
     def installed_plist(self) -> Path:
@@ -590,10 +738,9 @@ class RealLaunchd:
 
         target = self.installed_plist
         target.write_text(rendered)
-        # Root-owned and not group/world writable: anyone who can edit this file
-        # chooses what root launches at boot.
-        self._run(["chown", PLIST_OWNER, str(target)], check=True)
-        target.chmod(PLIST_MODE)
+        # Domain-aware hardening: `system` chowns root:wheel; `gui` leaves the
+        # operator's ownership and just sets the mode. See DomainPolicy.
+        self._policy.harden_plist(self._run, target)
 
     def _is_loaded(self) -> bool:
         try:
@@ -621,6 +768,16 @@ class RealLaunchd:
             return
         self._run(
             ["launchctl", "kickstart", "-k", f"{self._domain}/{self._label}"],
+            check=True,
+        )
+
+    def bootout(self) -> None:
+        """Unload the job from launchd (for uninstall). Idempotent: a job that
+        is not loaded is a no-op rather than an error."""
+        if not self._is_loaded():
+            return
+        self._run(
+            ["launchctl", "bootout", f"{self._domain}/{self._label}"],
             check=True,
         )
 
@@ -1010,14 +1167,28 @@ def positive_int(raw: str) -> int:
     return value
 
 
+def _add_domain_flag(sub):
+    """Add the --domain flag to a subcommand parser.
+
+    Choices: `gui` (LaunchAgent, no sudo, operator-owned) or `system`
+    (LaunchDaemon, sudo, root-owned). Default `gui` — the common case is a
+    Mac mini that auto-logs-in the operator.
+    """
+    sub.add_argument("--domain", choices=[DOMAIN_GUI, DOMAIN_SYSTEM], default=DEFAULT_DOMAIN,
+                     help=f"launchd domain: gui (LaunchAgent, no sudo, operator-owned) "
+                          f"or system (LaunchDaemon, sudo, root-owned) (default {DEFAULT_DOMAIN})")
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="setup-prod.py",
-        description="Install or upgrade the native Sentient gateway on this host.",
+        description="Install, upgrade, uninstall, or roll back the native Sentient gateway on this host.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
     install = commands.add_parser("install", help="install a release tarball")
     install.add_argument("tarball", type=Path, help="dist/gateway/<version>.tar.gz")
+    _add_domain_flag(install)
     # Overrides exist for staging a release somewhere other than the live tree.
     # There is deliberately no flag that skips verification, the health gate or
     # the rollback — those are the reasons this script exists.
@@ -1029,8 +1200,9 @@ def parse_args(argv):
                          help=f"vendored wheels root (default <repo>/{WHEELS_ROOT})")
     install.add_argument("--plist", type=Path, default=None,
                          help=f"launchd plist (default <repo>/{PLIST_SOURCE})")
-    install.add_argument("--launchd-dir", type=Path, default=LAUNCHD_DIR,
-                         help=f"where the plist is installed (default {LAUNCHD_DIR})")
+    install.add_argument("--launchd-dir", type=Path, default=None,
+                         help="where the plist is installed (default: domain-dependent — "
+                              "gui ~/Library/LaunchAgents, system /Library/LaunchDaemons)")
     install.add_argument("--home", type=Path, default=None,
                          help="operator home holding ~/.sentient (default the operator's)")
     install.add_argument("--ca-bundle", type=Path, default=None,
@@ -1058,20 +1230,69 @@ def parse_args(argv):
     install.add_argument("--keep", type=int, default=RELEASES_TO_KEEP,
                          help=f"past releases to retain (default {RELEASES_TO_KEEP})")
     install.add_argument("--operator", default=None,
-                         help="account the daemon runs as (default $SUDO_USER)")
+                         help="account the daemon runs as (default $SUDO_USER for system, $USER for gui)")
+
+    uninstall = commands.add_parser("uninstall", help="unload the launchd job and remove the plist")
+    _add_domain_flag(uninstall)
+    uninstall.add_argument("--opt-root", type=Path, default=OPT,
+                            help=f"release tree root (default {OPT})")
+    uninstall.add_argument("--repo", type=Path, default=REPO_ROOT,
+                            help="checkout supplying the plist")
+    uninstall.add_argument("--plist", type=Path, default=None,
+                            help=f"launchd plist (default <repo>/{PLIST_SOURCE})")
+    uninstall.add_argument("--launchd-dir", type=Path, default=None,
+                            help="where the plist is installed (default: domain-dependent)")
+    uninstall.add_argument("--home", type=Path, default=None,
+                            help="operator home holding ~/.sentient (default the operator's)")
+    uninstall.add_argument("--operator", default=None,
+                            help="account the daemon runs as")
+
+    rollback = commands.add_parser("rollback", help="roll back to the previous release on disk")
+    _add_domain_flag(rollback)
+    rollback.add_argument("--opt-root", type=Path, default=OPT,
+                           help=f"release tree root (default {OPT})")
+    rollback.add_argument("--repo", type=Path, default=REPO_ROOT,
+                           help="checkout supplying service sources and the plist")
+    rollback.add_argument("--plist", type=Path, default=None,
+                           help=f"launchd plist (default <repo>/{PLIST_SOURCE})")
+    rollback.add_argument("--launchd-dir", type=Path, default=None,
+                           help="where the plist is installed (default: domain-dependent)")
+    rollback.add_argument("--home", type=Path, default=None,
+                           help="operator home holding ~/.sentient (default the operator's)")
+    rollback.add_argument("--ca-bundle", type=Path, default=None,
+                           help="TLS anchor for the health probe (default <home>/.sentient/gateway/certs/cert.pem)")
+    rollback.add_argument("--health-url", default=DEFAULT_HEALTH_URL)
+    rollback.add_argument("--health-attempts", type=positive_int, default=HEALTH_ATTEMPTS,
+                           help=f"health probes before giving up (default {HEALTH_ATTEMPTS})")
+    rollback.add_argument("--health-interval", type=float, default=HEALTH_INTERVAL_SECONDS,
+                           help=f"seconds between probes (default {HEALTH_INTERVAL_SECONDS})")
+    rollback.add_argument("--outward-cert", type=Path, default=None,
+                           help="TLS anchor for the edge probe")
+    rollback.add_argument("--edge-url", default=DEFAULT_EDGE_URL)
+    rollback.add_argument("--edge-attempts", type=positive_int, default=EDGE_HEALTH_ATTEMPTS)
+    rollback.add_argument("--edge-interval", type=float, default=EDGE_HEALTH_INTERVAL_SECONDS)
+    rollback.add_argument("--operator", default=None,
+                           help="account the daemon runs as")
+
     return parser.parse_args(argv)
 
 
 def run_install(args) -> None:
-    operator = args.operator or resolve_operator(os.environ)
+    domain = args.domain
+    operator = args.operator or resolve_operator(os.environ, domain)
     home = args.home or Path(f"/Users/{operator}")
     repo = args.repo
     wheels = args.wheels or repo / WHEELS_ROOT
     plist = args.plist or repo / PLIST_SOURCE
     ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
 
+    # Domain policy: drives launchd dir, plist ownership, code hardening, and
+    # the launchd target string. See DomainPolicy.
+    policy = DomainPolicy(domain, operator, home)
+    launchd_dir = args.launchd_dir or policy.launchd_dir
+
     version = read_release_version(args.tarball)
-    info(f"installing gateway {version} for operator {operator}")
+    info(f"installing gateway {version} for operator {operator} (domain: {domain})")
 
     info("seeding operator state")
     ensure_state_dirs(home, repo / TEMPLATE_CONFIG,
@@ -1090,12 +1311,13 @@ def run_install(args) -> None:
         )
         (warn if cert_is_fallback else info)(cert_reason)
 
-    info("installing the launchd daemon")
-    launchd = RealLaunchd(plist, operator=operator, daemon_dir=args.launchd_dir)
+    info(f"installing the launchd job (domain: {domain})")
+    launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
+                          domain_policy=policy)
     launchd.install_plist()
     ok(f"{launchd.installed_plist}")
 
-    fs = RealFs(args.opt_root)
+    fs = RealFs(args.opt_root, domain_policy=policy)
     previous = fs.current
     probe = HealthProbe(args.health_url, ca_bundle,
                         attempts=args.health_attempts,
@@ -1166,10 +1388,120 @@ def run_install(args) -> None:
     ok(f"kept the {args.keep} most recent releases")
 
 
+def run_uninstall(args) -> None:
+    """Unload the launchd job and remove the plist. Does NOT touch the release
+    tree or the operator's state — a re-install picks both back up."""
+    domain = args.domain
+    operator = args.operator or resolve_operator(os.environ, domain)
+    home = args.home or Path(f"/Users/{operator}")
+    repo = args.repo
+    plist = args.plist or repo / PLIST_SOURCE
+    policy = DomainPolicy(domain, operator, home)
+    launchd_dir = args.launchd_dir or policy.launchd_dir
+
+    info(f"unloading the launchd job (domain: {domain})")
+    launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
+                          domain_policy=policy)
+    launchd.bootout()
+    ok(f"unloaded {LAUNCHD_LABEL} from {policy.launchd_target}")
+
+    installed_plist = launchd_dir / f"{LAUNCHD_LABEL}.plist"
+    if installed_plist.exists():
+        installed_plist.unlink()
+        ok(f"removed {installed_plist}")
+    else:
+        ok(f"plist already absent at {installed_plist}")
+
+
+def run_rollback(args) -> None:
+    """Roll back to the most recent release on disk that is NOT `current`.
+
+    Lists the release directories by mtime (install order), excludes the
+    current one, and points `current` at the most recent remaining. Then
+    kickstarts the job and health-gates the result — the same gate as install,
+    so a rollback to a broken release is caught rather than shipped."""
+    domain = args.domain
+    operator = args.operator or resolve_operator(os.environ, domain)
+    home = args.home or Path(f"/Users/{operator}")
+    repo = args.repo
+    plist = args.plist or repo / PLIST_SOURCE
+    ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
+    policy = DomainPolicy(domain, operator, home)
+    launchd_dir = args.launchd_dir or policy.launchd_dir
+
+    fs = RealFs(args.opt_root, domain_policy=policy)
+    current = fs.current
+    if current is None:
+        raise InstallError("no `current` symlink — nothing to roll back from")
+
+    # Most recent release that is NOT current, by mtime (install order).
+    ordered = sorted(
+        (p for p in fs._releases() if p.name != current),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not ordered:
+        raise InstallError(
+            f"no release on disk besides the current {current} — nothing to roll back to"
+        )
+    target = ordered[0].name
+    info(f"rolling back: {current} -> {target}")
+
+    # Resolve the outward cert for the health gate (same as install).
+    outward_cert = args.outward_cert
+    if outward_cert is None:
+        outward_cert, cert_reason, _ = resolve_outward_cert(
+            home, home / STATE_ROOT / OPERATOR_CONFIG_RELATIVE
+        )
+        info(cert_reason)
+
+    launchd = RealLaunchd(plist, operator=operator, daemon_dir=launchd_dir,
+                          domain_policy=policy)
+    probe = HealthProbe(args.health_url, ca_bundle,
+                        attempts=args.health_attempts,
+                        interval_seconds=args.health_interval)
+    edge_probe = HealthProbe(args.edge_url, outward_cert,
+                             attempts=args.edge_attempts,
+                             interval_seconds=args.edge_interval,
+                             check_hostname=False,
+                             is_success=lambda status: (
+                                 EDGE_SUCCESS_STATUS_MIN <= status < EDGE_SUCCESS_STATUS_MAX_EXCLUSIVE
+                             ))
+
+    fs.point_current_at(target)
+    launchd.kickstart()
+
+    def health() -> tuple[bool, str | None]:
+        gateway_healthy = probe.wait()
+        (ok if gateway_healthy else fail)(f"gateway (8888): {probe.last_reason}")
+        if not gateway_healthy:
+            return (False, f"gateway not healthy: {probe.last_reason}")
+        edge_healthy = edge_probe.wait()
+        (ok if edge_healthy else fail)(f"edge (443): {edge_probe.last_reason}")
+        if not edge_healthy:
+            return (False, f"gateway healthy, edge (443) not: {edge_probe.last_reason}")
+        return (True, None)
+
+    healthy, cause = health()
+    if healthy:
+        ok(f"rolled back to {target} — live and healthy")
+    else:
+        fail(f"rolled back to {target} but health gate failed: {cause}")
+        raise InstallError(f"rollback to {target} failed health: {cause}")
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     try:
-        run_install(args)
+        if args.command == "install":
+            run_install(args)
+        elif args.command == "uninstall":
+            run_uninstall(args)
+        elif args.command == "rollback":
+            run_rollback(args)
+        else:  # pragma: no cover — argparse enforces required=True
+            fail(f"unknown command: {args.command}")
+            return EXIT_INSTALL_FAILED
     except InstallError as e:
         fail(str(e))
         return EXIT_INSTALL_FAILED
@@ -1177,9 +1509,14 @@ def main(argv=None) -> int:
         fail(f"command failed: {' '.join(str(part) for part in e.cmd)}")
         return EXIT_INSTALL_FAILED
     except OSError as e:
-        # Almost always "not running under sudo": writing /opt/sentient and
-        # /Library/LaunchDaemons both need root. Name it rather than tracebacking.
-        fail(f"{e} — run this with sudo, or point --opt-root/--launchd-dir at a writable tree")
+        # In `system` domain: almost always "not running under sudo" — writing
+        # /opt/sentient and /Library/LaunchDaemons both need root. In `gui`
+        # domain this is a genuine filesystem error, not a missing-sudo error.
+        domain = getattr(args, "domain", DEFAULT_DOMAIN)
+        if domain == DOMAIN_SYSTEM:
+            fail(f"{e} — run this with sudo, or point --opt-root/--launchd-dir at a writable tree")
+        else:
+            fail(f"{e}")
         return EXIT_INSTALL_FAILED
     return EXIT_OK
 
