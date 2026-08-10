@@ -31,9 +31,14 @@ env:
 - tapOn: { id: "composer-input" }
 - inputText: "Remember that I hate cilantro."
 - tapOn: { id: "chat-send" }
-# Tap the message list to dismiss the keyboard so the alert/bubble is unobstructed
-# (iOS hideKeyboard is unreliable with the custom composer — 01-send-stream.yaml).
-- tapOn: { id: "chat-message-list" }
+# Do NOT tap chat-message-list here to dismiss the keyboard: memory_write is
+# confirm-tier, so the permission ALERT appears ~1.5s after send (as soon as the
+# provider decides to call the tool). The modal alert removes chat-message-list
+# from the accessibility tree, so a keyboard-dismiss tap here races the alert and
+# fails ("Element not found"). The alert floats above the keyboard anyway, so wait
+# for it directly; dismiss the keyboard AFTER answering it, before asserting the
+# bubble. (01-send-stream taps the list because it has no confirm-tier tool.)
+#
 # The prompt only appears after a provider round-trip decides to call the tool —
 # an LLM round-trip, genuinely long, well inside the broker's 120s timeout. Same
 # budget as 12-permission-confirm.
@@ -47,6 +52,9 @@ env:
 - extendedWaitUntil:
     notVisible: { id: "permission-allow" }
     timeout: 3000
+# Alert dismissed → chat-message-list is back in the tree. Tap it now to dismiss
+# any lingering keyboard so the confirmation bubble is unobstructed.
+- tapOn: { id: "chat-message-list" }
 # Confirmation bubble — the assistant's post-write reply, provider-paced.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
