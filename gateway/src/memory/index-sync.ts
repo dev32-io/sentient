@@ -99,6 +99,13 @@ export interface IndexSync {
   enqueueFile(file: string): void;
   /** Queue caller-authored entries verbatim (provenance/refs already set). */
   enqueueEntries(entries: EnqueueEntry[]): void;
+  /** Retire the index entry a dreamer fact line produced (the reconciler's
+   *  SUPERSEDE/FLAG_STALE seam). Recomputes the entry's deterministic id from
+   *  `(scope, file-section, file, lineText)` — the exact keying episode-writer's
+   *  fact entries use — and stages a `setStatus(superseded, reason)` in
+   *  `pendingStatus`, drained on the next `flush()`. Idempotent (a repeat is a
+   *  no-op); durable (persisted, so a crash mid-flush replays it). */
+  retireEntry(target: string, lineText: string, reason: string): void;
   /** Queue raw transcript chunks — a no-op unless `cfg.spark.raw_chunks`. */
   enqueueSessionChunks(sessionId: string, entries: EnqueueEntry[]): void;
   /** Upsert every queued row through the client; on success mark them done, on
@@ -298,6 +305,27 @@ export function createIndexSync(
     log.info("index-sync.enqueue-entries", { count: entries.length, pending: pendingCount(cursor) });
   }
 
+  function retireEntry(target: string, lineText: string, reason: string): void {
+    // The id episode-writer stamped on this line's fact entry: a headless
+    // file-section keyed on the target file + the line text (computeId +
+    // sourceComponent below resolve to `hash(scope:file-section:<file>#:hash(line))`).
+    const id = computeId({
+      kind: KIND_FILE_SECTION,
+      text: lineText,
+      timestamp: now(),
+      scope: scope.scopeId,
+      sourceRef: { file: target },
+      provenance: DEFAULT_FILE_PROVENANCE,
+    });
+    if (cursor.pendingStatus[id] !== undefined) {
+      log.debug("index-sync.retire.duplicate", { target, reason });
+      return;
+    }
+    cursor.pendingStatus[id] = reason;
+    persistCursor(cursorPath, cursor);
+    log.info("index-sync.retire.enqueued", { target, reason, pendingStatus: pendingStatusCount(cursor) });
+  }
+
   function enqueueSessionChunks(sessionId: string, entries: EnqueueEntry[]): void {
     if (!cfg.spark.raw_chunks) {
       log.debug("index-sync.raw-chunks.disabled", { sessionId, count: entries.length });
@@ -420,7 +448,7 @@ export function createIndexSync(
     return { ok: true, value: undefined };
   }
 
-  return { enqueueFile, enqueueEntries, enqueueSessionChunks, flush, onHealthRecovered, rebuildScope };
+  return { enqueueFile, enqueueEntries, retireEntry, enqueueSessionChunks, flush, onHealthRecovered, rebuildScope };
 }
 
 // --- Helpers -----------------------------------------------------------------

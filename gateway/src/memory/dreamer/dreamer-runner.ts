@@ -35,6 +35,7 @@ import type { ProviderClient, ProviderStreamChunk } from "../../provider/provide
 import type { ChatMessage } from "../../store/model-projection.js";
 import type { DreamSession, DreamWindow } from "../../store/project-for-dreaming.js";
 import type { UserId } from "../../user-auth/user-id.js";
+import { type ReduceOp, reduceReplySchema } from "./reconciler.js";
 
 const log = getLog(["sentient", "memory", "dreamer"]);
 
@@ -70,6 +71,15 @@ export interface DreamSessionResult {
 /** The whole map stage's output for one window. */
 export interface DreamResult {
   sessions: DreamSessionResult[];
+}
+
+/** The distilled memory the reduce stage reconciles today's candidates against:
+ *  the current `MEMORY.md` body plus every topic file, path + contents. Read
+ *  from the store by the transaction owner and handed in — the runner never
+ *  touches the store itself. */
+export interface CurrentMemory {
+  core: string;
+  topics: Array<{ slug: string; body: string }>;
 }
 
 /** The durable high-water mark on the session-store entry sequence, per user. */
@@ -116,6 +126,13 @@ export interface DreamRunner {
   readMark(dir: string): DreamMark;
   advanceMark(dir: string, seq: number, runAt: string): void;
   runMapStage(user: DreamUser, window: DreamWindow): Promise<DreamResult>;
+  /** The night's SECOND call: reconcile today's durable fact candidates against
+   *  the current distilled memory into a batch of reduce ops. ONE call, ONE
+   *  retry on parse/schema failure; `null` on double-fail (the transaction then
+   *  completes episodic-only, WARN — a broken reduce must not lose the episodes).
+   *  An empty `ops` array is a valid, common answer (a quiet night). Never throws
+   *  (this file's property 2). */
+  runReduceStage(user: DreamUser, result: DreamResult, currentMemory: CurrentMemory): Promise<ReduceOp[] | null>;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,8 +141,20 @@ export interface DreamRunner {
 
 const MARK_FILENAME = ".dream-mark.json";
 const TRANSCRIPT_PLACEHOLDER = "{{transcript}}";
+/** reduce.md's three placeholders (spec §8 reduce). */
+const MEMORY_MD_PLACEHOLDER = "{{memory_md}}";
+const TOPICS_PLACEHOLDER = "{{topics}}";
+const FACT_CANDIDATES_PLACEHOLDER = "{{fact_candidates}}";
 /** Joins the per-chunk episode paragraphs of a split session into one episode. */
 const EPISODE_JOIN = "\n\n";
+/** Rendered when the day produced no durable fact candidates — the reduce prompt
+ *  still runs (the model may FLAG_STALE existing lines the day mooted). */
+const NO_FACT_CANDIDATES = "(no durable fact candidates today)";
+const TAINT_ANNOTATION = "tool-derived";
+const CLEAN_ANNOTATION = "user-speech";
+
+/** The two dreamer LLM phases — a label on every per-call log line. */
+type DreamPhase = "map" | "reduce";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -229,6 +258,39 @@ function unionFacts(perChunk: DreamFact[][]): DreamFact[] {
   return merged;
 }
 
+/** Substitutes EVERY occurrence of `placeholder` with `value` without treating
+ *  the value as a regex replacement (a literal `$1`/`$&` in memory content must
+ *  survive verbatim — `String.replace` would mangle it). */
+function replaceAll(template: string, placeholder: string, value: string): string {
+  return template.split(placeholder).join(value);
+}
+
+/** Renders the current topic files for the reduce prompt's `{{topics}}` block:
+ *  one `--- topics/<slug> ---`-delimited section per topic, path then body. An
+ *  empty set renders a stable marker so the block is never blank. */
+function renderTopics(topics: Array<{ slug: string; body: string }>): string {
+  if (topics.length === 0) return "(no topic files yet)";
+  return topics.map((t) => `--- topics/${t.slug} ---\n${t.body}`).join("\n\n");
+}
+
+/** Renders the day's DURABLE fact candidates for `{{fact_candidates}}`: one line
+ *  per fact with its source seq range(s) AND its session's taint annotation, so
+ *  the reduce model sees which candidates came from untrusted (tool-derived)
+ *  input. Ephemeral facts are dropped — they are never carried into MEMORY.md.
+ *  Deterministic: same DreamResult in, same block out. */
+function renderFactCandidates(result: DreamResult): string {
+  const lines: string[] = [];
+  for (const session of result.sessions) {
+    const taint = session.containsToolDerived ? TAINT_ANNOTATION : CLEAN_ANNOTATION;
+    for (const fact of session.facts) {
+      if (fact.kind !== "durable") continue;
+      const seqs = fact.sources.map((s) => `${s.fromSeq}-${s.toSeq}`).join(", ");
+      lines.push(`- ${fact.text}  [sources: ${seqs || "none"}; session ${session.sessionId} (${taint})]`);
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : NO_FACT_CANDIDATES;
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -254,7 +316,7 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
   /** One provider round trip, collected as text. Null on any provider failure —
    *  never a throw (this file's property 2). Logs the per-call INFO line with
    *  input chars, output tokens, latency, and model — no content. */
-  async function streamOnce(userId: UserId, prompt: string): Promise<string | null> {
+  async function streamOnce(userId: UserId, phase: DreamPhase, prompt: string): Promise<string | null> {
     const messages: ChatMessage[] = [{ role: "user", content: prompt }];
     const startedAt = now();
     let stream: AsyncGenerator<ProviderStreamChunk> | null = null;
@@ -274,7 +336,7 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
     } catch (err) {
       log.warn("dreamer.call.failed", {
         userId,
-        phase: "map",
+        phase,
         chars: prompt.length,
         reason: err instanceof Error ? err.message : String(err),
       });
@@ -287,7 +349,7 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
       }
     }
     log.info("dreamer.call", {
-      phase: "map",
+      phase,
       chars: prompt.length,
       tokens: completionTokens,
       ms: now() - startedAt,
@@ -301,8 +363,8 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
    *  retry vs skip uniformly. */
   async function attemptMap(userId: UserId, template: string, transcript: string): Promise<MapOutput | null> {
     await yieldUntilIdle(userId);
-    const prompt = template.replace(TRANSCRIPT_PLACEHOLDER, transcript);
-    const raw = await streamOnce(userId, prompt);
+    const prompt = replaceAll(template, TRANSCRIPT_PLACEHOLDER, transcript);
+    const raw = await streamOnce(userId, "map", prompt);
     if (raw === null) return null;
     const json = extractJson(raw);
     if (json === null) return null;
@@ -370,10 +432,56 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
     return { sessions };
   }
 
+  /** One reduce attempt: yield, render the three placeholders, stream, extract,
+   *  validate against the shared reduce schema. Null on any failure (provider
+   *  error, unparseable, or schema mismatch) so `runReduceStage` decides retry
+   *  vs give-up uniformly — exactly the map stage's shape. */
+  async function attemptReduce(userId: UserId, prompt: string): Promise<ReduceOp[] | null> {
+    await yieldUntilIdle(userId);
+    const raw = await streamOnce(userId, "reduce", prompt);
+    if (raw === null) return null;
+    const json = extractJson(raw);
+    if (json === null) return null;
+    const parsed = reduceReplySchema.safeParse(json);
+    return parsed.success ? parsed.data.ops : null;
+  }
+
+  async function runReduceStage(
+    user: DreamUser,
+    result: DreamResult,
+    currentMemory: CurrentMemory,
+  ): Promise<ReduceOp[] | null> {
+    const template = deps.loadTemplate("reduce");
+    const prompt = replaceAll(
+      replaceAll(
+        replaceAll(template, MEMORY_MD_PLACEHOLDER, currentMemory.core),
+        TOPICS_PLACEHOLDER,
+        renderTopics(currentMemory.topics),
+      ),
+      FACT_CANDIDATES_PLACEHOLDER,
+      renderFactCandidates(result),
+    );
+
+    const first = await attemptReduce(user.userId, prompt);
+    if (first !== null) {
+      log.info("dreamer.reduce.done", { userId: user.userId, ops: first.length });
+      return first;
+    }
+    log.warn("dreamer.call.retry", { userId: user.userId, phase: "reduce", chars: prompt.length });
+    const second = await attemptReduce(user.userId, prompt);
+    if (second === null) {
+      log.warn("dreamer.reduce.failed", { userId: user.userId, reason: "unparseable-after-retry" });
+      return null;
+    }
+    log.info("dreamer.reduce.done", { userId: user.userId, ops: second.length });
+    return second;
+  }
+
   return {
     readMark,
     advanceMark,
     runMapStage,
+    runReduceStage,
   };
 }
 

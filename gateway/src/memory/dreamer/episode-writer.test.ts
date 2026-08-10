@@ -53,6 +53,7 @@ function captureSync(): { sync: IndexSync; calls: EnqueueEntry[][] } {
   const sync: IndexSync = {
     enqueueFile: () => {},
     enqueueEntries: (entries) => calls.push(entries),
+    retireEntry: () => {},
     enqueueSessionChunks: () => {},
     flush: async () => {},
     onHealthRecovered: () => {},

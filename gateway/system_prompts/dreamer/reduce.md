@@ -53,7 +53,11 @@ You do not rewrite `MEMORY.md` yourself. You emit a list of operations that a
 separate, deterministic step applies. Each op is one of:
 
 - **ADD** — a genuinely new fact, not already covered by any existing line.
-  Add it as a new line.
+  Add it as a new line. When an ADD introduces a brand-new topic file (a
+  `target` slug that does not yet exist), you may include an optional
+  `"description"` — a short phrase describing what that topic file is about —
+  which seeds the new topic's header; it is ignored for `MEMORY.md` and for a
+  topic that already exists.
 - **REWRITE** — an existing fact evolved or was refined (more specific, more
   current, a small correction) but is still fundamentally the same fact.
   Replace `old_line` with `new_line` in place.
@@ -112,6 +116,7 @@ item inside the top-level `"ops"` array, never a bare object on its own:
 The other three op shapes, each likewise always an item inside `"ops"`:
 
 {"ops": [{"op": "REWRITE", "target": "MEMORY.md", "old_line": "exact existing line", "new_line": "updated line", "sources": [{"fromSeq": 1, "toSeq": 2}]}]}
+{"ops": [{"op": "ADD", "target": "topics/new-slug", "line": "first fact for a brand-new topic", "description": "what this topic is about", "sources": [{"fromSeq": 1, "toSeq": 2}]}]}
 {"ops": [{"op": "SUPERSEDE", "target": "topics/some-slug", "old_line": "exact existing line", "new_line": "replacement line", "sources": [{"fromSeq": 1, "toSeq": 2}]}]}
 {"ops": [{"op": "FLAG_STALE", "target": "MEMORY.md", "old_line": "exact existing line", "reason": "why this is stale", "sources": [{"fromSeq": 1, "toSeq": 2}]}]}
 

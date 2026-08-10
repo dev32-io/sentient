@@ -243,6 +243,126 @@ describe("runMapStage", () => {
   });
 });
 
+// --- reduce stage ----------------------------------------------------------
+
+const REDUCE_TEMPLATE = "MEM[{{memory_md}}]TOPICS[{{topics}}]FACTS[{{fact_candidates}}]";
+
+function reduceReply(ops: unknown[]): string {
+  return JSON.stringify({ ops });
+}
+
+function reduceDeps(over: Partial<DreamRunnerDeps> & Pick<DreamRunnerDeps, "provider">): DreamRunnerDeps {
+  return deps({ loadTemplate: (name) => (name === "reduce" ? REDUCE_TEMPLATE : PASSTHROUGH_TEMPLATE), ...over });
+}
+
+const DURABLE: DreamFact = { text: "prefers oat milk", kind: "durable", sources: [{ fromSeq: 1, toSeq: 2 }] };
+const EPHEMERAL: DreamFact = { text: "is tired right now", kind: "ephemeral", sources: [{ fromSeq: 3, toSeq: 3 }] };
+
+function resultWith(sessions: Array<{ sessionId: string; facts: DreamFact[]; containsToolDerived?: boolean }>): {
+  sessions: Array<{ sessionId: string; episode: string; facts: DreamFact[]; containsToolDerived: boolean }>;
+} {
+  return {
+    sessions: sessions.map((s) => ({
+      sessionId: s.sessionId,
+      episode: "ep",
+      facts: s.facts,
+      containsToolDerived: s.containsToolDerived ?? false,
+    })),
+  };
+}
+
+const CURRENT_MEMORY = { core: "Kevin likes tea.", topics: [{ slug: "cooking", body: "sear the steak" }] };
+
+const ADD_OP = { op: "ADD", target: "MEMORY.md", line: "prefers oat milk", sources: [{ fromSeq: 1, toSeq: 2 }] };
+
+describe("runReduceStage", () => {
+  it("substitutes memory, topics, and DURABLE fact candidates (with taint) into the prompt", async () => {
+    const { provider, requests } = scriptedProvider(() => reduceReply([]));
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [DURABLE, EPHEMERAL], containsToolDerived: true }]),
+      CURRENT_MEMORY,
+    );
+
+    const prompt = requests[0]?.messages[0]?.content ?? "";
+    expect(prompt).toContain("MEM[Kevin likes tea.]");
+    expect(prompt).toContain("--- topics/cooking ---\nsear the steak");
+    expect(prompt).toContain("prefers oat milk"); // durable fact included
+    expect(prompt).toContain("tool-derived"); // taint annotation on the tainted session
+    expect(prompt).not.toContain("is tired right now"); // ephemeral facts are NOT carried
+  });
+
+  it("parses a valid reduce reply into the ops array", async () => {
+    const { provider } = scriptedProvider(() => reduceReply([ADD_OP]));
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    const ops = await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [DURABLE] }]),
+      CURRENT_MEMORY,
+    );
+
+    expect(ops).toEqual([ADD_OP]);
+  });
+
+  it("treats an empty ops array as a valid quiet-night answer", async () => {
+    const { provider, requests } = scriptedProvider(() => reduceReply([]));
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    const ops = await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [] }]),
+      CURRENT_MEMORY,
+    );
+
+    expect(ops).toEqual([]);
+    expect(requests.length).toBe(1);
+  });
+
+  it("retries once on a malformed reply and uses the second, valid one", async () => {
+    const { provider, requests } = scriptedProvider((idx) => (idx === 0 ? "not json" : reduceReply([ADD_OP])));
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    const ops = await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [DURABLE] }]),
+      CURRENT_MEMORY,
+    );
+
+    expect(requests.length).toBe(2);
+    expect(ops).toEqual([ADD_OP]);
+  });
+
+  it("returns null when BOTH attempts fail (the night completes episodic-only)", async () => {
+    const { provider, requests } = scriptedProvider(() => "still not json");
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    const ops = await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [DURABLE] }]),
+      CURRENT_MEMORY,
+    );
+
+    expect(ops).toBeNull();
+    expect(requests.length).toBe(2);
+  });
+
+  it("refuses a reply with an unknown op (schema-validated) and returns null after retry", async () => {
+    const { provider } = scriptedProvider(() => reduceReply([{ op: "DELETE", target: "MEMORY.md", line: "x" }]));
+    const runner = createDreamRunner(reduceDeps({ provider }));
+
+    const ops = await runner.runReduceStage(
+      { userId: USER_ID, memoryDir: "/unused" },
+      resultWith([{ sessionId: "s1", facts: [DURABLE] }]),
+      CURRENT_MEMORY,
+    );
+
+    expect(ops).toBeNull();
+  });
+});
+
 // --- checkpoint mark -------------------------------------------------------
 
 describe("mark", () => {

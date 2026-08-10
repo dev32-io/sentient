@@ -391,3 +391,127 @@ describe("applyOps — source→session mapping is tainted-first", () => {
     if (out.ok) expect(at(out.applied, 0).sessionIds).toEqual([]);
   });
 });
+
+// --- amendment 1: rail floor is min(prior*pct/100, prior-1) ------------------
+
+describe("applyOps — the preservation rail always allows dropping one line (amendment 1)", () => {
+  it("applies a single FLAG_STALE on a TINY file the raw pct floor would have wedged", async () => {
+    // 2 lines, pct 75 → raw floor 1.5 (would refuse a 1-line result forever).
+    // Effective floor = min(1.5, prior-1=1) = 1; result 1 line, 1 < 1 is false → allowed.
+    const { store } = tmpStore();
+    const { deps, retireCalls } = makeDeps();
+    store.writeCore("Kevin is on vacation.\nKevin lives in Boston.");
+
+    const out = await run(store, deps, [
+      { op: "FLAG_STALE", target: "MEMORY.md", old_line: "Kevin is on vacation.", reason: "trip ended", sources: [] },
+    ]);
+
+    expect(out.ok).toBe(true);
+    expect(store.readCore()).toBe("Kevin lives in Boston.");
+    expect(retireCalls).toEqual([{ target: "MEMORY.md", oldLine: "Kevin is on vacation.", reason: "stale" }]);
+  });
+
+  it("still refuses a batch that drops MORE than the one-line floor allows", async () => {
+    // 2 lines; effective floor min(1.5, 1) = 1; dropping BOTH → 0 lines, 0 < 1 → rail.
+    const { store } = tmpStore();
+    const { deps } = makeDeps();
+    store.writeCore("l1\nl2");
+
+    const out = await run(store, deps, [
+      { op: "FLAG_STALE", target: "MEMORY.md", old_line: "l1", reason: "x", sources: [] },
+      { op: "FLAG_STALE", target: "MEMORY.md", old_line: "l2", reason: "y", sources: [] },
+    ]);
+
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refused).toBe("rail");
+    expect(store.readCore()).toBe("l1\nl2");
+  });
+});
+
+// --- amendment 2: optional description seeds a NEW topic's frontmatter --------
+
+describe("applyOps — ADD description seeds a new topic file only (amendment 2)", () => {
+  it("uses an ADD's description as the frontmatter of a brand-new topic", async () => {
+    const { store } = tmpStore();
+    const { deps } = makeDeps();
+    store.writeCore("seed");
+
+    const out = await run(store, deps, [
+      {
+        op: "ADD",
+        target: "topics/gardening",
+        line: "the tomatoes go in after the last frost",
+        description: "the household garden",
+        sources: [],
+      },
+    ]);
+
+    expect(out.ok).toBe(true);
+    expect(store.readTopic("gardening")).toBe("the tomatoes go in after the last frost");
+    expect(store.listTopics().find((t) => t.name === "gardening")?.description).toBe("the household garden");
+  });
+
+  it("ignores a description on an ADD to an EXISTING topic (its own description is preserved)", async () => {
+    const { store } = tmpStore();
+    const { deps } = makeDeps();
+    store.writeCore("seed");
+    store.writeTopic("cooking", { name: "cooking", description: "recipes and technique" }, "sear the steak");
+
+    const out = await run(store, deps, [
+      {
+        op: "ADD",
+        target: "topics/cooking",
+        line: "rest it 5 minutes",
+        description: "SHOULD BE IGNORED",
+        sources: [],
+      },
+    ]);
+
+    expect(out.ok).toBe(true);
+    expect(store.listTopics().find((t) => t.name === "cooking")?.description).toBe("recipes and technique");
+  });
+
+  it("ignores a description on an ADD to MEMORY.md", async () => {
+    const { store } = tmpStore();
+    const { deps } = makeDeps();
+    store.writeCore("core fact");
+
+    const out = await run(store, deps, [
+      { op: "ADD", target: "MEMORY.md", line: "another core fact", description: "ignored", sources: [] },
+    ]);
+
+    expect(out.ok).toBe(true);
+    expect(store.readCore()).toBe("core fact\nanother core fact");
+  });
+});
+
+// --- ADD is idempotent (crash-rerun cannot duplicate a line) -----------------
+
+describe("applyOps — a re-applied ADD does not duplicate an already-present line", () => {
+  it("re-running the SAME ADD batch against already-applied content is byte-identical, op still reported applied", async () => {
+    const { store } = tmpStore();
+    const { deps } = makeDeps();
+    store.writeCore("Kevin likes tea.");
+    const addOps: ReduceOp[] = [
+      { op: "ADD", target: "MEMORY.md", line: "Kevin bikes to work.", sources: [{ fromSeq: 1, toSeq: 2 }] },
+    ];
+
+    // First run applies the ADD.
+    const first = await run(store, deps, addOps);
+    expect(first.ok).toBe(true);
+    const afterFirst = store.readCore();
+    expect(afterFirst).toBe("Kevin likes tea.\nKevin bikes to work.");
+
+    // Crash-rerun: the identical batch re-derived against the now-extended file.
+    const second = await run(store, deps, addOps);
+    expect(second.ok).toBe(true);
+    // No duplicate line — byte-identical to the first run's result.
+    expect(store.readCore()).toBe(afterFirst);
+    // The op is STILL reported applied (the file already reflects it), so the
+    // journal op-log + fact-entry enqueue stay stable across the rerun.
+    if (second.ok) {
+      expect(second.applied).toHaveLength(1);
+      expect(at(second.applied, 0).line).toBe("Kevin bikes to work.");
+    }
+  });
+});

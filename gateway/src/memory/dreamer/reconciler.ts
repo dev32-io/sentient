@@ -87,6 +87,11 @@ const addSchema = z.object({
   op: z.literal("ADD"),
   target: targetSchema,
   line: z.string(),
+  // Optional topic description, honored ONLY when this ADD creates a NEW topic
+  // file (amendment 2): it seeds the new topic's frontmatter `description`.
+  // Ignored for MEMORY.md and for an ADD onto a topic that already exists (its
+  // existing description is preserved). Absent for the vast majority of ops.
+  description: z.string().optional(),
   sources: z.array(sourceSchema),
 });
 
@@ -118,6 +123,12 @@ const reduceOpSchema = z.discriminatedUnion("op", [addSchema, rewriteSchema, sup
 
 /** One reduce op, exactly as `system_prompts/dreamer/reduce.md` emits it. */
 export type ReduceOp = z.infer<typeof reduceOpSchema>;
+
+/** The whole reduce reply, exactly `reduce.md`'s "## Output" — `{"ops": [...]}`.
+ *  Exported so the reduce-stage runner (dreamer-runner.ts) validates + retries
+ *  on the SAME schema the reconciler applies, no drift between the two. */
+export const reduceReplySchema = z.object({ ops: z.array(reduceOpSchema) });
+export type ReduceReply = z.infer<typeof reduceReplySchema>;
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -175,6 +186,9 @@ interface TargetState {
   /** Existing topic frontmatter, preserved across a body rewrite; new topics get
    *  `{name: slug, description: ""}`. Undefined for core. */
   meta: TopicMeta | undefined;
+  /** True iff this is a topic the store did NOT already have — the only case in
+   *  which an ADD op's optional `description` seeds the frontmatter (amendment 2). */
+  isNewTopic: boolean;
   /** Line count of the prior content — the preservation-rail baseline (core). */
   priorLines: number;
   /** The working line array; joined with `\n` into the final content. */
@@ -229,6 +243,17 @@ function opLogLine(op: ReduceOp): string {
       return op.new_line;
     case "FLAG_STALE":
       return op.old_line;
+  }
+}
+
+/** Seeds a newly-created topic's frontmatter `description` from an ADD op's
+ *  optional `description` (amendment 2). Only fires for a topic the store did
+ *  not already have AND whose description is still empty (the first ADD wins) —
+ *  an existing topic keeps its own description, MEMORY.md has none to set. */
+function seedNewTopicDescription(state: TargetState, description: string | undefined): void {
+  if (state.isCore || !state.isNewTopic || description === undefined) return;
+  if (state.meta !== undefined && state.meta.description === "") {
+    state.meta = { ...state.meta, description };
   }
 }
 
@@ -335,7 +360,15 @@ export async function applyOps(
   for (const op of validOps) {
     const state = openState(op.target);
     if (op.op === "ADD") {
-      state.lines.push(op.line);
+      // Idempotent ADD: never append a line the target already carries verbatim.
+      // The reduce prompt is TOLD not to re-add covered facts, but a crash-rerun
+      // re-derives ops against a MEMORY.md the first (committed) run already
+      // extended — so the SAME ADD arrives twice. Skipping the duplicate here
+      // closes that window mechanically rather than trusting the model. The op
+      // is still reported applied (the file already reflects it), so the journal
+      // op-log and fact-entry enqueue stay stable across the rerun.
+      if (!state.lines.includes(op.line)) state.lines.push(op.line);
+      seedNewTopicDescription(state, op.description);
       continue;
     }
     const newLine = op.op === "FLAG_STALE" ? null : op.new_line;
@@ -350,10 +383,17 @@ export async function applyOps(
   const core = computed.find((c) => c.state.isCore);
   if (core) {
     const nextLines = splitLines(core.content).length;
-    const floor = (core.state.priorLines * cfg.dreamer.preservation_pct) / PCT_DIVISOR;
+    const prior = core.state.priorLines;
+    // Effective floor is `min(prior*pct/100, prior-1)` (amendment 1): the pct
+    // rail still guards a large batch, but a batch may ALWAYS drop at least one
+    // line — otherwise a tiny file wedges (a 2-line MEMORY.md with pct=75 has a
+    // raw floor of 1.5, so a single legitimate FLAG_STALE could never apply and
+    // the same stale line refuses every night). `prior-1` goes negative only
+    // when prior is 0, where nextLines>=0 clears it anyway.
+    const floor = Math.min((prior * cfg.dreamer.preservation_pct) / PCT_DIVISOR, prior - 1);
     if (nextLines < floor) {
-      log.warn("dreamer.rail.refused", { scopeId, prior: core.state.priorLines, next: nextLines });
-      return { ok: false, refused: "rail", detail: `prior=${core.state.priorLines} next=${nextLines}` };
+      log.warn("dreamer.rail.refused", { scopeId, prior, next: nextLines });
+      return { ok: false, refused: "rail", detail: `prior=${prior} next=${nextLines}` };
     }
   }
 
@@ -413,6 +453,7 @@ function openTargetState(store: MemoryStore, target: string): TargetState {
       isCore: true,
       slug: undefined,
       meta: undefined,
+      isNewTopic: false,
       priorLines: splitLines(prior).length,
       lines: splitLines(prior),
     };
@@ -421,7 +462,15 @@ function openTargetState(store: MemoryStore, target: string): TargetState {
   const priorBody = store.readTopic(slug) ?? "";
   const existing = store.listTopics().find((t) => t.name === slug);
   const meta: TopicMeta = existing ?? { name: slug, description: "" };
-  return { target, isCore: false, slug, meta, priorLines: splitLines(priorBody).length, lines: splitLines(priorBody) };
+  return {
+    target,
+    isCore: false,
+    slug,
+    meta,
+    isNewTopic: existing === undefined,
+    priorLines: splitLines(priorBody).length,
+    lines: splitLines(priorBody),
+  };
 }
 
 /** Writes one target's final content through the store's atomic, scan-gated
@@ -449,11 +498,14 @@ async function retireRemoved(deps: ReconcilerDeps, ops: ReduceOp[], scopeId: str
     try {
       await deps.retireLine(op.target, op.old_line, reason);
     } catch (err) {
+      // Amendment 3: log the error NAME only — a retire-line error message can
+      // echo the very memory line it failed to retire (no memory content in
+      // logs, global constraint). The name + target + reason is enough to trace.
       log.warn("dreamer.reconcile.retire-deferred", {
         scopeId,
         target: op.target,
         reason,
-        detail: err instanceof Error ? err.message : String(err),
+        errorName: err instanceof Error ? err.name : "non-error",
       });
     }
   }

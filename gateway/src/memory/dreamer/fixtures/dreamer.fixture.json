@@ -1,0 +1,59 @@
+{
+  "meta": {
+    "note": "Captured from a live dreamer run. Replay via dreamer-replay.test.ts (zero-cost).",
+    "provider": "ollama (local, free)",
+    "model": "gpt-oss:20b",
+    "capturedAt": "2026-08-10T02:14:49.921Z"
+  },
+  "map": {
+    "promptChars": 4546,
+    "responseText": "{\"episode\":\"The user announced they would adopt a beagle named Biscuit next month, and the assistant acknowledged this. The user then said they had switched from dairy to oat milk because it doesn't sit well with them, and the assistant noted the new preference. No further questions or plans were discussed.\",\"facts\":[{\"text\":\"Adopting a beagle named Biscuit next month\",\"kind\":\"durable\",\"sources\":[{\"fromSeq\":1,\"toSeq\":2}]},{\"text\":\"Switching from dairy to oat milk\",\"kind\":\"durable\",\"sources\":[{\"fromSeq\":3,\"toSeq\":4}]}]}"
+  },
+  "reduce": {
+    "promptChars": 6967,
+    "responseText": "{\"ops\":[{\"op\":\"ADD\",\"target\":\"MEMORY.md\",\"line\":\"Adopting a beagle named Biscuit next month.\",\"sources\":[{\"fromSeq\":1,\"toSeq\":2}]},{\"op\":\"ADD\",\"target\":\"MEMORY.md\",\"line\":\"Switching from dairy to oat milk.\",\"sources\":[{\"fromSeq\":3,\"toSeq\":4}]}]}"
+  },
+  "preState": {
+    "memoryMd": "The household lives in Portland."
+  },
+  "reduceOps": [
+    {
+      "op": "ADD",
+      "target": "MEMORY.md",
+      "line": "Adopting a beagle named Biscuit next month.",
+      "sources": [
+        {
+          "fromSeq": 1,
+          "toSeq": 2
+        }
+      ]
+    },
+    {
+      "op": "ADD",
+      "target": "MEMORY.md",
+      "line": "Switching from dairy to oat milk.",
+      "sources": [
+        {
+          "fromSeq": 3,
+          "toSeq": 4
+        }
+      ]
+    }
+  ],
+  "sessionsIndex": [
+    {
+      "sessionId": "s_live_1",
+      "containsToolDerived": false,
+      "ranges": [
+        {
+          "fromSeq": 1,
+          "toSeq": 2
+        },
+        {
+          "fromSeq": 3,
+          "toSeq": 4
+        }
+      ]
+    }
+  ]
+}

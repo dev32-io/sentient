@@ -1,42 +1,59 @@
-// Dreamer S3a transaction (memory-system spec §8 "Checkpointing", "Outputs") —
-// the per-user, idempotent-by-construction nightly consolidation, EPISODIC ONLY
-// (MEMORY.md untouched; no reconciler, so `writeDreamOutputs` gets no
-// `appliedOps` and the op-log section reads "No memory updates this night").
+// Dreamer FULL dream transaction (memory-system spec §8 "Checkpointing",
+// "Outputs", "Fact ops", "Safety rails") — the per-user, idempotent-by-
+// construction nightly consolidation. Both halves: EPISODIC (journal) AND
+// SEMANTIC (the reduce stage → reconciler → MEMORY.md/topic ops).
 //
 // THE ORDER IS THE CONTRACT (spec §8). A single run is:
 //   read mark → snapshot maxSeq from the session store → immutable window
-//   (lastSeq, maxSeq] → projectForDreaming → runMapStage → writeDreamOutputs
+//   (lastSeq, maxSeq] → projectForDreaming → runMapStage → read current memory →
+//   runReduceStage → applyOps (reconciler) → writeDreamOutputs(..., APPLIED ops)
 //   (journal committed atomically, index entries enqueued) → sync.flush()
 //   best-effort → advanceMark.
-// The mark advances LAST, and ONLY on a clean write. A crash anywhere before it
-// redoes the SAME window next run; deterministic ids make the redone journal
-// last-wins by date and the redone index upserts converge (episode-writer.ts).
+// The mark advances LAST, and ONLY on a clean journal write. A crash anywhere
+// before it redoes the SAME window next run; deterministic ids make the redone
+// journal last-wins by date, the redone index upserts converge, and the ops are
+// re-derived from the same window (episode-writer.ts / reconciler.ts).
 //
-// FOUR OUTCOMES, three of which DO NOT advance the mark:
-//   - ok      — dream ran, journal committed, mark advanced.
+// FIVE OUTCOMES:
+//   - ok               — map + reduce ran, ops applied, journal committed, mark advanced.
+//   - ok-episodic-only — the SEMANTIC half was refused but the EPISODES are canonical
+//               and must NOT be lost. Two ways in: the reduce call double-failed
+//               (unparseable after retry → `runReduceStage` returns null), OR the
+//               reconciler REFUSED the batch (rail / scan / cap / old_line). Either
+//               way the journal is still written WITH NO OPS ("No memory updates
+//               this night." — the applied-op log is empty), the refusal is logged
+//               + recorded in the status `reason`, and THE MARK STILL ADVANCES.
+//               Re-dreaming the same window would re-spend the provider for episodes
+//               that are already durable, so the episodic commit is the checkpoint —
+//               a broken reduce does not hold the whole window hostage.
 //   - skipped — dreaming toggled OFF for this user: no LLM call, no journal, but
-//               the mark STILL advances to maxSeq (spec §8 per-user toggle: "off
-//               ⇒ user's sessions are skipped, mark still advances — no unbounded
-//               backlog"). This is `skipAndAdvance`, the scheduler's off-branch.
-//   - failed  — the map stage threw (e.g. a template-load failure — T18b review
-//               M1) OR the journal write was scan-refused (fail-closed store).
-//               The night is abandoned WITH A WARN and the mark is NOT advanced,
-//               so the next run redoes the window.
+//               the mark STILL advances to maxSeq (spec §8 per-user toggle).
+//   - failed  — the map stage threw, the journal write was scan-refused, the scope
+//               could not open, OR any UNEXPECTED throw crashed the semantic/write
+//               phase. The night is abandoned WITH A WARN and the mark is NOT
+//               advanced, so the next run redoes the window. (Distinct from
+//               ok-episodic-only: a crash means the episodes never committed either.)
+//   - initialized — first-run mark seed (advance without dreaming; no backlog).
 //
 // No memory content is logged (global constraint): userId, counts, seqs, the
-// date and the outcome only — never a transcript, an episode, or a fact.
+// date, the refusal reason and the outcome only — never a transcript, an
+// episode, a fact, or a memory line.
 
 import { join } from "node:path";
 import type { OrchestratorConfig } from "@sentient/config";
 import { getLog } from "../../logging/logger.js";
+import { scanContent } from "../../security/injection-scanner.js";
 import type { SessionEntry } from "../../store/entry-types.js";
 import { projectForDreaming } from "../../store/project-for-dreaming.js";
 import { writeFileAtomic } from "../../user-auth/atomic-write.js";
 import type { UserId } from "../../user-auth/user-id.js";
 import type { IndexSync } from "../index-sync.js";
 import type { MemoryStore } from "../memory-store.js";
-import type { DreamMark, DreamResult, DreamRunner } from "./dreamer-runner.js";
+import type { CurrentMemory, DreamMark, DreamResult, DreamRunner } from "./dreamer-runner.js";
+import type { AppliedOpLog } from "./episode-writer.js";
 import { writeDreamOutputs as realWriteDreamOutputs } from "./episode-writer.js";
+import { applyOps as realApplyOps } from "./reconciler.js";
+import type { ReconcilerDeps, SessionIndexEntry } from "./reconciler.js";
 
 const log = getLog(["sentient", "memory", "dreamer", "transaction"]);
 
@@ -59,11 +76,12 @@ const MS_PER_HOUR = 3_600_000;
  *  with the dreamer enabled), so we advance it to the current head WITHOUT dreaming
  *  the entire back-history through the paid provider. */
 export interface DreamOutcome {
-  result: "ok" | "skipped" | "failed" | "initialized";
+  result: "ok" | "ok-episodic-only" | "skipped" | "failed" | "initialized";
   sessions: number;
   ops: number;
   durationMs: number;
-  /** Present on `skipped`/`failed`/`initialized` — the greppable reason. */
+  /** Present on `ok-episodic-only`/`skipped`/`failed`/`initialized` — the
+   *  greppable reason (the reduce/reconciler refusal on `ok-episodic-only`). */
   reason?: string;
 }
 
@@ -115,6 +133,9 @@ export interface DreamTransactionDeps {
    *  (ok / scan-refused) without standing up a real MemoryStore. Defaults to the
    *  real `writeDreamOutputs`. */
   writeOutputs?: typeof realWriteDreamOutputs;
+  /** Injected for tests only: the reconciler write arm. Defaults to the real
+   *  `applyOps`; crash tests stub it to throw at the apply boundary. */
+  applyOps?: typeof realApplyOps;
 }
 
 export interface DreamTransaction {
@@ -161,12 +182,39 @@ async function writeStatus(memoryDir: string, record: DreamStatusRecord): Promis
 }
 
 // ---------------------------------------------------------------------------
+// Pure helpers (reduce-stage inputs)
+// ---------------------------------------------------------------------------
+
+/** Reads the store's CURRENT distilled memory for the reduce prompt: MEMORY.md
+ *  body + every topic file (slug + body). Absent files read as empty strings so
+ *  a first-ever dream reconciles against a clean slate rather than crashing. */
+function readCurrentMemory(store: MemoryStore): CurrentMemory {
+  const core = store.readCore() ?? "";
+  const topics = store.listTopics().map((t) => ({ slug: t.name, body: store.readTopic(t.name) ?? "" }));
+  return { core, topics };
+}
+
+/** Builds the reconciler's `sessionsIndex` from the map result: each session's
+ *  taint bit plus the seq ranges its FACTS cited, so a reduce op's `sources`
+ *  resolve back (via range overlap) to the exact contributing sessions —
+ *  tainted-first, the §3.8 purge-hook ordering. A session with no facts still
+ *  appears (empty ranges) so its taint is available if an op somehow cites it. */
+function buildSessionsIndex(result: DreamResult): SessionIndexEntry[] {
+  return result.sessions.map((session) => ({
+    sessionId: session.sessionId,
+    containsToolDerived: session.containsToolDerived,
+    ranges: session.facts.flatMap((fact) => fact.sources),
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Transaction
 // ---------------------------------------------------------------------------
 
 export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransaction {
   const now = deps.now ?? ((): number => Date.now());
   const writeOutputs = deps.writeOutputs ?? realWriteDreamOutputs;
+  const applyOps = deps.applyOps ?? realApplyOps;
 
   /** `YYYY-MM-DD` in LOCAL time (matches logging/format.ts's local-clock rule so
    *  the journal date lines up with "today's log"). */
@@ -212,12 +260,81 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
       return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "map-stage" };
     }
 
-    // WRITE — fail-closed: a scan-refused journal returns ok:false and enqueues
-    // NOTHING; we abandon the night WITHOUT advancing the mark (spec §8).
-    const date = localDate(now());
-    const written = writeOutputs(handle.store, handle.sync, handle.scopeId, date, result);
-    if (!written.ok) {
-      log.warn("dreamer.run.failed", { userId, reason: "journal-refused", error: written.error });
+    // SEMANTIC HALF — reduce → reconcile → write → flush → mark. Wrapped so an
+    // UNEXPECTED throw anywhere here is a `failed` crash (mark untouched → the
+    // next run redoes the window), while the GRACEFUL degradations (a null
+    // reduce or a reconciler refusal) fall through to `ok-episodic-only` WITH the
+    // mark advanced. The difference is the whole point: a crash lost the episodes
+    // too; an episodic-only night committed them.
+    try {
+      const applied = await reconcileMemory(handle, result, userId);
+
+      // WRITE — fail-closed: a scan-refused journal returns ok:false and enqueues
+      // NOTHING; we abandon the night WITHOUT advancing the mark (spec §8). The
+      // op log carries the APPLIED ops only (empty on an episodic-only refusal).
+      const date = localDate(now());
+      const written = writeOutputs(handle.store, handle.sync, handle.scopeId, date, result, applied.ops);
+      if (!written.ok) {
+        log.warn("dreamer.run.failed", { userId, reason: "journal-refused", error: written.error });
+        const durationMs = now() - startedAt;
+        await writeStatus(handle.memoryDir, {
+          lastRunAt: runAtIso,
+          result: "failed",
+          sessions: 0,
+          ops: 0,
+          durationMs,
+          reason: "journal-refused",
+        });
+        return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "journal-refused" };
+      }
+
+      // Index drain is best-effort — a dead service defers, never drops (index-sync
+      // header). The journal is the canonical artifact; the mark advances even if
+      // the flush is deferred, because the outbox replays it on the next flush.
+      try {
+        await handle.sync.flush();
+      } catch (err) {
+        log.warn("dreamer.flush.deferred", { userId, reason: err instanceof Error ? err.message : String(err) });
+      }
+
+      // MARK LAST — the checkpoint that makes the window immutable and the run
+      // idempotent. Reached on a clean journal write whether or not the semantic
+      // half was refused (episodes are canonical either way).
+      handle.runner.advanceMark(handle.memoryDir, maxSeq, runAtIso);
+
+      const sessions = written.episodeEntries;
+      const opsCount = applied.ops.length;
+      const durationMs = now() - startedAt;
+      const result_ = applied.refusedReason === undefined ? "ok" : "ok-episodic-only";
+      await writeStatus(handle.memoryDir, {
+        lastRunAt: runAtIso,
+        result: result_,
+        sessions,
+        ops: opsCount,
+        durationMs,
+        ...(applied.refusedReason === undefined ? {} : { reason: applied.refusedReason }),
+      });
+      log.info("dreamer.run.ok", {
+        userId,
+        sessions,
+        ops: opsCount,
+        episodicOnly: result_ === "ok-episodic-only",
+        duration_ms: durationMs,
+      });
+      return {
+        result: result_,
+        sessions,
+        ops: opsCount,
+        durationMs,
+        ...(applied.refusedReason === undefined ? {} : { reason: applied.refusedReason }),
+      };
+    } catch (err) {
+      // A crash in the semantic/write phase (reduce, reconcile, journal write, or
+      // mark advance threw). The mark advances only as the LAST step, so a throw
+      // before it leaves the window intact; a throw AT advanceMark leaves the
+      // journal written but the mark stale — the next run redoes it (last-wins).
+      const detail = err instanceof Error ? err.message : String(err);
+      log.warn("dreamer.run.failed", { userId, reason: "crash", detail });
       const durationMs = now() - startedAt;
       await writeStatus(handle.memoryDir, {
         lastRunAt: runAtIso,
@@ -225,29 +342,57 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
         sessions: 0,
         ops: 0,
         durationMs,
-        reason: "journal-refused",
+        reason: "crash",
       });
-      return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "journal-refused" };
+      return { result: "failed", sessions: 0, ops: 0, durationMs, reason: "crash" };
+    }
+  }
+
+  /** The semantic half's non-crash logic: read current memory → run the reduce
+   *  call → reconcile the ops. Returns the APPLIED op log (empty when the reduce
+   *  double-failed or the reconciler refused) plus the refusal reason that makes
+   *  the night `ok-episodic-only`. THROWS on an unexpected failure — the caller's
+   *  try/catch turns that into a `failed` crash. */
+  async function reconcileMemory(
+    handle: DreamScopeHandle,
+    result: DreamResult,
+    userId: string,
+  ): Promise<{ ops: AppliedOpLog[]; refusedReason: string | undefined }> {
+    const currentMemory = readCurrentMemory(handle.store);
+    const ops = await handle.runner.runReduceStage(
+      { userId: handle.userId, memoryDir: handle.memoryDir },
+      result,
+      currentMemory,
+    );
+
+    if (ops === null) {
+      log.warn("dreamer.reduce.episodic-only", { userId, reason: "reduce-unavailable" });
+      return { ops: [], refusedReason: "reduce-unavailable" };
+    }
+    if (ops.length === 0) {
+      // A quiet night: nothing warranted a change. Not a refusal — a clean `ok`.
+      return { ops: [], refusedReason: undefined };
     }
 
-    // Index drain is best-effort — a dead service defers, never drops (index-sync
-    // header). The journal is the canonical artifact; the mark advances even if
-    // the flush is deferred, because the outbox replays it on the next flush.
-    try {
-      await handle.sync.flush();
-    } catch (err) {
-      log.warn("dreamer.flush.deferred", { userId, reason: err instanceof Error ? err.message : String(err) });
+    const reconcilerDeps: ReconcilerDeps = {
+      // Retire the removed line's index entry through the sync layer's
+      // supersession bookkeeping (index-sync `retireEntry`). Bound here from the
+      // scope's own sync — the reconciler cannot derive index ids itself.
+      retireLine: async (target, oldLine, reason) => {
+        handle.sync.retireEntry(target, oldLine, reason);
+      },
+      scan: scanContent,
+    };
+    const sessionsIndex = buildSessionsIndex(result);
+    const applyResult = await applyOps(handle.store, reconcilerDeps, handle.scopeId, ops, sessionsIndex, deps.cfg);
+    if (applyResult.ok) {
+      return { ops: applyResult.applied, refusedReason: undefined };
     }
-
-    // MARK LAST — the checkpoint that makes the window immutable and the run
-    // idempotent. Only reached on a clean journal write.
-    handle.runner.advanceMark(handle.memoryDir, maxSeq, runAtIso);
-
-    const sessions = written.episodeEntries;
-    const durationMs = now() - startedAt;
-    await writeStatus(handle.memoryDir, { lastRunAt: runAtIso, result: "ok", sessions, ops: 0, durationMs });
-    log.info("dreamer.run.ok", { userId, sessions, ops: 0, duration_ms: durationMs });
-    return { result: "ok", sessions, ops: 0, durationMs };
+    // Rail / scan / cap / old_line refusal — the episodes are NOT lost: write the
+    // journal with NO ops, advance the mark, record the refusal (spec §8 the
+    // reconciler is fail-closed; the episodic checkpoint is not).
+    log.warn("dreamer.reduce.episodic-only", { userId, reason: "reduce-refused", refused: applyResult.refused });
+    return { ops: [], refusedReason: `reduce-refused:${applyResult.refused}` };
   }
 
   /** Advance the mark to the current head WITHOUT dreaming — the shared mechanic
