@@ -489,6 +489,10 @@ orchestrator:
       max_output_tokens: 3000        # per dreamer LLM call. Range 200-16000
       catch_up_threshold_hours: 24   # boot catch-up when last mark older. Range 1-168
       yield_check_ms: 5000           # defer while user has an active turn. Range 500-60000
+      # dreamer-only model; runs via the configured provider — this tag is Ollama
+      # Cloud's DeepSeek V4 Flash; pinned alternative deepseek-v4-flash:0731-cloud.
+      # Set "" to inherit provider.model.
+      model: deepseek-v4-flash:cloud
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)

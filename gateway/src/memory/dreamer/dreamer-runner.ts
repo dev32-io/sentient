@@ -112,8 +112,12 @@ export interface DreamRunnerDeps {
   turnStateFor: (userId: UserId) => TurnStateView;
   /** `orchestrator.memory` — `cfg.dreamer.*` holds every tunable this uses. */
   cfg: OrchestratorConfig["memory"];
-  /** Provider model id, for the per-call INFO log's `model=` field only. The
-   *  ProviderClient owns the actual model selection; this is a label. */
+  /** Provider model id for every map/reduce call — sent as `ProviderRequest.model`
+   *  on each `streamOnce`, so it overrides both the client's bound model AND a
+   *  per-user profile selection the `ProviderClient` might otherwise resolve
+   *  (see `user-model-provider.ts`). Already resolved by the caller (`cfg.dreamer.model
+   *  || orchestrator.provider.model` — phase-services.ts), so this is always the
+   *  final id, never `""`. */
   model: string;
   /** Injected clock (ms). Defaults to Date.now — tests pass a fake. */
   now?: () => number;
@@ -328,6 +332,7 @@ export function createDreamRunner(deps: DreamRunnerDeps): DreamRunner {
         tools: [],
         signal: new AbortController().signal,
         maxOutputTokens: dreamerCfg.max_output_tokens,
+        model: deps.model,
       });
       for await (const chunk of stream) {
         if (chunk.type === "text") answer += chunk.content;

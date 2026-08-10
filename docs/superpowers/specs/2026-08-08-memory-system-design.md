@@ -266,6 +266,7 @@ orchestrator:
       max_output_tokens: 3000     # per dreamer LLM call. Range 200-16000
       catch_up_threshold_hours: 24      # boot catch-up when last mark older. Range 1-168
       yield_check_ms: 5000        # defer while user has an active turn. Range 500-60000
+      model: deepseek-v4-flash:cloud    # dreamer-only model override; "" inherits provider.model
   # managed_services.deep-memory: launch: native, optional: true, exec/env/healthcheck per
   # whisper-stt precedent; embedding model pinned in ~/.sentient/deep-memory/config.yaml
 ```

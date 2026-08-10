@@ -876,6 +876,19 @@ const DREAMER_HOUSEHOLD_ID = "home";
  *  (`<cap.rootPath>/memory`), where the dream mark + status live. */
 const MEMORY_DIRNAME = "memory";
 
+/** Resolves the model the dreamer's map/reduce calls send: a non-empty
+ *  `memory.dreamer.model` override wins; `""` (the default) inherits the chat
+ *  model (`orchestrator.provider.model`). Exported so the fallback — "" must
+ *  fall through, not be treated as a real value — is unit-testable on its own,
+ *  without composing the rest of `buildDreamScheduler`'s heavy deps (provider,
+ *  deep-memory app, profile store, ...). */
+export function resolveDreamerModel(
+  memoryCfg: OrchestratorConfig["memory"],
+  providerCfg: OrchestratorConfig["provider"],
+): string {
+  return memoryCfg.dreamer.model || providerCfg.model;
+}
+
 /**
  * Builds the nightly dreamer scheduler + its S3a transaction, or null when the
  * feature is not wired (memory off, dreamer toggle off, or a missing provider /
@@ -931,7 +944,7 @@ function buildDreamScheduler(
       loadTemplate: (name) => loadDreamerTemplate(name),
       turnStateFor: (uid) => ({ hasActiveTurn: () => registryView?.hasActiveTurnForUser(uid) ?? false }),
       cfg: memoryCfg,
-      model: deps.orchestratorCfg.provider.model,
+      model: resolveDreamerModel(memoryCfg, deps.orchestratorCfg.provider),
     });
     const readWindow = (): { entries: SessionEntry[]; maxSeq: number } => {
       const sessionStore = openSessionStore(deps.accessManager.grant(principal, "session-store"), deps.dbFileName);

@@ -132,6 +132,20 @@ describe("runMapStage", () => {
     expect(requests[0]?.maxOutputTokens).toBe(1234);
   });
 
+  it("sends deps.model as the per-request model override on every provider call", async () => {
+    // phase-services.ts resolves "" → provider.model BEFORE constructing the
+    // runner (see resolveDreamerModel's own unit test in phase-services.test.ts
+    // for the inherit-vs-override fallback itself); this pins the other half of
+    // the wiring — that whatever the runner is handed actually reaches the
+    // provider request as `req.model`, not just the per-call log line.
+    const { provider, requests } = scriptedProvider(() => mapJson("ep"));
+    const runner = createDreamRunner(deps({ provider, model: "deepseek-v4-flash:cloud" }));
+
+    await runner.runMapStage({ userId: USER_ID, memoryDir: "/unused" }, win([{ sessionId: "s1", text: "hi" }]));
+
+    expect(requests[0]?.model).toBe("deepseek-v4-flash:cloud");
+  });
+
   it("retries once on malformed output and uses the second, valid response", async () => {
     const { provider, requests } = scriptedProvider((idx) =>
       idx === 0 ? "not json at all" : mapJson("recovered", [DURABLE_FACT]),

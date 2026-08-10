@@ -31,4 +31,15 @@ describe("orchestratorConfigSchema", () => {
     const c = orchestratorConfigSchema.parse(base);
     expect("api_key_env" in c.provider).toBe(false);
   });
+  it('defaults memory.dreamer.model to "" (inherit provider.model) when the memory block is omitted', () => {
+    const c = orchestratorConfigSchema.parse(base);
+    expect(c.memory.dreamer.model).toBe("");
+  });
+  it("parses a non-empty memory.dreamer.model override", () => {
+    const c = orchestratorConfigSchema.parse({
+      ...base,
+      memory: { dreamer: { model: "deepseek-v4-flash:cloud" } },
+    });
+    expect(c.memory.dreamer.model).toBe("deepseek-v4-flash:cloud");
+  });
 });

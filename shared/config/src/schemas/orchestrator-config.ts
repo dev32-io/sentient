@@ -317,6 +317,10 @@ export const orchestratorConfigSchema = z.object({
           // Defer while the user has an active turn; re-checked on this
           // interval. Range 500-60000.
           yield_check_ms: z.number().int().min(500).max(60000).default(5000),
+          // "" = inherit provider.model; a non-empty value overrides the model
+          // for dreamer map/reduce calls only (background distillation can run
+          // a cheaper/faster model than chat).
+          model: z.string().default(""),
         })
         .default({}),
     })

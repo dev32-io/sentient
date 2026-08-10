@@ -41,8 +41,14 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
       const requested = req.reasoningEffort ?? cfg.reasoning_effort;
       const isOmitted = cfg.reasoning_effort === "unset" || requested === "unset";
       const reasoningEffort = isOmitted ? undefined : requested;
+      // Per-request override (`req.model`) wins over the client's bound model —
+      // see the field comment in provider-client.ts. The dreamer is the first
+      // caller: it always sends its own resolved model, so this request's body
+      // reflects the dreamer's config even when `deps.provider` is a per-user
+      // wrapper whose cached client is keyed on the chat model.
+      const model = req.model ?? cfg.model;
       log.info("stream-start", {
-        model: cfg.model,
+        model,
         messageCount: req.messages.length,
         toolCount: req.tools.length,
         maxOutputTokens,
@@ -54,7 +60,7 @@ export function createOpenAIProvider(cfg: OrchestratorConfig["provider"], apiKey
       try {
         response = await client.chat.completions.create(
           {
-            model: cfg.model,
+            model,
             messages: req.messages as OpenAI.Chat.ChatCompletionMessageParam[],
             stream: true,
             stream_options: { include_usage: true },

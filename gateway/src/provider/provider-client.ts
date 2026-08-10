@@ -54,6 +54,16 @@ export interface ProviderRequest {
    * auxiliary call on exactly the deployment that had to disable it.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Per-request model override, for a workload that must run a different model
+   * than the loop's (`orchestrator.provider.model`, or a user's per-session
+   * selection resolved upstream) — the dreamer's nightly map/reduce calls (spec
+   * §8) are the first caller: `orchestrator.memory.dreamer.model` lets an
+   * operator point background distillation at a cheaper/faster model without
+   * touching the chat model. Omitted (or `undefined`) falls back to whatever
+   * the `ProviderClient` implementation would otherwise send.
+   */
+  model?: string;
 }
 
 export interface ProviderClient {

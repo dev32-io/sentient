@@ -920,6 +920,7 @@ function testOrchestratorConfig(): OrchestratorConfig {
         max_output_tokens: 3000,
         catch_up_threshold_hours: 24,
         yield_check_ms: 5000,
+        model: "",
       },
     },
   };
