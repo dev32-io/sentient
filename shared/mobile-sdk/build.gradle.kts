@@ -27,7 +27,10 @@ plugins {
 // Bumped to 0.3.0: Sentient 2.0 wire rebase — turn.*/permission.*/delegation.progress
 // frames, cycleId→turnId across protocol/connectors/sdk, per-turn downlink audio queue
 // (§7.2: a new turn queues behind, never flushes), permission + delegation connectors.
-version = "0.3.0"
+// Bumped to 0.4.0: 2.0 memory-branch protocol touches — AuthUser gains `role`
+// (tool-permission role gate readable by clients); dead 1.x decoders flagged for
+// removal (see native-todo "Mobile protocol cleanup").
+version = "0.4.0"
 
 kotlin {
     androidTarget {
