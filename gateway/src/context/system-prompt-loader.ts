@@ -161,3 +161,34 @@ export function loadAuxiliaryTemplate(
   auxiliaryTemplates.set(key, resolved);
   return resolved;
 }
+
+// ---------------------------------------------------------------------------
+// Dreamer templates (memory-system spec §8 — "Prompt templates as .md (baked +
+// operator override)")
+// ---------------------------------------------------------------------------
+
+/** The dreamer's two baked prompts. Unlike the compaction/skill/memory
+ *  preambles — where a file directly under `system_prompts/` IS the override and
+ *  the baked default lives under `templates/prompts/` — `system_prompts/dreamer/`
+ *  IS the baked location (see the header comment in map.md), mirroring
+ *  `system_prompts/auxiliary/`. Read at module init: a missing baked template is
+ *  a build error and must fail loudly at boot, not the first time a dream runs
+ *  at 3am when nobody is watching the log. */
+const DEFAULT_DREAMER_TEMPLATES: Record<"map" | "reduce", string> = {
+  map: readFileSync(assetPath("system_prompts", "dreamer", "map.md"), "utf8").trim(),
+  reduce: readFileSync(assetPath("system_prompts", "dreamer", "reduce.md"), "utf8").trim(),
+};
+
+/** One dreamer prompt: operator override (an on-disk `system_prompts/dreamer/<name>.md`
+ *  under the runtime asset root) FIRST, the baked template as the fallback —
+ *  same two-tier shape as the other loaders here, so an operator can retune the
+ *  dreamer without a rebuild. In a repo checkout the two paths coincide and the
+ *  override read simply returns the baked content (harmless); in a compiled
+ *  binary the baked copy lives in the embedded bundle and the override is the
+ *  on-disk file. THROWS never — a missing override falls through to the baked
+ *  default, which always exists (module-init read above). */
+export function loadDreamerTemplate(name: "map" | "reduce", opts: { runtimeDir?: string } = {}): string {
+  const runtimeDir = opts.runtimeDir ?? resolveAssetRoot();
+  const override = tryRead(join(runtimeDir, "system_prompts", "dreamer", `${name}.md`), "dreamer-template", "debug");
+  return override ?? DEFAULT_DREAMER_TEMPLATES[name];
+}

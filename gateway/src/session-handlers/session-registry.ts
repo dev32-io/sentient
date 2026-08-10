@@ -225,6 +225,17 @@ export interface SessionRegistry {
    * a divergence would leave a revoked account authoritative.
    */
   orphanSessionsForUser(userId: string): readonly SessionRuntime[];
+  /**
+   * True iff ANY resident session owned by [userId] has a turn in flight. The
+   * READ-ONLY, non-destructive seam the nightly dreamer's yield gate polls
+   * (memory-system spec §8: the dreamer is low priority and waits while a user
+   * has an active turn). A SCAN of resident sessions for the same reason
+   * `attachmentsForUser` is one — a per-user index would have to be kept in step
+   * through every attach/detach/disposal for a check that fires once a night.
+   * Distinct from `orphanSessionsForUser`, which TAKES sessions out of service;
+   * this only reads `runtime.running`.
+   */
+  hasActiveTurnForUser(userId: string): boolean;
   /** The one runtime serving this session, or null when none is resident. */
   runtimeFor(sessionId: string): SessionRuntime | null;
   /** Everything an attaching connection needs to hold onto — see
@@ -432,6 +443,14 @@ export function createSessionRegistry(policy: SessionDisposalPolicy = disposeWhe
         orphaned.push(orphanResident(sessionId, resident));
       }
       return orphaned;
+    },
+
+    hasActiveTurnForUser(userId) {
+      for (const resident of sessions.values()) {
+        const runtime = resident.handles.runtime;
+        if (runtime.userId === userId && runtime.running) return true;
+      }
+      return false;
     },
 
     runtimeFor(sessionId) {

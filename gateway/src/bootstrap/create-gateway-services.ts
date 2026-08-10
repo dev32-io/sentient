@@ -236,6 +236,23 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
 
   const routes = runPhaseRoutes({ cfg });
 
+  // Residency is DERIVED from observable work, not from which window closed last
+  // (session-model spec §5). Built here (not inline below) so the nightly dreamer
+  // can bind its yield gate to the live registry — the registry does not exist
+  // until now, which is why `startDreamScheduler` is late-bound (phase-services).
+  const sessionRegistry = createSessionRegistry(
+    createSessionRetentionPolicy({
+      retentionMs: cfg.session.retention_ms,
+      recheckIntervalMs: cfg.session.retention_recheck_interval_ms,
+      lostTaskThresholdMs: resolveLostTaskThresholdMs(cfg),
+      maxIdleResidentSessions: cfg.session.max_idle_resident_sessions,
+    }),
+  );
+
+  // Arm the nightly dreamer (memory-system spec §8) now that the registry exists.
+  // No-op when the dreamer is not wired (memory/dreamer off, or no provider).
+  services.startDreamScheduler?.(sessionRegistry);
+
   log.info("services-composed", {
     stt: services.stt !== null,
     tts: services.tts !== null,
@@ -275,14 +292,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     // Residency is DERIVED from observable work, not from which window closed
     // last (session-model spec §5). Substituted into the disposal hook the
     // registry has always exposed — the registry itself is unchanged.
-    sessionRegistry: createSessionRegistry(
-      createSessionRetentionPolicy({
-        retentionMs: cfg.session.retention_ms,
-        recheckIntervalMs: cfg.session.retention_recheck_interval_ms,
-        lostTaskThresholdMs: resolveLostTaskThresholdMs(cfg),
-        maxIdleResidentSessions: cfg.session.max_idle_resident_sessions,
-      }),
-    ),
+    sessionRegistry,
     // No config at all, and no dependency on the registry above: the two answer
     // different questions about the same fleet, and this one has to stay
     // answerable for a connection no session has ever heard of.

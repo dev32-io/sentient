@@ -478,7 +478,7 @@ orchestrator:
       k: 5                           # hits per memory_recall. Range 1-20
       context_entries: 2             # entries of context around a drill-down hit. Range 0-10
     dreamer:
-      enabled: false                 # SLICE STAGING — off until T20; zod default is true
+      enabled: true                  # S3 activation (T20) — nightly episodic consolidation; zod default is true
       hour: 3                        # local time, nightly. Range 0-23
       preservation_pct: 75           # refuse op batches shrinking MEMORY.md below this. Range 0-100
       max_input_chars_per_call: 60000  # per map-call session window. Range 4000-400000

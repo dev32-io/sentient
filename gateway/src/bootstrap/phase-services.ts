@@ -25,9 +25,14 @@ import type { StartupConfig } from "../config/startup-config.ts";
 import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
-import { loadMemoryPreamble, loadSkillIndexPreamble, loadSystemPrompt } from "../context/system-prompt-loader.ts";
+import {
+  loadDreamerTemplate,
+  loadMemoryPreamble,
+  loadSkillIndexPreamble,
+  loadSystemPrompt,
+} from "../context/system-prompt-loader.ts";
 import { type ExternalToolSlot, createExternalToolSlot } from "../external-tools/external-tool-slot.js";
-import type { UserPrincipal } from "../identity/user-principal.js";
+import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.ts";
 import {
   type DeepMemoryApp,
@@ -36,12 +41,16 @@ import {
   createSessionSpark,
   withIndexSync,
 } from "../memory/deep-memory-wiring.js";
+import { createDreamTransaction } from "../memory/dreamer/dream-transaction.js";
+import type { DreamScopeHandle } from "../memory/dreamer/dream-transaction.js";
+import { createDreamRunner, readMark } from "../memory/dreamer/dreamer-runner.js";
+import { type DreamClock, type DreamScheduler, createDreamScheduler } from "../memory/dreamer/scheduler.js";
 import { composeMemoryBlock } from "../memory/memory-prompt.js";
 import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
-import { type ProfileStore, createProfileStore } from "../profile-store/profile-store.ts";
+import { type ProfileStore, createProfileStore, memoryTogglesFor } from "../profile-store/profile-store.ts";
 import { type TemplateLoader, createTemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createConfirmHook, createSessionPermissionBroker } from "../runtime/session-permission-broker.js";
@@ -52,6 +61,7 @@ import { createInboundGate } from "../security/inbound-gate.js";
 import type { InboundGate } from "../security/inbound-gate.js";
 import { scanContent } from "../security/injection-scanner.js";
 import { createRiskAccumulator } from "../security/risk-accumulator.js";
+import type { SessionRegistry } from "../session-handlers/session-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import { renderSkillIndex } from "../skills/skill-index.js";
 import { createSkillStore } from "../skills/skill-store.js";
@@ -417,6 +427,12 @@ export interface PhaseServicesOutput {
    *  in `main.ts` once the MCP host exists, before the server accepts its
    *  first connection (task 9g). */
   readonly delegatedExternalTool: ExternalToolSlot;
+  /** Binds the live SessionRegistry into the dreamer's yield gate and arms the
+   *  nightly scheduler (memory-system spec §8). Null when the dreamer is not
+   *  wired. Called by create-gateway-services.ts once the registry exists. */
+  readonly startDreamScheduler: ((registry: Pick<SessionRegistry, "hasActiveTurnForUser">) => void) | null;
+  /** Disarms the nightly dreamer timer on shutdown. Null when not wired. */
+  readonly stopDreamScheduler: (() => void) | null;
 }
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
@@ -438,8 +454,15 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const profileStore = createProfileStore();
   const templateLoader = createTemplateLoader();
 
-  const { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool } =
-    await buildOrchestratorServices(cfg, secretsStore, profileStore, auth);
+  const {
+    accessManager,
+    mcpClient,
+    provider,
+    createSessionRuntime,
+    delegatedExternalTool,
+    startDreamScheduler,
+    stopDreamScheduler,
+  } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth);
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -545,6 +568,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     provider,
     createSessionRuntime,
     delegatedExternalTool,
+    startDreamScheduler,
+    stopDreamScheduler,
   };
 }
 
@@ -593,6 +618,14 @@ export interface OrchestratorServices {
    *  late-bound. Resolved per dispatch by `delegateTask`'s setup phase, never
    *  snapshotted at session creation. */
   delegatedExternalTool: ExternalToolSlot;
+  /** Binds the live SessionRegistry into the dreamer's yield gate and starts the
+   *  nightly scheduler + boot catch-up. Null when the dreamer is not wired
+   *  (memory or dreamer disabled, or provider / deep-memory app unavailable).
+   *  Late-bound because the registry is built AFTER this function returns
+   *  (create-gateway-services.ts). */
+  startDreamScheduler: ((registry: Pick<SessionRegistry, "hasActiveTurnForUser">) => void) | null;
+  /** Disarms the nightly timer on shutdown. Null when the dreamer is not wired. */
+  stopDreamScheduler: (() => void) | null;
 }
 
 /**
@@ -654,7 +687,15 @@ export async function buildOrchestratorServices(
 
   if (!cfg.orchestrator) {
     log.info("orchestrator.disabled", { reason: "no orchestrator: block in config.yaml" });
-    return { accessManager, mcpClient, provider: null, createSessionRuntime: null, delegatedExternalTool };
+    return {
+      accessManager,
+      mcpClient,
+      provider: null,
+      createSessionRuntime: null,
+      delegatedExternalTool,
+      startDreamScheduler: null,
+      stopDreamScheduler: null,
+    };
   }
 
   const orchestratorCfg = cfg.orchestrator;
@@ -691,7 +732,183 @@ export async function buildOrchestratorServices(
     deepMemoryApp,
   });
 
-  return { accessManager, mcpClient, provider, createSessionRuntime, delegatedExternalTool };
+  // Nightly dreamer (memory-system spec §8, S3a). Wired only when memory + the
+  // dreamer toggle are both on AND the two collaborators the transaction needs
+  // exist — the per-user provider factory and the deep-memory app (its index
+  // outbox is where the episode summaries land). `startDreamScheduler` is
+  // late-bound: the SessionRegistry the yield gate polls is not built until
+  // create-gateway-services.ts, after this returns.
+  const dreamWiring = buildDreamScheduler({
+    orchestratorCfg,
+    accessManager,
+    provider,
+    deepMemoryApp,
+    profileStore,
+    auth: auth ?? null,
+  });
+
+  return {
+    accessManager,
+    mcpClient,
+    provider,
+    createSessionRuntime,
+    delegatedExternalTool,
+    startDreamScheduler: dreamWiring?.start ?? null,
+    stopDreamScheduler: dreamWiring?.stop ?? null,
+  };
+}
+
+/** The dreamer's collaborators, all app-lifetime, all resolved before the
+ *  SessionRegistry exists. */
+interface DreamSchedulerDepsInput {
+  orchestratorCfg: OrchestratorConfig;
+  accessManager: AccessManager;
+  provider: UserModelProvider | null;
+  deepMemoryApp: DeepMemoryApp | null;
+  profileStore: ProfileStore;
+  auth: AuthService | null;
+}
+
+/** The dreamer principal's role + household are IMMATERIAL to the two grants it
+ *  mints (`memory-private`, `session-store`): both confine to the user's own
+ *  home dir (access-manager.ts `rootPathFor` uses `userHomeDir(principal)` for
+ *  every class except `memory-household`), and neither the memory store nor the
+ *  session store reads `role`/`householdId` on the dreamer write path. A fixed
+ *  adult/home principal therefore grants exactly the same authority a
+ *  freshly-authed one would, without an async user-record read per user per
+ *  night. */
+const DREAMER_PRINCIPAL_ROLE = "adult" as const;
+const DREAMER_HOUSEHOLD_ID = "home";
+/** The scope's memory dir name — sibling constant to memory-store's own
+ *  (`<cap.rootPath>/memory`), where the dream mark + status live. */
+const MEMORY_DIRNAME = "memory";
+
+/**
+ * Builds the nightly dreamer scheduler + its S3a transaction, or null when the
+ * feature is not wired (memory off, dreamer toggle off, or a missing provider /
+ * deep-memory app). Returns `start`/`stop` closures rather than the scheduler
+ * itself so the composition root binds the live SessionRegistry (built later)
+ * into the yield gate at the moment it arms the timer.
+ */
+function buildDreamScheduler(
+  deps: DreamSchedulerDepsInput,
+): { start: (registry: Pick<SessionRegistry, "hasActiveTurnForUser">) => void; stop: () => void } | null {
+  const memoryCfg = deps.orchestratorCfg.memory;
+  if (!memoryCfg.enabled || !memoryCfg.dreamer.enabled) {
+    log.info("dreamer.disabled", { memoryEnabled: memoryCfg.enabled, dreamerEnabled: memoryCfg.dreamer.enabled });
+    return null;
+  }
+  const { provider, deepMemoryApp } = deps;
+  if (!provider || !deepMemoryApp) {
+    log.warn("dreamer.not-wired", {
+      reason: "provider or deep-memory app unavailable — the nightly dreamer stays off (file memory unaffected)",
+      hasProvider: provider !== null,
+      hasDeepMemoryApp: deepMemoryApp !== null,
+    });
+    return null;
+  }
+
+  // Late-bound yield-gate seam: the runner polls this per provider call; a null
+  // registry (before `start`) simply reports no active turn, which is correct at
+  // boot when no session exists.
+  let registryView: Pick<SessionRegistry, "hasActiveTurnForUser"> | null = null;
+
+  const principalFor = (userId: string): UserPrincipal =>
+    createUserPrincipal(userId, DREAMER_PRINCIPAL_ROLE, DREAMER_HOUSEHOLD_ID);
+
+  const memoryDirFor = (userId: string): string =>
+    join(deps.accessManager.grant(principalFor(userId), "memory-private").rootPath, MEMORY_DIRNAME);
+
+  const openDreamScope = (userId: string): DreamScopeHandle | null => {
+    const principal = principalFor(userId);
+    const memoryCap = deps.accessManager.grant(principal, "memory-private");
+    // RAW store — writeDreamOutputs enqueues provenance-carrying index ENTRIES,
+    // so the store must not also enqueueFile the journal (index-sync header).
+    const store = openMemoryStore(memoryCap, memoryCfg, { scan: scanContent });
+    const scopeId = privateScopeId(userId);
+    const indexDir = join(memoryCap.rootPath, DEEP_MEMORY_DIRNAME);
+    const scope = deepMemoryApp.ensureScope({
+      scopeId,
+      indexDir,
+      indexPath: join(indexDir, DEEP_MEMORY_INDEX_FILE),
+      store,
+    });
+    const runner = createDreamRunner({
+      provider: provider.forUser(userId),
+      loadTemplate: (name) => loadDreamerTemplate(name),
+      turnStateFor: (uid) => ({ hasActiveTurn: () => registryView?.hasActiveTurnForUser(uid) ?? false }),
+      cfg: memoryCfg,
+      model: deps.orchestratorCfg.provider.model,
+    });
+    const readWindow = (): { entries: SessionEntry[]; maxSeq: number } => {
+      const sessionStore = openSessionStore(deps.accessManager.grant(principal, "session-store"));
+      try {
+        const entries: SessionEntry[] = [];
+        let maxSeq = 0;
+        for (const s of sessionStore.listSessions()) {
+          for (const entry of sessionStore.readSession(s.sessionId)) {
+            entries.push(entry);
+            if (entry.seq > maxSeq) maxSeq = entry.seq;
+          }
+        }
+        return { entries, maxSeq };
+      } finally {
+        sessionStore.close();
+      }
+    };
+    return {
+      userId: principal.userId,
+      scopeId,
+      memoryDir: join(memoryCap.rootPath, MEMORY_DIRNAME),
+      store,
+      sync: scope.sync,
+      runner,
+      readWindow,
+    };
+  };
+
+  const transaction = createDreamTransaction({
+    openDreamScope,
+    readDreamMark: (userId) => readMark(memoryDirFor(userId)),
+    cfg: memoryCfg,
+  });
+
+  const hostClock: DreamClock = {
+    now: () => new Date(),
+    setTimeout: (fn, ms) => {
+      const t = setTimeout(fn, ms);
+      // A nightly timer must never be the reason the process stays alive.
+      t.unref?.();
+      return t;
+    },
+    clearTimeout: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+  };
+
+  const listUsers = async (): Promise<string[]> => {
+    if (!deps.auth) return [];
+    const listed = await deps.auth.users.list();
+    return listed.ok ? listed.value.map((u) => u.userId) : [];
+  };
+
+  let scheduler: DreamScheduler | null = null;
+  return {
+    start(registry): void {
+      registryView = registry;
+      scheduler = createDreamScheduler({
+        runDreamFor: transaction.runDreamFor,
+        skipAndAdvance: transaction.skipAndAdvance,
+        catchUpDueFor: transaction.catchUpDueFor,
+        listUsers,
+        dreamingEnabledFor: async (userId) => (await memoryTogglesFor(deps.profileStore, userId)).dreaming,
+        cfg: memoryCfg,
+        clock: hostClock,
+      });
+      scheduler.start();
+    },
+    stop(): void {
+      scheduler?.stop();
+    },
+  };
 }
 
 /**
