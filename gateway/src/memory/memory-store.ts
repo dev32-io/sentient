@@ -37,6 +37,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   type Dirent,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -229,11 +230,52 @@ export function openMemoryStore(cap: Capability, cfg: MemoryConfig, deps: Memory
    * write, or null when the path escapes via a symlink (WARN — refused, never
    * followed, matching skill-store's unconditional path refusal).
    */
+  /** `true` when `p` exists as a link OR a real entry. Uses `lstat`, which does
+   *  NOT follow the final symlink — so a DANGLING symlink (or a live one) counts
+   *  as present, and `firstExistingAncestor` stops AT the link rather than
+   *  walking past it as `existsSync` (which follows) would. */
+  function pathPresent(p: string): boolean {
+    try {
+      lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Walks up from `dir` to the first component present on disk (link or real).
+   *  `dir` itself when present; the filesystem root as the terminal case. */
+  function firstExistingAncestor(dir: string): string {
+    let cur = dir;
+    while (!pathPresent(cur)) {
+      const parent = dirname(cur);
+      if (parent === cur) return cur; // reached the filesystem root
+      cur = parent;
+    }
+    return cur;
+  }
+
   function resolveWriteTarget(filePath: string, relPath: string): string | null {
     const dir = dirname(filePath);
-    mkdirSync(dir, { recursive: true });
 
-    const realRoot = realpathSync(memoryRoot); // exists now — we just mkdir'd under it
+    // GUARD BEFORE mkdir (spec §3.2, defense-in-depth). A recursive `mkdirSync`
+    // FOLLOWS a symlink, so creating the target dir first would materialise
+    // directories at the symlink's target OUTSIDE the grant before the write is
+    // refused. Ensure the grant root exists (so there is a realpath to compare
+    // against), then realpath the first PRESENT ancestor of `dir` — where
+    // "present" is by `lstat`, so a planted symlink at `dir` (live OR dangling)
+    // is the ancestor and is caught here: a live one resolves outside the root,
+    // a dangling one fails to resolve (null). Either way the write is refused
+    // with no directory created.
+    mkdirSync(memoryRoot, { recursive: true });
+    const realRoot = realpathSync(memoryRoot);
+    const realAncestor = realpathOrNull(firstExistingAncestor(dir));
+    if (realAncestor === null || !isWithin(realAncestor, realRoot)) {
+      log.warn("store.symlink-refused", { relPath, op: "write" });
+      return null;
+    }
+
+    mkdirSync(dir, { recursive: true });
     const realDir = realpathSync(dir);
     if (!isWithin(realDir, realRoot)) {
       log.warn("store.symlink-refused", { relPath, op: "write" });

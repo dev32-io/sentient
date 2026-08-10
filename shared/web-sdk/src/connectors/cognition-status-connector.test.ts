@@ -33,28 +33,29 @@ describe("CognitionStatusConnector", () => {
   });
 
   it("goes thinking on turn.started", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
     expect(connector.state()).toBe("thinking");
   });
 
   it("stays thinking while a second turn is still open after the first completes", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
-    mock.emit("turn.started", { turnId: "t-2", trigger: "background-completion" });
-    mock.emit("turn.completed", { turnId: "t-1" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-2", trigger: "background-completion" });
+    mock.emit("turn.completed", { type: "turn.completed", turnId: "t-1" });
     expect(connector.state()).toBe("thinking");
   });
 
   it("returns to idle only once every turn has settled", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
-    mock.emit("turn.started", { turnId: "t-2", trigger: "background-completion" });
-    mock.emit("turn.completed", { turnId: "t-1" });
-    mock.emit("turn.aborted", { turnId: "t-2", cutoff: "interrupt" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-2", trigger: "background-completion" });
+    mock.emit("turn.completed", { type: "turn.completed", turnId: "t-1" });
+    mock.emit("turn.aborted", { type: "turn.aborted", turnId: "t-2", cutoff: "interrupt" });
     expect(connector.state()).toBe("idle");
   });
 
   it("reports acting while a FOREGROUND row is running and thinking again once it settles", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t-1",
       items: [
         {
@@ -71,6 +72,7 @@ describe("CognitionStatusConnector", () => {
 
     // Full state, last-one-wins: the settled row replaces the running one.
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t-1",
       items: [
         {
@@ -91,8 +93,9 @@ describe("CognitionStatusConnector", () => {
     // `delegateTask` is fire-and-steer: it outlives the turn that dispatched it,
     // so counting it would pin cognition at acting for as long as the task runs.
     // Its surface is DelegationProgressConnector, not this one.
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t-1",
       items: [
         {
@@ -109,8 +112,9 @@ describe("CognitionStatusConnector", () => {
   });
 
   it("goes idle when the turn ends even though a background row survives on the strip", () => {
-    mock.emit("turn.started", { turnId: "t-1", trigger: "user" });
+    mock.emit("turn.started", { type: "turn.started", turnId: "t-1", trigger: "user" });
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t-1",
       items: [
         { id: "c-1", toolName: "search", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 1000 },
@@ -129,6 +133,7 @@ describe("CognitionStatusConnector", () => {
     // Foreground rows die with their turn at the source (runtime/task-list.ts);
     // the background one rides on with a null turnId.
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: null,
       items: [
         {
@@ -141,12 +146,13 @@ describe("CognitionStatusConnector", () => {
         },
       ],
     });
-    mock.emit("turn.completed", { turnId: "t-1" });
+    mock.emit("turn.completed", { type: "turn.completed", turnId: "t-1" });
     expect(connector.state()).toBe("idle");
   });
 
   it("ignores a tasklist.state that arrives with no turn in flight", () => {
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: null,
       items: [
         { id: "c-1", toolName: "search", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 1000 },

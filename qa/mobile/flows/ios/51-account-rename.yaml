@@ -34,6 +34,7 @@ tags:
 - inputText: "Kevin"
 - tapOn:
     id: "settings-account-save"
+# 5000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: "Saved"
     timeout: 5000

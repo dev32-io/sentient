@@ -27,6 +27,7 @@ tags:
 - assertVisible: { id: "settings-model-save" }
 - tapOn: { id: "settings-model-save" }
 - assertVisible: { id: "settings-apply-notice" }
+# 45000ms: apply retry / offline model save round-trip to the gateway
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
     timeout: 45000

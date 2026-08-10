@@ -79,6 +79,20 @@ describe("SessionStore", () => {
     expect(() => openSessionStore(fileScope)).toThrow(/resource class/i);
   });
 
+  // I7: `store.db_filename` (config.yaml#store) is threaded through — an operator
+  // override must land in the file it names, not the hardcoded "sessions.db".
+  it("CONFIG: opens the db file named by the threaded db_filename, defaulting to sessions.db", () => {
+    const custom = openSessionStore(cap, "custom-store.db");
+    custom.append(entry({ sessionId: "cfg", text: "hi" }));
+    custom.close();
+    expect(existsSync(`${cap.rootPath}/custom-store.db`)).toBe(true);
+
+    const dflt = openSessionStore(cap); // no filename → session-store default
+    dflt.append(entry({ sessionId: "cfg-default", text: "hi" }));
+    dflt.close();
+    expect(existsSync(`${cap.rootPath}/sessions.db`)).toBe(true);
+  });
+
   it("INVARIANT: exposes no mutating API — history is append-only", () => {
     const store = openSessionStore(cap);
     const opaque = store as unknown as Record<string, unknown>;

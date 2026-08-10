@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Capability } from "../access/capability.js";
 import { scanContent } from "../security/injection-scanner.js";
 import type { ClientError, DeepMemoryClient, HealthInfo, IndexEntry } from "./deep-memory-client.js";
+import { withIndexSync } from "./deep-memory-wiring.js";
 import type { EnqueueEntry, ScopeHandle } from "./index-sync.js";
 import { createIndexSync } from "./index-sync.js";
 import { type MemoryConfig, type MemoryStore, openMemoryStore } from "./memory-store.js";
@@ -245,6 +246,45 @@ describe("supersede-on-edit — no duplicate active entries per source", () => {
     // Exactly one new entry upserted on the edit flush, with a new id.
     expect(at(fake.upserts, 1).entries.length).toBe(1);
     expect(at(at(fake.upserts, 1).entries, 0).id).not.toBe(priorId);
+  });
+
+  // I4: the dreamer reconciler now edits core/topic files through a
+  // withIndexSync-wrapped store (dream-transaction.ts `reconcileMemory`), exactly
+  // as session-time `memory_write` does. Before the fix the dreamer wrote through
+  // the RAW store, so its MEMORY.md edits never re-fed `enqueueFile` and the
+  // heading-keyed SECTION-level entry a session-time write had created stayed
+  // `active` — a superseded fact could still surface in spark. This pins that an
+  // edit through the wrapped store retires the prior section entry (setStatus
+  // seen) with no manual enqueueFile and leaves no stale active duplicate.
+  it("retires the section-level entry when the reconciler edits the file through the wrapped store", async () => {
+    // withIndexSync fires a background flush after each successful write; wait a
+    // macrotask for it to drain rather than calling flush() ourselves (a second
+    // concurrent flush would double-record the same upsert).
+    const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+    const fake = makeFakeClient();
+    const sync = createIndexSync(makeScope(), fake.client, memCfg(false), { now });
+    const indexedStore = withIndexSync(store, sync);
+
+    // Session-time write creates the heading-keyed section entry.
+    indexedStore.writeCore("## Weather\nUser likes sunny days");
+    await settle();
+    expect(fake.upserts.length).toBe(1);
+    const sectionId = at(at(fake.upserts, 0).entries, 0).id;
+
+    // Dreamer reconcile edits that section's line through the SAME wrapped store —
+    // no explicit enqueueFile; the wrapper enqueues and flushes.
+    indexedStore.writeCore("## Weather\nUser now prefers rain");
+    await settle();
+
+    // The old section entry is retired: setStatus(superseded) names its id.
+    expect(fake.setStatuses.length).toBe(1);
+    expect(at(fake.setStatuses, 0).ids).toEqual([sectionId]);
+    expect(at(fake.setStatuses, 0).status).toBe("superseded");
+
+    // No stale active duplicate — the one new upsert carries a different id.
+    expect(at(fake.upserts, 1).entries.length).toBe(1);
+    expect(at(at(fake.upserts, 1).entries, 0).id).not.toBe(sectionId);
   });
 
   it("does not supersede when the same content is re-flushed", async () => {

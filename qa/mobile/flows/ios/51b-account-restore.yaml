@@ -23,6 +23,7 @@ tags:
 - tapOn:
     id: "settings-account-save"
     optional: true
+# 5000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: "Saved"
     timeout: 5000

@@ -44,7 +44,7 @@ describe("AssistantAudioResponseConnector", () => {
     const mock = createMockSDK();
     connector.attach(mock.sdk);
 
-    mock.emit("turn.audio.start", { turnId: "t-1", encoding: "opus", sampleRate: 48000 });
+    mock.emit("turn.audio.start", { type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 48000 });
     mock.emitBinary(audioBytes(7));
 
     expect(onAudioFrame).toHaveBeenCalledTimes(1);
@@ -57,7 +57,7 @@ describe("AssistantAudioResponseConnector", () => {
     const mock = createMockSDK();
     connector.attach(mock.sdk);
 
-    mock.emit("turn.audio.start", { turnId: "t-1", encoding: "pcm", sampleRate: 24000 });
+    mock.emit("turn.audio.start", { type: "turn.audio.start", turnId: "t-1", encoding: "pcm", sampleRate: 24000 });
 
     expect(onAudioStart).toHaveBeenCalledWith("t-1", { encoding: "pcm", sampleRate: 24000 });
   });
@@ -68,8 +68,8 @@ describe("AssistantAudioResponseConnector", () => {
     const mock = createMockSDK();
     connector.attach(mock.sdk);
 
-    mock.emit("turn.audio.start", { turnId: "t-1", encoding: "opus", sampleRate: 48000 });
-    mock.emit("turn.audio.done", { turnId: "t-1" });
+    mock.emit("turn.audio.start", { type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 48000 });
+    mock.emit("turn.audio.done", { type: "turn.audio.done", turnId: "t-1" });
 
     expect(onAudioDone).toHaveBeenCalledWith("t-1");
   });
@@ -81,15 +81,15 @@ describe("AssistantAudioResponseConnector", () => {
     const mock = createMockSDK();
     connector.attach(mock.sdk);
 
-    mock.emit("turn.audio.start", { turnId: "t-1", encoding: "opus", sampleRate: 48000 });
+    mock.emit("turn.audio.start", { type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 48000 });
     mock.emitBinary(audioBytes(1));
-    mock.emit("playback.stop", { turnId: "t-1", reason: "barge-in" });
+    mock.emit("playback.stop", { type: "playback.stop", turnId: "t-1", reason: "barge-in" });
     mock.emitBinary(audioBytes(2));
 
     expect(onPlaybackStop).toHaveBeenCalledWith("barge-in", "t-1");
     expect(onAudioFrame).toHaveBeenCalledTimes(1);
 
-    mock.emit("turn.audio.start", { turnId: "t-2", encoding: "opus", sampleRate: 48000 });
+    mock.emit("turn.audio.start", { type: "turn.audio.start", turnId: "t-2", encoding: "opus", sampleRate: 48000 });
     mock.emitBinary(audioBytes(3));
     expect(onAudioFrame).toHaveBeenCalledTimes(2);
     expect(onAudioFrame.mock.calls[1]?.[1]).toBe("t-2");

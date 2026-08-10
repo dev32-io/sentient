@@ -133,7 +133,7 @@ def test_time_range_filter_actually_filters(tmp_path):
         k=10,
         kinds=None,
         statuses=None,
-        time_range={"start": "2026-06-01T00:00:00Z", "end": "2026-07-01T00:00:00Z"},
+        time_range={"from": "2026-06-01T00:00:00Z", "to": "2026-07-01T00:00:00Z"},
     )
     assert {h["entry"]["id"] for h in hits} == {"mid"}
 

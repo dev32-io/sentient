@@ -57,6 +57,7 @@ tags:
 - tapOn: "PIN"
 - inputText: "1111"
 - tapOn: "Add"
+# 10000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     notVisible: "Display name"
     timeout: 10000
@@ -71,6 +72,7 @@ tags:
 - tapOn: "PIN"
 - inputText: "2222"
 - tapOn: "Add"
+# 10000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     notVisible: "Display name"
     timeout: 10000

@@ -9,6 +9,7 @@
 // nothing to refill it.
 // ---------------------------------------------------------------------------
 
+import { gatewayMessageSchema } from "@sentient/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Connector } from "./connector-types.ts";
 import { CURRENT_SESSION_STORAGE_KEY } from "./sdk-reconnect.ts";
@@ -112,6 +113,11 @@ function createDrivableSocket(): DrivableSocket {
       socket.onopen?.({} as Event);
     },
     deliver(frame) {
+      // The whole point of a wire test is to feed the EXACT frame the gateway
+      // emits. Parse every mock through the real schema before it reaches the
+      // SDK, so a convenient-envelope drift (missing required field, wrong field
+      // name) fails here instead of masking a production break.
+      gatewayMessageSchema.parse(frame);
       socket.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
     },
   };
@@ -138,6 +144,22 @@ function installSessionStorageShim(): void {
 const SESSION_ID = "s_1111111111111111111111111111111";
 const DRAFT_KEY = "d_2222222222222222222222222222222";
 
+/** A schema-valid `auth.ok` — every required `authUserSchema` field present. */
+const AUTH_OK_FRAME = {
+  type: "auth.ok",
+  user: { userId: "u_aaaaaaaa", displayName: "Alice", role: "adult", isAdmin: false, avatarTint: "#336699" },
+} as const;
+
+/** A schema-valid `session.ready` — all four required audio/effect fields present. */
+const SESSION_READY_FRAME = {
+  type: "session.ready",
+  sessionId: "conn-1",
+  audioEncoding: "opus",
+  inputSampleRate: 48000,
+  outputSampleRate: 48000,
+  enabledEffects: [] as string[],
+} as const;
+
 describe("SentientSDK — the per-tab session pointer", () => {
   let sdk: SentientSDK | null = null;
   let wire: DrivableSocket;
@@ -154,7 +176,7 @@ describe("SentientSDK — the per-tab session pointer", () => {
       /* never settles in these cases — the pointer is decided before ready */
     });
     wire.open();
-    wire.deliver({ type: "auth.ok" });
+    wire.deliver({ ...AUTH_OK_FRAME });
   }
 
   function presented(): unknown {
@@ -194,8 +216,8 @@ describe("SentientSDK — the per-tab session pointer", () => {
 
     handshake();
     wire.deliver({ type: "session.attached", sessionId: SESSION_ID, generation: 1 });
-    wire.deliver({ type: "session.ready", sessionId: "conn-1" });
-    wire.deliver({ type: "conversation.snapshot", entries: [] });
+    wire.deliver({ ...SESSION_READY_FRAME });
+    wire.deliver({ type: "conversation.snapshot", items: [] });
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     expect(stored()).toBe(SESSION_ID);
@@ -206,7 +228,7 @@ describe("SentientSDK — the per-tab session pointer", () => {
 
     handshake();
     expect(presented()).toBe(SESSION_ID);
-    wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY });
+    wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY, ts: 1 });
 
     // The refused id is gone; the draft key the tab now re-presents took its place.
     expect(stored()).not.toBe(SESSION_ID);
@@ -222,7 +244,7 @@ describe("SentientSDK — the per-tab session pointer", () => {
 
     handshake();
     expect(presented()).toBe(DRAFT_KEY);
-    wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY });
+    wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY, ts: 1 });
 
     expect(stored()).toBe(DRAFT_KEY);
   });
@@ -231,7 +253,7 @@ describe("SentientSDK — the per-tab session pointer", () => {
     handshake();
     expect(presented()).toBeUndefined();
 
-    expect(() => wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY })).not.toThrow();
+    expect(() => wire.deliver({ type: "session.draft", draftKey: DRAFT_KEY, ts: 1 })).not.toThrow();
     expect(stored()).toBe(DRAFT_KEY);
   });
 

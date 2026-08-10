@@ -142,6 +142,10 @@ export interface GatewayServices {
   // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
   /** L1 capability minter (spec §2.1) — always present. */
   readonly accessManager: AccessManager;
+  /** `store.db_filename` (config.yaml#store) — the session-store db every
+   *  short-lived readback handle opens. Threaded from config so an operator
+   *  override is honoured, not silently replaced by the "sessions.db" default. */
+  readonly dbFileName: string;
   /** Shared MCP client dialing `mcp_catalog` — always present (a no-op with
    *  an empty catalog). */
   readonly mcpClient: McpClient;
@@ -316,6 +320,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
     accessManager: services.accessManager,
+    dbFileName: cfg.store.db_filename,
     mcpClient: services.mcpClient,
     provider: services.provider,
     createSessionRuntime: services.createSessionRuntime,

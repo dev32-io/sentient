@@ -30,6 +30,7 @@ tags:
     point: "84%,36%"
 - assertVisible: { id: "settings-audio-save" }
 - tapOn: { id: "settings-audio-save" }
+# 8000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     notVisible: { id: "settings-audio-save" }
     timeout: 8000

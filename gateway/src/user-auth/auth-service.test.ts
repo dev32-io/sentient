@@ -171,6 +171,28 @@ describe("createAuthService", () => {
     expect(authOld.ok).toBe(false);
   });
 
+  it("SECURITY: changePin moves the credential floor — a token minted before it stops validating", async () => {
+    // Owner ruling (I3): a PIN change re-establishes the credential, so every
+    // token minted under the old PIN is invalidated at the next check.
+    const svc = await createAuthService(AUTH_CONFIG);
+    await svc.createUser({
+      userId: "kevin",
+      displayName: "Kevin",
+      pin: "1234",
+      role: "adult",
+      avatarTint: "sage",
+    });
+    const auth = await svc.authenticate("kevin", "1234");
+    if (!auth.ok) throw new Error("unreachable");
+    expect((await svc.tokens.validate(auth.value.token)).ok).toBe(true);
+
+    const r = await svc.changePin("kevin", "1234", "5678");
+    expect(r).toEqual({ ok: true, value: undefined });
+
+    // The old session's token no longer validates — routed to login as `expired`.
+    expect(await svc.tokens.validate(auth.value.token)).toEqual({ ok: false, error: "expired" });
+  });
+
   it("changePin returns wrong-pin when currentPin does not match", async () => {
     const svc = await createAuthService(AUTH_CONFIG);
     await svc.createUser({

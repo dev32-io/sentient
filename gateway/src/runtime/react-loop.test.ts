@@ -165,6 +165,7 @@ describe("runTurn — tool vocabulary", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -201,6 +202,7 @@ describe("runTurn — text-only response", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: (_turnId, text) => deltas.push(text),
         onToolUpdate: () => {},
       },
@@ -267,6 +269,7 @@ describe("runTurn — one tool call", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: (_turnId, u) => toolUpdates.push(u),
       },
@@ -346,6 +349,7 @@ describe("runTurn — runaway tool-calling model", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(3),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -408,6 +412,7 @@ describe("runTurn — abort mid-stream", () => {
           systemPrompt: "you are a test assistant",
           sessionId,
           config: loopConfig(10),
+          requestTimeoutMs: 120000,
           onTextDelta: () => {},
           onToolUpdate: () => {},
         },
@@ -477,6 +482,7 @@ describe("runTurn — narration + tool call in the same iteration (convergence)"
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: (_turnId, text) => deltas.push(text),
         onToolUpdate: () => {},
       },
@@ -559,6 +565,7 @@ describe("runTurn — provider exhausts its output budget before any visible tex
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -604,6 +611,7 @@ describe("runTurn — provider exhausts its output budget before any visible tex
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -677,6 +685,7 @@ describe("runTurn — background tool dispatch", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -745,6 +754,7 @@ describe("runTurn — background tool dispatch", () => {
         systemPrompt: "you are a test assistant",
         sessionId,
         config: loopConfig(10),
+        requestTimeoutMs: 120000,
         onTextDelta: () => {},
         onToolUpdate: () => {},
       },
@@ -758,6 +768,61 @@ describe("runTurn — background tool dispatch", () => {
     const entries = store.readSession(sessionId);
     const resultIds = entries.filter((e) => e.kind === "tool_result").map((e) => e.toolCallId);
     expect(resultIds).toEqual(["call_bg1", "call_bg2", "call_bg3"]);
+
+    store.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// I2: a provider that goes silent MID-STREAM must not hold the one-turn lock
+// forever. The stall watchdog (re-armed on every chunk) aborts the provider
+// call when the inter-chunk gap exceeds `requestTimeoutMs`, and the turn FAILS
+// (completed:false) rather than a cutoff — with no partial pre-stall text
+// committed as a completed reply.
+// ---------------------------------------------------------------------------
+
+describe("runTurn — mid-stream provider stall", () => {
+  it("fails the turn (not a cutoff) when the provider goes silent past requestTimeoutMs", async () => {
+    const store = openSessionStore(cap);
+    const sessionId = "provider-stall";
+    seedUserMessage(store, sessionId, "tell me a story");
+
+    // Yields one chunk, then goes silent — resolving only when the (stall) abort
+    // fires, exactly like the OpenAI SDK exiting its SSE loop on abort. Never
+    // yields "done".
+    const provider = fakeProvider(async function* (_call, req) {
+      yield { type: "text", content: "Once upon a time" };
+      await new Promise<void>((resolve) => {
+        if (req.signal.aborted) return resolve();
+        req.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+    });
+
+    const turnSignal = new AbortController().signal; // the turn is NEVER cut off
+    const result = await runTurn(
+      {
+        provider,
+        broker: noopBroker(),
+        store,
+        timeZone: { zone: () => "UTC" },
+        systemPrompt: "you are a test assistant",
+        sessionId,
+        config: loopConfig(10),
+        requestTimeoutMs: 40, // short stall budget so the watchdog fires fast
+        onTextDelta: () => {},
+        onToolUpdate: () => {},
+      },
+      { turnId: "turn-stall", signal: turnSignal },
+    );
+
+    // The turn FAILED (not aborted) — session-runtime's `failed` branch commits
+    // a user-visible failure notice (failed = !completed && !signal.aborted).
+    expect(result.completed).toBe(false);
+    expect(turnSignal.aborted).toBe(false);
+
+    // No partial pre-stall text was committed as a completed assistant reply.
+    const entries = store.readSession(sessionId);
+    expect(entries.some((e) => e.kind === "assistant")).toBe(false);
 
     store.close();
   });

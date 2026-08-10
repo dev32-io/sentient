@@ -345,8 +345,10 @@ class SqliteIndexEngine:
     ) -> None:
         if not isinstance(time_range, dict):
             return
-        start = _to_epoch(time_range.get("start"))
-        end = _to_epoch(time_range.get("end"))
+        # Canonical field pair is the client shape `from`/`to` (SearchFilters in
+        # deep-memory-client.ts). `from` is a Python keyword — read via dict access.
+        start = _to_epoch(time_range.get("from"))
+        end = _to_epoch(time_range.get("to"))
         if start is not None:
             clauses.append(f"{alias}ts_epoch >= ?")
             params.append(start)

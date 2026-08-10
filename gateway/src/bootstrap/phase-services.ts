@@ -327,6 +327,9 @@ export function buildSessionMemory(
   principal: UserPrincipal,
   ids: { conversationId: string; connectionId: string },
   wiring?: SessionMemoryWiring | null,
+  /** `store.db_filename` — undefined in a test harness falls back to the
+   *  session-store default; the composition root threads the operator value. */
+  dbFileName?: string,
 ): SessionMemory | null {
   if (!orchestratorCfg.memory.enabled) return null;
 
@@ -382,7 +385,7 @@ export function buildSessionMemory(
     // `memory_read({sessionId})` drill-down — this user's own past sessions,
     // capability-scoped; a short-lived handle per read (the continuity precedent).
     readSession = (sessionId) => {
-      const sessionStore = openSessionStore(accessManager.grant(principal, "session-store"));
+      const sessionStore = openSessionStore(accessManager.grant(principal, "session-store"), dbFileName);
       try {
         return sessionStore.readSession(sessionId);
       } finally {
@@ -815,6 +818,7 @@ export async function buildOrchestratorServices(
     auth: auth ?? null,
     inboundScan: cfg.inboundScan,
     deepMemoryApp,
+    dbFileName: cfg.store.db_filename,
   });
 
   // Nightly dreamer (memory-system spec §8, S3a). Wired only when memory + the
@@ -830,6 +834,7 @@ export async function buildOrchestratorServices(
     deepMemoryApp,
     profileStore,
     auth: auth ?? null,
+    dbFileName: cfg.store.db_filename,
   });
 
   return {
@@ -852,6 +857,9 @@ interface DreamSchedulerDepsInput {
   deepMemoryApp: DeepMemoryApp | null;
   profileStore: ProfileStore;
   auth: AuthService | null;
+  /** `store.db_filename` (config.yaml#store) — the session-store db this scope's
+   *  readback opens. Threaded so an operator override is honoured everywhere. */
+  dbFileName: string;
 }
 
 /** The dreamer principal's role + household are IMMATERIAL to the two grants it
@@ -926,7 +934,7 @@ function buildDreamScheduler(
       model: deps.orchestratorCfg.provider.model,
     });
     const readWindow = (): { entries: SessionEntry[]; maxSeq: number } => {
-      const sessionStore = openSessionStore(deps.accessManager.grant(principal, "session-store"));
+      const sessionStore = openSessionStore(deps.accessManager.grant(principal, "session-store"), deps.dbFileName);
       try {
         const entries: SessionEntry[] = [];
         let maxSeq = 0;
@@ -1148,6 +1156,10 @@ interface CreateSessionRuntimeFactoryDeps {
    *  tokens unset. Each session's memory build threads its private scope through
    *  `ensureScope` for spark + recall + index sync. */
   deepMemoryApp: DeepMemoryApp | null;
+  /** `store.db_filename` (config.yaml#store) — the session-store db every
+   *  runtime + memory readback in this factory opens. Threaded so an operator
+   *  override is honoured, not silently replaced by the "sessions.db" default. */
+  dbFileName: string;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -1160,7 +1172,7 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg, deepMemoryApp } = deps;
+  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg, deepMemoryApp, dbFileName } = deps;
 
   // Inbound-scan boundary config (T1), threaded from the operator's
   // `security.inbound_scan` YAML through StartupConfig — so a channel the
@@ -1302,6 +1314,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       principal,
       { conversationId, connectionId },
       deepMemoryApp ? { app: deepMemoryApp, gate: inboundGate, profileStore } : null,
+      dbFileName,
     );
     const spark = sessionMemory?.spark ?? null;
 
@@ -1462,6 +1475,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // comment in session-runtime.ts.
       sessionId: conversationId,
       accessManager,
+      // `store.db_filename` (config.yaml#store) — the live session-store db this
+      // runtime opens. Threaded so an operator override is honoured.
+      dbFileName,
       // Bound to THIS session's user, so every request runs the model that user
       // selected in Settings rather than one config.yaml value for the whole
       // household. See user-model-provider.ts.
@@ -1499,7 +1515,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
             // Short-lived by design, matching session-binding's own rule: a
             // second live handle on the same WAL for the life of the session
             // is not worth a question asked once.
-            const store = openSessionStore(accessManager.grant(principal, "session-store"));
+            const store = openSessionStore(accessManager.grant(principal, "session-store"), dbFileName);
             try {
               const prior = store.readSession(conversationId);
               const last = prior[prior.length - 1];

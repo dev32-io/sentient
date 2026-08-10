@@ -2193,6 +2193,41 @@ describe("ToolBroker — inbound gate wiring", () => {
     expect(mcp.callToolCalls).toHaveLength(1);
   });
 
+  it("SECURITY: block-level risk on a write tool is a CONFIRM, never a hard-deny (design intent)", async () => {
+    // `block` and `escalate` are treated identically at the PDP (isRiskElevated):
+    // both raise an otherwise-`allow` side-effecting call to a human confirm. A
+    // `block` finding does NOT unilaterally refuse — the risk accumulator only
+    // annotates and raises risk; the human is the one who says no. Pin that: at
+    // block-level risk, the write STILL runs once the person confirms.
+    const mcp = fakeMcp([todoTool]);
+    let confirmCalls = 0;
+    let askedReason = "";
+    const broker = createToolBroker({
+      mcp,
+      catalog: testCatalog,
+      store: fakeStore(),
+      capability,
+      sessionId: "session-1",
+      backgroundTools: new Map(),
+      config: toolsConfig,
+      toolPermissions: permissionsFor("test-mcp", { add_todo: "allow" }),
+      requestConfirm: async (_inv, reason) => {
+        confirmCalls += 1;
+        askedReason = reason;
+        return true; // the human approves
+      },
+      inboundGate: gateWithRisk("block"),
+    });
+
+    const result = await broker.dispatch(makeInvocation({ name: "add_todo" }));
+
+    // A confirm prompt (naming the risk), NOT a hard-deny — and the tool runs.
+    expect(confirmCalls).toBe(1);
+    expect(askedReason).toContain("risky");
+    expect(result).toEqual({ content: "result from test-mcp/add_todo", isError: false });
+    expect(mcp.callToolCalls).toHaveLength(1);
+  });
+
   it("elevated risk leaves a read-tier allow frictionless — no prompt storm on flagged reads", async () => {
     const mcp = fakeMcp([weatherTool]);
     let confirmCalls = 0;

@@ -308,6 +308,10 @@ export interface SessionRuntimeDeps {
    */
   sessionId: string;
   accessManager: AccessManager;
+  /** `store.db_filename` (config.yaml#store) — the session-store db this runtime
+   *  opens. Optional: a harness/test that omits it falls back to the session-store
+   *  default; the composition root threads the operator's configured value. */
+  dbFileName?: string;
   provider: ProviderClient;
   broker: ToolBroker;
   emitter: TurnEmitter;
@@ -433,7 +437,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   const userId = principal.userId;
 
   const cap = accessManager.grant(principal, "session-store");
-  const store: SessionStore = openSessionStore(cap);
+  const store: SessionStore = openSessionStore(cap, deps.dbFileName);
 
   let inFlight: InFlightTurn | null = null;
 
@@ -942,6 +946,14 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   }
 
   function startTurn(turnId: string, trigger: TurnTrigger): void {
+    // Revocation guard, BEFORE the inFlight check: `submit` guards revocation on
+    // its own path, but the back-to-back follow-up path (`onTurnSettled` →
+    // `startTurn`) reaches here directly. Without this a late background
+    // completion landing after the running turn's last iteration, while the
+    // account is revoked, would start a headless follow-up turn dispatching
+    // tools under the pre-revocation capability. This closes that second entry
+    // point — see `revokeAuthority`.
+    if (revokedReason !== null) return;
     // Re-entrancy guard: a future TurnEmitter.turnCompleted callback could call
     // submit() synchronously from inside onTurnSettled's clear-and-decide window;
     // without this, that re-entrant start plus onTurnSettled's own next-turn start
@@ -1039,6 +1051,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
         }),
       sessionId,
       config: config.loop,
+      requestTimeoutMs: config.provider.request_timeout_ms,
       onTextDelta: (id, text) => {
         turnText += text;
         // The reply id rides every delta, so the client never has to

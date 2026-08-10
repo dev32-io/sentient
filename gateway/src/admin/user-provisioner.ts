@@ -256,22 +256,19 @@ async function resetPinFlow(
     return { ok: false, error: "hash-error" };
   }
 
-  // THE CREDENTIAL FLOOR DOES NOT MOVE HERE, and that is deliberate rather
-  // than an oversight — OPEN QUESTION, owner's call (plan
-  // 2026-08-07-tool-permissions task 2c review).
-  //
-  // The field is named `credentialsValidFrom`, so the next reader will assume a
-  // PIN reset revokes the tokens issued under the old PIN. It does not: this
-  // write is `pinHash` alone, and every session that account already holds
-  // stays live. That matters because an operator resets a PIN precisely when
-  // they think a credential leaked.
-  //
-  // It is not a one-line fix. The floor is PER-USER and GLOBAL, so moving it
-  // here also kicks the person who just changed their own PIN straight back to
-  // the login screen (`changePin`, user-auth/auth-service.ts, has the same
-  // shape). Whether that is the right trade is a UX decision, not one to make
-  // silently inside a store write.
-  const updateResult = await deps.userStore.update(userId, { pinHash });
+  // OWNER RULING (2026-08-10 whole-branch review, I3): a PIN reset moves the
+  // credential floor. The field is named `credentialsValidFrom` precisely
+  // because a credential change revokes the tokens issued under the old one —
+  // and an operator resets someone else's PIN exactly when they believe a
+  // credential leaked, so every existing session on that account MUST die.
+  // ONE WRITE, both fields, so the hash and the floor move atomically (a split
+  // write leaves a crash window where the PIN changed but old tokens still
+  // validate — the failure this revocation exists to prevent). Mirror ruling at
+  // `changePin` (user-auth/auth-service.ts).
+  const updateResult = await deps.userStore.update(userId, {
+    pinHash,
+    credentialsValidFrom: deps.now().toISOString(),
+  });
   if (!updateResult.ok) {
     return updateResult.error === "not-found" ? { ok: false, error: "not-found" } : { ok: false, error: "io-error" };
   }

@@ -15,6 +15,7 @@ tags:
 # Pre-condition (set by the runner): gateway unreachable; the app's SDK loses its
 # WS and enters the reconnect loop.
 - launchApp
+# 30000ms: LLM round-trip on the local model (provider latency, not UI nav)
 - extendedWaitUntil:
     visible: { id: "connection-lost-banner" }
     timeout: 30000

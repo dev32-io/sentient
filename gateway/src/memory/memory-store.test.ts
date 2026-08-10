@@ -207,6 +207,23 @@ describe("MemoryStore — symlink escape guard", () => {
     expect(res).toEqual({ ok: false, error: "path_refused" });
     expect(readdirSync(outsideDir)).toEqual(["secret.txt"]);
   });
+
+  // I5: the guard runs BEFORE mkdir. A recursive mkdir follows a DANGLING symlink
+  // and materialises the target dir OUTSIDE the grant; the pre-fix order created
+  // that dir and only then refused the file write. Pin that nothing is created.
+  it("refuses a planted symlink target dir BEFORE mkdir — no directory created outside the root", () => {
+    mkdirSync(join(root, "memory"), { recursive: true });
+    const escapeTarget = join(outsideDir, "created-by-escape");
+    // Dangling symlink at the topics dir, pointing to a not-yet-existent path
+    // outside the grant.
+    symlinkSync(escapeTarget, join(root, "memory", "topics"), "dir");
+
+    const res = open(root).writeTopic("t", { name: "t", description: "d" }, "body");
+    expect(res).toEqual({ ok: false, error: "path_refused" });
+    // The escape target was never materialised — the guard refused before mkdir.
+    expect(existsSync(escapeTarget)).toBe(false);
+    expect(readdirSync(outsideDir)).toEqual(["secret.txt"]);
+  });
 });
 
 describe("MemoryStore — edit-ingest quarantine round-trip", () => {

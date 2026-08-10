@@ -76,6 +76,7 @@ env:
 - extendedWaitUntil:
     notVisible: { id: "chat-permission-allow" }
     timeout: 3000
+# 40000ms: permission broker fail-closed budget (up to 2 min for a human answer)
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 40000

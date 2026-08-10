@@ -90,7 +90,13 @@ describe("DelegationProgressConnector", () => {
     const connector = new DelegationProgressConnector();
     const mock = createMockSDK();
     connector.attach(mock.sdk);
-    mock.emit("delegation.progress", { taskId: "task-1", turnId: "t-1", agent: "hermes", status: "running" });
+    mock.emit("delegation.progress", {
+      type: "delegation.progress",
+      taskId: "task-1",
+      turnId: "t-1",
+      agent: "hermes",
+      status: "running",
+    });
 
     connector.reset();
 

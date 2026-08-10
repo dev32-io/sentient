@@ -58,6 +58,9 @@ export interface SessionsHandlerDeps {
   /** Resolves the caller's CURRENT role for the principal minted below. */
   users: Pick<UserStore, "get">;
   accessManager: AccessManager;
+  /** `store.db_filename` (config.yaml#store) — threaded into `withSessionStore`
+   *  so this REST readback opens the same db the runtime does. */
+  dbFileName: string;
 }
 
 export function createSessionsHandler(deps: SessionsHandlerDeps): (request: Request) => Promise<Response> {

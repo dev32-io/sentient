@@ -65,6 +65,7 @@ tags:
     visible: { id: "settings-apply-notice" }
     timeout: 3000
     optional: true
+# 20000ms: personality create + activate apply round-trip
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
     timeout: 20000
@@ -88,9 +89,11 @@ tags:
 - takeScreenshot: "50-personalities-survives-activate"
 # --- self-restore: delete it so the flow is re-runnable ---
 - tapOn: { id: "settings-personality-delete-e2e-test" }
+# 8000ms: personality create + activate apply round-trip
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
     timeout: 8000
+# 8000ms: personality create + activate apply round-trip
 - extendedWaitUntil:
     notVisible: { id: "settings-personality-e2e-test" }
     timeout: 8000

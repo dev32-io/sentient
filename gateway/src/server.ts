@@ -192,6 +192,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     tokens: services.auth.tokens,
     users: services.auth.users,
     accessManager: services.accessManager,
+    dbFileName: services.dbFileName,
   });
 
   return Bun.serve<SessionData>({

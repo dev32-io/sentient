@@ -351,6 +351,24 @@ describe("UserProvisioner", () => {
     expect(callLog.some((c) => c.method === "userLifecycle.emitRoleChanged")).toBe(false);
   });
 
+  // SECURITY BOUNDARY (I3 owner ruling). An operator resets a PIN precisely
+  // when a credential leaked, so the reset MUST revoke the account's existing
+  // tokens — the new hash and the credential floor move in ONE write, same
+  // atomicity argument as setRole.
+  it("SECURITY: resetPin patches the pin hash and the credential floor in a single update", async () => {
+    const { callLog, provisioner } = buildMocks();
+
+    const result = await provisioner.resetPin(OTHER, "5678");
+
+    expect(result.ok).toBe(true);
+    const updates = callLog.filter((c) => c.method === "userStore.update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.args[1]).toEqual({
+      pinHash: "$argon2id$mock",
+      credentialsValidFrom: "2026-01-01T00:00:00.000Z",
+    });
+  });
+
   it("rejects malformed userId at boundary", async () => {
     const { provisioner } = buildMocks();
     await expect(provisioner.deleteUser("admin")).rejects.toThrow(/invalid userId/);

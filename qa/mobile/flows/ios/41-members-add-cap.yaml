@@ -54,6 +54,7 @@ tags:
 - inputText: "2222"
 - tapOn:
     id: "settings-members-add-submit"
+# 8000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     notVisible: { id: "settings-members-add-name" }
     timeout: 8000

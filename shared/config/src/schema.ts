@@ -391,6 +391,14 @@ export const inboundScanConfigSchema = z
         tool_result: z.boolean().default(true),
         background_completion: z.boolean().default(true),
         skill_body: z.boolean().default(true),
+        // ADVISORY-ONLY / no-op toggle (kept for config upgrade-safety, never
+        // remove-then-reintroduce). Unlike the other channels, the delegation
+        // prompt does NOT transit `inbound-gate.ts` — `prompt-classifier.ts`
+        // scans it UNCONDITIONALLY via `scanContent` directly (see CLAUDE.md's
+        // security bullet + phase-services.ts:450). So setting this to `false`
+        // does NOT disable delegation-prompt scanning; the scan always runs
+        // (which is the safer posture). Wire it only if a real opt-out is ever
+        // wanted — today nothing reads this key.
         delegation_prompt: z.boolean().default(true),
         // Read-time gate on sparked snippets, memory_recall hits, and
         // drill-down session reads (memory-system spec §3.1). MEMORY.md

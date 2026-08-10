@@ -3002,6 +3002,74 @@ describe("SessionRuntime — revoked authority", () => {
     runtime.dispose();
   });
 
+  it("SECURITY: a mid-turn background completion cannot start a back-to-back turn after revocation", async () => {
+    // The gap the `startTurn` revocation guard closes: `submit` guards its own
+    // path, but the back-to-back follow-up (onTurnSettled → nextTurnTrigger →
+    // startTurn) reaches startTurn directly. A completion that landed mid-turn
+    // and revocation that landed mid-turn must NOT combine into a headless
+    // follow-up turn under the pre-revocation capability.
+    const am = createAccessManager({ userDataRoot: `${ROOT}/case-revoked-backtoback` });
+    const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");
+    mkdirSync(am.userHomeDir(alice), { recursive: true });
+
+    let releaseTurn1: () => void = () => {};
+    const turn1Gate = new Promise<void>((resolve) => {
+      releaseTurn1 = resolve;
+    });
+
+    const provider = fakeProvider(async function* (callIndex) {
+      if (callIndex === 1) {
+        // Hold turn 1 open so a background completion AND a revocation both land
+        // before it settles — the exact window the back-to-back path traverses.
+        await turn1Gate;
+        yield { type: "text", content: "ok" };
+        yield { type: "done", finishReason: "stop" };
+        return;
+      }
+      // A second provider call is the bug: a follow-up turn under revoked authority.
+      yield { type: "text", content: "this follow-up must never run" };
+      yield { type: "done", finishReason: "stop" };
+    });
+
+    const emitter = recordingEmitter();
+    const runtime = createSessionRuntime({
+      principal: alice,
+      sessionId: "sess-revoked-backtoback",
+      accessManager: am,
+      provider,
+      broker: noopBroker(),
+      emitter,
+      timeZone: { zone: () => "UTC" },
+      systemPrompt: "you are a test assistant",
+      config: testConfig(),
+    });
+
+    runtime.submit({ kind: "conversational", text: "please delegate this" });
+    await waitFor(() => runtime.running);
+
+    // Mid-turn: completion appends + steers (inFlight, so no new turn yet), then
+    // the account is revoked while the turn is still open.
+    runtime.submit({ kind: "background-completion", note: "Delegated task task-1 completed: the answer" });
+    runtime.revokeAuthority("role-changed");
+
+    releaseTurn1();
+    await waitUntilIdle(runtime);
+    // One tick for the settle `.then` chain (onTurnSettled → nextTurnTrigger).
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // No follow-up turn: exactly one provider call, one turnStarted.
+    expect(provider.calls).toHaveLength(1);
+    expect(emitter.events.filter((e) => e.type === "turnStarted")).toHaveLength(1);
+
+    // The completion is still durably committed — retention's whole point.
+    const readback = openSessionStore(am.grant(alice, "session-store"));
+    const trigger = readback.readSession("sess-revoked-backtoback").find((e) => e.kind === "trigger");
+    expect(trigger?.text).toContain("Delegated task task-1 completed");
+    readback.close();
+
+    runtime.dispose();
+  });
+
   it("refuses a conversational stimulus on a revoked runtime too", async () => {
     const am = createAccessManager({ userDataRoot: `${ROOT}/case-revoked-user` });
     const alice = createUserPrincipal("u_aaaaaaaa", "adult", "home");

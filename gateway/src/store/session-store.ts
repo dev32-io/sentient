@@ -35,12 +35,10 @@ export { MintKeyConflictError } from "./session-metadata.js";
 
 const log = getLog(["sentient", "store", "session-store"]);
 
-// Mirrors gateway/config.yaml#store.db_filename. The composition root does not
-// exist yet, so nothing reads that key: `store` is absent from gatewayConfigSchema
-// and zod's non-strict parsing drops it, leaving cfg.store undefined. When the
-// runtime composition root lands it must add the schema section and thread the
-// value here, retiring this constant.
-const DB_FILENAME = "sessions.db";
+// Fallback when a caller does not thread `store.db_filename` from config — a
+// harness or test opening a store without the full composition root. The
+// composition root passes `cfg.store.db_filename` through explicitly.
+const DEFAULT_DB_FILENAME = "sessions.db";
 
 interface EntryRow {
   seq: number;
@@ -102,7 +100,7 @@ export interface SessionStore {
   close(): void;
 }
 
-export function openSessionStore(cap: Capability): SessionStore {
+export function openSessionStore(cap: Capability, dbFileName: string = DEFAULT_DB_FILENAME): SessionStore {
   // Checked BEFORE the path check, deliberately: a wrong-class capability and
   // an escaping path are different faults and must say so. Without this, a
   // `file-scope` capability for the same user has an IDENTICAL rootPath, so
@@ -118,7 +116,7 @@ export function openSessionStore(cap: Capability): SessionStore {
     throw new Error(`capability resource class mismatch: expected "session-store", got "${cap.resource}"`);
   }
 
-  const dbPath = path.join(cap.rootPath, DB_FILENAME);
+  const dbPath = path.join(cap.rootPath, dbFileName);
   if (!capabilityCoversPath(cap, dbPath)) {
     throw new Error(`store path escapes capability scope: ${dbPath}`);
   }

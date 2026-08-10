@@ -107,6 +107,7 @@ function freshHarness(): Harness {
         return { ok: true as const, value: records.get(userId) ?? null };
       },
     },
+    dbFileName: "sessions.db",
   };
   return {
     handleSessions: createSessionsHandler(deps),

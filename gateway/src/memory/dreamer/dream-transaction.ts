@@ -48,6 +48,7 @@ import { projectForDreaming } from "../../store/project-for-dreaming.js";
 import type { DreamSession, DreamWindow } from "../../store/project-for-dreaming.js";
 import { writeFileAtomic } from "../../user-auth/atomic-write.js";
 import type { UserId } from "../../user-auth/user-id.js";
+import { withIndexSync } from "../deep-memory-wiring.js";
 import type { IndexSync } from "../index-sync.js";
 import type { MemoryStore } from "../memory-store.js";
 import type { CurrentMemory, DreamMark, DreamResult, DreamRunner } from "./dreamer-runner.js";
@@ -460,7 +461,18 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
       scan: scanContent,
     };
     const sessionsIndex = buildSessionsIndex(result);
-    const applyResult = await applyOps(handle.store, reconcilerDeps, handle.scopeId, ops, sessionsIndex, deps.cfg);
+    // I4 fix (option a): the reconciler's CORE/TOPIC edits go through a
+    // sync-wrapped store, exactly as session-time `memory_write` does. Without
+    // this, a SUPERSEDE only retired the headless FACT-level entry (via
+    // `retireLine` below) and left the heading-keyed SECTION-level entry that
+    // session-time writes created active — a superseded fact could still surface
+    // in spark. Re-projecting the edited file re-feeds `enqueueFile`, and
+    // `detectSupersessions` retires the old section id (REASON_FILE_EDITED).
+    // Journal writes stay on the RAW `handle.store` (writeOutputs) so the
+    // dreamer's taint-carrying `enqueueEntries` provenance is not clobbered by
+    // an enqueueFile re-projection; `applyOps` only ever writes core/topic.
+    const indexedStore = withIndexSync(handle.store, handle.sync);
+    const applyResult = await applyOps(indexedStore, reconcilerDeps, handle.scopeId, ops, sessionsIndex, deps.cfg);
     if (applyResult.ok) {
       return { ops: applyResult.applied, refusedReason: undefined };
     }

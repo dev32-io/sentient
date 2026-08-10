@@ -205,12 +205,15 @@ schema-versioned data lives under `~/.sentient/deep-memory/`, mutable and
 operator-owned, untouched by the release swap.
 
 **Before the first real wheel build**, `deploy/mac-prod/native/requirements/
-deep-memory.lock` must exist — it does not ship yet. Generate it via the
-recipe documented in the header of the sibling `whisper-stt.lock` /
-`local-tts.lock` files (`uv pip freeze` against the tested
+deep-memory.lock` must exist — it does not ship yet. `build-python-wheels.sh`
+now **fails loud** with the generate recipe when the lock is absent (rather
+than a confusing `grep` error or a partial wheel set), so a release build
+cannot silently skip deep-memory. Generate it via the recipe documented in
+the header of the sibling `whisper-stt.lock` / `local-tts.lock` files (`uv pip
+freeze` against the tested
 `capabilityServices/DeepMemoryService/.venv/bin/python`, then `uv pip
-compile`, then `scripts/build-python-wheels.sh` to fill in the wheel
-hashes) before running `build-python-wheels.sh` for a release.
+compile`, then `scripts/build-python-wheels.sh` to fill in the wheel hashes)
+before running `build-python-wheels.sh` for a release.
 
 ### Token provisioning
 

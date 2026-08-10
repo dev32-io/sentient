@@ -103,6 +103,12 @@ export interface ReactLoopDeps {
   situationBlock?: () => Promise<string | null>;
   sessionId: string;
   config: OrchestratorConfig["loop"];
+  /** Per-request provider deadline (`provider.request_timeout_ms`). Covers the
+   *  HTTP call AND now the MID-STREAM gap: if no chunk arrives within this many
+   *  ms while consuming the stream, the loop aborts the provider call and FAILS
+   *  the turn (not a cutoff) — a stalled provider must never hold the one-turn
+   *  lock open forever. See `consumeStream`. */
+  requestTimeoutMs: number;
   /** Which reply the loop's assistant text is going into right now. Read at
    *  each append, never cached: the caller rotates it mid-turn when the person
    *  speaks (see session-runtime.ts's `InFlightTurn.replyId`). Optional —
@@ -358,6 +364,10 @@ interface StreamOutcome {
   toolCalls: ChatToolCall[];
   finishReason: string;
   aborted: boolean;
+  /** The provider stream went silent mid-response for longer than
+   *  `requestTimeoutMs` and was aborted. Distinct from `aborted` (a user cutoff
+   *  on the turn signal): a stall FAILS the turn, it is not a cutoff. */
+  stalled: boolean;
   cacheHitRatio?: number;
 }
 
@@ -372,15 +382,41 @@ async function consumeStream(
   tools: ProviderTool[],
   signal: AbortSignal,
   onTextDelta: (text: string) => void,
+  requestTimeoutMs: number,
 ): Promise<StreamOutcome> {
-  const stream = provider.stream({ messages, tools, signal });
+  // The provider call runs on a MERGED signal: the turn's own signal (user
+  // cutoff) OR a local stall controller. The HTTP client's `timeout` only bounds
+  // time-to-headers; a provider that goes silent MID-STREAM would otherwise block
+  // this `for await` forever, holding the one-turn lock open (blocking the
+  // dreamer, wedging the session). A watchdog re-armed on every chunk aborts the
+  // stall controller when the inter-chunk gap exceeds `requestTimeoutMs`.
+  const stallController = new AbortController();
+  const providerSignal = AbortSignal.any([signal, stallController.signal]);
+  const stream = provider.stream({ messages, tools, signal: providerSignal });
   let text = "";
   const toolCalls: ChatToolCall[] = [];
   let finishReason = "";
   let usage: { promptTokens: number; cachedTokens: number; completionTokens: number } | undefined;
+  let stalled = false;
+
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  const armStall = (): void => {
+    if (stallTimer !== undefined) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      log.warn("react-loop.stream.stalled", {
+        requestTimeoutMs,
+        reason: "no provider chunk within request_timeout_ms mid-stream — aborting the stream; the turn fails",
+      });
+      stallController.abort();
+    }, requestTimeoutMs);
+    stallTimer.unref?.();
+  };
 
   try {
+    armStall(); // covers the gap before the first chunk too
     for await (const chunk of stream) {
+      armStall(); // re-arm: measure the gap to the NEXT chunk
       if (signal.aborted) break;
       if (chunk.type === "text") {
         text += chunk.content;
@@ -398,6 +434,7 @@ async function consumeStream(
       }
     }
   } finally {
+    if (stallTimer !== undefined) clearTimeout(stallTimer);
     await stream.return(undefined);
   }
 
@@ -408,6 +445,7 @@ async function consumeStream(
     toolCalls,
     finishReason,
     aborted: signal.aborted,
+    stalled,
     ...(cacheHitRatio !== undefined ? { cacheHitRatio } : {}),
   };
 }
@@ -457,6 +495,7 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
     situationBlock,
     sessionId,
     config,
+    requestTimeoutMs,
     onTextDelta,
     onTurnCommitting,
   } = deps;
@@ -522,12 +561,32 @@ export async function runTurn(deps: ReactLoopDeps, args: RunTurnArgs): Promise<T
       messageCount: messages.length,
     });
 
-    const outcome = await consumeStream(provider, messages, forceFinal ? [] : tools, signal, (text) =>
-      onTextDelta(turnId, text),
+    const outcome = await consumeStream(
+      provider,
+      messages,
+      forceFinal ? [] : tools,
+      signal,
+      (text) => onTextDelta(turnId, text),
+      requestTimeoutMs,
     );
 
     if (outcome.aborted) {
       log.info("react-loop.aborted-mid-stream", { sessionId, turnId, iteration });
+      return { completed: false, iterations: iteration, consumedThroughSeq };
+    }
+
+    // A mid-stream stall — distinct from a user cutoff. The turn FAILS (not a
+    // cutoff): return `completed: false` on a non-aborted signal so
+    // session-runtime commits a user-visible failure notice (its `failed`
+    // branch). Never fall through to commit partial pre-stall text as a
+    // completed reply.
+    if (outcome.stalled) {
+      log.warn("react-loop.failed-stall", {
+        sessionId,
+        turnId,
+        iteration,
+        reason: "provider stream stalled mid-response — failing the turn",
+      });
       return { completed: false, iterations: iteration, consumedThroughSeq };
     }
 

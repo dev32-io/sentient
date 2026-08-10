@@ -325,11 +325,17 @@ sealed class ServerMessage {
 
 // ── Supporting DTOs ──
 
-/** Authenticated user identity — matches ws-auth-gate.ts send shape. */
+/** Authenticated user identity — matches ws-auth-gate.ts send shape.
+ *  Mirror contract (web-sdk-mirror-contract): protocol `authUserSchema` requires
+ *  `role: userRoleSchema`. Defaulted to "adult" (matching the gateway's
+ *  DEFAULT_ROLE) so `coerceInputValues` stays resilient to an older gateway. */
 @Serializable
 data class AuthUser(
     val userId: String,
     val displayName: String,
+    /** "adult" | "child" | "admin" — the user's role, needed for the tool-permission
+     *  system. Distinct from [isAdmin], which mobile uses for admin-surface gating today. */
+    val role: String = "adult",
     val isAdmin: Boolean = false,
     val avatarTint: String = "",
 )

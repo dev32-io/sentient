@@ -49,6 +49,7 @@ describe("TaskListConnector", () => {
     connector.attach(mock.sdk);
 
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t1",
       items: [
         {
@@ -65,7 +66,7 @@ describe("TaskListConnector", () => {
     expect(connector.turnId()).toBe("t1");
     expect(onUpdate).toHaveBeenCalledWith("t1", connector.list());
 
-    mock.emit("tasklist.state", { turnId: null, items: [] });
+    mock.emit("tasklist.state", { type: "tasklist.state", turnId: null, items: [] });
     expect(connector.list()).toEqual([]);
     expect(connector.turnId()).toBeNull();
     expect(onUpdate).toHaveBeenCalledTimes(2);
@@ -77,6 +78,7 @@ describe("TaskListConnector", () => {
     connector.attach(mock.sdk);
 
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: null,
       items: [
         {
@@ -102,6 +104,7 @@ describe("TaskListConnector", () => {
     connector.detach();
 
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t1",
       items: [{ id: "a", toolName: "x", kind: "foreground", status: "running", argsPreview: "{}", startedAtMs: 1 }],
     });
@@ -121,6 +124,7 @@ describe("TaskListConnector", () => {
     connector.attach(mock.sdk);
 
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: null,
       items: [
         {
@@ -142,6 +146,7 @@ describe("TaskListConnector", () => {
 
     // Still attached — the next conversation's own frames must land.
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t2",
       items: [{ id: "b", toolName: "y", kind: "foreground", status: "running", argsPreview: "", startedAtMs: 9 }],
     });
@@ -155,6 +160,7 @@ describe("TaskListConnector", () => {
     connector.attach(mock.sdk);
 
     mock.emit("tasklist.state", {
+      type: "tasklist.state",
       turnId: "t1",
       items: [{ id: "a", toolName: "x", kind: "foreground", status: "running", argsPreview: "{}", startedAtMs: 1 }],
     });

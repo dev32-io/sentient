@@ -116,6 +116,57 @@ def test_purge_empty_filter_is_noop(tmp_path):
     assert _table_count(index_path, "entries") == 2
 
 
+def test_search_time_range_filters_by_from_and_to(tmp_path):
+    # `from`/`to` are the canonical client field pair (SearchFilters in
+    # deep-memory-client.ts). A mismatched reader silently drops the SQL clause,
+    # so pin that the real engine actually bounds against ts_epoch.
+    engine, _registry, _index_path = _make_engine(tmp_path)
+    engine.upsert(
+        SCOPE,
+        [
+            _entry("old", "shared keyword note", timestamp="2026-01-01T00:00:00Z"),
+            _entry("mid", "shared keyword note", timestamp="2026-06-15T00:00:00Z"),
+            _entry("new", "shared keyword note", timestamp="2026-12-31T00:00:00Z"),
+        ],
+    )
+    windowed = engine.search(
+        [SCOPE],
+        "keyword",
+        k=10,
+        kinds=None,
+        statuses=None,
+        time_range={"from": "2026-05-01T00:00:00Z", "to": "2026-08-01T00:00:00Z"},
+    )
+    assert {h["entry"]["id"] for h in windowed} == {"mid"}
+
+
+def test_purge_time_range_filters_by_from_and_to(tmp_path):
+    # Poison-remediation purge bounded to a window (spec §3.8): a no-op filter
+    # would silently purge nothing (false remediation), so pin real filtering.
+    engine, _registry, index_path = _make_engine(tmp_path)
+    engine.upsert(
+        SCOPE,
+        [
+            _entry("old", "alpha note", timestamp="2026-01-01T00:00:00Z"),
+            _entry("mid", "beta note", timestamp="2026-06-15T00:00:00Z"),
+            _entry("new", "gamma note", timestamp="2026-12-31T00:00:00Z"),
+        ],
+    )
+    purged = engine.purge(
+        SCOPE,
+        {"timeRange": {"from": "2026-05-01T00:00:00Z", "to": "2026-08-01T00:00:00Z"}},
+    )
+    assert purged == 1
+    assert _table_count(index_path, "entries") == 2
+    # `mid` (inside the window) is gone; the out-of-window entries survive.
+    conn = sqlite3.connect(str(index_path))
+    try:
+        remaining = {row[0] for row in conn.execute("SELECT id FROM entries").fetchall()}
+    finally:
+        conn.close()
+    assert remaining == {"old", "new"}
+
+
 def test_set_status_transition_with_reason(tmp_path):
     engine, _registry, _index_path = _make_engine(tmp_path)
     engine.upsert(SCOPE, [_entry("x", "a durable fact")])

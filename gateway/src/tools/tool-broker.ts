@@ -649,7 +649,16 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
 
   /** True when the inbound gate's accumulated risk warrants an extra confirm on
    *  a side-effecting tool. `warn` is intentionally NOT elevated — only
-   *  `escalate` and `block` gate a call the person otherwise allowed. */
+   *  `escalate` and `block` gate a call the person otherwise allowed.
+   *
+   *  DESIGN INTENT (spec §6.2): `block` and `escalate` are treated IDENTICALLY
+   *  here — both raise an otherwise-`allow` side-effecting call to a `confirm`.
+   *  `block` is NOT a hard-deny at this layer: the risk accumulator's findings
+   *  ANNOTATE and RAISE risk, they never unilaterally refuse. A human confirm is
+   *  the strongest verdict risk alone can produce; a real deny only comes from
+   *  the role gate or an explicit `deny` permission. Keeping `block` at confirm
+   *  avoids a poisoned session silently bricking a tool the person legitimately
+   *  wants — the human is always the one who says no. */
   function isRiskElevated(): boolean {
     const level = inboundGate.getRiskLevel();
     return level === "escalate" || level === "block";

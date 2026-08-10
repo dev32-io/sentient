@@ -32,6 +32,7 @@ tags:
     element: { id: "voice-pick-c624a6ca980346ec9dc38bb434fec506" }
     direction: DOWN
 - tapOn: { id: "voice-pick-c624a6ca980346ec9dc38bb434fec506" }
+# 10000ms: voice clone / synth round-trip (Fish import + local-tts)
 - extendedWaitUntil:
     visible: { id: "voice-active-c624a6ca980346ec9dc38bb434fec506" }
     timeout: 10000

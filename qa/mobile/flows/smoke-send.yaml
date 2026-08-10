@@ -1,8 +1,15 @@
 appId: io.dev32.sentient.debug
+tags:
+  - chat
 ---
 # Smoke: send a text message and confirm the assistant streams a reply.
 # Verifies end-to-end streaming (text.input -> gateway native ReAct loop -> turn.* frames -> ChatContent live bubble).
 - launchApp
+# Conditional login: fires only when the launch landed on the login screen — a
+# no-op when the persisted token routed straight to chat (e2e-testing rule).
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "android/_helpers/login.yaml"
 - assertVisible:
     id: "composer-input"
 - tapOn:
@@ -11,6 +18,7 @@ appId: io.dev32.sentient.debug
 - tapOn:
     id: "chat-send"
 # assistant bubble should appear and stream a reply within the turn window
+# 40s: full provider round-trip on the local model (LLM latency, not UI nav).
 - extendedWaitUntil:
     visible:
       id: "assistant-bubble"

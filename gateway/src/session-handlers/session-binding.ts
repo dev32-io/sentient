@@ -58,11 +58,11 @@ const log = getLog(["sentient", "ws", "session-binding"]);
  * structurally, so this is a widening, not a breaking change.
  */
 export function withSessionStore<T>(
-  services: Pick<GatewayServices, "accessManager">,
+  services: Pick<GatewayServices, "accessManager" | "dbFileName">,
   principal: UserPrincipal,
   use: (store: SessionStore) => T,
 ): T {
-  const store = openSessionStore(services.accessManager.grant(principal, "session-store"));
+  const store = openSessionStore(services.accessManager.grant(principal, "session-store"), services.dbFileName);
   try {
     return use(store);
   } finally {
