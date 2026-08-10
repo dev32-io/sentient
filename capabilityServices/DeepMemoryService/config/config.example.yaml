@@ -67,8 +67,16 @@ storage:
   # live. `POST /register-scope` refuses (400) any indexPath that resolves
   # outside this root — the path-traversal boundary for the whole service.
   # The scope registry itself is persisted here as `scope-registry.json`.
-  # Absolute path. Default under the service state root.
-  data_root: "~/.sentient/deep-memory/scopes"
+  # Absolute path.
+  #
+  # MUST be the GATEWAY ROOT `~/.sentient/gateway` — the common parent of the
+  # gateway's per-user scopes (`~/.sentient/gateway/users/<userId>/deep-memory/
+  # index.db`) AND its shared/household scope (`~/.sentient/gateway/shared/...`).
+  # A narrower root (e.g. `~/.sentient/gateway/users`) resolves outside the
+  # household index path and breaks family memory; the old service-local default
+  # `~/.sentient/deep-memory/scopes` contains NO gateway index path at all and is
+  # dead on arrival. See deploy/README.md § "Deploy alignment".
+  data_root: "~/.sentient/gateway"
 
 # =============================================================================
 # Embedding model — the MLX embedding model the index engine loads.

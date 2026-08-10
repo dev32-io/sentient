@@ -575,6 +575,86 @@ describe("memory_recall — wired deep memory", () => {
   });
 });
 
+describe("memory_recall — child audience filter (spec §9)", () => {
+  const adultsHit = () =>
+    hit(indexEntry({ id: "e_secret", scope: "family", audience: "adults", text: "the safe code is 1234" }));
+  const familyHit = () =>
+    hit(indexEntry({ id: "e_open", scope: "family", audience: "all", text: "taco night is friday" }), 1);
+
+  it("drops an @adults-audience hit for a child principal and logs the count", async () => {
+    const client = fakeDeepClient({ ok: true, value: [adultsHit(), familyHit()] });
+    const tools = build("child", true, {
+      deepMemory: { client, scopeIds: { private: "scope-private", family: "scope-family" } },
+    });
+
+    const res = await invoke(tools, "memory_recall", { query: "what happens friday" });
+
+    expect(res.content).not.toContain("hitId=e_secret");
+    expect(res.content).toContain("hitId=e_open");
+    expect(loggedEvent(["memory-tools.audience.filtered", "dropped="])).toBe(true);
+  });
+
+  it("passes the @adults-audience hit through for an adult principal", async () => {
+    const client = fakeDeepClient({ ok: true, value: [adultsHit(), familyHit()] });
+    const tools = build("adult", true, {
+      deepMemory: { client, scopeIds: { private: "scope-private", family: "scope-family" } },
+    });
+
+    const res = await invoke(tools, "memory_recall", { query: "what happens friday" });
+
+    expect(res.content).toContain("hitId=e_secret");
+    expect(res.content).toContain("hitId=e_open");
+    expect(loggedEvent(["memory-tools.audience.filtered"])).toBe(false);
+  });
+});
+
+describe("memory_read — child @adults family-file filter (spec §9)", () => {
+  const SAFE = "- taco night is friday";
+  const SECRET = "- the safe code is 1234 @adults";
+
+  it("strips an @adults line from a family MEMORY.md read for a child", async () => {
+    // Write the tagged content as an adult first — the write role-gate blocks a
+    // child from ever authoring it — then read it back as a child.
+    const asAdult = build("adult", true);
+    await invoke(asAdult, "memory_write", {
+      scope: "family",
+      target: "MEMORY.md",
+      op: "append",
+      content: `${SAFE}\n${SECRET}`,
+    });
+
+    const asChild = build("child", true, { cfg: ROOMY_CFG });
+    const res = await invoke(asChild, "memory_read", { scope: "family", target: { file: "MEMORY.md" } });
+
+    expect(res.isError).toBe(false);
+    expect(res.content).toContain("taco night");
+    expect(res.content).not.toContain("safe code");
+  });
+
+  it("leaves a child's own PRIVATE read unfiltered — the tag only gates family", async () => {
+    const tools = build("child", false, { cfg: ROOMY_CFG });
+    await invoke(tools, "memory_write", { target: "MEMORY.md", op: "append", content: SECRET });
+
+    const res = await invoke(tools, "memory_read", { scope: "private", target: { file: "MEMORY.md" } });
+
+    expect(res.content).toContain("safe code");
+  });
+
+  it("leaves an adult's family read unfiltered — the tag only gates children", async () => {
+    const tools = build("adult", true, { cfg: ROOMY_CFG });
+    await invoke(tools, "memory_write", {
+      scope: "family",
+      target: "MEMORY.md",
+      op: "append",
+      content: `${SAFE}\n${SECRET}`,
+    });
+
+    const res = await invoke(tools, "memory_read", { scope: "family", target: { file: "MEMORY.md" } });
+
+    expect(res.content).toContain("safe code");
+  });
+});
+
 describe("memory_read — session drill-down (wired)", () => {
   const transcript: SessionEntry[] = [
     entry({ seq: 10, kind: "user", text: "u0" }),

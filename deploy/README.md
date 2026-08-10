@@ -255,16 +255,25 @@ Same shape as any other release, exercised end-to-end on a real install:
    whisper-stt/local-tts failure would — verify the gateway still installs
    successfully and simply logs the addon as degraded, memory tools absent.
 
-### Deploy alignment — `storage.data_root` must cover the gateway's `user_data_root`
+### Deploy alignment — `storage.data_root` must be the gateway ROOT
 
-The gateway registers each user's private scope at indexPath
-`<user_data_root>/<userId>/deep-memory/index.db` (memory-system design §5.3,
-T15 review). deep-memory's OWN `config.yaml`
-(`~/.sentient/deep-memory/config/config.yaml`, `storage.data_root`) must be
-set so that path resolves inside it — in practice, `storage.data_root` should
-equal the gateway's `user_data_root` (`gateway/config.yaml`'s
-`access.user_data_root`, default `~/.sentient/gateway/users`). A mismatch
-does not crash either process: `register-scope` refuses with
+The gateway registers a user's PRIVATE scope at indexPath
+`<user_data_root>/<userId>/deep-memory/index.db` (default `<user_data_root>` =
+`~/.sentient/gateway/users`) AND the shared HOUSEHOLD scope under
+`~/.sentient/gateway/shared/...` (memory-system design §5.3, T15/T24 review).
+deep-memory's OWN `config.yaml`
+(`~/.sentient/deep-memory/config/config.yaml`, `storage.data_root`) must be set
+so BOTH those paths resolve inside it. The only root that covers both is their
+common parent, the gateway root: `storage.data_root: "~/.sentient/gateway"`.
+
+Two mis-settings to avoid — each fails silently, not loudly:
+- `~/.sentient/gateway/users` (the gateway's `user_data_root`) covers private
+  scopes but NOT the household scope under `.../shared`, so family memory
+  breaks the moment a household index registers.
+- `~/.sentient/deep-memory/scopes` (the old service-local default) contains NO
+  gateway index path at all — dead on arrival, every scope refused.
+
+A mismatch does not crash either process: `register-scope` refuses with
 `path_outside_data_root` (CONTRACT.md §4), and the memory system degrades
 non-fatally per the §11 model — `memory_recall` and the memory tools simply
 report unavailable, silently, with no boot failure to flag it. Verify this

@@ -78,8 +78,10 @@ function carriesAdultsTag(line: string): boolean {
   return line.trim().endsWith(ADULTS_TAG);
 }
 
-/** Drops `@adults`-tagged lines from a MEMORY.md body for a child principal. */
-function filterAdultsLines(body: string): string {
+/** Drops `@adults`-tagged lines from a MEMORY.md body for a child principal.
+ *  Exported so the deliberate-read path (memory_read on a family file) reuses
+ *  the exact same suffix filter the session-prompt renderer applies. */
+export function filterAdultsLines(body: string): string {
   return body
     .split("\n")
     .filter((line) => !carriesAdultsTag(line))

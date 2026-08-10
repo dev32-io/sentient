@@ -41,6 +41,7 @@ import type {
   SearchRequest,
 } from "../memory/deep-memory-client.js";
 import { MEMORY_SLUG_RE } from "../memory/memory-file.js";
+import { filterAdultsLines } from "../memory/memory-prompt.js";
 import type { MemoryConfig, MemoryStore, MemoryWriteUsage, TopicMeta, WriteResult } from "../memory/memory-store.js";
 import type { scanContent } from "../security/injection-scanner.js";
 import type { SessionEntry } from "../store/entry-types.js";
@@ -688,8 +689,14 @@ function createMemoryReadRunner(deps: MemoryToolsDeps): NativeToolRunner {
       const body = readFileTarget(store, fileTarget);
       if (body === null) return fail(`No ${file} found in ${scope} memory.`);
 
-      const capped = capToolResult(body, { limit: deps.cfg.read_max_chars });
-      log.info("memory-tools.read.ok", { scope, file, chars: body.length });
+      // A child principal reading a FAMILY file never sees `@adults`-tagged
+      // lines — the same suffix filter the session-prompt renderer applies
+      // (memory-prompt.ts), here on the deliberate-read path so a direct
+      // `memory_read` cannot bypass what the situation block already hides.
+      const visibleBody = scope === "family" && !isAdultRole(deps.principal.role) ? filterAdultsLines(body) : body;
+
+      const capped = capToolResult(visibleBody, { limit: deps.cfg.read_max_chars });
+      log.info("memory-tools.read.ok", { scope, file, chars: visibleBody.length });
       return ok(capped);
     },
   };
@@ -868,6 +875,18 @@ function buildSearchRequest(
   };
 }
 
+/** Drops `@adults`-audience hits for a child principal (spec §9) — the same
+ *  boundary the spark/situation-block renderers apply, here on the deliberate
+ *  `memory_recall` path. An adult role passes every hit through unchanged. Logs
+ *  the dropped COUNT only (never hit content or ids). */
+function filterAdultsHits(hits: Hit[], role: UserRole): Hit[] {
+  if (isAdultRole(role)) return hits;
+  const visible = hits.filter((hit) => hit.entry.audience !== "adults");
+  const dropped = hits.length - visible.length;
+  if (dropped > 0) log.info("memory-tools.audience.filtered", { dropped });
+  return visible;
+}
+
 function createMemoryRecallRunner(deps: MemoryToolsDeps): NativeToolRunner {
   return {
     definition: memoryRecallDefinition,
@@ -897,7 +916,10 @@ function createMemoryRecallRunner(deps: MemoryToolsDeps): NativeToolRunner {
         log.warn("memory-tools.recall.unavailable", { reason: result.error.kind });
         return mapRecallClientError(result.error);
       }
-      const hits = result.value;
+      // A child principal never sees `@adults`-audience family content on a
+      // deliberate recall — the spark and situation-block renderers already
+      // filter, so this closes the direct-search path to the same boundary.
+      const hits = filterAdultsHits(result.value, deps.principal.role);
       log.info("memory-tools.recall.ok", { hits: hits.length });
       if (hits.length === 0) return ok("No past conversations matched that search.");
       return ok(hits.map(renderHit).join("\n"));

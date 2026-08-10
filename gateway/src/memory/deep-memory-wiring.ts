@@ -24,8 +24,12 @@
 //     own `index.db` (spec §2, §5.3: derived, rebuildable, disposable).
 //   - indexPath = `<indexDir>/index.db` — the register-scope path the service
 //     opens. The deep-memory service's `storage.data_root` must contain this
-//     path (it is the gateway's `user_data_root`); a mismatch is refused with
-//     `path_outside_data_root` and memory degrades non-fatally (spec §11).
+//     path. Because private scopes live under `<user_data_root>/...` and the
+//     household scope under `<gateway-root>/shared/...`, `data_root` must be the
+//     GATEWAY ROOT `~/.sentient/gateway` (their common parent), NOT the narrower
+//     `user_data_root` — which would exclude the household index. A mismatch is
+//     refused with `path_outside_data_root` and memory degrades non-fatally
+//     (spec §11). See deploy/README.md § "Deploy alignment".
 //
 // REGISTRATION-BEFORE-SEARCH is an invariant, not a hope: every scope-naming
 // client op (search/upsert/…) returned by `ensureScope` awaits that scope's
