@@ -68,6 +68,9 @@ class FakeFs:
     def point_current_at(self, version):
         self.current = version
 
+    def harden_release(self, version):
+        pass
+
     def has_version(self, version):
         return version in self.installed
 
@@ -771,9 +774,10 @@ def test_an_archive_escaping_the_release_root_is_refused(tmp_path):
     assert "escape" in str(e.value).lower() or "outside" in str(e.value).lower()
 
 
-def test_unpack_lays_down_a_runnable_release_and_hardens_it(tmp_path):
-    """CODE IS ROOT-OWNED: the service user must not be able to rewrite its own
-    binary. That is the entire reason code does not live under $HOME."""
+def test_unpack_lays_down_a_runnable_release_then_harden_release_locks_it(tmp_path):
+    """CODE IS ROOT-OWNED: unpack extracts writable, then harden_release makes
+    it read-only AFTER staging — staging writes into the release dir, so
+    hardening must come last, not at unpack time."""
     tarball = _release_tarball(tmp_path, "1.13.0")
     opt = tmp_path / "opt"
     recorded = []
@@ -783,8 +787,13 @@ def test_unpack_lays_down_a_runnable_release_and_hardens_it(tmp_path):
 
     assert (opt / "releases" / "1.13.0" / "bin" / "sentient-gateway").is_file()
     assert fs.has_version("1.13.0") is True
+    # unpack does NOT harden — release is still writable
+    assert not [argv for argv in recorded if argv[0] in ("chown", "chmod")], \
+        "unpack must not harden (staging writes after unpack)"
+
+    fs.harden_release("1.13.0")
     hardening = [argv for argv in recorded if argv[0] == "chown"]
-    assert hardening, "must chown the release"
+    assert hardening, "harden_release must chown the release"
     assert "root:wheel" in hardening[0]
 
 
@@ -1231,8 +1240,8 @@ def test_gui_domain_kickstart_uses_gui_uid_target(tmp_path):
     assert bootstrap[0][2].startswith("gui/"), f"gui domain must target gui/<uid>, got {bootstrap[0][2]}"
 
 
-def test_gui_domain_unpack_hardens_with_chmod_a_w(tmp_path):
-    """gui: unpacking hardens with chmod a-w, not chown root:wheel.
+def test_gui_domain_harden_release_uses_chmod_a_w(tmp_path):
+    """gui: harden_release (not unpack) hardens with chmod a-w, not chown root:wheel.
 
     The release extracts to ~/.sentient/gateway/releases/<version>/ (operator-
     writable), NOT /opt/sentient/ — which the operator cannot write to without sudo.
@@ -1252,14 +1261,20 @@ def test_gui_domain_unpack_hardens_with_chmod_a_w(tmp_path):
     assert (release_dir / "bin" / "sentient-gateway").is_file()
     assert "/opt/sentient" not in str(release_dir), "gui must not write to /opt/sentient"
 
+    # unpack does NOT harden
+    assert not [argv for argv in recorded if argv[0] in ("chown", "chmod")], \
+        "unpack must not harden in gui mode either"
+
+    fs.harden_release("1.13.0")
     chown_calls = [argv for argv in recorded if argv[0] == "chown"]
     chmod_calls = [argv for argv in recorded if argv[0] == "chmod"]
     assert chown_calls == [], "gui mode must not chown the release"
     assert ["chmod", "-R", "a-w", str(release_dir)] in chmod_calls
 
 
-def test_system_domain_unpack_hardens_with_chown_root(tmp_path):
-    """system: unpacking hardens with chown root:wheel — unchanged from before.
+def test_system_domain_harden_release_chowns_root(tmp_path):
+    """system: harden_release (not unpack) chowns root:wheel — unchanged behavior,
+    just moved after staging so the release is writable during native service setup.
 
     The release extracts to <release_root>/releases/<version>/, where
     release_root defaults to /opt/sentient for system domain.
@@ -1274,6 +1289,11 @@ def test_system_domain_unpack_hardens_with_chown_root(tmp_path):
     fs.unpack("1.13.0", tarball)
 
     assert (opt / "releases" / "1.13.0" / "bin" / "sentient-gateway").is_file()
+    # unpack does NOT harden
+    assert not [argv for argv in recorded if argv[0] in ("chown", "chmod")], \
+        "unpack must not harden in system mode either"
+
+    fs.harden_release("1.13.0")
     chown_calls = [argv for argv in recorded if argv[0] == "chown"]
     assert chown_calls, "system mode must chown the release"
     assert "root:wheel" in chown_calls[0]

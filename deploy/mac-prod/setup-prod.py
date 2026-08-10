@@ -594,7 +594,13 @@ class RealFs:
                 f"release {version} unpacked without {GATEWAY_BINARY} — the archive is "
                 "not a gateway release"
             )
-        self._harden(release)
+    def harden_release(self, version: str) -> None:
+        """Make a release tree read-only AFTER staging is complete.
+
+        Called by the Installer after native services are staged — staging
+        writes into the release dir, so hardening must come last.
+        """
+        self._harden(self._releases_dir / version)
 
     def _harden(self, release: Path) -> None:
         # CODE IS IMMUTABLE: the service runs as the operator (or root) and must
@@ -1105,6 +1111,7 @@ class Installer:
         # built here, and a failure must leave the working version current
         # rather than hand launchd a release with no interpreter.
         self._prepare(version)
+        self._fs.harden_release(version)
         self._fs.point_current_at(version)
         self._launchd.kickstart()
 
