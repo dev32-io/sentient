@@ -3,11 +3,15 @@
 <!--
   Sentient gateway — launchd job definition (TEMPLATE).
 
-  A LaunchDaemon in the `system` domain, NOT a LaunchAgent. `~/Library/LaunchAgents/`
-  is writable by the very user the job runs as, which is the same hole the
-  root-owned-code layout exists to close: anyone who can write the job definition
-  chooses what launches at boot. This file is root:wheel 0644 in
-  /Library/LaunchDaemons/, and the job itself runs UNPRIVILEGED via `UserName`.
+  Works in TWO domains (see deploy/mac-prod/setup-prod.py --domain):
+
+    * `gui` (default): installed as a LaunchAgent in ~/Library/LaunchAgents/,
+      operator-owned. The job runs in the user's GUI session and survives reboot
+      via RunAtLoad+KeepAlive on a mini that auto-logs-in. `UserName` is harmless
+      here — launchd ignores it, the agent runs as the logged-in user.
+    * `system`: installed as a LaunchDaemon in /Library/LaunchDaemons/,
+      root:wheel 0644. The original headless-server design — the gateway must be
+      up with nobody logged in. `UserName` runs the job unprivileged.
 
   Every literal `OPERATOR` below is a placeholder. deploy/mac-prod/setup-prod.py
   substitutes the operator's account name at install time and REFUSES to install

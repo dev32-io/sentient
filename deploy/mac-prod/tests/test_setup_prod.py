@@ -1069,3 +1069,204 @@ def test_prune_does_not_mistake_the_current_symlink_for_a_release(tmp_path):
 
     assert (opt / "current").is_symlink()
     assert (opt / "1.13.0/bin").is_dir(), "must not have deleted through the symlink"
+
+
+# --- domain flag (gui vs system) -----------------------------------------------
+#
+# `--domain gui` (default) installs a LaunchAgent in ~/Library/LaunchAgents,
+# operator-owned, with code-immutability via chmod a-w. `--domain system` is the
+# original headless-server path: root-owned LaunchDaemon in
+# /Library/LaunchDaemons. The plist content is identical across domains.
+
+from setup_prod import (
+    DOMAIN_GUI,
+    DOMAIN_SYSTEM,
+    DEFAULT_DOMAIN,
+    DomainPolicy,
+    launchd_dir_for,
+    launchd_domain_target,
+)
+
+
+def test_default_domain_is_gui():
+    """The default is gui — the common case is a desktop mini, no sudo needed."""
+    assert DEFAULT_DOMAIN == DOMAIN_GUI
+
+
+def test_launchd_dir_for_gui_uses_home_library_launchagents(tmp_path):
+    home = tmp_path / "home"
+    assert launchd_dir_for(DOMAIN_GUI, home) == home / "Library" / "LaunchAgents"
+
+
+def test_launchd_dir_for_system_uses_library_launchdaemons(tmp_path):
+    assert launchd_dir_for(DOMAIN_SYSTEM, tmp_path) == Path("/Library/LaunchDaemons")
+
+
+def test_launchd_domain_target_system_is_literal():
+    assert launchd_domain_target(DOMAIN_SYSTEM) == "system"
+
+
+def test_launchd_domain_target_gui_includes_uid():
+    target = launchd_domain_target(DOMAIN_GUI, uid=501)
+    assert target == "gui/501"
+
+
+def test_gui_domain_policy_does_not_chown_plist(tmp_path):
+    """gui: the operator owns the plist — no chown root:wheel."""
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", tmp_path / "home")
+    assert policy.plist_owner is None
+    assert policy.requires_root() is False
+
+
+def test_system_domain_policy_chowns_plist_root(tmp_path):
+    """system: the plist is root-owned — anyone who can write it chooses what
+    root launches at boot."""
+    policy = DomainPolicy(DOMAIN_SYSTEM, "kevinye", tmp_path / "home")
+    assert policy.plist_owner == "root:wheel"
+    assert policy.requires_root() is True
+
+
+def test_gui_domain_harden_code_uses_chmod_a_w_not_chown(tmp_path):
+    """gui: chmod a-w (operator owns the tree, but nobody can write it)."""
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "bin").mkdir()
+    recorded = []
+
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", tmp_path / "home")
+    policy.harden_code(_recording_runner(recorded), release)
+
+    # gui mode uses chmod a-w, NOT chown root:wheel
+    chown_calls = [argv for argv in recorded if argv[0] == "chown"]
+    chmod_calls = [argv for argv in recorded if argv[0] == "chmod"]
+    assert chown_calls == [], "gui mode must not chown the release tree"
+    assert chmod_calls, "gui mode must chmod the release tree"
+    assert chmod_calls[0] == ["chmod", "-R", "a-w", str(release)]
+
+
+def test_system_domain_harden_code_chowns_root_and_chmods(tmp_path):
+    """system: chown root:wheel + chmod 755 — the original hardening."""
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "bin").mkdir()
+    recorded = []
+
+    policy = DomainPolicy(DOMAIN_SYSTEM, "kevinye", tmp_path / "home")
+    policy.harden_code(_recording_runner(recorded), release)
+
+    chown_calls = [argv for argv in recorded if argv[0] == "chown"]
+    chmod_calls = [argv for argv in recorded if argv[0] == "chmod"]
+    assert chown_calls, "system mode must chown the release tree"
+    assert chown_calls[0] == ["chown", "-R", "root:wheel", str(release)]
+    assert chmod_calls, "system mode must chmod the release tree"
+    assert chmod_calls[0] == ["chmod", "-R", "755", str(release)]
+
+
+def test_gui_domain_install_plist_does_not_chown(tmp_path):
+    """gui: installing the plist leaves it operator-owned, just sets the mode."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    agents = tmp_path / "Library/LaunchAgents"
+    agents.mkdir(parents=True)
+    recorded = []
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=agents,
+                     runner=_recording_runner(recorded), domain_policy=policy)
+
+    ld.install_plist()
+
+    installed = (agents / "io.sentient.gateway.plist").read_text()
+    assert "OPERATOR" not in installed
+    assert "kevinye" in installed
+    chown_calls = [argv for argv in recorded if argv[0] == "chown"]
+    assert chown_calls == [], "gui mode must not chown the plist"
+    assert stat.S_IMODE((agents / "io.sentient.gateway.plist").stat().st_mode) == 0o644
+
+
+def test_system_domain_install_plist_chowns_root(tmp_path):
+    """system: installing the plist chowns root:wheel — the original behavior."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+    recorded = []
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_SYSTEM, "kevinye", home)
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner(recorded), domain_policy=policy)
+
+    ld.install_plist()
+
+    assert ["chown", "root:wheel", str(daemons / "io.sentient.gateway.plist")] in recorded
+    assert stat.S_IMODE((daemons / "io.sentient.gateway.plist").stat().st_mode) == 0o644
+
+
+def test_gui_domain_kickstart_uses_gui_uid_target(tmp_path):
+    """gui: launchctl bootstrap/kickstart targets gui/<uid>, not system."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(SYNTHETIC_PLIST)
+    agents = tmp_path / "Library/LaunchAgents"
+    agents.mkdir(parents=True)
+    recorded = []
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=agents,
+                     runner=_recording_runner(recorded, fails=("print",)),
+                     domain_policy=policy)
+
+    ld.kickstart()
+
+    launchctl = [argv for argv in recorded if argv[0] == "launchctl"]
+    bootstrap = [argv for argv in launchctl if argv[1] == "bootstrap"]
+    assert bootstrap, "must bootstrap an unloaded job"
+    assert bootstrap[0][2].startswith("gui/"), f"gui domain must target gui/<uid>, got {bootstrap[0][2]}"
+
+
+def test_gui_domain_unpack_hardens_with_chmod_a_w(tmp_path):
+    """gui: unpacking hardens with chmod a-w, not chown root:wheel."""
+    tarball = _release_tarball(tmp_path, "1.13.0")
+    opt = tmp_path / "opt"
+    recorded = []
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    fs = RealFs(opt, runner=_rootless_runner(recorded), domain_policy=policy)
+
+    fs.unpack("1.13.0", tarball)
+
+    assert (opt / "1.13.0/bin/sentient-gateway").is_file()
+    chown_calls = [argv for argv in recorded if argv[0] == "chown"]
+    chmod_calls = [argv for argv in recorded if argv[0] == "chmod"]
+    assert chown_calls == [], "gui mode must not chown the release"
+    assert ["chmod", "-R", "a-w", str(opt / "1.13.0")] in chmod_calls
+
+
+def test_system_domain_unpack_hardens_with_chown_root(tmp_path):
+    """system: unpacking hardens with chown root:wheel — unchanged from before."""
+    tarball = _release_tarball(tmp_path, "1.13.0")
+    opt = tmp_path / "opt"
+    recorded = []
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_SYSTEM, "kevinye", home)
+    fs = RealFs(opt, runner=_rootless_runner(recorded), domain_policy=policy)
+
+    fs.unpack("1.13.0", tarball)
+
+    chown_calls = [argv for argv in recorded if argv[0] == "chown"]
+    assert chown_calls, "system mode must chown the release"
+    assert "root:wheel" in chown_calls[0]
+
+
+def test_resolve_operator_gui_uses_user_not_sudo_user():
+    """gui: the script runs as the operator (no sudo), so $USER is the operator."""
+    assert resolve_operator({"USER": "kevinye"}, DOMAIN_GUI) == "kevinye"
+
+    for hostile in ({}, {"USER": ""}, {"USER": "root"}):
+        with pytest.raises(InstallError) as e:
+            resolve_operator(hostile, DOMAIN_GUI)
+        assert "operator" in str(e.value).lower()
+
+
+def test_resolve_operator_system_uses_sudo_user():
+    """system: the script runs under sudo, so $SUDO_USER names the operator."""
+    assert resolve_operator({"SUDO_USER": "kevinye"}, DOMAIN_SYSTEM) == "kevinye"

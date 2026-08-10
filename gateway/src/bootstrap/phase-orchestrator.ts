@@ -8,6 +8,7 @@ import { getLog } from "../logging/logger.ts";
 import { defaultHealthIO } from "../system-orchestrator/health-io.js";
 import { type SystemOrchestratorService, createSystemOrchestratorService } from "../system-orchestrator/index.js";
 import type { OrchestratorStatus } from "../system-orchestrator/types.js";
+import { createDockerPinger, waitForDocker } from "./docker-wait.js";
 import { makeSecretAccessor } from "./secret-accessor.ts";
 
 const log = getLog(["sentient", "bootstrap", "phase-orchestrator"]);
@@ -349,8 +350,26 @@ export async function runPhaseOrchestrator(input: PhaseOrchestratorInput): Promi
   // But the INFRA class cannot wait for the wizard: with the gateway bound to
   // loopback, inbound-proxy IS the route to the wizard, so deferring it means
   // the fresh host has no reachable UI on any interface. Hence the split.
+  //
+  // DOCKER-WAIT: before boot-reconcile fires, wait (bounded, non-fatal) for the
+  // docker daemon to be reachable. On a rebooted mini where launchd starts the
+  // gateway before Docker Desktop has finished auto-starting, the first apply
+  // would fail against an absent daemon. The wait covers that race; on timeout
+  // the boot proceeds anyway — the health-watchdog retries later, so a slow
+  // docker start is a degraded boot, not a fatal one.
   let bootReconcile: Promise<OrchestratorStatus> | null = null;
   if (systemOrchestrator) {
+    const dockerReady = await waitForDocker({
+      docker: createDockerPinger(),
+      timeoutMs: cfg.systemOrchestrator.docker_wait_timeout_ms,
+      pollMs: cfg.systemOrchestrator.docker_wait_poll_ms,
+    });
+    if (!dockerReady) {
+      log.warn("boot-reconcile.docker-not-ready", {
+        reason: "docker daemon not reachable within the bounded wait — proceeding anyway; health-watchdog will retry",
+      });
+    }
+
     const installed = await installState.load();
     const orch = systemOrchestrator;
     const run = installed.bootstrap_complete ? () => orch.reconcile() : () => orch.reconcileInfraOnly();
