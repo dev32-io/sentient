@@ -23,6 +23,8 @@ from setup_prod import (
     INSTALL_VENV_SCRIPT,
     OPERATOR_PLACEHOLDER,
     PLIST_SOURCE,
+    RELEASE_ROOT_PLACEHOLDER,
+    RELEASES_SUBDIR,
     SERVICE_SOURCES,
     STATE_DIRS,
     STATE_ROOT,
@@ -779,7 +781,7 @@ def test_unpack_lays_down_a_runnable_release_and_hardens_it(tmp_path):
 
     fs.unpack("1.13.0", tarball)
 
-    assert (opt / "1.13.0/bin/sentient-gateway").is_file()
+    assert (opt / "releases" / "1.13.0" / "bin" / "sentient-gateway").is_file()
     assert fs.has_version("1.13.0") is True
     hardening = [argv for argv in recorded if argv[0] == "chown"]
     assert hardening, "must chown the release"
@@ -790,11 +792,13 @@ def test_current_survives_a_tmp_symlink_left_by_a_crashed_run(tmp_path):
     """`current` must never be absent, and a half-finished previous run must not
     wedge the installer — that would turn a retry into an outage."""
     opt = tmp_path / "opt"
-    (opt / "1.12.0").mkdir(parents=True)
-    (opt / "1.13.0").mkdir(parents=True)
+    releases = opt / "releases"
+    releases.mkdir(parents=True)
+    (releases / "1.12.0").mkdir(parents=True)
+    (releases / "1.13.0").mkdir(parents=True)
     fs = RealFs(opt, runner=_rootless_runner([]))
     fs.point_current_at("1.12.0")
-    (opt / ".current.tmp").symlink_to(opt / "1.12.0")  # crashed mid-swap
+    (opt / ".current.tmp").symlink_to(releases / "1.12.0")  # crashed mid-swap
 
     fs.point_current_at("1.13.0")
 
@@ -903,7 +907,7 @@ def test_kickstart_restarts_an_already_loaded_job(tmp_path):
 # `gateway/config.yaml` spawns these directly:
 #   exec:  ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
 #   env:   PYTHONPATH: "${SENTIENT_CODE}/whisper-stt/src"
-# with SENTIENT_CODE=/opt/sentient/current. The installer is the only thing that
+# with SENTIENT_CODE=<release_root>/current. The installer is the only thing that
 # puts those paths on disk, and `scripts/build-gateway.sh` stages ONLY bin/ and
 # share/ — so if these two sides drift, both native services fail at every boot
 # with ModuleNotFoundError or a missing interpreter.
@@ -1010,8 +1014,10 @@ def test_staging_refuses_a_release_missing_its_service_source(tmp_path):
 def _releases(opt, *versions):
     """Create release dirs with strictly increasing mtimes (install order)."""
     opt.mkdir(parents=True, exist_ok=True)
+    releases_dir = opt / "releases"
+    releases_dir.mkdir(exist_ok=True)
     for index, version in enumerate(versions):
-        release = opt / version
+        release = releases_dir / version
         release.mkdir()
         (release / "bin").mkdir()
         os.utime(release, (index + 1, index + 1))
@@ -1025,7 +1031,8 @@ def test_prune_keeps_the_most_recent_releases_and_removes_the_rest(tmp_path):
 
     fs.prune(keep=2)
 
-    assert sorted(p.name for p in opt.iterdir() if p.name != "current") == ["1.12.0", "1.13.0"]
+    releases_dir = opt / "releases"
+    assert sorted(p.name for p in releases_dir.iterdir()) == ["1.12.0", "1.13.0"]
 
 
 def test_prune_never_removes_the_current_release(tmp_path):
@@ -1068,7 +1075,7 @@ def test_prune_does_not_mistake_the_current_symlink_for_a_release(tmp_path):
     fs.prune(keep=1)
 
     assert (opt / "current").is_symlink()
-    assert (opt / "1.13.0/bin").is_dir(), "must not have deleted through the symlink"
+    assert (opt / "releases" / "1.13.0" / "bin").is_dir(), "must not have deleted through the symlink"
 
 
 # --- domain flag (gui vs system) -----------------------------------------------
@@ -1083,6 +1090,7 @@ from setup_prod import (
     DOMAIN_SYSTEM,
     DEFAULT_DOMAIN,
     DomainPolicy,
+    OPT,
     launchd_dir_for,
     launchd_domain_target,
 )
@@ -1224,25 +1232,38 @@ def test_gui_domain_kickstart_uses_gui_uid_target(tmp_path):
 
 
 def test_gui_domain_unpack_hardens_with_chmod_a_w(tmp_path):
-    """gui: unpacking hardens with chmod a-w, not chown root:wheel."""
+    """gui: unpacking hardens with chmod a-w, not chown root:wheel.
+
+    The release extracts to ~/.sentient/gateway/releases/<version>/ (operator-
+    writable), NOT /opt/sentient/ — which the operator cannot write to without sudo.
+    """
     tarball = _release_tarball(tmp_path, "1.13.0")
-    opt = tmp_path / "opt"
-    recorded = []
     home = tmp_path / "home"
+    recorded = []
     policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
-    fs = RealFs(opt, runner=_rootless_runner(recorded), domain_policy=policy)
+    release_root = policy.release_root  # ~/.sentient/gateway
+    fs = RealFs(release_root, runner=_rootless_runner(recorded), domain_policy=policy)
 
     fs.unpack("1.13.0", tarball)
 
-    assert (opt / "1.13.0/bin/sentient-gateway").is_file()
+    # Release is under <release_root>/releases/<version>/, NOT /opt/sentient/
+    release_dir = release_root / "releases" / "1.13.0"
+    assert release_dir.is_dir(), "release must extract under releases/ subdir"
+    assert (release_dir / "bin" / "sentient-gateway").is_file()
+    assert "/opt/sentient" not in str(release_dir), "gui must not write to /opt/sentient"
+
     chown_calls = [argv for argv in recorded if argv[0] == "chown"]
     chmod_calls = [argv for argv in recorded if argv[0] == "chmod"]
     assert chown_calls == [], "gui mode must not chown the release"
-    assert ["chmod", "-R", "a-w", str(opt / "1.13.0")] in chmod_calls
+    assert ["chmod", "-R", "a-w", str(release_dir)] in chmod_calls
 
 
 def test_system_domain_unpack_hardens_with_chown_root(tmp_path):
-    """system: unpacking hardens with chown root:wheel — unchanged from before."""
+    """system: unpacking hardens with chown root:wheel — unchanged from before.
+
+    The release extracts to <release_root>/releases/<version>/, where
+    release_root defaults to /opt/sentient for system domain.
+    """
     tarball = _release_tarball(tmp_path, "1.13.0")
     opt = tmp_path / "opt"
     recorded = []
@@ -1252,6 +1273,7 @@ def test_system_domain_unpack_hardens_with_chown_root(tmp_path):
 
     fs.unpack("1.13.0", tarball)
 
+    assert (opt / "releases" / "1.13.0" / "bin" / "sentient-gateway").is_file()
     chown_calls = [argv for argv in recorded if argv[0] == "chown"]
     assert chown_calls, "system mode must chown the release"
     assert "root:wheel" in chown_calls[0]
@@ -1270,3 +1292,134 @@ def test_resolve_operator_gui_uses_user_not_sudo_user():
 def test_resolve_operator_system_uses_sudo_user():
     """system: the script runs under sudo, so $SUDO_USER names the operator."""
     assert resolve_operator({"SUDO_USER": "kevinye"}, DOMAIN_SYSTEM) == "kevinye"
+
+
+# --- release root per domain (the bug this fixes) -----------------------------
+#
+# gui mode (no sudo) cannot write to /opt/sentient — the release root must be
+# operator-writable. system mode stays at /opt/sentient (root-owned, unchanged).
+
+
+def test_system_domain_release_root_is_opt_sentient():
+    """system: release root is /opt/sentient — unchanged from the original design."""
+    policy = DomainPolicy(DOMAIN_SYSTEM, "kevinye", Path("/Users/kevinye"))
+    assert policy.release_root == OPT
+
+
+def test_gui_domain_release_root_is_sentient_gateway():
+    """gui: release root is ~/.sentient/gateway — operator-writable, already
+    where state lives. NOT /opt/sentient, which the operator cannot write to
+    without sudo."""
+    home = Path("/Users/kevinye")
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    assert policy.release_root == home / STATE_ROOT / "gateway"
+    assert policy.release_root != OPT
+
+
+def test_gui_domain_current_symlink_lives_at_release_root_not_opt(tmp_path):
+    """gui: the `current` symlink and `releases/` live under ~/.sentient/gateway,
+    not /opt/sentient. This is the fix for the Permission denied bug."""
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    release_root = policy.release_root
+
+    # Simulate an install: create releases/1.13.0 and point current at it.
+    releases_dir = release_root / RELEASES_SUBDIR
+    releases_dir.mkdir(parents=True)
+    (releases_dir / "1.13.0").mkdir()
+    fs = RealFs(release_root, runner=_rootless_runner([]), domain_policy=policy)
+    fs.point_current_at("1.13.0")
+
+    assert fs.current == "1.13.0"
+    assert (release_root / "current").is_symlink()
+    # The symlink resolves into releases/, NOT /opt/sentient
+    target = Path(os.readlink(release_root / "current"))
+    assert RELEASES_SUBDIR in target.parts
+    assert "1.13.0" in target.parts
+
+
+def test_realfs_release_dir_uses_releases_subdir(tmp_path):
+    """release_dir(version) returns <release_root>/releases/<version>."""
+    opt = tmp_path / "opt"
+    fs = RealFs(opt, runner=_rootless_runner([]))
+    assert fs.release_dir("1.13.0") == opt / RELEASES_SUBDIR / "1.13.0"
+
+
+# --- RELEASE_ROOT plist substitution ------------------------------------------
+
+
+PLIST_WITH_RELEASE_ROOT = """<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>io.sentient.gateway</string>
+<key>ProgramArguments</key><array>
+<string>RELEASE_ROOT/current/bin/sentient-gateway</string>
+</array>
+<key>UserName</key><string>OPERATOR</string>
+<key>EnvironmentVariables</key><dict>
+<key>GATEWAY_RUNTIME_DIR</key><string>RELEASE_ROOT/current/share</string>
+<key>SENTIENT_CODE</key><string>RELEASE_ROOT/current</string>
+</dict>
+</dict></plist>
+"""
+
+
+def test_install_plist_substitutes_release_root(tmp_path):
+    """The plist's RELEASE_ROOT placeholders are substituted at install time —
+    system gets /opt/sentient, gui gets ~/.sentient/gateway."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(PLIST_WITH_RELEASE_ROOT)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+    release_root = Path("/opt/sentient")
+
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner([]), release_root=release_root)
+    ld.install_plist()
+
+    installed = (daemons / "io.sentient.gateway.plist").read_text()
+    assert RELEASE_ROOT_PLACEHOLDER not in installed
+    assert "/opt/sentient/current/bin/sentient-gateway" in installed
+    assert "/opt/sentient/current/share" in installed
+    assert "/opt/sentient/current" in installed
+
+
+def test_install_plist_substitutes_release_root_for_gui(tmp_path):
+    """gui domain: RELEASE_ROOT becomes ~/.sentient/gateway — the user-writable
+    path, not /opt/sentient."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(PLIST_WITH_RELEASE_ROOT)
+    agents = tmp_path / "Library/LaunchAgents"
+    agents.mkdir(parents=True)
+    home = tmp_path / "home"
+    policy = DomainPolicy(DOMAIN_GUI, "kevinye", home)
+    release_root = policy.release_root
+
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=agents,
+                     runner=_recording_runner([]), domain_policy=policy,
+                     release_root=release_root)
+    ld.install_plist()
+
+    installed = (agents / "io.sentient.gateway.plist").read_text()
+    assert RELEASE_ROOT_PLACEHOLDER not in installed
+    assert "/opt/sentient" not in installed, "gui plist must not reference /opt/sentient"
+    expected = str(release_root / "current" / "bin" / "sentient-gateway")
+    assert expected in installed
+
+
+def test_install_plist_refuses_a_surviving_release_root_placeholder(tmp_path):
+    """If RELEASE_ROOT is not substituted (e.g. release_root not passed), the
+    plist must not be installed — a surviving placeholder would make launchd
+    exec a path that literally contains 'RELEASE_ROOT'."""
+    source = tmp_path / "io.sentient.gateway.plist"
+    source.write_text(PLIST_WITH_RELEASE_ROOT)
+    daemons = tmp_path / "LaunchDaemons"
+    daemons.mkdir()
+
+    # No release_root passed — placeholder survives
+    ld = RealLaunchd(source, operator="kevinye", daemon_dir=daemons,
+                     runner=_recording_runner([]))
+
+    with pytest.raises(InstallError) as e:
+        ld.install_plist()
+
+    assert "RELEASE_ROOT" in str(e.value)

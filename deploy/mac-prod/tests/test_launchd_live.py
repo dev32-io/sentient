@@ -73,7 +73,7 @@ def _rehearsal_plist(source: Path, evidence: Path, probe: Path, logs: Path) -> s
 
     Deviations, each forced:
       * `Label`  — a rehearsal must never be mistaken for a real gateway job;
-      * `ProgramArguments` — production points at /opt/sentient/current/bin,
+      * `ProgramArguments` — production points at RELEASE_ROOT/current/bin,
         which does not exist until an install has run;
       * `Standard{Out,Error}Path` — must not write into the operator's real
         state dir;
@@ -150,6 +150,7 @@ def test_real_launchctl_bootstraps_a_new_label_then_kickstarts_it(tmp_path):
     launchd = RealLaunchd(
         source, operator=operator, label=REHEARSAL_LABEL, daemon_dir=daemon_dir,
         runner=_rehearsal_runner(recorded), domain=_user_domain(),
+        release_root=tmp_path,
     )
     try:
         launchd.install_plist()
