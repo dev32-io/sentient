@@ -108,18 +108,16 @@ describe("dreamer replay — captured reduce output through the reconciler (zero
 
     // A pathological batch: flag every prior line stale — must trip the rail
     // (proving the rail is exercised on the real fixture store, not bypassed).
-    const staleAll: ReduceOp[] = fx.preState.memoryMd
-      .split("\n")
-      .map(
-        (line) =>
-          ({
-            op: "FLAG_STALE",
-            target: "MEMORY.md",
-            old_line: line,
-            reason: "replay-rail-probe",
-            sources: [],
-          }) as ReduceOp,
-      );
+    const staleAll: ReduceOp[] = fx.preState.memoryMd.split("\n").map(
+      (line) =>
+        ({
+          op: "FLAG_STALE",
+          target: "MEMORY.md",
+          old_line: line,
+          reason: "replay-rail-probe",
+          sources: [],
+        }) as ReduceOp,
+    );
 
     const out = await applyOps(
       store,
