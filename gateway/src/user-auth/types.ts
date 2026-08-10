@@ -1,16 +1,41 @@
-import type { Result } from "@sentient/protocol";
+import type { Result, UserRole } from "@sentient/protocol";
 
 /** Tint color for user avatar circles; matches webui avatar palette. */
 export type AvatarTint = "terra" | "sage" | "amber" | "clay";
 
-/** Persisted per-user record. `pinHash` is argon2id; never log it. */
+/** Persisted per-user record. `pinHash` is argon2id; never log it.
+ *
+ *  `role` REPLACED `isAdmin: boolean` in storage (plan
+ *  2026-08-07-tool-permissions task 2b). It is the single source of truth for
+ *  both halves of authority: which impact tier a tool call may reach
+ *  (`canExecute`) and whether the admin REST surface opens. Records written
+ *  before the change are migrated on read — see `user-record-migration.ts`.
+ *
+ *  `isAdmin` is still DERIVED onto the wire (`role === "admin"`) so the three
+ *  clients keep compiling while they migrate; it must never be stored. */
 export interface UserRecord {
   userId: string;
   displayName: string;
   pinHash: string;
-  isAdmin: boolean;
+  role: UserRole;
   avatarTint: AvatarTint;
   createdAt: string; // ISO-8601 UTC
+  /**
+   * REVOCATION INSTANT (ISO-8601 UTC): every token this account holds that was
+   * issued at or before it is dead, whatever its own `exp` says.
+   *
+   * It is the record's answer to "are this caller's credentials still good?",
+   * and `token-service.validate` reads it through `CredentialFloor` at the
+   * moment of the decision — so a role change invalidates the outward token
+   * without anything being tracked, cached or swept. Written by `setRole` in
+   * the SAME `update()` as the role itself: two writes would leave a crash
+   * window where the role changed and the old credentials still worked.
+   *
+   * A fresh record stores `NEVER_REVOKED` (credential-floor.ts). Records
+   * written before this field existed carry no value and read as `createdAt`
+   * — see `user-record-migration.ts`.
+   */
+  credentialsValidFrom: string; // ISO-8601 UTC
 }
 
 export type UserStoreError = "not-found" | "already-exists" | "io-error" | "corrupt-file" | "last-admin-demotion";
@@ -24,9 +49,20 @@ export interface Argon2Params {
   parallelism: number;
 }
 
+/**
+ * What a validated session token tells the gateway. IDENTITY AND LIFETIME,
+ * NOTHING ELSE.
+ *
+ * THE TOKEN IDENTIFIES, IT NEVER AUTHORIZES (owner ruling, 2026-08-07). It
+ * says who is calling; it does not say what they may do. Every authorization
+ * decision resolves the caller's role from the user record at the moment of
+ * the decision, so a demoted account loses its authority on its very next
+ * request — no refresh, no re-login, no cache to flush. Do not add an
+ * authority-bearing claim to this shape; a claim is a snapshot, and a snapshot
+ * of authority is a stale grant waiting to be trusted.
+ */
 export interface TokenPayload {
   userId: string;
-  isAdmin: boolean;
   issuedAt: number; // unix seconds
   expiresAt: number; // unix seconds
 }

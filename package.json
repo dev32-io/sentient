@@ -8,7 +8,9 @@
     "shared/*"
   ],
   "scripts": {
-    "dev": "bun run --filter './gateway' dev & bun run --filter './web' dev",
+    "dev": "bash scripts/stack.sh up",
+    "stack:down": "bash scripts/stack.sh down",
+    "stack:status": "bash scripts/stack.sh status",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",

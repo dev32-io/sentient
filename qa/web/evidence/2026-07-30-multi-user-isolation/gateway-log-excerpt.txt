@@ -1,0 +1,20 @@
+130:2026-07-30T01:11:04.310 INFO  [gateway:profile-store] save | userId="u_1eee01a4"
+131:2026-07-30T01:11:04.313 INFO  [gateway:profile-store:renderer] writeRendered | userId="u_1eee01a4" dir="/Users/kevinye/.sentient/gateway/u_1eee01a4/profiles/u_1eee01a4" wroteSoul=true
+132:2026-07-30T01:11:04.313 INFO  [gateway:admin:user-provisioner] createUser.success | userId="u_1eee01a4"
+133:2026-07-30T01:11:04.314 INFO  [gateway:api:admin] createUser.success | userId="u_1eee01a4"
+134:2026-07-30T01:15:05.237 INFO  [gateway:user-auth:auth-service] authenticate.ok | userId="u_1eee01a4"
+142:2026-07-30T01:15:05.266 INFO  [gateway:api:profile-edit] memory.get | userId="u_1eee01a4" slot="memory"
+143:2026-07-30T01:15:05.266 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+148:2026-07-30T01:15:05.271 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+149:2026-07-30T01:15:05.273 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-ms78ncqc-q39u0hcz" userId="u_1eee01a4"
+150:2026-07-30T01:15:05.276 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+151:2026-07-30T01:15:05.280 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" epoch=2 priorEpoch=null leaseId=2 reason="fresh-connect"
+154:2026-07-30T01:15:05.281 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_1eee01a4" conversationId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" connectionId="s-ms78ncqc-q39u0hcz"
+155:2026-07-30T01:15:05.285 INFO  [store:session-store] store.opened | userId="u_1eee01a4"
+156:2026-07-30T01:15:05.285 INFO  [ws:session-configure] session-configured | sessionId="s-ms78ncqc-q39u0hcz" userId="u_1eee01a4" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="2b9a32f5-292f-4e62-b38b-0502baf96220" hasRuntime=true hasVoice=true epoch=2 resumed=false requestedResumeLastSeq=null conversationId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220"
+158:2026-07-30T01:15:05.285 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" itemCount=0 throughSeq=0
+159:2026-07-30T01:15:05.285 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-ms78ncqc-q39u0hcz" userId="u_1eee01a4" voiceId="default" speak=true
+160:2026-07-30T01:15:05.288 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+163:2026-07-30T01:15:05.300 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+165:2026-07-30T01:15:05.310 INFO  [gateway:api:profile] me.request | method="GET" userId="u_1eee01a4"
+168:2026-07-30T01:15:53.675 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_1eee01a4" sessionId="c::u_1eee01a4::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="conversational" seq=1 turnId="9b3d80ce-9448-4bd1-9ca0-48179e10e36e"

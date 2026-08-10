@@ -28,6 +28,7 @@ tags:
 - assertVisible: "Check for updates"
 - tapOn:
     point: "50%,89%"
+# 15000ms: OTA manifest fetch / offline settle
 - extendedWaitUntil:
     visible: "Check failed — Retry"
     timeout: 15000

@@ -9,9 +9,16 @@ max_sessions: 10
 auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
-  replay_buffer_max_bytes: 16777216
   per_user_max_sessions: 40
-  idle_timeout_ms: 900000
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
   url: ws://stt-service:8766
@@ -42,9 +49,16 @@ max_sessions: 10
 auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
-  replay_buffer_max_bytes: 16777216
   per_user_max_sessions: 40
-  idle_timeout_ms: 900000
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}
@@ -63,9 +77,16 @@ max_sessions: 10
 auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
-  replay_buffer_max_bytes: 16777216
   per_user_max_sessions: 40
-  idle_timeout_ms: 900000
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}
@@ -92,9 +113,16 @@ max_sessions: 5
 auth_timeout_ms: 3000
 session:
   ws_idle_timeout_ms: 255000
-  replay_buffer_max_bytes: 16777216
   per_user_max_sessions: 40
-  idle_timeout_ms: 900000
+access:
+  user_data_root: /tmp/sentient-test-users
+orchestrator:
+  provider:
+    base_url: https://openrouter.ai/api/v1
+    model: test-model
+  loop: {}
+  tools: {}
+  delegation: {}
 stt:
   provider: local-stt
 tts: {}
@@ -113,9 +141,7 @@ max_sessions: 10
 auth_timeout_ms: 5000
 session:
   ws_idle_timeout_ms: 255000
-  replay_buffer_max_bytes: 16777216
   per_user_max_sessions: 40
-  idle_timeout_ms: 900000
 stt:
   provider: local-stt
 tts: {}

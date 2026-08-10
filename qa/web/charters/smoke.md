@@ -51,19 +51,21 @@ and click Send.
 
 **Expect:**
 - Optimistic user bubble appears within one frame.
-- A tool pill appears on the assistant message bubble for the
-  duration of the tool call (look for the `mcp_duckduckgo_search`
-  pill in `tool-pill-strip.tsx`).
-- The same pill appears in the composer's task strip
-  (`composer-task-strip.tsx`) — pill must be in BOTH places, not
-  just one.
-- Assistant text bubble streams in.
-- Cycle ends with `cycle.done` (visible in
-  `[sentient.webui.cycle-audio-queue]` console logs).
+- A tool pill appears in the composer's task strip
+  (`composer-task-strip.tsx`) for the duration of the tool call, and
+  the strip is empty again once the turn ends.
+- ZERO tool pills on any chat bubble. The composer strip is the ONLY
+  tool surface: `turn.tool.update` and the `kind: "tool"` feed item
+  are deleted, and `tool-pill-strip.tsx` no longer exists.
+- The assistant reply streams in as ONE bubble that grows through every
+  narration stretch of the turn, and stays one row after it commits.
+- Turn ends with `turn.completed` (visible in the
+  `[sentient.sdk.turn-audio-queue]` console logs).
 
-**Oracle hits:** if pill renders only on bubble OR only on strip →
-fire `shared.few-hiccupps.product-consistency` (two views of the
-same state must agree).
+**Oracle hits:** if a tool pill renders on a chat bubble, or the reply
+splits into more than one bubble for a single uninterrupted turn →
+fire `shared.few-hiccupps.product-consistency`. Do NOT file a bug for
+"the pill is only in the strip" — that is the contract.
 
 ### 2. Speaking state tracks audio drain
 

@@ -4,6 +4,20 @@ The production deploy target: gateway + all sibling services on a single
 Apple-silicon Mac. **This replaces the retired Raspberry Pi deploy** — see
 [Why macOS](#why-macos).
 
+> **Native-stack migration banner (2026-07-29):** the gateway is a native
+> binary under `launchd` now, not a container. The only supported install is
+> [Native installer — first real run](#native-installer--first-real-run)
+> (`sudo python3 deploy/mac-prod/setup-prod.py install <tarball>`); compose
+> builds addon images only. **Do not follow** any section below that detects
+> `HOST_DOCKER_GID`, runs the top-level `python3 deploy/setup-prod.py`, or
+> brings the gateway up with `docker compose ... up -d` — those describe the
+> pre-migration flow. That top-level `deploy/setup-prod.py` and its
+> `native/stt-backend.py` / `native/tts-backend.py` value-rewriters (which
+> still patch `host.docker.internal` URLs into the gateway config — including
+> the STT-backend table below) have **no caller left outside this file**.
+> Whether they get deleted or re-grounded is an **open decision**, deliberately
+> not settled here. Until it is, treat those sections as historical.
+
 ## Why macOS
 
 The Pi 5 couldn't give local speech models enough headroom. Running the
@@ -19,8 +33,8 @@ This folder simply targets the common case: everything on one macOS host.
 
 ## Layout
 
-Only the **gateway** is a long-running compose service. `hermes`, the MCPs
-and `signal-cli` are `build-only` — the gateway's orchestrator
+Only the **gateway** is a long-running compose service. `hermes` and the MCPs
+are `build-only` — the gateway's orchestrator
 creates/starts/recreates them at runtime over `/var/run/docker.sock`. Compose
 only builds their images. `stt-service` (SenseVoice) is gated behind the
 `stt-docker` profile: built/managed **only** when the docker-sensevoice STT
@@ -116,6 +130,43 @@ there. Once the agent is loaded and healthy, re-run
 `python3 deploy/setup-prod.py` as usual to reconcile the gateway config's
 `tts.url` / `companions.tts_health_url`.
 
+## Native installer — first real run
+
+`setup-prod.py install <tarball>` unpacks a release under `/opt/sentient`,
+builds each native service's venv from vendored wheels, flips the `current`
+symlink, restarts the LaunchDaemon, and **health-gates the result over verified
+TLS — rolling back to the previous release if the new one does not come up**.
+
+Three of its operations need root, so they are the parts a dev box cannot
+exercise. Everything else is covered before you ever run this on the mini:
+
+| Behaviour | Where it is verified |
+|---|---|
+| install / rollback FSM, checksum gate, TLS trust decisions | `tests/test_setup_prod.py` (unit) |
+| ordering between the real collaborators — real tarball, real plist, real filesystem, real HTTPS (gateway + edge) + pinned CA | `bash tests/e2e-install.sh <workdir>` (rootless, 8 cases incl. rollback) |
+| the real `launchctl` contract — `print` exit codes, bootstrap-vs-kickstart, a rendered plist actually spawning a process with the substituted env | `SENTIENT_LAUNCHD_REHEARSAL=1 pytest deploy/mac-prod/tests/` (real launchctl, `gui/<uid>` domain) |
+| `chown -R root:wheel`; the `system` domain; `UserName` switching to another account | **first real run — the commands below** |
+
+Run these once on the mini and read the output rather than assuming:
+
+```bash
+./scripts/build-gateway.sh --release
+sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+
+ls -la /opt/sentient/                 # versioned dir root:wheel, `current` symlink
+launchctl print system/io.sentient.gateway | grep -E "state|username|path"
+curl -sk https://localhost:8888/api/v1/health     # {"status":"ok"}
+```
+
+Expected: the release dir owned by `root:wheel`, the daemon `state = running`
+with `username = <operator>` (NOT root), and health ok. A failed health gate
+exits non-zero having already rolled back — the message names the version it
+reverted to, or says manual intervention is needed and why.
+
+**Prerequisite the installer will refuse without:** `brew install python@3.11`.
+`native/install-venv.sh` pins local-tts to 3.11 (mlx-audio ships no 3.14
+wheels) and fails loudly rather than building a venv on the wrong interpreter.
+
 ## Headless 24×7 host notes
 
 The Mac mini runs headless. Required host setup (auto-login so Docker Desktop
@@ -133,4 +184,10 @@ reads/writes regardless of host ownership.
 ## Dev vs prod
 
 - `deploy/mac-prod/` — this folder, release build (`BUILD_PROFILE=release`).
-- `deploy/macos/` — local Docker Desktop **dev** (debug build).
+- Local dev runs the gateway from the checkout (`cd gateway && bun --watch
+  src/main.ts`) against the SAME addon images this folder's `build-only`
+  profile bakes. There is no separate dev compose file. Never `--hot`:
+  `gateway/src/main.ts` refuses it outright, because a second in-process
+  evaluation would arm a second addon supervisor inside the still-live
+  process, and the two would reap and respawn each other's `whisper-stt` /
+  `local-tts` children until nothing owns the ports.

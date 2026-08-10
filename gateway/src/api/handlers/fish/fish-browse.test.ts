@@ -11,7 +11,7 @@ function makeTokens(): Pick<TokenService, "validate"> {
   return {
     validate: async (token) => {
       if (token === VALID_TOKEN) {
-        return { ok: true, value: { userId: "test-user", isAdmin: false, issuedAt: 0, expiresAt: 9999999999 } };
+        return { ok: true, value: { userId: "test-user", issuedAt: 0, expiresAt: 9999999999 } };
       }
       return { ok: false, error: "signature-invalid" };
     },

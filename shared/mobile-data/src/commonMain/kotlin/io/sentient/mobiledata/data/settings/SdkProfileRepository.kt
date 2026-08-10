@@ -15,6 +15,7 @@ import io.sentient.mobilesdk.settings.PersonalityList
 import io.sentient.mobilesdk.settings.ProfileEditHttpClient
 import io.sentient.mobilesdk.settings.ProfileHttpClient
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ProfileV1PutBody
 import io.sentient.mobilesdk.settings.ProvidersHttpClient
 import io.sentient.mobilesdk.settings.SoulDefaultDoc
 import io.sentient.mobilesdk.settings.SoulDoc
@@ -27,7 +28,7 @@ class SdkProfileRepository(
 
     override suspend fun getProfile(): SentientResult<ProfileV1> = profile.getMe().toEnvelope()
 
-    override suspend fun putProfile(profile: ProfileV1): SentientResult<ProfileV1> =
+    override suspend fun putProfile(profile: ProfileV1PutBody): SentientResult<ProfileV1> =
         this.profile.updateMe(profile).toEnvelope()
 
     override suspend fun apply(): ApplyResult = profile.apply()

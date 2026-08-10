@@ -1,64 +1,65 @@
-import type { UserAudioInputAdapter } from "../adapters/user-audio-input-adapter.js";
-import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
+// Mic echo guard — hard-mute the STT uplink for a cooldown window at TTS
+// start so the client's WebRTC AEC converges on the initial burst.
+// `stt.tts_echo_cooldown_ms` (config.yaml) is the window; residual echo past
+// it is handled at the client edge (RNNoise + speech-prob gate), so there is
+// no gateway-side energy gate.
+//
+// Implements runtime/turn-voice.ts's MicEchoGuard: the interface lives with
+// its consumer (the runtime), the implementation with the resource it drives
+// (the WS-layer STT session). Dependencies point inward.
+//
+// EVERY ATTACHED WINDOW'S MIC, not just one (session-model plan task 5). TTS
+// fans out to every window of a session, so every window hears it — and a
+// guard scoped to the connection that happened to build the session leaves the
+// others' microphones open on the assistant's own voice, which is
+// self-triggered barge-in and spurious transcripts. The suppression therefore
+// applies to whichever STT sessions are live at the moment TTS starts, read
+// lazily for the same reason it always was.
+
 import { getLog } from "../logging/logger.js";
+import type { MicEchoGuard } from "../runtime/turn-voice.js";
+import type { SttSession } from "./stt-session.js";
 
 const log = getLog(["sentient", "session-handlers", "mic-echo-guard"]);
 
-// ---------------------------------------------------------------------------
-// Mic echo guard — hard-mute the STT uplink for a cooldown window around
-// TTS playback so the browser's WebRTC AEC has time to converge.
-//
-// Pre-N4 this also ramped a PCM-domain energy threshold up during playback
-// and back down at the tail. That gate was removed once the webui edge
-// (Phase 5.5 N3) started running RNNoise + a speech-prob gate before the
-// opus encoder — residual echo never reaches the gateway anymore. Only the
-// start-of-playback hard-mute remains here; the tail/threshold side is gone.
-// ---------------------------------------------------------------------------
+const CLEAR_SUPPRESSION_MS = 0;
 
-export interface MicSuppressionOptions {
-  readonly echoCooldownMs: number;
-}
-
-export interface MicEchoGuard {
-  onTtsStart(cycleId: string): void;
-  /** TTS finished or was cancelled — currently a no-op (kept for symmetry +
-   *  future hooks). The start-side cooldown self-expires; nothing to tear
-   *  down. */
-  onTtsDone(cycleId: string): void;
-  onTtsCancel(cycleId: string): void;
-  /** Hard reset on session teardown. */
-  dispose(): void;
-}
-
+/**
+ * @param getSttSessions read lazily and as a SET — a session's STT sessions are
+ *                 minted per connection on its first `audio.start`, which may
+ *                 be long after this guard is built, and a window can attach
+ *                 later still. Empty is normal: a text-only session never
+ *                 dials STT.
+ * @param cooldownMs `null` when the gateway has no `stt:` config (nothing to
+ *                 suppress); otherwise `stt.tts_echo_cooldown_ms`.
+ */
 export function createMicEchoGuard(
-  audioAdapterRef: () => UserAudioInputAdapter | null,
-  opts: MicSuppressionOptions | null,
+  getSttSessions: () => readonly SttSession[],
+  cooldownMs: number | null,
   sessionId: string,
 ): MicEchoGuard {
+  function suppressAll(ms: number): number {
+    const sessions = getSttSessions();
+    for (const stt of sessions) stt.suppressInputFor(ms);
+    return sessions.length;
+  }
+
   return {
-    onTtsStart(cycleId) {
-      const adapter = audioAdapterRef();
-      if (!adapter || !opts) return;
-      adapter.suppressInputFor(opts.echoCooldownMs);
-      log.info("mic-suppress.tts-start", {
+    onTtsStart(turnId) {
+      if (cooldownMs === null) return;
+      const suppressed = suppressAll(cooldownMs);
+      if (suppressed === 0) return;
+      log.info("mic-suppress.tts-start", { sessionId, turnId, cooldownMs, windows: suppressed });
+    },
+    onTtsCancel(turnId) {
+      const cleared = suppressAll(CLEAR_SUPPRESSION_MS);
+      if (cleared === 0) return;
+      log.info("mic-suppress.cleared", {
         sessionId,
-        cycleId,
-        cooldownMs: opts.echoCooldownMs,
+        turnId,
+        windows: cleared,
+        reason: "tts cancelled — the user is speaking, their frames must reach STT now",
       });
     },
-    onTtsDone(cycleId) {
-      log.debug("mic-suppress.tts-done", { sessionId, cycleId });
-    },
-    onTtsCancel(cycleId) {
-      log.debug("mic-suppress.tts-cancel", { sessionId, cycleId });
-    },
-    dispose() {
-      /* nothing to tear down */
-    },
   };
-}
-
-export function buildMicSuppressionOptions(services: GatewayServices): MicSuppressionOptions | null {
-  if (!services.stt) return null;
-  return { echoCooldownMs: services.stt.adapterConfig.ttsEchoCooldownMs };
 }

@@ -24,13 +24,13 @@ schema_version: "0.1.0"
 # WebSocket server
 # =============================================================================
 server:
-  # Bind address inside the container. 0.0.0.0 = all interfaces, which
-  # Docker needs in order to route traffic from the host. Don't touch
-  # unless you have a specific networking reason.
-  host: "0.0.0.0"
+  # Loopback ONLY. The gateway is the sole consumer and runs on the same host.
+  # This was "0.0.0.0" when the service ran in a container, where that meant
+  # "reachable on the docker network"; as a native host process it means the LAN.
+  host: 127.0.0.1
 
-  # WebSocket port inside the container. If you ever move this, update
-  # the host->container port mapping in deploy/mac-prod/docker-compose.yml too.
+  # WebSocket port. If you move this, update the gateway's STT provider config
+  # to match.
   port: 8766
 
   # Maximum accepted WebSocket frame size in bytes. 16 MiB ≈ 8 minutes

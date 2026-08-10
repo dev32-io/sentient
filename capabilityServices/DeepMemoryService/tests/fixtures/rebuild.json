@@ -1,0 +1,14 @@
+{
+  "endpoint": "/rebuild",
+  "method": "POST",
+  "plane": "admin",
+  "note": "Precondition: the two entries in upsert.json are already upserted. Drops the whole scope index; the gateway then re-feeds from journals + files through the idempotent upsert path. Response reports how many entries were dropped and the post-drop status.",
+  "request": {
+    "scopeId": "user:alice"
+  },
+  "response": {
+    "scopeId": "user:alice",
+    "dropped": 2,
+    "status": "dropped"
+  }
+}

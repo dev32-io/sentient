@@ -60,7 +60,7 @@ source scripts/env.sh
 ```
 
 Point the app at a gateway via the build config / in-app backend resolution; the default
-local stack is `deploy/macos/` (see the root `deploy/` docs).
+is the dev gateway running on this host (see the root `deploy/` docs).
 
 ## Testing
 

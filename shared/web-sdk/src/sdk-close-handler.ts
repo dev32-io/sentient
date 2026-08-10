@@ -48,6 +48,12 @@ export interface CloseHandlerDeps {
 /**
  * Tear down the current WS without firing onclose. Used by the reconnect
  * controller before each retry. Idempotent.
+ *
+ * `detachAll` here drops socket subscriptions ONLY. Connector session state —
+ * the conversation mirror above all — must survive: the reconnect's normal
+ * outcome is `stream.resumed{recovered:true}`, which replays just the frames
+ * the client missed and deliberately carries no conversation.snapshot. Only
+ * `SentientSDK.disconnect()` clears that state.
  */
 export function teardownWsForReconnect(deps: CloseHandlerDeps): void {
   const ws = deps.getWs();

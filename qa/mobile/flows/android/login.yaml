@@ -6,7 +6,8 @@ tags:
 # entry → chat screen. Proves the Koin DI + Navigation-Compose nav gate routes to
 # chat on valid auth. The avatar+PIN body lives in _helpers/login.yaml (shared with
 # every authed flow's conditional login); this flow forces the login screen via
-# clearState, then delegates. PIN is 1234 (Kevin / u_8c866990).
+# clearState, then delegates. PIN is 1234; the avatar id comes from the helper's
+# ${QA_USER_ID} (server-minted, see the helper header — do not re-hardcode it).
 #
 # Also serves as the runner's setup "ensure logged in" step at batch start.
 - launchApp:

@@ -131,13 +131,18 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
         <div class="drawer__footer">
           <NewChatButton
             onClick={() => {
-              // Fire-and-forget: gateway clears the chat pane synchronously
-              // (switchFlow.switchTo("")) and kicks ACP `session/new` in the
-              // background. The user can type into the empty input
-              // immediately; onCycle awaits the stashed Promise before
-              // dispatching the first prompt. Awaiting here would re-block
-              // the drawer close on the cold-start latency we're trying to
-              // hide.
+              // Fire-and-forget: sessions.newChat() sends session.new over WS
+              // (intent: "explicit") and resolves once the gateway answers
+              // session.draft — no session row yet, just a draft key the
+              // composer's next send will mint against. The gateway's
+              // sendDraftHandshake sends an empty conversation.snapshot on
+              // the SAME socket just before session.draft, which is what
+              // actually clears the chat pane (ConversationHistoryConnector's
+              // ordinary snapshot handling, not a session-boundary special
+              // case — see use-voice-client.ts's onSessionsChanged for the
+              // verified-redundant belt-and-suspenders clear alongside it).
+              // Awaiting the promise here would only re-block the drawer's
+              // close on that round trip; the user can type immediately.
               void sessions.newChat();
               onClose();
             }}

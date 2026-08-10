@@ -170,8 +170,6 @@ struct UserSessionHost: View {
             AdvancedScreen(settings: settings, onBack: popRoute)
         case .settingsAccount:
             AccountScreen(settings: settings, onBack: popRoute)
-        case .settingsDevices:
-            DevicesScreen(settings: settings, onBack: popRoute)
         case .settingsMembers:
             MembersScreen(settings: settings, onBack: popRoute)
         case .settingsSecrets:

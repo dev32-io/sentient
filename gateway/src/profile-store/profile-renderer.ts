@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import type { McpCatalog, McpServerEntry } from "@sentient/config";
-import { stringify as yamlStringify } from "yaml";
+import type { McpCatalog } from "@sentient/config";
+import { assetPath } from "../config/asset-root.ts";
 import { getLog } from "../logging/logger.js";
 import { writeFileAtomic } from "../user-auth/atomic-write.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -14,25 +14,22 @@ const log = getLog(["sentient", "gateway", "profile-store", "renderer"]);
 // ---------------------------------------------------------------------------
 // Template loading — done once at module init.
 //
-// Templates live in gateway/templates/profile/ relative to the gateway root.
-// GATEWAY_RUNTIME_DIR lets operators override the root at deploy time
-// (e.g. GATEWAY_RUNTIME_DIR=/app in Docker); falls back to two levels up from
-// this source file during local dev (import.meta.dir = gateway/src/profile-store).
+// Templates live in <asset root>/templates/profile/. The root differs per
+// deployment shape (repo checkout vs compiled binary); config/asset-root.ts
+// owns that resolution and fails loudly on a bogus root rather than letting
+// an ENOENT on a template be the first symptom.
 // ---------------------------------------------------------------------------
 
-const GATEWAY_ROOT = process.env.GATEWAY_RUNTIME_DIR ?? join(import.meta.dir, "..", "..");
-const TMPL_DIR = join(GATEWAY_ROOT, "templates", "profile");
-
-const HERMES_CONFIG_TMPL = readFileSync(join(TMPL_DIR, "hermes-config.yaml.tmpl"), "utf8");
+const HERMES_CONFIG_TMPL = readFileSync(assetPath("templates", "profile", "hermes-config.yaml.tmpl"), "utf8");
 
 // Per-provider model fragments. Each fragment is 2-space indented and
 // contains no trailing newline; the renderer appends "\n" between blocks.
 // Convention: {{model_id}} is always present; {{base_url}} only for providers
 // that need a configurable endpoint (ollama-cloud, custom).
 const MODEL_FRAGMENTS: Record<ModelProvider, string> = {
-  openrouter: readFileSync(join(TMPL_DIR, "model.openrouter.tmpl"), "utf8"),
-  "ollama-cloud": readFileSync(join(TMPL_DIR, "model.ollama-cloud.tmpl"), "utf8"),
-  custom: readFileSync(join(TMPL_DIR, "model.custom.tmpl"), "utf8"),
+  openrouter: readFileSync(assetPath("templates", "profile", "model.openrouter.tmpl"), "utf8"),
+  "ollama-cloud": readFileSync(assetPath("templates", "profile", "model.ollama-cloud.tmpl"), "utf8"),
+  custom: readFileSync(assetPath("templates", "profile", "model.custom.tmpl"), "utf8"),
 };
 
 // ---------------------------------------------------------------------------
@@ -56,10 +53,11 @@ export interface ProviderBaseUrlAccessor {
 }
 
 export interface RenderContext {
-  // Operator-managed MCP server inventory. Names referenced by
-  // profile.tools.enabled[] are resolved against this map; entries
-  // not present are dropped with a warn log. An empty/missing catalog
-  // yields `mcp_servers: {}` — Hermes treats that as "no MCP".
+  // Operator-managed MCP server inventory. Unused by renderMcpServers as of
+  // the tool-permissions work (see that function's STUB comment) — kept on
+  // the context shape only because callers (apply-deps.ts) still construct
+  // and pass it. Task 3 should decide whether this field goes away with
+  // renderMcpServers or stays for a future consumer.
   mcpCatalog: McpCatalog;
   // Accessor for per-user provider configuration (e.g. custom base_url).
   // Optional: renderers that never use the "custom" provider can omit it.
@@ -87,123 +85,26 @@ function renderSoul(profile: ProfileV1, templateBody: string): string {
   return `${head}${templateBody.trim()}\n${overrideBlock}`;
 }
 
-// Per-render variable substitution. Operator-authored catalog entries can
-// reference {{userId}} in any string position (command, args, url, env
-// values) — useful for per-user socket paths and similar.
-function substituteVars(value: string, userId: string): string {
-  return value.replaceAll("{{userId}}", userId);
-}
-
-function applyVarsToEntry(entry: McpServerEntry, _ctx: RenderContext, userId: string): McpServerEntry {
-  const sub = (s: string) => substituteVars(s, userId);
-  if (entry.transport === "http") {
-    return { ...entry, url: sub(entry.url) };
-  }
-  return {
-    ...entry,
-    command: sub(entry.command),
-    args: entry.args.map(sub),
-    env: Object.fromEntries(Object.entries(entry.env).map(([k, v]) => [k, sub(v)])),
-  };
-}
-
-// Hermes' MCP loader (tools/mcp_tool.py) expects each server config to
-// expose its raw transport keys (`command`/`args`/`env` for stdio,
-// `url`/`timeout` for HTTP). The schema's `transport` discriminator is a
-// renderer-side hint for type safety; strip it before serialization so
-// Hermes doesn't reject the config as having an unknown key.
-function entryToHermesYamlMap(entry: McpServerEntry): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (entry.transport === "http") {
-    out.url = entry.url;
-    out.timeout = entry.timeout;
-    out.connect_timeout = entry.connect_timeout;
-  } else {
-    out.command = entry.command;
-    if (entry.args.length > 0) out.args = entry.args;
-    if (Object.keys(entry.env).length > 0) out.env = entry.env;
-    out.timeout = entry.timeout;
-    out.connect_timeout = entry.connect_timeout;
-  }
-  // `available` is operator metadata for the webui (full tool list +
-  // descriptions). Hermes' MCP loader understands include/exclude plus
-  // the per-MCP resources/prompts knobs (suppresses the four
-  // auto-registered housekeeping tools per server). Strip `available`
-  // before serializing or Hermes will reject the config; pass the rest.
-  if (entry.tools) {
-    const hermesTools: Record<string, unknown> = {};
-    if (entry.tools.include) hermesTools.include = entry.tools.include;
-    if (entry.tools.exclude) hermesTools.exclude = entry.tools.exclude;
-    if (entry.tools.resources !== undefined) hermesTools.resources = entry.tools.resources;
-    if (entry.tools.prompts !== undefined) hermesTools.prompts = entry.tools.prompts;
-    if (Object.keys(hermesTools).length > 0) out.tools = hermesTools;
-  }
-  return out;
-}
-
-function renderMcpServers(profile: ProfileV1, ctx: RenderContext): string {
-  // Hermes' tools_config._get_platform_tools expects mcp_servers as a
-  // mapping of name -> {command|url, ...}, not a list. Server names
-  // referenced in profile.tools.enabled are resolved against the
-  // operator's catalog (gateway config.yaml#mcp_catalog); unknown names
-  // are skipped with a warn so a typo doesn't crash the worker.
-  //
-  // Per-tool whitelist resolution: the catalog entry's `tools.include`
-  // is the operator's authoritative allow-list (e.g. ha-mcp ships
-  // ~84 tools, the operator picks ~21). The user's
-  // `profile.tools.enabled[name]` array can FURTHER narrow this — must
-  // be a subset of the operator's list, names not in the catalog list
-  // are dropped at render with a warn. Empty user array = inherit
-  // operator list verbatim.
-  const resolved: Record<string, Record<string, unknown>> = {};
-  const unknownServers: string[] = [];
-  const unknownTools: { server: string; tool: string }[] = [];
-  for (const [name, userInclude] of Object.entries(profile.tools.enabled)) {
-    const entry = ctx.mcpCatalog[name];
-    if (!entry) {
-      unknownServers.push(name);
-      continue;
-    }
-    const yamlEntry = entryToHermesYamlMap(applyVarsToEntry(entry, ctx, profile.userId));
-    if (userInclude.length > 0) {
-      const operatorInclude = entry.tools?.include ?? null;
-      const narrowed = operatorInclude
-        ? userInclude.filter((t) => {
-            if (operatorInclude.includes(t)) return true;
-            unknownTools.push({ server: name, tool: t });
-            return false;
-          })
-        : userInclude.slice();
-      // Only emit include/exclude/resources/prompts into the rendered
-      // Hermes config; keep `available` (UI-only operator metadata) out
-      // of the wire.
-      const baseFilter: Record<string, unknown> = {};
-      if (entry.tools?.exclude) baseFilter.exclude = entry.tools.exclude;
-      if (entry.tools?.resources !== undefined) baseFilter.resources = entry.tools.resources;
-      if (entry.tools?.prompts !== undefined) baseFilter.prompts = entry.tools.prompts;
-      baseFilter.include = narrowed;
-      yamlEntry.tools = baseFilter;
-    }
-    resolved[name] = yamlEntry;
-  }
-  if (unknownServers.length > 0) {
-    log.warn("renderMcpServers.unknown-servers", {
-      userId: profile.userId,
-      unknown: unknownServers,
-      hint: "add to gateway config.yaml#mcp_catalog or remove from profile.tools.enabled",
-    });
-  }
-  if (unknownTools.length > 0) {
-    log.warn("renderMcpServers.unknown-tools", {
-      userId: profile.userId,
-      unknown: unknownTools,
-      hint: "tool name is not in the catalog's tools.include for that server",
-    });
-  }
-  if (Object.keys(resolved).length === 0) return "  {}";
-  // yaml.stringify produces a flow-block tree with stable key order; indent
-  // by 2 to nest under the `mcp_servers:` parent key.
-  return indent(yamlStringify(resolved).trimEnd(), 2);
+// STUB (Task 1 of the tool-permissions work, 2026-08-07): this used to
+// resolve `profile.tools.enabled` (per-server tool whitelist) against
+// `ctx.mcpCatalog` into a Hermes `mcp_servers:` block. `tools.enabled` is
+// retired — replaced by `profile.tools.permissions`, owned by the gateway's
+// own ToolBroker (see profile-types.ts) — and per the owner's own read of
+// this file's ONLY consumer, Hermes never read this block anyway: the
+// gateway's MCP is registered with a delegated Hermes agent at call time via
+// `hermes mcp add` (external-tools/hermes-external-tool.ts), and every
+// proxied call is mediated by the CALLER's own ToolBroker, not by anything
+// Hermes loads from its own config.yaml. So this always rendered dead data.
+//
+// Left as an explicit empty stub — not deleted outright — because deciding
+// whether `renderProfile`/`RenderContext.mcpCatalog` should lose this
+// concept entirely (vs. keep emitting an inert `{}` for template-shape
+// stability) is Task 3's call, not this task's. Task 3 punch list: delete
+// this function and `ctx.mcpCatalog`'s only remaining use-site (this file),
+// OR confirm callers still need the `{}` placeholder in the rendered yaml
+// and keep the stub as-is.
+function renderMcpServers(_profile: ProfileV1, _ctx: RenderContext): string {
+  return "  {}";
 }
 
 function renderHermesYaml(profile: ProfileV1, ctx: RenderContext): string {
@@ -242,7 +143,6 @@ function renderHermesYaml(profile: ProfileV1, ctx: RenderContext): string {
   // entirely. The patch closes that completeness gap.
   return HERMES_CONFIG_TMPL.replace("{{model_section}}", modelSection)
     .replace("{{compression_threshold}}", String(profile.compression.threshold))
-    .replace("{{gateway_signal_block}}", renderGatewaySignalBlock(profile))
     .replace("{{agent_block}}", agentBlock)
     .replace("{{mcp_servers_block}}", mcpEntries)
     .replace("{{max_tokens}}", String(profile.advanced.maxTokens))
@@ -250,49 +150,28 @@ function renderHermesYaml(profile: ProfileV1, ctx: RenderContext): string {
     .replace(/\n+$/, "\n");
 }
 
-// Emit the gateway.platforms.signal block + cron.default_deliver when the user
-// has paired Signal as a device. gateway.platforms.signal.enabled tells Hermes'
-// gateway runner to boot the Signal adapter; unauthorized_dm_behavior=ignore
-// disables Hermes' built-in DM pairing-code stranger-approval surface (we only
-// allow the user's own E.164 in SIGNAL_ALLOWED_USERS, set via .env on pair).
-// cron.default_deliver makes scheduled jobs deliver to Signal by default —
-// overridable per-job. Emit nothing when unpaired; Hermes' built-in defaults apply.
-function renderGatewaySignalBlock(profile: ProfileV1): string {
-  if (profile.devices?.signal?.paired !== true) return "";
-  return [
-    "gateway:",
-    "  platforms:",
-    "    signal:",
-    "      enabled: true",
-    "      extra:",
-    "        unauthorized_dm_behavior: ignore",
-    "  unauthorized_dm_behavior: ignore",
-    "cron:",
-    "  default_deliver: signal",
-    "",
-  ].join("\n");
-}
-
 // Emit the `agent:` block. Holds two fields:
 //   - reasoning_effort (always emitted; defaults to "minimal" via the
 //     profile schema — see profile-types.ts. This is the sentient product
 //     default for family-assistant context).
 //   - enabled_toolsets (Hermes 0008-acp-completeness-fixes patch; only
-//     emitted when profile.tools.toolsets is explicit. Combines those
-//     Hermes built-in toolset names with the user's MCP server keys —
-//     each MCP is also addressable via the `mcp-<name>` alias. Hermes'
-//     patched _resolve_acp_toolsets returns the list verbatim when
-//     explicit, so the renderer must include the MCP keys here —
-//     Hermes will not auto-append them once `enabled_toolsets` is set.
-//     When omitted/empty, Hermes falls back to its baked default.).
+//     emitted when profile.tools.toolsets is explicit).
+//
+// STUB (Task 1 of the tool-permissions work, 2026-08-07): this used to merge
+// the emitted toolsets with `Object.keys(profile.tools.enabled)` so each MCP
+// server also got a `mcp-<name>` toolset alias. `tools.enabled` is retired
+// and `renderMcpServers` above always emits an empty `mcp_servers:` block
+// now, so there is nothing left in THIS file's rendered yaml for such an
+// alias to reference — merging `Object.keys(profile.tools.permissions)` in
+// its place would just re-introduce the same phantom-alias problem the stub
+// above was written to avoid. Dropped the merge entirely; Task 3 should
+// remove this whole comment once it disposes of renderMcpServers.
 function renderAgentBlock(profile: ProfileV1): string {
   const lines: string[] = ["agent:", `  reasoning_effort: ${profile.advanced.reasoningEffort}`];
   const toolsets = profile.tools.toolsets;
   if (toolsets && toolsets.length > 0) {
-    const mcpKeys = Object.keys(profile.tools.enabled);
-    const merged = Array.from(new Set([...toolsets, ...mcpKeys]));
     lines.push("  enabled_toolsets:");
-    for (const t of merged) lines.push(`    - ${t}`);
+    for (const t of toolsets) lines.push(`    - ${t}`);
   }
   return `${lines.join("\n")}\n`;
 }

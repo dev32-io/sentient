@@ -1,9 +1,9 @@
 /**
  * Out-of-band marker that flows alongside text deltas through the TTS pipeline
  * and tells downstream stages "flush whatever you've been holding". Emitted by
- * the broadcaster when the LLM stops streaming text to call a tool, so a short
- * pre-tool acknowledgement ("Let me check.") isn't held back for the seconds
- * the tool takes to return. Markdown stripping, emoji stripping, and
+ * the session's TurnVoice (runtime/turn-voice.ts) when the ReAct loop stops
+ * streaming text to call a tool, so a short pre-tool acknowledgement ("Let me
+ * check.") isn't held back for the seconds the tool takes to return. Markdown stripping, emoji stripping, and
  * paragraph-aggregation now happen service-side in local-tts (which owns the
  * full text frontend); the gateway forwards raw text deltas plus this marker.
  *

@@ -23,8 +23,6 @@ tags:
     id: "settings-cat-memory"
 - assertVisible:
     id: "settings-cat-account"
-- assertVisible:
-    id: "settings-cat-devices"
 - takeScreenshot: "42-non-admin-top"
 # Admin group must NOT render for a non-admin user.
 - assertNotVisible:

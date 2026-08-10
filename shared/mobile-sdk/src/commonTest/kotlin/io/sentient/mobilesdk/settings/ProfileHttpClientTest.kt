@@ -26,7 +26,8 @@ import kotlin.test.assertTrue
  */
 private val JSON_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
 
-// A full ProfileV1 body exactly as `GET /profile/me` returns it (profile-types.ts).
+// A full ProfileV1 body exactly as `GET /profile/me` returns it TODAY
+// (profile-types.ts) — post tools.enabled -> tools.permissions migration.
 private const val PROFILE_JSON = """{
   "schemaVersion":1,
   "userId":"u_abc123",
@@ -34,10 +35,50 @@ private const val PROFILE_JSON = """{
   "voice":{"provider":"local-tts","id":"default"},
   "audio":{"ttsEnabled":true,"channel":"voice"},
   "persona":{"template":"default","overrides":""},
-  "tools":{"enabled":{"home-assistant":[]},"toolsets":["memory","web"]},
+  "tools":{"permissions":{"home-assistant":{"get_state":"allow","*":"ask"}},"toolsets":["memory","web"]},
   "compression":{"threshold":0.5},
-  "advanced":{"extraSystemPrompt":"","maxTokens":1024,"reasoningEffort":"minimal"},
-  "devices":{"signal":{"paired":true,"account_masked":"+1•••••1234","linked_at":"2026-07-01T00:00:00Z"}}
+  "advanced":{"extraSystemPrompt":"","maxTokens":1024,"reasoningEffort":"minimal"}
+}"""
+
+// A profile whose `tools` names NEITHER `permissions` NOR `toolsets` — the real shape of
+// EVERY response now that `enabled` is retired (gateway's `permissions` field is
+// `.optional()`; a never-configured account never had it). This is the "live break" this
+// task fixes: a required-no-default `enabled` field used to throw on exactly this body.
+private const val PROFILE_JSON_UNCONFIGURED_TOOLS = """{
+  "schemaVersion":1,
+  "userId":"u_abc123",
+  "model":{"provider":"openrouter","id":"google/gemini-2.5-flash"},
+  "voice":{"provider":"local-tts","id":"default"},
+  "audio":{"ttsEnabled":true,"channel":"voice"},
+  "persona":{"template":"default","overrides":""},
+  "tools":{},
+  "compression":{"threshold":0.5},
+  "advanced":{"extraSystemPrompt":"","maxTokens":1024,"reasoningEffort":"minimal"}
+}"""
+
+// A full McpCatalogView body exactly as `GET /mcp-catalog` returns it TODAY
+// (mcp-catalog.ts) — the endpoint this task added the most new required fields to.
+// Includes one server with a settable, resolved tool + a wildcard, plus nativeTools'
+// one settable:false entry (delegateTask, structurally unwritable via a PUT).
+private const val MCP_CATALOG_JSON = """{
+  "servers":{
+    "home-assistant":{
+      "tools":[
+        {"name":"get_state","description":"Get entity state.","tier":"read","permission":"allow","settable":true},
+        {"name":"call_service","description":"Call a service.","tier":"write","permission":"ask","settable":true}
+      ],
+      "defaultInclude":["get_state"],
+      "wildcardPermission":"ask",
+      "description":"Home Assistant"
+    }
+  },
+  "wildcardPermissionKey":"*",
+  "nativeTools":[
+    {"name":"delegateTask","description":"Hand a task to a background worker agent.","tier":"confirm","permission":"ask","settable":false}
+  ],
+  "hermesBuiltins":[
+    {"name":"remember","description":"Save a memory.","toolset":"memory"}
+  ]
 }"""
 
 private fun profileClient(engine: MockEngine): ProfileHttpClient =
@@ -71,8 +112,23 @@ class ProfileHttpClientTest {
         assertEquals("openrouter", p.model.provider)
         assertEquals("local-tts", p.voice.provider)
         assertEquals(listOf("memory", "web"), p.tools.toolsets)
-        assertEquals("+1•••••1234", p.devices?.signal?.accountMasked)
+        assertEquals(ToolPermission.ALLOW, p.tools.permissions?.get("home-assistant")?.get("get_state"))
+        assertEquals(ToolPermission.ASK, p.tools.permissions?.get("home-assistant")?.get("*"))
         assertEquals("Bearer tok", auth)
+    }
+
+    // Self-review-mandated: pin the actual live break directly against a real decode of a
+    // real response body — a hand-built fixture that happens to still carry a field proves
+    // nothing about the shape the gateway sends TODAY. `tools:{}` (no `permissions`, no
+    // `toolsets`) is every never-configured account's real response now that `enabled` is
+    // retired; a required-no-default field here used to throw on exactly this body.
+    @Test
+    fun getMe_decodesWhenToolsNamesNeitherPermissionsNorToolsets() = runTest {
+        val engine = MockEngine { _ -> respond(PROFILE_JSON_UNCONFIGURED_TOOLS, HttpStatusCode.OK, JSON_HEADERS) }
+        val result = profileClient(engine).getMe()
+        assertIs<AuthResult.Success<ProfileV1>>(result)
+        assertNull(result.value.tools.permissions, "absent permissions must decode as null (never set), not throw")
+        assertNull(result.value.tools.toolsets)
     }
 
     @Test
@@ -82,24 +138,52 @@ class ProfileHttpClientTest {
             body = req.body.toByteArray().decodeToString()
             respond(PROFILE_JSON, HttpStatusCode.OK, JSON_HEADERS)
         }
-        val profile = ProfileV1(
+        val profile = ProfileV1PutBody(
             schemaVersion = 1,
             userId = "u_x",
             model = ProfileModelRef("custom", "m"),
             voice = ProfileVoiceRef("local-tts", "default"),
             audio = ProfileAudio(ttsEnabled = false, channel = "text"),
             persona = ProfilePersona("default", ""),
-            tools = ProfileTools(enabled = emptyMap(), toolsets = null),
+            tools = ProfileToolsPatch(permissions = null, toolsets = null),
             compression = ProfileCompression(0.5),
             advanced = ProfileAdvanced("", 1024, "minimal"),
-            devices = null,
         )
         profileClient(engine).updateMe(profile)
         val sent = body ?: ""
         assertTrue(sent.contains("\"userId\":\"u_x\""), "body=$sent")
         // explicitNulls=false: null optionals must be ABSENT, never `null` (zod .optional() rejects null).
         assertFalse(sent.contains("toolsets"), "toolsets must be omitted: $sent")
-        assertFalse(sent.contains("devices"), "devices must be omitted: $sent")
+        assertFalse(sent.contains("permissions"), "permissions must be omitted when unset: $sent")
+    }
+
+    // The self-review-mandated proof that a client CAN actually clear a stored key: a `null`
+    // permission LEAF (inside the map, not the `tools` field itself) must survive
+    // settingsBodyJson's explicitNulls=false, which only ever skips a null-valued CLASS
+    // property — never a Map entry's value. If this ever regresses (e.g. a future
+    // kotlinx.serialization upgrade changes Map-null encoding), a "reset to role default"
+    // write would silently degrade into a no-op with no compile-time signal.
+    @Test
+    fun updateMe_encodesExplicitNullToolPermissionAsLiteralNull() = runTest {
+        var body: String? = null
+        val engine = MockEngine { req ->
+            body = req.body.toByteArray().decodeToString()
+            respond(PROFILE_JSON, HttpStatusCode.OK, JSON_HEADERS)
+        }
+        val profile = ProfileV1PutBody(
+            schemaVersion = 1,
+            userId = "u_x",
+            model = ProfileModelRef("custom", "m"),
+            voice = ProfileVoiceRef("local-tts", "default"),
+            audio = ProfileAudio(ttsEnabled = false, channel = "text"),
+            persona = ProfilePersona("default", ""),
+            tools = ProfileToolsPatch(permissions = mapOf("home-assistant" to mapOf("*" to null)), toolsets = null),
+            compression = ProfileCompression(0.5),
+            advanced = ProfileAdvanced("", 1024, "minimal"),
+        )
+        profileClient(engine).updateMe(profile)
+        val sent = body ?: ""
+        assertTrue(sent.contains("\"*\":null"), "a clear must be encoded as a literal map-value null: $sent")
     }
 
     @Test
@@ -108,12 +192,12 @@ class ProfileHttpClientTest {
             respond("""{"error":"userId-mismatch"}""", HttpStatusCode.UnprocessableEntity, JSON_HEADERS)
         }
         val result = profileClient(engine).updateMe(
-            ProfileV1(
+            ProfileV1PutBody(
                 1, "u_x",
                 ProfileModelRef("custom", "m"), ProfileVoiceRef("local-tts", "default"),
                 ProfileAudio(true, "voice"), ProfilePersona("default", ""),
-                ProfileTools(emptyMap(), null), ProfileCompression(0.5),
-                ProfileAdvanced("", 1024, "minimal"), null,
+                ProfileToolsPatch(null, null), ProfileCompression(0.5),
+                ProfileAdvanced("", 1024, "minimal"),
             ),
         )
         assertIs<AuthResult.Failure>(result)
@@ -121,6 +205,39 @@ class ProfileHttpClientTest {
         assertIs<AuthError.Server>(err)
         assertEquals(422, err.status)
         assertTrue(err.body.contains("userId-mismatch"))
+    }
+
+    // IMPORTANT-3-mandated: a real decode through the real client, not a hand-verified
+    // shape comparison — an @SerialName typo or a gateway field rename must fail HERE, at
+    // test time, not silently at decode time on a real device with zero compile-time signal.
+    @Test
+    fun getMcpCatalog_parsesFullShapeIncludingNativeToolsAndUnsettableEntry() = runTest {
+        val engine = MockEngine { _ -> respond(MCP_CATALOG_JSON, HttpStatusCode.OK, JSON_HEADERS) }
+        val result = profileClient(engine).getMcpCatalog()
+        assertIs<AuthResult.Success<McpCatalogView>>(result)
+        val view = result.value
+
+        assertEquals("*", view.wildcardPermissionKey)
+
+        val server = view.servers["home-assistant"]
+        assertEquals(2, server?.tools?.size)
+        val getState = server?.tools?.first { it.name == "get_state" }
+        assertEquals(ImpactTier.READ, getState?.tier)
+        assertEquals(ToolPermission.ALLOW, getState?.permission)
+        assertEquals(true, getState?.settable)
+        assertEquals(listOf("get_state"), server?.defaultInclude)
+        assertEquals(ToolPermission.ASK, server?.wildcardPermission)
+        assertEquals("Home Assistant", server?.description)
+
+        assertEquals(1, view.nativeTools.size)
+        val delegateTask = view.nativeTools.first()
+        assertEquals("delegateTask", delegateTask.name)
+        assertEquals(ImpactTier.CONFIRM, delegateTask.tier)
+        assertEquals(ToolPermission.ASK, delegateTask.permission)
+        assertEquals(false, delegateTask.settable, "delegateTask is the one tool a PUT can never change")
+
+        assertEquals(1, view.hermesBuiltins.size)
+        assertEquals("memory", view.hermesBuiltins.first().toolset)
     }
 
     @Test

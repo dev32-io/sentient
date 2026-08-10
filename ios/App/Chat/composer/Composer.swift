@@ -43,6 +43,10 @@ import SwiftUI
 import MobileData
 
 struct Composer: View {
+    /// Composer task strip's live rows (`ChatModel.tasks`) — rendered as the
+    /// first child of the card, above the mic-denied notice and draft field.
+    /// Server-owned full state; the composer renders it, deriving nothing.
+    let tasks: [TaskListItem]
     /// Tints the send glyph as ready. Passed `true` now (the outbox queues any
     /// send issued before READY), so it no longer gates submission.
     let canSend: Bool
@@ -116,6 +120,7 @@ struct Composer: View {
 
     private var card: some View {
         VStack(spacing: Space.sm) {
+            ComposerTaskStrip(items: tasks)
             if micDenied { micDeniedRow }
             draftField
             buttonRow

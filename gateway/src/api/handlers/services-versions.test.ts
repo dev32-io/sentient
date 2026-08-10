@@ -11,7 +11,7 @@ function makeTokens(): Pick<TokenService, "validate"> {
   return {
     validate: async (token) => {
       if (token === VALID_TOKEN) {
-        return { ok: true, value: { userId: "test-user", isAdmin: false, issuedAt: 0, expiresAt: 9999999999 } };
+        return { ok: true, value: { userId: "test-user", issuedAt: 0, expiresAt: 9999999999 } };
       }
       return { ok: false, error: "signature-invalid" };
     },
@@ -48,6 +48,8 @@ function makeOrchestrator(versions: ServiceVersionRecord): SystemOrchestratorSer
     applySubset: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     getStatus: () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
     reconcile: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
+    reconcileInfraOnly: async () => ({ state: "ready", services: [], startedAt: null, finishedAt: null }),
+    stopHealthWatch: () => {},
     getRequiredServicesStatus: async () => versions,
   };
 }

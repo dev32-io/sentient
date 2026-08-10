@@ -27,6 +27,7 @@ tags:
 - eraseText: 20
 - inputText: "Kevin"
 - tapOn: { id: "settings-account-name-save" }
+# 8000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: "Saved"
     timeout: 8000

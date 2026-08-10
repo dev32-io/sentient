@@ -1,6 +1,48 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { loadConfig, resolveEnvVars, resolveEnvVarsDeep } from "./loader.ts";
+import { gatewayConfigSchema } from "./schema.ts";
+import type { GatewayConfig } from "./schema.ts";
+
+// Repo template config — the same file every fresh operator install ships
+// with. Fixture helper for tests that need to parse it (optionally with some
+// keys stripped, to simulate an operator config that predates a section).
+const THIS_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_CONFIG_PATH = join(THIS_DIR, "..", "..", "..", "gateway", "config.yaml");
+
+/** Delete a dot-path key (e.g. "orchestrator.skills") from a parsed object,
+ *  in place. No-op if any segment along the path is missing. */
+function stripKeyPath(obj: Record<string, unknown>, path: string): void {
+  const segments = path.split(".");
+  const leaf = segments.pop();
+  if (!leaf) return;
+  let cursor: unknown = obj;
+  for (const segment of segments) {
+    if (cursor === null || typeof cursor !== "object") return;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  if (cursor !== null && typeof cursor === "object") {
+    delete (cursor as Record<string, unknown>)[leaf];
+  }
+}
+
+/** Load + validate the repo's checked-in gateway/config.yaml, optionally
+ *  stripping dot-path keys first to simulate a pre-upgrade operator config
+ *  that predates a given section. Mirrors `loadConfig`'s own
+ *  parse -> resolve-env-vars -> schema.parse pipeline so the fixture exercises
+ *  the same path as a real boot. */
+function loadConfigFixture(options?: { stripKeys?: string[] }): GatewayConfig {
+  const raw = parseYaml(readFileSync(REPO_CONFIG_PATH, "utf-8")) as Record<string, unknown>;
+  for (const key of options?.stripKeys ?? []) {
+    stripKeyPath(raw, key);
+  }
+  const resolved = resolveEnvVarsDeep(raw);
+  return gatewayConfigSchema.parse(resolved) as GatewayConfig;
+}
 
 describe("resolveEnvVars", () => {
   beforeEach(() => {
@@ -91,5 +133,53 @@ api_key: \${TEST_API_KEY}
     const schema = z.object({ port: z.number() });
 
     expect(() => loadConfig(yaml, schema)).toThrow();
+  });
+});
+
+describe("loadConfigFixture — orchestrator.skills + security.inbound_scan", () => {
+  it("parses orchestrator.skills and security.inbound_scan", () => {
+    const cfg = loadConfigFixture(); // existing helper against the repo config.yaml
+    expect(cfg.orchestrator?.skills.max_index_entries).toBe(50);
+    expect(cfg.orchestrator?.skills.max_body_chars).toBe(20000);
+    expect(cfg.security.inbound_scan.enabled).toBe(true);
+    expect(cfg.security.inbound_scan.channels.skill_body).toBe(true);
+  });
+
+  it("boots a pre-upgrade config missing both sections, on secure defaults", () => {
+    const cfg = loadConfigFixture({ stripKeys: ["orchestrator.skills", "security.inbound_scan"] });
+    expect(cfg.orchestrator?.skills.max_index_entries).toBe(50);
+    expect(cfg.security.inbound_scan.enabled).toBe(true); // missing block = scanning ON — secure by default
+  });
+});
+
+describe("loadConfigFixture — orchestrator.memory", () => {
+  it("parses orchestrator.memory with spec defaults", () => {
+    const cfg = loadConfigFixture();
+    expect(cfg.orchestrator?.memory.core_max_lines).toBe(300);
+    expect(cfg.orchestrator?.memory.spark.min_similarity).toBe(0.78);
+    // 8772: whisper-stt owns 8768/8769 and local-tts owns 8770/8771
+    // (WS/health pairs each) — must stay off both.
+    expect(cfg.orchestrator?.memory.service.url).toBe("http://127.0.0.1:8772");
+    expect(cfg.security.inbound_scan.channels.memory_body).toBe(true);
+  });
+
+  it("boots a pre-upgrade config missing orchestrator.memory entirely", () => {
+    const cfg = loadConfigFixture({ stripKeys: ["orchestrator.memory"] });
+    expect(cfg.orchestrator?.memory.enabled).toBe(true); // block-level .default({})
+  });
+});
+
+describe("loadConfigFixture — managed_services.deep-memory", () => {
+  it("parses as a native, optional entry whose healthcheck matches orchestrator.memory.service.url", () => {
+    const cfg = loadConfigFixture();
+    const services = cfg.managed_services as Record<string, Record<string, unknown>> | undefined;
+    const deepMemory = services?.["deep-memory"];
+    expect(deepMemory?.launch).toBe("native");
+    expect(deepMemory?.optional).toBe(true);
+    const healthcheck = deepMemory?.healthcheck as { url?: string } | undefined;
+    // The addon's own health port must be the SAME port the gateway's
+    // DeepMemoryClient dials — a drift here is exactly the 8771 collision
+    // this test guards against.
+    expect(healthcheck?.url).toBe(`${cfg.orchestrator?.memory.service.url}/health`);
   });
 });

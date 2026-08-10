@@ -1,0 +1,23 @@
+=== Pre-flight stack-integrity (16:50:27) ===
+RESULT PASS — pass=9 fail=0 skip-optional=0 of 9 declared (full run captured separately, not re-pasted here)
+
+=== Delegation trial A (423-char taskPrompt) — request + deny ===
+2026-08-01T17:02:27.978 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_5sn7gl4x" action="confirm" reason="Runs this instruction as a background agent with its own tools, unsupervised until it finishes" rule="confirm_delegate_task"
+2026-08-01T17:02:27.979 INFO  [runtime:permission-broker] permission-broker.request | userId="u_0417d3b0" sessionId="s-msb0ywdd-lmlyfn0j" requestId="e2d73ae3-508b-4fe6-bcdd-4371d06f61cb" toolCallId="call_5sn7gl4x" toolName="delegateTask" turnId="c6a9998f-0a00-4ee7-a596-dc0f56119125" argKeys=agent,taskPrompt timeoutMs=120000 pending=1
+2026-08-01T17:02:27.979 INFO  [ws:turn-emitter] turn-emitter.permission-request | sessionId="s-msb0ywdd-lmlyfn0j" requestId="e2d73ae3-508b-4fe6-bcdd-4371d06f61cb" toolCallId="call_5sn7gl4x" toolName="delegateTask" argKeys=agent,taskPrompt expiresAtMs=1785629067979
+2026-08-01T17:03:36.545 INFO  [runtime:permission-broker] permission-broker.settled | userId="u_0417d3b0" sessionId="s-msb0ywdd-lmlyfn0j" requestId="e2d73ae3-508b-4fe6-bcdd-4371d06f61cb" toolCallId="call_5sn7gl4x" toolName="delegateTask" reason="denied" pending=0
+2026-08-01T17:03:36.545 INFO  [tools:tool-broker] tool-broker.pdp.confirm-resolved | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_5sn7gl4x" confirmed=false
+2026-08-01T17:03:36.545 WARN  [tools:tool-broker] tool-broker.dispatch.denied | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_5sn7gl4x" reason="The user declined this delegateTask call. Do not retry it; offer an alternative if one exists."
+2026-08-01T17:03:36.546 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="c6a9998f-0a00-4ee7-a596-dc0f56119125" toolCallId="call_5sn7gl4x" toolName="delegateTask" isError=true resultLength=94
+
+=== Delegation trial B (996-char taskPrompt) — request + deny ===
+2026-08-01T17:04:31.155 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_kqs9axdo" action="confirm" reason="Runs this instruction as a background agent with its own tools, unsupervised until it finishes" rule="confirm_delegate_task"
+2026-08-01T17:04:31.156 INFO  [runtime:permission-broker] permission-broker.request | userId="u_0417d3b0" sessionId="s-msb0ywdd-lmlyfn0j" requestId="7dc5fdd9-e894-4811-a28d-1e271a9e436c" toolCallId="call_kqs9axdo" toolName="delegateTask" turnId="56b9a3a3-4e21-484c-8894-4d4a9dff6ccd" argKeys=agent,taskPrompt timeoutMs=120000 pending=1
+2026-08-01T17:04:31.156 INFO  [ws:turn-emitter] turn-emitter.permission-request | sessionId="s-msb0ywdd-lmlyfn0j" requestId="7dc5fdd9-e894-4811-a28d-1e271a9e436c" toolCallId="call_kqs9axdo" toolName="delegateTask" argKeys=agent,taskPrompt expiresAtMs=1785629191156
+2026-08-01T17:05:28.123 INFO  [runtime:permission-broker] permission-broker.settled | userId="u_0417d3b0" sessionId="s-msb0ywdd-lmlyfn0j" requestId="7dc5fdd9-e894-4811-a28d-1e271a9e436c" toolCallId="call_kqs9axdo" toolName="delegateTask" reason="denied" pending=0
+2026-08-01T17:05:28.123 INFO  [tools:tool-broker] tool-broker.pdp.confirm-resolved | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_kqs9axdo" confirmed=false
+2026-08-01T17:05:28.123 WARN  [tools:tool-broker] tool-broker.dispatch.denied | sessionId="s-msb0ywdd-lmlyfn0j" tool="delegateTask" toolCallId="call_kqs9axdo" reason="The user declined this delegateTask call. Do not retry it; offer an alternative if one exists."
+2026-08-01T17:05:28.124 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="56b9a3a3-4e21-484c-8894-4d4a9dff6ccd" toolCallId="call_kqs9axdo" toolName="delegateTask" isError=true resultLength=94
+
+=== hermes-runner.run.start count in window 17:02-17:06 (must be 0) ===
+0

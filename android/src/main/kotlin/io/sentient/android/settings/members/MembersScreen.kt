@@ -2,9 +2,12 @@
 // MembersScreen — the Members (admin) settings page (Admin group). Household card:
 // slots caption + "Add user" (disabled at the 3-user cap) + a member list (avatar
 // tint + name + role pill; per-row Promote/Demote + Delete for everyone but you).
-// State + callbacks come from [MembersViewModel]; leaf rows are pure. A non-admin
-// (shouldn't reach here — root gates) sees a guard state. testTags:
-// settings-members-screen/-back, settings-members-{add,row-*,promote-*,delete-*}.
+// Both promote and demote confirm first (either one force-signs the target out
+// everywhere); demote's copy additionally warns that only another admin can
+// restore the admin access it removes. State + callbacks come from
+// [MembersViewModel]; leaf rows are pure. A non-admin (shouldn't reach here — root
+// gates) sees a guard state. testTags: settings-members-screen/-back,
+// settings-members-{add,row-*,promote-*,delete-*,toggle-confirm,toggle-cancel}.
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.members
 
@@ -59,7 +62,9 @@ fun MembersScreen(
         state = state,
         onBack = onBack,
         onAdd = vm::openAdd,
-        onToggleAdmin = vm::toggleAdmin,
+        onToggleClick = vm::openToggle,
+        onToggleConfirm = vm::confirmToggle,
+        onToggleCancel = vm::closeToggle,
         onDeleteClick = vm::openDelete,
         onDeleteConfirm = vm::confirmDelete,
         onDeleteCancel = vm::closeDelete,
@@ -76,7 +81,9 @@ private fun MembersContent(
     state: MembersUiState,
     onBack: () -> Unit,
     onAdd: () -> Unit,
-    onToggleAdmin: (UserSummary) -> Unit,
+    onToggleClick: (UserSummary) -> Unit,
+    onToggleConfirm: () -> Unit,
+    onToggleCancel: () -> Unit,
     onDeleteClick: (UserSummary) -> Unit,
     onDeleteConfirm: () -> Unit,
     onDeleteCancel: () -> Unit,
@@ -116,7 +123,7 @@ private fun MembersContent(
                 )
                 return@Column
             }
-            HouseholdCard(state, onAdd, onToggleAdmin, onDeleteClick)
+            HouseholdCard(state, onAdd, onToggleClick, onDeleteClick)
             if (state.errorMessage != null) {
                 Text(state.errorMessage, color = Color(Colors.stop), fontSize = tokens.type.sm)
             }
@@ -147,6 +154,37 @@ private fun MembersContent(
         )
     }
 
+    state.toggleTarget?.let { target ->
+        val isDemote = target.isAdmin
+        AlertDialog(
+            onDismissRequest = onToggleCancel,
+            title = { Text(if (isDemote) "Demote ${target.displayName}?" else "Promote ${target.displayName}?") },
+            text = {
+                Text(
+                    if (isDemote)
+                        "This signs ${target.displayName} out on every device, right now. Once demoted, they can't restore their own admin access — only another admin can promote them back."
+                    else
+                        "This signs ${target.displayName} out on every device, right now. They'll need to log back in before they can use their new admin access.",
+                    color = Color(Colors.ink3),
+                    fontSize = tokens.type.sm,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onToggleConfirm, modifier = Modifier.testTag("settings-members-toggle-confirm")) {
+                    Text(
+                        if (isDemote) "Demote" else "Promote",
+                        color = Color(if (isDemote) Colors.stop else Colors.accent),
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onToggleCancel, modifier = Modifier.testTag("settings-members-toggle-cancel")) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     state.addDialog?.let {
         AddMemberDialog(
             state = it,
@@ -162,7 +200,7 @@ private fun MembersContent(
 private fun HouseholdCard(
     state: MembersUiState,
     onAdd: () -> Unit,
-    onToggleAdmin: (UserSummary) -> Unit,
+    onToggleClick: (UserSummary) -> Unit,
     onDeleteClick: (UserSummary) -> Unit,
 ) {
     val tokens = LocalTokens.current
@@ -185,7 +223,7 @@ private fun HouseholdCard(
             MemberRow(
                 user = user,
                 isSelf = user.userId == state.selfUserId,
-                onToggleAdmin = { onToggleAdmin(user) },
+                onToggleClick = { onToggleClick(user) },
                 onDelete = { onDeleteClick(user) },
             )
         }
@@ -193,7 +231,7 @@ private fun HouseholdCard(
 }
 
 @Composable
-private fun MemberRow(user: UserSummary, isSelf: Boolean, onToggleAdmin: () -> Unit, onDelete: () -> Unit) {
+private fun MemberRow(user: UserSummary, isSelf: Boolean, onToggleClick: () -> Unit, onDelete: () -> Unit) {
     val tokens = LocalTokens.current
     Row(
         modifier = Modifier
@@ -214,7 +252,7 @@ private fun MemberRow(user: UserSummary, isSelf: Boolean, onToggleAdmin: () -> U
         }
         RolePill(user.isAdmin)
         if (!isSelf) {
-            TextButton(onClick = onToggleAdmin, modifier = Modifier.testTag("settings-members-promote-${user.userId}")) {
+            TextButton(onClick = onToggleClick, modifier = Modifier.testTag("settings-members-promote-${user.userId}")) {
                 Text(if (user.isAdmin) "Demote" else "Promote", fontSize = tokens.type.sm)
             }
             TextButton(onClick = onDelete, modifier = Modifier.testTag("settings-members-delete-${user.userId}")) {
@@ -280,8 +318,10 @@ private fun MembersScreenPreview() {
                 isAdmin = true,
                 loaded = true,
             ),
-            onBack = {}, onAdd = {}, onToggleAdmin = {}, onDeleteClick = {}, onDeleteConfirm = {},
-            onDeleteCancel = {}, onAddName = {}, onAddPin = {}, onAddSubmit = {}, onAddCancel = {},
+            onBack = {}, onAdd = {},
+            onToggleClick = {}, onToggleConfirm = {}, onToggleCancel = {},
+            onDeleteClick = {}, onDeleteConfirm = {}, onDeleteCancel = {},
+            onAddName = {}, onAddPin = {}, onAddSubmit = {}, onAddCancel = {},
         )
     }
 }

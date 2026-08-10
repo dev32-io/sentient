@@ -115,7 +115,7 @@ class UserAudioInputConnectorTest {
     fun handle_ignores_unowned_frames() {
         val (c, rec) = connector()
         c.handle(io.sentient.mobilesdk.protocol.ServerMessage.Pong)
-        c.handle(io.sentient.mobilesdk.protocol.ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
+        c.handle(io.sentient.mobilesdk.protocol.ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
         assertEquals(emptyList<ClientMessage>(), rec.sent)
         assertTrue(rec.binary.isEmpty())
     }

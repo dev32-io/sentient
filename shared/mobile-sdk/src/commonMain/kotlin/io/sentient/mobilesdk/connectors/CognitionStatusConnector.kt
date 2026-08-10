@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// CognitionStatusConnector — tracks cognition cycle lifecycle.
+// CognitionStatusConnector — tracks turn lifecycle (design §7).
 //
 // Mirrors web-sdk's cognition-status-connector.ts VERBATIM:
 //   capability = "cognition.status"  (status observer)
 //
-//   cycle.started   → THINKING
-//   cycle.completed → IDLE
-//   cycle.aborted   → IDLE
+//   turn.started   → THINKING
+//   turn.completed → IDLE
+//   turn.aborted   → IDLE
 //   (duplicate target state → no callback; setState short-circuits)
 //
 // NOTE — three states, two reached: the TS declares CognitionState =
@@ -14,7 +14,7 @@
 // "acting" — it is reserved for a separate task-driven surface. We port the
 // enum verbatim (IDLE/THINKING/ACTING) and the exact idle↔thinking table; the
 // ACTING branch is unreached here, matching the TS. (Plan summary lists only
-// the three cycle.* transitions — confirmed against the TS, no extra
+// the three turn.* transitions — confirmed against the TS, no extra
 // transitions exist in this connector.)
 //
 // Threading: single-threaded; the orchestrator routes frames and subscribes
@@ -48,25 +48,25 @@ class CognitionStatusConnector(
 
     override fun handle(msg: ServerMessage) {
         when (msg) {
-            is ServerMessage.CycleStarted -> setState(CognitionState.THINKING, "cycle.started", msg.cycleId)
-            is ServerMessage.CycleCompleted -> {
-                setState(CognitionState.IDLE, "cycle.completed", msg.cycleId)
-                onEvent?.invoke(SdkEvent.CycleDone(cycleId = msg.cycleId))
+            is ServerMessage.TurnStarted -> setState(CognitionState.THINKING, "turn.started", msg.turnId)
+            is ServerMessage.TurnCompleted -> {
+                setState(CognitionState.IDLE, "turn.completed", msg.turnId)
+                onEvent?.invoke(SdkEvent.TurnDone(turnId = msg.turnId))
             }
-            is ServerMessage.CycleAborted -> setState(CognitionState.IDLE, "cycle.aborted", msg.cycleId)
+            is ServerMessage.TurnAborted -> setState(CognitionState.IDLE, "turn.aborted", msg.turnId)
             else -> Unit // not owned by this connector
         }
     }
 
     /** Force-reset to IDLE (optimistic local clear). Fires onStateChange via setState so the
-     *  orchestrator's deriver stays in sync; prevents the next cycle.started short-circuiting. */
+     *  orchestrator's deriver stays in sync; prevents the next turn.started short-circuiting. */
     fun reset() = setState(CognitionState.IDLE, "reset", null)
 
-    private fun setState(next: CognitionState, trigger: String, cycleId: String?) {
+    private fun setState(next: CognitionState, trigger: String, turnId: String?) {
         if (next == currentState) return
         log.info(
             "transition",
-            mapOf("from" to currentState, "to" to next, "trigger" to trigger, "cycleId" to cycleId),
+            mapOf("from" to currentState, "to" to next, "trigger" to trigger, "turnId" to turnId),
         )
         currentState = next
         onStateChange?.invoke(next)

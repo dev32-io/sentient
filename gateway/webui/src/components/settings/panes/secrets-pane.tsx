@@ -16,12 +16,13 @@ const api = createAdminApi();
 
 export interface SecretsPaneProps {
   /** Push a slow op into the settings-view imperative queue so the apply
-   *  bar surfaces and the operator can restart the user's hermes worker
-   *  to pick up the new secret. Single-shot key — repeat saves coalesce. */
+   *  bar surfaces and, on Apply, the gateway re-renders the user's Hermes
+   *  profile to pick up the new secret. Single-shot key — repeat saves
+   *  coalesce. */
   onMark: (op: PendingOpWithPayload) => void;
 }
 
-const RESTART_OP: PendingOpWithPayload = {
+const APPLY_SECRETS_OP: PendingOpWithPayload = {
   key: "secrets.changed",
   kind: "slow",
   payload: null,
@@ -53,20 +54,20 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
     await api.setLlmProviderKey(token, provider, { api_key: newKey });
     setEditing(null);
     await refresh();
-    onMark(RESTART_OP);
+    onMark(APPLY_SECRETS_OP);
   }
 
   async function saveLlmBaseUrl(provider: LlmProvider, newUrl: string) {
     await api.setLlmProviderKey(token, provider, { base_url: newUrl });
     setEditing(null);
     await refresh();
-    onMark(RESTART_OP);
+    onMark(APPLY_SECRETS_OP);
   }
 
   async function setActive(provider: LlmProvider) {
     await api.setActiveLlmProvider(token, provider);
     await refresh();
-    onMark(RESTART_OP);
+    onMark(APPLY_SECRETS_OP);
   }
 
   if (!isAuthed) return <PaneHead title="Provider keys" sub="Sign in to manage keys." />;

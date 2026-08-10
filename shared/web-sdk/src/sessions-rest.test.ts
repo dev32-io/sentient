@@ -10,32 +10,31 @@ function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response>)
 }
 
 describe("sessions REST client", () => {
-  it("GET /sessions returns items with bearer", async () => {
+  it("GET /sessions maps the gateway's {sessions: SessionMetadata[]} envelope to rows", async () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const fetchFn = mockFetch(async (url, init) => {
       calls.push([url, init]);
       return new Response(
         JSON.stringify({
-          items: [
+          sessions: [
             {
               sessionId: "s-1",
-              rootId: "r-1",
+              createdAt: 1,
+              updatedAt: 2,
               title: "T",
-              startedAt: 1,
-              lastActiveAt: 1,
-              messageCount: 0,
-              isActive: true,
+              titleProvenance: "user",
+              version: 1,
             },
           ],
-          total: 1,
-          hasMore: false,
         }),
         { status: 200 },
       );
     });
     const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
     const result = await rest.list();
-    expect(result.items[0]?.sessionId).toBe("s-1");
+    expect(result.items[0]).toMatchObject({ sessionId: "s-1", title: "T", lastActiveAt: 2 });
+    expect(result.total).toBe(1);
+    expect(result.hasMore).toBe(false);
     expect(calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer t" });
   });
 
@@ -43,7 +42,7 @@ describe("sessions REST client", () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const fetchFn = mockFetch(async (url, init) => {
       calls.push([url, init]);
-      return new Response(JSON.stringify({ items: [], total: 0, hasMore: false }), { status: 200 });
+      return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
     });
     const rest = createSessionsRest({ baseUrl: "https://h/api/v1", token: () => "t", fetchFn });
     await rest.list({ limit: 10, offset: 5 });

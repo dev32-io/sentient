@@ -80,7 +80,7 @@ final class AdvancedViewModel {
     func save() async {
         guard let o = original, isDirty else { return }
         log.info("save.start reasoning=\(reasoningEffort)")
-        let mutation = ProfileMutationPutProfile(previous: o, next: nextProfile(from: o))
+        let mutation = ProfileMutationPutProfile(previous: o, next: nextProfile(from: o).toPutBody())
         for await state in settings.applyProfileChange.invoke(mutation: mutation) {
             switch onEnum(of: state) {
             case .idle: break
@@ -122,8 +122,7 @@ final class AdvancedViewModel {
                 extraSystemPrompt: extraSystemPrompt,
                 maxTokens: Int32(maxTokens.rounded()),
                 reasoningEffort: reasoningEffort
-            ),
-            devices: o.devices
+            )
         )
     }
 }

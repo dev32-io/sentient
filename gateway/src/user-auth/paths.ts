@@ -24,10 +24,18 @@ export function getUserProfileDir(userId: string): string {
 }
 
 /**
- * Hermes-consumed profile dir for a user. Hermes reads SOUL.md + config.yaml
- * from `<HERMES_HOME>/profiles/<userId>/`, where HERMES_HOME equals
- * `getUserProfileDir(userId)` per the supervisord program env. The apply
- * orchestrator writes rendered output here so hermes picks it up on restart.
+ * The gateway-side render target for a user's Hermes profile: config.yaml +
+ * SOUL.md land here, and `tools/hermes-runner.ts` spawns `hermes -p <userId>`
+ * with this as its `cwd`.
+ *
+ * It is NOT the directory hermes reads its config.yaml from. Hermes resolves
+ * that from its own profile store, and `HERMES_HOME` cannot bridge the two: it
+ * is ONE process-wide variable while this root is per-user, so a single value
+ * is right for at most one family member. What the delegated agent can CALL is
+ * therefore set through hermes's own CLI by
+ * `external-tools/hermes-external-tool.ts`, never by writing here. Do not
+ * restate the old claim that hermes picks this render up: it is what sent two
+ * waves of defect-chasing to the wrong layer.
  */
 export function getHermesProfileDir(userId: string): string {
   return join(getUserProfileDir(userId), "profiles", userId);

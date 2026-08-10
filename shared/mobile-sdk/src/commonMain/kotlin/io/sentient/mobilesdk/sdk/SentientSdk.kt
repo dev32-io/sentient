@@ -10,15 +10,19 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.connectors.CognitionState
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.SessionsListPage
 import io.sentient.mobilesdk.connectors.SessionsRequestException
 import io.sentient.mobilesdk.connectors.SessionsTimeoutException
 import io.sentient.mobilesdk.dev.FaultHooks
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ResumeParams
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.secure.DeviceIdProvider
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.ConnectResult
@@ -48,8 +52,8 @@ import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
 
-/** A1: "stuck" only when a cycle is active AND the socket is not healthy. A slow healthy
- *  cycle stays READY and never arms — no content-frame false-positives. */
+/** A1: "stuck" only when a turn is active AND the socket is not healthy. A slow healthy
+ *  turn stays READY and never arms — no content-frame false-positives. */
 internal fun shouldWatchStuck(cognition: CognitionState, isSpeaking: Boolean, status: SdkStatus): Boolean =
     (cognition != CognitionState.IDLE || isSpeaking) && status != SdkStatus.READY
 
@@ -68,7 +72,7 @@ class SentientSdk(
      * mobile-data keeps the chat timeline in-memory and injects nothing — so this
      * defaults to a no-op and the in-memory cursor dies with the process (a cold
      * relaunch takes the recovered:false REST-refetch path). When set, it seeds the
-     * cursor on resume-prep, persists on advance (coalesced to cycle boundaries), and
+     * cursor on resume-prep, persists on advance (coalesced to turn boundaries), and
      * clears on a non-recovered reset / delete.
      */
     private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
@@ -80,6 +84,28 @@ class SentientSdk(
 
     private val _timeline = MutableStateFlow<List<ChatMessage>>(emptyList())
     val timeline: StateFlow<List<ChatMessage>> = _timeline.asStateFlow()
+
+    // Open L3 confirm prompts (§7.1). A StateFlow is conflation-SAFE here only because
+    // every emitted value carries EVERY still-open prompt — never model this as a single
+    // nullable prompt, or two back-to-back requests would lose the first. The arrival
+    // one-shots ride [events] (buffered, suspend-on-overflow).
+    private val _permissions = MutableStateFlow<List<PermissionPrompt>>(emptyList())
+    val permissions: StateFlow<List<PermissionPrompt>> = _permissions.asStateFlow()
+
+    /** Live background-delegation rows (§5.4). Same cumulative-list rationale. */
+    private val _delegations = MutableStateFlow<List<DelegationSnapshotItem>>(emptyList())
+    val delegations: StateFlow<List<DelegationSnapshotItem>> = _delegations.asStateFlow()
+
+    /**
+     * The composer task strip's mirror of `tasklist.state` (FULL STATE every frame —
+     * see [io.sentient.mobilesdk.connectors.TaskListConnector]). Split out as its own
+     * surface (tile-derivation-strip task): the chat timeline no longer folds tool
+     * activity into [ChatMessage] rows, but the composer strip still needs the list to
+     * render it. Conflation-safe — the gateway always sends the complete list, never a
+     * delta.
+     */
+    private val _tasks = MutableStateFlow<List<TaskListItem>>(emptyList())
+    val tasks: StateFlow<List<TaskListItem>> = _tasks.asStateFlow()
 
     private val _events = MutableSharedFlow<SdkEvent>(
         replay = 0,
@@ -137,7 +163,7 @@ class SentientSdk(
     private val resumeCursor = ResumeCursor()
 
     // Task 4.7 durable persistence: seeds the empty cursor on resume-prep, persists
-    // on advance (coalesced to cycle boundaries), clears on a non-recovered reset /
+    // on advance (coalesced to turn boundaries), clears on a non-recovered reset /
     // delete. Keyed by the live currentSessionId so it never holds a stale anchor.
     private val cursorPersistence = ResumeCursorPersistence(
         cursor = resumeCursor,
@@ -157,7 +183,7 @@ class SentientSdk(
         voiceAudio = bundle.voiceAudio,
         scope = scope,
         onStateChanged = ::onAudioStateChanged,
-        // Lazy-arm the downlink engine on the first TTS cycle (mirrors web-sdk's
+        // Lazy-arm the downlink engine on the first TTS turn (mirrors web-sdk's
         // arm-on-audio.start model). Deferred accessors — `voice` is constructed AFTER
         // `audio`, but these only fire at audio.start / drain, long after construction.
         armPlayback = { voice.armPlayback() },
@@ -172,7 +198,7 @@ class SentientSdk(
         audioConfig = config.audio,
         audioInput = { connectors.audioInput },
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
-        // (audio.start before frames, audio.end after). Lazy/cycle-safe — connectors
+        // (audio.start before frames, audio.end after). Lazily deref'd — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
         onUplinkStart = { turnMode -> connectors.audioInput.startStreaming(turnMode) },
         onUplinkStop = { connectors.audioInput.stopStreaming() },
@@ -219,6 +245,9 @@ class SentientSdk(
         scope = scope,
         audioHooks = { audio.downlinkHooks },
         onCognitionChanged = ::onCognitionChanged,
+        onPermissionsChanged = { prompts -> _permissions.value = prompts },
+        onDelegationsChanged = { list -> _delegations.value = list },
+        onTasksChanged = { list -> _tasks.value = list },
         // Lazy-arm model: the downlink engine is armed on connector.audio.start, not from
         // the preference flag. The gateway only sends audio.* when TTS is on, so arming
         // follows the actual audio — no preference→configure coupling needed. The prefs
@@ -240,11 +269,45 @@ class SentientSdk(
         emit()
     }
 
+    /**
+     * Drop TURN-scoped active state back to idle. Runs on every conversation change,
+     * but ALSO on interrupt and on the stuck-state watchdog — i.e. while the client
+     * stays in the same conversation. Nothing conversation-scoped belongs here; that
+     * is [clearConversationScopedState].
+     */
     private fun clearActiveToIdle() {
         connectors.cognition.reset()  // currentState→IDLE + onCognitionChanged → deriver IDLE + refreshStuckWatch + emit
+        connectors.permission.reset() // fail-closed: drop open prompts, never auto-approve
         audio.stopLocal()             // isSpeaking→false (if speaking) via onAudioStateChanged
         stuckWatchdog.disarm()
         emit()
+    }
+
+    /**
+     * Drop CONVERSATION-scoped state when leaving the current conversation. Single
+     * writer for every "leave" entry point — [switchSession], [newChat], [sendNewChat]
+     * and [sendSwitchSession] — so a new entry point cannot silently skip one clear.
+     *
+     * Delegation rows (§5.4) outlive the turn that dispatched them and are keyed by
+     * taskId alone, and terminal rows are retained by design, so nothing else ever
+     * retires them: without this, conversation A's background-task rows render inside
+     * conversation B and may never self-clear.
+     *
+     * The composer task strip's [tasks] mirror has the SAME leak for a different
+     * reason: the gateway's `tasklist.state` is a per-session projector that only
+     * re-emits on its own mutations, never on `conversation.activate`, so a switch
+     * into a conversation with no task activity of its own would otherwise leave
+     * [tasks] holding the previous conversation's last-known rows forever.
+     *
+     * Deliberately NOT folded into [clearActiveToIdle] (that also runs on interrupt /
+     * stuck-watchdog, where the conversation is unchanged and its in-flight
+     * delegations/tasks must keep rendering) and NOT into [fireSwitch] (the reconnect
+     * re-establish path re-activates the SAME conversation and must preserve them).
+     */
+    private fun clearConversationScopedState(trigger: String) {
+        log.info("conversation.scope.clear", mapOf("trigger" to trigger))
+        connectors.delegation.clear()
+        connectors.tasks.clear()
     }
 
     private fun onStuckTimeout() {
@@ -366,9 +429,20 @@ class SentientSdk(
     fun interrupt() {
         log.info("interrupt")
         markInteraction()
-        connectors.cycleError.noteInterrupt(null)
+        connectors.turnError.noteInterrupt(null)
         clearActiveToIdle()
         sendControl(ClientMessage.Interrupt) // best-effort; null-safe if transport is dead
+    }
+
+    /**
+     * Answer an open permission prompt (design §7.1). Fail-closed by construction: NOT
+     * calling this is never an approval — the gateway auto-denies at its 2-minute timeout
+     * and echoes permission.resolved{outcome:"timeout"}.
+     */
+    fun respondToPermission(requestId: String, approved: Boolean) {
+        log.info("permission.respond", mapOf("requestId" to requestId, "approved" to approved))
+        markInteraction()
+        connectors.permission.respond(requestId, approved)
     }
 
     /** Start the voice uplink: flip voiceMode ACTIVE, then request the serialized
@@ -442,7 +516,7 @@ class SentientSdk(
     }
 
     /** Patch TTS on/off; the server echoes via session.preferences.changed and starts /
-     *  stops sending connector.audio.* accordingly. The downlink engine is LAZY-ARMED on
+     *  stops sending turn.audio.* accordingly. The downlink engine is LAZY-ARMED on
      *  audio.start (mirrors web-sdk), so no local configure is needed here — arming
      *  follows the actual audio, not the preference flag. */
     suspend fun setTtsEnabled(enabled: Boolean) {
@@ -459,6 +533,25 @@ class SentientSdk(
         connectors.preferences.patch(patch)
     }
 
+    /**
+     * Adopt the user's stored audio preferences WITHOUT sending anything.
+     *
+     * The connector otherwise starts at [AudioPreferences.DEFAULT] (TTS on) and
+     * has no way to learn the truth: the gateway sends no preferences frame at
+     * `session.configure`, and `session.preferences.changed` — which both SDKs
+     * listen for — is not in `gatewayMessageSchema` at all, so nothing can emit
+     * it. A client that never seeds therefore renders the DEFAULT forever,
+     * which is how the chat TTS icon showed ON for a user whose stored
+     * preference was off.
+     *
+     * Call once per connection scope with `GET /profile/me`'s `audio` block —
+     * the same source webui seeds from (webui app.tsx). Idempotent.
+     */
+    fun seedAudioPreferences(prefs: AudioPreferences) {
+        log.info("seedAudioPreferences", mapOf("ttsEnabled" to prefs.ttsEnabled, "channel" to prefs.channel))
+        connectors.preferences.seed(prefs)
+    }
+
     /** Page the session list via REST GET /api/v1/sessions. */
     @Throws(kotlin.coroutines.cancellation.CancellationException::class)
     suspend fun listSessions(limit: Int, offset: Int): SessionsListPage =
@@ -472,14 +565,15 @@ class SentientSdk(
     )
     suspend fun switchSession(sessionId: String) {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
+        clearConversationScopedState("switch")
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
         connectors.sessions.switchTo(sessionId)
         // Bug #3: switching to a past chat must drop stale active cognition
         // (THINKING / interrupt) from the current view — the gateway cancels the
-        // current cycle on switch but emits no cognition idle. Clear AFTER the
+        // current turn on switch but emits no cognition idle. Clear AFTER the
         // switch is sent so it can never gate the request.
         clearActiveToIdle()
     }
@@ -492,7 +586,8 @@ class SentientSdk(
     )
     suspend fun newChat(): String {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
+        clearConversationScopedState("new-chat")
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -527,7 +622,8 @@ class SentientSdk(
      */
     fun sendNewChat() {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
+        clearConversationScopedState("new-chat-fire")
         // Bug #1: the gateway clears its own mirror on session.new but emits no
         // client-facing clear; drop the visible past-chat history locally the
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
@@ -546,6 +642,10 @@ class SentientSdk(
         // Problem 1: drop the current session's messages NOW so the spinner
         // renders over an empty chat, not stale history, while the target loads.
         connectors.history.clearForSwitch()
+        // …and with them the conversation's background-delegation rows. This is the
+        // path the UI actually takes (SwitchConversationUseCase → switchToFireAndForget);
+        // the awaited [switchSession] is not wired to any screen.
+        clearConversationScopedState("switch-fire")
         // Send the activate FIRST (never gated), THEN drop stale active cognition
         // (THINKING / interrupt) from the current view (bug #3). The reconnect
         // re-establish path uses fireSwitch directly (no cognition clear AND no
@@ -562,7 +662,7 @@ class SentientSdk(
      */
     private fun fireSwitch(id: String) {
         markInteraction()
-        connectors.cycleError.reset()
+        connectors.turnError.reset()
         connectors.sessions.sendSwitch(id)
     }
 
@@ -831,7 +931,7 @@ class SentientSdk(
      * BEFORE routing so deduped replays never reach the connectors.
      *
      * On a real advance (the cursor moved forward) note it on [cursorPersistence] so
-     * the next cycle boundary persists the snapshot (Task 4.7 save coalescing).
+     * the next turn boundary persists the snapshot (Task 4.7 save coalescing).
      */
     private fun applyCursor(seq: Long, epoch: Long?): Boolean {
         val before = resumeCursor.snapshot
@@ -869,7 +969,7 @@ class SentientSdk(
      * the clear/activate decision to here).
      *
      * recovered=true → PRESERVE in-flight state. The gateway replayed the in-flight
-     *   cycle's frames; the cursor dedups them and they re-establish THINKING/
+     *   turn's frames; the cursor dedups them and they re-establish THINKING/
      *   speaking. We must NOT clear cognition/isSpeaking — that is the whole point
      *   of the resume. No-op beyond confirming the recovery.
      *
@@ -952,7 +1052,7 @@ class SentientSdk(
         override fun onSessionForbidden() = this@SentientSdk.onSessionForbidden()
         override fun onPong() = this@SentientSdk.onPong()
         override fun onStreamResumed(recovered: Boolean) = this@SentientSdk.onStreamResumed(recovered)
-        override fun onCycleSettled() = cursorPersistence.flush()
+        override fun onTurnSettled() = cursorPersistence.flush()
         override fun resumeParams(): ResumeParams? = this@SentientSdk.resumeParams()
         override fun currentConversationId(): String? = _currentSessionId.value
         override fun onAuthFailed() = setError(authExpired = true)

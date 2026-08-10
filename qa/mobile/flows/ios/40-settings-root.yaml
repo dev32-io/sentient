@@ -29,8 +29,6 @@ tags:
 # User group
 - assertVisible:
     id: "settings-cat-account"
-- assertVisible:
-    id: "settings-cat-devices"
 - takeScreenshot: "40-settings-root-admin"
 # Admin group (this test user IS admin)
 - assertVisible:

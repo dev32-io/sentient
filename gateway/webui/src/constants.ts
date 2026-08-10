@@ -90,13 +90,9 @@ export const SCROLL_THRESHOLD_PX = 100;
 export const MEMORY_MD_CHAR_LIMIT = 2200;
 export const USER_MD_CHAR_LIMIT = 1375;
 
-/** Cycle audio queue — preempt cap defaults (overridden via session.ready in Task 4). */
-export const DEFAULT_MIN_EAGER_END_MS = 3_000;
-export const DEFAULT_PREEMPT_FADEOUT_MS = 30;
-
 /**
  * Maximum time the Interrupt button stays visible after the gateway reports
- * `cycle.completed` but before audio playback has started. Covers text-only
+ * `turn.completed` but before audio playback has started. Covers text-only
  * replies (no TTS) where we'd otherwise linger forever waiting for audio.
  */
 export const AWAITING_GRACE_MS = 2_000;
@@ -109,7 +105,7 @@ export const AWAITING_GRACE_MS = 2_000;
 // socket on presence return (visibility/focus/pointer/key). Composed with the
 // gateway's ~30-min PersonSession archive, total memory window is ~1.5h.
 //
-// Active playback, active cycles, and `sdk.demandStay()` suppress the close;
+// Active playback, active turns, and `sdk.demandStay()` suppress the close;
 // see `shared/web-sdk/src/presence/idle-detector.ts` for the suppression set.
 // ---------------------------------------------------------------------------
 
@@ -195,6 +191,9 @@ export const SPEECH_GATE_GAP_TOLERANCE_FRAMES = 3;
 // (SPEECH_GATE_OPEN_DEBOUNCE_MS / SPEECH_GATE_FRAME_MS = 20) so the onset
 // buffered during the debounce is flushed intact on open. 24 ≈ 240ms.
 export const SPEECH_GATE_PREROLL_FRAMES = 24;
-// Failsafe: if connector.transcript.final never arrives (server hiccup),
-// force the latch closed after this long so it can't stream forever.
+// Failsafe: if the gateway's `turn.started` never arrives (server hiccup),
+// force the latch closed after this long so it can't stream forever. The
+// normal close is the turn.started binding in use-voice-client.ts — reaching
+// this timeout means the mic streamed for 20s of one reply, so treat it as a
+// symptom, not as the design.
 export const SPEECH_GATE_MAX_OPEN_MS = 20_000;

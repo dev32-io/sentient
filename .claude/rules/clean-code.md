@@ -14,8 +14,7 @@ paths:
 ---
 # Clean Code Rules
 
-- Files MUST stay under 300 lines. Split at 250.
-- Functions MUST stay under 40 lines. Extract at 30.
+- Proactively decompose large monolithic files, functions, and god-classes along logical boundaries whenever a unit carries more than one clear responsibility. Cohesion sets size, never a line count.
 - Max nesting depth: 3 levels. Use early returns to flatten.
 - No magic numbers or hardcoded strings. Use named constants.
 - No commented-out code. Delete it. Git has history.

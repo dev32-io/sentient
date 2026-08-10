@@ -26,7 +26,6 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountViewModel
 import io.sentient.android.settings.advanced.AdvancedViewModel
 import io.sentient.android.settings.audio.AudioViewModel
-import io.sentient.android.settings.devices.DevicesViewModel
 import io.sentient.android.settings.members.MembersViewModel
 import io.sentient.android.settings.memory.MemoryViewModel
 import io.sentient.android.settings.model.ModelViewModel
@@ -111,7 +110,6 @@ val appModule = module {
     viewModel { SystemPromptViewModel(get<SettingsComponent>()) }
     viewModel { AdvancedViewModel(get<SettingsComponent>()) }
     viewModel { AccountViewModel(get<SettingsComponent>().account) }
-    viewModel { DevicesViewModel(get<SettingsComponent>().devices) }
     viewModel {
         val settings = get<SettingsComponent>()
         MembersViewModel(admin = settings.admin, account = settings.account)

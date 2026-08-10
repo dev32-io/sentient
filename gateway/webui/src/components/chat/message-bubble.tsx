@@ -1,12 +1,10 @@
 import type { JSX } from "preact";
-import { useState } from "preact/hooks";
 import type { ChatMessage } from "../../types.ts";
 import { Avatar, type AvatarTint } from "../common/avatar.tsx";
 import type { SentientMarkMode } from "../common/sentient-mark.tsx";
 import { BubbleSpeakingWave } from "./bubble-speaking-wave.tsx";
 import { BubbleText } from "./bubble-text.tsx";
 import { InterruptChip } from "./interrupt-chip.tsx";
-import { ToolPillStrip } from "./tool-pill-strip.tsx";
 
 export interface CurrentUser {
   displayName: string;
@@ -27,14 +25,9 @@ function formatTime(ts: number): string {
 
 function MessageBubbleInner({ message, avatarMode, currentUser }: MessageBubbleProps): JSX.Element {
   const isSpeaking = avatarMode === "speaking";
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-  const { role, text, timestamp, isStreaming, cutoff, tools } = message;
+  const { role, text, timestamp, isStreaming, cutoff } = message;
   const name = role === "user" ? currentUser.displayName : ASSISTANT_NAME;
   const userInitial = currentUser.displayName.charAt(0).toUpperCase() || "?";
-
-  function handleToggle(taskId: string): void {
-    setOpenTaskId((prev) => (prev === taskId ? null : taskId));
-  }
 
   return (
     <article
@@ -62,14 +55,6 @@ function MessageBubbleInner({ message, avatarMode, currentUser }: MessageBubbleP
               <BubbleText text={text} isStreaming={isStreaming} />
             )}
           </div>
-          {tools && tools.length > 0 && (
-            <ToolPillStrip
-              tools={tools}
-              expandDirection="down"
-              openTaskId={openTaskId}
-              onToggleTask={handleToggle}
-            />
-          )}
         </div>
       </div>
     </article>

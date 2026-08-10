@@ -1,81 +1,112 @@
-import { homedir } from "node:os";
-import type { HermesAcpWire } from "@sentient/config";
-import type { ClientType, SessionConfigureResume } from "@sentient/protocol";
+import type { ClientType, GatewayMessage, SessionConfigureResume } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
-import type { Adapter } from "../adapters/adapter-types.js";
-import type { STTAdapterConfig } from "../adapters/stt/stt-adapter-types.js";
-import type { UserAudioInputAdapter } from "../adapters/user-audio-input-adapter.js";
-import { createUserAudioInputAdapter } from "../adapters/user-audio-input-adapter.js";
-import { createUserTextInputAdapter } from "../adapters/user-text-input-adapter.js";
-import { DASHBOARD_PORT_OFFSET } from "../admin/supervisord-control.js";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
-import { buildHttpBaseUrlForUser, buildWsUrlForUser } from "../bootstrap/hermes-connection-helpers.js";
-import { createAttentionGate } from "../cerebrum/attention-gate.js";
-import type { AttentionGateConfig } from "../cerebrum/attention-gate.js";
-import { toFeed, toFeedItem } from "../cerebrum/conversation-feed.js";
-import { createConversationMirror } from "../cerebrum/conversation-mirror.js";
-import type { ConversationMirror } from "../cerebrum/conversation-mirror.js";
-import type { HermesProfileBinding } from "../cerebrum/hermes-client.js";
-import type { HermesDispatcherDeps } from "../cerebrum/hermes-dispatcher.js";
-import { dispatchHermesCycle } from "../cerebrum/hermes-dispatcher.js";
-import type { DispatchMode } from "../cerebrum/hermes-event-types.js";
-import type { PreferenceLanguage, SessionPreferences } from "../cerebrum/preferences.js";
-import { createPreferenceManager } from "../cerebrum/preferences.js";
-import { createShortTermContext } from "../cerebrum/short-term-context.js";
-import { createTaskMirror } from "../cerebrum/task-mirror.js";
-import { createAcpHermesClient } from "../hermes-adapter-client/acp-hermes-client.js";
-import type { AcpWireHandle, AcpWireRegistry } from "../hermes-adapter-client/acp-wire-registry.js";
-import type { AcpPerProfileConnection } from "../hermes-adapter-client/per-profile-connection.js";
-import type { SentientPluginClient } from "../hermes-adapter-client/plugin-client.js";
-import { buildPluginBaseUrl, createSentientPluginClient } from "../hermes-adapter-client/plugin-client.js";
-import { listSessionsViaAcp } from "../hermes-adapter-client/sessions-client.js";
-import { bootstrapAcpWire } from "../hermes-adapter-client/wire-bootstrap.js";
 import { getLog } from "../logging/logger.js";
-import { createDeviceAttachment } from "../person-session/device-attachment.js";
-import { hermesMessageToMirrorEntry } from "../sessions/hermes-message-to-mirror.js";
-import { migrateLegacyTitles } from "../sessions/storage-migrator.js";
-import { createSwitchFlow } from "../sessions/switch-flow.js";
-import { createTitleStore } from "../sessions/title-store.js";
-import type { TtsChunk } from "../tts/stages/stage-types.js";
-import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.js";
-import { createAbortSlot } from "./abort-slot.js";
-import { drainAudioToWs } from "./audio-frame-sender.js";
-import { createBargeInController } from "./barge-in-controller.js";
-import { createInterruptController } from "./interrupt-controller.js";
-import { buildMicSuppressionOptions, createMicEchoGuard } from "./mic-echo-guard.js";
-import { createSessionAudioWire } from "./session-audio-wire.js";
-import { createSessionsHandlers } from "./sessions-handlers.js";
-import type { SurfaceCycleRegistry } from "./surface-cycle-registry.js";
-import { ttsSkipReason } from "./tts-policy.js";
-import type { ClientData } from "./ws-helpers.js";
-import { errorMessage, sendError } from "./ws-helpers.js";
-import { type ResumeParams, handleResumeOrFresh } from "./ws-resume-handover.js";
-
-// Resolve a config-supplied path that may start with "~/" against the
-// gateway user's $HOME. Tilde-prefixed values come straight from YAML;
-// anything else is returned unchanged so absolute and env-derived paths
-// work without surprise.
-function expandHome(rawPath: string): string {
-  if (rawPath === "~") return homedir();
-  if (rawPath.startsWith("~/")) return `${homedir()}/${rawPath.slice(2)}`;
-  return rawPath;
-}
+import {
+  bindSessionRuntime,
+  completeAttach,
+  completeAttachWithSnapshot,
+  detachSession,
+  sendDraftHandshake,
+  withSessionStore,
+} from "./session-binding.js";
+import { isDraftKey, mintDraftKey, resolveSession } from "./session-id.js";
+import type { SessionData } from "./ws-helpers.js";
+import { sendError } from "./ws-helpers.js";
+import { handleResumeOrFresh } from "./ws-resume.js";
+import { sendConnectionFrame } from "./ws-send.js";
 
 const log = getLog(["sentient", "ws", "session-configure"]);
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 48000;
 const AUDIO_ENCODING = "pcm16";
-// Normal WS closure code (RFC 6455 1000). Local copy to avoid a circular import
-// from ws-handlers, which imports handleSessionConfigure from this file.
-const WS_NORMAL_CLOSURE = 1000;
 
 // ---------------------------------------------------------------------------
-// Session configure — Hermes dispatch wiring
+// Session configure — post-purge minimal form.
+//
+// This file used to own the whole Hermes-cycle session pipeline: ACP wire
+// acquisition, conversation mirroring, attention-gate cycle dispatch, TTS
+// wiring, resume/replay handover, and sessions (search/switch/rename). That
+// entire pipeline existed to serve "every cycle = one Hermes round-trip",
+// which 2.0's native orchestrator discards — it was purged wholesale in this
+// task, alongside the four gateway/src trees that only served that pipeline.
+//
+// What remains is exactly the brief for Task 1: accept the WS connection,
+// confirm auth already succeeded (ws-auth-gate runs before this handler),
+// and hold the socket — record the client's declared capabilities/type and
+// ack with session.ready so the connection is usable.
+//
+// Plan 2 Task 10 adds the one piece of orchestrator wiring that belongs
+// HERE rather than in the message router: minting this session's
+// `SessionRuntime` once the principal is known, via `services.
+// createSessionRuntime({ principal, conversationId, connectionId, emitter })`
+// — see `SessionRuntimeRequest` (runtime/session-handles.ts) for why those
+// two ids are named apart, and the last paragraph below for what each one
+// keys. From this point on, `ws.data.runtime` is the seam
+// `text.input`/`interrupt` (ws-handlers.ts) route through — see that file for
+// the message-level wiring, and ws-turn-emitter.ts for the outbound frame
+// mapping.
+//
+// Plan 3 Task 6 makes that factory return a PAIR — { runtime, permissions }.
+// Both are SESSION-scoped and both live on the registry's `SessionHandles`,
+// never on a socket: since session-model task 7 the permission broker holds
+// the session's open prompts, fans each one to every attached window, and is
+// reached by `permission.response` (ws-handlers.ts) through the ATTACHMENT
+// this connection holds rather than through a per-socket reference.
+//
+// Plan 3 Task 2 adds the voice half: this handler also composes the session's
+// `TurnVoice` (profile-backed voice id + audio prefs, mic echo guard, TTS
+// synthesizer) and hands it to `createSessionRuntime`, so the ReAct loop's
+// text deltas fork into TTS on the turn's own AbortController. The STT half
+// is lazy — ws-handlers.ts mints `ws.data.stt` on the first `audio.start`.
+//
+// Plan 3 Task 10 adds the second piece: running the resume decision
+// (ws-resume.ts) before session.ready goes out. The `resume` field the client
+// folds into this frame is honoured, not just logged. The journal it resumes
+// from is the SESSION's, taken by the bind rather than acquired here — the
+// session-model redesign moved it off the surface (task 6), which is why
+// `surfaceId` below now partitions nothing.
+//
+// session.ready is a CONNECTION-lane frame (frame-lanes.ts): validated by
+// `sendConnectionFrame`, but never seq-stamped and never journaled. A stamped
+// ready would advance the client's cursor past a replay window it has not been
+// handed yet, and it is this socket's handshake — no other window has any use
+// for it.
+//
+// Every NON-recovered handshake ends with a `conversation.snapshot`
+// (runtime/conversation-feed.ts, via `SessionRuntime`). Without it a client
+// renders an empty chat on every reload, reconnect-with-recovered:false, and
+// first connect — the `turn.*` family is a live stream the client discards,
+// so the committed feed is the only thing that survives a turn.
+//
+// Finally, this handler decides WHICH SESSION this connection is looking at
+// (`resolveConnectionSession` below). Two ids live in this file and they are
+// not the same thing: `sessionId` is this WebSocket connection and dies with
+// it; the session the store partitions on outlives every socket. The store
+// used to be keyed on the former, so a reload / reconnect / restart landed in
+// a brand-new empty partition — the snapshot above came back empty AND the
+// model projection replayed nothing, which is the whole of "the assistant
+// forgot everything on reload".
+//
+// Session-model redesign, task 3: that id is no longer DERIVED from the
+// principal and the surface. It is ALLOCATED (session-id.ts) when the first
+// message of a draft arrives, and a client-presented id is honoured only when
+// the store this caller's capability opens already holds it. A connection that
+// presents nothing — a fresh tab, a first launch, the window right after "+" —
+// is a DRAFT: no row, no id, no runtime, nothing in the session list. Ten
+// opened tabs leave no trace.
+//
+// Because that id is durable it is also SHARED, so the runtime it keys lives in
+// `services.sessionRegistry` rather than on this socket: this connection
+// ATTACHES to the session (task 5), building its runtime only if it is the
+// first to arrive. A second window joins the same loop instead of forking a
+// second one over the same append-only log — and, unlike the single-owner
+// registry this replaced, without tearing the first window down.
 // ---------------------------------------------------------------------------
 
 export async function handleSessionConfigure(
-  ws: ServerWebSocket<ClientData>,
+  ws: ServerWebSocket<SessionData>,
   capabilities: readonly string[],
   language: "en" | "zh",
   services: GatewayServices,
@@ -90,1232 +121,282 @@ export async function handleSessionConfigure(
     sendError(ws, "protocol_error", "No active session");
     return;
   }
-  const userId = ws.data.userId;
-  if (!userId) {
-    log.warn("session-configure-no-user", { sessionId, reason: "auth gate must set ws.data.userId" });
+  const principal = ws.data.principal;
+  if (!principal) {
+    log.warn("session-configure-no-user", { sessionId, reason: "auth gate must set ws.data.principal" });
     sendError(ws, "protocol_error", "Session not authenticated");
     return;
   }
+  const userId = principal.userId;
 
-  const capSet = new Set(capabilities);
-  ws.data.grantedCapabilities = capSet;
+  ws.data.grantedCapabilities = new Set(capabilities);
   ws.data.clientType = clientType;
 
-  const salienceMap = services.salienceMap ?? { lookup: () => ({}) };
-  const taskMirror = createTaskMirror();
-  ws.data.taskManager = taskMirror;
+  // `surfaceId` no longer partitions ANYTHING (session-model task 6). It was
+  // the journal's key while a surface owned its own seq space; the journal is
+  // the SESSION's now, acquired with the session's handles, so two browser tabs
+  // of one user are two cursors into one stream rather than two streams. The
+  // field is kept because it is on the frozen wire and it is what a log line
+  // uses to tell those two tabs apart.
+  const surfaceId = configureSurfaceId ?? configureDeviceId;
+  // Parked for ONE reader: the `pendingId` dedup namespace (spec §3.8,
+  // store/pending-id-scope.ts). It is not an authorization input and mints no
+  // capability — §3.4 is explicit that this field gates nothing.
+  ws.data.surfaceId = surfaceId;
 
-  const taskTableWindow = services.cerebrum.task_table.window;
-  const shortTermContext = createShortTermContext(sessionId, salienceMap, {
-    taskMirror,
-    taskTableWindow,
-  });
-  ws.data.shortTermContext = shortTermContext;
-
-  const conversationMirror = createConversationMirror(services.cerebrum.conversation_history.max_entries);
-  ws.data.conversationHistory = conversationMirror;
-
-  // Egress proxy — all outbound push frames route through this pair of
-  // closures. The inner target starts as a direct ws.send fallback so the
-  // early setup paths (preferences seed, session.ready) that emit before
-  // the FrameSequencer attachment is built still work. Once the attachment
-  // is constructed (below), the target is replaced with attachment.send /
-  // attachment.sendBinary so everything from that point is seq/epoch-stamped
-  // and journaled into the per-device replay buffer.
-  let egressSend: (msg: unknown) => void = (msg) => {
-    ws.send(JSON.stringify(msg));
-  };
-  let egressSendBinary: (data: Uint8Array) => void = (data) => {
-    ws.send(data);
-  };
-  // stable capture; egressSend/egressSendBinary are retargeted to attachment.send below
-  const wsSend = (msg: unknown): void => egressSend(msg);
-  const wsSendBinary = (data: Uint8Array): void => egressSendBinary(data);
-
-  // Conversation feed: the HermesEventTranslator emits conversation.entry for
-  // assistant/tool entries it produces. User and trigger entries (from
-  // adapters + sensors) don't flow through the translator — mirror onAppend
-  // fills that gap so the client's committed history stays in step with the
-  // server's. AttentionGate also subscribes to the same mirror for wake logic.
-  const conversationFeedUnsub = conversationMirror.onAppend((entry) => {
-    if (entry.kind !== "user" && entry.kind !== "trigger") return;
-    const preview = entry.kind === "user" ? entry.content.slice(0, 80) : entry.summary.slice(0, 80);
-    log.debug("wire.conversation.entry", {
-      sessionId,
-      kind: entry.kind,
-      preview,
-    });
-    wsSend({ type: "conversation.entry", item: toFeedItem(entry) });
-  });
-  ws.data.conversationFeedUnsub = conversationFeedUnsub;
-
-  // Hermes dispatcher deps — wired below after the gate is created.
-  // The gate's onCycle callback closes over these.
-  const cycleSlot = createAbortSlot("cycle");
-  const wire = createSessionAudioWire({ wsSend });
-
-  // Gateway-minted session id awaiting attachment to the next outbound
-  // user.message. Set by the `session.new` handler (see sessionsHandlers
-  // wiring below); consumed-once in onCycle so subsequent cycles fall
-  // back to Hermes' default per-tuple keying.
-  let pendingNewSessionId: string | null = null;
-  // Pre-warm path: when the user clicks "+ New chat", session.new kicks
-  // `acpConn.newSession` as a background task and stashes the in-flight
-  // Promise here. If the user types and sends BEFORE the Promise resolves,
-  // onCycle awaits it once and consumes. Hides ACP cold-start latency
-  // (model probe + MCP handshake) behind the user's typing time. Cleared
-  // alongside pendingNewSessionId after consumption.
-  let pendingNewSessionPromise: Promise<string> | null = null;
-
-  const deviceId = configureDeviceId;
-  // Surface key — the unit of session isolation. Old clients omit surfaceId →
-  // fall back to deviceId (today's per-device behavior, spec §4). Derived
-  // before the bind so the conversation anchor is keyed by surface (D2): the
-  // anchor survives transport handover, the per-sessionId binding does not.
-  const surfaceId = configureSurfaceId ?? deviceId;
-
-  // Bind session to the auth-derived userId at session start (instead of
-  // per-cycle) so identify_user's findActiveSessionFor can resolve from
-  // turn 1, and so the conversationId anchored to the surface by a prior cycle
-  // is reused by the next one.
-  let initialBinding: HermesProfileBinding;
-  try {
-    initialBinding = await services.sessionRouter.bind(sessionId, userId, surfaceId);
-  } catch (err) {
-    log.error("session-bind-failed", { sessionId, userId, reason: errorMessage(err, "unknown") });
-    sendError(ws, "protocol_error", "Session binding failed");
-    return;
-  }
-  log.info("session-hermes-bound", {
-    sessionId,
-    userId: initialBinding.userId,
-    hermesUrl: initialBinding.url,
-  });
-
-  // Attach this WS to the user's PersonSession. The registry creates one
-  // per userId on first attachment; subsequent attachments reuse it. State
-  // still lives per-WS today (B2 scope); attachment is bookkeeping that
-  // gives B3/B4 a handle to migrate ownership to.
-  const personSession = await services.personSessions.getOrCreate(initialBinding.userId);
-  if (!personSession) {
-    log.error("person-session-create-failed", { sessionId, userId });
-    sendError(ws, "protocol_error", "Person session create failed");
-    return;
-  }
-  // Tier-3 boundary assertion: the resolved PersonSession MUST belong to the
-  // authenticated user. A mismatch means the wire pool / cycle registry /
-  // anchor state we are about to route through is owned by a DIFFERENT user —
-  // a cross-user isolation breach. Refuse the configure rather than proceed.
-  if (personSession.userId !== userId) {
-    log.error("person-session.owner-mismatch", {
-      sessionId,
-      expected: userId,
-      got: personSession.userId,
-    });
-    sendError(ws, "protocol_error", "Session identity mismatch");
-    return;
-  }
-  // Task 3.8 — the resolved surfaceId (configureSurfaceId ?? deviceId) keys the
-  // per-surface replay buffer across reconnects; deviceId is carried for presence.
-  // The client supplies both on session.configure; the resume request now rides
-  // INSIDE that same frame (configureResume), so the resume decision is a
-  // synchronous read off the parsed configure message — no separate frame, no
-  // same-tick ordering race. When resumeParams carries a matching epoch,
-  // acquire REUSES the prior buffer (resumed:true) so the new FrameSequencer
-  // continues the same seq counter — seq continuity across reconnect.
-  const resumeParams: ResumeParams | null = configureResume
-    ? { epoch: configureResume.epoch, lastSeq: configureResume.lastSeq, deviceId: configureDeviceId }
-    : null;
-  log.info("session-configure.surface", {
-    sessionId,
-    surfaceId,
-    deviceId,
-    surfaceFromConfigure: configureSurfaceId !== undefined,
-  });
-  const acquired = personSession.acquireDeviceBuffer(surfaceId, {
-    deviceId,
-    ...(resumeParams ? { resumeEpoch: resumeParams.epoch } : {}),
-  });
-  const { buffer: deviceBuffer, epoch: deviceEpoch, resumed: deviceResumed, liveSocket: deviceLiveSocket } = acquired;
-
-  // ACP WIRE — acquired BEFORE the handover (order is load-bearing). The wire
-  // is pooled per-user and ref-counted; on a resume the OLD pipeline still holds
-  // a ref (the in-flight Hermes cycle is streaming on it). Acquiring here REUSES
-  // that wire (refcount 1→2) so when the handover below releases the old ref
-  // (2→1) the wire never hits 0 — it is NOT disposed, and the in-flight cycle is
-  // NOT killed. The gateway keeps receiving the cycle's output (final answer +
-  // cycle.done) and streams it to the resumed socket. On a fresh connect there
-  // is no handover, so this just dials/reuses normally — order is immaterial.
-  let resolvedWsUrl: string;
-  try {
-    resolvedWsUrl = await buildWsUrlForUser(services.hermes, services.userPortStore, initialBinding.userId);
-  } catch (err: unknown) {
-    log.error("acp.ws-url-resolve-failed", {
-      sessionId,
-      userId: initialBinding.userId,
-      reason: errorMessage(err, "unknown"),
-    });
-    sendError(ws, "protocol_error", "Cannot resolve Hermes WS URL");
-    return;
-  }
-  const acpConn = await acquireAcpWireOrFail({
-    sessionId,
-    userId: initialBinding.userId,
-    surfaceId,
-    registry: personSession.wires,
-    wsUrl: resolvedWsUrl,
-    token: initialBinding.apiKey,
-    acpWire: services.hermes?.acp_wire,
-    setDispose: (fn) => {
-      ws.data.acpWireDispose = fn;
-    },
-  });
-  if (acpConn === null) {
-    sendError(ws, "protocol_error", "Cannot reach Hermes ACP wire");
-    return;
-  }
-  // Sibling of acpWireDispose: drop the surface's conversation anchor on the
-  // SAME reap that disposes the wire (D3). Anchor lifetime == surface lifetime —
-  // prevents unbounded anchor growth as surfaces churn (D2 leak fix).
-  ws.data.dropAnchor = () => personSession.dropAnchor(surfaceId);
-
-  // HANDOVER (Task 3.8): a matching-epoch resume hands back the deferred
-  // teardown stashed by the prior resumable disconnect (Task 3.7). Run it NOW
-  // to dispose the orphaned OLD pipeline (gate / sessionManager entry /
-  // translator) and RELEASE its wire ref. Because we acquired the wire ABOVE,
-  // that release drops refcount 2→1 — the wire and the in-flight cycle on it
-  // SURVIVE the handover (instead of being disposed mid-flight). acquire already
-  // detached the teardown from the entry so the retention sweep can never re-run it.
-  if (acquired.priorDeferredTeardown !== null) {
-    log.info("resume.handover-old-pipeline", { sessionId, surfaceId, epoch: deviceEpoch });
-    acquired.priorDeferredTeardown();
-  }
-
-  // attachmentId is the resolved surfaceId — it keys the per-surface replay
-  // buffer (DeviceBufferStore is keyed by surfaceId), so the resumable-disconnect
-  // path in ws-handlers (releaseDeviceBuffer / bufferFor / disposeDeviceBuffer
-  // keyed by attachment.attachmentId) addresses the correct buffer across
-  // reconnects. The carried deviceId is for device-presence tracking only.
-  // sessionId stays the per-WS id used for sessionRouter / Manager / Controls.
-  // Creating the attachment registers THIS socket as the surface's current live
-  // writer (deviceLiveSocket.current). Runs AFTER the handover above, so on a
-  // resume it deliberately takes over from the old attachment — the in-flight
-  // cycle's old sequencer (sharing this ref) now writes to the new socket.
-  const attachment = createDeviceAttachment<ClientData>({
-    attachmentId: surfaceId,
-    deviceId,
-    ws,
-    sessionId,
-    profile: personSession.profile,
-    buffer: deviceBuffer,
-    epoch: deviceEpoch,
-    liveSocket: deviceLiveSocket,
-    clock: acquired.clock,
-  });
-  personSession.attach(attachment);
-  personSession.setForceClose(surfaceId, () => ws.close(WS_NORMAL_CLOSURE, "idle-timeout"));
-  ws.data.personSession = personSession;
-  ws.data.attachment = attachment;
-  ws.data.activityClock = acquired.clock;
-
-  // Live-socket activation is DEFERRED on a matching-epoch resume: the new
-  // socket must not receive any frame until AFTER the replay window flushes
-  // (else an in-flight cycle frame outruns the replay and poisons the client
-  // cursor). For every other path (fresh, no-resume, or epoch-mismatch fresh
-  // buffer) there is no replay window, so go live now — the configure handshake
-  // (session.ready / prefs / snapshot) writes through this socket.
-  const isResumeAttempt = resumeParams !== null && deviceResumed;
-  if (!isResumeAttempt) attachment.goLive();
-
-  // Route all subsequent outbound push frames through the FrameSequencer so
-  // they are seq/epoch-stamped and journaled before the socket write. Everything
-  // after this point — preferences seed, session.ready, Hermes cycle frames,
-  // audio frames — flows through the attachment. Frames emitted before this
-  // point (auth-handshake, protocol errors) are raw ws.send; those happen
-  // before the device buffer exists and cannot be replayed — acceptable.
-  // one-time retarget: all push frames now flow through the per-device FrameSequencer
-  egressSend = (msg) => attachment.send(msg);
-  egressSendBinary = (data) => attachment.sendBinary(data);
-
-  // Seed session preferences from the user's profile.audio so the entry-gate
-  // ttsEnabled check (below) and the channel mid-stream gate honor the
-  // user's saved settings. Falls through to schema defaults
-  // ({ttsEnabled: true, channel: "voice"}) when profile is missing — safe
-  // first-time-user behavior.
-  const profileResult = await services.profileStore.get(initialBinding.userId);
-  const audioPrefs = profileResult.ok ? profileResult.value.audio : { ttsEnabled: true, channel: "voice" as const };
-  if (!profileResult.ok) {
-    log.warn("preferences-init.profile-fallback", {
-      sessionId,
-      userId: initialBinding.userId,
-      reason: "profile-read-failed",
-    });
-  }
-  const preferenceManager = createPreferenceManager({
-    initial: {
-      language: language as PreferenceLanguage,
-      channel: audioPrefs.channel,
-      ttsEnabled: audioPrefs.ttsEnabled,
-    },
-  });
-  ws.data.preferenceManager = preferenceManager;
-  log.info("preferences-initial", {
-    sessionId,
-    preferences: preferenceManager.get(),
-  });
-
-  // Mirror audio-pref changes to the WS client so the UI can reflect state
-  // without polling. Language is internal (drives STT reconfigure) — only
-  // ttsEnabled + channel are part of the user-facing wire surface.
-  const preferenceAudioUnsub = preferenceManager.onChange((next, _prev, changed) => {
-    const audioChanged = changed.includes("ttsEnabled") || changed.includes("channel");
-    if (!audioChanged) return;
-    wsSend({
-      type: "session.preferences.changed",
-      preferences: {
-        ttsEnabled: next.ttsEnabled,
-        channel: next.channel,
-      },
-    });
-    log.debug("preferences-emit", {
-      sessionId,
-      ttsEnabled: next.ttsEnabled,
-      channel: next.channel,
-    });
-  });
-  ws.data.preferenceAudioUnsub = preferenceAudioUnsub;
-
-  // NOTE: the initial session.preferences.changed SEED is emitted in the
-  // fresh-only block below (co-located with session.ready), NOT here.
-  // On a successful resume (recovered:true), the prior connection's journaled
-  // session.preferences.changed frame is already in the replay window and is
-  // replayed verbatim — no re-seed needed. Seeding here would cause a
-  // double-send: once live AND once via replay.
-
-  // Register MCP control surface. MCP tools (update_user_settings, ...)
-  // look up this session's controls by sessionId and mutate per-session
-  // state directly — no global broadcasts, no cross-session reach.
-  services.sessionControls.register(sessionId, {
-    async updateUserSettings(_sid, settingsUserId, patch) {
-      // 1. Persist to the profile store. ttsEnabled + channel land in
-      //    profile.audio; voice/model are top-level. Persistent fields
-      //    only — language is a session-scoped value (not on the profile).
-      if (
-        patch.ttsEnabled !== undefined ||
-        patch.channel !== undefined ||
-        patch.voice !== undefined ||
-        patch.model !== undefined
-      ) {
-        const cur = await services.profileStore.get(settingsUserId);
-        if (cur.ok) {
-          const nextProfile = {
-            ...cur.value,
-            audio: {
-              ttsEnabled: patch.ttsEnabled ?? cur.value.audio.ttsEnabled,
-              channel: patch.channel ?? cur.value.audio.channel,
-            },
-            voice: patch.voice ?? cur.value.voice,
-            model: patch.model ?? cur.value.model,
-          };
-          const saved = await services.profileStore.save(nextProfile);
-          if (!saved.ok) {
-            log.warn("update-user-settings.profile-save-failed", {
-              sessionId,
-              userId: settingsUserId,
-              error: saved.error,
-            });
-          }
-        } else {
-          log.warn("update-user-settings.profile-read-failed", {
-            sessionId,
-            userId: settingsUserId,
-            error: cur.error,
-          });
-        }
-      }
-      // 2. Apply audio fields to the live PreferenceManager so the next
-      //    cycle's entry gate and the mid-stream channel gate see them.
-      //    voice/model do NOT hot-swap mid-session — they take effect on
-      //    next session (PreferenceManager doesn't carry them).
-      const prefPatch: { channel?: "voice" | "text"; ttsEnabled?: boolean } = {};
-      if (patch.channel !== undefined) prefPatch.channel = patch.channel;
-      if (patch.ttsEnabled !== undefined) prefPatch.ttsEnabled = patch.ttsEnabled;
-      if (Object.keys(prefPatch).length > 0) {
-        preferenceManager.update(prefPatch);
-      }
-    },
-  });
-
-  // Forward-ref: InterruptController needs the gate, but the gate's onCycle
-  // closes over interruptController. Proxy bridges the cycle.
-  const attentionGateProxy = {
-    _gate: null as { clearPendingConversationSalience(): void } | null,
-    clearPendingConversationSalience(): void {
-      this._gate?.clearPendingConversationSalience();
-    },
-  };
-
-  // Holds the currently running TTS controller so bargeInController can cancel
-  // TTS independently of the Hermes cycle.
-  const currentTts: { cancel: (() => void) | null } = { cancel: null };
-
-  // Mic echo guard: ramps STT energy threshold up/down around TTS playback.
-  // Prevents own-audio from being picked up as phantom user speech.
-  const micEchoGuard = createMicEchoGuard(() => ws.data.audioAdapter, buildMicSuppressionOptions(services), sessionId);
-
-  const bargeInController = createBargeInController({
-    taskMirror,
-    wire,
-    currentCycleId: () => cycleSlot.currentId(),
-    cancelTts: () => currentTts.cancel?.(),
-  });
-
-  const interruptController = createInterruptController({
-    cycleSlot,
-    taskMirror,
-    wire,
-    attentionGate: attentionGateProxy,
-  });
-
-  ws.data.bargeInController = bargeInController;
-  ws.data.interruptController = interruptController;
-
-  // Build Hermes dispatcher deps. TTS is optional (null when the `tts` config
-  // block is absent — see content-tts-factory.ts).
-  // The cycle's AbortController is owned by `onCycle` below; `startTts` uses a
-  // LOCAL controller so barge-in can cut audio without aborting the Hermes
-  // fetch (cycle survives a barge-in per spec v4 §5.9). Interrupt cancels the
-  // cycle controller; we link it so the TTS controller also aborts.
+  // --- Session identity: membership lookup, or a draft ---
   //
-  // Per-user voice: PersonSession.voiceId is hydrated in the background by
-  // the registry from profile.json#voice.id on getOrCreate. The getter
-  // below re-evaluates per TTS turn, so by the time the user actually
-  // speaks (≫ a profile-read ms), the right voiceId is in place. Falls
-  // back to the gateway-wide default when null.
-  const synthesizer: TextStreamSynthesizer | null = services.createSynthesizerFor(() => personSession.voiceId);
+  // Resolved before the runtime block, because it is a runtime construction
+  // input. Deliberately NOT `sessionId`: that one is minted per WebSocket
+  // connection, so partitioning the store on it opened a brand-new empty
+  // partition on every reload, reconnect and restart — the committed feed came
+  // back empty and the model projection handed the LLM no history at all
+  // (spec §10 acceptance #9).
+  const resolved = resolveConnectionSession(ws, services, configureConversationId);
 
-  // Route `session/update` notifications carrying out-of-band SDK frames
-  // (sessions.renamed, commands.available) directly to the client. The cycle
-  // stream consumes the same notifications inside AcpHermesClient — multiple
-  // subscribers per acpConn.onEvent is supported.
+  // A repeat session.configure on the same connection leaves the session it
+  // was on — otherwise this connection would hold two attachments and its
+  // close would release only one, pinning a session resident forever. Whether
+  // the prior session's runtime is DISPOSED by that detach is the registry's
+  // decision, not this handler's: sole attachment, so today it is; with
+  // another window still attached, it is not.
   //
-  // The acpConn is now POOLED across attachments, so this per-WS handler must
-  // be unsubscribed on cleanup — otherwise a detached client's closed socket
-  // keeps receiving frames for the lifetime of the shared wire.
-  const sdkFrameUnsub = acpConn.onEvent((evt) => {
-    if (evt.type === "sessions.renamed") {
-      wsSend({
-        type: "sessions.renamed",
-        sessionId: evt.sessionId,
-        title: evt.title,
-        source: evt.source,
-      });
-    } else if (evt.type === "commands.available") {
-      wsSend({ type: "commands.available", commands: evt.commands });
-    }
-  });
-  ws.data.acpSdkFrameUnsub = sdkFrameUnsub;
-
-  const hermesDeps: HermesDispatcherDeps = {
-    clientFor: () => createAcpHermesClient({ acpConn, onActivity: (source) => acquired.clock.touch(source) }),
-    mirror: conversationMirror,
-    tasks: taskMirror,
-    emit: wsSend,
-    ...(synthesizer
-      ? {
-          startTts: (deltas: AsyncIterable<TtsChunk>, cycleId: string) => {
-            // Channel gate — checked PER chunk, not just at startTts entry.
-            // Hermes' multi-cycle protocol (update_user_settings({channel:
-            // "text"}) runs as a mid-cycle MCP tool call) means the agent
-            // can flip the preference between text.delta frames; without
-            // per-chunk gating, the post-flip messages of the same cycle
-            // still flow to TTS. See gateway TTS UX bug 2026-04-26.
-            //
-            // Initial check at entry: if channel is already text, drain
-            // and skip TTS pipeline init entirely (no audio context, no
-            // mic-echo-guard cooldown).
-            const initialPrefs = preferenceManager.get();
-            const skipReason = ttsSkipReason({
-              clientType: ws.data.clientType,
-              channel: initialPrefs.channel,
-              ttsEnabled: initialPrefs.ttsEnabled,
-            });
-            if (skipReason !== null) {
-              log.info("tts.skip.audio-prefs", {
-                sessionId,
-                cycleId,
-                when: "startTts-entry",
-                reason: skipReason,
-                clientType: ws.data.clientType,
-                channel: initialPrefs.channel,
-                ttsEnabled: initialPrefs.ttsEnabled,
-              });
-              const drain = (async () => {
-                for await (const _ of deltas) {
-                  /* drop */
-                }
-              })();
-              return { done: drain, cancel: () => {} };
-            }
-            log.info("tts.start", { sessionId, cycleId });
-            const ttsController = new AbortController();
-            const cycleCtrl = cycleSlot.currentController();
-            // Link cycle abort to TTS: interrupt cancels cycle, which also
-            // cancels TTS. Barge-in cancels TTS only (local controller).
-            if (cycleCtrl !== null) {
-              cycleCtrl.signal.addEventListener(
-                "abort",
-                () => {
-                  try {
-                    ttsController.abort(cycleCtrl.signal.reason);
-                    log.debug("tts.propagate-cycle-abort", { sessionId, cycleId });
-                  } catch {
-                    /* already aborted */
-                  }
-                },
-                { once: true },
-              );
-            }
-            currentTts.cancel = () => {
-              log.info("tts.cancel", { sessionId, cycleId, reason: "barge-in" });
-              ttsController.abort("barge-in");
-            };
-
-            // Mid-stream channel gate. Each chunk re-reads the preference
-            // so an update_user_settings({channel:"text"}) call between
-            // assistant.message frames immediately stops the rest of the
-            // cycle from being spoken. Already-queued audio drains past
-            // this point — to also kill in-flight playback the agent would
-            // call pause_audio (separate tool, separate path).
-            //
-            // NOTE: ttsEnabled is intentionally NOT checked here. Per spec,
-            // ttsEnabled is a "next time" setting — current cycle finishes,
-            // next cycle's entry gate enforces the new value.
-            async function* gateByChannel(src: AsyncIterable<TtsChunk>): AsyncIterable<TtsChunk> {
-              for await (const chunk of src) {
-                if (preferenceManager.get().channel !== "voice") {
-                  log.info("tts.skip.channel-text", { sessionId, cycleId, when: "mid-stream" });
-                  ttsController.abort("channel-text");
-                  return;
-                }
-                yield chunk;
-              }
-            }
-            const gated = gateByChannel(deltas);
-            const audioStream = synthesizer.synthesize(gated, ttsController.signal);
-            const done = drainAudioToWs(
-              audioStream,
-              cycleId,
-              sessionId,
-              wsSend,
-              wsSendBinary,
-              ttsController.signal,
-              micEchoGuard,
-            ).finally(() => {
-              if (currentTts.cancel !== null) currentTts.cancel = null;
-            });
-            return {
-              done,
-              cancel: () => {
-                log.debug("tts.cancel-via-handle", { sessionId, cycleId });
-                ttsController.abort("tts-cancel");
-              },
-            };
-          },
-        }
-      : {}),
-  };
-
-  const gateConfig = buildGateConfig(services);
-  const gate = createAttentionGate(
-    shortTermContext,
-    gateConfig,
-    {
-      onCycle: async (params) => {
-        const binding = services.sessionRouter.get(sessionId);
-        if (!binding) {
-          log.error("onCycle-no-binding", {
-            sessionId,
-            cycleId: params.cycleId,
-            reason: "session was released before cycle could dispatch",
-          });
-          return { aborted: true, shouldContinue: false };
-        }
-        log.debug("onCycle.begin", {
-          sessionId,
-          cycleId: params.cycleId,
-          userId: binding.userId,
-          forceFinal: params.forceFinal,
-          triggerReason: params.triggerReason,
-        });
-        // The conversation anchor is per-surface state owned by PersonSession
-        // (not the per-sessionId binding, which does not survive transport
-        // handover). Source the surface's anchored conversationId and override
-        // the binding's null conversationId with it for this dispatch.
-        const anchoredConversationId = personSession.conversationIdFor(surfaceId);
-        const bindingWithAnchor = { ...binding, conversationId: anchoredConversationId };
-        const mode: DispatchMode = params.forceFinal ? { bargedIn: () => true } : { bargedIn: () => false };
-
-        const controller = new AbortController();
-
-        // Per-surface ownership gate (D1). The first cycle on an idle surface
-        // wins the lease and dispatches; a concurrent dispatch (an internal
-        // save-skill cycle, OR a reconnecting transport's fresh cycle) is
-        // REFUSED — it must QUEUE behind the in-flight cycle whose output
-        // already streams to the surface's resume buffer. We AWAIT the lease
-        // here (abortable) rather than returning shouldContinue:true: returning
-        // would make the gate re-fire this cycle synchronously → a tight
-        // busy-loop that exhausts the surface's per-hour cycle budget (D1 bug).
-        // While awaiting, onCycle has not returned, so the gate holds this cycle
-        // as active and accumulates other stimuli in pendingSalience (drained at
-        // natural end) — no spin, no dropped message. We do NOT register the
-        // per-transport cycleSlot until we win; the incumbent is NEVER cancelled.
-        let admission = admitCycle(personSession.cycles, surfaceId, params.cycleId, controller);
-        while (!admission.dispatch) {
-          if (controller.signal.aborted) {
-            return { aborted: true, shouldContinue: false };
-          }
-          log.info("onCycle.awaiting-surface-cycle", {
-            sessionId,
-            surfaceKey: surfaceId,
-            requestedCycleId: params.cycleId,
-            activeCycleId: admission.activeCycleId,
-          });
-          await waitForReleaseOrAbort(personSession.cycles.whenReleased(surfaceId), controller.signal);
-          if (controller.signal.aborted) {
-            return { aborted: true, shouldContinue: false };
-          }
-          admission = admitCycle(personSession.cycles, surfaceId, params.cycleId, controller);
-        }
-
-        cycleSlot.register(params.cycleId, controller);
-
-        controller.signal.addEventListener(
-          "abort",
-          () => {
-            cycleSlot.complete(params.cycleId);
-          },
-          { once: true },
-        );
-
-        // Consume the pending client-minted session id once. Subsequent
-        // ReAct continuations within the same cycle (and the next cycle
-        // after a normal turn) MUST NOT re-force the id — Hermes' default
-        // keying takes over once the chain is established.
-        //
-        // Priority: eager pending id → in-flight session.new pre-warm Promise
-        // → null (no mint; Hermes default keying). The only mint is an eager
-        // client session.new. See resolveForcedSessionId for the full contract.
-        const forcedSessionId = await resolveForcedSessionId({
-          pendingNewSessionId,
-          pendingNewSessionPromise,
-          cycleId: params.cycleId,
-        });
-        pendingNewSessionId = null;
-        pendingNewSessionPromise = null;
-
-        try {
-          const result = await dispatchHermesCycle(
-            {
-              sessionId,
-              userId: binding.userId,
-              cycleId: params.cycleId,
-              userMessage: getLastUserMessage(conversationMirror),
-              binding: bindingWithAnchor,
-              maxOutputTokens: services.hermes?.defaults.max_output_tokens ?? 512,
-              signal: controller.signal,
-              mode,
-              ...(forcedSessionId ? { forcedSessionId } : {}),
-            },
-            hermesDeps,
-          );
-          if (result.conversationId && result.conversationId !== anchoredConversationId) {
-            personSession.updateConversationId(surfaceId, result.conversationId);
-          }
-        } finally {
-          cycleSlot.complete(params.cycleId);
-          // Release the surface lease so the next cycle on this surface can win
-          // ownership. Keyed-stale-safe: complete() no-ops if a newer cycle owns
-          // the surface slot.
-          personSession.cycles.complete(surfaceId, params.cycleId);
-        }
-
-        return { aborted: controller.signal.aborted, shouldContinue: false };
-      },
-    },
-    conversationMirror,
-    salienceMap,
-  );
-  attentionGateProxy._gate = gate;
-  ws.data.attentionGate = gate;
-
-  const adapters = registerAdapters(ws, capSet, services);
-  ws.data.adapters = adapters;
-
-  // Wire the mic's first-speech signal to the session-level bargeIn.
-  ws.data.audioAdapter?.setOnSpeechOnset(() => bargeInController.trigger());
-
-  const adapterAbortController = new AbortController();
-  for (const adapter of adapters) {
-    adapter
-      .start({
-        shortTermContext,
-        conversationHistory: conversationMirror,
-        abortSignal: adapterAbortController.signal,
-        admitPendingId: (id: string) => personSession.admitPendingId(id),
-      })
-      .catch((err: unknown) => {
-        log.error("adapter-start-failed", { id: adapter.id, error: errorMessage(err, "unknown") });
-      });
+  // The session's frame journal is not torn down with it either: it belongs to
+  // the SESSION and outlives its handles in the replay registry's retention
+  // window, so a re-configure that lands back on the same session gets the same
+  // journal and the same epoch, and the replay this handshake is about to
+  // promise stays contiguous.
+  if (ws.data.attachment !== null) {
+    log.info("session-configure.reconfigure", {
+      sessionId,
+      userId,
+      conversationId: ws.data.conversationId,
+      reason: "detaching from the session this connection was already on",
+    });
+    detachSession(ws, services);
   }
 
-  const preferenceUnsub = preferenceManager.onChange((next, prev, changed) => {
-    log.info("preference-change-received", { sessionId, prev, next, changed });
-    if (changed.includes("language")) {
-      handleLanguageChange(ws, services, next, prev.language).catch((err: unknown) => {
-        log.error("stt-reconfigure-failed", {
-          sessionId,
-          error: errorMessage(err, "unknown"),
-        });
-      });
-    }
-    if (changed.includes("channel")) {
-      log.info("channel-preference-takes-effect-next-cycle", {
-        sessionId,
-        channel: next.channel,
-      });
-    }
-  });
-  ws.data.preferenceUnsub = preferenceUnsub;
+  // `conversationId` is the session this connection has RESOLVED; `runtime` is
+  // whether it is currently serviceable. They are set together on the happy
+  // path and can diverge on exactly one: a bind failure (no active LLM key
+  // resolved for this user). The id is kept anyway, and deliberately — it is
+  // the only record of WHICH session the client asked for, and clearing it
+  // would send their next message into a brand-new one instead. The recovery is
+  // a late re-bind on the next message (`ensureBoundRuntime`, ws-handlers.ts),
+  // which is what stops this state being permanent.
+  //
+  // Safe to hold without a runtime: a failed bind attaches nothing (the
+  // registry either registers the attachment or propagates the build failure),
+  // and `detachSession` is keyed on THIS connection's attachment id, so its
+  // teardown cannot unseat a window that did attach.
+  ws.data.conversationId = resolved.sessionId;
+  ws.data.draftKey = resolved.draftKey;
+  // The bind ATTACHES this connection to the session and takes its journal:
+  // one seq space shared with every other window on it. It also HOLDS this
+  // window — it receives nothing until the attach is completed below, which is
+  // what makes "the snapshot, then the frames that arrived meanwhile" a single
+  // linearization point rather than two steps with a hole between them.
+  const bind = resolved.sessionId === null ? null : await bindSessionRuntime(ws, services, resolved.sessionId);
+  // REFUSED is not a degraded handshake, it is a DEAD socket: the bind found
+  // that the record no longer grants this connection's authority, told the
+  // client so and closed it (session-binding.ts). Everything below writes
+  // frames and opens a store handle, all of it for a corpse.
+  if (bind?.kind === "refused") return;
+  const hasRuntime = bind?.kind === "bound";
+  // A resume is honourable only when this connection's cursor is in the same
+  // seq space the session's journal is still allocating from.
+  const epochMatches = configureResume !== undefined && configureResume.epoch === ws.data.epoch;
 
   log.info("session-configured", {
     sessionId,
-    capabilities: [...capSet],
-    adapterCount: adapters.length,
+    userId,
+    capabilities,
+    clientType,
     language,
+    deviceId: configureDeviceId,
+    surfaceId,
+    hasRuntime,
+    epoch: ws.data.epoch,
+    resumed: epochMatches,
+    requestedResumeLastSeq: configureResume?.lastSeq ?? null,
+    conversationId: resolved.sessionId,
+    draft: resolved.sessionId === null,
   });
 
-  // -------------------------------------------------------------------------
-  // Sessions wiring: PluginClient + TitleStore + SwitchFlow + handlers
-  // -------------------------------------------------------------------------
-  // The dashboard sidecar's sentient-plugin REST surface is the only path
-  // for search / delete / get / getMessages — ACP doesn't cover those.
-  // Derive the plugin base URL by swapping the ACP port for the dashboard
-  // port (acpPort + DASHBOARD_PORT_OFFSET, same offset supervisord-control
-  // bakes into each per-user program).
-  let httpBaseUrl: string;
-  try {
-    httpBaseUrl = await buildHttpBaseUrlForUser(services.hermes, services.userPortStore, initialBinding.userId);
-  } catch (err: unknown) {
-    log.error("http-base-url-resolve-failed", {
-      sessionId,
-      userId: initialBinding.userId,
-      reason: errorMessage(err, "unknown"),
-    });
-    sendError(ws, "protocol_error", "Cannot resolve Hermes HTTP base URL");
-    return;
-  }
-
-  let pendingSwitchId: string | null = null;
-  let snapshotUnsub: (() => void) | null = null;
-
-  const sessionsConfig = services.sessions;
-
-  const pluginBaseUrl = buildPluginBaseUrl(httpBaseUrl, DASHBOARD_PORT_OFFSET);
-  if (pluginBaseUrl === null) {
-    log.error("plugin-client.url-derive-failed", {
-      sessionId,
-      userId: initialBinding.userId,
-      httpBaseUrl,
-      reason: "could not derive plugin URL from httpBaseUrl",
-    });
-    sendError(ws, "protocol_error", "Cannot derive plugin sidecar URL");
-    return;
-  }
-  const pluginClient: SentientPluginClient = createSentientPluginClient({
-    baseUrl: pluginBaseUrl,
-    token: initialBinding.apiKey,
-    timeoutMs: sessionsConfig.hermes_http_timeout_ms,
-  });
-  log.info("plugin-client.constructed", {
-    sessionId,
-    userId: initialBinding.userId,
-    pluginBaseUrl,
-  });
-
-  // Run the one-shot migrator before constructing the new-layout titleStore.
-  // Idempotent; no-op once a profile has been migrated.
-  await migrateLegacyTitles({
-    legacyDir: expandHome(sessionsConfig.title_override_dir),
-    newRoot: expandHome(sessionsConfig.user_data_root),
-    userId: initialBinding.userId,
-  });
-
-  const titleStore = createTitleStore({
-    userDataRoot: expandHome(sessionsConfig.user_data_root),
-    userId: initialBinding.userId,
-  });
-
-  // Past-sessions list — ACP `session/list` is the only source.
-  const profileSessionsLookup = async (): Promise<Set<string>> => {
-    try {
-      const result = await listSessionsViaAcp(acpConn);
-      return new Set(result.sessions.map((r) => r.sessionId));
-    } catch (err: unknown) {
-      log.warn("profile-sessions-lookup-failed", {
-        sessionId,
-        userId: initialBinding.userId,
-        message: errorMessage(err, "unknown"),
-      });
-      return new Set();
-    }
-  };
-
-  const switchFlow = createSwitchFlow({
-    mirror: { replaceAll: (entries) => conversationMirror.replaceAll(entries) },
-    cancelCurrentCycle: () =>
-      new Promise<void>((resolve) => {
-        const activeId = cycleSlot.currentId();
-        if (activeId === null) {
-          resolve();
-          return;
-        }
-        const unsub = cycleSlot.onComplete(() => {
-          unsub();
-          resolve();
-        });
-        interruptController.trigger();
-      }),
-    fetchHistory: async (targetSessionId, signal) => {
-      // Empty target id == fresh chat (session.new). Skip the fetch and
-      // let mirror.replaceAll([]) clear the buffer.
-      if (targetSessionId === "") return [];
-      const raw = await pluginClient.getMessages(targetSessionId);
-      if (signal.aborted) {
-        throw Object.assign(new Error("aborted"), { name: "AbortError" });
-      }
-      return raw
-        .map((m, i) => hermesMessageToMirrorEntry(m, targetSessionId, i))
-        .filter((e): e is NonNullable<typeof e> => e !== null);
-    },
-    teardownTimeoutMs: sessionsConfig.switch_teardown_timeout_ms,
-  });
-
-  // On conversation.activate the gateway emits session.switched only —
-  // history is now REST (no conversation.snapshot on activate).
-  const emitActivateSwitched = (switchedTo: string): void => {
-    wsSend({ type: "session.switched", sessionId: switchedTo, ts: Date.now() });
-    log.info("session.switched.emitted", { sessionId, switchedTo });
-  };
-
-  // switchFlow drives mirror.replaceAll, which fires onSnapshot.
-  // pendingSwitchId latch correlates the snapshot with the originating activate.
-  // On conversation.activate: emit session.switched only (history is REST).
-  // On session.new: pendingSwitchId is null — nothing to emit here.
-  snapshotUnsub = conversationMirror.onSnapshot((_entries) => {
-    const switchedTo = pendingSwitchId;
-    pendingSwitchId = null;
-    if (switchedTo !== null) {
-      emitActivateSwitched(switchedTo);
-    }
-  });
-  ws.data.snapshotUnsub = snapshotUnsub;
-
-  const sessionsHandlers = createSessionsHandlers({
-    userId: initialBinding.userId,
-    titleStore,
-    send: (frame) => {
-      wsSend(frame);
-    },
-    switchFlow,
-    profileSessionsLookup,
-    setPendingNewSessionId: (id) => {
-      pendingNewSessionId = id;
-    },
-    setPendingNewSessionPromise: (promise) => {
-      pendingNewSessionPromise = promise;
-    },
-    acpConn,
-  });
-
-  // Latch pendingSwitchId before delegating, so the upcoming mirror
-  // snapshot fan-out is correlated with this activate. session.new clears
-  // the latch — its empty-snapshot has nothing to pair against; Hermes
-  // emits session.created on the first user.message of the new chain.
-  ws.data.sessionsHandlers = {
-    handle: async (frame) => {
-      if (frame.type === "conversation.activate") pendingSwitchId = frame.sessionId;
-      else if (frame.type === "session.new") pendingSwitchId = null;
-      await sessionsHandlers.handle(frame);
-    },
-  };
-
-  // session.ready builder — sent on BOTH paths. The client handshake's
-  // ready-gate ONLY completes on session.ready (its FSM has no stream.resumed
-  // case), so a warm resume MUST send it too or the handshake times out
-  // (4002) → reconnect storm. handleResumeOrFresh invokes this thunk on the
-  // recovered:true path BEFORE stream.resumed (order is load-bearing — see its
-  // doc). On recovered:false / fresh, the thunk runs here in the fresh block.
-  const playbackTunables = {
-    minEagerEndMs: services.webui.playback.min_eager_end_ms,
-    preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
-  };
-  // The session.ready payload. On the fresh / recovered:false path it is sent
-  // seq-stamped via wsSend (sendReady below). On recovered:true the handover
-  // sends this SAME object RAW (seq-less) so it ungates the client without
-  // poisoning the resume cursor — see ws-resume-handover.
-  const readyFrame: Record<string, unknown> = {
+  const readyFrame: GatewayMessage = {
     type: "session.ready",
     sessionId,
     audioEncoding: AUDIO_ENCODING,
     inputSampleRate: INPUT_SAMPLE_RATE,
     outputSampleRate: OUTPUT_SAMPLE_RATE,
     enabledEffects: [],
-    playback: playbackTunables,
+    playback: {
+      minEagerEndMs: services.webui.playback.min_eager_end_ms,
+      preemptFadeoutMs: services.webui.playback.preempt_fadeout_ms,
+    },
   };
-  const sendReady = (): void => {
-    log.debug("session-ready-playback-tunables", { sessionId, ...playbackTunables });
-    wsSend(readyFrame);
-  };
 
-  // STREAM-RESUME decision (Task 3.8). When the device buffer was resumed AND
-  // it still holds the frames since the client's lastSeq: send session.ready
-  // (via sendReady) THEN stream.resumed{recovered:true} + replay those frames
-  // VERBATIM (raw socket sends — they keep their original seq/header), then
-  // SUPPRESS the fresh-only block below (prefs seed + the conversation.activate
-  // rehydrate / empty snapshot). session.ready is NOT suppressed — it was sent
-  // inside handleResumeOrFresh. Otherwise emit recovered:false (when a resume
-  // was requested) and fall through to the normal fresh setup; the client
-  // REST-refetches history.
-
-  // Re-anchor the conversation thread for the NEXT user message. The client
-  // declares the conversationId it is displaying (configure field, mobile) or
-  // via the ?session_id= upgrade param (web). Seed it HERE — before the
-  // recovered:true early-return below — so a warm buffer-resume reconnect still
-  // continues the same Hermes thread instead of forking. The next cycle's
-  // resolveForcedSessionId consumes this; an unknown id degrades to a fresh
-  // Hermes session/load (per-user worker isolation makes a stale id harmless).
-  // On the fresh / recovered:false path the conversation.activate block further
-  // below re-seeds pendingNewSessionId to the same id — an idempotent no-op;
-  // this early seed exists solely to cover the recovered:true path that returns
-  // before that block.
-  const reanchorConversationId = configureConversationId ?? ws.data.resumeSessionId;
-  if (reanchorConversationId != null) {
-    pendingNewSessionId = reanchorConversationId;
-    log.info("resume.reanchor", {
-      sessionId,
-      conversationId: reanchorConversationId,
-      source: configureConversationId ? "configure" : "url",
-    });
-  }
-
-  const replayed = handleResumeOrFresh({
+  // On the recovered path this sends session.ready itself (RAW, before the
+  // stream.resumed ack and the verbatim replay) and returns the seq it replayed
+  // through — see ws-resume.ts for why that order is load-bearing. Every other
+  // path returns null and we send the normal ready below.
+  const replayedThrough = handleResumeOrFresh({
     ws,
     sessionId,
-    surfaceId,
-    buffer: deviceBuffer,
-    epoch: deviceEpoch,
-    resumed: deviceResumed,
-    resumeParams,
+    journal: ws.data.journal,
+    epoch: ws.data.epoch,
+    epochMatches,
+    resumeParams: configureResume,
     readyFrame,
-    goLive: () => attachment.goLive(),
   });
-
-  if (replayed) {
-    // Successful resume: RAW session.ready + the missed frames were already sent
-    // (session.ready first, then stream.resumed + replay), and the handover went
-    // live AFTER the replay. The client has history + prefs from the replay
-    // window. Suppress the fresh-only block (prefs seed + snapshot).
-    log.info("session-configured.resumed", { sessionId, surfaceId, epoch: deviceEpoch });
+  if (replayedThrough !== null) {
+    // Recovered: the client's mirror is intact and the replay just carried it
+    // to `replayedThrough`, so it gets NO snapshot — only the frames that
+    // arrived while it was held, which is everything past that seq.
+    completeAttach(ws, services, replayedThrough);
     return;
   }
 
-  // Fresh / recovered:false path. On a recovered:false resume the live socket
-  // was deferred (isResumeAttempt) but there is no replay window, so go live now
-  // before the fresh handshake writes session.ready / prefs / snapshot.
-  if (isResumeAttempt) attachment.goLive();
-  // Send session.ready now (the thunk the resume path would have called).
-  sendReady();
-
-  // Seed the client with the current audio preferences. Fresh path only — on
-  // resume the prior connection's journaled session.preferences.changed is
-  // replayed verbatim (no double-send). The onChange listener above only fires
-  // on FUTURE changes, and session.ready carries no prefs — so without this
-  // seed the client keeps its schema default (ttsEnabled: true). When the
-  // saved profile differs, the toggle computes !current from the wrong value
-  // → update() is a no-op → no echo → button appears stuck. Both webui and
-  // the mobile SDK rely on this seed to reflect the real state and toggle
-  // reliably.
-  wsSend({
-    type: "session.preferences.changed",
-    preferences: {
-      ttsEnabled: preferenceManager.get().ttsEnabled,
-      channel: preferenceManager.get().channel,
-    },
-  });
-
-  // Resume on connect: if `?session_id=` was at WS upgrade, run the activate
-  // flow now. The mirror.onSnapshot listener emits session.switched only
-  // (history is REST). On failure (404, network), fall through to the
-  // empty-snapshot path below.
-  const resumeSessionId = ws.data.resumeSessionId;
-  let resumeHandled = false;
-  if (resumeSessionId !== null && ws.data.sessionsHandlers !== null) {
-    try {
-      await ws.data.sessionsHandlers.handle({
-        type: "conversation.activate",
-        sessionId: resumeSessionId,
-      });
-      gate.clearConversationSalience();
-      resumeHandled = true;
-      log.info("resume.success", { sessionId, resumeSessionId });
-    } catch (err: unknown) {
-      log.warn("resume.failed", { sessionId, resumeSessionId, message: errorMessage(err, "unknown") });
-      pendingSwitchId = null;
-    }
-  }
-
-  if (!resumeHandled) {
-    // Initial sync of the conversation mirror. Empty on fresh session.
-    wsSend({
-      type: "conversation.snapshot",
-      items: toFeed(conversationMirror.snapshot()),
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Adapter registration
-// ---------------------------------------------------------------------------
-
-function registerAdapters(
-  ws: ServerWebSocket<ClientData>,
-  capabilities: ReadonlySet<string>,
-  services: GatewayServices,
-): Adapter[] {
-  const adapters: Adapter[] = [];
-
-  if (capabilities.has("text.input")) {
-    const textAdapter = createUserTextInputAdapter();
-    ws.data.textAdapter = textAdapter;
-    adapters.push(textAdapter);
-  }
-
-  if (capabilities.has("audio.input") && services.stt) {
-    const audioAdapter = createUserAudioInputAdapter(services.stt.adapterFactory, services.stt.adapterConfig);
-    ws.data.audioAdapter = audioAdapter;
-    adapters.push(audioAdapter);
-  }
-
-  return adapters;
-}
-
-// ---------------------------------------------------------------------------
-// ACP wire acquire (pooled per surfaceId)
-// ---------------------------------------------------------------------------
-
-interface AcquireAcpWireOrFailInput {
-  readonly sessionId: string;
-  readonly userId: string;
-  /** Surface key for the wire pool — one isolated Hermes child per surface. */
-  readonly surfaceId: string;
-  /** Per-surfaceId pool — reuses a live wire across transport reconnects for the same surface. */
-  readonly registry: AcpWireRegistry;
-  /** Per-profile WS URL ending in `/ws` — `bootstrapAcpWire` rewrites the suffix to `/acp`. */
-  readonly wsUrl: string;
-  /** Bearer token for the ACP WS handshake. */
-  readonly token: string;
-  /** ACP wire resilience tunables (open timeout + reconnect backoff). */
-  readonly acpWire: HermesAcpWire | undefined;
-  /** Stash the release fn on the WS so the close-handler can drop this attachment's ref. */
-  readonly setDispose: (fn: () => void) => void;
-}
-
-/**
- * Acquire the surface's pooled ACP wire — dials on the first attachment, reuses
- * the live wire (refCount++) for every subsequent same-surface reconnect so the
- * overlay never evicts the in-flight connection. On failure, log + return null so
- * the caller can reject the session cleanly. ACP is the only wire — no legacy
- * fallback. The dial threads the reconnect config so the wire self-heals on
- * abnormal close. The stashed dispose releases ONE reference; the registry
- * tears the wire down only when the last attachment for this surface detaches.
- * userId is used for WS-URL resolution and logging only — the pool key is surfaceId.
- */
-async function acquireAcpWireOrFail(input: AcquireAcpWireOrFailInput): Promise<AcpPerProfileConnection | null> {
-  const dial = (): Promise<AcpWireHandle> => {
-    const acpWire = input.acpWire;
-    return bootstrapAcpWire({
-      wsUrl: input.wsUrl,
-      token: input.token,
-      sessionId: input.sessionId,
-      ...(acpWire
-        ? {
-            openTimeoutMs: acpWire.open_timeout_ms,
-            reconnect: {
-              baseMs: acpWire.reconnect_base_ms,
-              maxMs: acpWire.reconnect_max_ms,
-              jitterMs: acpWire.reconnect_jitter_ms,
-              maxAttempts: acpWire.reconnect_max_attempts,
-            },
-          }
-        : {}),
-    });
-  };
-  try {
-    const acpConn = await input.registry.acquire(input.surfaceId, dial);
-    let released = false;
-    input.setDispose(() => {
-      if (released) return;
-      released = true;
-      input.registry.release(input.surfaceId);
-    });
-    log.info("acp-wire-acquire-ok", { sessionId: input.sessionId, userId: input.userId, surfaceId: input.surfaceId });
-    return acpConn;
-  } catch (err: unknown) {
-    log.warn("acp-wire-acquire-failed", {
-      sessionId: input.sessionId,
-      userId: input.userId,
-      surfaceId: input.surfaceId,
-      reason: errorMessage(err, "unknown"),
-    });
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Preference -> side-effect handlers
-// ---------------------------------------------------------------------------
-
-async function handleLanguageChange(
-  ws: ServerWebSocket<ClientData>,
-  services: GatewayServices,
-  next: SessionPreferences,
-  prevLanguage: SessionPreferences["language"],
-): Promise<void> {
-  const audioAdapter: UserAudioInputAdapter | null = ws.data.audioAdapter;
-  if (!audioAdapter) {
-    log.debug("language-change-ignored-no-audio-adapter", {
-      prevLanguage,
-      next: next.language,
-      reason: "session is text-only",
-    });
+  sendConnectionFrame(ws, readyFrame);
+  if (resolved.sessionId === null) {
+    sendDraftHandshake(ws, resolved.draftKey, undefined);
     return;
   }
-  if (!services.stt) {
-    log.warn("language-change-ignored-no-stt-service", { prevLanguage, next: next.language });
-    return;
-  }
-  const newSttConfig: STTAdapterConfig = {
-    ...services.stt.adapterConfig,
-    language: next.language,
-    pauseRenderLanguage: next.language === "auto" ? services.stt.adapterConfig.pauseRenderLanguage : next.language,
-  };
-  log.info("stt-reconfigure-start", {
-    prevLanguage,
-    nextLanguage: next.language,
-    pauseRenderLanguage: newSttConfig.pauseRenderLanguage,
-  });
-  await audioAdapter.reconfigure(newSttConfig);
-  log.info("stt-reconfigure-complete", { nextLanguage: next.language });
+  sendConversationSnapshot(ws, services, sessionId, resolved.sessionId, userId);
 }
 
-// ---------------------------------------------------------------------------
-// Config builders
-// ---------------------------------------------------------------------------
-
-function buildGateConfig(services: GatewayServices): AttentionGateConfig {
-  const cerebrum = services.cerebrum;
-  return {
-    debounceWindowMs: cerebrum?.cycle.debounce_window_ms ?? 80,
-    standardThreshold: cerebrum?.cycle.standard_threshold ?? 50,
-    immediateWakeThreshold: cerebrum?.cycle.immediate_wake_threshold ?? 100,
-    maxPerHour: cerebrum?.cycle.max_per_hour ?? 120,
-    maxIterations: cerebrum?.cycle.max_iterations ?? 10,
-    maxIterWarnAhead: cerebrum?.cycle.max_iter_warn_ahead ?? 3,
-  };
+/** What this connection is looking at: a real session, or a draft holding the
+ *  key its first message will mint under. Exactly one of the two is set. */
+interface ConnectionSession {
+  sessionId: string | null;
+  draftKey: string;
 }
 
 /**
- * Extract the text of the most recent user entry from the conversation mirror.
- * Returns empty string if no user entry exists.
- */
-function getLastUserMessage(mirror: ConversationMirror): string {
-  const entries = mirror.snapshot();
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i];
-    if (entry && entry.kind === "user") {
-      return entry.content;
-    }
-  }
-  return "";
-}
-
-export interface ResolveForcedSessionIdInput {
-  readonly pendingNewSessionId: string | null;
-  readonly pendingNewSessionPromise: Promise<string> | null;
-  readonly cycleId: string;
-}
-
-/**
- * Resolve which sessionId the upcoming cycle should force, in priority order:
+ * Decide which session this connection opens — MEMBERSHIP, not derivation and
+ * not a prefix parse (spec §3.5).
  *
- *   1. An eager `pendingNewSessionId` (session.new pre-warm already resolved).
- *   2. An in-flight `pendingNewSessionPromise` (session.new pre-warm still
- *      racing the first message) — awaited once.
- *   3. No pending session.new: return null — the cycle falls through to Hermes
- *      default keying. The only mint is an eager client `session.new`
- *      (visible `session.created`). A fresh-chain message with no pending id
- *      does NOT trigger an invisible gateway mint.
+ * Four inputs, four answers:
+ *
+ *  - **nothing presented** — a fresh tab or a first launch. A DRAFT: no row,
+ *    no id, no runtime, nothing in the session list. The id is allocated when
+ *    the first message arrives (ws-handlers.ts), so ten opened tabs leave the
+ *    list unchanged.
+ *  - **a draft key** — the client is mid-draft and reconnected. Stay on the
+ *    same draft, so the first message still mints under the key the client
+ *    already holds and a lost `session.created` ack cannot fork a second
+ *    session out of the retry.
+ *  - **a session id the caller's store holds** — open it. This covers both
+ *    shapes identically: a minted id (a `sessions` row) and a legacy
+ *    `c::<userId>::<surfaceId>` partition (entries, no row). The store was
+ *    already chosen by the caller's capability, which is why membership is a
+ *    STRONGER check than the prefix parse it replaces — and why the
+ *    `surfaceId` inside a legacy id is dead metadata that nothing reads.
+ *  - **anything else** — REFUSED, and the connection starts a fresh draft.
+ *    The old behaviour created an empty partition for any well-formed string,
+ *    which let a client spam a user's database with rows nothing can list,
+ *    open or delete.
  */
-export async function resolveForcedSessionId(input: ResolveForcedSessionIdInput): Promise<string | null> {
-  if (input.pendingNewSessionId !== null) return input.pendingNewSessionId;
-  if (input.pendingNewSessionPromise !== null) {
-    try {
-      return await input.pendingNewSessionPromise;
-    } catch (err) {
-      log.warn("pending-new-session-failed", { cycleId: input.cycleId, reason: errorMessage(err, "unknown") });
-      return null;
-    }
-  }
-  // No pending session.new on a fresh chain: do NOT mint here. The client mints
-  // eagerly via session.new (visible session.created); a fresh-chain message with
-  // no pending id falls through to Hermes default keying (no invisible mint).
-  return null;
-}
+function resolveConnectionSession(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  presented: string | undefined,
+): ConnectionSession {
+  const connectionId = ws.data.sessionId;
+  const principal = ws.data.principal;
+  if (principal === null) return { sessionId: null, draftKey: mintDraftKey() };
+  const userId = principal.userId;
 
-export interface CycleAdmission {
-  readonly dispatch: boolean;
-  readonly activeCycleId: string;
+  if (presented === undefined) {
+    const draftKey = mintDraftKey();
+    log.info("session-configure.draft.fresh", { sessionId: connectionId, userId, draftKey });
+    return { sessionId: null, draftKey };
+  }
+
+  if (isDraftKey(presented)) {
+    log.info("session-configure.draft.resumed", { sessionId: connectionId, userId, draftKey: presented });
+    return { sessionId: null, draftKey: presented };
+  }
+
+  const resolution = withSessionStore(services, principal, (store) => resolveSession({ store, presented }));
+  if ("sessionId" in resolution) {
+    log.info("session-configure.session.opened", {
+      sessionId: connectionId,
+      userId,
+      conversationId: resolution.sessionId,
+    });
+    return { sessionId: resolution.sessionId, draftKey: mintDraftKey() };
+  }
+
+  const draftKey = mintDraftKey();
+  log.warn("session-configure.session.refused", {
+    sessionId: connectionId,
+    userId,
+    draftKey,
+    reason: `presented session id was ${resolution.rejected} in this caller's store — starting a draft instead of creating it`,
+  });
+  return { sessionId: null, draftKey };
 }
 
 /**
- * Per-surface cycle gate (D1). First cycle on an idle surface dispatches; any
- * concurrent dispatch (internal save-skill, or a reconnecting transport's fresh
- * cycle) is REFUSED — it queues behind / adopts the in-flight cycle whose output
- * already streams to the resume buffer. NEVER cancels the incumbent.
+ * Hand the client its committed conversation feed, right after session.ready.
+ *
+ * ONLY on the non-recovered paths (fresh connect, and a resume the journal
+ * could not honour). A recovered resume replays the exact frames the client
+ * missed, and its mirror is still intact — a snapshot there would fight that
+ * replay. `replayedThrough` is precisely the recovered flag, so this reads off
+ * the same decision rather than re-deriving it.
+ *
+ * It also completes the ATTACH: the connection has been held since it bound, so
+ * the snapshot and the drain of everything emitted meanwhile are one
+ * linearization point (fan-out-emitter.ts's `attachWithSnapshot`).
+ *
+ * The feed lives on the SessionRuntime because the runtime owns the store
+ * handle. No runtime (orchestrator absent, or per-session construction
+ * failure) means no store to project — the socket is still usable, so this
+ * logs its reason rather than failing the handshake.
+ *
+ * DOES THIS CLOSE `recovered:false` WITHOUT THE MISSING REST ROUTE? Per client:
+ *
+ *  - **web: yes, but only because of the frame order** — and that order is now
+ *    pinned by ws-session-configure.test.ts. Both client SDKs treat
+ *    `stream.resumed{recovered:false}` as "refetch history over
+ *    `GET /sessions/:id/messages`", a route this gateway does not serve
+ *    (sessions CRUD is later scope), and both replace their mirror with an
+ *    EMPTY list when that fetch fails. web-sdk attaches its
+ *    ConversationHistoryConnector only on `session.ready`
+ *    (sdk-message-router.ts's `handleReady` → `attachAll`), and ws-resume.ts
+ *    sends the ack BEFORE ready, so the synthetic `session.switched` reaches no
+ *    history connector and no fetch is made — this snapshot is then the only
+ *    thing that fills the mirror. Reordering either side reawakens the 404 and
+ *    wipes the chat a moment after this frame filled it.
+ *  - **mobile: no — a live residual.** `SentientSdk.onStreamResumed` calls
+ *    `refetchHistoryForSession` directly, with no handler-map gate to be
+ *    detached, so the 404 lands AFTER this snapshot and clears the mirror
+ *    (SdkConnectors.loadHistoryForSession's error branch → `replaceMirror(
+ *    emptyList())`). Closing it needs the REST route or a mobile-sdk change;
+ *    neither is in this task's scope, and no gateway-side ordering can beat an
+ *    async client fetch.
  */
-export function admitCycle(
-  registry: SurfaceCycleRegistry,
-  surfaceKey: string,
-  cycleId: string,
-  controller: AbortController,
-): CycleAdmission {
-  const lease = registry.acquire(surfaceKey, cycleId, controller);
-  return { dispatch: lease.owner, activeCycleId: lease.activeCycleId };
-}
-
-/** Resolve when the surface lease frees OR the cycle aborts, whichever first. */
-async function waitForReleaseOrAbort(released: Promise<void>, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return;
-  await new Promise<void>((resolve) => {
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      signal.removeEventListener("abort", finish);
-      resolve();
-    };
-    signal.addEventListener("abort", finish, { once: true });
-    released.then(finish, finish);
+function sendConversationSnapshot(
+  ws: ServerWebSocket<SessionData>,
+  services: GatewayServices,
+  sessionId: string,
+  conversationId: string,
+  userId: string,
+): void {
+  if (completeAttachWithSnapshot(ws, services)) {
+    // The strip (runtime/task-list.ts) rides beside the committed feed: a
+    // fresh joiner has no other way to learn what is already running. Full
+    // state on the session lane, so a redundant re-broadcast to windows
+    // already attached is harmless (spec: `SessionRuntime.emitTaskList`).
+    ws.data.runtime?.emitTaskList();
+    return;
+  }
+  log.warn("session-configure.no-conversation-snapshot", {
+    sessionId,
+    conversationId,
+    userId,
+    reason: "this connection is not attached to a session runtime — no store to project",
   });
 }

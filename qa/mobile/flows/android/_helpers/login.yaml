@@ -1,8 +1,17 @@
 appId: io.dev32.sentient.debug
 tags:
   - helper
+env:
+  # QA_USER_ID — the login-picker avatar this suite authenticates as. It is a
+  # variable, not a literal, because it is a SERVER-MINTED id that does not
+  # survive a state reset: the native-stack cutover moved the gateway state root
+  # and the old `u_8c866990` ("Kevin") record did not come with it, which broke
+  # every authed flow at the SELECTOR (looks like a product bug, isn't one).
+  # run-e2e.sh pre-flights this id against `GET /api/v1/auth/users` and fails
+  # loudly with the fix; override per run with `-e QA_USER_ID=<id>`.
+  QA_USER_ID: u_0417d3b0
 ---
-# _helpers/login.yaml — reusable login SUBFLOW (Kevin / u_8c866990, PIN 1234).
+# _helpers/login.yaml — reusable login SUBFLOW (admin QA fixture user, PIN 1234).
 #
 # This is NOT a standalone test. It is invoked two ways:
 #   1. Conditionally, at the top of every authed flow:
@@ -22,7 +31,7 @@ tags:
     visible: { id: "login-backend-setup" }
     timeout: 3000
 - tapOn:
-    id: "login-avatar-u_8c866990"
+    id: "login-avatar-${QA_USER_ID}"
 - extendedWaitUntil:
     visible: { id: "pin-key-1" }
     timeout: 3000

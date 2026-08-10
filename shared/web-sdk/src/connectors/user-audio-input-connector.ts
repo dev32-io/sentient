@@ -6,8 +6,18 @@ import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 // ---------------------------------------------------------------------------
 
 export interface UserAudioInputConfig {
-  /** Called when the gateway sends a final transcript for user speech. */
-  onTranscript?: (text: string) => void;
+  /**
+   * The gateway opened a turn for a USER stimulus — it has taken ownership of
+   * whatever was said, so the client's mic latch (SpeechGate) can close and
+   * stop streaming until sustained speech reopens it.
+   *
+   * This is the 2.0 replacement for the deleted `connector.transcript.final`
+   * (plan reconciliation R9). There is no live partial-transcript frame in the
+   * contract any more, so this is the earliest server signal that the utterance
+   * boundary has passed. Background-completion turns are filtered out: they
+   * arrive at arbitrary moments and must never truncate an utterance in flight.
+   */
+  onTurnStarted?: () => void;
 }
 
 /**
@@ -21,6 +31,9 @@ interface AudioStartFrame {
   turnMode?: TurnMode;
 }
 
+/** Turns started by a background `delegateTask` completion, not by a person. */
+const BACKGROUND_TRIGGER = "background-completion";
+
 // ---------------------------------------------------------------------------
 // UserAudioInputConnector — captures mic audio and streams to gateway.
 //
@@ -28,7 +41,7 @@ interface AudioStartFrame {
 // Direction: input
 //
 // Sends: audio.start, binary audio frames, audio.end
-// Receives: connector.transcript.final
+// Receives: turn.started (the mic-latch close signal — see onTurnStarted)
 // ---------------------------------------------------------------------------
 
 export class UserAudioInputConnector implements Connector {
@@ -37,7 +50,7 @@ export class UserAudioInputConnector implements Connector {
 
   private readonly config: UserAudioInputConfig;
   private sdk: SentientSDKInternal | null = null;
-  private unsubTranscript: (() => void) | null = null;
+  private unsubTurnStarted: (() => void) | null = null;
   private isStreaming = false;
 
   constructor(config: UserAudioInputConfig = {}) {
@@ -47,17 +60,17 @@ export class UserAudioInputConnector implements Connector {
   attach(sdk: SentientSDKInternal): void {
     this.sdk = sdk;
 
-    this.unsubTranscript = sdk.onMessage("connector.transcript.final", (msg: unknown) => {
-      const m = msg as Record<string, unknown>;
-      const text = (m.text as string) ?? "";
-      this.config.onTranscript?.(text);
+    this.unsubTurnStarted = sdk.onMessage("turn.started", (msg: unknown) => {
+      const m = msg as { trigger?: string };
+      if (m.trigger === BACKGROUND_TRIGGER) return;
+      this.config.onTurnStarted?.();
     });
   }
 
   detach(): void {
     this.stopStreaming();
-    this.unsubTranscript?.();
-    this.unsubTranscript = null;
+    this.unsubTurnStarted?.();
+    this.unsubTurnStarted = null;
     this.sdk = null;
   }
 

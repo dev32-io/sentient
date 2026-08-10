@@ -1,278 +1,159 @@
-import type { ConversationFeedItem } from "@sentient/protocol";
-import { toFeedItem } from "../../cerebrum/conversation-feed.js";
-import type { HermesRawMessage } from "../../hermes-adapter-client/sessions-client.js";
+// GET /api/v1/sessions and GET /api/v1/sessions/:id/messages (spec §3.5 #3,
+// §1; session-model plan task 4) — the REST surface that lets a reload or a
+// second window list a user's own sessions and re-open one's full history.
+//
+// AUTHORIZATION: principal -> capability -> membership, same chain as the WS
+// path (spec §3.4). The route NEVER reads a userId from the caller — it
+// resolves the principal from the validated bearer token and opens THAT
+// principal's own store. A userId in the query string selects nothing; its
+// presence is logged and otherwise ignored, because a client sending one is
+// either broken or probing.
+//
+// membership, not shape, decides whether an id 404s: `resolveSession`
+// (session-id.ts) looks the presented id up in the caller's own store, which
+// was already selected by their capability. That makes "not yours" and "not
+// there" the SAME answer for free — another user's real session id can never
+// even be compared against, because it lives in a different SQLite file this
+// capability was never granted access to. The same membership check refuses a
+// draft key (`d_...`): it fails `isWellFormedSessionId` (neither the minted
+// `s_` prefix nor the legacy `c::` one), which is the sessionDraftSchema doc's
+// MUST-requirement — "the sessions REST surface MUST 404 it" — holding
+// structurally rather than by a bolted-on check here.
+
+import type { AccessManager } from "../../access/access-manager.js";
+import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
 import { getLog } from "../../logging/logger.js";
-import { hermesMessageToMirrorEntry } from "../../sessions/hermes-message-to-mirror.js";
+import { snapshotFeedItems } from "../../runtime/conversation-feed.js";
+import { withSessionStore } from "../../session-handlers/session-binding.js";
+import { resolveSession } from "../../session-handlers/session-id.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
+import type { UserStore } from "../../user-auth/user-store.js";
 
 const log = getLog(["sentient", "api", "sessions"]);
 
 // --- HTTP status constants ---------------------------------------------------
 
 const HTTP_OK = 200;
-const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
-const HTTP_INTERNAL = 500;
 
-// --- Pagination constants ----------------------------------------------------
+// --- Principal defaults -------------------------------------------------------
+// The ROLE comes off the USER RECORD, resolved on this request — never off the
+// token, which identifies and nothing more (owner ruling, 2026-08-07). It
+// matters here more than anywhere else on the REST surface: this is where a
+// `UserPrincipal` is minted, and `AccessManager.grant` bakes that principal's
+// role into a `Capability`. A stale claim reaching this line would become a
+// frozen authority object, which is the one thing the ruling exists to prevent.
+// Same record `ws-auth-gate.ts` reads for that user's WS sessions, so the two
+// entry points agree by construction rather than by convention.
+// HOUSEHOLDS are still not modelled; that half keeps its placeholder.
+const REST_HOUSEHOLD_ID = "home";
 
-const DEFAULT_SEARCH_LIMIT = 20;
-// Returns the most-recent N messages (tail). Slice 4 adds proper cursor pagination.
-const DEFAULT_MESSAGES_LIMIT = 200;
+const SESSIONS_PATH = "/api/v1/sessions";
+const MESSAGES_PATH_RE = /^\/api\/v1\/sessions\/([^/]+)\/messages$/;
 
-// --- Route patterns ----------------------------------------------------------
-
-const SESSION_ID_RE = /^\/api\/v1\/sessions\/([^/]+)$/;
-const SESSION_MESSAGES_RE = /^\/api\/v1\/sessions\/([^/]+)\/messages$/;
-
-// --- Dep interface -----------------------------------------------------------
-
-export interface PluginClientLike {
-  getMessages(id: string): Promise<unknown[]>;
-  search(q: string, limit: number): Promise<unknown[]>;
-  get(id: string): Promise<unknown | null>;
-  delete(id: string): Promise<void>;
-}
-
-export interface TitleStoreLike {
-  getTitlesFor(ids: string[]): Promise<Record<string, string>>;
-  setTitle(id: string, t: string): Promise<void>;
-  delete(id: string): Promise<void>;
-}
-
-export interface SessionListItem {
-  sessionId: string;
-  title: string;
-  lastActiveAt: number;
-}
-
-export interface SessionsHttpDeps {
+export interface SessionsHandlerDeps {
   tokens: { validate: (token: string) => Promise<TokenResult<TokenPayload>> };
-  resolvePluginClient: (userId: string) => Promise<PluginClientLike>;
-  listSessions: (userId: string) => Promise<SessionListItem[]>;
-  /** Returns a per-user title store. Implementations must be file-backed /
-   *  side-effect-free; a fresh instance per call is correct (no shared
-   *  in-memory cache is required). */
-  resolveTitleStore: (userId: string) => TitleStoreLike;
+  /** Resolves the caller's CURRENT role for the principal minted below. */
+  users: Pick<UserStore, "get">;
+  accessManager: AccessManager;
+  /** `store.db_filename` (config.yaml#store) — threaded into `withSessionStore`
+   *  so this REST readback opens the same db the runtime does. */
+  dbFileName: string;
 }
 
-// --- Handler -----------------------------------------------------------------
-
-export function createSessionsHttpHandler(deps: SessionsHttpDeps): (request: Request) => Promise<Response> {
+export function createSessionsHandler(deps: SessionsHandlerDeps): (request: Request) => Promise<Response> {
   return (request) => handleSessions(deps, request);
 }
 
-async function handleSessions(deps: SessionsHttpDeps, request: Request): Promise<Response> {
-  const url = new URL(request.url);
-  const path = url.pathname;
-  const method = request.method;
-
-  // Auth gate — all routes require a valid bearer
+async function handleSessions(deps: SessionsHandlerDeps, request: Request): Promise<Response> {
   const token = readBearer(request);
-  if (!token) return jsonError(HTTP_UNAUTHORIZED, "missing-token", "Bearer token required");
+  if (!token) return jsonError(HTTP_UNAUTHORIZED, "missing-token");
 
   const valid = await deps.tokens.validate(token);
   if (!valid.ok) {
     log.debug("sessions.token-rejected", { reason: valid.error });
-    return jsonError(HTTP_UNAUTHORIZED, valid.error, "Invalid token");
+    return jsonError(HTTP_UNAUTHORIZED, valid.error);
   }
 
-  const userId = valid.value.userId;
-  log.debug("sessions.request", { method, path, userId });
+  const { pathname, searchParams } = new URL(request.url);
 
-  if (path === "/api/v1/sessions" && method === "GET") return handleList(deps, userId);
-  if (path === "/api/v1/sessions/search" && method === "GET") return handleSearch(deps, userId, url);
+  // BINDING CONSTRAINT: the route never accepts a userId from the request.
+  // Log-and-ignore, not honour-then-log — the value below never reaches a
+  // capability grant.
+  const suppliedUserId = searchParams.get("userId");
+  if (suppliedUserId !== null) {
+    log.warn("sessions.userId-param-ignored", {
+      userId: valid.value.userId,
+      suppliedUserId,
+      reason: "client supplied a userId in the request; only the authenticated principal selects the store",
+    });
+  }
 
-  const messagesMatch = path.match(SESSION_MESSAGES_RE);
-  if (messagesMatch?.[1] && method === "GET") return handleGetMessages(deps, userId, messagesMatch[1], url);
+  const stored = await deps.users.get(valid.value.userId);
+  if (!stored.ok || stored.value === null) {
+    // FAIL CLOSED. A token naming a user who is not there identifies nobody,
+    // so it is an invalid credential — never a defaulted role.
+    log.warn("sessions.no-record", {
+      userId: valid.value.userId,
+      reason: stored.ok ? "token names a user with no record" : stored.error,
+    });
+    return jsonError(HTTP_UNAUTHORIZED, "user-not-found");
+  }
 
-  const sessionMatch = path.match(SESSION_ID_RE);
-  if (sessionMatch?.[1]) return handleSessionById(deps, userId, sessionMatch[1], method, request);
-
-  return jsonError(HTTP_NOT_FOUND, "not-found", "Route not found");
-}
-
-async function handleSessionById(
-  deps: SessionsHttpDeps,
-  userId: string,
-  sessionId: string,
-  method: string,
-  request: Request,
-): Promise<Response> {
-  if (method === "PATCH") return handleRename(deps, userId, sessionId, request);
-  if (method === "DELETE") return handleDelete(deps, userId, sessionId);
-  return new Response("Method Not Allowed", { status: HTTP_METHOD_NOT_ALLOWED });
-}
-
-// --- Route handlers ----------------------------------------------------------
-
-async function handleList(deps: SessionsHttpDeps, userId: string): Promise<Response> {
-  log.info("sessions.list", { userId });
+  let principal: UserPrincipal;
   try {
-    const sessions = await deps.listSessions(userId);
-    const ids = sessions.map((s) => s.sessionId);
-    const titleOverrides = await deps.resolveTitleStore(userId).getTitlesFor(ids);
-    const items = sessions.map((s) => ({
-      ...s,
-      title: titleOverrides[s.sessionId] ?? s.title,
-    }));
-    log.debug("sessions.list.ok", { userId, count: items.length });
-    return Response.json({ items, total: items.length, hasMore: false }, { status: HTTP_OK });
-  } catch (e: unknown) {
-    log.warn("sessions.list.error", { userId, reason: errorMessage(e) });
-    return jsonError(HTTP_INTERNAL, "list-failed", "Failed to list sessions");
-  }
-}
-
-async function handleSearch(deps: SessionsHttpDeps, userId: string, url: URL): Promise<Response> {
-  const q = url.searchParams.get("q") ?? "";
-  const limit = Number.parseInt(url.searchParams.get("limit") ?? String(DEFAULT_SEARCH_LIMIT), 10);
-  log.info("sessions.search", { userId, q_len: q.length, limit });
-  // HermesSearchHit has no title field, so no titleStore override is applied here (unlike handleList).
-  try {
-    const client = await deps.resolvePluginClient(userId);
-    const items = await client.search(q, Number.isFinite(limit) ? limit : DEFAULT_SEARCH_LIMIT);
-    log.debug("sessions.search.ok", { userId, count: items.length });
-    return Response.json({ items }, { status: HTTP_OK });
-  } catch (e: unknown) {
-    log.warn("sessions.search.error", { userId, reason: errorMessage(e) });
-    return jsonError(HTTP_INTERNAL, "search-failed", "Failed to search sessions");
-  }
-}
-
-async function handleGetMessages(
-  deps: SessionsHttpDeps,
-  userId: string,
-  sessionId: string,
-  url: URL,
-): Promise<Response> {
-  const limit = Number.parseInt(url.searchParams.get("limit") ?? String(DEFAULT_MESSAGES_LIMIT), 10);
-  const offset = Number.parseInt(url.searchParams.get("offset") ?? "0", 10);
-  log.info("sessions.getMessages", { userId, sessionId, limit, offset });
-
-  const owned = await checkOwnership(deps, userId, sessionId);
-  if (!owned) {
-    log.debug("sessions.getMessages.not-owned", { userId, sessionId });
-    return jsonError(HTTP_NOT_FOUND, "not-found", "Session not found");
-  }
-
-  try {
-    const client = await deps.resolvePluginClient(userId);
-    const all = await client.getMessages(sessionId);
-    const safeLimit = Number.isFinite(limit) ? limit : DEFAULT_MESSAGES_LIMIT;
-    const safeOffset = Number.isFinite(offset) ? offset : 0;
-    const { items, total } = mapMessagesToFeed(all, safeOffset, safeLimit, sessionId);
-    log.debug("sessions.getMessages.ok", { userId, sessionId, total, returned: items.length });
-    return Response.json({ items, total, offset: safeOffset, limit: safeLimit }, { status: HTTP_OK });
-  } catch (e: unknown) {
-    log.warn("sessions.getMessages.error", { userId, sessionId, reason: errorMessage(e) });
-    return jsonError(HTTP_INTERNAL, "getMessages-failed", "Failed to fetch messages");
-  }
-}
-
-async function handleRename(
-  deps: SessionsHttpDeps,
-  userId: string,
-  sessionId: string,
-  request: Request,
-): Promise<Response> {
-  log.info("sessions.rename", { userId, sessionId });
-
-  const owned = await checkOwnership(deps, userId, sessionId);
-  if (!owned) {
-    log.debug("sessions.rename.not-owned", { userId, sessionId });
-    return jsonError(HTTP_NOT_FOUND, "not-found", "Session not found");
-  }
-
-  let body: unknown;
-  try {
-    body = await request.json();
+    principal = createUserPrincipal(valid.value.userId, stored.value.role, REST_HOUSEHOLD_ID);
   } catch {
-    return jsonError(HTTP_BAD_REQUEST, "invalid-json", "Request body must be JSON");
+    // assertUserId throws on a stored/claimed userId that doesn't match the
+    // canonical shape. Reject cleanly rather than let the throw escape.
+    log.warn("sessions.malformed-user-record", { reason: "token subject fails assertUserId" });
+    return jsonError(HTTP_UNAUTHORIZED, "invalid-user-record");
   }
 
-  if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).title !== "string") {
-    return jsonError(HTTP_BAD_REQUEST, "missing-title", "Body must include { title: string }");
+  if (pathname === SESSIONS_PATH) {
+    if (request.method !== "GET") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
+    return handleList(deps, principal);
   }
 
-  const title = (body as Record<string, unknown>).title as string;
-  try {
-    await deps.resolveTitleStore(userId).setTitle(sessionId, title);
-    log.info("sessions.rename.ok", { userId, sessionId, title_len: title.length });
-    return Response.json({ sessionId, title }, { status: HTTP_OK });
-  } catch (e: unknown) {
-    log.warn("sessions.rename.error", { userId, sessionId, reason: errorMessage(e) });
-    return jsonError(HTTP_INTERNAL, "rename-failed", "Failed to rename session");
+  const messagesMatch = MESSAGES_PATH_RE.exec(pathname);
+  if (messagesMatch) {
+    if (request.method !== "GET") return jsonError(HTTP_METHOD_NOT_ALLOWED, "method-not-allowed");
+    // A malformed percent-encoding (`%ZZ`) throws in decodeURIComponent —
+    // degrade to this route's normal not-found shape rather than an
+    // unhandled 500 (mirrors voices.ts's safeDecode).
+    const presented = safeDecode(messagesMatch[1] ?? "");
+    if (presented === null) return jsonError(HTTP_NOT_FOUND, "not-found");
+    return handleMessages(deps, principal, presented);
   }
+
+  return jsonError(HTTP_NOT_FOUND, "not-found");
 }
 
-async function handleDelete(deps: SessionsHttpDeps, userId: string, sessionId: string): Promise<Response> {
-  log.info("sessions.delete", { userId, sessionId });
-
-  const owned = await checkOwnership(deps, userId, sessionId);
-  if (!owned) {
-    log.debug("sessions.delete.not-owned", { userId, sessionId });
-    return jsonError(HTTP_NOT_FOUND, "not-found", "Session not found");
-  }
-
-  try {
-    const client = await deps.resolvePluginClient(userId);
-    await client.delete(sessionId);
-    await deps.resolveTitleStore(userId).delete(sessionId);
-    log.info("sessions.delete.ok", { userId, sessionId });
-    return Response.json({ sessionId }, { status: HTTP_OK });
-  } catch (e: unknown) {
-    log.warn("sessions.delete.error", { userId, sessionId, reason: errorMessage(e) });
-    return jsonError(HTTP_INTERNAL, "delete-failed", "Failed to delete session");
-  }
+function handleList(deps: SessionsHandlerDeps, principal: UserPrincipal): Response {
+  // Already newest-updated-first (session-metadata.ts) — do not re-sort here.
+  const sessions = withSessionStore(deps, principal, (store) => store.listSessionsWithMetadata());
+  log.info("sessions.list", { userId: principal.userId, count: sessions.length });
+  return Response.json({ sessions }, { status: HTTP_OK });
 }
 
-// --- Ownership enforcement ---------------------------------------------------
-// A session belongs to the user when it appears in their ACP-listed session set.
-// Returns false if the session is missing from the list (→ 404; don't leak existence).
-
-async function checkOwnership(deps: SessionsHttpDeps, userId: string, sessionId: string): Promise<boolean> {
-  try {
-    const sessions = await deps.listSessions(userId);
-    return sessions.some((s) => s.sessionId === sessionId);
-  } catch (e: unknown) {
-    log.warn("sessions.ownership-check.error", { userId, sessionId, reason: errorMessage(e) });
-    return false;
-  }
+function handleMessages(deps: SessionsHandlerDeps, principal: UserPrincipal, presented: string): Response {
+  return withSessionStore(deps, principal, (store) => {
+    const resolution = resolveSession({ store, presented });
+    if ("rejected" in resolution) {
+      log.warn("sessions.messages.not-found", { userId: principal.userId, reason: resolution.rejected });
+      return jsonError(HTTP_NOT_FOUND, "not-found");
+    }
+    const entries = store.readSession(resolution.sessionId);
+    // The SAME projection the live path emits on conversation.snapshot /
+    // conversation.entry — reusing it (not re-deriving the shape here) is
+    // what keeps render(replay) == render(live) a structural fact.
+    const items = snapshotFeedItems(entries);
+    log.info("sessions.messages", { userId: principal.userId, sessionId: resolution.sessionId, count: items.length });
+    return Response.json({ items }, { status: HTTP_OK });
+  });
 }
-
-// --- Feed mapper -------------------------------------------------------------
-
-/**
- * Map raw Hermes message rows to ConversationFeedItem[].
- * Non-mappable roles (tool/system) are filtered out — same policy as
- * SwitchFlow.fetchHistory.
- *
- * When no offset is supplied (offset=0), returns the most-recent `limit`
- * messages (the TAIL) so opening a past chat shows recent context rather than
- * the oldest messages. Explicit offset>0 slices from the start (legacy path;
- * Slice 4 adds proper cursor pagination).
- */
-function mapMessagesToFeed(
-  rows: unknown[],
-  offset: number,
-  limit: number,
-  conversationId: string,
-): { items: ConversationFeedItem[]; total: number } {
-  const mapped = (rows as HermesRawMessage[])
-    .map((m, i) => hermesMessageToMirrorEntry(m, conversationId, i))
-    .filter((e) => e !== null)
-    .map(toFeedItem);
-  if (offset === 0) {
-    // Tail slice: return the most-recent `limit` messages in chronological order.
-    return { items: mapped.slice(-limit), total: mapped.length };
-  }
-  return { items: mapped.slice(offset, offset + limit), total: mapped.length };
-}
-
-// --- Helpers -----------------------------------------------------------------
 
 function readBearer(request: Request): string | null {
   const h = request.headers.get("authorization");
@@ -282,10 +163,14 @@ function readBearer(request: Request): string | null {
   return parts[1] ?? null;
 }
 
-function jsonError(status: number, code: string, detail: string): Response {
-  return Response.json({ error: code, detail }, { status });
+function jsonError(status: number, code: string): Response {
+  return Response.json({ error: code }, { status });
 }
 
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+function safeDecode(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
 }

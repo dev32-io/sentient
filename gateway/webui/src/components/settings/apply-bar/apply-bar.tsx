@@ -3,13 +3,7 @@ import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { Btn } from "../primitives/btn.tsx";
-import {
-  applyButtonLabel,
-  runApply,
-  type ApplyBarState,
-  type ApplyDeps,
-  type PendingOpWithPayload,
-} from "./apply-bar-machine.ts";
+import { runApply, type ApplyBarState, type ApplyDeps, type PendingOpWithPayload } from "./apply-bar-machine.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "apply-bar"]);
 
@@ -25,7 +19,10 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
 
   if (pending.length === 0 && state.phase === "idle") return null;
 
-  const label = applyButtonLabel(pending);
+  // Always "Apply" — there is no restart to distinguish; a `slow` op's
+  // extra profile rewrite is a background disk write (measured 8-12ms),
+  // invisible to the user.
+  const label = "Apply";
   const isBusy = state.phase === "saving" || state.phase === "restarting";
 
   const handleApply = async () => {
@@ -47,14 +44,14 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
         <span class="ab-count">
           {pending.length} pending {pending.length === 1 ? "change" : "changes"}
         </span>
-        <span class="ab-sub">{subtextFor(state, label)}</span>
+        <span class="ab-sub">{subtextFor(state)}</span>
       </div>
       <Btn kind="ghost" size="sm" onClick={onDiscard} disabled={isBusy}>
         Discard
       </Btn>
       <Btn kind="primary" size="sm" onClick={handleApply} disabled={isBusy}>
         {state.phase === "saving" && <><span class="spin-mini" /> Saving…</>}
-        {state.phase === "restarting" && <><span class="spin-mini" /> Restarting…</>}
+        {state.phase === "restarting" && <><span class="spin-mini" /> Applying…</>}
         {state.phase === "ready" && <>Done</>}
         {state.phase === "failed" && <>Retry</>}
         {state.phase === "idle" && label}
@@ -63,8 +60,11 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
   );
 }
 
-function subtextFor(state: ApplyBarState, label: string): string {
+// Nothing restarts on apply — Hermes is a one-shot exec that reads its
+// on-disk profile fresh on every delegation (gateway/src/apply/orchestrator.ts).
+// Both branches read the same because there is no distinct slow-op UX left
+// to describe; keep the phase-based failure branch since that IS distinct.
+function subtextFor(state: ApplyBarState): string {
   if (state.phase === "failed") return state.errorMessage;
-  if (label === "Apply & Restart") return "Agent will restart to apply";
   return "Changes will apply instantly";
 }

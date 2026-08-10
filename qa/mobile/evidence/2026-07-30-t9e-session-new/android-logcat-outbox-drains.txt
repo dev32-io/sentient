@@ -1,0 +1,40 @@
+07-30 10:50:20.702 27248 27248 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:21.673 27344 27344 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-76274ba5410802ef
+07-30 10:50:21.676 27344 27344 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=CONNECTING
+07-30 10:50:22.281 27344 27344 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=AUTHENTICATING
+07-30 10:50:22.324 27344 27381 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-7e04fabc47ecf760
+07-30 10:50:22.325 27344 27344 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached
+07-30 10:50:22.335 27344 27381 I sentient.mobile-sdk.sdk.orchestrator: session.anchor sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:35.131 27344 27344 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:35.278 27344 27344 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:38.684 27448 27448 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-7a9413b4df1ac4ca
+07-30 10:50:38.687 27448 27448 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=CONNECTING
+07-30 10:50:39.301 27448 27448 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=AUTHENTICATING
+07-30 10:50:39.350 27448 27469 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-5650af25452d4387
+07-30 10:50:39.350 27448 27448 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached
+07-30 10:50:39.381 27448 27489 I sentient.mobile-sdk.sdk.orchestrator: session.anchor sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:46.496 27448 27448 I sentient.mobile-sdk.sdk.orchestrator: session.anchor.clear trigger=new-chat
+07-30 10:50:46.496 27448 27448 I sentient.mobile-sdk.connector.sessions: sendNew requestId=4b710cc3d4c36e54
+07-30 10:50:46.500 27448 27490 I sentient.mobile-sdk.sdk.orchestrator: session.anchor sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:46.500 27448 27448 I sentient.mobile-sdk.data.send-message: flush count=0 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:50:48.540 27544 27544 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-57212468156ef88a
+07-30 10:50:48.544 27544 27544 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=CONNECTING
+07-30 10:50:49.158 27544 27544 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=AUTHENTICATING
+07-30 10:50:49.201 27544 27577 I sentient.mobile-sdk.connector.sessions: sendNew requestId=-202d8732ae308356
+07-30 10:50:49.201 27544 27544 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached
+07-30 10:50:49.242 27544 27577 I sentient.mobile-sdk.sdk.orchestrator: session.anchor sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:08.584 27544 27544 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:08.730 27544 27544 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:15.424 27647 27647 I sentient.mobile-sdk.connector.sessions: sendNew requestId=fc361daa4f92a67
+07-30 10:51:15.427 27647 27647 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=CONNECTING
+07-30 10:51:16.143 27647 27647 I sentient.mobile-sdk.data.send-message: flush-skipped reason=not-ready status=AUTHENTICATING
+07-30 10:51:16.208 27647 27682 I sentient.mobile-sdk.connector.sessions: sendNew requestId=7c340897169a6597
+07-30 10:51:16.209 27647 27647 I sentient.mobile-sdk.data.send-message: flush-skipped reason=no-id-attached
+07-30 10:51:16.265 27647 27682 I sentient.mobile-sdk.sdk.orchestrator: session.anchor sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:30.517 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:30.610 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:38.353 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:38.386 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:38.516 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:51:38.518 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=1 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62
+07-30 10:57:50.409 27647 27647 I sentient.mobile-sdk.data.send-message: flush count=0 sessionId=c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62

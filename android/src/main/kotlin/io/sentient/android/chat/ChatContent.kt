@@ -3,15 +3,19 @@
 //
 // The chat surface (Task 3.4, rendering half). Consumes the
 // KMP-layer data model (committed history + optimistic pending outbox + live
-// streaming bubble + task pills) and the separate ConnectionState, so the VM
-// is the only place that holds references to SDK or repo. The old chat surface
-// (SdkState path) is left UNTOUCHED until MainActivity is rewired (next task).
+// streaming bubble + server-owned task list) and the separate ConnectionState,
+// so the VM is the only place that holds references to SDK or repo. The old
+// chat surface (SdkState path) is left UNTOUCHED until MainActivity is
+// rewired (next task).
 //
 // Row ordering in the MessageList:
 //   1. committed messages (as ChatRow.Msg, with day-dividers from chatRows())
 //   2. pending outbox entries (as ChatRow.Pending, QUEUED→SENT→FAILED chips)
-//   3. live streaming assistant bubble (as ChatRow.Msg with live.copy(tools=tasks))
+//   3. live streaming assistant bubble (as ChatRow.Msg, verbatim)
 //      — this is appended only when ChatModel.live != null.
+//
+// ChatModel.tasks (the tool/task row list) has no bubble anchor — it renders
+// as its own strip at the top of the composer (ComposerTaskStrip), not here.
 //
 // Banners (top-of-stack, highest priority first):
 //   1. chat-side ErrorBanner from ChatUiState (e.g. ChatRepository failure)
@@ -82,6 +86,8 @@ import io.sentient.mobilesdk.transport.SdkStatus
  * @param onRetry             User tapped the FAILED chip on a pending message — re-queues by pendingId.
  * @param onComposerFocus     Composer TextField gained focus — used to trigger ensureConnected.
  * @param onDismissReopenFailed  Tap-to-dismiss for the ReopenFailed one-shot notice.
+ * @param onAllowPermission   User tapped Allow on the permission-prompt dialog (spec §7.1).
+ * @param onDenyPermission    User tapped Deny on the permission-prompt dialog (spec §7.1).
  * @param userName            Logged-in user's display name for bubble avatars.
  */
 @Composable
@@ -101,6 +107,8 @@ fun ChatContent(
     onRetry: (String) -> Unit = {},
     onComposerFocus: () -> Unit = {},
     onDismissReopenFailed: () -> Unit = {},
+    onAllowPermission: () -> Unit = {},
+    onDenyPermission: () -> Unit = {},
     userName: String = "You",
     modifier: Modifier = Modifier,
 ) {
@@ -116,7 +124,7 @@ fun ChatContent(
     //   committed (with day-dividers) ++ pending (status chips) ++ live bubble.
     val committed = uiState.model.committed
     val pending = uiState.model.pending
-    val live = uiState.model.live?.copy(tools = uiState.model.tasks)
+    val live = uiState.model.live
 
     // displayMessages = committed + live. Pending rows are handled separately
     // as ChatRow.Pending via the MessageList `pending` parameter.
@@ -187,6 +195,7 @@ fun ChatContent(
                 ttsEnabled = connection.prefs.ttsEnabled,
                 micActive = voiceActive,
                 canInterrupt = canInterrupt,
+                tasks = uiState.model.tasks,
                 onSend = onSend,
                 onMicPress = onMicPress,
                 onMicRelease = onMicRelease,
@@ -210,5 +219,13 @@ fun ChatContent(
                     .testTag("banner-connection"),
             )
         }
+    }
+
+    // Permission-prompt dialog (design spec §7.1) — floats as its own system Window
+    // (Material3 AlertDialog), so its position in this tree has no effect on where
+    // it renders. Kept OUTSIDE the Box so it is structurally independent of the
+    // connection-banner overlay above.
+    uiState.pendingPermissionRequest?.let { request ->
+        PermissionPromptDialog(request = request, onAllow = onAllowPermission, onDeny = onDenyPermission)
     }
 }

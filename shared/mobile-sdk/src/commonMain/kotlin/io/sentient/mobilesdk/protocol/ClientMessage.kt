@@ -67,16 +67,18 @@ sealed class ClientMessage {
     @Serializable @SerialName("text.input")
     data class TextInput(val text: String, val pendingId: String? = null) : ClientMessage()
 
-    @Serializable @SerialName("tool.confirm")
-    data class ToolConfirm(val toolCallId: String, val approved: Boolean) : ClientMessage()
-
-    @Serializable @SerialName("session.end")
-    data object SessionEnd : ClientMessage()
+    /** User's Allow / Deny for an open [ServerMessage.PermissionRequest] (design §7.1).
+     *  Replaces the retired `tool.confirm`. Keyed by requestId, NOT toolCallId — the
+     *  PDP owns the request lifetime, and one tool call can be re-prompted. */
+    @Serializable @SerialName("permission.response")
+    data class PermissionResponse(val requestId: String, val approved: Boolean) : ClientMessage()
 
     @Serializable @SerialName("ping")
     data object Ping : ClientMessage()
 
-    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort: cycle + TTS + interruptable tasks. */
+    /** Explicit user-initiated interrupt (UI Stop / Escape). Hard abort of the TURN: turn + TTS.
+     *  It does NOT cancel background work — a delegated task outlives the turn that spawned it
+     *  and its completion still arrives later, so never present Stop as cancelling it. */
     @Serializable @SerialName("interrupt")
     data object Interrupt : ClientMessage()
 
@@ -89,8 +91,16 @@ sealed class ClientMessage {
     // Query RPCs (list/search/delete/rename) were removed from the WS protocol in
     // Task 2.1 — they are now REST (SessionsHttpClient). Only lifecycle frames remain.
 
+    /**
+     * Ask for a new chat. [intent] separates a person pressing "+" ("explicit")
+     * from the app simply launching with no route id ("implicit") — this SDK
+     * fires session.new on EVERY launch, twice per launch, and the gateway
+     * answering both the same way would abandon the bound conversation on every
+     * app open. Defaulted to "implicit" on the gateway, so omitting it is the
+     * safe half.
+     */
     @Serializable @SerialName("session.new")
-    data class SessionNew(val requestId: String) : ClientMessage()
+    data class SessionNew(val requestId: String, val intent: String? = null) : ClientMessage()
 
     /** Replaces the retired session.switch — activates an existing session.
      *  Fire-and-forget: no requestId. The gateway strips any requestId on the

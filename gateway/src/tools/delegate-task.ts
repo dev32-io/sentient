@@ -1,0 +1,265 @@
+// delegateTask (Plan 2 Task 5, spec §5.4) — the single immutable background
+// tool slot that collapses every present/future delegated worker behind one
+// enum value + one DelegationGuard frontmatter entry. v1 wires exactly
+// `agent: "hermes"`; adding `codex`/`opencode` later is a new frontmatter
+// file + a new DelegationGuard map entry, not a new tool slot.
+//
+// Registers under the `BackgroundToolRunner` shape `tool-broker.ts` expects
+// (matched from that file, not re-derived): `definition: ToolDefinition` +
+// `run(inv, taskId): { cancel: () => void; result: Promise<ToolResult> }`.
+// `run` starts the guard evaluation + (if allowed) the Hermes invocation
+// immediately and returns synchronously — the broker never awaits `result`
+// before `dispatch` returns (fire-and-steer, spec §5.2).
+//
+// A BACKGROUND TASK OUTLIVES THE TURN THAT SPAWNED IT, IN EVERY CASE, AND
+// NOTHING CANCELS IT. That is the whole contract, and it is deliberately
+// absolute:
+//
+//   - BARGE-IN aborts the turn and leaves this running (CLAUDE.md, spec §4.7)
+//     — the user talking over the assistant did not ask to unwind the work
+//     they kicked off;
+//   - INTERRUPT (UI Stop) aborts the turn and leaves this running too. Stop
+//     used to fan out into `BackgroundRegistry.cancelAll()`; that call is gone,
+//     along with `cancelAll` itself.
+//
+// Which is why this runner does NOT subscribe its controller to `inv.signal`:
+// that signal IS the turn's, so any subscription makes both gestures kill the
+// delegation — the exact regression the contract exists to forbid.
+//
+// THE TRADE, STATED PLAINLY: a runaway delegation now runs to its own
+// completion. The lost-task watchdog is the only backstop. This is deliberate
+// until the model has a task-management tool it can call — at which point the
+// per-task `cancel` handles this file still hands `BackgroundRegistry` become
+// that tool's mechanism, with a NAMED taskId rather than a blanket sweep.
+//
+// Late-result note (load-bearing, spec §5.2/§5.4): the `result` promise this
+// runner returns settles with the FINAL ToolResult, but nothing in this file
+// appends it to the store. `ToolInvocation` carries no `turnId` (see
+// tool-broker.ts's header for why), so this runner has no way to append
+// directly. The actual mechanism: tool-broker.ts's `dispatchBackground`
+// observes this same `result` promise and, once it settles, forwards the
+// outcome to whatever `setBackgroundCompletionSink` installed. The
+// composition root (phase-services.ts's `buildCreateSessionRuntime`) binds
+// that sink, right after constructing `SessionRuntime`, to
+// `runtime.submit({ kind: "background-completion", note })` — which holds
+// the turnId context this file does not and appends a fresh `trigger` entry,
+// NEVER a second `tool_result` for `inv.toolCallId`.
+
+import type { ExternalToolSource } from "../external-tools/external-tool-slot.js";
+import { getLog } from "../logging/logger.js";
+import type { UserId } from "../user-auth/user-id.js";
+import type { DelegationGuard } from "./delegation-guard.js";
+import type { HermesRunner } from "./hermes-runner.js";
+import type { BackgroundToolRunner } from "./tool-broker.js";
+import type { ToolDefinition, ToolInvocation, ToolResult } from "./tool-types.js";
+
+const log = getLog(["sentient", "tools", "delegate-task"]);
+
+const TOOL_NAME = "delegateTask";
+const SUPPORTED_AGENTS = ["hermes"] as const;
+// Data-driven membership check for `parseArgs` below — defense-in-depth so
+// a future N>1-agent state can't route an unsupported `agent` string to
+// `hermesRunner.run` on a type-check pass alone. The real allowlist in v1
+// is still `DelegationGuard`'s frontmatter map (an agent absent there is
+// denied by `evaluate`); this only guards the shape before the guard runs.
+const SUPPORTED_AGENTS_SET = new Set<string>(SUPPORTED_AGENTS);
+const BAD_ARGS_MESSAGE = "delegateTask requires string arguments { agent, taskPrompt }";
+const UNSUPPORTED_AGENT_MESSAGE = `delegateTask agent must be one of: ${SUPPORTED_AGENTS.join(", ")}`;
+
+export const delegateTaskDefinition: ToolDefinition = {
+  name: TOOL_NAME,
+  // A tool description IS a prompt: it is the only thing the model reads when
+  // choosing between this and everything else it holds. The previous one —
+  // "Delegate a free-form task to a background worker agent" — described the
+  // mechanism and named no boundary, so it read as an invitation, and a model
+  // that is unsure of its own reach takes the least-resistance path. State what
+  // this is FOR, and just as explicitly what it is not for.
+  description: [
+    "Hand a task to a background worker agent with its own tools and workspace (file system, shell, code execution).",
+    "Returns a task id immediately; the worker runs off-loop and its result arrives later as a stimulus.",
+    "",
+    "Use ONLY when the user asked for delegation, or the task needs capabilities you do not have",
+    "(writing files, running code, operating a computer), or the task is long-running and the user should not wait.",
+    "",
+    "Do NOT use this as a shortcut for work your own tools can do. The worker starts with none of this",
+    "conversation, so a task you could have handled directly comes back slower and less grounded.",
+    "",
+    `Supported agents: ${SUPPORTED_AGENTS.join(", ")}.`,
+  ].join("\n"),
+  parameters: {
+    type: "object",
+    properties: {
+      agent: { type: "string", enum: [...SUPPORTED_AGENTS], description: "Which delegated worker to invoke." },
+      taskPrompt: { type: "string", description: "Free-form instructions for the delegated worker." },
+    },
+    required: ["agent", "taskPrompt"],
+  },
+  category: "background",
+  // `confirm`, and not because delegation is a "write": this is the one tool
+  // that hands a free-form instruction to another agent holding its OWN tools
+  // (file system, shell) and lets it run unsupervised until it finishes. That
+  // reaches further outside the house than anything in the catalog, and it is
+  // not undoable once the worker has acted — so adults only.
+  //
+  // Declared HERE rather than in `config.yaml#mcp_catalog` because this tool
+  // is gateway-native: it has no MCP server, so no catalog entry curates it.
+  // That is the exception, not a licence to tier tools in TypeScript.
+  tier: "confirm",
+};
+
+export interface DelegateTaskDeps {
+  guard: DelegationGuard;
+  hermesRunner: HermesRunner;
+  /** The session's principal — delegated to Hermes as `-p <userId>`. */
+  userId: UserId;
+  /**
+   * Source of the delegated worker's own configuration, verified and repaired
+   * in the setup phase below — for Hermes, the gateway's per-user MCP entry on
+   * its profile (`external-tools/hermes-external-tool.ts`).
+   *
+   * A SOURCE, not a tool: it is read per DISPATCH, never snapshotted at
+   * session construction. A session built during the boot window would
+   * otherwise bake in whatever the slot held at WS-connect time and stay
+   * tool-less for the life of the socket (see external-tool-slot.ts).
+   *
+   * Optional and null-tolerant: a dev/headless composition root with no
+   * `orchestrator:` block has nothing to provide, and the delegation still runs.
+   */
+  externalTool?: ExternalToolSource | null;
+}
+
+type ParsedDelegateArgs = { agent: string; taskPrompt: string };
+type ParseArgsResult = { ok: true; value: ParsedDelegateArgs } | { ok: false; message: string };
+
+function parseArgs(args: Record<string, unknown>): ParseArgsResult {
+  const { agent, taskPrompt } = args;
+  if (typeof agent !== "string" || typeof taskPrompt !== "string") {
+    return { ok: false, message: BAD_ARGS_MESSAGE };
+  }
+  if (!SUPPORTED_AGENTS_SET.has(agent)) {
+    return { ok: false, message: UNSUPPORTED_AGENT_MESSAGE };
+  }
+  return { ok: true, value: { agent, taskPrompt } };
+}
+
+function errorResult(content: string): ToolResult {
+  return { content, isError: true };
+}
+
+export function createDelegateTaskRunner(deps: DelegateTaskDeps): BackgroundToolRunner {
+  const { guard, hermesRunner, userId } = deps;
+  const externalToolSource = deps.externalTool ?? null;
+
+  /**
+   * Setup phase — runs INSIDE the result promise, i.e. after `run` has already
+   * handed the broker its `{ taskId }`, and strictly BEFORE the spawn. Hermes
+   * reads its MCP config at startup, so providing after the spawn is the same
+   * as not providing at all.
+   *
+   * NEVER fails the delegation. A provisioning failure (CLI down, timeout,
+   * read-back mismatch) leaves the delegated agent with fewer tools, which is
+   * degraded; refusing to run at all is broken. The `provide` contract says it
+   * does not throw — the catch is here anyway, because a throw would reject the
+   * runner's result promise and the broker would report the whole delegation as
+   * failed on a bookkeeping error.
+   *
+   * The tool is RESOLVED here, per dispatch, rather than captured when this
+   * runner was built: session construction races gateway boot, and a snapshot
+   * taken on the losing side of that race is permanent.
+   */
+  async function runSetupPhase(taskId: string, signal: AbortSignal): Promise<void> {
+    if (!externalToolSource) {
+      log.debug("delegate-task.setup.no-external-tool", { taskId, userId, reason: "no source bound" });
+      return;
+    }
+    if (signal.aborted) {
+      log.info("delegate-task.setup.skipped", {
+        taskId,
+        userId,
+        reason: "cancelled before setup ran; a delegation that will not spawn must not touch the profile",
+      });
+      return;
+    }
+    const externalTool = await externalToolSource.resolve(signal);
+    if (signal.aborted) {
+      log.info("delegate-task.setup.skipped", {
+        taskId,
+        userId,
+        reason:
+          "cancelled while resolving the external tool; a delegation that will not spawn must not touch the profile",
+      });
+      return;
+    }
+    if (!externalTool) {
+      log.debug("delegate-task.setup.no-external-tool", {
+        taskId,
+        userId,
+        reason: "this configuration binds no external tool",
+      });
+      return;
+    }
+    try {
+      const outcome = await externalTool.provide(userId);
+      if (outcome.ok) return;
+      log.warn("delegate-task.setup.failed", {
+        taskId,
+        userId,
+        tool: externalTool.name,
+        error: outcome.error,
+        reason: "dispatching anyway; the delegated agent runs with fewer tools rather than not at all",
+      });
+    } catch (err: unknown) {
+      log.warn("delegate-task.setup.threw", {
+        taskId,
+        userId,
+        tool: externalTool.name,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  function run(inv: ToolInvocation, taskId: string): { cancel: () => void; result: Promise<ToolResult> } {
+    const parsed = parseArgs(inv.args);
+    if (!parsed.ok) {
+      log.warn("delegate-task.run.bad-args", { taskId, toolCallId: inv.toolCallId, reason: parsed.message });
+      return { cancel: () => {}, result: Promise.resolve(errorResult(parsed.message)) };
+    }
+
+    const { agent, taskPrompt } = parsed.value;
+    const decision = guard.evaluate(agent, taskPrompt);
+    log.info("delegate-task.run.guard-decision", { taskId, agent, action: decision.action });
+
+    if (decision.action !== "allow") {
+      // No wired confirm-UI seam for delegation yet (Plan 3) — `confirm`
+      // fails closed exactly like `deny`, mirroring tool-broker.ts's own
+      // Plan 2 default (see that file's header).
+      return { cancel: () => {}, result: Promise.resolve(errorResult(decision.reason)) };
+    }
+
+    // THE TURN'S SIGNAL IS DELIBERATELY NOT SUBSCRIBED. `inv.signal` IS the
+    // turn's `AbortController` (react-loop.ts builds the invocation with it),
+    // so wiring this controller to it made barge-in — the one gesture whose
+    // whole contract is "keep background tasks running" — kill the delegation.
+    // See this file's header for the full contract.
+    //
+    // The controller stays: it is the handle `BackgroundRegistry` stores as
+    // this task's `cancel`, which a future model-facing task-management tool
+    // drives. Nothing in production calls it today.
+    const controller = new AbortController();
+
+    const result = runSetupPhase(taskId, controller.signal)
+      .then(() => hermesRunner.run(userId, taskPrompt, controller.signal))
+      .then((outcome): ToolResult => {
+        if (outcome.ok) {
+          log.info("delegate-task.run.ok", { taskId, agent, outputLength: outcome.output.length });
+          return { content: outcome.output, isError: false };
+        }
+        log.warn("delegate-task.run.failed", { taskId, agent, reason: outcome.error });
+        return { content: outcome.error, isError: true };
+      });
+
+    return { cancel: () => controller.abort(), result };
+  }
+
+  return { definition: delegateTaskDefinition, run };
+}

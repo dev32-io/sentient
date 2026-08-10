@@ -55,7 +55,7 @@ so the browser/cube/mobile clients never see ACP directly.
 `sentient-gateway` is not just a WS terminator — it owns the docker
 lifecycle of every sibling container: `sentient-hermes`, `stt-service`,
 `egress-proxy`, `ha-mcp`, `ma-mcp`, `searxng`, `searxng-mcp`,
-`fetch-mcp`, `signal-cli`. Implementation in
+`fetch-mcp`. Implementation in
 `gateway/src/system-orchestrator/`.
 
 How it works:
@@ -237,25 +237,84 @@ the risk accumulator. The scanner does NOT block output — silent
 blocking creates worse failure modes than logging and downstream policy
 decisions.
 
-### Policy engine
+### Tool authorization — two gates, no policy engine
 
-`gateway/src/security/policy-engine.ts` evaluates declarative rules
-loaded from MCP-policy config. Each rule binds a tool match
-(`tool == "<name>"` or `tool == "*"`) to a boolean condition over
-`role` / `userId` / `session.channel` / `args.*` predicates, joined with
-` AND ` / ` OR `. The first matching rule's action wins:
-`allow` / `deny` / `confirm`. Predicates are parsed into a fixed AST —
-no dynamic eval.
+There is no rule engine and no second policy file. `ToolBroker`
+(`gateway/src/tools/tool-broker.ts`) applies two gates at both of its
+choke points — `definitions()`, the sole producer of the model's
+`tools[]`, and `resolveDecision()`, the sole PDP:
+
+1. **The role gate.** `canExecute(capability.role, tier)`
+   (`shared/protocol/src/roles.ts`) over the tool's IMPACT TIER, declared
+   by the operator in `config.yaml#mcp_catalog`. The role travels on the
+   capability, minted once by `AccessManager.grant`; it is never
+   re-derived and never cached from a lookup.
+2. **The person's permission**, resolved with no fallthrough
+   (`gateway/src/tools/resolve-tool-permission.ts`, the ONE copy of the
+   rule, shared by the broker and the settings API so the UI cannot lie
+   about what the model can do):
+   `stored[server][tool] ?? stored[server]["*"] ?? defaultPermissionsFor(role, catalog)[server]?[tool] ?? "off"`.
+   The `"*"` wildcard is how a bulk "whole server" write reaches a tool
+   the client could not enumerate; a tool's OWN key always outranks it,
+   which is why a wildcard-only write is a no-op on a seeded account.
+   The role template (`gateway/src/tools/role-defaults.ts`) is the FLOOR,
+   not a one-time copy, so a profile with no stored table, a re-roled
+   account, and a tool the operator adds tomorrow all resolve. The final
+   `off` is the fail-closed backstop.
+
+   One asymmetry, deliberate: a TOOL missing under a present server is
+   unanswered and the template decides, but a SERVER missing from a
+   non-empty stored table resolves `off` — a stored answer the template
+   never sits underneath. A PUT cannot create that state (the update is a
+   per-key delta; an omitted key is left as stored), so it only describes a
+   table written before seeding or hand-edited.
+
+`allow`/`ask`/`deny` leave `tools[]` byte-identical — a prompt-cache
+invariant. Only `off` and the role gate change it. A rule that is
+conditioned on the SESSION rather than the person (the sole survivor:
+`identify_user` is meaningful only on a voice channel) belongs to the
+tool that owns it, not to either table.
+
+`gateway/mcp-policy.yaml` and `gateway/src/security/policy-engine.ts`
+were retired: a second, name-keyed classification of the same tools that
+had to agree with the catalog's tiers and eventually would not.
 
 ### Risk accumulator
 
 `gateway/src/security/risk-accumulator.ts` runs an exponential-decay
-score over weighted security events (`injection_pattern`,
-`repeated_offense`, `role_violation`, `ha_name_prompt_like`,
-`mutating_sensitive_domain`, `policy_rejection`). Half-life and per-event
-weights are config-driven. Score thresholds map to `none` / `warn` /
-`escalate` / `block` levels, consumed by the policy engine and surfaced
-in logs.
+score over weighted security events. Half-life and per-event weights are
+config-driven (`shared/config/src/schemas/risk-config.ts`). Score
+thresholds map to `none` / `warn` / `escalate` / `block` levels.
+
+**Those levels are live, on one path.** `prompt-classifier.ts`'s
+`tierFromRiskLevel` maps `escalate`/`block` → `high` and everything else
+with at least one hit → `medium`; `delegation-guard.ts` turns `high` into
+`deny` or `confirm` per the agent's `confirm_class`, and `medium` into
+`confirm`. So the levels change the outcome of a `delegateTask`
+dispatch today, with shipped defaults (`enabled: true`,
+`injection_pattern: 30`, `threshold_escalate: 80` — three pattern hits in
+one `taskPrompt` reach `escalate`). Do not describe this as inert.
+
+Three things about it that a reader will otherwise assume wrongly, all
+checkable by grep:
+
+- **Only one of the six `RiskEvent` members is ever recorded.**
+  `injection_pattern`, by `prompt-classifier.ts`. `repeated_offense`,
+  `role_violation`, `ha_name_prompt_like`, `mutating_sensitive_domain`
+  and `policy_rejection` are declared in the union and weighted in config
+  and have no emitter anywhere. `policy_rejection` is named after the
+  retired policy engine.
+- **It is not session-scoped where it runs.** `prompt-classifier.ts`
+  constructs a *fresh* accumulator inside `classify()`, so its only live
+  use is a per-prompt counter over one scan's hits — every event lands in
+  the same tick, the decay factor is ~1, and `ttl_seconds` never bites.
+  The decay machinery is built for a session-scoped consumer that does
+  not exist yet.
+- **The tool PDP does not read it.** The two gates above resolve from the
+  role and the permission table only. Coupling session risk to the PDP —
+  a raised score making it require `ask` for a tool it would otherwise
+  allow — is the intended next consumer, tracked in `docs/native-todo.md`
+  § "untrusted content enters the model context completely unscanned".
 
 ### Log sanitizer
 

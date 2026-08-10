@@ -2,15 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
 import { migrateWebToolsEnabled } from "./web-tools-migrator.js";
 
-function makeProfile(overrides: Partial<ProfileV1["tools"]["enabled"]>): ProfileV1 {
+function makeProfile(overrides: Partial<ProfileV1["tools"]["permissions"]>): ProfileV1 {
   return {
     schemaVersion: 1,
     userId: "u1",
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "v1" },
     audio: { ttsEnabled: true, channel: "voice" },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: overrides as Record<string, string[]>, toolsets: [] },
+    tools: { permissions: overrides as ProfileV1["tools"]["permissions"], toolsets: [] },
     compression: { threshold: 0.8 },
     advanced: { extraSystemPrompt: "", maxTokens: 512, reasoningEffort: "minimal" },
   };
@@ -18,7 +19,7 @@ function makeProfile(overrides: Partial<ProfileV1["tools"]["enabled"]>): Profile
 
 describe("migrateWebToolsEnabled", () => {
   it("renames duckduckgo key to searxng + fetch when present", async () => {
-    const profile = makeProfile({ duckduckgo: ["search"] });
+    const profile = makeProfile({ duckduckgo: { search: "allow" } });
     const profileStore = {
       get: vi.fn().mockResolvedValue({ ok: true, value: profile }),
       save: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
@@ -29,13 +30,13 @@ describe("migrateWebToolsEnabled", () => {
 
     expect(profileStore.save).toHaveBeenCalledTimes(1);
     const [saved] = (profileStore.save.mock.calls[0] ?? []) as [ProfileV1];
-    expect(saved.tools.enabled.duckduckgo).toBeUndefined();
-    expect(saved.tools.enabled.searxng).toEqual([]);
-    expect(saved.tools.enabled.fetch).toEqual([]);
+    expect(saved.tools.permissions?.duckduckgo).toBeUndefined();
+    expect(saved.tools.permissions?.searxng).toEqual({});
+    expect(saved.tools.permissions?.fetch).toEqual({});
   });
 
   it("is a no-op when duckduckgo key is absent (idempotent)", async () => {
-    const profile = makeProfile({ searxng: [], fetch: [] });
+    const profile = makeProfile({ searxng: {}, fetch: {} });
     const profileStore = {
       get: vi.fn().mockResolvedValue({ ok: true, value: profile }),
       save: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
@@ -47,11 +48,11 @@ describe("migrateWebToolsEnabled", () => {
     expect(profileStore.save).not.toHaveBeenCalled();
   });
 
-  it("preserves other entries in tools.enabled", async () => {
+  it("preserves other entries in tools.permissions", async () => {
     const profile = makeProfile({
-      duckduckgo: ["search"],
-      home_assistant: ["ha_get_state"],
-      music_assistant: [],
+      duckduckgo: { search: "allow" },
+      home_assistant: { ha_get_state: "allow" },
+      music_assistant: {},
     });
     const profileStore = {
       get: vi.fn().mockResolvedValue({ ok: true, value: profile }),
@@ -62,8 +63,8 @@ describe("migrateWebToolsEnabled", () => {
     await migrateWebToolsEnabled({ userStore, profileStore });
 
     const [saved] = (profileStore.save.mock.calls[0] ?? []) as [ProfileV1];
-    expect(saved.tools.enabled.home_assistant).toEqual(["ha_get_state"]);
-    expect(saved.tools.enabled.music_assistant).toEqual([]);
+    expect(saved.tools.permissions?.home_assistant).toEqual({ ha_get_state: "allow" });
+    expect(saved.tools.permissions?.music_assistant).toEqual({});
   });
 
   it("logs and skips users whose profile fails to load", async () => {

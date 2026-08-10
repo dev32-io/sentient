@@ -1,6 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { configure, reset } from "@logtape/logtape";
 import type { AuthConfig } from "@sentient/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuthService } from "./auth-service.js";
@@ -33,7 +34,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     expect(r.ok).toBe(true);
@@ -50,7 +51,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.authenticate("kevin", "1234");
@@ -60,7 +61,8 @@ describe("createAuthService", () => {
     expect(valid.ok).toBe(true);
     if (!valid.ok) throw new Error("unreachable");
     expect(valid.value.userId).toBe("kevin");
-    expect(valid.value.isAdmin).toBe(false);
+    // The whole payload shape: identity plus a lifetime, and nothing else.
+    expect(valid.value.expiresAt).toBeGreaterThan(valid.value.issuedAt);
   });
 
   it("authenticate with wrong pin returns invalid-credentials", async () => {
@@ -69,7 +71,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await svc.authenticate("kevin", "9999");
@@ -88,7 +90,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     };
     await svc.createUser(a);
@@ -102,7 +104,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     const r = await svc.listUsersPublic();
@@ -111,7 +113,7 @@ describe("createAuthService", () => {
     expect(r.value).toEqual([{ userId: "kevin", displayName: "Kevin", avatarTint: "terra" }]);
     for (const u of r.value as unknown as Array<Record<string, unknown>>) {
       expect("pinHash" in u).toBe(false);
-      expect("isAdmin" in u).toBe(false);
+      expect("role" in u).toBe(false);
     }
   });
 
@@ -122,7 +124,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: true,
+      role: "admin",
       avatarTint: "terra",
     });
     expect(await svc.isFirstRun()).toBe(false);
@@ -134,7 +136,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.updateDisplayName("kevin", "Kevin Updated");
@@ -158,7 +160,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.changePin("kevin", "1234", "5678");
@@ -169,13 +171,35 @@ describe("createAuthService", () => {
     expect(authOld.ok).toBe(false);
   });
 
+  it("SECURITY: changePin moves the credential floor — a token minted before it stops validating", async () => {
+    // Owner ruling (I3): a PIN change re-establishes the credential, so every
+    // token minted under the old PIN is invalidated at the next check.
+    const svc = await createAuthService(AUTH_CONFIG);
+    await svc.createUser({
+      userId: "kevin",
+      displayName: "Kevin",
+      pin: "1234",
+      role: "adult",
+      avatarTint: "sage",
+    });
+    const auth = await svc.authenticate("kevin", "1234");
+    if (!auth.ok) throw new Error("unreachable");
+    expect((await svc.tokens.validate(auth.value.token)).ok).toBe(true);
+
+    const r = await svc.changePin("kevin", "1234", "5678");
+    expect(r).toEqual({ ok: true, value: undefined });
+
+    // The old session's token no longer validates — routed to login as `expired`.
+    expect(await svc.tokens.validate(auth.value.token)).toEqual({ ok: false, error: "expired" });
+  });
+
   it("changePin returns wrong-pin when currentPin does not match", async () => {
     const svc = await createAuthService(AUTH_CONFIG);
     await svc.createUser({
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     const r = await svc.changePin("kevin", "9999", "5678");
@@ -194,7 +218,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     // Remove write permission from dir: reads (r-x) still work but creating .tmp fails
@@ -210,7 +234,7 @@ describe("createAuthService", () => {
       userId: "kevin",
       displayName: "Kevin",
       pin: "1234",
-      isAdmin: false,
+      role: "adult",
       avatarTint: "sage",
     });
     // Remove write permission from dir: reads (r-x) still work but creating .tmp fails
@@ -218,5 +242,89 @@ describe("createAuthService", () => {
     const r = await svc.changePin("kevin", "1234", "5678");
     chmodSync(root, 0o755);
     expect(r).toEqual({ ok: false, error: "io-error" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D20 — a rejected credential used to leave no trace at all: both failure
+// branches (`authenticate.no-user`, `authenticate.wrong-pin`) logged at
+// DEBUG while the running level is `info` (also the documented prod
+// default), so a wrong PIN produced a correct 401 and NOTHING in the gateway
+// log. Repeated PIN guessing against a household assistant was invisible.
+// Pinned at WARN here — a rejected credential is exactly the "boundary
+// decision with a reason" the logging rules require at that level.
+//
+// Captures the RAW logtape record (not the sanitizer's output) so this pins
+// the source call site itself never passing the pin into log properties —
+// not merely that the sanitizer would have redacted it downstream.
+// ---------------------------------------------------------------------------
+describe("createAuthService — failed logins are logged (D20)", () => {
+  const AUTH_SERVICE_CATEGORY = ["sentient", "gateway", "user-auth", "auth-service"];
+  let root: string;
+  let warnings: Array<Record<string, unknown>>;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), "sentient-authsvc-log-"));
+    process.env.SENTIENT_GATEWAY_ROOT = root;
+    warnings = [];
+    await configure({
+      sinks: {
+        test: (record) => {
+          if (record.level === "warning") warnings.push(record.properties);
+        },
+      },
+      loggers: [
+        { category: AUTH_SERVICE_CATEGORY, sinks: ["test"], lowestLevel: "debug" },
+        // Suppresses LogTape's own one-time "loggers are configured" meta
+        // notice, which otherwise prints straight to the console on every
+        // `configure()` call in this file's beforeEach.
+        { category: "logtape", sinks: [], lowestLevel: "error" },
+      ],
+      reset: true,
+    });
+  });
+
+  afterEach(async () => {
+    await reset();
+    rmSync(root, { recursive: true, force: true });
+    // biome-ignore lint/performance/noDelete: delete is the correct way to unset a process.env key
+    delete process.env.SENTIENT_GATEWAY_ROOT;
+  });
+
+  it("SECURITY: an unknown-user login is logged at WARN with a reason, never the pin", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.authenticate("u_nope", "9999");
+    expect(warnings).toContainEqual(expect.objectContaining({ userId: "u_nope", reason: expect.any(String) }));
+    expect(JSON.stringify(warnings)).not.toContain("9999");
+  });
+
+  it("SECURITY: a wrong-pin login is logged at WARN with a reason, never the pin", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
+    warnings = []; // createUser logs at INFO, not WARN, but clear defensively
+    await auth.authenticate("kevin", "9999");
+    expect(warnings).toContainEqual(expect.objectContaining({ userId: "kevin", reason: expect.any(String) }));
+    const dump = JSON.stringify(warnings);
+    expect(dump).not.toContain("9999");
+    expect(dump).not.toContain("1234");
+  });
+
+  it("the no-user and wrong-pin reasons are distinguishable", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
+    await auth.authenticate("u_ghost", "0000");
+    await auth.authenticate("kevin", "9999");
+    expect(warnings).toHaveLength(2);
+    const reasons = warnings.map((w) => w.reason);
+    expect(new Set(reasons).size).toBe(2);
+  });
+
+  it("a successful login does not log at WARN", async () => {
+    const auth = await createAuthService(AUTH_CONFIG);
+    await auth.createUser({ userId: "kevin", displayName: "Kevin", pin: "1234", role: "adult", avatarTint: "sage" });
+    warnings = [];
+    const r = await auth.authenticate("kevin", "1234");
+    expect(r.ok).toBe(true);
+    expect(warnings).toEqual([]);
   });
 });

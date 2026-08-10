@@ -1,0 +1,4 @@
+2026-07-30T00:59:52.863 INFO  [runtime:compaction] compaction.summarizing | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb" estimatedTokens=9306 thresholdTokens=8000 boundarySeq=61 olderEntries=51 recentEntries=10 transcriptChars=23148
+2026-07-30T00:59:52.864 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=2 toolCount=0
+2026-07-30T00:59:58.099 INFO  [provider:openai] stream-end | durationMs=5235 finishReason="length" promptTokens=5920 cachedTokens=0 completionTokens=1024 cacheHitRatio=0
+2026-07-30T00:59:58.100 WARN  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb" reason="empty-summary" boundarySeq=61

@@ -11,7 +11,9 @@ plugins {
 // sessions work. The chat timeline is in-memory from the SDK — no durable store.
 // Bumped to 0.2.0 in lockstep with shared/mobile-sdk: hold-to-talk / toggle-to-talk
 // split touched ChatComponent's DI wiring (TalkModeController injection).
-version = "0.2.0"
+// Bumped to 0.3.0 in lockstep with shared/mobile-sdk: 2.0 wire rebase (turnId rename)
+// + permission / delegation passthroughs on ChatComponent.
+version = "0.3.0"
 
 kotlin {
     androidTarget {

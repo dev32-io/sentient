@@ -1,0 +1,31 @@
+# Step 4 — tool-surface rows, gateway log trail (2026-07-31)
+# Every line below is from ~/.sentient/gateway/logs/2026-07-31.log, unedited.
+
+2026-07-31T18:17:29.190 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="95805f13-8912-4692-ba2e-c2bfc865d04e" maxIterations=10 toolCount=29
+2026-07-31T18:17:30.453 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="ha_get_state" toolCallId="call_30101p59" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_state"
+2026-07-31T18:17:30.514 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_state" isError=false contentLength=374 elapsedMs=60
+2026-07-31T18:17:30.514 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="ha_get_state" toolCallId="call_30101p59" isError=false contentLength=374
+2026-07-31T18:17:31.877 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="95805f13-8912-4692-ba2e-c2bfc865d04e" iterations=2 forceFinal=false
+2026-07-31T18:18:19.370 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="042d8be7-9743-4742-94da-ae03b463e8ec" maxIterations=10 toolCount=29
+2026-07-31T18:18:20.665 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="ma_search" toolCallId="call_3u3okk8a" action="allow" reason="Read-only music library search" rule="allow_ma_search"
+2026-07-31T18:18:21.824 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="music_assistant" name="ma_search" isError=false contentLength=973 elapsedMs=1159
+2026-07-31T18:18:21.824 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="ma_search" toolCallId="call_3u3okk8a" isError=false contentLength=973
+2026-07-31T18:18:22.785 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="042d8be7-9743-4742-94da-ae03b463e8ec" iterations=2 forceFinal=false
+2026-07-31T18:19:03.696 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="8c29f83a-5399-4ba1-9840-daf94f141778" maxIterations=10 toolCount=29
+2026-07-31T18:19:06.523 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="search_web" toolCallId="call_juec1hv0" action="allow" reason="Read-only web search" rule="allow_search_web"
+2026-07-31T18:19:07.276 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="searxng" name="search_web" isError=false contentLength=3765 elapsedMs=752
+2026-07-31T18:19:07.276 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="search_web" toolCallId="call_juec1hv0" isError=false contentLength=3765
+2026-07-31T18:19:08.926 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="8c29f83a-5399-4ba1-9840-daf94f141778" iterations=2 forceFinal=false
+2026-07-31T18:19:54.768 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="467b2f1e-1ba6-4f26-b74a-42e66c1642c9" maxIterations=10 toolCount=29
+2026-07-31T18:19:56.007 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="fetch" toolCallId="call_uyhtdsvw" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-07-31T18:19:56.164 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=false contentLength=679 elapsedMs=156
+2026-07-31T18:19:56.164 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="fetch" toolCallId="call_uyhtdsvw" isError=false contentLength=679
+2026-07-31T18:19:58.482 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="467b2f1e-1ba6-4f26-b74a-42e66c1642c9" iterations=2 forceFinal=false
+2026-07-31T18:20:48.135 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="c036168b-8a7d-4543-8686-d5992fc67c1b" maxIterations=10 toolCount=29
+2026-07-31T18:20:49.443 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="ha_get_state" toolCallId="call_dnaxs1nz" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_state"
+2026-07-31T18:20:49.512 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_state" isError=false contentLength=374 elapsedMs=69
+2026-07-31T18:20:49.512 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="ha_get_state" toolCallId="call_dnaxs1nz" isError=false contentLength=374
+2026-07-31T18:20:51.089 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms9ocinv-t4hg09d7" tool="search_web" toolCallId="call_c7vwhaht" action="allow" reason="Read-only web search" rule="allow_search_web"
+2026-07-31T18:20:53.614 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="searxng" name="search_web" isError=false contentLength=3841 elapsedMs=2525
+2026-07-31T18:20:53.614 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-ms9ocinv-t4hg09d7" tool="search_web" toolCallId="call_c7vwhaht" isError=false contentLength=3841
+2026-07-31T18:20:55.252 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_1eee01a4::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="c036168b-8a7d-4543-8686-d5992fc67c1b" iterations=3 forceFinal=false

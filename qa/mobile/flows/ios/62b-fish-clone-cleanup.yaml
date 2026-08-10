@@ -41,6 +41,7 @@ tags:
 # restore active voice to Jarvis (now the only "Yours" row, shifted to first).
 - tapOn:
     point: "50%,54%"
+# 5000ms: voice clone / synth round-trip (Fish import + local-tts)
 - extendedWaitUntil:
     visible: "Active"
     timeout: 5000

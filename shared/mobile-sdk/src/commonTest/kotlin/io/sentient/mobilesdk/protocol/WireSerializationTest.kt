@@ -222,7 +222,7 @@ class WireSerializationTest {
 
     @Test fun gateway_push_frame_seq_epoch_are_peelable() {
         // The SDK reads seq/epoch generically off the raw JSON (not per-variant).
-        val s = """{"type":"message.delta","cycleId":"c1","delta":"hi","seq":7,"epoch":2}"""
+        val s = """{"type":"turn.text.delta","turnId":"t1","text":"hi","seq":7,"epoch":2}"""
         val (seq, epoch) = WireJson.peelSeqEpoch(s)
         assertEquals(7L, seq)
         assertEquals(2L, epoch)
@@ -232,5 +232,83 @@ class WireSerializationTest {
         val (seq, epoch) = WireJson.peelSeqEpoch("""{"type":"pong"}""")
         assertEquals(0L, seq)
         assertEquals(null, epoch)
+    }
+
+    // ── 2.0 frozen wire contract (design §7) ──────────────────────────────────
+
+    @Test fun turn_started_decodes_with_trigger() {
+        val s = """{"type":"turn.started","turnId":"t1","trigger":"background-completion"}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.TurnStarted
+        assertEquals("t1", msg.turnId)
+        assertEquals("background-completion", msg.trigger)
+    }
+
+    @Test fun turn_text_delta_decodes_with_turn_id() {
+        val s = """{"type":"turn.text.delta","turnId":"t1","text":"hel"}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.TurnTextDelta
+        assertEquals("t1", msg.turnId)
+        assertEquals("hel", msg.text)
+    }
+
+    @Test fun turn_completed_and_aborted_decode() {
+        val done = WireJson.instance.decodeFromString(
+            ServerMessage.serializer(), """{"type":"turn.completed","turnId":"t1"}""",
+        ) as ServerMessage.TurnCompleted
+        assertEquals("t1", done.turnId)
+        val aborted = WireJson.instance.decodeFromString(
+            ServerMessage.serializer(), """{"type":"turn.aborted","turnId":"t2","cutoff":"barge-in"}""",
+        ) as ServerMessage.TurnAborted
+        assertEquals("barge-in", aborted.cutoff)
+    }
+
+    @Test fun turn_audio_frames_decode() {
+        val start = WireJson.instance.decodeFromString(
+            ServerMessage.serializer(), """{"type":"turn.audio.start","turnId":"t1","encoding":"opus","sampleRate":48000}""",
+        ) as ServerMessage.TurnAudioStart
+        assertEquals("opus", start.encoding)
+        assertEquals(48000, start.sampleRate)
+        val done = WireJson.instance.decodeFromString(
+            ServerMessage.serializer(), """{"type":"turn.audio.done","turnId":"t1"}""",
+        ) as ServerMessage.TurnAudioDone
+        assertEquals("t1", done.turnId)
+    }
+
+    @Test fun playback_stop_is_rekeyed_to_turn_id() {
+        val s = """{"type":"playback.stop","turnId":"t1","reason":"interrupt"}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.PlaybackStop
+        assertEquals("t1", msg.turnId)
+        assertEquals("interrupt", msg.reason)
+    }
+
+    @Test fun permission_request_decodes_with_arbitrary_args_object() {
+        val s = """{"type":"permission.request","requestId":"r1","toolCallId":"tc1","toolName":"sendMessage","args":{"to":"mum","body":"hi"},"description":"Send a message to mum","expiresAtMs":1200}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.PermissionRequest
+        assertEquals("r1", msg.requestId)
+        assertEquals("sendMessage", msg.toolName)
+        assertEquals(2, msg.args.size)
+        assertEquals(1200L, msg.expiresAtMs)
+    }
+
+    @Test fun permission_resolved_decodes_outcome() {
+        val s = """{"type":"permission.resolved","requestId":"r1","outcome":"timeout"}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.PermissionResolved
+        assertEquals("timeout", msg.outcome)
+    }
+
+    @Test fun delegation_progress_decodes() {
+        val s = """{"type":"delegation.progress","taskId":"task-9","turnId":"t1","agent":"hermes","status":"running"}"""
+        val msg = WireJson.instance.decodeFromString(ServerMessage.serializer(), s) as ServerMessage.DelegationProgress
+        assertEquals("task-9", msg.taskId)
+        assertEquals("hermes", msg.agent)
+        assertEquals(null, msg.note)
+    }
+
+    @Test fun permission_response_encodes_request_id_and_approved() {
+        val json = WireJson.instance.encodeToString(
+            ClientMessage.serializer(), ClientMessage.PermissionResponse(requestId = "r1", approved = false),
+        )
+        assertTrue(json.contains("\"type\":\"permission.response\""), json)
+        assertTrue(json.contains("\"requestId\":\"r1\""), json)
+        assertTrue(json.contains("\"approved\":false"), json)
     }
 }

@@ -1,4 +1,5 @@
 import { useSignal } from "@preact/signals";
+import type { TaskListItem } from "@sentient/protocol";
 import {
   AssistantAudioResponseConnector,
   type AudioPreferences,
@@ -6,27 +7,29 @@ import {
   CognitionStatusConnector,
   type CommittedFeedItem,
   ConversationHistoryConnector,
+  DelegationProgressConnector,
+  type DelegationProgressItem,
   type EchoGate,
   type InFlightMessage,
   InFlightMessageConnector,
+  PermissionConfirmConnector,
+  type PermissionRequestItem,
   PreferencesConnector,
   type SDKStatus,
   SentientSDK,
-  type SessionReadyPayload,
   SessionsConnector,
-  type TaskSnapshotItem,
-  TaskStatusConnector,
+  TaskListConnector,
   UserAudioInputConnector,
   UserTextInputConnector,
   createEchoGate,
   createLogger,
   createSessionsRest,
   createSpeechGate,
+  createTurnAudioQueue,
   deriveRestBaseUrl,
 } from "@sentient/web-sdk";
-import type { ChatMessage, VoiceStatus } from "@sentient/web-sdk";
+import type { VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
-import { createCycleAudioQueue } from "../adapters/cycle-audio-queue.ts";
 import { createWebAudioCapture } from "../adapters/web-audio-capture.ts";
 import { createWebAudioPlayback } from "../adapters/web-audio-playback.ts";
 import { int16ToFloat32 } from "../audio/int16-float32.ts";
@@ -36,8 +39,6 @@ import { createRnNoiseDenoiser } from "../audio/rnnoise-denoiser.ts";
 import {
   AUDIO_SAMPLE_RATE,
   CAPTURE_SAMPLE_RATE,
-  DEFAULT_MIN_EAGER_END_MS,
-  DEFAULT_PREEMPT_FADEOUT_MS,
   DENOISE_BYPASS,
   ECHO_GATE_BASELINE_THRESHOLD,
   ECHO_GATE_PLAYBACK_THRESHOLD,
@@ -53,14 +54,34 @@ import {
   SPEECH_GATE_OPEN_DEBOUNCE_MS,
   SPEECH_GATE_PREROLL_FRAMES,
 } from "../constants.ts";
+// The webui's OWN display model, not the SDK's — it is what every chat
+// component already takes.
+import type { ChatMessage } from "../types.ts";
 import { createAwaitingTracker } from "./awaiting-tracker.ts";
-import { attachToolsToAssistantMessages, deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
+import { deriveCycleStatus, deriveMessages } from "./cycle-helpers.ts";
+import { reducePermissionPrompt } from "./permission-helpers.ts";
+import { type DrainBubble, clearConversationScopedState } from "./session-boundary.ts";
 import { useTypewriterBuffer } from "./use-typewriter-buffer.ts";
 import { buildVoiceStatus, resolveGatewayUrl } from "./voice-status.ts";
 
 export type { CycleStatus } from "./cycle-helpers.ts";
 
 const log = createLogger(["sentient", "webui", "voice-client"]);
+
+/**
+ * What a refused command says to the person who issued it (gateway spec §3.7).
+ *
+ * Each reason gets its own line because the right NEXT ACTION differs: retry a
+ * busy race, do not retry a stale one (it belonged to the conversation you
+ * left), sign in again on an expired credential.
+ */
+const COMMAND_REJECTION_COPY: Readonly<Record<string, string>> = {
+  session_busy: "Someone else was sending at the same moment — try again.",
+  stale_generation: "That message was meant for the previous chat, so it wasn't sent.",
+  not_attached: "That chat isn't open any more — reopen it and try again.",
+  credential_expired: "Your session expired. Please sign in again.",
+};
+const COMMAND_REJECTION_FALLBACK = "That didn't go through. Please try again.";
 
 // ---------------------------------------------------------------------------
 // Hook public interface
@@ -86,12 +107,31 @@ export interface UseVoiceClientOptions {
 export function useVoiceClient(options: UseVoiceClientOptions) {
   const status = useSignal<VoiceStatus>({ state: "inactive", label: "Ready", canSpeak: false, isActive: false });
   const messages = useSignal<readonly ChatMessage[]>([]);
-  // tasks signal exposed to UI — raw SDK shape (TaskSnapshotItem).
-  const tasks = useSignal<readonly TaskSnapshotItem[]>([]);
+  // tasks signal exposed to UI — the gateway's full-state tasklist.state list.
+  const tasks = useSignal<readonly TaskListItem[]>([]);
+  /**
+   * Live user-speech preview. ALWAYS EMPTY under the 2.0 contract: R9 deleted
+   * the partial-transcript frame, so spoken text now appears only once the
+   * gateway commits it as a conversation entry. Kept because ChatView still
+   * binds it; retiring the signal means retiring that UI too, which is a
+   * webui-wide change, not this fix's.
+   */
   const transcript = useSignal<string>("");
   const cycleStatus = useSignal(deriveCycleStatus({ cognition: "idle", audioPlaying: false, runningTasks: 0 }));
-  const currentCycleId = useSignal<string | null>(null);
+  const currentTurnId = useSignal<string | null>(null);
   const voiceMode = useSignal<"off" | "active">("off");
+  /**
+   * The L3 `confirm` prompt currently awaiting a user decision, or null.
+   * Bound purely to `permission.request` / `permission.resolved` wire frames
+   * via PermissionConfirmConnector — the oldest pending request is the one
+   * rendered, and the connector (not this signal) owns the pending set.
+   */
+  const permissionRequest = useSignal<PermissionRequestItem | null>(null);
+  /**
+   * Background `delegateTask` work, in dispatch order. Joins to a composer
+   * task-strip row through `TaskListItem.id` — same id on both frames.
+   */
+  const delegations = useSignal<readonly DelegationProgressItem[]>([]);
   // Audio preferences (TTS on/off, channel). Seeded from the persisted
   // profile via `seedPreferences` once the app loads it; updated server-side
   // via the PreferencesConnector's `session.preferences.changed` frame.
@@ -105,15 +145,23 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   const sdkStatus = useSignal<SDKStatus>("disconnected");
   const connectionLost = useSignal(false);
   const authExpired = useSignal(false);
+  // The gateway REFUSED the last command this tab sent (gateway spec §3.7) —
+  // human-readable, or null once nothing is outstanding. There is no optimistic
+  // echo in this UI: a message that is refused simply never appears, so without
+  // surfacing this the person sees their text vanish and nothing else happens.
+  const commandRejection = useSignal<string | null>(null);
 
   const sdkStatusRef = useRef<SDKStatus>("disconnected");
   const cognitionRef = useRef<CognitionState>("idle");
   const isAudioPlayingRef = useRef(false);
-  // Raw snapshots kept for attachToolsToAssistantMessages (needs cycleId).
-  const rawTasksRef = useRef<readonly TaskSnapshotItem[]>([]);
 
   const typewriter = useTypewriterBuffer();
-  const typewriterCycleIdRef = useRef<string | null>(null);
+  /** WHICH BUBBLE the typewriter is currently revealing — the reply, falling
+   *  back to the turn only against a gateway that does not stamp deltas. It
+   *  cannot be the turn: `setBuffer` is append-only and refuses to shrink, so
+   *  a reply rotating inside one turn would leave the reveal stuck on the
+   *  previous stretch's text while rendering it into the new bubble. */
+  const typewriterBubbleIdRef = useRef<string | null>(null);
   const typewriterRef = useRef(typewriter);
   typewriterRef.current = typewriter;
 
@@ -122,12 +170,11 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     const gatewayUrl = resolveGatewayUrl(options.wsUrl);
     const capture = createWebAudioCapture();
     const playback = createWebAudioPlayback();
-    const cycleQueue = createCycleAudioQueue({
-      playback,
-      // Defaults used until session.ready arrives with server-configured tunables.
-      minEagerEndMs: DEFAULT_MIN_EAGER_END_MS,
-      preemptFadeoutMs: DEFAULT_PREEMPT_FADEOUT_MS,
-    });
+    // Strict sequential FIFO keyed by turnId (spec §7.2). A follow-up turn's
+    // audio queues BEHIND the turn already sounding; nothing preempts or
+    // fades. `cancelAll()` (barge-in / interrupt) is the only flush path, so
+    // the queue has no tunables to configure.
+    const turnQueue = createTurnAudioQueue({ playback });
 
     // Client-side echo gate — suppresses mic frames while the assistant is
     // speaking. The playback adapter's onDrain event is the authoritative
@@ -142,14 +189,18 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       log.debug("echo-gate.state", { state: snap.state, threshold: snap.threshold });
     });
 
-    const inflightRef: { current: InFlightMessage | null } = { current: null };
+    // Every turn still mid-stream, oldest first — one streaming bubble each
+    // (spec §7.2). Empty when idle.
+    const inflightRef: { current: readonly InFlightMessage[] } = { current: [] };
     const committedRef: { current: readonly CommittedFeedItem[] } = { current: [] };
-    // Post-stream drain state: when message.done fires, the connector clears
-    // inflight but the typewriter may still be mid-reveal. We keep rendering
-    // a synthetic inflight bubble (driven by the typewriter) until its visible
-    // catches up to the final buffered text. During drain, the committed
-    // assistant entry for this cycleId is suppressed to prevent a pop.
-    const drainCycleRef: { current: { cycleId: string; snapshot: InFlightMessage } | null } = { current: null };
+    // Post-stream drain state: when turn.completed fires, the connector drops
+    // the turn's buffer but the typewriter may still be mid-reveal. We keep
+    // rendering a synthetic inflight bubble (driven by the typewriter) until
+    // its visible catches up to the final buffered text. During drain, the
+    // committed assistant entry for THIS REPLY is suppressed to prevent a pop —
+    // by `replyId`, never by turn: a turn that a person typed through commits
+    // two assistant rows under one turnId and a turn-keyed match hides both.
+    const drainTurnRef: { current: DrainBubble | null } = { current: null };
     // Empty-history detection: snapshot committed-count when leaving `ready`
     // status; on next conversation snapshot post-reconnect, compare. Empty
     // result + nonzero prior == server-side PersonSession archive cycled.
@@ -176,7 +227,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         status.value = nextStatus;
       }
 
-      const runningCount = rawTasksRef.current.filter((t) => t.status === "running").length;
+      const runningCount = tasks.value.filter((t) => t.status === "running").length;
       const nextCycleStatus = deriveCycleStatus({
         cognition: cognitionRef.current,
         audioPlaying: isAudioPlayingRef.current,
@@ -190,17 +241,19 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     function refreshMessages(): void {
       // During drain, render a synthetic inflight bubble from the drain snapshot.
-      const effectiveInflight = inflightRef.current ?? drainCycleRef.current?.snapshot ?? null;
-      // Committed assistant entries already carry their gateway cycleId
+      const drain = drainTurnRef.current;
+      const live = inflightRef.current;
+      const effectiveInflight = live.length > 0 ? live : drain ? [drain.snapshot] : [];
+      // Committed assistant entries already carry their gateway turnId
       // (CommittedFeedItem) — read it straight through. No ts-window stamping,
       // no per-message cache: the gateway is the source of truth for the id.
       const base = deriveMessages(
         committedRef.current,
         effectiveInflight,
-        effectiveInflight ? typewriterRef.current.visible.value : undefined,
-        drainCycleRef.current?.cycleId,
+        effectiveInflight.length > 0 ? typewriterRef.current.visible.value : undefined,
+        drain?.replyId,
       );
-      messages.value = attachToolsToAssistantMessages(base, rawTasksRef.current);
+      messages.value = base;
     }
 
     const speechGate = createSpeechGate({
@@ -211,9 +264,16 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       maxOpenMs: SPEECH_GATE_MAX_OPEN_MS,
     });
 
+    // `turn.started` (user trigger) is the mic latch's close signal: the
+    // gateway has taken ownership of the utterance, so stop streaming until
+    // sustained speech reopens the gate. This replaces the deleted
+    // `connector.transcript.final` (R9) — without it the only thing that ever
+    // closed the latch was SPEECH_GATE_MAX_OPEN_MS, so every utterance was
+    // followed by up to 20s of continuous mic uplink and STT load, with a wide
+    // window for residual TTS echo to re-trigger barge-in.
     const audioInputConnector = new UserAudioInputConnector({
-      onTranscript: (text) => {
-        transcript.value = text;
+      onTurnStarted: () => {
+        log.debug("speech-gate.close", { reason: "turn.started", stateBefore: speechGate.state() });
         speechGate.close();
         denoiser?.reset();
       },
@@ -329,55 +389,55 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     // The local-tts service ships opus packets in TTS frames. Decode via
     // WebCodecs AudioDecoder; downsample 48kHz → playback's sample rate. The
-    // decoder output is async, so we capture the active cycleId in a ref and
-    // attribute each decoded chunk to the latest cycle. Acceptable for verify
-    // (cycleId mismatch only on rapid cycle boundary, recoverable on next frame).
-    let activeCycleId = "";
+    // decoder output is async, so we capture the active turnId in a ref and
+    // attribute each decoded chunk to the latest turn. Acceptable for verify
+    // (turnId mismatch only on a rapid turn boundary, recoverable on the next frame).
+    let activeTurnId = "";
     const opusDecoder = createOpusDecoder({
       targetSampleRate: AUDIO_SAMPLE_RATE,
       onFrame: (samples) => {
-        if (activeCycleId) cycleQueue.onAudioFrame(activeCycleId, samples);
+        if (activeTurnId) turnQueue.onAudioFrame(activeTurnId, samples);
       },
     });
 
     const audioResponseConnector = new AssistantAudioResponseConnector({
-      onAudioStart: (cycleId: string) => {
+      onAudioStart: (turnId: string) => {
         isAudioPlayingRef.current = true;
         awaiting.onAudioStart();
-        cycleQueue.onAudioStart(cycleId);
-        echoGate.onPlaybackStart(cycleId);
+        turnQueue.onAudioStart(turnId);
+        echoGate.onPlaybackStart(turnId);
         refreshStatus();
-        // Each cycle is a fresh OGG-Opus stream from the TTS service — reset decoder so
-        // the second cycle's OpusHead doesn't get interpreted as mid-stream
-        // garbage (caused TTS to cut short after ~1 s on cycle 2+).
+        // Each turn is a fresh OGG-Opus stream from the TTS service — reset decoder so
+        // the second turn's OpusHead doesn't get interpreted as mid-stream
+        // garbage (caused TTS to cut short after ~1 s on turn 2+).
         void opusDecoder.reset();
       },
-      onAudioFrame: (frame: Uint8Array, cycleId: string) => {
-        activeCycleId = cycleId;
+      onAudioFrame: (frame: Uint8Array, turnId: string) => {
+        activeTurnId = turnId;
         opusDecoder.decode(frame);
       },
-      onAudioDone: (cycleId: string) => {
-        // Flush the decoder's final buffered frame(s) into the cycle queue
-        // BEFORE marking the cycle done. The OGG-Opus decoder holds the tail
+      onAudioDone: (turnId: string) => {
+        // Flush the decoder's final buffered frame(s) into the turn queue
+        // BEFORE marking the turn done. The OGG-Opus decoder holds the tail
         // until end-of-stream (see opus-decoder.flush()), so without this the
         // last ~word of every reply was cut. flush() emits via onFrame ->
-        // cycleQueue.onAudioFrame while the cycle is still active (playback has
+        // turnQueue.onAudioFrame while the turn is still active (playback has
         // ~250ms buffered ahead, so it hasn't drained yet); only then mark the
-        // cycle done so playback drains the tail too. flush() never rejects
+        // turn done so playback drains the tail too. flush() never rejects
         // (errors caught inside), so `.then` always marks done.
         void opusDecoder.flush().then(() => {
-          cycleQueue.onAudioDone(cycleId);
+          turnQueue.onAudioDone(turnId);
           // isAudioPlaying stays true until playback physically drains (via onStateChange).
           // echoGate moves to tail on playback adapter's onDrain — see `unsubPlaybackDrain`.
           refreshStatus();
         });
       },
-      onPlaybackStop: (reason, cycleId) => {
-        log.debug("playback-stop", { reason, cycleId });
+      onPlaybackStop: (reason, turnId) => {
+        log.debug("playback-stop", { reason, turnId });
         isAudioPlayingRef.current = false;
         awaiting.onPlaybackEnded();
-        cycleQueue.cancelAll();
-        echoGate.onPlaybackCancel(cycleId);
+        turnQueue.cancelAll();
+        echoGate.onPlaybackCancel(turnId);
         refreshStatus();
         void opusDecoder.reset();
       },
@@ -386,8 +446,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     audioResponseConnector.onCancelled = () => {
       isAudioPlayingRef.current = false;
       awaiting.onPlaybackEnded();
-      cycleQueue.cancelAll();
-      // Best-effort: no cycleId here, but the gate accepts any id — it just
+      turnQueue.cancelAll();
+      // Best-effort: no turnId here, but the gate accepts any id — it just
       // drops to baseline. The signal name is enough.
       echoGate.onPlaybackCancel("");
       refreshStatus();
@@ -412,8 +472,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     // Committed conversation + live streaming bubble come from two connectors.
-    // `message.done` clears inflight just before the committed entry arrives —
-    // UI swaps cleanly without a visible double-render.
+    // `turn.completed` clears the inflight buffer just before the committed
+    // entry arrives — UI swaps cleanly without a visible double-render.
     // `sessionsRest` is passed as the 2nd arg so that after `session.switched`
     // the connector can fetch the new session's history via REST (instead of
     // clearing awaitingSnapshot with an empty mirror).
@@ -434,9 +494,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
           }
           committedRef.current = items;
           refreshMessages();
-          // Clear live STT preview once finalized user/speech entry lands.
-          const last = items.findLast((i) => i.kind === "user" && i.channel === "speech");
-          if (last && (last as { content: string }).content === transcript.value) transcript.value = "";
         },
       },
       sessionsRest,
@@ -444,51 +501,96 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
 
     const inflightMessageConnector = new InFlightMessageConnector({
       onUpdate: (inflight) => {
-        if (inflight) {
-          // New cycle: reset the typewriter before feeding the first buffer.
-          // This also clears any stale drain state from a previous cycle.
-          if (typewriterCycleIdRef.current !== inflight.cycleId) {
+        // The typewriter reveals exactly ONE turn: the newest still-producing
+        // one. Older still-open turns (§7.2's second bubble) render their full
+        // buffered text — they are no longer the turn emitting tokens.
+        const newest = inflight[inflight.length - 1] ?? null;
+        if (newest) {
+          // New BUBBLE: reset the typewriter before feeding the first buffer.
+          // This also clears any stale drain state from the previous one. A
+          // rotation inside one turn is a new bubble by the same rule.
+          const bubbleId = newest.replyId ?? newest.turnId;
+          if (typewriterBubbleIdRef.current !== bubbleId) {
             typewriterRef.current.reset();
-            typewriterCycleIdRef.current = inflight.cycleId;
-            drainCycleRef.current = null;
+            typewriterBubbleIdRef.current = bubbleId;
+            drainTurnRef.current = null;
           }
-          typewriterRef.current.setBuffer(inflight.text);
-          currentCycleId.value = inflight.cycleId;
-          inflightRef.current = inflight;
+          typewriterRef.current.setBuffer(newest.text);
+          currentTurnId.value = newest.turnId;
         } else {
-          // message.done or cycle.aborted — drain whatever's buffered at MAX_RATE.
-          // Snapshot the last inflight so we can keep rendering the typewriter
-          // bubble until it catches up, instead of letting the committed entry pop in.
-          // If the typewriter is already caught up (visible === full text), skip drain —
-          // no subscription will fire so we'd otherwise get stuck suppressing the committed entry.
-          if (inflightRef.current) {
-            const fullText = inflightRef.current.text;
-            const alreadyDrained = typewriterRef.current.visible.value.length >= fullText.length;
+          // turn.completed or turn.aborted for the last open turn — drain
+          // whatever's buffered at MAX_RATE. Snapshot the last inflight so we
+          // keep rendering the typewriter bubble until it catches up, instead
+          // of letting the committed entry pop in. If the typewriter is already
+          // caught up (visible === full text), skip drain — no subscription
+          // will fire so we'd otherwise get stuck suppressing the committed entry.
+          const last = inflightRef.current[inflightRef.current.length - 1];
+          if (last) {
+            const alreadyDrained = typewriterRef.current.visible.value.length >= last.text.length;
             if (!alreadyDrained) {
-              drainCycleRef.current = {
-                cycleId: inflightRef.current.cycleId,
-                snapshot: inflightRef.current,
+              drainTurnRef.current = {
+                turnId: last.turnId,
+                ...(last.replyId === undefined ? {} : { replyId: last.replyId }),
+                snapshot: last,
               };
             }
           }
           typewriterRef.current.markComplete();
-          inflightRef.current = null;
         }
+        inflightRef.current = inflight;
         refreshMessages();
       },
     });
 
-    const taskStatusConnector = new TaskStatusConnector({
-      onList: (items) => {
-        rawTasksRef.current = items;
+    const taskListConnector = new TaskListConnector({
+      onUpdate: (turnId, items) => {
         tasks.value = items;
-        // Expose latest task's cycleId when no inflight cycle is active. Tasks
-        // arrive in startedAtMs-ascending order from the connector; the latest
-        // is always the last element — no sort needed.
-        const latest = items[items.length - 1];
-        if (latest && !inflightRef.current) currentCycleId.value = latest.cycleId;
-        refreshMessages();
+        // Expose the turn's id when no turn is streaming text yet — e.g. the
+        // first tool call of a turn dispatches before any narration token
+        // lands, so there is no inflight bubble to carry it. `null` means only
+        // background rows survive a finished turn; leave currentTurnId alone
+        // rather than clobbering it with "no active turn".
+        if (turnId !== null && inflightRef.current.length === 0) currentTurnId.value = turnId;
         refreshStatus();
+      },
+    });
+
+    // L3 `confirm` prompts (spec §5.3 / §7.1). The connector owns the pending
+    // set; `reducePermissionPrompt` is the ONLY function that moves the signal,
+    // so every open/close is one auditable, fail-closed transition.
+    const permissionConnector = new PermissionConfirmConnector({
+      onPending: (pending) => {
+        const head = pending[0];
+        // An empty set means the connector dropped everything — the request
+        // was answered, the gateway resolved it, or the socket detached. No
+        // decision can be inferred from that, so the dialog closes without
+        // ever implying an approval.
+        permissionRequest.value =
+          head === undefined
+            ? null
+            : reducePermissionPrompt(permissionRequest.peek(), { type: "request", request: head });
+      },
+      onResolved: (requestId, outcome) => {
+        // The gateway decided first — answered on another surface, or the
+        // fail-closed 2-minute timeout. The reducer dismisses the dialog only
+        // when the id matches the one on screen, so a stale or mismatched
+        // `permission.resolved` can never clobber a newer request.
+        log.info("permission.resolved", { requestId, outcome });
+        permissionRequest.value = reducePermissionPrompt(permissionRequest.peek(), {
+          type: "resolved",
+          requestId,
+          outcome,
+        });
+      },
+    });
+
+    // Background delegated work (delegateTask). Registered so the capability
+    // is advertised in `session.configure` and progress frames are consumed
+    // rather than dropped by the router. `delegations` joins to a composer
+    // task-strip row through `TaskListItem.id`, which is the same id.
+    const delegationConnector = new DelegationProgressConnector({
+      onList: (items) => {
+        delegations.value = items;
       },
     });
 
@@ -505,15 +607,6 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       idlePresence: {
         idleThresholdMs: IDLE_THRESHOLD_MS,
         tickIntervalMs: IDLE_TICK_INTERVAL_MS,
-      },
-      onSessionReady: (payload: SessionReadyPayload) => {
-        if (payload.playback) {
-          log.debug("session.ready playback tunables", payload.playback);
-          cycleQueue.configure({
-            minEagerEndMs: payload.playback.minEagerEndMs,
-            preemptFadeoutMs: payload.playback.preemptFadeoutMs,
-          });
-        }
       },
       onStatusChange: (status) => {
         log.debug("sdk.status.change", { status });
@@ -543,6 +636,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         log.warn("auth-expired (gateway rejected token on reconnect)");
         authExpired.value = true;
       },
+      onCommandRejected: ({ command, reason }) => {
+        log.warn("command-rejected", { command, reason });
+        commandRejection.value = COMMAND_REJECTION_COPY[reason] ?? COMMAND_REJECTION_FALLBACK;
+      },
     });
     const sessionsConnector = new SessionsConnector({ rest: sessionsRest });
 
@@ -556,19 +653,24 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       },
     });
 
-    // Mid-cycle session switch: the gateway aborts the running cycle and
-    // emits cycle.aborted, but the typewriter's drain machinery would keep
-    // revealing the buffered text from the OLD cycle as a synthetic bubble
-    // in the NEW pane until catch-up. Clear drain + typewriter state on
-    // every switch so the new session loads clean. `created` and `switched`
-    // both signal a session boundary; `deleted` / `renamed` do not.
+    // Every conversation boundary drops what the pane holds for the
+    // conversation it is leaving — the typewriter's drain state AND the
+    // composer task strip. `created`, `switched` and `draft` all signal one;
+    // `deleted` / `renamed` do not. The rule itself lives in session-boundary.ts.
     sessionsConnector.onSessionsChanged((e) => {
-      if (e.kind !== "switched" && e.kind !== "created") return;
-      log.debug("session-boundary.clear-drain", { kind: e.kind, sessionId: e.sessionId });
-      drainCycleRef.current = null;
-      inflightRef.current = null;
-      typewriterCycleIdRef.current = null;
-      typewriterRef.current.reset();
+      if (e.kind !== "switched" && e.kind !== "created" && e.kind !== "draft") return;
+      log.debug("session-boundary.clear-scope", {
+        kind: e.kind,
+        sessionId: e.kind === "draft" ? e.draftKey : e.sessionId,
+      });
+      clearConversationScopedState(e.kind, {
+        drain: drainTurnRef,
+        inflight: inflightRef,
+        committed: committedRef,
+        typewriterBubbleId: typewriterBubbleIdRef,
+        typewriter: typewriterRef.current,
+        taskList: taskListConnector,
+      });
       refreshMessages();
     });
 
@@ -578,7 +680,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     sdk.register(cognitionConnector);
     sdk.register(conversationConnector);
     sdk.register(inflightMessageConnector);
-    sdk.register(taskStatusConnector);
+    sdk.register(taskListConnector);
+    sdk.register(permissionConnector);
+    sdk.register(delegationConnector);
     sdk.register(sessionsConnector);
     sdk.register(preferencesConnector);
 
@@ -634,19 +738,19 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     const unsubTypewriter = typewriterRef.current.visible.subscribe((visibleText) => {
-      // Active stream: re-render the inflight bubble with the new visible substring.
-      if (inflightRef.current) {
+      // Active stream: re-render the inflight bubbles with the new visible substring.
+      if (inflightRef.current.length > 0) {
         refreshMessages();
         return;
       }
       // Drain mode: hold the synthetic inflight bubble until the typewriter has
       // revealed the full snapshot text, then clear drain state and let the
       // committed entry take over.
-      const drain = drainCycleRef.current;
+      const drain = drainTurnRef.current;
       if (drain) {
         if (visibleText.length >= drain.snapshot.text.length) {
-          drainCycleRef.current = null;
-          log.debug("typewriter-drain-complete", { cycleId: drain.cycleId, finalLen: visibleText.length });
+          drainTurnRef.current = null;
+          log.debug("typewriter-drain-complete", { turnId: drain.turnId, finalLen: visibleText.length });
         }
         refreshMessages();
       }
@@ -656,12 +760,13 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       sdk,
       capture,
       playback,
-      cycleQueue,
+      turnQueue,
       speechGate,
       audioInputConnector,
       textInputConnector,
       sessionsConnector,
       preferencesConnector,
+      permissionConnector,
       awaiting,
       refreshStatus,
       isOpusUplinkAvailable: () => !opusEncoderUnavailable && opusEncoder !== null,
@@ -672,6 +777,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         unsubPlayback();
         unsubPlaybackDrain();
         unsubTypewriter();
+        turnQueue.dispose();
         echoGate.dispose();
         awaiting.dispose();
         // Close order matters: denoiser's `onFrame` may still be in-flight
@@ -737,12 +843,18 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     sdkStatus,
     connectionLost,
     authExpired,
+    /** Copy for the last refused command, or null. Cleared by the consumer once shown. */
+    commandRejection,
     cycleStatus,
-    currentCycleId,
+    currentTurnId,
     voiceMode,
     messages,
     tasks,
     transcript,
+    /** L3 confirm prompt awaiting a decision, or null. Drives PermissionDialog. */
+    permissionRequest,
+    /** Background delegateTask progress, in dispatch order. */
+    delegations,
     /** Audio preferences (TTS on/off, channel) — mirrors profile + server-of-record state. */
     prefs,
     /** Seed the preferences state from the persisted profile. Call once after the profile loads. */
@@ -753,6 +865,19 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     /** Send a preferences patch to the gateway. Server echoes via `session.preferences.changed`. */
     patchPreferences: (patch: { ttsEnabled?: boolean; channel?: "voice" | "text" }) => {
       resources.preferencesConnector.patch(patch);
+    },
+    /**
+     * Answer the pending L3 confirm prompt. The connector clears the request
+     * and re-emits its pending set, which nulls `permissionRequest` — this
+     * function never mutates the signal itself, so the wire remains the only
+     * thing that can open or close the dialog (state-bound UX). A click that
+     * races the gateway's own resolution is dropped by the connector.
+     */
+    respondToPermission: (approved: boolean) => {
+      const current = permissionRequest.peek();
+      if (!current) return;
+      log.info("permission.respond", { requestId: current.requestId, approved });
+      resources.permissionConnector.respond(current.requestId, approved);
     },
     /** Sessions connector — wired for past-chats drawer + cross-tab sync. */
     sessionsConnector: resources.sessionsConnector,
@@ -816,19 +941,19 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
      *
      * Stops local playback first, then tells the server. We cannot wait for
      * the server's `playback.stop` round-trip: if the gateway already
-     * finished emitting `connector.audio.done`, it has nothing to abort and
+     * finished emitting `turn.audio.done`, it has nothing to abort and
      * will never send one, so the client would otherwise keep draining its
      * buffered audio.
      */
     interrupt: () => {
       // Interrupt cancels TTS — no audio response is expected from this
-      // action, so it does NOT call playback.unlock(). cycleQueue.cancelAll
+      // action, so it does NOT call playback.unlock(). turnQueue.cancelAll
       // → playback.clear() rebuilds the AudioContext synchronously inside
       // this onClick frame; iOS counts the click as transient activation,
       // so the rebuilt AC routes properly without an explicit unlock.
       isAudioPlayingRef.current = false;
       resources.awaiting.onPlaybackEnded();
-      resources.cycleQueue.cancelAll();
+      resources.turnQueue.cancelAll();
       resources.refreshStatus();
       resources.sdk.interrupt();
     },

@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
 // PrivacyGuardTest — privacy boundary: chat content must never appear in the
-// captured diagnostic log. Three cases are pinned:
+// captured diagnostic log. Four cases are pinned:
 //
 //   1. InFlightMessageConnector (streaming assistant text path): logs only
-//      cycleId, deltaLen, totalLen — never the raw delta. This was the
+//      turnId, deltaLen, totalLen — never the raw delta. This was the
 //      original guard.
 //
 //   2. WsTransport recv path (NEW): the inbound TEXT-frame boundary was the
@@ -17,6 +17,18 @@
 //      the raw user search query = user content. The fix changed to `qLen`
 //      (integer length only). This case drives the REAL SessionsConnector
 //      path so the guard fails loudly if raw query logging is re-introduced.
+//
+//   4. PermissionConnector (L3 confirm prompt path): a permission.request carries
+//      the ACTUAL tool ARGUMENT VALUES plus a gateway-rendered description built
+//      from them. Both are user content; the connector logs the argument-key COUNT
+//      only.
+//
+//   5. TaskListConnector (composer task strip path): `tasklist.state` rows carry
+//      `argsPreview` — a rendering of the tool's ACTUAL arguments (the message
+//      body, the search text, the entity being addressed). It is the newest
+//      content-bearing field on the mobile wire; the connector logs the row COUNT
+//      only. `clear()` is exercised too: it logs on the same tag and would be the
+//      obvious place to "helpfully" name what was dropped.
 //
 // Why this test belongs here (.claude/rules/testing.md):
 //   Security boundary — log content privacy is an explicit boundary concern.
@@ -32,18 +44,23 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
+import io.sentient.mobilesdk.connectors.PermissionConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
+import io.sentient.mobilesdk.connectors.TaskListConnector
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.log.LogConfig
 import io.sentient.mobilesdk.log.LogLevel
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.transport.WsIncoming
 import io.sentient.mobilesdk.transport.WsTransport
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -63,19 +80,19 @@ class PrivacyGuardTest {
         }
 
         // Drive the REAL streaming path with the secret as the assistant delta text.
-        // InFlightMessageConnector logs only cycleId, deltaLen, and totalLen — never
+        // InFlightMessageConnector logs only turnId, deltaLen, and totalLen — never
         // the raw delta — so the secret must not appear in the captured output.
         val c = InFlightMessageConnector()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c-priv-1", triggerKind = "text"))
-        c.handle(ServerMessage.MessageDelta(cycleId = "c-priv-1", delta = secret))
-        c.handle(ServerMessage.MessageDone(cycleId = "c-priv-1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c-priv-1", trigger = "text"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c-priv-1", text = secret))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c-priv-1"))
 
         // Also exercise the abort (barge-in) path — in-flight content dropped mid-stream
         // is the primary case the diagnostic feature exists to debug and a plausible
         // future leak vector. The secret must not appear in abort logging either.
-        c.handle(ServerMessage.CycleStarted(cycleId = "c-priv-2", triggerKind = "text"))
-        c.handle(ServerMessage.MessageDelta(cycleId = "c-priv-2", delta = secret))
-        c.handle(ServerMessage.CycleAborted(cycleId = "c-priv-2", reason = "barge-in"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c-priv-2", trigger = "text"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c-priv-2", text = secret))
+        c.handle(ServerMessage.TurnAborted(turnId = "c-priv-2", cutoff = "barge-in"))
 
         val log = captured.toString()
         assertTrue(
@@ -87,7 +104,7 @@ class PrivacyGuardTest {
     /**
      * Exercises the REAL WsTransport inbound TEXT-frame path — the proven
      * chat-content leak site (WsTransport.routeText logged `raw` directly before
-     * the fix). A realistic assistant.message.delta JSON frame whose `delta` field
+     * the fix). A realistic turn.text.delta JSON frame whose `text` field
      * contains the secret is delivered through FakeWebSocketEngine so that
      * routeText runs and logs. The captured ring must contain ZERO chat text.
      *
@@ -103,10 +120,10 @@ class PrivacyGuardTest {
             captured.append(tag).append(' ').append(line).append('\n')
         }
 
-        // Realistic assistant.message.delta wire frame — this is the exact JSON
-        // shape the gateway sends. The `delta` field holds the chat content that
-        // was leaking into the diagnostic ring.
-        val frame = """{"type":"assistant.message.delta","cycleId":"c-ws-priv-1","delta":"$secret"}"""
+        // Realistic turn.text.delta wire frame — this is the exact JSON shape the
+        // gateway sends. The `text` field holds the chat content that was leaking
+        // into the diagnostic ring.
+        val frame = """{"type":"turn.text.delta","turnId":"t-ws-priv-1","text":"$secret"}"""
 
         val fake = FakeWebSocketEngine()
         val session = fake.open("wss://test/ws", allowSelfSignedDevHost = false)
@@ -181,5 +198,67 @@ class PrivacyGuardTest {
             !log.contains(secret),
             "search query content leaked into the diagnostic log:\n$log",
         )
+    }
+
+    /**
+     * Permission prompts carry TOOL ARGUMENTS — the message body, the file path, the
+     * search text. They are user content and must never reach the diagnostic ring.
+     * The connector logs argKeys count only; the description is gateway-rendered from
+     * the same arguments, so it is not logged either.
+     */
+    @Test fun permission_request_arguments_are_never_logged() {
+        val secret = "tell Biscuit the vet appointment is at 4pm"
+        val captured = StringBuilder()
+        VitalsLogTap.register { _, tag, line -> captured.append(tag).append(' ').append(line).append('\n') }
+
+        val c = PermissionConnector(send = { })
+        c.handle(
+            ServerMessage.PermissionRequest(
+                requestId = "r-priv-1",
+                toolCallId = "tc-priv-1",
+                toolName = "sendMessage",
+                args = JsonObject(mapOf("body" to JsonPrimitive(secret))),
+                description = "Send: $secret",
+                expiresAtMs = 120_000,
+            ),
+        )
+        c.respond("r-priv-1", approved = true)
+
+        assertTrue(!captured.toString().contains(secret), "tool arguments leaked into the diagnostic log:\n$captured")
+    }
+
+    /**
+     * The composer task strip's rows carry `argsPreview` — the gateway's rendering of
+     * the tool's ACTUAL arguments (what was searched for, what was said, which entity
+     * was addressed). It is user content by the same rule as a permission prompt's
+     * `args`, and it is the newest content-bearing field on the mobile wire.
+     *
+     * Drives the REAL connector on both of its logging paths: the `tasklist.state`
+     * frame and `clear()`. Both must log counts and ids only.
+     */
+    @Test fun task_list_rows_never_log_their_args_preview() {
+        val secret = "search the vet for Biscuit's 4pm appointment"
+        val captured = StringBuilder()
+        VitalsLogTap.register { _, tag, line -> captured.append(tag).append(' ').append(line).append('\n') }
+
+        val c = TaskListConnector()
+        c.handle(
+            ServerMessage.TaskListState(
+                turnId = "t-priv-1",
+                items = listOf(
+                    TaskListItem(
+                        id = "tc-priv-1",
+                        toolName = "search_web",
+                        kind = "foreground",
+                        status = "running",
+                        argsPreview = secret,
+                        startedAtMs = 1L,
+                    ),
+                ),
+            ),
+        )
+        c.clear()
+
+        assertTrue(!captured.toString().contains(secret), "task-strip args leaked into the diagnostic log:\n$captured")
     }
 }

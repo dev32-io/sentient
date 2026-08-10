@@ -95,8 +95,9 @@ function sampleProfile(userId = "alice", voiceId = "voice-abc"): ProfileV1 {
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: voiceId },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {} },
+    tools: { permissions: {} },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };
@@ -107,7 +108,7 @@ function makeTokens(userId = "alice") {
     validate: vi.fn(
       async (): Promise<TokenResult<TokenPayload>> => ({
         ok: true,
-        value: { userId, isAdmin: false, issuedAt: 0, expiresAt: 9999999999 },
+        value: { userId, issuedAt: 0, expiresAt: 9999999999 },
       }),
     ),
   };
@@ -157,7 +158,6 @@ function makeDeps(overrides: Partial<VoicesHandlerDeps> = {}): {
   const deps: VoicesHandlerDeps = {
     tokens: makeTokens(),
     profileStore: makeProfileStore(),
-    refreshVoice: vi.fn(async () => undefined),
     ttsUrl: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,
@@ -303,7 +303,6 @@ describe("POST /api/v1/voices", () => {
     expect(profileStore.save).toHaveBeenCalledWith(
       expect.objectContaining({ voice: { provider: "local-tts", id: VALID_VOICE_ID } }),
     );
-    expect(deps.refreshVoice).toHaveBeenCalledWith("alice");
   });
 
   it("POST create forwards description and tags", async () => {
@@ -450,7 +449,6 @@ describe("POST /api/v1/voices", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toEqual({ voiceId: VALID_VOICE_ID, name: "Dad", warning: "not-activated" });
-    expect(deps.refreshVoice).not.toHaveBeenCalled();
   });
 });
 
@@ -470,7 +468,6 @@ describe("DELETE /api/v1/voices/:id", () => {
     expect(profileStore.save).toHaveBeenCalledWith(
       expect.objectContaining({ voice: { provider: "local-tts", id: "default" } }),
     );
-    expect(deps.refreshVoice).toHaveBeenCalledWith("alice");
   });
 
   it("leaves the profile unchanged when deleting a non-active voice", async () => {
@@ -484,7 +481,6 @@ describe("DELETE /api/v1/voices/:id", () => {
 
     expect(response.status).toBe(200);
     expect(profileStore.save).not.toHaveBeenCalled();
-    expect(deps.refreshVoice).not.toHaveBeenCalled();
   });
 
   it("returns 422 invalid-voice-id for a structurally-invalid id, without opening a WS", async () => {
@@ -572,7 +568,6 @@ describe("DELETE /api/v1/voices/:id", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body).toEqual({ voiceId: VALID_VOICE_ID, warning: "profile-not-updated" });
-    expect(deps.refreshVoice).not.toHaveBeenCalled();
   });
 
   it("returns 200 voiceId (no warning) when the service delete succeeds but the profile read fails", async () => {
@@ -587,7 +582,6 @@ describe("DELETE /api/v1/voices/:id", () => {
     const body = await response.json();
     expect(body).toEqual({ voiceId: VALID_VOICE_ID });
     expect(profileStore.save).not.toHaveBeenCalled();
-    expect(deps.refreshVoice).not.toHaveBeenCalled();
   });
 });
 

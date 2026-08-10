@@ -14,8 +14,13 @@
 //            as accepted so the ring flushes the buffered onset, then forward
 //            EVERY subsequent frame until close() or the maxOpenMs failsafe.
 //
-// Close is server-driven (caller invokes close() on connector.transcript.final),
+// Close is server-driven (the caller invokes close() when the gateway takes
+// ownership of the utterance — `turn.started`, via UserAudioInputConnector's
+// onTurnStarted; the pre-2.0 `connector.transcript.final` no longer exists),
 // NOT a local hangover — so the ring is created with hangoverFrames: 0.
+// maxOpenMs is a failsafe for a lost/never-sent close signal, not the design's
+// close path: if it is what closes the gate in practice, the caller is not
+// wired up and the mic streams for the whole failsafe window.
 //
 // Pure: the caller supplies the per-frame speech verdict and a monotonic nowMs.
 // ---------------------------------------------------------------------------

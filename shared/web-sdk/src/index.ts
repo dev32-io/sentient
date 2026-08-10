@@ -38,7 +38,10 @@ export type {
 } from "./connectors/preferences-connector.ts";
 
 export { AssistantAudioResponseConnector } from "./connectors/assistant-audio-response-connector.ts";
-export type { AssistantAudioResponseConfig } from "./connectors/assistant-audio-response-connector.ts";
+export type {
+  AssistantAudioFormat,
+  AssistantAudioResponseConfig,
+} from "./connectors/assistant-audio-response-connector.ts";
 
 export { CognitionStatusConnector } from "./connectors/cognition-status-connector.ts";
 export type {
@@ -55,8 +58,20 @@ export type {
   InFlightMessageConnectorConfig,
 } from "./connectors/inflight-message-connector.ts";
 
-export { TaskStatusConnector } from "./connectors/task-status-connector.ts";
-export type { TaskSnapshotItem, TaskStatusConnectorConfig } from "./connectors/task-status-connector.ts";
+export { TaskListConnector } from "./connectors/task-list-connector.ts";
+export type { TaskListConnectorConfig } from "./connectors/task-list-connector.ts";
+
+export { PermissionConfirmConnector } from "./connectors/permission-confirm-connector.ts";
+export type {
+  PermissionConfirmConnectorConfig,
+  PermissionRequestItem,
+} from "./connectors/permission-confirm-connector.ts";
+
+export { DelegationProgressConnector } from "./connectors/delegation-progress-connector.ts";
+export type {
+  DelegationProgressConnectorConfig,
+  DelegationProgressItem,
+} from "./connectors/delegation-progress-connector.ts";
 
 export { SessionsConnector } from "./connectors/sessions-connector.ts";
 export type {
@@ -78,6 +93,15 @@ export { createEmitter, type TypedEmitter } from "./event-emitter.ts";
 export { pcm16ToFloat32, float32ToPcm16 } from "./audio-codec.ts";
 export type { AudioCaptureAdapter } from "./audio-capture-adapter.ts";
 export type { AudioPlaybackAdapter } from "./audio-playback-adapter.ts";
+
+// ---------------------------------------------------------------------------
+// Turn-keyed TTS audio queue — strict sequential FIFO (spec §7.2). A new turn
+// NEVER preempts, fades, or replaces in-flight audio; `cancelAll()` is the ONLY
+// flush path and is driven exclusively by barge-in / interrupt.
+// ---------------------------------------------------------------------------
+
+export { createTurnAudioQueue } from "./turn-audio-queue.ts";
+export type { TurnAudioPlayback, TurnAudioQueue, TurnAudioQueueOptions } from "./turn-audio-queue.ts";
 
 // ---------------------------------------------------------------------------
 // Echo gate — client-side mic pre-filter that suppresses frames while the

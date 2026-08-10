@@ -280,3 +280,53 @@ Theme: define `res/values/themes.xml`:
 ```
 
 Add dep `com.google.android.material:material` for the parent theme to resolve.
+
+## Nested drag races: raw touch-slop, not angle dominance (learning)
+
+`detectVerticalDragGestures` / `detectHorizontalDragGestures` doc themselves as
+"coordinating" so only one axis locks a drag — but the coordination is a bare
+race on **raw per-axis touch-slop distance**, not a comparison of which axis
+is more dominant. `TouchSlopDetector.getPostSlopOffset` (AndroidX
+`androidx.compose.foundation.gestures.DragGestureDetector`) checks only
+`finalChange.mainAxis().absoluteValue >= touchSlop` for its OWN axis — it never
+looks at the cross-axis delta. So an ancestor's `detectVerticalDragGestures`
+sitting above a `Modifier.horizontalScroll` child wins outright whenever
+accumulated `|dy|` crosses the ~8dp system touch slop **first**, even on a
+gesture whose overall path is mostly horizontal (a diagonal-ish start, or a
+short/fast swipe, is enough) — and once it wins, it owns the rest of that
+touch, so the child's `horizontalScroll` gets nothing for the whole gesture.
+
+Symptom: a horizontally-scrollable row nested under an ancestor's raw
+vertical-swipe gesture (e.g. swipe-down-to-dismiss-keyboard) never visibly
+scrolls, with no other symptom (no dropped taps, no other gesture stealing
+it) — see `android/.../chat/composer/Composer.kt`'s swipe-dismiss vs. the task
+strip's `horizontalScroll` (`ComposerTaskStrip.kt`), diagnosed and fixed on
+`feature/native-orchestrator`.
+
+**Fix**: don't use the built-in per-axis-slop detector for an ancestor gesture
+that must coexist with a nested scrollable on the other axis. Write a plain
+`awaitEachGesture { awaitFirstDown(...); while (true) { awaitPointerEvent() ...
+} }` loop instead, and defer ALL consumption to a threshold well past the
+child's own slop (in practice, the same threshold the gesture's actual
+app-level action already fires at) — every event below that stays
+unconsumed, so the child's own scrollable always gets the chance to claim an
+ambiguous or horizontal-dominant drag first. Bail (`break`) the moment
+`change.isConsumed` is true — that's the child (or anyone else) having won.
+See `ComposerSwipeGesture.kt`'s `accumulateSwipeDown` for the extracted, unit
+-tested accumulator.
+
+## Deriving a child's min/max size from its own measured width
+
+`BoxWithConstraints` gives a composable its OWN incoming width constraint
+before composing children — the right tool whenever a child's size needs to
+be a function of "how much room do I actually have," not a fixed dp value or
+the screen width (which can differ from the actual available width once
+padding/insets are subtracted). Read `maxWidth` (a `Dp`) inside the
+`BoxWithConstraintsScope`, run it through a plain, unit-testable pure function
+extracted to its own file (`ComposerTaskStripLayout.kt`'s `taskPillMinWidth` is
+the reference shape — mirrors the same formula on webui via CSS
+`clamp(min, N cqw, max)` and iOS via `onGeometryChange` + a `ComposerLayout`
+static func), then apply the result via `Modifier.widthIn(min = ..., max =
+...)` as the OUTERMOST modifier on the child so it bounds the child's total
+size (padding included), matching CSS border-box `min-width`/`max-width`
+semantics.

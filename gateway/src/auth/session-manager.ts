@@ -1,4 +1,7 @@
 import type { Result, Session, UserRole } from "@sentient/protocol";
+import { getLog } from "../logging/logger.js";
+
+const log = getLog(["sentient", "gateway", "auth", "session-manager"]);
 
 // ---------------------------------------------------------------------------
 // SessionManager — tracks active connections.
@@ -48,8 +51,26 @@ export interface SessionManager {
    * No-op if the sessionId was never bound (e.g. session torn down before auth).
    */
   unbindUser(sessionId: string): void;
+  /**
+   * Forget every connection bound to [userId] — the registry entry AND the
+   * per-user slot, across all three maps.
+   *
+   * Called when that account's credentials are REVOKED (a role change or a
+   * deletion, session-handlers/credential-revocation.ts). The sockets are
+   * closed separately; this is what stops a revoked account's dead connections
+   * from holding its concurrent-connection budget against the fresh sign-in
+   * that follows. A no-op for a user with nothing bound.
+   */
+  revokeUser(userId: string): void;
 }
 
+/**
+ * Mints a CONNECTION id, one per WebSocket. It is ephemeral by design — the
+ * SessionManager registry, the per-user concurrent-connection cap, and log
+ * correlation are all connection-scoped concerns. Nothing durable may be
+ * keyed on it; the conversation the session store partitions on is resolved
+ * separately, in `handleSessionConfigure`.
+ */
 function generateSessionId(): string {
   const random = Math.random().toString(36).slice(2, 10);
   const timestamp = Date.now().toString(36);
@@ -132,6 +153,21 @@ export function createSessionManager(options: SessionManagerOptions = {}): Sessi
           userSessions.delete(userId);
         }
       }
+    },
+
+    revokeUser(userId: string): void {
+      const bound = userSessions.get(userId);
+      if (!bound) return;
+      for (const sessionId of bound) {
+        sessions.delete(sessionId);
+        sessionToUser.delete(sessionId);
+      }
+      userSessions.delete(userId);
+      log.info("session-manager.revoked", {
+        userId,
+        connections: bound.size,
+        reason: "this account's credentials were revoked — dropping its bound connections",
+      });
     },
   };
 }

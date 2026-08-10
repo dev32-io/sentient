@@ -1,7 +1,8 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { McpCatalog } from "@sentient/config";
+import type { McpCatalog, McpToolDescriptor } from "@sentient/config";
+import type { ImpactTier } from "@sentient/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isMap, parseDocument } from "yaml";
 import { createPersonalityStore } from "./personality-store.js";
@@ -10,12 +11,17 @@ import { PROFILE_SCHEMA_VERSION, type ProfileV1 } from "./profile-types.js";
 
 // Test catalog mirrors gateway/config.yaml#mcp_catalog defaults so the
 // renderer-output expectations stay close to operator-visible behavior.
+function tool(name: string, tier: ImpactTier): McpToolDescriptor {
+  return { name, description: "", tier };
+}
+
 const TEST_CATALOG: McpCatalog = {
   home_assistant: {
     transport: "http",
     url: "http://ha-mcp:8086/mcp",
     timeout: 30,
     connect_timeout: 5,
+    tools: { include: [tool("ha_get_state", "read"), tool("ha_call_service", "confirm")] },
   },
   gateway: {
     transport: "stdio",
@@ -24,7 +30,7 @@ const TEST_CATALOG: McpCatalog = {
     env: {},
     timeout: 30,
     connect_timeout: 10,
-    tools: { include: ["identify_user", "pause_audio"] },
+    tools: { include: [tool("identify_user", "confirm"), tool("pause_audio", "admin")] },
   },
   duckduckgo: {
     transport: "stdio",
@@ -33,12 +39,14 @@ const TEST_CATALOG: McpCatalog = {
     env: { HTTP_PROXY: "http://egress-proxy:3128" },
     timeout: 30,
     connect_timeout: 10,
+    tools: { include: [tool("search", "read")] },
   },
   music_assistant: {
     transport: "http",
     url: "http://ma-mcp:8668/mcp",
     timeout: 30,
     connect_timeout: 5,
+    tools: { include: [tool("ma_search", "read")] },
   },
 };
 
@@ -53,9 +61,10 @@ function buildTestProfile(userId: string): ProfileV1 {
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
     tools: {
-      enabled: { home_assistant: [], gateway: [], music_assistant: [], duckduckgo: [] },
+      permissions: {},
       toolsets: ["memory", "todo", "session_search", "skills"],
     },
     compression: { threshold: 0.5 },
@@ -154,78 +163,37 @@ describe("renderProfile (pure function)", () => {
     expect(r.hermesConfigYaml).toMatch(/max_output_tokens:\s*4096/);
   });
 
-  it("renders the enabled tools list", () => {
+  // Tool-permissions work (task 1, 2026-08-07): `profile.tools.enabled` is
+  // retired and renderMcpServers is now a STUB that always emits an empty
+  // block, regardless of profile.tools.permissions or the passed-in catalog
+  // — see the STUB comment on renderMcpServers in profile-renderer.ts for
+  // why (Hermes never read this block; the gateway registers its own MCP
+  // with a delegated Hermes agent through a separate, live mechanism). The
+  // catalog-driven rendering tests that used to live here (per-server URL/
+  // stdio/env rendering, unknown-server skip, per-tool narrowing, `available`
+  // stripping) asserted behavior that no longer exists and were deleted
+  // rather than kept red or given misleading passing bodies.
+  it("always renders an empty mcp_servers block (dead code pending Task 3)", () => {
     const r = renderProfile(profile, templateBody, ctx);
-    for (const tool of Object.keys(profile.tools.enabled)) {
-      expect(r.hermesConfigYaml).toMatch(new RegExp(tool));
-    }
-  });
-
-  // Hermes' MCP loader rejects servers that lack a transport (command for
-  // stdio, url for HTTP). Servers must be rendered with their full spec
-  // from the catalog — `enabled: true` alone surfaces as a warning loop
-  // and the tool is silently absent from the agent's tool set.
-  it("renders home_assistant with the HTTP url from the catalog", () => {
-    const r = renderProfile({ ...profile, tools: { enabled: { home_assistant: [] } } }, templateBody, ctx);
-    expect(r.hermesConfigYaml).toMatch(/home_assistant:\s*\n\s*url:\s*http:\/\/ha-mcp:8086\/mcp/);
-  });
-
-  it("interpolates {{userId}} into stdio args", () => {
-    const r = renderProfile({ ...profile, tools: { enabled: { gateway: [] } } }, templateBody, ctx);
-    expect(r.hermesConfigYaml).toMatch(/command:\s*nc/);
-    expect(r.hermesConfigYaml).toContain("/run/sentient/mcp-alice.sock");
-    expect(r.hermesConfigYaml).not.toContain("{{userId}}");
-  });
-
-  it("renders stdio env block (e.g. duckduckgo HTTP_PROXY)", () => {
-    const r = renderProfile({ ...profile, tools: { enabled: { duckduckgo: [] } } }, templateBody, ctx);
-    expect(r.hermesConfigYaml).toMatch(/duckduckgo:/);
-    expect(r.hermesConfigYaml).toMatch(/command:\s*duckduckgo-mcp-server/);
-    expect(r.hermesConfigYaml).toMatch(/HTTP_PROXY:\s*http:\/\/egress-proxy:3128/);
-  });
-
-  it("skips names not in the MCP catalog (no transport details)", () => {
-    const r = renderProfile(
-      { ...profile, tools: { enabled: { home_assistant: [], bogus_tool: [] } } },
-      templateBody,
-      ctx,
-    );
-    expect(r.hermesConfigYaml).toContain("home_assistant:");
-    expect(r.hermesConfigYaml).not.toContain("bogus_tool");
-  });
-
-  // Per-user `tools.enabled[name] = ["a","b"]` further narrows the operator's
-  // catalog `tools.include` allowlist for that server. Empty array = inherit.
-  it("narrows catalog tools.include with the user's per-tool whitelist", () => {
-    const r = renderProfile({ ...profile, tools: { enabled: { gateway: ["pause_audio"] } } }, templateBody, ctx);
-    expect(r.hermesConfigYaml).toMatch(/pause_audio/);
-    expect(r.hermesConfigYaml).not.toMatch(/identify_user/);
-  });
-
-  it("drops user tool names that are not in the operator's catalog include list", () => {
-    const r = renderProfile(
-      { ...profile, tools: { enabled: { gateway: ["pause_audio", "definitely_not_a_tool"] } } },
-      templateBody,
-      ctx,
-    );
-    expect(r.hermesConfigYaml).toMatch(/pause_audio/);
-    expect(r.hermesConfigYaml).not.toMatch(/definitely_not_a_tool/);
+    expect(r.hermesConfigYaml).toMatch(/mcp_servers:\s*\n\s*\{\}/);
   });
 
   // Hermes' 0008-acp-completeness-fixes patch reads `agent.enabled_toolsets`
-  // verbatim when explicit — does NOT auto-append MCP server keys. Renderer
-  // must merge profile.tools.toolsets ∪ profile.tools.enabled keys so MCP
-  // tools stay reachable after we trim hermes-acp out of the default.
-  it("emits agent.enabled_toolsets merging profile.toolsets and MCP server keys", () => {
+  // verbatim when explicit. It used to also merge in MCP server keys so MCP
+  // tools stayed reachable via a `mcp-<name>` alias; that merge is retired
+  // alongside `tools.enabled` because the aliased servers no longer appear
+  // in this file's (now-stubbed) mcp_servers block — see renderAgentBlock's
+  // comment in profile-renderer.ts.
+  it("emits agent.enabled_toolsets from profile.tools.toolsets only (no MCP-key merge)", () => {
     const r = renderProfile(profile, templateBody, ctx);
     expect(r.hermesConfigYaml).toMatch(/agent:\s*\n[\s\S]*enabled_toolsets:/);
     expect(r.hermesConfigYaml).toMatch(/-\s*memory/);
-    expect(r.hermesConfigYaml).toMatch(/-\s*home_assistant/);
-    expect(r.hermesConfigYaml).toMatch(/-\s*gateway/);
+    expect(r.hermesConfigYaml).not.toMatch(/-\s*home_assistant/);
+    expect(r.hermesConfigYaml).not.toMatch(/-\s*gateway/);
   });
 
   it("omits enabled_toolsets when profile.tools.toolsets is empty (legacy fallback)", () => {
-    const legacy = { ...profile, tools: { enabled: profile.tools.enabled, toolsets: [] } };
+    const legacy = { ...profile, tools: { permissions: profile.tools.permissions, toolsets: [] } };
     const r = renderProfile(legacy, templateBody, ctx);
     expect(r.hermesConfigYaml).not.toMatch(/enabled_toolsets:/);
   });
@@ -236,7 +204,7 @@ describe("renderProfile (pure function)", () => {
   });
 
   it("emits agent.reasoning_effort even when toolsets are empty (always-on agent block)", () => {
-    const legacy = { ...profile, tools: { enabled: profile.tools.enabled, toolsets: [] } };
+    const legacy = { ...profile, tools: { permissions: profile.tools.permissions, toolsets: [] } };
     const r = renderProfile(legacy, templateBody, ctx);
     expect(r.hermesConfigYaml).toMatch(/agent:\s*\n\s*reasoning_effort:\s*minimal/);
   });
@@ -250,57 +218,11 @@ describe("renderProfile (pure function)", () => {
     expect(r.hermesConfigYaml).toMatch(/reasoning_effort:\s*high/);
   });
 
-  // tools.available is operator metadata for the webui Tools page. Hermes'
-  // MCP loader rejects unknown keys — leaking `available` into the rendered
-  // config would silently disable the whole server.
-  it("strips tools.available from the rendered MCP block (UI-only metadata)", () => {
-    const catalogWithAvailable: McpCatalog = {
-      ...TEST_CATALOG,
-      gateway: {
-        ...TEST_CATALOG.gateway,
-        tools: {
-          include: ["identify_user"],
-          available: [
-            { name: "identify_user", description: "..." },
-            { name: "pause_audio", description: "..." },
-          ],
-        },
-      } as McpCatalog["gateway"],
-    };
-    const r = renderProfile(
-      { ...profile, tools: { enabled: { gateway: [] }, toolsets: profile.tools.toolsets } },
-      templateBody,
-      { ...ctx, mcpCatalog: catalogWithAvailable },
-    );
-    expect(r.hermesConfigYaml).not.toContain("available:");
-  });
-
   it("is deterministic — same inputs yield byte-identical outputs", () => {
     const r1 = renderProfile(profile, templateBody);
     const r2 = renderProfile(profile, templateBody);
     expect(r1.soulMarkdown).toBe(r2.soulMarkdown);
     expect(r1.hermesConfigYaml).toBe(r2.hermesConfigYaml);
-  });
-
-  // Signal device pairing: gateway + cron blocks are conditional on
-  // profile.devices.signal.paired. Hermes' built-in defaults apply when unpaired.
-  it("omits gateway+cron blocks when Signal is not paired", () => {
-    const r = renderProfile(profile, templateBody, ctx);
-    expect(r.hermesConfigYaml).not.toContain("default_deliver: signal");
-    // No leftover placeholder
-    expect(r.hermesConfigYaml).not.toContain("{{gateway_signal_block}}");
-  });
-
-  it("includes gateway+cron blocks when Signal is paired", () => {
-    const paired: ProfileV1 = {
-      ...profile,
-      devices: { signal: { paired: true, account_masked: "+1•••••1234" } },
-    };
-    const r = renderProfile(paired, templateBody, ctx);
-    expect(r.hermesConfigYaml).toContain("platforms:");
-    expect(r.hermesConfigYaml).toMatch(/signal:\s*\n\s+enabled: true/);
-    expect(r.hermesConfigYaml).toContain("unauthorized_dm_behavior: ignore");
-    expect(r.hermesConfigYaml).toContain("default_deliver: signal");
   });
 });
 

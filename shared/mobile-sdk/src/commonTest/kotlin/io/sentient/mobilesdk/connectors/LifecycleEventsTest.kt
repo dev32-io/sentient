@@ -15,19 +15,19 @@ class LifecycleEventsTest {
     }
 
     @Test
-    fun cycle_aborted_frame_emits_event_with_kind() {
+    fun turn_aborted_frame_emits_event_with_cutoff() {
         val events = mutableListOf<SdkEvent>()
-        val c = CycleErrorConnector(onErrorChange = {}, onEvent = { events.add(it) })
-        c.handle(ServerMessage.CycleAborted(cycleId = "c1", reason = "interrupt"))
-        assertTrue(events.any { it is SdkEvent.CycleAborted && it.cycleId == "c1" && it.kind == "interrupt" })
+        val c = TurnErrorConnector(onErrorChange = {}, onEvent = { events.add(it) })
+        c.handle(ServerMessage.TurnAborted(turnId = "c1", cutoff = "interrupt"))
+        assertTrue(events.any { it is SdkEvent.TurnAborted && it.turnId == "c1" && it.cutoff == "interrupt" })
     }
 
     @Test
-    fun cycle_completed_frame_emits_cycle_done_event() {
+    fun turn_completed_frame_emits_turn_done_event() {
         val events = mutableListOf<SdkEvent>()
         val c = CognitionStatusConnector(onStateChange = {}, onEvent = { events.add(it) })
-        c.handle(ServerMessage.CycleStarted(cycleId = "c2"))
-        c.handle(ServerMessage.CycleCompleted(cycleId = "c2"))
-        assertTrue(events.any { it is SdkEvent.CycleDone && it.cycleId == "c2" })
+        c.handle(ServerMessage.TurnStarted(turnId = "c2"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c2"))
+        assertTrue(events.any { it is SdkEvent.TurnDone && it.turnId == "c2" })
     }
 }

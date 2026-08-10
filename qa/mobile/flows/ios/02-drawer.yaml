@@ -39,6 +39,7 @@ tags:
     start: "8%, 50%"
     end: "85%, 50%"
     duration: 400
+# 8000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: { id: "history-search" }
     timeout: 8000

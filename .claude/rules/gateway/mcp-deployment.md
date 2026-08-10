@@ -17,11 +17,14 @@ paths:
 - Stdio-only upstream packages MUST be wrapped behind an HTTP MCP transport before they get a container.
 - One container per MCP, shared by all users. Per-user differentiation lives in tool-include lists and per-user secrets, not in container instances.
 - User profile config references MCP servers by `url:` only. Never `command:`.
-- MCP containers attach to `sentient-internal` and publish NO host ports. Adding `ports:` to an MCP service is forbidden; document this inline.
-- MCP containers needing internet egress route through `egress-proxy`. Match the upstream port in `tinyproxy.conf#ConnectPort`.
-- MCP containers needing LAN egress that the proxy cannot tunnel attach to `sentient-external` as a second network. They still publish no host port. Document the reason inline.
+- The native gateway dials every MCP over loopback (`http://127.0.0.1:<port>/mcp`), never docker DNS or `host.docker.internal` — the gateway is a host process, not a container.
+- Whether a container publishes its own loopback port is decided by one question: does it need LAN or internet egress by design?
+- An addon that does attaches `sentient-external` and publishes its own loopback port (`"127.0.0.1:<port>:<port>"`) — a direct publish adds no exposure it does not already have.
+- An addon that does not stays `sentient-internal`-only, publishes NO port, and is reached inward through `ingress-proxy`. Its egress confinement MUST be network-enforced, never `HTTP_PROXY`-advisory.
+- A `ports:` entry without the explicit `127.0.0.1` prefix is a defect — docker's default bind is `0.0.0.0`, which exposes the MCP to the LAN. MCP containers are never LAN-reachable; only the gateway's `8888` is.
+- Docker silently drops port publishing when **every** attached network is `internal: true`. `enforcePublishReachable` in `docker-driver.ts` refuses a template shaped to hit this silently.
+- Outbound internet egress routes through `egress-proxy`; match the upstream port in `tinyproxy.conf#ConnectPort`. `ingress-proxy` is the INBOUND path (gateway → MCP) and is orthogonal.
 - LAN target hostnames resolve via `extra_hosts:` static map in the compose service. Never rely on mDNS inside docker.
 - Each built-in MCP image lives at `gateway/mcp/<name>/Dockerfile`. Pin the upstream package version.
 - Secrets reach the container via `env_file: .env` + `${VAR}` interpolation. Never bake tokens into the image. Never write tokens into per-user rendered config.
-- Hermes-callable URLs follow `http://<service-name>:<port>/mcp`. Service name in compose matches the host token in user config.
 - Shipping a new MCP container requires updating `gateway/config.yaml#mcp_catalog` with the tool definitions in the same change. Remove any deprecated stdio block at the same time.

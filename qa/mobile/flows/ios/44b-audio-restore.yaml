@@ -8,6 +8,8 @@ tags:
 # the profile to its original state after 44-audio-fast-save.yaml. Self-navigating
 # (does not assume 44 left the Audio screen open), so it is batch-safe on its own.
 # Point-tap the switch (same RowToggle id-collision workaround as 44).
+# Coordinate calibration basis (iPhone 17 / iOS 26.5, 402x874) is documented in
+# 44-audio-fast-save.yaml — re-measure there with `inspect_screen`, never guess.
 - runFlow: _helpers/open-settings.yaml
 - tapOn:
     id: "settings-cat-audio"
@@ -19,7 +21,7 @@ tags:
     visible: { id: "settings-audio-tts" }
     timeout: 3000
 - tapOn:
-    point: "85%,24%"
+    point: "83%,26%"
 # Save appears after the toggle state-update — wait for it (avoid the race).
 - extendedWaitUntil:
     visible: { id: "settings-audio-save" }

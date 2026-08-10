@@ -71,6 +71,7 @@ tags:
     visible: { id: "settings-voice-screen" }
     timeout: 3000
 - tapOn: "Yours"
+# 5000ms: voice clone / synth round-trip (Fish import + local-tts)
 - extendedWaitUntil:
     visible: "E2E RecordTest"
     timeout: 5000

@@ -1,0 +1,278 @@
+2026-08-01T16:21:30.384 INFO  [ws:session-new] session.new.answered | sessionId="s-msazvmcy-bvnodzys" requestId="db8041fd-3763-4616-8ef7-e0220bde9e0a" conversationId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d"
+2026-08-01T16:22:05.027 INFO  [ws] client-disconnected
+2026-08-01T16:22:05.028 INFO  [runtime:permission-broker] permission-broker.deny-all | userId="u_0417d3b0" sessionId="s-msazvmcy-bvnodzys" count=0
+2026-08-01T16:22:05.029 INFO  [runtime:turn-voice] turn-voice.audio.cancel | sessionId="s-msazvmcy-bvnodzys" turnIds= reason="user cancel gesture — barge-in or interrupt"
+2026-08-01T16:22:05.029 INFO  [runtime:session-runtime] session-runtime.dispose | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" hadInFlight=false cutTurnCount=0
+2026-08-01T16:22:05.030 INFO  [store:session-store] store.closed | userId="u_0417d3b0"
+2026-08-01T16:22:05.030 INFO  [ws:replay-registry] replay-registry.released | surfaceKey="u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" epoch=11 leaseId=11 newestSeq=3 journalBytes=66456 retentionMs=300000
+2026-08-01T16:22:05.031 INFO  [ws] session-cleanup | sessionId="s-msazvmcy-bvnodzys" conversationId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d"
+2026-08-01T16:22:05.157 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:22:05.157 INFO  [ws] client-connected
+2026-08-01T16:22:05.157 INFO  [ws] session-opened | sessionId="s-msazxgpx-pp0x26bl"
+2026-08-01T16:22:05.159 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msazxgpx-pp0x26bl" userId="u_0417d3b0"
+2026-08-01T16:22:05.160 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" epoch=12 priorEpoch=11 leaseId=12 reason="no-resume-requested"
+2026-08-01T16:22:05.160 INFO  [bootstrap:text-stream-synthesizer] text-stream-synthesizer-created
+2026-08-01T16:22:05.160 WARN  [tools:mcp-client] mcp.entry.stdio-skipped | serverName="gateway" reason="v1 only dials http transport"
+2026-08-01T16:22:05.160 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" connectionId="s-msazxgpx-pp0x26bl"
+2026-08-01T16:22:05.161 INFO  [store:session-store] store.opened | userId="u_0417d3b0" schemaVersion=1
+2026-08-01T16:22:05.162 INFO  [ws:session-configure] session-configured | sessionId="s-msazxgpx-pp0x26bl" userId="u_0417d3b0" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="6e2aad99-4b3c-453b-bfd4-103441e1944d" hasRuntime=true hasVoice=true epoch=12 resumed=false requestedResumeLastSeq=null conversationId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d"
+2026-08-01T16:22:05.162 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-msazxgpx-pp0x26bl" itemCount=22
+2026-08-01T16:22:05.162 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" itemCount=22 throughSeq=195
+2026-08-01T16:22:05.163 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-msazxgpx-pp0x26bl" userId="u_0417d3b0" voiceId="c624a6ca980346ec9dc38bb434fec506" ttsEnabled=true channel="voice"
+2026-08-01T16:22:05.166 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:22:05.171 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:22:05.175 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="music_assistant" totalCount=10 filteredCount=10 elapsedMs=15
+2026-08-01T16:22:05.176 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="fetch" totalCount=1 filteredCount=1 elapsedMs=16
+2026-08-01T16:22:05.178 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:22:05.184 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="searxng" totalCount=5 filteredCount=1 elapsedMs=24
+2026-08-01T16:22:05.192 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="home_assistant" totalCount=78 filteredCount=16 elapsedMs=32
+2026-08-01T16:22:05.192 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-msazxgpx-pp0x26bl" toolCount=28
+2026-08-01T16:22:05.196 INFO  [gateway:api:profile] me.request | method="GET" userId="u_0417d3b0"
+2026-08-01T16:23:35.210 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=196 turnId="09ffc12f-6d61-4540-b04a-7a485c604db4"
+2026-08-01T16:23:35.210 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4"
+2026-08-01T16:23:35.211 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" trigger="user"
+2026-08-01T16:23:35.211 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" trigger="user" lastProcessedSeq=196
+2026-08-01T16:23:35.211 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" maxIterations=10 toolCount=29
+2026-08-01T16:23:35.212 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:23:35.212 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:23:35.213 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=39 toolCount=29
+2026-08-01T16:23:35.214 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:23:35.215 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:23:37.188 INFO  [provider:openai] stream-end | durationMs=1975 finishReason="tool_calls" promptTokens=31506 cachedTokens=0 completionTokens=72 cacheHitRatio=0
+2026-08-01T16:23:37.189 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:23:37.190 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_overview" toolCallId="call_7wieu6g7" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_overview"
+2026-08-01T16:23:37.369 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_overview" isError=false contentLength=13268 elapsedMs=178
+2026-08-01T16:23:37.369 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_overview" toolCallId="call_7wieu6g7" isError=false contentLength=13268
+2026-08-01T16:23:37.370 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" toolCallId="call_7wieu6g7" toolName="ha_get_overview" isError=false resultLength=13268
+2026-08-01T16:23:37.371 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=41 toolCount=29
+2026-08-01T16:23:40.989 INFO  [provider:openai] stream-end | durationMs=3618 finishReason="stop" promptTokens=35464 cachedTokens=0 completionTokens=532 cacheHitRatio=0
+2026-08-01T16:23:40.990 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" iteration=2 forceFinal=false finishReason="stop" toolCallCount=0 textLength=2017 cacheHitRatio=0
+2026-08-01T16:23:40.990 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" iterations=2 forceFinal=false
+2026-08-01T16:23:40.991 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" completed=true failed=false iterations=2
+2026-08-01T16:23:40.991 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4"
+2026-08-01T16:23:40.991 INFO  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" reason="nothing-to-summarize" regionEntries=41 keepRecentTurns=4 estimatedTokens=19901
+2026-08-01T16:23:42.216 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" encoding="opus" sampleRate=48000
+2026-08-01T16:23:42.217 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" encoding="opus" sampleRate=48000 firstFrameMs=7006
+2026-08-01T16:24:26.668 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=200 turnId="7f8af69b-693a-438f-959b-f7f505b39be9"
+2026-08-01T16:24:26.669 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9"
+2026-08-01T16:24:26.669 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" trigger="user"
+2026-08-01T16:24:26.669 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" trigger="user" lastProcessedSeq=200
+2026-08-01T16:24:26.669 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" maxIterations=10 toolCount=29
+2026-08-01T16:24:26.671 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=43 toolCount=29
+2026-08-01T16:24:28.540 INFO  [provider:openai] stream-end | durationMs=1869 finishReason="tool_calls" promptTokens=36000 cachedTokens=0 completionTokens=260 cacheHitRatio=0
+2026-08-01T16:24:28.540 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:24:28.541 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_vioxlahx" action="allow" reason="Read-only Home Assistant template render" rule="allow_ha_eval_template"
+2026-08-01T16:24:28.576 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_eval_template" isError=false contentLength=13580 elapsedMs=35
+2026-08-01T16:24:28.576 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_vioxlahx" isError=false contentLength=13580
+2026-08-01T16:24:28.576 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" toolCallId="call_vioxlahx" toolName="ha_eval_template" isError=false resultLength=13580
+2026-08-01T16:24:28.577 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=45 toolCount=29
+2026-08-01T16:24:30.010 INFO  [provider:openai] stream-end | durationMs=1433 finishReason="tool_calls" promptTokens=40578 cachedTokens=0 completionTokens=106 cacheHitRatio=0
+2026-08-01T16:24:30.011 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" iteration=2 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:24:30.012 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_ccwk6whl" action="allow" reason="Read-only Home Assistant template render" rule="allow_ha_eval_template"
+2026-08-01T16:24:30.039 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_eval_template" isError=false contentLength=282 elapsedMs=27
+2026-08-01T16:24:30.039 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_ccwk6whl" isError=false contentLength=282
+2026-08-01T16:24:30.039 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" toolCallId="call_ccwk6whl" toolName="ha_eval_template" isError=false resultLength=282
+2026-08-01T16:24:30.040 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=47 toolCount=29
+2026-08-01T16:24:32.116 INFO  [provider:openai] stream-end | durationMs=2076 finishReason="tool_calls" promptTokens=40741 cachedTokens=0 completionTokens=83 cacheHitRatio=0
+2026-08-01T16:24:32.116 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" iteration=3 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:24:32.117 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_state" toolCallId="call_qafg1ikd" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_state"
+2026-08-01T16:24:32.173 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_state" isError=false contentLength=2009 elapsedMs=56
+2026-08-01T16:24:32.174 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_state" toolCallId="call_qafg1ikd" isError=false contentLength=2009
+2026-08-01T16:24:32.174 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" toolCallId="call_qafg1ikd" toolName="ha_get_state" isError=false resultLength=2009
+2026-08-01T16:24:32.175 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=49 toolCount=29
+2026-08-01T16:24:34.471 INFO  [provider:openai] stream-end | durationMs=2296 finishReason="stop" promptTokens=41471 cachedTokens=0 completionTokens=297 cacheHitRatio=0
+2026-08-01T16:24:34.471 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" iteration=4 forceFinal=false finishReason="stop" toolCallCount=0 textLength=1130 cacheHitRatio=0
+2026-08-01T16:24:34.472 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" iterations=4 forceFinal=false
+2026-08-01T16:24:34.472 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" completed=true failed=false iterations=4
+2026-08-01T16:24:34.472 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9"
+2026-08-01T16:24:34.473 INFO  [runtime:compaction] compaction.summarizing | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" estimatedTokens=24248 thresholdTokens=8000 boundarySeq=207 olderEntries=31 recentEntries=18 transcriptChars=62965
+2026-08-01T16:24:34.474 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=2 toolCount=0
+2026-08-01T16:24:53.498 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=70
+2026-08-01T16:24:53.498 INFO  [tts:local-tts] dispose
+2026-08-01T16:24:53.498 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:24:53.498 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" framesSent=70
+2026-08-01T16:24:53.498 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msazxgpx-pp0x26bl" turnId="09ffc12f-6d61-4540-b04a-7a485c604db4" frameCount=70 bytesSent=969309 elapsedMs=78287
+2026-08-01T16:24:53.499 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:24:53.499 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:24:53.500 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:24:53.500 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:24:54.599 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" encoding="opus" sampleRate=48000
+2026-08-01T16:24:54.599 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" encoding="opus" sampleRate=48000 firstFrameMs=1100
+2026-08-01T16:25:02.494 INFO  [provider:openai] stream-end | durationMs=28020 finishReason="stop" promptTokens=15130 cachedTokens=0 completionTokens=842 cacheHitRatio=0
+2026-08-01T16:25:02.494 INFO  [runtime:compaction] compaction.committed | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" seq=208 compactedThroughSeq=207 estimatedTokens=24248 summaryChars=2995 markerChars=37896
+2026-08-01T16:25:25.744 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=209 turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64"
+2026-08-01T16:25:25.744 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64"
+2026-08-01T16:25:25.745 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" trigger="user"
+2026-08-01T16:25:25.745 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" trigger="user" lastProcessedSeq=209
+2026-08-01T16:25:25.745 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" maxIterations=10 toolCount=29
+2026-08-01T16:25:25.746 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=3 toolCount=29
+2026-08-01T16:25:27.979 INFO  [provider:openai] stream-end | durationMs=2233 finishReason="tool_calls" promptTokens=26677 cachedTokens=0 completionTokens=169 cacheHitRatio=0
+2026-08-01T16:25:27.979 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:25:27.980 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_15c7bmfi" action="allow" reason="Read-only Home Assistant template render" rule="allow_ha_eval_template"
+2026-08-01T16:25:28.011 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_eval_template" isError=false contentLength=558 elapsedMs=30
+2026-08-01T16:25:28.011 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_15c7bmfi" isError=false contentLength=558
+2026-08-01T16:25:28.012 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" toolCallId="call_15c7bmfi" toolName="ha_eval_template" isError=false resultLength=558
+2026-08-01T16:25:28.013 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=5 toolCount=29
+2026-08-01T16:25:30.592 INFO  [provider:openai] stream-end | durationMs=2579 finishReason="stop" promptTokens=26938 cachedTokens=0 completionTokens=240 cacheHitRatio=0
+2026-08-01T16:25:30.592 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" iteration=2 forceFinal=false finishReason="stop" toolCallCount=0 textLength=741 cacheHitRatio=0
+2026-08-01T16:25:30.593 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" iterations=2 forceFinal=false
+2026-08-01T16:25:30.593 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" completed=true failed=false iterations=2
+2026-08-01T16:25:30.593 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64"
+2026-08-01T16:25:30.594 INFO  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" reason="nothing-to-summarize" regionEntries=4 keepRecentTurns=4 estimatedTokens=9882
+2026-08-01T16:25:32.870 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=39
+2026-08-01T16:25:32.870 INFO  [tts:local-tts] dispose
+2026-08-01T16:25:32.871 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:25:32.871 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" framesSent=109
+2026-08-01T16:25:32.871 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msazxgpx-pp0x26bl" turnId="7f8af69b-693a-438f-959b-f7f505b39be9" frameCount=39 bytesSent=533046 elapsedMs=39372
+2026-08-01T16:25:32.871 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:25:32.871 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:25:32.872 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:25:32.872 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:25:34.073 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" encoding="opus" sampleRate=48000
+2026-08-01T16:25:34.073 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" encoding="opus" sampleRate=48000 firstFrameMs=1202
+2026-08-01T16:25:56.423 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=23
+2026-08-01T16:25:56.423 INFO  [tts:local-tts] dispose
+2026-08-01T16:25:56.424 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:25:56.424 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" framesSent=132
+2026-08-01T16:25:56.424 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msazxgpx-pp0x26bl" turnId="9fdad238-82da-407d-a0ab-4e3a9454bf64" frameCount=23 bytesSent=320103 elapsedMs=23553
+2026-08-01T16:26:21.839 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=213 turnId="1798de05-8790-4aea-9401-74b5178ae036"
+2026-08-01T16:26:21.839 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036"
+2026-08-01T16:26:21.840 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036" trigger="user"
+2026-08-01T16:26:21.840 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" trigger="user" lastProcessedSeq=213
+2026-08-01T16:26:21.840 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" maxIterations=10 toolCount=29
+2026-08-01T16:26:21.841 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:26:21.841 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:26:21.842 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=7 toolCount=29
+2026-08-01T16:26:21.844 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:26:21.845 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:26:23.135 INFO  [provider:openai] stream-end | durationMs=1293 finishReason="tool_calls" promptTokens=27194 cachedTokens=0 completionTokens=130 cacheHitRatio=0
+2026-08-01T16:26:23.135 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:26:23.136 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_51ct69hq" action="allow" reason="Read-only Home Assistant template render" rule="allow_ha_eval_template"
+2026-08-01T16:26:23.165 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_eval_template" isError=false contentLength=861 elapsedMs=28
+2026-08-01T16:26:23.165 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_eval_template" toolCallId="call_51ct69hq" isError=false contentLength=861
+2026-08-01T16:26:23.166 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" toolCallId="call_51ct69hq" toolName="ha_eval_template" isError=false resultLength=861
+2026-08-01T16:26:23.167 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=9 toolCount=29
+2026-08-01T16:26:25.531 INFO  [provider:openai] stream-end | durationMs=2364 finishReason="stop" promptTokens=27562 cachedTokens=0 completionTokens=349 cacheHitRatio=0
+2026-08-01T16:26:25.532 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" iteration=2 forceFinal=false finishReason="stop" toolCallCount=0 textLength=968 cacheHitRatio=0
+2026-08-01T16:26:25.532 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" iterations=2 forceFinal=false
+2026-08-01T16:26:25.532 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" completed=true failed=false iterations=2
+2026-08-01T16:26:25.532 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036"
+2026-08-01T16:26:25.533 INFO  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="1798de05-8790-4aea-9401-74b5178ae036" reason="nothing-to-summarize" regionEntries=8 keepRecentTurns=4 estimatedTokens=10421
+2026-08-01T16:26:26.752 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036" encoding="opus" sampleRate=48000
+2026-08-01T16:26:26.752 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036" encoding="opus" sampleRate=48000 firstFrameMs=4911
+2026-08-01T16:26:50.384 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=31
+2026-08-01T16:26:50.385 INFO  [tts:local-tts] dispose
+2026-08-01T16:26:50.385 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:26:50.385 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036" framesSent=163
+2026-08-01T16:26:50.385 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msazxgpx-pp0x26bl" turnId="1798de05-8790-4aea-9401-74b5178ae036" frameCount=31 bytesSent=317637 elapsedMs=28544
+2026-08-01T16:26:55.990 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=217 turnId="59df0d02-2d6c-406e-ac20-349263d9b02a"
+2026-08-01T16:26:55.991 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a"
+2026-08-01T16:26:55.991 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" trigger="user"
+2026-08-01T16:26:55.991 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" trigger="user" lastProcessedSeq=217
+2026-08-01T16:26:55.992 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" maxIterations=10 toolCount=29
+2026-08-01T16:26:55.992 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:26:55.992 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:26:55.993 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=11 toolCount=29
+2026-08-01T16:26:55.994 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:26:55.995 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:26:58.618 INFO  [provider:openai] stream-end | durationMs=2625 finishReason="stop" promptTokens=27911 cachedTokens=0 completionTokens=311 cacheHitRatio=0
+2026-08-01T16:26:58.618 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=668 cacheHitRatio=0
+2026-08-01T16:26:58.619 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" iterations=1 forceFinal=false
+2026-08-01T16:26:58.619 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" completed=true failed=false iterations=1
+2026-08-01T16:26:58.619 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a"
+2026-08-01T16:26:58.619 INFO  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" reason="nothing-to-summarize" regionEntries=10 keepRecentTurns=4 estimatedTokens=10619
+2026-08-01T16:26:59.827 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" encoding="opus" sampleRate=48000
+2026-08-01T16:26:59.827 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" encoding="opus" sampleRate=48000 firstFrameMs=3835
+2026-08-01T16:27:21.035 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=23
+2026-08-01T16:27:21.035 INFO  [tts:local-tts] dispose
+2026-08-01T16:27:21.036 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:27:21.036 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" framesSent=186
+2026-08-01T16:27:21.036 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msazxgpx-pp0x26bl" turnId="59df0d02-2d6c-406e-ac20-349263d9b02a" frameCount=23 bytesSent=300029 elapsedMs=25044
+2026-08-01T16:28:25.523 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=219 turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e"
+2026-08-01T16:28:25.524 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msazxgpx-pp0x26bl" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e"
+2026-08-01T16:28:25.525 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msazxgpx-pp0x26bl" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" trigger="user"
+2026-08-01T16:28:25.525 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" trigger="user" lastProcessedSeq=219
+2026-08-01T16:28:25.525 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" maxIterations=10 toolCount=29
+2026-08-01T16:28:25.525 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:28:25.526 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:28:25.526 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=13 toolCount=29
+2026-08-01T16:28:25.529 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:28:25.530 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:28:26.926 INFO  [provider:openai] stream-end | durationMs=1400 finishReason="tool_calls" promptTokens=28116 cachedTokens=0 completionTokens=124 cacheHitRatio=0
+2026-08-01T16:28:26.926 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:28:26.928 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_history" toolCallId="call_9ueypppb" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_history"
+2026-08-01T16:28:27.044 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_history" isError=false contentLength=81623 elapsedMs=115
+2026-08-01T16:28:27.045 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msazxgpx-pp0x26bl" tool="ha_get_history" toolCallId="call_9ueypppb" isError=false contentLength=81623
+2026-08-01T16:28:27.047 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" toolCallId="call_9ueypppb" toolName="ha_get_history" isError=false resultLength=81623
+2026-08-01T16:28:27.048 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=15 toolCount=29
+2026-08-01T16:28:32.102 INFO  [provider:openai] stream-end | durationMs=5054 finishReason="length" promptTokens=56183 cachedTokens=0 completionTokens=1024 cacheHitRatio=0
+2026-08-01T16:28:32.103 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" iteration=2 forceFinal=false finishReason="length" toolCallCount=0 textLength=0 cacheHitRatio=0
+2026-08-01T16:28:32.104 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" iterations=2 forceFinal=false
+2026-08-01T16:28:32.105 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" completed=true failed=false iterations=2
+2026-08-01T16:28:32.105 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msazxgpx-pp0x26bl" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e"
+2026-08-01T16:28:32.106 INFO  [runtime:compaction] compaction.skipped | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="4fe97f75-1a11-4a1a-ae62-fe51ba6fa22e" reason="nothing-to-summarize" regionEntries=14 keepRecentTurns=4 estimatedTokens=31088
+2026-08-01T16:39:09.590 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=286 turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2"
+2026-08-01T16:39:09.591 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2"
+2026-08-01T16:39:09.593 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" trigger="user"
+2026-08-01T16:39:09.593 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" trigger="user" lastProcessedSeq=286
+2026-08-01T16:39:09.594 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" maxIterations=10 toolCount=29
+2026-08-01T16:39:09.594 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:39:09.594 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:39:09.595 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=3 toolCount=29
+2026-08-01T16:39:09.597 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:39:09.598 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:39:11.904 INFO  [provider:openai] stream-end | durationMs=2309 finishReason="tool_calls" promptTokens=19417 cachedTokens=0 completionTokens=305 cacheHitRatio=0
+2026-08-01T16:39:11.905 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:39:11.907 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="ha_get_overview" toolCallId="call_eay3t4h1" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_overview"
+2026-08-01T16:39:12.020 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_overview" isError=false contentLength=759 elapsedMs=112
+2026-08-01T16:39:12.020 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="ha_get_overview" toolCallId="call_eay3t4h1" isError=false contentLength=759
+2026-08-01T16:39:12.021 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" toolCallId="call_eay3t4h1" toolName="ha_get_overview" isError=false resultLength=759
+2026-08-01T16:39:12.023 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=5 toolCount=29
+2026-08-01T16:39:14.248 INFO  [provider:openai] stream-end | durationMs=2225 finishReason="tool_calls" promptTokens=19728 cachedTokens=0 completionTokens=193 cacheHitRatio=0
+2026-08-01T16:39:14.249 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" iteration=2 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:39:14.250 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="ha_get_overview" toolCallId="call_202d02w9" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_overview"
+2026-08-01T16:39:14.310 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_overview" isError=false contentLength=1489 elapsedMs=60
+2026-08-01T16:39:14.310 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="ha_get_overview" toolCallId="call_202d02w9" isError=false contentLength=1489
+2026-08-01T16:39:14.311 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" toolCallId="call_202d02w9" toolName="ha_get_overview" isError=false resultLength=1489
+2026-08-01T16:39:14.313 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=7 toolCount=29
+2026-08-01T16:39:18.828 INFO  [provider:openai] stream-end | durationMs=4515 finishReason="stop" promptTokens=20271 cachedTokens=0 completionTokens=432 cacheHitRatio=0
+2026-08-01T16:39:18.829 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" iteration=3 forceFinal=false finishReason="stop" toolCallCount=0 textLength=976 cacheHitRatio=0
+2026-08-01T16:39:18.829 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" iterations=3 forceFinal=false
+2026-08-01T16:39:18.829 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" completed=true failed=false iterations=3
+2026-08-01T16:39:18.829 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2"
+2026-08-01T16:39:19.865 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" encoding="opus" sampleRate=48000
+2026-08-01T16:39:19.865 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" encoding="opus" sampleRate=48000 firstFrameMs=10271
+2026-08-01T16:39:46.021 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=32
+2026-08-01T16:39:46.021 INFO  [tts:local-tts] dispose
+2026-08-01T16:39:46.021 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:39:46.021 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" framesSent=149
+2026-08-01T16:39:46.021 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msb09m5r-46751n6z" turnId="8c0a7046-38cc-4857-83f8-48b9a0b699f2" frameCount=32 bytesSent=428702 elapsedMs=36427
+2026-08-01T16:39:47.270 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=292 turnId="266fbba3-64d1-4080-8427-6bd08f7684b3"
+2026-08-01T16:39:47.271 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3"
+2026-08-01T16:39:47.271 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" trigger="user"
+2026-08-01T16:39:47.272 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" trigger="user" lastProcessedSeq=292
+2026-08-01T16:39:47.272 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" maxIterations=10 toolCount=29
+2026-08-01T16:39:47.272 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:39:47.273 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:39:47.273 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=9 toolCount=29
+2026-08-01T16:39:47.275 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:39:47.275 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:39:48.492 INFO  [provider:openai] stream-end | durationMs=1219 finishReason="tool_calls" promptTokens=20525 cachedTokens=0 completionTokens=99 cacheHitRatio=0
+2026-08-01T16:39:48.493 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:39:48.494 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="ha_get_state" toolCallId="call_ue2p2u6m" action="allow" reason="Read-only Home Assistant query" rule="allow_ha_get_state"
+2026-08-01T16:39:48.547 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="home_assistant" name="ha_get_state" isError=true contentLength=575 elapsedMs=53
+2026-08-01T16:39:48.547 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="ha_get_state" toolCallId="call_ue2p2u6m" isError=true contentLength=575
+2026-08-01T16:39:48.548 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" toolCallId="call_ue2p2u6m" toolName="ha_get_state" isError=true resultLength=575
+2026-08-01T16:39:48.550 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=11 toolCount=29
+2026-08-01T16:39:49.588 INFO  [provider:openai] stream-end | durationMs=1038 finishReason="stop" promptTokens=20757 cachedTokens=0 completionTokens=33 cacheHitRatio=0
+2026-08-01T16:39:49.588 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" iteration=2 forceFinal=false finishReason="stop" toolCallCount=0 textLength=74 cacheHitRatio=0
+2026-08-01T16:39:49.589 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" iterations=2 forceFinal=false
+2026-08-01T16:39:49.589 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" completed=true failed=false iterations=2
+2026-08-01T16:39:49.589 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3"
+2026-08-01T16:39:50.726 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" encoding="opus" sampleRate=48000
+2026-08-01T16:39:50.726 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" encoding="opus" sampleRate=48000 firstFrameMs=3454
+2026-08-01T16:39:51.942 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=4
+2026-08-01T16:39:51.942 INFO  [tts:local-tts] dispose
+2026-08-01T16:39:51.942 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:39:51.942 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" framesSent=153
+2026-08-01T16:39:51.943 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msb09m5r-46751n6z" turnId="266fbba3-64d1-4080-8427-6bd08f7684b3" frameCount=4 bytesSent=35766 elapsedMs=4671

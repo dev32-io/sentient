@@ -1,7 +1,8 @@
 import type { AuthConfig } from "@sentient/config";
-import type { Result } from "@sentient/protocol";
+import { DEFAULT_ROLE, type Result, type UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import { loadOrCreateAuthSecret } from "./auth-secret.js";
+import { NEVER_REVOKED, createCredentialFloor } from "./credential-floor.js";
 import { hashPin, verifyPin } from "./pin-service.js";
 import { type TokenService, createTokenService } from "./token-service.js";
 import type { AvatarTint, StoreResult, UserRecord } from "./types.js";
@@ -13,7 +14,10 @@ export interface CreateUserInput {
   userId: string;
   displayName: string;
   pin: string;
-  isAdmin: boolean;
+  /** Omitted means `adult` — the owner's default for a new household member.
+   *  Never inferred from anything else; a caller that wants an operator asks
+   *  for one by name. */
+  role?: UserRole;
   avatarTint: AvatarTint;
 }
 
@@ -42,8 +46,14 @@ export interface AuthService {
 
 export async function createAuthService(authConfig: AuthConfig): Promise<AuthService> {
   const secret = await loadOrCreateAuthSecret();
-  const tokens = createTokenService({ secret, ttlSeconds: authConfig.token_ttl_seconds });
   const users = createUserStore();
+  // The store is built FIRST because the token service now needs it: validity
+  // is the record's answer, read per call through this port.
+  const tokens = createTokenService({
+    secret,
+    ttlSeconds: authConfig.token_ttl_seconds,
+    credentialFloor: createCredentialFloor(users),
+  });
 
   const argon2Params = {
     memoryKb: authConfig.argon2_memory_kb,
@@ -62,32 +72,39 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         userId: input.userId,
         displayName: input.displayName,
         pinHash,
-        isAdmin: input.isAdmin,
+        role: input.role ?? DEFAULT_ROLE,
         avatarTint: input.avatarTint,
         createdAt: new Date().toISOString(),
+        credentialsValidFrom: NEVER_REVOKED,
       };
       const r = await users.add(rec);
       if (!r.ok) {
         if (r.error === "already-exists") return { ok: false, error: "already-exists" };
         return { ok: false, error: "io-error" };
       }
-      log.info("createUser", { userId: rec.userId, isAdmin: rec.isAdmin });
+      log.info("createUser", { userId: rec.userId, role: rec.role });
       return { ok: true, value: rec };
     },
 
     async authenticate(userId, pin) {
       const r = await users.get(userId);
       if (!r.ok || r.value === null) {
-        log.debug("authenticate.no-user", { userId });
+        // D20: a rejected credential is a security boundary decision, not a
+        // debug trace — WARN so it survives at the running `info` level
+        // (also the documented prod default). userId + reason are the whole
+        // payload; the pin is NEVER logged, not even truncated.
+        log.warn("authenticate.no-user", { userId, reason: "no such user" });
         return { ok: false, error: "invalid-credentials" };
       }
       const ok = await verifyPin(pin, r.value.pinHash);
       if (!ok) {
-        log.debug("authenticate.wrong-pin", { userId });
+        log.warn("authenticate.wrong-pin", { userId, reason: "wrong pin" });
         return { ok: false, error: "invalid-credentials" };
       }
-      const token = await tokens.issue({ userId: r.value.userId, isAdmin: r.value.isAdmin });
-      log.info("authenticate.ok", { userId: r.value.userId });
+      // The token carries identity only — the role is resolved from this same
+      // record at each authorization decision, never from the credential.
+      const token = await tokens.issue({ userId: r.value.userId });
+      log.info("authenticate.ok", { userId: r.value.userId, role: r.value.role });
       return { ok: true, value: { token, user: r.value } };
     },
 
@@ -137,7 +154,18 @@ export async function createAuthService(authConfig: AuthConfig): Promise<AuthSer
         return { ok: false, error: "wrong-pin" };
       }
       const newHash = await hashPin(newPin, argon2Params);
-      const r = await users.update(userId, { pinHash: newHash });
+      // OWNER RULING (2026-08-10 whole-branch review, I3): a PIN change moves the
+      // credential floor. This is standard practice — changing your PIN
+      // re-establishes the credential, so every token minted under the old PIN
+      // (on this device AND every other one) is invalidated at the next check.
+      // The UX cost is accepted: the user is kicked to login on the session they
+      // changed the PIN from. Written in the SAME update as `pinHash` so the
+      // hash and the floor move atomically. Mirror ruling at
+      // `admin/user-provisioner.ts#resetPinFlow`.
+      const r = await users.update(userId, {
+        pinHash: newHash,
+        credentialsValidFrom: new Date().toISOString(),
+      });
       if (!r.ok) {
         log.warn("changePin.io-error", { userId });
         return { ok: false, error: "io-error" };

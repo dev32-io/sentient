@@ -42,6 +42,7 @@ tags:
     visible: "Remove"
     timeout: 3000
 - tapOn: "Remove"
+# 8000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: { text: ".*1 active.*" }
     timeout: 8000

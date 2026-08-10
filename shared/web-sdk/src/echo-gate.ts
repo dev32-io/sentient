@@ -109,12 +109,12 @@ export interface EchoGate {
    * threshold. Returns true if the frame should be forwarded to STT.
    */
   acceptFrame(pcm: Int16Array): boolean;
-  /** Assistant audio just started playing for this cycle. */
-  onPlaybackStart(cycleId: string): void;
+  /** Assistant audio just started playing for this turn. */
+  onPlaybackStart(turnId: string): void;
   /** Output sink finished draining all scheduled audio. */
-  onPlaybackDrain(cycleId: string): void;
+  onPlaybackDrain(turnId: string): void;
   /** Playback cancelled mid-stream (barge-in, interrupt). */
-  onPlaybackCancel(cycleId: string): void;
+  onPlaybackCancel(turnId: string): void;
   /** Current state snapshot (for logging / diagnostics). */
   snapshot(): EchoGateSnapshot;
   /** Subscribe to state transitions. Returns unsubscribe. */
@@ -186,16 +186,16 @@ export function createEchoGate(config: EchoGateConfig, deps: EchoGateDeps = {}):
       const rms = computeRms(pcm);
       return rms >= thresholdFor(state);
     },
-    onPlaybackStart(_cycleId) {
+    onPlaybackStart(_turnId) {
       clearTailTimer();
       setState("playback");
     },
-    onPlaybackDrain(_cycleId) {
+    onPlaybackDrain(_turnId) {
       if (state !== "playback") return; // late or duplicate drain
       setState("tail");
       startTailTimer();
     },
-    onPlaybackCancel(_cycleId) {
+    onPlaybackCancel(_turnId) {
       clearTailTimer();
       setState("baseline");
     },

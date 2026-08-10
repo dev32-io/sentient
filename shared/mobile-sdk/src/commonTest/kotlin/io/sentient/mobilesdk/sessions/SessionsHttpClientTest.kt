@@ -28,18 +28,21 @@ private fun buildClient(engine: MockEngine, token: String = "t"): SessionsHttpCl
 class SessionsHttpClientTest {
 
     @Test
-    fun list_parses_items_and_sends_bearer() = runTest {
+    fun list_maps_the_gateways_sessions_envelope_and_sends_bearer() = runTest {
         var authHeader: String? = null
         val engine = MockEngine { req ->
             authHeader = req.headers[HttpHeaders.Authorization]
             respond(
-                """{"items":[{"sessionId":"s-1","title":"T","lastActiveAt":1}],"total":1,"hasMore":false}""",
+                """{"sessions":[{"sessionId":"s-1","createdAt":1,"updatedAt":2,"title":"T",""" +
+                    """"titleProvenance":"user","version":1}]}""",
                 HttpStatusCode.OK,
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
         val rows = buildClient(engine).list(limit = 100, offset = 0)
         assertEquals("s-1", rows.first().sessionId)
+        assertEquals("T", rows.first().title)
+        assertEquals(2L, rows.first().lastActiveAt)
         assertEquals("Bearer t", authHeader)
     }
 
@@ -49,7 +52,7 @@ class SessionsHttpClientTest {
         val engine = MockEngine { req ->
             capturedUrl = req.url.toString()
             respond(
-                """{"items":[],"total":0,"hasMore":false}""",
+                """{"sessions":[]}""",
                 HttpStatusCode.OK,
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )

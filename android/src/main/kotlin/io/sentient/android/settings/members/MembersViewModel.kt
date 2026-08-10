@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // MembersViewModel — thin state-holder for the Members (admin) settings page.
 // Imperative admin ops over SettingsComponent.admin (AdminUseCases): list, promote/
-// demote (PATCH isAdmin), delete (confirm), add member (name + 4-digit PIN, 3-user
-// cap). Also resolves SettingsComponent.account to read the current userId so the
-// self-row hides its own promote/demote/delete (webui parity; the server also
-// enforces last-admin). PINs are NEVER logged (only lengths/ids/flags).
+// demote (PATCH isAdmin, confirm — either direction force-signs the target out
+// everywhere), delete (confirm), add member (name + 4-digit PIN, 3-user cap). Also
+// resolves SettingsComponent.account to read the current userId so the self-row
+// hides its own promote/demote/delete (webui parity; the server also enforces
+// last-admin). PINs are NEVER logged (only lengths/ids/flags).
 // ---------------------------------------------------------------------------
 package io.sentient.android.settings.members
 
@@ -48,6 +49,7 @@ data class MembersUiState(
     val busy: Boolean = false,
     val addDialog: AddMemberState? = null,
     val deleteTarget: UserSummary? = null,
+    val toggleTarget: UserSummary? = null,
     val errorMessage: String? = null,
     /** True when me() itself failed — distinct from a confirmed non-admin (mirrors iOS Access.error). */
     val accessError: Boolean = false,
@@ -94,10 +96,17 @@ class MembersViewModel(
         }
     }
 
-    /** Promote / demote (PATCH isAdmin). Self-row never reaches this (UI hides its actions). */
-    fun toggleAdmin(user: UserSummary) {
+    /** Open the promote/demote confirmation for a member (self-row never reaches this — UI hides its actions). */
+    fun openToggle(user: UserSummary) = _state.update { it.copy(toggleTarget = user) }
+
+    fun closeToggle() = _state.update { it.copy(toggleTarget = null) }
+
+    /** Promote / demote the confirmed member (PATCH isAdmin), then refetch. */
+    fun confirmToggle() {
+        val target = _state.value.toggleTarget ?: return
+        _state.update { it.copy(toggleTarget = null) }
         viewModelScope.launch {
-            when (admin.setUserAdmin(user.userId, !user.isAdmin)) {
+            when (admin.setUserAdmin(target.userId, !target.isAdmin)) {
                 is SentientResult.Success -> refresh()
                 is SentientResult.Failure -> _state.update { it.copy(errorMessage = ERR_ROLE) }
                 is SentientResult.Loading -> Unit

@@ -27,14 +27,38 @@ tags:
     visible: { id: "settings-tools-screen" }
     timeout: 3000
 - assertVisible: { id: "settings-tools-server-fetch" }
+# skill-system (mobile-skill-parity, tag settings-soul): the five gateway-native
+# skill_* permission rows render under the "Gateway tools" card, and the
+# skill_create dropdown is writable. Native rows are testTag'd
+# settings-tools-native-<toolName>; the RowSelect options are
+# settings-select-option-<permission>. Re-selecting the current default (ask)
+# closes the menu and arms an idempotent edit that the Save below round-trips —
+# proving the native namespace reaches the settings PATCH.
+- scrollUntilVisible:
+    element: { id: "settings-tools-native-skill_create" }
+    direction: DOWN
+    timeout: 3000
+- assertVisible: { id: "settings-tools-native-skill_list" }
+- assertVisible: { id: "settings-tools-native-skill_use" }
+- assertVisible: { id: "settings-tools-native-skill_create" }
+- assertVisible: { id: "settings-tools-native-skill_update" }
+- assertVisible: { id: "settings-tools-native-skill_delete" }
+- takeScreenshot: "49-skill-rows"
+- tapOn: { id: "settings-tools-native-skill_create" }
+- assertVisible: { id: "settings-select-option-deny" }   # dropdown writable
+- tapOn: { id: "settings-select-option-ask" }             # current default; closes menu, no net change
 - takeScreenshot: "49-tools-before"
 - tapOn:
     point: "84%,37%"
 - assertVisible: "off"
 - assertVisible: { id: "settings-tools-save" }
 - tapOn: { id: "settings-tools-save" }
-# SLOW apply/restart budget.
+# apply completes in 5-12 ms on 2.0 (measured: `apply:orchestrator apply.ready
+# elapsedMs=5..12`, 4 samples 2026-07-30). There is no supervisord and no Hermes
+# worker to restart, so the old 45 s budget was padding that would have let a 30 s
+# hang pass. 8000 ms = ~600x the measured server time, enough for the emulator/sim
+# re-fetch + recomposition, tight enough to catch a real stall.
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
-    timeout: 45000
+    timeout: 8000
 - takeScreenshot: "49-tools-after"

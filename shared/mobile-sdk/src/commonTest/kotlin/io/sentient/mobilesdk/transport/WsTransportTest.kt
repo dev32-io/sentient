@@ -180,7 +180,7 @@ class WsTransportTest {
     @Test
     fun events_preserve_exact_control_audio_interleave_order() = runTest {
         // The wire contract: trailing audio frames arrive BEFORE the control
-        // frame that terminates them (connector.audio.done). One ordered event
+        // frame that terminates them (turn.audio.done). One ordered event
         // stream must surface them in EXACT arrival order so audio.done can never
         // overtake/lag the audio — this is the bug this fix pins.
         val fake = FakeWebSocketEngine()
@@ -191,21 +191,21 @@ class WsTransportTest {
 
         val b1 = byteArrayOf(1, 1, 1)
         val b2 = byteArrayOf(2, 2, 2)
-        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.start\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.audio.start\",\"turnId\":\"t1\",\"encoding\":\"pcm\",\"sampleRate\":24000}"))
         fake.emit(WsIncoming.Binary(framedAudio(seq = 1, payload = b1)))
         fake.emit(WsIncoming.Binary(framedAudio(seq = 2, payload = b2)))
-        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.done\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.audio.done\",\"turnId\":\"t1\"}"))
         fake.closeIncoming()
         job.join()
 
         assertEquals(4, collected.size, "events=$collected")
         val start = collected[0] as WsEvent.Control
-        assertTrue(start.message is ServerMessage.ConnectorAudioStart, "first=$start")
+        assertTrue(start.message is ServerMessage.TurnAudioStart, "first=$start")
         // Payloads (header peeled) preserve EXACT arrival order between the controls.
         assertTrue((collected[1] as WsEvent.Audio).bytes.contentEquals(b1))
         assertTrue((collected[2] as WsEvent.Audio).bytes.contentEquals(b2))
         val done = collected[3] as WsEvent.Control
-        assertTrue(done.message is ServerMessage.ConnectorAudioDone, "last=$done")
+        assertTrue(done.message is ServerMessage.TurnAudioDone, "last=$done")
     }
 
     @Test

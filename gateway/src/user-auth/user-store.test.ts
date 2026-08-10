@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { NEVER_REVOKED } from "./credential-floor.js";
 import type { UserRecord } from "./types.js";
 import { createUserStore } from "./user-store.js";
 
@@ -10,9 +11,10 @@ function sample(overrides: Partial<UserRecord> = {}): UserRecord {
     userId: "kevin",
     displayName: "Kevin",
     pinHash: "$argon2id$fake",
-    isAdmin: true,
+    role: "admin",
     avatarTint: "terra",
     createdAt: "2026-04-24T00:00:00.000Z",
+    credentialsValidFrom: NEVER_REVOKED,
     ...overrides,
   };
 }

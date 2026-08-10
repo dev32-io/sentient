@@ -8,7 +8,7 @@
 // reconnect. The bug it guards (confirmed by review):
 //   - onReadyReached() called clearActiveToIdle() UNCONDITIONALLY on every
 //     reconnect-to-READY, BEFORE stream.resumed arrived. On a recovered:true
-//     resume the gateway replays the in-flight cycle's frames to restore
+//     resume the gateway replays the in-flight turn's frames to restore
 //     THINKING/speaking — but the client had ALREADY cleared cognition→IDLE,
 //     losing the state the resume exists to preserve (an IDLE flash + a possible
 //     stuck-state watchdog fire).
@@ -16,7 +16,7 @@
 // Drives the REAL orchestrator over a FakeWebSocketEngine + a MockEngine-backed
 // SessionsHttpClient under runTest virtual time. The resume cursor is advanced
 // by SEQ-STAMPED frames (so a reconnect attempts stream.resume); cognition is
-// driven THINKING via cycle.started before the drop.
+// driven THINKING via turn.started before the drop.
 // ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.sdk
 
@@ -54,14 +54,14 @@ class SdkResumeReconciliationTest {
     private fun createdFrame(uuid: String) =
         "{\"type\":\"session.created\",\"sessionId\":\"$uuid\",\"ts\":1}"
 
-    /** cycle.started carrying a resume [seq] stamp (peeled by WsTransport → advances
+    /** turn.started carrying a resume [seq] stamp (peeled by WsTransport → advances
      *  the cursor's lastSeq so a reconnect will attempt stream.resume). */
-    private fun cycleStartedSeq(seq: Long, cycleId: String = "c1") =
-        "{\"type\":\"cycle.started\",\"cycleId\":\"$cycleId\",\"seq\":$seq,\"epoch\":1}"
+    private fun turnStartedSeq(seq: Long, turnId: String = "t1") =
+        "{\"type\":\"turn.started\",\"turnId\":\"$turnId\",\"trigger\":\"user\",\"seq\":$seq,\"epoch\":1}"
 
-    /** cycle.started with NO seq stamp — drives cognition without advancing the cursor. */
-    private fun cycleStartedNoSeq(cycleId: String = "c1") =
-        "{\"type\":\"cycle.started\",\"cycleId\":\"$cycleId\"}"
+    /** turn.started with NO seq stamp — drives cognition without advancing the cursor. */
+    private fun turnStartedNoSeq(turnId: String = "t1") =
+        "{\"type\":\"turn.started\",\"turnId\":\"$turnId\",\"trigger\":\"user\"}"
 
     private fun streamResumedFrame(recovered: Boolean) =
         "{\"type\":\"stream.resumed\",\"recovered\":$recovered,\"epoch\":1}"
@@ -85,10 +85,10 @@ class SdkResumeReconciliationTest {
         connectToReady(sdk, fake)
 
         // Anchor the ACP session + drive cognition THINKING with a SEQ-stamped
-        // cycle.started (advances the resume cursor so a reconnect resumes).
+        // turn.started (advances the resume cursor so a reconnect resumes).
         fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
         sdk.currentSessionId.first { it == anchoredUuid }
-        fake.emit(WsIncoming.Text(cycleStartedSeq(seq = 5)))
+        fake.emit(WsIncoming.Text(turnStartedSeq(seq = 5)))
         sdk.connection.first { it.cognition == CognitionState.THINKING }
 
         // Drop → reconnect → READY. The DEFER path: resume is carried in
@@ -106,7 +106,7 @@ class SdkResumeReconciliationTest {
         assertEquals(CognitionState.THINKING, sdk.connection.value.cognition, "cognition must stay THINKING before stream.resumed")
         assertTrue(activateFrames(fake.sentText).isEmpty(), "deferred path must NOT re-activate before the ack, sent=${fake.sentText}")
 
-        // The gateway replays the in-flight cycle and acks recovered:true.
+        // The gateway replays the in-flight turn and acks recovered:true.
         fake.emit(WsIncoming.Text(streamResumedFrame(recovered = true)))
         runCurrent()
 
@@ -128,7 +128,7 @@ class SdkResumeReconciliationTest {
 
         fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
         sdk.currentSessionId.first { it == anchoredUuid }
-        fake.emit(WsIncoming.Text(cycleStartedSeq(seq = 7)))
+        fake.emit(WsIncoming.Text(turnStartedSeq(seq = 7)))
         sdk.connection.first { it.cognition == CognitionState.THINKING }
 
         fake.failIncoming("network drop")
@@ -165,11 +165,11 @@ class SdkResumeReconciliationTest {
         val sdk = buildSdkWithHistory(backgroundScope, fake, http)
         connectToReady(sdk, fake)
 
-        // Anchor + drive cognition THINKING with an UNSTAMPED cycle.started: the
+        // Anchor + drive cognition THINKING with an UNSTAMPED turn.started: the
         // resume cursor stays at lastSeq==0 → a reconnect cannot attempt resume.
         fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
         sdk.currentSessionId.first { it == anchoredUuid }
-        fake.emit(WsIncoming.Text(cycleStartedNoSeq()))
+        fake.emit(WsIncoming.Text(turnStartedNoSeq()))
         sdk.connection.first { it.cognition == CognitionState.THINKING }
 
         fake.failIncoming("network drop")

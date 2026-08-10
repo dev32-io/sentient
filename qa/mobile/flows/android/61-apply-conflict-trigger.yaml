@@ -16,6 +16,7 @@ tags:
 # fired in the SAME shell right after backgrounding the curl (near-zero overhead);
 # gateway logged apply.rejected-concurrent. The runner uses that adb-tap variant.
 - tapOn: { id: "settings-model-save" }
+# 5000ms: apply retry / offline model save round-trip to the gateway
 - extendedWaitUntil:
     visible: { id: "settings-apply-notice" }
     timeout: 5000

@@ -94,7 +94,7 @@ class ConversationHistoryConnector(
      * to empty, and emits the empty snapshot/update so the UI clears immediately.
      *
      * Does NOT arm [awaitingHistory]: a new chat has no REST history to wait for,
-     * and the FIRST entry of the new cycle must reach the mirror, not be gated.
+     * and the FIRST entry of the new turn must reach the mirror, not be gated.
      */
     fun clearForNewChat() {
         generation++
@@ -177,14 +177,20 @@ class ConversationHistoryConnector(
             log.debug("entry-dropped", mapOf("reason" to "awaiting-history", "ts" to msg.item.ts))
             return
         }
-        // Re-attach the gateway's frame cycleId onto an assistant entry so the
-        // committed twin can be suppressed by exact id while its live bubble
-        // reveals. The wire item strips cycleId; the frame carries it. No
-        // client-side derivation (text-match / ts-window) anywhere.
+        // Re-attach the gateway's frame turnId AND replyId onto an assistant entry.
+        // turnId suppresses the committed twin while its live bubble reveals; replyId
+        // is what groups several committed rows of one ReAct turn back into the single
+        // bubble they were streamed as. The item itself now carries replyId too (the
+        // gateway stamps it there as of Task 2) — this re-attach is only an OVERRIDE
+        // for turnId (always frame-only) and for a frame from a gateway that predates
+        // the item-level stamp. No client-side derivation anywhere.
         val item = msg.item
         val enriched =
-            if (item is ConversationFeedItem.Assistant && msg.cycleId != null) item.copy(cycleId = msg.cycleId)
-            else item
+            if (item is ConversationFeedItem.Assistant && (msg.turnId != null || msg.replyId != null)) {
+                item.copy(turnId = msg.turnId ?: item.turnId, replyId = msg.replyId ?: item.replyId)
+            } else {
+                item
+            }
         // Dedup by stable entryId: a re-delivered entry (e.g. a committed entry
         // replayed on resume) updates in place instead of double-appending.
         // Empty entryId (UNKNOWN_ENTRY_ID) has no identity → never deduped.
@@ -198,7 +204,8 @@ class ConversationHistoryConnector(
             mapOf(
                 "entryId" to enriched.entryId,
                 "ts" to enriched.ts,
-                "cycleId" to (msg.cycleId ?: "-"),
+                "turnId" to (msg.turnId ?: "-"),
+                "replyId" to (msg.replyId ?: "-"),
                 "deduped" to (existingIdx >= 0),
                 "size" to mirror.size,
             ),

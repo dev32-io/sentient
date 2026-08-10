@@ -1,0 +1,379 @@
+// SECURITY BOUNDARY — revoking an account's credentials kicks it off the wire.
+//
+// Layer 1 (the credential floor, user-auth/credential-floor.ts) is what makes a
+// revocation authoritative: the token stops validating at every one of the 17
+// `validate()` call sites. But a WebSocket is validated ONCE, at connect, so
+// layer 1 alone leaves the demoted account's live socket serving until it
+// happens to reconnect. This module is layer 2 — the immediacy half.
+//
+// The property under test is BLAST RADIUS. A revocation must close exactly the
+// target account's windows and touch nobody else's: the household shares one
+// gateway, and a role change for one member that dropped everyone would be a
+// self-inflicted outage.
+
+import type { ServerWebSocket } from "bun";
+import { describe, expect, it } from "vitest";
+import { createSessionManager } from "../auth/session-manager.js";
+import { createUserPrincipal } from "../identity/user-principal.js";
+import { createAuthenticatedSockets } from "./authenticated-sockets.js";
+import { WS_CLOSE_POLICY } from "./credential-lifetime.js";
+import { createCredentialRevoker } from "./credential-revocation.js";
+import { type SessionHandles, createSessionRegistry } from "./session-registry.js";
+import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
+
+const ADA = "u_aaaaaaaa";
+const GRACE = "u_bbbbbbbb";
+
+/** The code all three clients already classify as a TERMINAL auth failure, so
+ *  a kicked window shows its login screen instead of retrying forever. */
+const REVOKED_CODE = "expired";
+
+/** What a revoked window sees, IN ORDER. */
+const EJECTION = [`auth.error:${REVOKED_CODE}`, `close:${WS_CLOSE_POLICY}`];
+
+interface FakeSocket {
+  /**
+   * ONE ordered log of everything that happened to this socket.
+   *
+   * Not two arrays. The contract is `auth.error` **then** close — a bare close
+   * is indistinguishable from a lost network, and both SDKs would reconnect
+   * with the same dead token forever instead of showing the login screen.
+   * Recording sends and closes separately makes a close-before-send regression
+   * pass, because both still happened.
+   */
+  readonly events: SocketEvent[];
+  readonly ws: ServerWebSocket<SessionData>;
+}
+
+type SocketEvent = { kind: "sent"; frame: { type: string; code?: string } } | { kind: "closed"; code: number };
+
+/** A socket authenticated as [userId] — a principal on `ws.data` is what makes
+ *  it enumerable, which is the registry's only index into who owns a window. */
+function fakeSocket(userId: string, connectionId: string): FakeSocket {
+  const events: SocketEvent[] = [];
+  const data = createEmptySessionData();
+  data.sessionId = connectionId;
+  data.authState = "authed";
+  data.principal = createUserPrincipal(userId, "adult", "home");
+  const ws = {
+    data,
+    send: (text: string) => {
+      events.push({ kind: "sent", frame: JSON.parse(text) as { type: string; code?: string } });
+      return text.length;
+    },
+    close: (code: number) => {
+      events.push({ kind: "closed", code });
+    },
+    getBufferedAmount: () => 0,
+  };
+  return { events, ws: ws as unknown as ServerWebSocket<SessionData> };
+}
+
+/** One resident session, with a runtime that records every `revokeAuthority` it
+ *  is told and reports [userId] as its owner — `SessionRuntime.userId` is the
+ *  only index `orphanSessionsForUser` has. */
+interface ResidentDouble {
+  readonly revocations: string[];
+  readonly handles: SessionHandles;
+}
+
+function residentSession(userId: string): ResidentDouble {
+  const revocations: string[] = [];
+  const handles = {
+    runtime: {
+      userId,
+      dispose: () => {},
+      cutUnheardSpeech: () => {},
+      revokeAuthority: (reason: string) => {
+        revocations.push(reason);
+      },
+    },
+    permissions: { denyAll: () => {} },
+    work: {
+      isTurnInFlight: false,
+      hasPendingForegroundTool: false,
+      hasOutstandingPrompt: false,
+      hasAuxiliaryTaskInFlight: false,
+      newestBackgroundTaskStartedAtMs: null,
+    },
+    dispose: () => {},
+  } as unknown as SessionHandles;
+  return { revocations, handles };
+}
+
+interface Harness {
+  registry: ReturnType<typeof createSessionRegistry>;
+  sessions: ReturnType<typeof createSessionManager>;
+  sockets: ReturnType<typeof createAuthenticatedSockets>;
+  revoker: ReturnType<typeof createCredentialRevoker>;
+  /** What the AUTH GATE does and nothing more — a socket with a principal, a
+   *  bound connection, and NO attachment. This is a real state, not a
+   *  contrivance: it is every window between sign-in and `session.configure`,
+   *  and it is where the person sits while they read a page. */
+  authenticate: (socket: FakeSocket, userId: string) => string;
+  /** Authenticate, THEN attach — the only order production can produce, and the
+   *  reason a live window is in both indexes at once. */
+  attach: (socket: FakeSocket, userId: string, sessionId: string) => { connectionId: string; resident: ResidentDouble };
+  /**
+   * A session that is RESIDENT WITH NO WINDOW — attached, then detached, with a
+   * policy that never disposes. Production's shape for exactly one thing:
+   * `session-retention.ts` holding a session open past its last window because
+   * a background task has not reported completion. Neither the attachment walk
+   * nor the authenticated-socket set can see it.
+   */
+  orphanedSession: (userId: string, sessionId: string) => ResidentDouble;
+}
+
+/** A live gateway in miniature: the real registry (which owns the attachment
+ *  map), the real authenticated-socket set (which owns every live socket,
+ *  attached or not) and the real session manager (which owns the per-user
+ *  connection bookkeeping the revoker drops). Nothing here is a double —
+ *  a revocation test against doubles would pin the doubles. */
+function harness(): Harness {
+  // A policy that never disposes: these cases are about which sockets get
+  // closed, not about what a detach does to a session's residency.
+  const registry = createSessionRegistry(() => {});
+  const sessions = createSessionManager();
+  const sockets = createAuthenticatedSockets();
+  const h: Harness = {
+    registry,
+    sessions,
+    sockets,
+    revoker: createCredentialRevoker({ registry, sessions, sockets }),
+    authenticate(socket, userId) {
+      const created = sessions.createSession();
+      if (!created.ok) throw new Error(created.error);
+      const connectionId = created.value.sessionId;
+      socket.ws.data.sessionId = connectionId;
+      const bound = sessions.bindUser(connectionId, userId);
+      if (!bound.ok) throw new Error(bound.error);
+      sockets.add(userId, socket.ws);
+      return connectionId;
+    },
+    attach(socket, userId, sessionId) {
+      const connectionId = h.authenticate(socket, userId);
+      const resident = residentSession(userId);
+      registry.attach(sessionId, connectionId, socket.ws, () => resident.handles);
+      return { connectionId, resident };
+    },
+    orphanedSession(userId, sessionId) {
+      const socket = fakeSocket(userId, `${sessionId}-gone`);
+      const connectionId = h.authenticate(socket, userId);
+      const resident = residentSession(userId);
+      const attachment = registry.attach(sessionId, connectionId, socket.ws, () => resident.handles);
+      registry.detach(sessionId, attachment.attachmentId);
+      sockets.remove(socket.ws);
+      return resident;
+    },
+  };
+  return h;
+}
+
+/** The full ordered story of one socket's ejection, as one comparable value:
+ *  `["auth.error:expired", "close:1008"]`. Order is the contract, so it is
+ *  asserted as a sequence rather than as two independent facts. */
+function ejectionOf(socket: FakeSocket): string[] {
+  return socket.events.map((e) => (e.kind === "sent" ? `${e.frame.type}:${e.frame.code ?? ""}` : `close:${e.code}`));
+}
+
+describe("CredentialRevoker", () => {
+  it("SECURITY: closes every window of the revoked account and leaves every other account's open", async () => {
+    const h = harness();
+    const adaLaptop = fakeSocket(ADA, "ada-laptop");
+    const adaPhone = fakeSocket(ADA, "ada-phone");
+    const gracePhone = fakeSocket(GRACE, "grace-phone");
+    h.attach(adaLaptop, ADA, "s_ada_1");
+    h.attach(adaPhone, ADA, "s_ada_2");
+    h.attach(gracePhone, GRACE, "s_grace_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaLaptop)).toEqual(EJECTION);
+    expect(ejectionOf(adaPhone)).toEqual(EJECTION);
+    // Untouched: not closed, and not even spoken to.
+    expect(ejectionOf(gracePhone)).toEqual([]);
+  });
+
+  // WIRE CONTRACT. `auth.error` FIRST, then the close: a bare close is
+  // indistinguishable from a lost network and both SDKs would reconnect with
+  // the same dead token forever instead of showing the login screen. `expired`
+  // is the code all three clients already classify as terminal.
+  it("WIRE: a closed window is told `auth.error` code expired before the socket closes 1008", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(ada)).toEqual([`auth.error:${REVOKED_CODE}`, `close:${WS_CLOSE_POLICY}`]);
+  });
+
+  it("SECURITY: drops the revoked account's bound sessions, and only those", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    const grace = fakeSocket(GRACE, "grace-phone");
+    const adaConnectionId = h.attach(ada, ADA, "s_ada_1").connectionId;
+    const graceConnectionId = h.attach(grace, GRACE, "s_grace_1").connectionId;
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(h.sessions.getSession(adaConnectionId)).toBeUndefined();
+    expect(h.sessions.getSession(graceConnectionId)).toBeDefined();
+  });
+
+  // The delete path has the identical hole and takes the identical fix:
+  // `emitDeleted` was wired only to the MCP host, so a deleted account kept a
+  // working session until its token expired.
+  it("SECURITY: a deleted user's open window is closed by the same path", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "user-deleted");
+
+    expect(ejectionOf(ada)).toEqual(EJECTION);
+  });
+
+  it("is a no-op for an account with nothing open", async () => {
+    const h = harness();
+    const grace = fakeSocket(GRACE, "grace-phone");
+    h.attach(grace, GRACE, "s_grace_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(grace)).toEqual([]);
+  });
+
+  // ── THE DRAFT WINDOW (defect found by the end-to-end run) ────────────────
+  //
+  // Demoting a target who was signed in but had never started a conversation
+  // logged `closedWindows=0`, sent no `auth.error`, closed nothing, and left
+  // their window rendering a logged-in UI. The revoker enumerated the RESIDENT
+  // SESSIONS' attachments, and a connection between the auth gate and its first
+  // `session.configure` has no attachment to find.
+
+  it("SECURITY: closes a window that authenticated but never attached to a session", async () => {
+    const h = harness();
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    h.authenticate(adaDraft, ADA);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+  });
+
+  it("SECURITY: a draft window of another account is left open", async () => {
+    const h = harness();
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    const graceDraft = fakeSocket(GRACE, "grace-draft");
+    h.authenticate(adaDraft, ADA);
+    h.authenticate(graceDraft, GRACE);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+    expect(ejectionOf(graceDraft)).toEqual([]);
+  });
+
+  // An ATTACHED window is reachable through BOTH the attachment walk and the
+  // authenticated-socket set, so the two enumerations overlap. The full ordered
+  // event log is the assertion precisely because it catches the overlap: a
+  // second ejection would append `auth.error` and a second `close` after the
+  // first, and a socket told twice that its credentials died is a client that
+  // sees a close-after-close it cannot interpret.
+  it("closes an attached window exactly once, though it is in both enumerations", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(ada)).toEqual(EJECTION);
+  });
+
+  it("closes a mixed fleet — one attached window and one draft — once each", async () => {
+    const h = harness();
+    const adaLaptop = fakeSocket(ADA, "ada-laptop");
+    const adaDraft = fakeSocket(ADA, "ada-draft");
+    h.attach(adaLaptop, ADA, "s_ada_1");
+    h.authenticate(adaDraft, ADA);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(adaLaptop)).toEqual(EJECTION);
+    expect(ejectionOf(adaDraft)).toEqual(EJECTION);
+  });
+
+  // A socket that has already gone (its close handler ran) is not this
+  // account's window any more, and the fleet that IS still open must not be
+  // affected by its departure — the revoker walks a snapshot, so a removal
+  // mid-revocation cannot make it skip a peer.
+  it("skips a socket whose close already ran, and still closes the rest", async () => {
+    const h = harness();
+    const departed = fakeSocket(ADA, "ada-departed");
+    const survivor = fakeSocket(ADA, "ada-draft");
+    h.authenticate(departed, ADA);
+    h.authenticate(survivor, ADA);
+    h.sockets.remove(departed.ws);
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(departed)).toEqual([]);
+    expect(ejectionOf(survivor)).toEqual(EJECTION);
+  });
+
+  // ── THE SESSION THAT OUTLIVES ITS WINDOWS ───────────────────────────────
+  //
+  // Closing the sockets is not the whole job. `session-retention.ts` keeps a
+  // session resident while a background task is unfinished — deliberately,
+  // because nothing cancels one and disposal closes the store handle its result
+  // must land through. That retained `SessionRuntime` holds a `ToolBroker`
+  // whose `Capability` was minted with the OLD role frozen into it, and
+  // `submit` guarded only on `disposed`. So a `delegateTask` settling after the
+  // demotion started a headless follow-up turn at the pre-demotion role, with
+  // no window attached and nobody to see it.
+  //
+  // Both enumerations the revoker already had are blind to this: the session
+  // has no attachment and its socket is long gone. `orphanSessionsForUser` is the
+  // only thing that reaches it.
+
+  it("SECURITY: revokes the authority of a session that is resident with no window left", async () => {
+    const h = harness();
+    const orphaned = h.orphanedSession(ADA, "s_ada_bg");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(orphaned.revocations).toEqual(["role-changed"]);
+  });
+
+  it("SECURITY: leaves another account's windowless session authoritative", async () => {
+    const h = harness();
+    const adaOrphan = h.orphanedSession(ADA, "s_ada_bg");
+    const graceOrphan = h.orphanedSession(GRACE, "s_grace_bg");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(adaOrphan.revocations).toEqual(["role-changed"]);
+    expect(graceOrphan.revocations).toEqual([]);
+  });
+
+  it("SECURITY: revokes an attached session's runtime as well as closing its window", async () => {
+    const h = harness();
+    const ada = fakeSocket(ADA, "ada-laptop");
+    const { resident } = h.attach(ada, ADA, "s_ada_1");
+
+    await h.revoker.revokeUser(ADA, "role-changed");
+
+    expect(ejectionOf(ada)).toEqual(EJECTION);
+    expect(resident.revocations).toEqual(["role-changed"]);
+  });
+
+  it("tells the runtime WHICH incident revoked it — a deletion is not a demotion", async () => {
+    const h = harness();
+    const orphaned = h.orphanedSession(ADA, "s_ada_bg");
+
+    await h.revoker.revokeUser(ADA, "user-deleted");
+
+    expect(orphaned.revocations).toEqual(["user-deleted"]);
+  });
+});

@@ -1,22 +1,27 @@
 // gateway/webui/src/components/settings/sidebar/sidebar-nav.tsx
 import type { JSX } from "preact";
 import { Icon, type IconName } from "../../common/icon.tsx";
-import { NAV_GROUPS, SOUL_KEYS, type SidebarKey } from "./nav-config.ts";
+import { SOUL_KEYS, type SidebarKey, navGroupsFor } from "./nav-config.ts";
 
 export interface SidebarNavProps {
   active: SidebarKey;
   onChange: (key: SidebarKey) => void;
   dirtyKeys: ReadonlySet<SidebarKey>;
+  /** Whether the signed-in viewer's record says admin — decides whether the
+   *  Admin group is drawn. Display only: every pane behind it re-checks the
+   *  record server-side on each call. */
+  isAdmin: boolean;
 }
 
 export function SidebarNav({
   active,
   onChange,
   dirtyKeys,
+  isAdmin,
 }: SidebarNavProps): JSX.Element {
   return (
     <nav class="s-nav">
-      {NAV_GROUPS.map((g) => (
+      {navGroupsFor(isAdmin).map((g) => (
         <div key={g.group} class="s-nav-group">
           {g.group !== "Soul" && (
             <div class="s-nav-h">{g.group}</div>

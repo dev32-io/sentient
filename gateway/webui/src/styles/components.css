@@ -123,13 +123,15 @@ html.is-paused *::after {
     width: 44px;
     height: 44px;
   }
-  /* Composer is high-density; carve out small tightly-packed controls
-     even on mobile. WCAG 44×44 still applies to topbar / drawer / standalone icon buttons. */
+  /* Composer is high-density, so its controls stay under the 44×44 generic
+     floor to preserve room for the textarea — but they still need to be
+     comfortably tappable, not just clear WCAG 2.5.8 AA's 24×24 minimum.
+     WCAG 44×44 still applies to topbar / drawer / standalone icon buttons. */
   .composer__bottom-row .icon-btn {
-    min-width: 32px;
-    min-height: 32px;
-    width: 32px;
-    height: 32px;
+    min-width: 40px;
+    min-height: 40px;
+    width: 40px;
+    height: 40px;
   }
 }
 .icon-btn:hover { background: var(--color-bg-sunk); color: var(--color-ink); }
@@ -427,8 +429,8 @@ html.is-paused *::after {
   border-top-left-radius: 6px;
 }
 /* The text-inner carries the padded text area so the speaking wave
-   (position: absolute; inset: 0) fills the full text cell — from the
-   bubble's top edge down to the tool-strip (or bottom edge if none). */
+   (position: absolute; inset: 0) fills the full text cell, top edge to
+   bottom edge. */
 .message-bubble__text-inner {
   position: relative;
   padding: 14px 18px;
@@ -456,7 +458,13 @@ html.is-paused *::after {
 }
 /* Inline markdown container — strips default block margins from paragraphs
    and lists so the bubble stays compact, but preserves visible structure
-   for headings, code, and lists. */
+   for headings, code, and lists. `.message-bubble__text-wrap` sets
+   `overflow: hidden`, so an unbroken long token (URL, hash, path) MUST wrap
+   here or it is silently clipped off the edge with no scrollbar to reveal
+   it — same fix as `.tool-inline-detail__preview` below. */
+.bubble-text__md {
+  overflow-wrap: anywhere;
+}
 .bubble-text__md > :first-child { margin-top: 0; }
 .bubble-text__md > :last-child { margin-bottom: 0; }
 .bubble-text__md p { margin: 0 0 0.4em; }
@@ -563,42 +571,39 @@ html.is-paused *::after {
 }
 .interrupt-chip--inline { margin-left: 6px; }
 
-/* ─── ToolInlineDetail (flush inside bubble) ─── */
+/* ─── Dock + Composer ─── */
 
-.tool-inline-detail {
-  padding: 12px 16px;
-  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: var(--color-ink);
+.dock {
+  padding: 24px 22px 22px;
+  display: flex;
+  justify-content: center;
+  /* No background, no border — the composer card carries the visual weight
+     and messages naturally show through the empty sides as they scroll. */
 }
-.tool-inline-detail__preview {
-  display: block;
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--color-ink-2);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+.dock-inner {
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* ─── ToolPillStrip ─── */
-
+/* ─── ComposerTaskStrip — the composer's own topmost row (design v2
+   `00-chat-reference.png`; spec §4.9: "flush with top edge, inside composer's
+   border"). It replaced pills anchored to a chat bubble: the gateway's
+   `tasklist.state` has no bubble to anchor to, so this renders as a row of
+   the composer card itself instead. Full width, a plain `border-bottom`
+   hairline separates it from the rest of the card — no inset offsets, no
+   pseudo-element positioning like the old bubble-anchored strip needed. */
 .tool-strip {
   display: flex;
   flex-direction: column;
-  position: relative;
-}
-.tool-strip::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 12px;
-  right: 12px;
-  height: 1px;
-  background: color-mix(in oklab, var(--color-ink) 12%, transparent);
-  pointer-events: none;
+  width: 100%;
+  border-bottom: 1px solid color-mix(in oklab, var(--color-ink) 12%, transparent);
+  /* Query container for .tool-pill's `cqw` min-width below — pill width is
+     derived from THIS element's own width, not the viewport, so it tracks
+     the strip regardless of what else is on the page. */
+  container-type: inline-size;
 }
 .tool-strip__pills {
   display: flex;
@@ -606,6 +611,10 @@ html.is-paused *::after {
   flex-wrap: nowrap;
   gap: 0;
   width: 100%;
+  /* Always scrollable — pills never wrap and never shrink to fit (below).
+     Native scrollbar is the overflow affordance on desktop/mouse; the touch
+     breakpoint hides it in favor of a peeking partial pill (see media query). */
+  overflow-x: auto;
 }
 .tool-pill {
   display: inline-flex;
@@ -620,8 +629,23 @@ html.is-paused *::after {
   font-size: 13px;
   line-height: 1;
   text-align: left;
-  flex: 1 1 0;
-  min-width: 0;
+  /* Never shrink, never stretch (a lone pill sits at its natural width,
+     left-aligned) — flex-basis:auto so a short name doesn't pad out to the
+     floor, a long one grows up to the ceiling below, then truncates. */
+  flex: 0 0 auto;
+  /* pillMinWidth = clamp(112px, 0.42 × stripWidth, 200px) — ~2.4 pills in
+     view at any width in the unclamped middle band (stripWidth 267–476px);
+     outside that band the floor/ceiling deliberately trade pill-count
+     consistency for a readable width. Verified against the strip's real
+     rendered width (.dock/.dock-inner/.composer padding all subtracted) at
+     three anchors: 390px phone → 350px strip → ~147px pills, ~2.4 in view;
+     620px narrow browser → 580px strip → ceiling engages, ~2.9 in view;
+     1280px desktop → 692px strip → ceiling engages, ~3.5 in view, and
+     identical on any wider desktop since .dock-inner's own 720px max-width
+     caps the composer long before the viewport does. All three read fine
+     as-is — no constant changes needed. */
+  min-width: clamp(112px, 42cqw, 200px);
+  max-width: 200px;
   cursor: pointer;
   transition: background var(--motion-fast), color var(--motion-fast);
 }
@@ -668,9 +692,8 @@ html.is-paused *::after {
   background: transparent;
   animation: tool-spin 1s linear infinite;
 }
-.tool-pill__dot--finished { background: var(--color-ok); }
-.tool-pill__dot--failed { background: var(--color-stop); }
-.tool-pill__dot--cancelled { background: var(--color-ink-3); }
+.tool-pill__dot--done { background: var(--color-ok); }
+.tool-pill__dot--error { background: var(--color-stop); }
 .tool-pill__chev {
   display: inline-flex;
   color: var(--color-ink-4);
@@ -682,22 +705,35 @@ html.is-paused *::after {
 }
 @keyframes tool-spin { to { transform: rotate(360deg); } }
 
-/* ─── Dock + Composer ─── */
+/* ToolInlineDetail — expands UPWARD, above the pills row. The strip sits at
+   the very top of the composer card, so a detail panel has nowhere to grow
+   but up (spec §4.9: "click pill to expand detail upward"). */
+.tool-inline-detail {
+  padding: 12px 16px;
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--color-ink);
+}
+.tool-inline-detail__label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+.tool-inline-detail__preview {
+  display: block;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-ink-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
-.dock {
-  padding: 24px 22px 22px;
-  display: flex;
-  justify-content: center;
-  /* No background, no border — the composer card carries the visual weight
-     and messages naturally show through the empty sides as they scroll. */
-}
-.dock-inner {
-  width: 100%;
-  max-width: 720px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .composer {
   position: relative;
   background: var(--color-paper);
@@ -1192,16 +1228,15 @@ html.is-paused *::after {
   .bubble-text__md ol { margin: 0.15em 0 0.3em; padding-left: 1.2em; }
   .bubble-text__md li { margin: 0.1em 0; }
 
-  /* Tool pills tighter; horizontal-scroll the strip when >2 pills appear so
-     names stay legible instead of getting ellipsized into `bulk_…`. */
+  /* Tool pills tighter. Scrolling itself (flex:0 0 auto + the min-width
+     clamp) is set unconditionally above; touch/narrow only hides the
+     scrollbar in favor of a peeking partial pill as the overflow tell — an
+     always-visible bar reads as clutter on a phone. */
   .tool-strip__pills {
-    overflow-x: auto;
     scrollbar-width: none;
   }
   .tool-strip__pills::-webkit-scrollbar { display: none; }
   .tool-pill {
-    flex: 0 0 auto;
-    min-width: 130px;
     padding: 6px 8px;
     gap: 6px;
     font-size: 12px;
@@ -1227,15 +1262,25 @@ html.is-paused *::after {
     min-height: 22px;
   }
   .composer__bottom-row { margin-top: 4px; gap: 6px; }
-  .composer__bottom-row .icon-btn { width: 28px; height: 28px; border-radius: 7px; }
+  /* Raised from 28px (measured too small to comfortably tap — QA e2e round
+     2, task-21) toward the 44px comfort target; kept at 40 rather than a
+     full 44 so the high-density bottom row doesn't grow tall enough to
+     visibly eat chat real estate. Icon glyph size (16px, via <Icon>) is
+     unchanged — only the hit-rect/chrome grows, same idiom as the base
+     `.icon-btn` touch rule above. */
+  .composer__bottom-row .icon-btn { width: 40px; height: 40px; border-radius: 10px; }
   .send-btn,
-  .interrupt-btn { width: 28px; height: 28px; border-radius: 7px; }
-  .composer--live .composer__bottom-row { min-height: 28px; }
+  .interrupt-btn { width: 40px; height: 40px; border-radius: 10px; }
+  .composer--live .composer__bottom-row { min-height: 40px; }
 
-  /* Corner mic: smaller tab, tighter travel on narrow screens. */
-  .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 32px; }
-  .mic-corner { width: 32px; height: 32px; }
-  .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 32px)); }
+  /* Corner mic: smaller tab, tighter travel on narrow screens. Bumped 32→36
+     (more conservative than the 40px flat controls above) because this is a
+     drag rail, not a plain tap target — `mic-corner-gesture.ts` computes
+     travel/lock thresholds from the button's live measured size at runtime,
+     so growing it further shortens the hold→lock drag distance. */
+  .mic-corner-wrap { top: -16px; right: 8px; width: 84px; height: 36px; }
+  .mic-corner { width: 36px; height: 36px; }
+  .mic-corner-wrap__trail { width: calc(var(--mic-drag-progress, 0) * (100% - 36px)); }
   .composer__wave-field { padding: 0 10px; }
 
   /* Suggestion chips: single horizontal scroll row instead of wrapping

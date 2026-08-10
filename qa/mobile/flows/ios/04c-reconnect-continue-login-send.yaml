@@ -6,12 +6,12 @@ tags:
 #
 # Validates the same fix as Android 04c: on reconnect the SDK sends
 # `conversationId` in `session.configure`; the gateway re-anchors so the
-# follow-up CONTINUES the same Hermes conversation (gateway log
+# follow-up CONTINUES the same conversation (gateway log
 # `resume.reanchor source=configure`, same conversationId, no
 # dispatch.session-new.lazy). The fix lives in shared commonMain.
 #
 # COUPLED PAIR: the reconnect is forced BETWEEN this flow and 04c-followup by
-# the runner (NOT a Maestro step) — `docker restart sentient-gateway` drops the
+# the runner (NOT a Maestro step) — restarting the native gateway process drops the
 # WS while the app process stays alive (in-memory currentSessionId survives),
 # then the SDK reconnects and re-sends configure with conversationId. Run these
 # two adjacent, in order; the followup does NOT relaunch. Without the runner's
@@ -26,7 +26,7 @@ tags:
 - inputText: "My lucky color is teal. Please remember it."
 - tapOn: { id: "chat-send" }
 - tapOn: { id: "chat-message-list" }
-# assistant reply — Hermes LLM round-trip, genuinely slow.
+# assistant reply — provider round-trip, genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

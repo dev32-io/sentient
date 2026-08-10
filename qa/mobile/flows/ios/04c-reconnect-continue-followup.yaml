@@ -5,7 +5,7 @@ tags:
 # 04c (part 2/2, iOS) — reconnect conversation-continuity, FOLLOW-UP turn.
 #
 # Pre-state (set by the runner): 04c-...-login-send.yaml ran, then the gateway
-# was restarted (`docker restart sentient-gateway`) to drop the WS, and the SDK
+# was restarted (the native gateway process, via the runner) to drop the WS, and the SDK
 # reconnected. The app is the SAME running instance (NOT relaunched) — so it does
 # NOT log in again here; it continues on the existing in-memory session so
 # currentSessionId is re-asserted in session.configure.
@@ -19,7 +19,7 @@ tags:
 - inputText: "What is my lucky color?"
 - tapOn: { id: "chat-send" }
 - tapOn: { id: "chat-message-list" }
-# assistant reply — Hermes LLM round-trip, genuinely slow.
+# assistant reply — provider round-trip, genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

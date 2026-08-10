@@ -8,7 +8,25 @@ tags:
 # "e2e-test", then Activate. Self-navigating + self-cleaning (deletes the entry
 # at the end regardless of outcome), so it leaves no net profile mutation.
 #
-# DEFECT-4 (backend, confirmed live, NOT mobile-specific): writeRendered()
+# ⚠️ STALE ON 2.0 + RED ON iOS — driven 2026-07-30, needs TWO fixes, neither of
+# which is guessed here (an un-driven static edit is how this flow got stale).
+#
+# 1. RED at `settings-personalities-activate-e2e-test is visible` (iOS batch
+#    2026-07-30, 31s). The expand step below point-taps the chevron at
+#    "89%,21%". Its sibling class was measured on this same sim: the audio
+#    toggle's "85%,24%" was 4 px off and killed 44/44b/59 (see
+#    44-audio-fast-save.yaml for the calibration recipe). Re-measure this
+#    chevron with `inspect_screen` on a screen that HAS a personality card
+#    before touching the number.
+# 2. The DEFECT-4 narrative below is PRE-2.0. The Android twin was re-grounded
+#    off it in 01341bf: the wipe raced the supervisord restart, 2.0 has no
+#    restart (apply is 5-12 ms), and the personality now SURVIVES Activate.
+#    This flow asserts neither outcome (its cleanup is all `optional: true`),
+#    so it proves less than its Android twin — it should assert survival plus a
+#    real self-restoring delete. NOT ported blind, because it cannot be driven
+#    green until (1) is fixed.
+#
+# DEFECT-4 (pre-2.0, NO LONGER REPRODUCES — kept for provenance): writeRendered()
 # overwrites config.yaml from ProfileV1 fields only, racing the personality-store
 # read-modify-write on the same restart cycle — create() persists, activate()
 # silently no-ops (activeName stays null). The end-of-flow delete restores the

@@ -24,6 +24,7 @@ import io.sentient.mobilesdk.settings.ProfileVoiceRef
 import io.sentient.mobilesdk.settings.VoiceCreateResult
 import io.sentient.mobilesdk.settings.VoiceDeleteResult
 import io.sentient.mobilesdk.settings.VoiceSummary
+import io.sentient.mobilesdk.settings.toPutBody
 
 class VoicesUseCases(
     private val voices: VoicesRepository,
@@ -55,7 +56,8 @@ class VoicesUseCases(
         when (val cur = profile.getProfile()) {
             is SentientResult.Success -> {
                 log.info("pickActive", mapOf("voiceId" to voiceId))
-                profile.putProfile(cur.data.copy(voice = ProfileVoiceRef(ProfileEnums.VOICE_PROVIDER, voiceId)))
+                val next = cur.data.copy(voice = ProfileVoiceRef(ProfileEnums.VOICE_PROVIDER, voiceId))
+                profile.putProfile(next.toPutBody())
             }
             is SentientResult.Failure -> cur
             is SentientResult.Loading -> cur

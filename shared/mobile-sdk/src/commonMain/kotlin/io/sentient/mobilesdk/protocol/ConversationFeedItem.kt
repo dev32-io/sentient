@@ -64,11 +64,17 @@ sealed class ConversationFeedItem {
     /**
      * kind="assistant" — model reply, optionally cut short.
      *
-     * `cycleId` is the gateway-owned join key to the live streaming bubble. The
+     * `turnId` is the gateway-owned join key to the live streaming bubble. The
      * wire item strips it (it rides the conversation.entry FRAME); the history
      * connector re-attaches it here from the frame on a LIVE append so the
      * committed twin can be suppressed by exact id while its bubble reveals.
-     * Null for REST history / snapshot entries (no live cycle to join).
+     * Null for REST history / snapshot entries (no live turn to join).
+     *
+     * `replyId` now arrives ON THE WIRE — the gateway stamps it on the item
+     * itself, since one reply is one `conversation.entry` whose `entryId` IS
+     * its `replyId`. The frame also carries it (see [ServerMessage.ConversationEntry]);
+     * the history connector's re-attach is only an OVERRIDE for a frame from an
+     * older gateway that stamped the frame but not yet the item.
      */
     @Serializable @SerialName("assistant")
     data class Assistant(
@@ -76,24 +82,42 @@ sealed class ConversationFeedItem {
         override val ts: Long = UNKNOWN_TS,
         val content: String,
         val cutoff: Cutoff? = null,
-        val cycleId: String? = null,
+        val turnId: String? = null,
+        /** Groups consecutive assistant rows into the one bubble they were. */
+        val replyId: String? = null,
     ) : ConversationFeedItem()
 
-    /** kind="tool" — completed tool invocation in the feed. */
-    @Serializable @SerialName("tool")
-    data class Tool(
-        override val entryId: String = UNKNOWN_ENTRY_ID,
-        override val ts: Long = UNKNOWN_TS,
-        val toolName: String,
-        val status: String,
-        val summary: String,
-    ) : ConversationFeedItem()
+    // THERE IS NO kind="tool" ANY MORE. A tool call is the MODEL's record of
+    // what it did, not a user-facing artifact — the gateway keeps it in the
+    // store for the model projection and never puts it on the feed. Live tool
+    // activity is the composer task strip (TaskListConnector / tasklist.state).
+    //
+    // Which is exactly why [Unknown] exists: an OLD gateway still sends
+    // `kind:"tool"`, and OTA means a staged rollout puts new phones in front of
+    // old gateways routinely. Without a default the unknown discriminator
+    // throws and takes the WHOLE `conversation.snapshot` frame with it — a
+    // blank chat instead of a degraded one.
+
+    /**
+     * Forward/backward-compat catch-all. Decodes any unrecognised feed item —
+     * a retired `kind` from an older gateway, a newer one from a gateway ahead
+     * of this build — without throwing. Registered as the polymorphic default
+     * deserializer in [WireJson], mirroring [ServerMessage.Unknown]. Renders as
+     * nothing (see `StateDeriver.committedMessage`): one missing row beats a
+     * missing conversation.
+     */
+    @Serializable @SerialName("unknown")
+    data object Unknown : ConversationFeedItem() {
+        override val entryId: String get() = UNKNOWN_ENTRY_ID
+        override val ts: Long get() = UNKNOWN_TS
+    }
 }
 
 /**
  * Why an assistant reply was cut short.
  * kind="barge-in": user spoke mid-TTS.
- * kind="interrupt": hard abort via UI button; cancelledTaskIds identifies affected tasks.
+ * kind="interrupt": hard abort of the TURN via UI button. cancelledTaskIds is always empty —
+ * nothing cancels a background task, so never render it as tasks killed by the Stop.
  */
 @Serializable
 data class Cutoff(

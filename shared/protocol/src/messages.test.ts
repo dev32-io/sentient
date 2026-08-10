@@ -2,30 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   conversationFeedAssistantItemSchema,
   conversationFeedItemSchema,
-  conversationFeedToolItemSchema,
   conversationFeedTriggerItemSchema,
   conversationFeedUserItemSchema,
 } from "./conversation.ts";
 import {
   audioStartSchema,
   clientMessageSchema,
-  cognitionStatusSchema,
-  connectorAudioDoneSchema,
-  connectorAudioStartSchema,
-  connectorCancelledSchema,
-  connectorTranscriptFinalSchema,
   conversationEntrySchema,
-  cycleAbortedSchema,
-  cycleCompletedSchema,
-  cycleStartedSchema,
+  delegationProgressSchema,
   gatewayMessageSchema,
-  messageDeltaSchema,
-  messageDoneSchema,
+  permissionRequestSchema,
+  permissionResolvedSchema,
+  permissionResponseSchema,
+  playbackStopSchema,
   sessionConfigureSchema,
   sessionReadySchema,
   streamResumedSchema,
-  taskUpdateSchema,
   textInputSchema,
+  turnAbortedSchema,
+  turnAudioStartSchema,
+  turnStartedSchema,
+  turnTextDeltaSchema,
 } from "./messages.ts";
 import type { StreamResumed } from "./messages.ts";
 
@@ -217,205 +214,6 @@ describe("session.ready", () => {
   });
 });
 
-describe("cycle.started", () => {
-  it("parses a valid cycle.started message", () => {
-    const result = cycleStartedSchema.safeParse({
-      type: "cycle.started",
-      cycleId: "c-1",
-      triggerKind: "voice",
-      triggerSource: "UserAudioInputConnector",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects missing cycleId", () => {
-    const result = cycleStartedSchema.safeParse({
-      type: "cycle.started",
-      triggerKind: "voice",
-      triggerSource: "UserAudioInputConnector",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("connector.cancelled", () => {
-  it("parses valid connector.cancelled", () => {
-    const result = connectorCancelledSchema.safeParse({
-      type: "connector.cancelled",
-      connector: "AssistantAudioResponseConnector",
-      cycleId: "c-1",
-      taskId: "t-1",
-      reason: "barge_in",
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("cycle.aborted", () => {
-  it("parses valid cycle.aborted", () => {
-    const result = cycleAbortedSchema.safeParse({
-      type: "cycle.aborted",
-      cycleId: "c-1",
-      reason: "client_disconnect",
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("cycle.completed", () => {
-  it("parses with empty effectsInvoked", () => {
-    const result = cycleCompletedSchema.safeParse({
-      type: "cycle.completed",
-      cycleId: "c-1",
-      effectsInvoked: [],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("parses with populated effectsInvoked", () => {
-    const result = cycleCompletedSchema.safeParse({
-      type: "cycle.completed",
-      cycleId: "c-1",
-      effectsInvoked: ["tts", "memory_write"],
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("connector.transcript.final", () => {
-  it("parses valid transcript final", () => {
-    const result = connectorTranscriptFinalSchema.safeParse({
-      type: "connector.transcript.final",
-      connector: "UserAudioInputConnector",
-      text: "hello world",
-      language: "en",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects wrong connector literal", () => {
-    const result = connectorTranscriptFinalSchema.safeParse({
-      type: "connector.transcript.final",
-      connector: "WrongConnector",
-      text: "hello",
-      language: "en",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("message.delta", () => {
-  it("parses valid delta", () => {
-    const result = messageDeltaSchema.safeParse({
-      type: "message.delta",
-      cycleId: "c-1",
-      delta: "Hello",
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects missing cycleId", () => {
-    const result = messageDeltaSchema.safeParse({
-      type: "message.delta",
-      delta: "Hello",
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe("message.done", () => {
-  it("parses valid done", () => {
-    const result = messageDoneSchema.safeParse({
-      type: "message.done",
-      cycleId: "c-1",
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("conversation.entry cycleId (live-bubble join key)", () => {
-  const assistantItem = {
-    entryId: "e-1",
-    ts: 1,
-    kind: "assistant" as const,
-    content: "hi",
-  };
-
-  it("carries cycleId on the frame so clients join live↔committed without inventing it", () => {
-    const result = conversationEntrySchema.safeParse({
-      type: "conversation.entry",
-      cycleId: "c-1",
-      item: assistantItem,
-    });
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.cycleId).toBe("c-1");
-  });
-
-  it("is optional — a user-echo / out-of-band entry carries no cycle", () => {
-    const result = conversationEntrySchema.safeParse({
-      type: "conversation.entry",
-      item: assistantItem,
-    });
-    expect(result.success).toBe(true);
-    expect(result.success && result.data.cycleId).toBeUndefined();
-  });
-});
-
-describe("connector.audio.start", () => {
-  it("parses valid audio start", () => {
-    const result = connectorAudioStartSchema.safeParse({
-      type: "connector.audio.start",
-      connector: "AssistantAudioResponseConnector",
-      cycleId: "c-1",
-      taskId: "t-1",
-      encoding: "pcm16",
-      sampleRate: 48000,
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("connector.audio.done", () => {
-  it("parses valid audio done", () => {
-    const result = connectorAudioDoneSchema.safeParse({
-      type: "connector.audio.done",
-      connector: "AssistantAudioResponseConnector",
-      cycleId: "c-1",
-      taskId: "t-1",
-    });
-    expect(result.success).toBe(true);
-  });
-});
-
-describe("cognition.status", () => {
-  it("parses idle state", () => {
-    const result = cognitionStatusSchema.safeParse({
-      type: "cognition.status",
-      state: "idle",
-      runningEffects: [],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("parses thinking state with effects", () => {
-    const result = cognitionStatusSchema.safeParse({
-      type: "cognition.status",
-      state: "thinking",
-      runningEffects: ["stt"],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects invalid state", () => {
-    const result = cognitionStatusSchema.safeParse({
-      type: "cognition.status",
-      state: "sleeping",
-      runningEffects: [],
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
 describe("audio.start turnMode (hold/toggle-talk split design §4)", () => {
   it("defaults turnMode to semantic when absent", () => {
     const result = audioStartSchema.safeParse({ type: "audio.start" });
@@ -463,88 +261,33 @@ describe("clientMessageSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  // CONTRACT: the exact payload-nested shape all three clients send for the
+  // in-chat mute toggle (web-sdk PreferencesConnector, mobile-sdk
+  // ClientMessage.UserPreferencesPatch, gateway/webui's TTS toggle). The 2.0
+  // purge deleted the handler and left the frame out of this union, so every
+  // tap was answered with protocol_error — which neither SDK renders.
+  it("parses user.preferences.patch with a payload-nested audio patch", () => {
+    const result = clientMessageSchema.safeParse({
+      type: "user.preferences.patch",
+      payload: { ttsEnabled: false },
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "user.preferences.patch") {
+      expect(result.data.payload.ttsEnabled).toBe(false);
+      expect(result.data.payload.channel).toBeUndefined();
+    }
+  });
+
+  it("rejects a user.preferences.patch whose fields are not nested under payload", () => {
+    expect(clientMessageSchema.safeParse({ type: "user.preferences.patch", ttsEnabled: false }).success).toBe(false);
+  });
+
   it("rejects removed auth type", () => {
     expect(clientMessageSchema.safeParse({ type: "auth", token: "t" }).success).toBe(false);
   });
 
   it("rejects old turn-based types", () => {
     expect(clientMessageSchema.safeParse({ type: "barge_in" }).success).toBe(false);
-  });
-});
-
-describe("gatewayMessageSchema", () => {
-  it("parses cycle.started", () => {
-    expect(
-      gatewayMessageSchema.safeParse({
-        type: "cycle.started",
-        cycleId: "c-1",
-        triggerKind: "text",
-        triggerSource: "TextInputConnector",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("parses message.delta", () => {
-    expect(
-      gatewayMessageSchema.safeParse({
-        type: "message.delta",
-        cycleId: "c-1",
-        delta: "Hi",
-      }).success,
-    ).toBe(true);
-  });
-
-  it("rejects removed turn.started type", () => {
-    expect(gatewayMessageSchema.safeParse({ type: "turn.started", turnIdx: 1 }).success).toBe(false);
-  });
-
-  it("rejects removed response.text.delta type", () => {
-    expect(gatewayMessageSchema.safeParse({ type: "response.text.delta", text: "hi" }).success).toBe(false);
-  });
-
-  it("rejects removed transcript.partial type", () => {
-    expect(gatewayMessageSchema.safeParse({ type: "transcript.partial", text: "hi" }).success).toBe(false);
-  });
-});
-
-describe("task.update", () => {
-  it("parses valid task.update with cycleId", () => {
-    const result = taskUpdateSchema.safeParse({
-      type: "task.update",
-      taskId: "t1",
-      toolName: "tool",
-      cycleId: "cycle-1",
-      status: "running",
-      argsPreview: "",
-      startedAtMs: 0,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it("requires cycleId on task.update", () => {
-    const result = taskUpdateSchema.safeParse({
-      type: "task.update",
-      taskId: "t1",
-      toolName: "tool",
-      status: "running",
-      argsPreview: "",
-      startedAtMs: 0,
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("parses task.update with terminal status and endedAtMs", () => {
-    const result = taskUpdateSchema.safeParse({
-      type: "task.update",
-      taskId: "t1",
-      toolName: "tool",
-      cycleId: "cycle-1",
-      status: "finished",
-      argsPreview: "",
-      startedAtMs: 0,
-      endedAtMs: 100,
-    });
-    expect(result.success).toBe(true);
   });
 });
 
@@ -626,24 +369,15 @@ describe("transport boundary — query RPCs removed from WS", () => {
 // Task 3.9 — seq/epoch on gateway push frames + resume handshake
 // ---------------------------------------------------------------------------
 
-describe("message.delta with seq/epoch (gateway push frames)", () => {
-  it("parses message.delta WITHOUT seq/epoch (backwards compat)", () => {
-    const result = gatewayMessageSchema.safeParse({
-      type: "message.delta",
-      cycleId: "c-1",
-      delta: "Hello",
-    });
-    expect(result.success).toBe(true);
+describe("seq/epoch stamping on gateway push frames", () => {
+  const delta = { type: "turn.text.delta", turnId: "t-1", text: "Hello" };
+
+  it("parses a push frame WITHOUT seq/epoch (pre-sequencing frame)", () => {
+    expect(gatewayMessageSchema.safeParse(delta).success).toBe(true);
   });
 
-  it("parses message.delta WITH seq and epoch", () => {
-    const result = gatewayMessageSchema.safeParse({
-      type: "message.delta",
-      cycleId: "c-1",
-      delta: "Hello",
-      seq: 42,
-      epoch: 7,
-    });
+  it("parses a push frame WITH seq and epoch", () => {
+    const result = gatewayMessageSchema.safeParse({ ...delta, seq: 42, epoch: 7 });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.seq).toBe(42);
@@ -652,43 +386,50 @@ describe("message.delta with seq/epoch (gateway push frames)", () => {
   });
 
   it("rejects negative seq", () => {
-    const result = gatewayMessageSchema.safeParse({
-      type: "message.delta",
-      cycleId: "c-1",
-      delta: "Hello",
-      seq: -1,
-      epoch: 0,
-    });
-    expect(result.success).toBe(false);
+    expect(gatewayMessageSchema.safeParse({ ...delta, seq: -1, epoch: 0 }).success).toBe(false);
   });
 
   it("rejects fractional seq", () => {
-    const result = gatewayMessageSchema.safeParse({
-      type: "message.delta",
-      cycleId: "c-1",
-      delta: "Hello",
-      seq: 1.5,
-      epoch: 0,
-    });
-    expect(result.success).toBe(false);
+    expect(gatewayMessageSchema.safeParse({ ...delta, seq: 1.5, epoch: 0 }).success).toBe(false);
   });
 
   it("parses auth.ok WITH seq/epoch", () => {
     const result = gatewayMessageSchema.safeParse({
       type: "auth.ok",
-      sessionId: "s-1",
-      role: "adult",
+      user: { userId: "u_a1b2c3d4", displayName: "Kevin", role: "adult", isAdmin: false, avatarTint: "terra" },
       seq: 0,
       epoch: 1,
     });
     expect(result.success).toBe(true);
   });
 
-  it("parses cognition.status WITH seq/epoch", () => {
+  // WIRE CONTRACT. `role` is REQUIRED on auth.ok as of plan
+  // 2026-08-07-tool-permissions task 2b. A gateway that forgot to stamp it
+  // would have its auth ack DROPPED by `sendGatewayFrame` rather than sent,
+  // hanging every client at connect — so the schema must refuse it here, loudly
+  // and in a test, instead of at runtime.
+  it("rejects an auth.ok whose user carries no role", () => {
     const result = gatewayMessageSchema.safeParse({
-      type: "cognition.status",
-      state: "thinking",
-      runningEffects: [],
+      type: "auth.ok",
+      user: { userId: "u_a1b2c3d4", displayName: "Kevin", isAdmin: false, avatarTint: "terra" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses tasklist.state WITH seq/epoch", () => {
+    const result = gatewayMessageSchema.safeParse({
+      type: "tasklist.state",
+      turnId: "t-1",
+      items: [
+        {
+          id: "c-1",
+          toolName: "search",
+          kind: "foreground",
+          status: "running",
+          argsPreview: "",
+          startedAtMs: 1,
+        },
+      ],
       seq: 100,
       epoch: 3,
     });
@@ -821,30 +562,6 @@ describe("conversationFeedItem entryId — required on all kinds", () => {
     if (result.success) expect(result.data.entryId).toBe("def-456");
   });
 
-  it("rejects a tool item missing entryId", () => {
-    const result = conversationFeedToolItemSchema.safeParse({
-      ts: 1000,
-      kind: "tool",
-      toolName: "search",
-      status: "finished",
-      summary: "done",
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts a tool item with entryId", () => {
-    const result = conversationFeedToolItemSchema.safeParse({
-      entryId: "ghi-789",
-      ts: 1000,
-      kind: "tool",
-      toolName: "search",
-      status: "finished",
-      summary: "done",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.entryId).toBe("ghi-789");
-  });
-
   it("rejects a trigger item missing entryId", () => {
     const result = conversationFeedTriggerItemSchema.safeParse({
       ts: 1000,
@@ -871,7 +588,6 @@ describe("conversationFeedItem entryId — required on all kinds", () => {
     for (const item of [
       { ts: 0, kind: "user", channel: "text", content: "x" },
       { ts: 0, kind: "assistant", content: "y" },
-      { ts: 0, kind: "tool", toolName: "t", status: "finished", summary: "s" },
       { ts: 0, kind: "trigger", source: "s", summary: "w" },
     ]) {
       expect(conversationFeedItemSchema.safeParse(item).success).toBe(false);
@@ -952,5 +668,250 @@ describe("session.configure surfaceId", () => {
       surfaceId: "",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wire contract v2 (spec §7) — the frozen 2.0 gateway → client frame set.
+// These tests exist because four packages (gateway, web-sdk, webui, KMP SDK)
+// decode these bytes at a process boundary; a silent rename here is a
+// production-only failure. Pin the SHAPES, not the plumbing.
+// ---------------------------------------------------------------------------
+
+describe("turn lifecycle frames", () => {
+  it("parses turn.started with a user trigger", () => {
+    const result = turnStartedSchema.safeParse({ type: "turn.started", turnId: "t-1", trigger: "user" });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses turn.started with a background-completion trigger", () => {
+    const result = turnStartedSchema.safeParse({
+      type: "turn.started",
+      turnId: "t-1",
+      trigger: "background-completion",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects turn.started without a trigger", () => {
+    expect(turnStartedSchema.safeParse({ type: "turn.started", turnId: "t-1" }).success).toBe(false);
+  });
+
+  it("rejects an unknown turn.started trigger", () => {
+    expect(turnStartedSchema.safeParse({ type: "turn.started", turnId: "t-1", trigger: "ambient" }).success).toBe(
+      false,
+    );
+  });
+
+  it("turn.text.delta carries turnId — the field response.text.delta was missing", () => {
+    expect(turnTextDeltaSchema.safeParse({ type: "turn.text.delta", turnId: "t-1", text: "hi" }).success).toBe(true);
+    expect(turnTextDeltaSchema.safeParse({ type: "turn.text.delta", text: "hi" }).success).toBe(false);
+  });
+
+  it("parses turn.aborted for both cutoff kinds", () => {
+    for (const cutoff of ["interrupt", "barge-in"]) {
+      expect(turnAbortedSchema.safeParse({ type: "turn.aborted", turnId: "t-1", cutoff }).success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown turn.aborted cutoff", () => {
+    expect(turnAbortedSchema.safeParse({ type: "turn.aborted", turnId: "t-1", cutoff: "timeout" }).success).toBe(false);
+  });
+});
+
+describe("turn.audio.start encoding", () => {
+  it("accepts opus and pcm", () => {
+    for (const encoding of ["opus", "pcm"]) {
+      expect(
+        turnAudioStartSchema.safeParse({ type: "turn.audio.start", turnId: "t-1", encoding, sampleRate: 48000 })
+          .success,
+      ).toBe(true);
+    }
+  });
+
+  it("rejects pcm16 — the wire enum is exactly opus | pcm", () => {
+    expect(
+      turnAudioStartSchema.safeParse({ type: "turn.audio.start", turnId: "t-1", encoding: "pcm16", sampleRate: 48000 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects a non-positive sampleRate", () => {
+    expect(
+      turnAudioStartSchema.safeParse({ type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 0 })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("permission mediation frames (spec §7.1)", () => {
+  it("parses permission.request with args and an expiry", () => {
+    const result = permissionRequestSchema.safeParse({
+      type: "permission.request",
+      requestId: "r-1",
+      toolCallId: "c-1",
+      toolName: "sendMessage",
+      args: { to: "+1555", body: "hi" },
+      description: "Send a message to +1555",
+      expiresAtMs: 1_700_000_000_000,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses permission.resolved for every outcome — timeout included (fail-closed)", () => {
+    for (const outcome of ["allowed", "denied", "timeout"]) {
+      expect(
+        permissionResolvedSchema.safeParse({ type: "permission.resolved", requestId: "r-1", outcome }).success,
+      ).toBe(true);
+    }
+  });
+
+  it("rejects an unknown permission outcome", () => {
+    expect(
+      permissionResolvedSchema.safeParse({ type: "permission.resolved", requestId: "r-1", outcome: "expired" }).success,
+    ).toBe(false);
+  });
+
+  it("clientMessageSchema accepts permission.response and rejects the retired tool.confirm", () => {
+    expect(
+      clientMessageSchema.safeParse({ type: "permission.response", requestId: "r-1", approved: true }).success,
+    ).toBe(true);
+    expect(clientMessageSchema.safeParse({ type: "tool.confirm", toolCallId: "c-1", approved: true }).success).toBe(
+      false,
+    );
+  });
+
+  it("permission.response requires an explicit boolean — a missing decision is never an approval", () => {
+    expect(permissionResponseSchema.safeParse({ type: "permission.response", requestId: "r-1" }).success).toBe(false);
+  });
+});
+
+describe("delegation.progress (spec §5.4)", () => {
+  it("parses a running update without a note", () => {
+    const result = delegationProgressSchema.safeParse({
+      type: "delegation.progress",
+      taskId: "task-1",
+      turnId: "t-1",
+      agent: "hermes",
+      status: "running",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses a terminal update with a note", () => {
+    const result = delegationProgressSchema.safeParse({
+      type: "delegation.progress",
+      taskId: "task-1",
+      turnId: "t-1",
+      agent: "hermes",
+      status: "error",
+      note: "provider timeout",
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("turnId rekey (cycleId is gone from the 2.0 wire)", () => {
+  it("playback.stop is keyed by turnId", () => {
+    expect(playbackStopSchema.safeParse({ type: "playback.stop", turnId: "t-1", reason: "barge-in" }).success).toBe(
+      true,
+    );
+    expect(playbackStopSchema.safeParse({ type: "playback.stop", cycleId: "c-1", reason: "barge-in" }).success).toBe(
+      false,
+    );
+  });
+
+  it("conversation.entry carries an optional turnId on the FRAME, never on the item", () => {
+    const item = { entryId: "e-1", ts: 1, kind: "assistant" as const, content: "hi" };
+    const withTurn = conversationEntrySchema.safeParse({ type: "conversation.entry", turnId: "t-1", item });
+    expect(withTurn.success).toBe(true);
+    expect(withTurn.success && withTurn.data.turnId).toBe("t-1");
+
+    // Absent on a user-echo / out-of-band entry.
+    const without = conversationEntrySchema.safeParse({ type: "conversation.entry", item });
+    expect(without.success).toBe(true);
+    expect(without.success && without.data.turnId).toBeUndefined();
+  });
+});
+
+describe("gatewayMessageSchema — the 2.0 union", () => {
+  it("admits every new 2.0 frame", () => {
+    const frames = [
+      { type: "turn.started", turnId: "t-1", trigger: "user" },
+      { type: "turn.text.delta", turnId: "t-1", text: "hi" },
+      { type: "turn.completed", turnId: "t-1" },
+      { type: "turn.aborted", turnId: "t-1", cutoff: "interrupt" },
+      {
+        type: "tasklist.state",
+        turnId: "t-1",
+        items: [
+          {
+            id: "c-1",
+            toolName: "search",
+            kind: "foreground",
+            status: "done",
+            argsPreview: "{}",
+            startedAtMs: 1,
+            endedAtMs: 2,
+          },
+        ],
+      },
+      { type: "turn.audio.start", turnId: "t-1", encoding: "opus", sampleRate: 48000 },
+      { type: "turn.audio.done", turnId: "t-1" },
+      {
+        type: "permission.request",
+        requestId: "r-1",
+        toolCallId: "c-1",
+        toolName: "sendMessage",
+        args: {},
+        description: "d",
+        expiresAtMs: 1,
+      },
+      { type: "permission.resolved", requestId: "r-1", outcome: "denied" },
+      { type: "delegation.progress", taskId: "task-1", turnId: "t-1", agent: "hermes", status: "running" },
+      { type: "playback.stop", turnId: "t-1", reason: "interrupt" },
+    ];
+    for (const frame of frames) {
+      expect(gatewayMessageSchema.safeParse(frame).success, `frame ${frame.type}`).toBe(true);
+    }
+  });
+
+  it("rejects every retired pre-2.0 frame type", () => {
+    const retired = [
+      "cycle.started",
+      "cycle.aborted",
+      "cycle.completed",
+      "message.delta",
+      "message.done",
+      "connector.audio.start",
+      "connector.audio.done",
+      "connector.cancelled",
+      "connector.transcript.final",
+      "task.update",
+      "tool.confirm_request",
+      "cognition.status",
+    ];
+    for (const type of retired) {
+      expect(gatewayMessageSchema.safeParse({ type }).success, `retired ${type}`).toBe(false);
+    }
+  });
+
+  // Reconciliation note (deliberate, reviewed): this file used to assert that
+  // the literal "turn.started" was REJECTED — it was a pre-cerebrum frame
+  // retired long ago. The 2.0 contract legitimately reuses that type string
+  // for the native turn (spec §7: "cycle.* may become turn.* — not preserved
+  // out of timidity"). The rejection that still matters is the old PAYLOAD:
+  // `{ turnIdx }` with no turnId/trigger must not squeak through.
+  it("accepts the 2.0 turn.started payload but still rejects the retired turnIdx payload", () => {
+    expect(gatewayMessageSchema.safeParse({ type: "turn.started", turnId: "t-1", trigger: "user" }).success).toBe(true);
+    expect(gatewayMessageSchema.safeParse({ type: "turn.started", turnIdx: 1 }).success).toBe(false);
+  });
+
+  it("rejects response.text.delta — Plan 2's interim frame, never a contract frame", () => {
+    expect(gatewayMessageSchema.safeParse({ type: "response.text.delta", text: "hi" }).success).toBe(false);
+  });
+
+  it("rejects transcript.partial — no partial-transcript frame exists in 2.0", () => {
+    expect(gatewayMessageSchema.safeParse({ type: "transcript.partial", text: "hi" }).success).toBe(false);
   });
 });

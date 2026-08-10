@@ -7,6 +7,7 @@ import "./components/settings/primitives/primitives.css";
 import "./components/settings/panes/panes.css";
 import "./components/common/dialog.css";
 import "./components/sessions/drawer.css";
+import "./components/permission/permission-dialog.css";
 import { App } from "./app.tsx";
 
 function init(): void {

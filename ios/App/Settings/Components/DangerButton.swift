@@ -7,7 +7,7 @@
 // the point of an extraction, not a restyle.
 //
 // Used for the root Settings "Log out" row today; also fits Members'
-// destructive delete-user action and Devices' Unlink confirm per the plan.
+// destructive delete-user action per the plan.
 //
 // Stateless leaf: `title` + `action` in, no local state.
 // ---------------------------------------------------------------------------

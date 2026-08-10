@@ -48,6 +48,11 @@ final class ChatViewModel: ObservableObject {
     /// for each transition there.
     @Published private(set) var keepScreenOn = false
 
+    /// Outstanding L3 permission-confirm prompt (design spec §7.1), or nil. Single
+    /// active prompt per session — SessionRuntime blocks the turn on it, so the SDK's
+    /// open-prompt list is at most one deep in practice; this holds its head.
+    @Published private(set) var pendingPermission: PermissionPrompt?
+
     private let component: ChatComponent
     /// Per-conversation optimistic outbox. Dies with this VM (conversation switch).
     /// Built via the createOutboundCache() factory: SKIE doesn't synthesise a zero-arg
@@ -61,12 +66,20 @@ final class ChatViewModel: ObservableObject {
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
     private var reopenFailedTask: Task<Void, Never>?
+    private var permissionTask: Task<Void, Never>?
+    /// Local defensive countdown to a shown prompt's expiresAtMs. Re-armed per prompt;
+    /// cancelled on any of: a new prompt replacing it, the server resolving it, or the
+    /// user answering it locally.
+    private var permissionTimeoutTask: Task<Void, Never>?
     private let log = AppLog("chat", "viewmodel")
 
     /// Periodic outbox-sweep interval (unacked-timeout detection) in nanoseconds.
     private static let sweepIntervalNs: UInt64 = 1_000_000_000
     /// Auto-dismiss interval for the ReopenFailed notice (spec §14) in nanoseconds.
     private static let reopenFailedAutoDismissNs: UInt64 = 4_000_000_000
+    /// Nanoseconds per millisecond, for converting the wire's expiresAtMs into a
+    /// Task.sleep(nanoseconds:) duration.
+    private static let nsPerMs: UInt64 = 1_000_000
 
     init(component: ChatComponent, sessionId: String?) {
         self.component = component
@@ -86,6 +99,7 @@ final class ChatViewModel: ObservableObject {
         startColdReplaceCollecting()
         startPeriodicSweep()
         startReopenFailedCollecting()
+        startPermissionCollecting()
     }
 
     private var isReady: Bool { connection.status == .ready }
@@ -182,6 +196,26 @@ final class ChatViewModel: ObservableObject {
     func dismissReopenFailedNotice() {
         log.debug("reopen-failed.notice.dismissed")
         state.reopenFailedNotice = nil
+    }
+
+    /// Local optimistic dismiss — fires immediately on the user's own Allow/Deny tap,
+    /// ahead of the `permission.resolved` round trip. Idempotent. Never an approval:
+    /// the decision itself travels via `respondPermission`, called from the same tap.
+    func dismissPermissionPrompt() {
+        guard let current = pendingPermission else { return }
+        permissionTimeoutTask?.cancel()
+        pendingPermission = PermissionPromptFSM.reduce(
+            current: current,
+            event: .userResponded(requestId: current.requestId)
+        )
+    }
+
+    /// Answer an outstanding permission prompt. Sends `permission.response` over the
+    /// wire; the dialog itself is dismissed by `dismissPermissionPrompt()`, called
+    /// alongside this from the same button tap (see ChatPermissionAlert.permissionPrompt).
+    func respondPermission(_ requestId: String, approved: Bool) {
+        log.info("permission.response requestId=\(requestId) approved=\(approved)")
+        component.respondToPermission(requestId: requestId, approved: approved)
     }
 
     // ── Chat stream collection ────────────────────────────────────────────────
@@ -315,6 +349,69 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
+    // ── Permission-prompt stream collection (design spec §7.1) ────────────────
+
+    /// Dedicated collector for the SDK's open-prompt StateFlow — a SEPARATE Task from
+    /// every other collector in this file, cancelled in deinit like the rest. The SDK
+    /// publishes the whole open list; at most one prompt is live per session (the
+    /// SessionRuntime blocks its turn on it), so this VM renders the head.
+    private func startPermissionCollecting() {
+        permissionTask = Task { [weak self] in
+            guard let self else { return }
+            for await prompts in self.component.permissions {
+                self.applyPermissionPrompts(prompts)
+            }
+        }
+    }
+
+    private func applyPermissionPrompts(_ prompts: [PermissionPrompt]) {
+        let current = pendingPermission
+        let next = prompts.first
+        // Same head as we already show ⇒ this emission was about something further
+        // down the list. Returning early keeps the countdown armed and the log
+        // un-duplicated.
+        guard next?.requestId != current?.requestId else { return }
+        permissionTimeoutTask?.cancel()
+        if let next {
+            pendingPermission = PermissionPromptFSM.reduce(current: current, event: .requested(next))
+            // toolName is a fixed MCP-route identifier, not user content. The rendered
+            // description and the raw args ARE user content and are never logged.
+            log.info("permission.request.shown requestId=\(next.requestId) toolName=\(next.toolName)")
+            armLocalTimeoutFallback(for: next)
+        } else if let current {
+            // The SDK dropped it — permission.resolved arrived (allowed / denied /
+            // timeout all clear identically; the outcome itself is server-side
+            // bookkeeping, not something this VM branches on).
+            log.info("permission.resolved requestId=\(current.requestId)")
+            pendingPermission = PermissionPromptFSM.reduce(
+                current: current,
+                event: .resolved(requestId: current.requestId)
+            )
+        }
+    }
+
+    /// Defensive UI-only fallback: if neither the user's own tap nor the server's
+    /// permission.resolved frame clears this prompt by its expiresAtMs, clear it
+    /// locally so the dialog can never hang forever on a lost/delayed frame. Never an
+    /// approval — nothing is sent to the server from this path, and the gateway has
+    /// already fail-closed denied the call by the time this fires.
+    private func armLocalTimeoutFallback(for prompt: PermissionPrompt) {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let remainingMs = max(0, prompt.expiresAtMs - nowMs)
+        permissionTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(remainingMs) * Self.nsPerMs)
+            guard let self, !Task.isCancelled else { return }
+            let wasShowing = self.pendingPermission?.requestId == prompt.requestId
+            self.pendingPermission = PermissionPromptFSM.reduce(
+                current: self.pendingPermission,
+                event: .localTimeoutFired(requestId: prompt.requestId)
+            )
+            if wasShowing {
+                self.log.warn("permission.prompt.cleared requestId=\(prompt.requestId) reason=local-timeout-fallback")
+            }
+        }
+    }
+
     /// Single teardown path for THIS VM: cancel collection tasks ONLY. The SDK /
     /// socket are owned by UserSession and MUST survive a conversation switch.
     deinit {
@@ -324,5 +421,7 @@ final class ChatViewModel: ObservableObject {
         coldReplaceTask?.cancel()
         sweepTask?.cancel()
         reopenFailedTask?.cancel()
+        permissionTask?.cancel()
+        permissionTimeoutTask?.cancel()
     }
 }

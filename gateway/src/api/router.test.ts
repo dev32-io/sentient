@@ -27,61 +27,13 @@ function makeDeps(overrides: Partial<ApiRouterDeps> = {}): ApiRouterDeps {
     handleWizard: fallthrough,
     handleSystemStatus: fallthrough,
     handleApply: fallthrough,
-    handleDevices: fallthrough,
-    handleSessions: fallthrough,
     handleVoices: fallthrough,
     handleDiagnostics: fallthrough,
+    handleSessions: fallthrough,
     handleStatic: nullStatic,
     ...overrides,
   };
 }
-
-describe("createApiRouter — sessions route dispatch", () => {
-  it("routes GET /api/v1/sessions to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const router = createApiRouter(makeDeps({ handleSessions }));
-    const res = await router(new Request("http://host/api/v1/sessions"));
-    expect(handleSessions).toHaveBeenCalledOnce();
-    expect(res?.status).toBe(200);
-  });
-
-  it("routes GET /api/v1/sessions/search to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const router = createApiRouter(makeDeps({ handleSessions }));
-    await router(new Request("http://host/api/v1/sessions/search?q=hi"));
-    expect(handleSessions).toHaveBeenCalledOnce();
-  });
-
-  it("routes GET /api/v1/sessions/<id>/messages to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const router = createApiRouter(makeDeps({ handleSessions }));
-    await router(new Request("http://host/api/v1/sessions/abc-123/messages"));
-    expect(handleSessions).toHaveBeenCalledOnce();
-  });
-
-  it("routes DELETE /api/v1/sessions/<id> to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const router = createApiRouter(makeDeps({ handleSessions }));
-    await router(new Request("http://host/api/v1/sessions/abc-123", { method: "DELETE" }));
-    expect(handleSessions).toHaveBeenCalledOnce();
-  });
-
-  it("routes PATCH /api/v1/sessions/<id> to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const router = createApiRouter(makeDeps({ handleSessions }));
-    await router(new Request("http://host/api/v1/sessions/s-1", { method: "PATCH" }));
-    expect(handleSessions).toHaveBeenCalledOnce();
-  });
-
-  it("does NOT route /api/v1/health to handleSessions", async () => {
-    const handleSessions = vi.fn().mockResolvedValue(sentinel);
-    const handleHealth = vi.fn().mockResolvedValue(new Response("health", { status: 200 }));
-    const router = createApiRouter(makeDeps({ handleSessions, handleHealth }));
-    await router(new Request("http://host/api/v1/health"));
-    expect(handleSessions).not.toHaveBeenCalled();
-    expect(handleHealth).toHaveBeenCalledOnce();
-  });
-});
 
 describe("createApiRouter — voices route dispatch", () => {
   it("routes GET /api/v1/voices to handleVoices", async () => {
@@ -106,5 +58,24 @@ describe("createApiRouter — voices route dispatch", () => {
     await router(new Request("http://host/api/v1/providers/models"));
     expect(handleVoices).not.toHaveBeenCalled();
     expect(handleProviders).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createApiRouter — sessions route dispatch", () => {
+  it("routes GET /api/v1/sessions to handleSessions, ahead of the static fallback", async () => {
+    const handleSessions = vi.fn().mockResolvedValue(sentinel);
+    const handleStatic = vi.fn().mockResolvedValue(new Response("index.html", { status: 200 }));
+    const router = createApiRouter(makeDeps({ handleSessions, handleStatic }));
+    const res = await router(new Request("http://host/api/v1/sessions"));
+    expect(handleSessions).toHaveBeenCalledOnce();
+    expect(handleStatic).not.toHaveBeenCalled();
+    expect(res?.status).toBe(200);
+  });
+
+  it("routes GET /api/v1/sessions/<id>/messages to handleSessions", async () => {
+    const handleSessions = vi.fn().mockResolvedValue(sentinel);
+    const router = createApiRouter(makeDeps({ handleSessions }));
+    await router(new Request("http://host/api/v1/sessions/s_abc123/messages"));
+    expect(handleSessions).toHaveBeenCalledOnce();
   });
 });

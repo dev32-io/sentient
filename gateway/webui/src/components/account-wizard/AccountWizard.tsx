@@ -69,10 +69,15 @@ const INITIAL_DRAFT: Omit<DraftAccount, "isAdmin"> = {
     model: { provider: "ollama-cloud", id: "" },
     voice: { provider: "local-tts", id: "default" },
     audio: { ttsEnabled: true, channel: "voice" },
+    // Mirrors the gateway schema's own `.default({spark: true, dreaming: true})`.
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: {
-      enabled: {} as Record<string, string[]>,
-    },
+    // No `permissions` key at all — a fresh account has never touched a
+    // dropdown, so every tool resolves from its role template (see
+    // `ProfileV1["tools"]["permissions"]`'s doc comment). Writing `{}` here
+    // would instead mean "every server off", which is not what a new
+    // account should get.
+    tools: {},
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   },

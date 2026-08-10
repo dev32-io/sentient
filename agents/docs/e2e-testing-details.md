@@ -1,21 +1,29 @@
 # E2E Smoke — Details & Examples
 
-The driver depends on the surface: **web** (webui) → Playwright MCP; **native mobile** (Android + iOS apps) → Maestro + `adb`/`xcrun simctl`. The rule file (`.claude/rules/e2e-testing.md`) defines the bar; this doc shows how to execute it well. Both surfaces smoke against the same `deploy/macos/` gateway stack.
+The driver depends on the surface: **web** (webui) → Playwright MCP; **native mobile** (Android + iOS apps) → Maestro + `adb`/`xcrun simctl`. The rule file (`.claude/rules/e2e-testing.md`) defines the bar; this doc shows how to execute it well. Both surfaces smoke against the same local stack — addons via docker, gateway native.
 
 ## Bringup
 
-Default stack: `deploy/macos/docker-compose.yml`. From the repo root:
+`bun run dev` from the repo root is the whole-stack launcher (see the root
+`CLAUDE.md`): preflight (docker-daemon wait, webui build, addon-image bake)
+then gateway (`bun --watch`, never `--hot` — refused outright, see
+`gateway/CLAUDE.md`) plus vite plus every docker/native addon plus
+`inbound-proxy`.
 
 ```bash
 source scripts/env.sh
-HOST_DOCKER_GID=0 docker compose -f deploy/macos/docker-compose.yml build gateway
-HOST_DOCKER_GID=0 docker compose -f deploy/macos/docker-compose.yml up -d
-until curl -sk -o /dev/null -w "%{http_code}" https://localhost:8888/ | grep -q 200; do sleep 1; done
+bun run dev &
+until curl -sk -o /dev/null -w "%{http_code}" https://localhost/ | grep -q 200; do sleep 1; done
 ```
 
-Open `https://localhost:8888` via Playwright MCP `browser_navigate`. The
-self-signed cert is already trusted in the chromium profile that ships
-with the MCP — no clickthrough needed.
+The gateway's own `system-orchestrator/` creates and starts every addon
+container — `inbound-proxy` included — from the images preflight baked;
+there is no `docker compose up` for this stack. Open `https://localhost` via
+Playwright MCP `browser_navigate` — the one door all browser smoke drives
+against, proxy in front of the gateway, identical to prod. The self-signed
+cert is already trusted in the chromium profile that ships with the MCP — no
+clickthrough needed. (`https://localhost:8888` still answers directly from
+the host, for diagnostics only — not the smoke URL.)
 
 ## Native mobile bringup (Maestro)
 
@@ -107,28 +115,32 @@ tabs interleaved. Useful for BroadcastChannel / cross-tab sync flows
 
 ## Reconnect / restart smoke
 
-To exercise WS reconnect, kill the gateway container while a tab is
-open:
+To exercise WS reconnect, restart the native gateway process while a tab is
+open (dev, `bun --watch` from `gateway/` — never `--hot`, see
+`gateway/CLAUDE.md`):
 
 ```bash
-docker compose -f deploy/macos/docker-compose.yml restart gateway
+pkill -f "bun --watch src/main.ts"; cd gateway && bun --watch src/main.ts &
 ```
 
 Wait for `/health` to come back, then verify the tab reconnected. The
 SDK's exponential-backoff path is in `shared/web-sdk/src/sdk-reconnect.ts`.
+Addon containers are untouched by this — only the gateway process restarts.
 
 ## Production smoke (macOS mini — NOT agent-driven)
 
-Production runs on the Apple-silicon Mac mini (`mini0@mini0.lan`). Rebuild +
-health-check + log-level smoke only:
+Production runs on the Apple-silicon Mac mini (`mini0@mini0.lan`) as a native
+compiled binary under `launchd`. Rebuild + health-check + log-level smoke
+only:
 
 ```bash
 ssh mini0@mini0.lan
-cd ~/sentient && git pull && docker compose -f deploy/mac-prod/docker-compose.yml \
-  build gateway && docker compose -f deploy/mac-prod/docker-compose.yml up -d gateway
-docker compose -f deploy/mac-prod/docker-compose.yml ps
-docker compose -f deploy/mac-prod/docker-compose.yml logs gateway --tail=200 \
-  | grep -E "WARN|ERROR" || echo "clean"
+cd ~/sentient && git pull
+docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build   # addon images
+./scripts/build-gateway.sh --release
+sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
+launchctl print system/io.sentient.gateway | grep -E "state|path"
+tail -200 ~/.sentient/gateway/logs/$(date +%F).log | grep -E "WARN|ERROR" || echo "clean"
 ```
 
 Real-user smoke on prod is the operator's job, not the agent's. On PROD the

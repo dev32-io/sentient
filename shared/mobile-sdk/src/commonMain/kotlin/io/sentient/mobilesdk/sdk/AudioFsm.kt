@@ -10,7 +10,7 @@
 //                                                              → interrupting
 //
 // Driven by TYPED inputs (no hardware, no clock): Activate / Deactivate /
-// MicOnset / TranscriptFinal / CycleStart / CycleDone / AudioStart / AudioDone /
+// MicOnset / TranscriptFinal / TurnStart / TurnDone / AudioStart / AudioDone /
 // Interrupt. The AudioPipeline feeds these from the capture/gate/connector
 // events; the orchestrator maps the resulting AudioState onto ConnectionState.
 // Pure typed transitions — no logging here (the pipeline logs
@@ -19,22 +19,24 @@
 // Transition table (every row pinned in AudioFsmTest):
 //   INACTIVE           Activate        → LISTENING        (else: stay INACTIVE)
 //   LISTENING          MicOnset        → USER_SPEAKING
-//   LISTENING          CycleStart      → PROCESSING
+//   LISTENING          TurnStart      → PROCESSING
 //   LISTENING          AudioStart      → ASSISTANT_SPEAKING
 //   USER_SPEAKING      TranscriptFinal → PROCESSING
-//   USER_SPEAKING      CycleStart      → PROCESSING
+//   USER_SPEAKING      TurnStart      → PROCESSING
 //   USER_SPEAKING      Interrupt       → LISTENING
 //   PROCESSING         AudioStart      → ASSISTANT_SPEAKING
-//   PROCESSING         CycleDone       → LISTENING
+//   PROCESSING         TurnDone       → LISTENING
 //   PROCESSING         MicOnset        → USER_SPEAKING    (barge-in pre-audio)
 //   PROCESSING         Interrupt       → INTERRUPTING
 //   ASSISTANT_SPEAKING AudioDone       → LISTENING
 //   ASSISTANT_SPEAKING MicOnset        → INTERRUPTING     (barge-in)
 //   ASSISTANT_SPEAKING Interrupt       → INTERRUPTING
-//   ASSISTANT_SPEAKING CycleDone       → ASSISTANT_SPEAKING (audio still draining)
+//   ASSISTANT_SPEAKING TurnDone        → ASSISTANT_SPEAKING (audio still draining)
+//   ASSISTANT_SPEAKING AudioStart      → ASSISTANT_SPEAKING (design §7.2: the next turn's
+//                                        audio QUEUES BEHIND; it never restarts the state)
 //   INTERRUPTING       AudioDone       → LISTENING
-//   INTERRUPTING       CycleDone       → LISTENING
-//   INTERRUPTING       AudioStart      → ASSISTANT_SPEAKING (next cycle resumes)
+//   INTERRUPTING       TurnDone       → LISTENING
+//   INTERRUPTING       AudioStart      → ASSISTANT_SPEAKING (next turn resumes)
 //   <any>              Deactivate      → INACTIVE
 // Unlisted (state, input) pairs are no-ops (stay in the current state).
 // ---------------------------------------------------------------------------
@@ -56,7 +58,7 @@ enum class AudioState {
     /** Mic active, idle. "Listening..." display. */
     LISTENING,
 
-    /** Local mic onset detected; awaiting server resolution (transcript / cycle). */
+    /** Local mic onset detected; awaiting server resolution (transcript / turn). */
     USER_SPEAKING,
 
     /** Server cognition active (thinking / acting). "Thinking..." display. */
@@ -71,7 +73,7 @@ enum class AudioState {
 
 /**
  * Typed inputs that drive [AudioFsm]. A flat sealed hierarchy → SKIE exposes an
- * exhaustive Swift enum. No payloads: the pipeline carries ids (cycleId /
+ * exhaustive Swift enum. No payloads: the pipeline carries ids (turnId /
  * utteranceId) in its log trail, not through the FSM transition.
  */
 sealed interface AudioInput {
@@ -87,16 +89,16 @@ sealed interface AudioInput {
     /** Server finalized the utterance (connector.transcript.final). */
     data object TranscriptFinal : AudioInput
 
-    /** A cognitive cycle began (cycle.started / cognition → thinking). */
-    data object CycleStart : AudioInput
+    /** A turn began (turn.started / cognition → thinking). */
+    data object TurnStart : AudioInput
 
-    /** The cognitive cycle finished (cycle.done / cognition → idle). */
-    data object CycleDone : AudioInput
+    /** The turn finished (turn.completed / cognition → idle). */
+    data object TurnDone : AudioInput
 
-    /** Assistant audio began playing (connector.audio.start). */
+    /** Assistant audio began playing (turn.audio.start). */
     data object AudioStart : AudioInput
 
-    /** Assistant audio finished / drained (connector.audio.done). */
+    /** Assistant audio finished / drained (turn.audio.done). */
     data object AudioDone : AudioInput
 
     /** Hard interrupt or playback.stop (UI Stop / barge-in cancel). */
@@ -138,21 +140,21 @@ class AudioFsm(var state: AudioState = AudioState.INACTIVE) {
 
     private fun fromListening(input: AudioInput): AudioState = when (input) {
         is AudioInput.MicOnset -> AudioState.USER_SPEAKING
-        is AudioInput.CycleStart -> AudioState.PROCESSING
+        is AudioInput.TurnStart -> AudioState.PROCESSING
         is AudioInput.AudioStart -> AudioState.ASSISTANT_SPEAKING
         else -> state
     }
 
     private fun fromUserSpeaking(input: AudioInput): AudioState = when (input) {
         is AudioInput.TranscriptFinal -> AudioState.PROCESSING
-        is AudioInput.CycleStart -> AudioState.PROCESSING
+        is AudioInput.TurnStart -> AudioState.PROCESSING
         is AudioInput.Interrupt -> AudioState.LISTENING
         else -> state
     }
 
     private fun fromProcessing(input: AudioInput): AudioState = when (input) {
         is AudioInput.AudioStart -> AudioState.ASSISTANT_SPEAKING
-        is AudioInput.CycleDone -> AudioState.LISTENING
+        is AudioInput.TurnDone -> AudioState.LISTENING
         is AudioInput.MicOnset -> AudioState.USER_SPEAKING
         is AudioInput.Interrupt -> AudioState.INTERRUPTING
         else -> state
@@ -162,12 +164,15 @@ class AudioFsm(var state: AudioState = AudioState.INACTIVE) {
         is AudioInput.AudioDone -> AudioState.LISTENING
         is AudioInput.MicOnset -> AudioState.INTERRUPTING
         is AudioInput.Interrupt -> AudioState.INTERRUPTING
-        else -> state // CycleDone stays: audio still physically draining.
+        // §7.2: a follow-up turn's audio.start queues behind the audio already playing —
+        // it must NOT bounce the display state. Stay speaking.
+        is AudioInput.AudioStart -> AudioState.ASSISTANT_SPEAKING
+        else -> state // TurnDone stays: audio still physically draining.
     }
 
     private fun fromInterrupting(input: AudioInput): AudioState = when (input) {
         is AudioInput.AudioDone -> AudioState.LISTENING
-        is AudioInput.CycleDone -> AudioState.LISTENING
+        is AudioInput.TurnDone -> AudioState.LISTENING
         is AudioInput.AudioStart -> AudioState.ASSISTANT_SPEAKING
         else -> state
     }

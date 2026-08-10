@@ -1,24 +1,13 @@
-import type { Result } from "@sentient/protocol";
+import { ADMIN_ROLE, DEFAULT_ROLE, type Result, type UserRole } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import { profileV1Schema } from "../profile-store/profile-types.js";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
+import { NEVER_REVOKED } from "../user-auth/credential-floor.js";
 import type { Argon2Params, AvatarTint, UserRecord } from "../user-auth/types.js";
 import { assertUserId } from "../user-auth/user-id.js";
 import type { UserStore } from "../user-auth/user-store.js";
-import type { SupervisordControl, SupervisordError } from "./supervisord-control.js";
 import type { UserLifecycle } from "./user-lifecycle.js";
-import type { UserPortStore } from "./user-port-store.js";
-
-/** Outcome of `bootstrapWorker`.
- *  - "warm"          — health passed, pool upserted, ping→pong confirmed.
- *  - "dispatch-failed" — health passed and pool upserted, but ping→pong timed out.
- *  - "deferred"      — hermes not configured; no check performed (legacy/lazy path).
- *
- *  When mode is "strict" (account creation) only "warm" is a success — any other
- *  outcome triggers rollback and a "worker-not-ready" error to the caller.
- *  When mode is "lazy" (existing callers) health-timeout is non-fatal. */
-export type BootstrapWarmStatus = "warm" | "dispatch-failed" | "deferred";
 
 const log = getLog(["sentient", "gateway", "admin", "user-provisioner"]);
 
@@ -26,67 +15,73 @@ const AVATAR_TINTS: AvatarTint[] = ["terra", "sage", "amber", "clay"];
 
 // --- Error types -----------------------------------------------------------
 
-export type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile" | "worker-not-ready";
+export type CreateError = "hash-error" | "io-error" | "apply-error" | "invalid-profile";
 export type DeleteError = "not-found" | "last-admin" | "io-error";
 export type ResetError = "hash-error" | "not-found" | "io-error";
-export type AdminToggleError = "last-admin" | "not-found" | "io-error";
+export type SetRoleError = "last-admin" | "not-found" | "io-error";
 
 // --- Result types ----------------------------------------------------------
 
+/** The admin REST surface's user shape.
+ *
+ *  `isAdmin` is DERIVED from `role`, never stored — see `buildUserSummary`. It
+ *  stays on the wire so webui / Android / iOS keep compiling and behaving
+ *  correctly while they migrate to reading `role` (plan
+ *  2026-08-07-tool-permissions tasks 6–9). Removing it is a follow-up. */
 export interface UserSummary {
   userId: string;
   displayName: string;
+  role: UserRole;
   isAdmin: boolean;
   avatarTint: AvatarTint;
-  port: number;
   createdAt: string;
+}
+
+/** The ONE place `isAdmin` is derived for the admin surface. */
+export function buildUserSummary(rec: UserRecord): UserSummary {
+  return {
+    userId: rec.userId,
+    displayName: rec.displayName,
+    role: rec.role,
+    isAdmin: rec.role === ADMIN_ROLE,
+    avatarTint: rec.avatarTint,
+    createdAt: rec.createdAt,
+  };
 }
 
 // --- Dependencies ----------------------------------------------------------
 
-/** Subset of InternalSecretsStore consumed by the provisioner — kept narrow so
- *  Phase H's rename to `getSentientGatewayTokenSync` is a single-line change. */
-export interface InternalSecretsForProvisioner {
-  getHermesAuthTokenSync(): string;
-}
-
 export interface UserProvisionerDeps {
   userStore: UserStore;
   profileStore: ProfileStore;
-  userPortStore: UserPortStore;
   argon2Params: Argon2Params;
   hashPin: (pin: string, params: Argon2Params) => Promise<string>;
   makeUserId: () => string;
   randomAvatarTint: () => AvatarTint;
   now: () => Date;
-  supervisordControl: Pick<SupervisordControl, "upsertProgram" | "removeProgram">;
-  internalSecrets: InternalSecretsForProvisioner;
-  resolveTimezone: () => string;
-  /** Returns the host-side absolute path to a user's Hermes home directory.
-   *  Threaded into the supervisord program env (HERMES_HOME) and used by
-   *  the Hermes docker-backend when bind-mounting per-task sandbox dirs. */
-  resolveHermesHome: (userId: string) => string;
   archiveUserDir: (userId: string) => Promise<Result<void, "io-error">>;
   /** Render config.yaml + SOUL.md to the inner Hermes profile dir
-   *  (`<HERMES_HOME>/profiles/<userId>/`). MUST run BEFORE the supervisord
-   *  program is upserted — otherwise the worker boots without a model
-   *  config and the first cycle aborts. */
+   *  (`getHermesProfileDir(userId)`). `hermes-runner` spawns
+   *  `hermes -p <userId>` with `cwd` set to that dir, so the dir must exist
+   *  before the first delegation. What it must NOT be assumed to do is bind the
+   *  delegated agent's model or MCP tools: hermes reads its config.yaml from its
+   *  own store, not from this one. Its TOOLS come from
+   *  `external-tools/hermes-external-tool.ts` (`hermes mcp add`); its
+   *  model/credential from `createHermesProfile`'s `--clone-from`. */
   renderInnerProfile: (userId: string) => Promise<Result<void, "render-error" | "write-error">>;
-  /** Hand ownership of `<userDir>` and its rendered children to the hermes
-   *  container's uid (default 10000). MUST run AFTER renderInnerProfile (so
-   *  every freshly-written file is covered) and BEFORE upsertProgram (so
-   *  supervisord can open per-user log files when it spawns the worker).
-   *  Errors here are non-fatal — the user-provisioner logs and proceeds.
-   *  See `gateway/src/admin/chown-hermes.ts`. */
-  chownUserDirToHermes: (userId: string) => Promise<Result<void, "chown-error">>;
-  /** Wait for the just-started worker to accept auth, then warm the
-   *  connection pool and (in strict mode) confirm dispatch readiness via a
-   *  ping→pong round-trip. In lazy mode a health-timeout is non-fatal;
-   *  in strict mode only "warm" is success — anything else triggers rollback. */
-  bootstrapWorker: (userId: string, mode: "strict" | "lazy") => Promise<Result<BootstrapWarmStatus, "health-timeout">>;
+  /** Register the user with the Hermes CLI's OWN profile store, which is a
+   *  different tree from the gateway-side render above. `hermes -p <userId>`
+   *  refuses to start at all until that registration exists, so without this
+   *  every gateway-provisioned user fails its first `delegateTask` with
+   *  "Profile '<userId>' does not exist" — for the life of the install. The
+   *  deleted supervisord program spec used to run it as a self-bootstrapping
+   *  prefix; the native cutover removed the daemon and this replaces it. */
+  createHermesProfile: (userId: string) => Promise<Result<void, "cli-error">>;
   /** Fan-out for user lifecycle events. McpHost subscribes here to add/remove
-   *  per-user MCP sockets in lockstep with create/delete. Listener errors are
-   *  swallowed and logged — they do NOT roll back the user op. */
+   *  per-user MCP sockets in lockstep with create/delete, and the credential
+   *  revoker subscribes to delete/roleChanged to close that account's live
+   *  sockets. Listener errors are swallowed and logged — they do NOT roll back
+   *  the user op. */
   userLifecycle: UserLifecycle;
 }
 
@@ -96,13 +91,16 @@ export interface UserProvisioner {
   createUser(input: CreateUserInput): Promise<Result<UserSummary, CreateError>>;
   deleteUser(userId: string): Promise<Result<void, DeleteError>>;
   resetPin(userId: string, newPin: string): Promise<Result<void, ResetError>>;
-  setIsAdmin(userId: string, isAdmin: boolean): Promise<Result<void, AdminToggleError>>;
+  /** Re-role an existing member. Refuses to leave the household with no admin
+   *  — the same guard `deleteUser` applies, for the same reason. */
+  setRole(userId: string, role: UserRole): Promise<Result<void, SetRoleError>>;
 }
 
 export interface CreateUserInput {
   displayName: string;
   pin: string;
-  isAdmin: boolean;
+  /** Omitted means `adult`. */
+  role?: UserRole;
   profile: ProfileV1;
 }
 
@@ -119,9 +117,9 @@ export function createUserProvisioner(deps: UserProvisionerDeps): UserProvisione
       assertUserId(userId);
       return resetPinFlow(deps, userId, newPin);
     },
-    async setIsAdmin(userId, isAdmin) {
+    async setRole(userId, role) {
       assertUserId(userId);
-      return setIsAdminFlow(deps, userId, isAdmin);
+      return setRoleFlow(deps, userId, role);
     },
   };
 }
@@ -144,23 +142,16 @@ async function createUserWithRollback(
     userId,
     displayName: input.displayName,
     pinHash: hashed.value,
-    isAdmin: input.isAdmin,
+    role: input.role ?? DEFAULT_ROLE,
     avatarTint,
     createdAt,
+    credentialsValidFrom: NEVER_REVOKED,
   };
   const addResult = await deps.userStore.add(record);
   if (!addResult.ok) {
     log.warn("createUser.add-failed", { userId, error: addResult.error });
     return { ok: false, error: "io-error" };
   }
-
-  const bindResult = await deps.userPortStore.bind(userId);
-  if (!bindResult.ok) {
-    log.warn("createUser.port-bind-failed", { userId, error: bindResult.error });
-    await deps.userStore.remove(userId);
-    return { ok: false, error: "io-error" };
-  }
-  const port = bindResult.value.port;
 
   // Splice the server-generated userId onto the caller's profile, then
   // validate the full shape. userId is generated above after input arrives
@@ -170,81 +161,49 @@ async function createUserWithRollback(
     profile = profileV1Schema.parse({ ...input.profile, userId });
   } catch {
     log.warn("createUser.invalid-profile", { userId });
-    await rollbackPortAndUser(deps, userId);
+    await deps.userStore.remove(userId);
     return { ok: false, error: "invalid-profile" };
   }
   const saveResult = await deps.profileStore.save(profile);
   if (!saveResult.ok) {
     log.warn("createUser.save-failed", { userId, error: saveResult.error });
-    await rollbackPortAndUser(deps, userId);
+    await deps.userStore.remove(userId);
     return { ok: false, error: "io-error" };
   }
 
-  // Render the inner Hermes profile dir BEFORE supervisord starts the worker.
-  // The worker reads `<HERMES_HOME>/profiles/<userId>/config.yaml` on boot;
-  // if missing, it comes up with no model/agent config and the first cycle
-  // aborts. Order: render → upsertProgram → bootstrapWorker.
+  // Render the inner Hermes profile dir. Load-bearing, not cosmetic:
+  // `delegateTask` → hermes-runner spawns `hermes -p <userId>` with `cwd` set
+  // to this dir, so a missing config.yaml means the very first delegation runs
+  // with no model/agent config. There is no daemon to start afterwards — the
+  // old order (render → chown to uid 10000 → supervisord upsertProgram →
+  // bootstrapWorker health-poll) served a per-user Hermes child inside the
+  // `sentient-hermes` container that no longer exists.
   const renderResult = await deps.renderInnerProfile(userId);
   if (!renderResult.ok) {
     log.warn("createUser.render-failed", { userId, error: renderResult.error });
-    await rollbackProfilePortAndUser(deps, userId);
+    await rollbackProfileAndUser(deps, userId);
     return { ok: false, error: "apply-error" };
   }
 
-  // Hand the just-written user dir to the hermes container's uid before
-  // supervisord starts the worker. Without this, supervisord (running as
-  // hermes uid=10000) hits EACCES when opening the per-user stdout/stderr
-  // log files and the program enters FATAL state — surfaces to the user
-  // as "worker-not-ready" on Account creation. Chown errors are non-fatal:
-  // on FS layers that don't honour uid changes the worker may still boot.
-  const chownResult = await deps.chownUserDirToHermes(userId);
-  if (!chownResult.ok) {
-    log.warn("createUser.chown-failed", { userId, error: chownResult.error });
-  }
-
-  const upsertResult = await deps.supervisordControl.upsertProgram({
-    userId,
-    port,
-    token: deps.internalSecrets.getHermesAuthTokenSync(),
-    timezone: deps.resolveTimezone(),
-    provider: profile.model.provider,
-    hermesHome: deps.resolveHermesHome(userId),
-    signalPaired: profile.devices?.signal?.paired === true,
-  });
-  if (!upsertResult.ok) {
-    log.warn("createUser.supervisord-upsert-failed", {
+  // Register the user with the Hermes CLI itself. FAIL-SOFT, deliberately:
+  // Hermes is an optional DELEGATED agent, not part of the gateway's own turn
+  // loop, and the operator may never have configured it. A failure here must
+  // degrade `delegateTask` for this user, never fail or roll back the user.
+  const hermesResult = await deps.createHermesProfile(userId);
+  if (!hermesResult.ok) {
+    log.warn("createUser.hermes-profile-failed", {
       userId,
-      kind: upsertResult.error.kind,
-      reason: upsertResult.error.reason,
+      reason: hermesResult.error,
+      degrades: "delegateTask",
     });
-    await rollbackProfilePortAndUser(deps, userId);
-    return { ok: false, error: "apply-error" };
   }
 
-  // Notify lifecycle subscribers (e.g. McpHost) BEFORE warming the worker.
-  // The hermes worker boots immediately after `upsertProgram` and probes its
-  // gateway-MCP socket within ~1s; if the socket isn't ready by then it
-  // exhausts its retries and runs without gateway tools for its lifetime.
+  // Notify lifecycle subscribers (e.g. McpHost, which opens this user's
+  // gateway-MCP socket) once the profile is on disk.
   await deps.userLifecycle.emitCreated(userId);
 
-  // Strict bootstrap: poll worker health, upsert pool entry, then confirm
-  // dispatch readiness via a ping→pong round-trip. Account creation blocks
-  // until the worker is truly ready — the HTTP response only resolves once
-  // the spinner represents real readiness, not just /health 200.
-  const warmResult = await deps.bootstrapWorker(userId, "strict");
-  if (!warmResult.ok || warmResult.value === "dispatch-failed") {
-    const reason = warmResult.ok ? "dispatch-failed" : warmResult.error;
-    log.warn("createUser.worker-not-ready", { userId, reason });
-    await rollbackProfilePortAndUser(deps, userId);
-    return { ok: false, error: "worker-not-ready" };
-  }
-  log.info("createUser.bootstrap-ok", { userId, status: warmResult.value });
-
-  log.info("createUser.success", { userId, port });
-  return {
-    ok: true,
-    value: { userId, displayName: input.displayName, isAdmin: input.isAdmin, avatarTint, port, createdAt },
-  };
+  log.info("createUser.success", { userId, role: record.role });
+  return { ok: true, value: buildUserSummary(record) };
 }
 
 async function hashOrFail(deps: UserProvisionerDeps, pin: string): Promise<Result<string, CreateError>> {
@@ -259,39 +218,19 @@ async function hashOrFail(deps: UserProvisionerDeps, pin: string): Promise<Resul
 // --- deleteUser (5-step, no rollback needed) -------------------------------
 
 async function deleteUserFlow(deps: UserProvisionerDeps, userId: string): Promise<Result<void, DeleteError>> {
-  const port = await deps.userPortStore.resolvePort(userId);
-  if (port === null) return { ok: false, error: "not-found" };
-
+  // Existence check. This used to be "does the user hold a port binding?" —
+  // the port store was the de-facto user index. With ports gone the user store
+  // itself answers it, which is also the record `last-admin` is decided from.
   const listResult = await deps.userStore.list();
   if (!listResult.ok) return { ok: false, error: "io-error" };
   const target = listResult.value.find((u) => u.userId === userId);
-  if (target?.isAdmin && isOnlyAdmin(listResult.value)) {
+  if (!target) return { ok: false, error: "not-found" };
+  if (target.role === ADMIN_ROLE && isOnlyAdmin(listResult.value)) {
     return { ok: false, error: "last-admin" };
   }
 
-  // Resolve signal-pairing state BEFORE archive: the profile dir may be moved
-  // on archive, making profileStore.get unavailable afterward. false is safe
-  // here — extra stop targets are non-fatal (supervisorctl logs and continues).
-  const profileResult = await deps.profileStore.get(userId);
-  const signalPaired = profileResult.ok ? profileResult.value.devices?.signal?.paired === true : false;
-
   const archiveResult = await deps.archiveUserDir(userId);
   if (!archiveResult.ok) return { ok: false, error: "io-error" };
-
-  // Best-effort: remove the supervisord program. User is already archived;
-  // a stale program file is undesirable but not fatal.
-  const removeProgramResult = await deps.supervisordControl.removeProgram(userId, signalPaired);
-  if (!removeProgramResult.ok) {
-    log.warn("deleteUser.supervisord-remove-failed", {
-      userId,
-      port,
-      kind: removeProgramResult.error.kind,
-      reason: removeProgramResult.error.reason,
-    });
-  }
-
-  const unbindResult = await deps.userPortStore.unbind(userId);
-  if (!unbindResult.ok) log.warn("deleteUser.unbind-failed", { userId, error: unbindResult.error });
 
   const removeResult = await deps.userStore.remove(userId);
   if (!removeResult.ok) log.warn("deleteUser.remove-failed", { userId, error: removeResult.error });
@@ -317,7 +256,19 @@ async function resetPinFlow(
     return { ok: false, error: "hash-error" };
   }
 
-  const updateResult = await deps.userStore.update(userId, { pinHash });
+  // OWNER RULING (2026-08-10 whole-branch review, I3): a PIN reset moves the
+  // credential floor. The field is named `credentialsValidFrom` precisely
+  // because a credential change revokes the tokens issued under the old one —
+  // and an operator resets someone else's PIN exactly when they believe a
+  // credential leaked, so every existing session on that account MUST die.
+  // ONE WRITE, both fields, so the hash and the floor move atomically (a split
+  // write leaves a crash window where the PIN changed but old tokens still
+  // validate — the failure this revocation exists to prevent). Mirror ruling at
+  // `changePin` (user-auth/auth-service.ts).
+  const updateResult = await deps.userStore.update(userId, {
+    pinHash,
+    credentialsValidFrom: deps.now().toISOString(),
+  });
   if (!updateResult.ok) {
     return updateResult.error === "not-found" ? { ok: false, error: "not-found" } : { ok: false, error: "io-error" };
   }
@@ -326,45 +277,58 @@ async function resetPinFlow(
   return { ok: true, value: undefined };
 }
 
-// --- setIsAdmin ------------------------------------------------------------
+// --- setRole ---------------------------------------------------------------
 
-async function setIsAdminFlow(
+async function setRoleFlow(
   deps: UserProvisionerDeps,
   userId: string,
-  isAdmin: boolean,
-): Promise<Result<void, AdminToggleError>> {
+  role: UserRole,
+): Promise<Result<void, SetRoleError>> {
   const listResult = await deps.userStore.list();
   if (!listResult.ok) return { ok: false, error: "io-error" };
 
-  if (!isAdmin && isOnlyAdmin(listResult.value)) {
+  // Demoting the last admin locks the household out of its own admin surface —
+  // and now, additionally, out of every `admin`-tier tool. Refused for ANY
+  // target role that is not admin, not just the old boolean's `false`.
+  if (role !== ADMIN_ROLE && isOnlyAdmin(listResult.value)) {
     const target = listResult.value.find((u) => u.userId === userId);
-    if (target?.isAdmin) return { ok: false, error: "last-admin" };
+    if (target?.role === ADMIN_ROLE) return { ok: false, error: "last-admin" };
   }
 
-  const updateResult = await deps.userStore.update(userId, { isAdmin });
+  // ONE WRITE, both fields. A role change REVOKES this account's credentials
+  // (plan 2026-08-07-tool-permissions task 2c): the floor moves to now, so
+  // every token issued before this moment stops validating. Splitting it into
+  // two `update()` calls would leave a crash window in which the role had
+  // changed and the old credentials still worked — the exact failure the
+  // revocation exists to prevent — and `user-store.ts` has no lock across its
+  // read-modify-write, so a second round trip is not free either.
+  const updateResult = await deps.userStore.update(userId, {
+    role,
+    credentialsValidFrom: deps.now().toISOString(),
+  });
   if (!updateResult.ok) {
     return updateResult.error === "not-found" ? { ok: false, error: "not-found" } : { ok: false, error: "io-error" };
   }
 
-  log.info("setIsAdmin.success", { userId, isAdmin });
+  // AFTER the write, never before: the revoker closes this account's live
+  // sockets, and kicking a user whose role never actually persisted would be a
+  // logout for nothing.
+  await deps.userLifecycle.emitRoleChanged(userId);
+
+  log.info("setRole.success", { userId, role });
   return { ok: true, value: undefined };
 }
 
 // --- Helpers ---------------------------------------------------------------
 
 function isOnlyAdmin(users: UserRecord[]): boolean {
-  return users.filter((u) => u.isAdmin).length <= 1;
+  return users.filter((u) => u.role === ADMIN_ROLE).length <= 1;
 }
 
-async function rollbackPortAndUser(deps: UserProvisionerDeps, userId: string): Promise<void> {
-  await deps.userPortStore.unbind(userId);
-  await deps.userStore.remove(userId);
-}
-
-async function rollbackProfilePortAndUser(deps: UserProvisionerDeps, userId: string): Promise<void> {
+async function rollbackProfileAndUser(deps: UserProvisionerDeps, userId: string): Promise<void> {
   const removeProfileResult = await deps.profileStore.remove(userId);
   if (!removeProfileResult.ok) log.warn("rollback.profile-remove-failed", { userId, error: removeProfileResult.error });
-  await rollbackPortAndUser(deps, userId);
+  await deps.userStore.remove(userId);
 }
 
 /** Random avatar tint picker — used as default injection. */
@@ -378,6 +342,3 @@ export function randomAvatarTint(): AvatarTint {
 export function makeUserId(): string {
   return `u_${crypto.randomUUID().slice(0, 8)}`;
 }
-
-// Re-export for ergonomic consumption from bootstrap.
-export type { SupervisordError };

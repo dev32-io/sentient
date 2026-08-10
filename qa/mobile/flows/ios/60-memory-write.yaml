@@ -1,0 +1,62 @@
+appId: io.dev32.sentient.debug
+tags:
+  - memory
+  - chat
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable (server-minted).
+  QA_USER_ID: u_0417d3b0
+---
+# 60-memory-write — native memory WRITE round-trip (memory-system S1, spec §5).
+#
+# "Remember that I hate cilantro" → the model calls the confirm-tier `memory_write`
+# tool → the gateway's L3 PEP raises a real permission prompt (the model's own tool
+# call is never an authorisation decision) → iOS surfaces it as the SwiftUI
+# permission alert → Allow → the fact lands in the user's private MEMORY.md and the
+# assistant confirms in a bubble.
+#
+# `memory_write` is CONFIRM-tier, so the alert is REQUIRED, not auto-approved.
+# iOS alert ids are `permission-allow`/`permission-deny` (ChatPermissionAlert.swift),
+# WITHOUT the `chat-` prefix the Android testTags carry — and the Android twin is
+# D13-RED (testTagsAsResourceId is not applied to the Compose AlertDialog subtree,
+# so `chat-permission-allow` never resolves; see android/12-permission-confirm.yaml).
+# So native memory-write coverage is iOS-only until D13 is fixed.
+#
+# WRITES Ada's real MEMORY.md (memory is per-user durable state, not discarded like
+# 46-memory-cap) — restored in the drive's teardown, not by this flow.
+- runFlow: _helpers/login.yaml
+- tapOn: { id: "new-chat" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 3000
+- tapOn: { id: "composer-input" }
+- inputText: "Remember that I hate cilantro."
+- tapOn: { id: "chat-send" }
+# Do NOT tap chat-message-list here to dismiss the keyboard: memory_write is
+# confirm-tier, so the permission ALERT appears ~1.5s after send (as soon as the
+# provider decides to call the tool). The modal alert removes chat-message-list
+# from the accessibility tree, so a keyboard-dismiss tap here races the alert and
+# fails ("Element not found"). The alert floats above the keyboard anyway, so wait
+# for it directly; dismiss the keyboard AFTER answering it, before asserting the
+# bubble. (01-send-stream taps the list because it has no confirm-tier tool.)
+#
+# The prompt only appears after a provider round-trip decides to call the tool —
+# an LLM round-trip, genuinely long, well inside the broker's 120s timeout. Same
+# budget as 12-permission-confirm.
+- extendedWaitUntil:
+    visible: { id: "permission-allow" }
+    timeout: 45000
+- assertVisible: "Allow this action?"
+- takeScreenshot: "60-memory-write-prompt"
+# --- Allow: the write dispatches and the assistant confirms in a bubble ---
+- tapOn: { id: "permission-allow" }
+- extendedWaitUntil:
+    notVisible: { id: "permission-allow" }
+    timeout: 3000
+# Alert dismissed → chat-message-list is back in the tree. Tap it now to dismiss
+# any lingering keyboard so the confirmation bubble is unobstructed.
+- tapOn: { id: "chat-message-list" }
+# Confirmation bubble — the assistant's post-write reply, provider-paced.
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 45000
+- takeScreenshot: "60-memory-write-confirmed"

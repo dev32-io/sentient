@@ -64,7 +64,8 @@ xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp \
 
 **Always build SIGNED.** Never pass `CODE_SIGNING_ALLOWED=NO` — it strips the keychain
 entitlement and breaks WebSocket auth on device. Point the app at a gateway via the
-`GatewayWSURL` build setting / in-app backend resolution (local default: `deploy/macos/`).
+`GatewayWSURL` build setting / in-app backend resolution (local default: the dev gateway
+on this host — see the root `deploy/` docs).
 
 ## Testing
 

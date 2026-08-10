@@ -27,8 +27,8 @@ private fun userItem(content: String, ts: Long = 1) =
 private fun assistantItem(content: String, ts: Long = 2) =
     ConversationFeedItem.Assistant(ts = ts, content = content)
 
-private fun toolItem(summary: String, ts: Long = 3) =
-    ConversationFeedItem.Tool(ts = ts, toolName = "speak", status = "finished", summary = summary)
+private fun triggerItem(summary: String, ts: Long = 3) =
+    ConversationFeedItem.Trigger(ts = ts, source = "background-completion", summary = summary)
 
 class ConversationHistoryConnectorTest {
 
@@ -145,34 +145,34 @@ class ConversationHistoryConnectorTest {
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
         c.handle(ServerMessage.ConversationEntry(userItem("hi")))
         c.handle(ServerMessage.ConversationEntry(assistantItem("hello")))
-        c.handle(ServerMessage.ConversationEntry(toolItem("said hi")))
+        c.handle(ServerMessage.ConversationEntry(triggerItem("task finished")))
 
         assertEquals(3, c.items().size)
-        assertEquals(listOf("user", "assistant", "tool"), c.items().map { it.kindName() })
+        assertEquals(listOf("user", "assistant", "trigger"), c.items().map { it.kindName() })
         assertEquals(3, entries)
         // 1 for snapshot + 3 for entries.
         assertEquals(4, updates)
     }
 
     @Test
-    fun reattaches_frame_cycleId_onto_committed_assistant_entry() {
+    fun reattaches_frame_turnId_onto_committed_assistant_entry() {
         var emitted: ConversationFeedItem? = null
         val c = ConversationHistoryConnector(onEntry = { emitted = it })
 
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
-        c.handle(ServerMessage.ConversationEntry(assistantItem("hello"), cycleId = "c-1"))
+        c.handle(ServerMessage.ConversationEntry(assistantItem("hello"), turnId = "c-1"))
 
         val item = c.items().single()
-        assertEquals("c-1", (item as ConversationFeedItem.Assistant).cycleId)
-        assertEquals("c-1", (emitted as ConversationFeedItem.Assistant).cycleId)
+        assertEquals("c-1", (item as ConversationFeedItem.Assistant).turnId)
+        assertEquals("c-1", (emitted as ConversationFeedItem.Assistant).turnId)
     }
 
     @Test
-    fun leaves_cycleId_null_when_frame_carries_none() {
+    fun leaves_turnId_null_when_frame_carries_none() {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.ConversationSnapshot(items = emptyList()))
         c.handle(ServerMessage.ConversationEntry(assistantItem("hello")))
-        assertEquals(null, (c.items().single() as ConversationFeedItem.Assistant).cycleId)
+        assertEquals(null, (c.items().single() as ConversationFeedItem.Assistant).turnId)
     }
 
     @Test
@@ -186,7 +186,7 @@ class ConversationHistoryConnectorTest {
     fun ignores_unowned_frames() {
         val c = ConversationHistoryConnector()
         c.handle(ServerMessage.Pong)
-        c.handle(ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
         assertEquals(emptyList(), c.items())
     }
 
@@ -303,5 +303,5 @@ private fun ConversationFeedItem.kindName(): String = when (this) {
     is ConversationFeedItem.User -> "user"
     is ConversationFeedItem.Trigger -> "trigger"
     is ConversationFeedItem.Assistant -> "assistant"
-    is ConversationFeedItem.Tool -> "tool"
+    is ConversationFeedItem.Unknown -> "unknown"
 }

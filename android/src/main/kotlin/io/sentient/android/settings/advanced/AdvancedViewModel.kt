@@ -15,6 +15,7 @@ import io.sentient.mobiledata.usecase.settings.ApplyState
 import io.sentient.mobiledata.usecase.settings.ProfileMutation
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.toPutBody
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,7 +85,7 @@ class AdvancedViewModel(private val component: SettingsComponent) : ViewModel() 
         if (!state.dirty || state.applyActive) return
         log.info("save", mapOf("reasoning" to next.advanced.reasoningEffort, "maxTokens" to next.advanced.maxTokens))
         viewModelScope.launch {
-            component.applyProfileChange(ProfileMutation.PutProfile(previous, next)).collect { st ->
+            component.applyProfileChange(ProfileMutation.PutProfile(previous, next.toPutBody())).collect { st ->
                 _ui.update { it.foldApply(st) }
                 if (st is ApplyState.Ready) refetch()
             }

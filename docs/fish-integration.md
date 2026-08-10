@@ -35,7 +35,7 @@ https + no-redirect hardening.)
 
 Set the feature flag to `false` in the operator config
 (`~/.sentient/gateway/config/config.yaml` in the standard macOS deploy) and
-restart the gateway container:
+restart the gateway — native, not a container:
 
 ```yaml
 providers:
@@ -43,7 +43,7 @@ providers:
 ```
 
 ```bash
-docker compose -f deploy/macos/docker-compose.yml restart gateway
+# the gateway is native — restart it where it runs (bun --watch in dev, or launchctl in prod)
 ```
 
 Effects, verified end-to-end:

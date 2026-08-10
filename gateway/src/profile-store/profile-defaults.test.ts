@@ -1,47 +1,106 @@
 import { describe, expect, it, test } from "bun:test";
+import { type McpCatalog, mcpCatalogSchema } from "@sentient/config";
 import { applyProfileDefaults } from "./profile-defaults.js";
 import { profileV1Schema } from "./profile-types.js";
 
-test("applyProfileDefaults seeds tools.enabled and tools.toolsets when caller omits them", () => {
+/** One tool per tier — enough for the seeded table to differ per role, which
+ *  is the whole point of threading the role in. */
+const CATALOG: McpCatalog = mcpCatalogSchema.parse({
+  household: {
+    transport: "http",
+    url: "http://127.0.0.1:9000/mcp",
+    tools: {
+      include: [
+        { name: "look_up", tier: "read" },
+        { name: "add_to_list", tier: "write" },
+        { name: "unlock_door", tier: "confirm" },
+      ],
+    },
+  },
+});
+
+const ADULT = { role: "adult" as const, mcpCatalog: CATALOG };
+
+test("applyProfileDefaults seeds tools.permissions and tools.toolsets when caller omits them", () => {
   const partial = {
     schemaVersion: 1 as const,
     userId: "u_test",
     model: { provider: "openrouter" as const, id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts" as const, id: "abc" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {}, toolsets: [] },
+    // OMITTED, not `{}` — an empty table is a table naming no server, which
+    // the ToolBroker reads as every server off, so it is preserved rather than
+    // seeded. Only "never set" gets the starter set.
+    tools: { toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };
 
-  const out = applyProfileDefaults(partial);
+  const out = applyProfileDefaults(partial, ADULT);
 
-  expect(out.tools.enabled).toEqual({
-    home_assistant: [],
-    gateway: [],
-    music_assistant: [],
-    searxng: [],
-    fetch: [],
+  expect(out.tools.permissions).toEqual({
+    household: { look_up: "allow", add_to_list: "ask", unlock_door: "ask" },
   });
   expect(out.tools.toolsets).toEqual(["memory", "todo", "session_search", "skills"]);
 });
 
-test("applyProfileDefaults preserves caller-provided tools.enabled overrides", () => {
+test("applyProfileDefaults seeds the ACCOUNT'S OWN role, not one default table for everybody", () => {
+  const partial = {
+    schemaVersion: 1 as const,
+    userId: "u_kid",
+    model: { provider: "openrouter" as const, id: "google/gemini-2.5-flash" },
+    voice: { provider: "local-tts" as const, id: "abc" },
+    audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
+    persona: { template: "default", overrides: "" },
+    tools: { toolsets: [] },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
+  };
+
+  // The confirm-tier tool is gone AND the two below it are still there: a
+  // child's table is narrower, not empty.
+  expect(applyProfileDefaults(partial, { role: "child", mcpCatalog: CATALOG }).tools.permissions).toEqual({
+    household: { look_up: "allow", add_to_list: "ask" },
+  });
+});
+
+test("applyProfileDefaults preserves caller-provided tools.permissions overrides", () => {
   const partial = {
     schemaVersion: 1 as const,
     userId: "u_test",
     model: { provider: "openrouter" as const, id: "x" },
     voice: { provider: "local-tts" as const, id: "y" },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: { searxng: ["search_web"] }, toolsets: ["memory"] },
+    tools: { permissions: { searxng: { web_search: "allow" as const } }, toolsets: ["memory"] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
   };
-  const out = applyProfileDefaults(partial);
-  expect(out.tools.enabled).toEqual({ searxng: ["search_web"] });
+  const out = applyProfileDefaults(partial, ADULT);
+  expect(out.tools.permissions).toEqual({ searxng: { web_search: "allow" } });
   expect(out.tools.toolsets).toEqual(["memory"]);
+});
+
+test("applyProfileDefaults preserves an EMPTY tools.permissions — that is 'every server off', not 'unset'", () => {
+  const partial = {
+    schemaVersion: 1 as const,
+    userId: "u_test",
+    model: { provider: "openrouter" as const, id: "x" },
+    voice: { provider: "local-tts" as const, id: "y" },
+    audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
+    persona: { template: "default", overrides: "" },
+    tools: { permissions: {}, toolsets: ["memory"] },
+    compression: { threshold: 0.5 },
+    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" as const },
+  };
+  // Seeding the role template here would silently turn every server back on
+  // for somebody who had just switched all of them off.
+  expect(applyProfileDefaults(partial, ADULT).tools.permissions).toEqual({});
 });
 
 describe("audio defaults", () => {
@@ -57,7 +116,7 @@ describe("audio defaults", () => {
       advanced: { extraSystemPrompt: "", maxTokens: 4096 },
     };
     const parsed = profileV1Schema.parse(legacy);
-    const withDefaults = applyProfileDefaults(parsed);
+    const withDefaults = applyProfileDefaults(parsed, ADULT);
     expect(withDefaults.audio).toEqual({ ttsEnabled: true, channel: "voice" });
   });
 
@@ -74,7 +133,7 @@ describe("audio defaults", () => {
       audio: { ttsEnabled: false, channel: "text" as const },
     };
     const parsed = profileV1Schema.parse(profile);
-    const withDefaults = applyProfileDefaults(parsed);
+    const withDefaults = applyProfileDefaults(parsed, ADULT);
     expect(withDefaults.audio).toEqual({ ttsEnabled: false, channel: "text" });
   });
 });

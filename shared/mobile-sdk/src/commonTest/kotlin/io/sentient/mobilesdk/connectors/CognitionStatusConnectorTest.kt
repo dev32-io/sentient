@@ -40,7 +40,7 @@ class CognitionStatusConnectorTest {
     @Test
     fun transitions_to_thinking_on_cycle_started() {
         val (c, changes) = connectorWithChanges()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c1", triggerKind = "test"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c1", trigger = "test"))
         assertEquals(listOf(CognitionState.THINKING), changes)
         assertEquals(CognitionState.THINKING, c.state())
     }
@@ -48,8 +48,8 @@ class CognitionStatusConnectorTest {
     @Test
     fun transitions_to_idle_on_cycle_completed() {
         val (c, changes) = connectorWithChanges()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c1", triggerKind = "test"))
-        c.handle(ServerMessage.CycleCompleted(cycleId = "c1"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c1", trigger = "test"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c1"))
         assertEquals(CognitionState.IDLE, changes.last())
         assertEquals(CognitionState.IDLE, c.state())
     }
@@ -57,8 +57,8 @@ class CognitionStatusConnectorTest {
     @Test
     fun transitions_to_idle_on_cycle_aborted() {
         val (c, changes) = connectorWithChanges()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c1", triggerKind = "test"))
-        c.handle(ServerMessage.CycleAborted(cycleId = "c1", reason = "interrupt"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c1", trigger = "test"))
+        c.handle(ServerMessage.TurnAborted(turnId = "c1", cutoff = "interrupt"))
         assertEquals(CognitionState.IDLE, changes.last())
     }
 
@@ -66,7 +66,7 @@ class CognitionStatusConnectorTest {
     fun does_not_call_onStateChange_for_duplicate_state() {
         val (c, changes) = connectorWithChanges()
         // Already idle — cycle.completed should be a no-op.
-        c.handle(ServerMessage.CycleCompleted(cycleId = "c1"))
+        c.handle(ServerMessage.TurnCompleted(turnId = "c1"))
         assertEquals(emptyList(), changes)
     }
 
@@ -74,7 +74,7 @@ class CognitionStatusConnectorTest {
     fun ignores_unowned_frames() {
         val (c, changes) = connectorWithChanges()
         c.handle(ServerMessage.Pong)
-        c.handle(ServerMessage.MessageDelta(cycleId = "c1", delta = "x"))
+        c.handle(ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
         assertEquals(emptyList(), changes)
         assertEquals(CognitionState.IDLE, c.state())
     }
@@ -87,7 +87,7 @@ class CognitionStatusConnectorTest {
         // reset() clears it; the next cycle.started must STILL fire onStateChange(THINKING)
         // — proving no short-circuit drift.
         val (c, changes) = connectorWithChanges()
-        c.handle(ServerMessage.CycleStarted(cycleId = "c1", triggerKind = "test"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c1", trigger = "test"))
         assertEquals(listOf(CognitionState.THINKING), changes)
         changes.clear()
 
@@ -98,7 +98,7 @@ class CognitionStatusConnectorTest {
         changes.clear()
 
         // Next cycle arrives on the recovered socket — must NOT short-circuit.
-        c.handle(ServerMessage.CycleStarted(cycleId = "c2", triggerKind = "test"))
+        c.handle(ServerMessage.TurnStarted(turnId = "c2", trigger = "test"))
         assertEquals(listOf(CognitionState.THINKING), changes)
         assertEquals(CognitionState.THINKING, c.state())
     }

@@ -1,0 +1,4 @@
+2026-08-01T15:01:32.525 INFO  [gateway:user-auth:auth-service] authenticate.ok | userId="u_0417d3b0"
+2026-08-01T15:01:32.608 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msax1vvx-7h2uw06o" userId="u_0417d3b0"
+2026-08-01T15:02:35.588 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msax38hq-22z5wn82" userId="u_0417d3b0"
+2026-08-01T15:02:40.382 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-msax3c6x-pwbl1hqm" userId="u_0417d3b0"

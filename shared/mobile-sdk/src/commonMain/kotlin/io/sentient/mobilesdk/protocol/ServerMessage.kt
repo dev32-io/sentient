@@ -2,6 +2,7 @@ package io.sentient.mobilesdk.protocol
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Gateway → client wire frames. Mirrors shared/protocol/src/messages.ts +
@@ -19,7 +20,10 @@ sealed class ServerMessage {
     /**
      * Sent after a valid auth frame. Carries the authenticated user object.
      * Wire: { type:"auth.ok", user:{userId,displayName,isAdmin,avatarTint} }
-     * (matches ws-auth-gate.ts actual send shape, not the gatewayMessageSchema stub).
+     * — now the shape gatewayMessageSchema declares AND the one ws-auth-gate.ts
+     * sends through it. (It used to be neither: the schema carried a
+     * {sessionId, role} stub nobody sent, and the gate hand-serialized this
+     * frame past validation.)
      */
     @Serializable @SerialName("auth.ok")
     data class AuthOk(val user: AuthUser) : ServerMessage()
@@ -66,20 +70,88 @@ sealed class ServerMessage {
     @Serializable @SerialName("session.preferences.changed")
     data class SessionPreferencesChanged(val preferences: AudioPreferences) : ServerMessage()
 
-    // ── Cognitive cycle lifecycle ──
+    // ── Turn lifecycle (design §7 — replaces the retired cycle.* / message.* frames) ──
+    // Every non-identity field carries a default: a malformed frame degrades to a
+    // harmless value instead of throwing MissingFieldException, which would drop the
+    // WHOLE frame at WsTransport decode (a dropped turn.audio.start = silent TTS).
 
-    @Serializable @SerialName("cycle.started")
-    data class CycleStarted(
-        val cycleId: String,
-        val triggerKind: String? = null,
-        val triggerSource: String? = null,
+    @Serializable @SerialName("turn.started")
+    data class TurnStarted(
+        val turnId: String,
+        /** "user" | "background-completion". */
+        val trigger: String = "",
     ) : ServerMessage()
 
-    @Serializable @SerialName("cycle.aborted")
-    data class CycleAborted(val cycleId: String, val reason: String? = null) : ServerMessage()
+    @Serializable @SerialName("turn.text.delta")
+    data class TurnTextDelta(
+        val turnId: String,
+        /** WHICH BUBBLE this chunk belongs to. A ReAct turn produces text more
+         *  than once under ONE turnId, and those stretches render as one bubble
+         *  that grew — except across a message the person sent mid-turn, which
+         *  is drawn between them and starts a new one. Server-minted; null only
+         *  from a gateway that predates the field. */
+        val replyId: String? = null,
+        val text: String = "",
+    ) : ServerMessage()
 
-    @Serializable @SerialName("cycle.completed")
-    data class CycleCompleted(val cycleId: String) : ServerMessage()
+    @Serializable @SerialName("turn.completed")
+    data class TurnCompleted(val turnId: String) : ServerMessage()
+
+    @Serializable @SerialName("turn.aborted")
+    data class TurnAborted(
+        val turnId: String,
+        /** "interrupt" | "barge-in"; "" only for a malformed frame. */
+        val cutoff: String = "",
+    ) : ServerMessage()
+
+    // ── Turn audio (design §7.2) ──
+    // A NEW turnId NEVER cancels in-flight audio — it queues behind it. See AudioPipeline.
+
+    @Serializable @SerialName("turn.audio.start")
+    data class TurnAudioStart(
+        val turnId: String,
+        /** "opus" | "pcm". */
+        val encoding: String = "",
+        val sampleRate: Int = 0,
+    ) : ServerMessage()
+
+    @Serializable @SerialName("turn.audio.done")
+    data class TurnAudioDone(val turnId: String) : ServerMessage()
+
+    // ── Permission mediation (design §7.1) ──
+
+    /** L3 `confirm` decision awaiting the user. [args] is an arbitrary tool-argument
+     *  object — it is USER CONTENT and must never be logged. */
+    @Serializable @SerialName("permission.request")
+    data class PermissionRequest(
+        val requestId: String,
+        val toolCallId: String,
+        val toolName: String = "",
+        val args: JsonObject = JsonObject(emptyMap()),
+        val description: String = "",
+        val expiresAtMs: Long = 0L,
+    ) : ServerMessage()
+
+    /** The gateway resolved the request first (user answered elsewhere, or the
+     *  2-minute fail-closed timeout fired) — the client dismisses its dialog. */
+    @Serializable @SerialName("permission.resolved")
+    data class PermissionResolved(
+        val requestId: String,
+        /** "allowed" | "denied" | "timeout". */
+        val outcome: String = "",
+    ) : ServerMessage()
+
+    // ── Delegation progress (design §5.4 / §7) ──
+
+    @Serializable @SerialName("delegation.progress")
+    data class DelegationProgress(
+        val taskId: String,
+        val turnId: String = "",
+        val agent: String = "",
+        /** "running" | "done" | "error". */
+        val status: String = "",
+        val note: String? = null,
+    ) : ServerMessage()
 
     // ── Connector frames ──
 
@@ -89,28 +161,6 @@ sealed class ServerMessage {
         val language: String? = null,
     ) : ServerMessage()
 
-    @Serializable @SerialName("connector.audio.start")
-    data class ConnectorAudioStart(
-        val cycleId: String? = null,
-        val taskId: String? = null,
-        val encoding: String? = null,
-        val sampleRate: Int? = null,
-    ) : ServerMessage()
-
-    @Serializable @SerialName("connector.audio.done")
-    data class ConnectorAudioDone(
-        val cycleId: String? = null,
-        val taskId: String? = null,
-    ) : ServerMessage()
-
-    // ── Streaming assistant content ──
-
-    @Serializable @SerialName("message.delta")
-    data class MessageDelta(val cycleId: String? = null, val delta: String? = null) : ServerMessage()
-
-    @Serializable @SerialName("message.done")
-    data class MessageDone(val cycleId: String? = null) : ServerMessage()
-
     // ── Conversation feed ──
 
     @Serializable @SerialName("conversation.snapshot")
@@ -118,35 +168,44 @@ sealed class ServerMessage {
         val items: List<ConversationFeedItem> = emptyList(),
     ) : ServerMessage()
 
-    // `cycleId` is the gateway-owned join key between this committed entry and
-    // its live streaming bubble (carried on the FRAME; the item strips it). Read
-    // it straight through — the client never invents/derives it. Null for
-    // user-echo / out-of-band entries and for REST history (no live cycle).
+    // `turnId` is the gateway-owned join key between this committed entry and its live
+    // streaming bubble (carried on the FRAME; the item strips it). Read it straight
+    // through — the client never invents/derives it. Null for user-echo / out-of-band
+    // entries and for REST history (no live turn).
     @Serializable @SerialName("conversation.entry")
     data class ConversationEntry(
         val item: ConversationFeedItem,
-        val cycleId: String? = null,
+        val turnId: String? = null,
+        /** The bubble this committed entry belongs to — the SAME key the live
+         *  deltas carried, so the swap at turn end shows the same grouping the
+         *  stream did. */
+        val replyId: String? = null,
     ) : ServerMessage()
 
-    // ── Task sidebar ──
+    // ── Task list (composer strip) ──
 
-    @Serializable @SerialName("task.update")
-    data class TaskUpdate(
-        val taskId: String,
-        val toolName: String,
-        val cycleId: String,
-        val status: String,
-        val argsPreview: String,
-        val startedAtMs: Long,
-        val endedAtMs: Long? = null,
+    /**
+     * The live task/tool rows the composer strip renders. FULL STATE every
+     * time — the gateway owns which rows exist and how long each lives
+     * (foreground dies with its turn, a background delegateTask outlives it),
+     * so this client replaces its list and derives nothing.
+     */
+    @Serializable
+    @SerialName("tasklist.state")
+    data class TaskListState(
+        val turnId: String? = null,
+        val items: List<TaskListItem> = emptyList(),
     ) : ServerMessage()
 
     // ── Playback control ──
 
+    /** Flush playback. Emitted ONLY for a user action — barge-in (mic onset) or
+     *  interrupt (UI Stop). Never for a new turn. */
     @Serializable @SerialName("playback.stop")
     data class PlaybackStop(
-        val cycleId: String? = null,
-        val reason: String? = null,
+        val turnId: String = "",
+        /** "barge-in" | "interrupt". */
+        val reason: String = "",
     ) : ServerMessage()
 
     // ── Shared utility ──
@@ -177,11 +236,74 @@ sealed class ServerMessage {
         val ts: Long,
     ) : ServerMessage()
 
+    /**
+     * "You have no session yet — hold this key."
+     *
+     * A connection that presents no session id is a DRAFT: no row, no id,
+     * nothing in the session list until its first message mints one. [draftKey]
+     * is what the client holds meanwhile — it takes the anchor's place so the
+     * outbound queue can drain (SendMessageUseCase gates on a non-null attached
+     * id), it is re-presented as `session.configure.conversationId` so a
+     * reconnect stays on the same draft, and the gateway spends it as the mint
+     * key, which is what makes a retry after a lost `session.created` resolve to
+     * the session already minted instead of forking a second one.
+     */
+    @Serializable @SerialName("session.draft")
+    data class SessionDraft(
+        val requestId: String? = null,
+        val draftKey: String,
+        val ts: Long,
+    ) : ServerMessage()
+
+    /** The gateway titled this session. Distinct from [SessionsRenamed], which
+     *  echoes a rename the client itself asked for; [provenance] is
+     *  "generated" or "user". */
+    @Serializable @SerialName("session.title")
+    data class SessionTitle(
+        val sessionId: String,
+        val title: String,
+        val provenance: String,
+    ) : ServerMessage()
+
     @Serializable @SerialName("session.switched")
     data class SessionSwitched(
         val sessionId: String,
         val title: String? = null,
         val ts: Long,
+    ) : ServerMessage()
+
+    /**
+     * "You are now window number [generation] on [sessionId]" (gateway spec §3.7).
+     *
+     * Sent on EVERY attach — handshake, mint, re-bind, activate — and it is the
+     * only source of the pair every outbound command is stamped with. The stamp
+     * is what lets the gateway tell a command issued before a session switch
+     * from one issued after it, and refuse the stale one instead of applying it
+     * to the wrong conversation.
+     *
+     * Arrives BEFORE session.ready / session.created / session.switched, so the
+     * binding is never behind the session id it belongs to.
+     */
+    @Serializable @SerialName("session.attached")
+    data class SessionAttached(
+        val sessionId: String,
+        val generation: Int,
+    ) : ServerMessage()
+
+    /**
+     * The gateway REFUSED a command this client sent (gateway spec §3.7).
+     *
+     * Never silence: a dropped command is indistinguishable from a lost network
+     * and leaves the UI waiting on a reply that is never coming. [reason] is one
+     * of `stale_generation` (issued against a session this app has left — do not
+     * retry), `session_busy` (another window won a simultaneous input race —
+     * retryable at once), `not_attached`, or `credential_expired`.
+     */
+    @Serializable @SerialName("command.rejected")
+    data class CommandRejected(
+        val command: String,
+        val reason: String,
+        val pendingId: String? = null,
     ) : ServerMessage()
 
     /** Error frame for lifecycle operations (e.g. forbidden on re-establish switch).
@@ -203,11 +325,17 @@ sealed class ServerMessage {
 
 // ── Supporting DTOs ──
 
-/** Authenticated user identity — matches ws-auth-gate.ts send shape. */
+/** Authenticated user identity — matches ws-auth-gate.ts send shape.
+ *  Mirror contract (web-sdk-mirror-contract): protocol `authUserSchema` requires
+ *  `role: userRoleSchema`. Defaulted to "adult" (matching the gateway's
+ *  DEFAULT_ROLE) so `coerceInputValues` stays resilient to an older gateway. */
 @Serializable
 data class AuthUser(
     val userId: String,
     val displayName: String,
+    /** "adult" | "child" | "admin" — the user's role, needed for the tool-permission
+     *  system. Distinct from [isAdmin], which mobile uses for admin-surface gating today. */
+    val role: String = "adult",
     val isAdmin: Boolean = false,
     val avatarTint: String = "",
 )

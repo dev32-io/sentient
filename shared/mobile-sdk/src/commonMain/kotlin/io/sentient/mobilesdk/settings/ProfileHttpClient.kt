@@ -59,13 +59,18 @@ open class ProfileHttpClient(
     /**
      * PUT /profile/me → the saved ProfileV1. A 422 body {error:"userId-mismatch"}
      * surfaces as AuthError.Server(422, ...) — the repo branches on the status.
+     *
+     * Takes [ProfileV1PutBody], NOT [ProfileV1] — the PATCH-shaped `tools`
+     * (leaves may be `null` to clear a stored permission) is the wire body a
+     * PUT actually needs; see that type's doc comment. Build one from a loaded
+     * profile via `ProfileV1.toPutBody()`.
      */
-    open suspend fun updateMe(profile: ProfileV1): AuthResult<ProfileV1> = safeSettingsCall(log) {
+    open suspend fun updateMe(profile: ProfileV1PutBody): AuthResult<ProfileV1> = safeSettingsCall(log) {
         log.debug("updateMe", mapOf("userId" to profile.userId))
         val resp = httpClient.put("$baseUrl$PATH_PROFILE_ME") {
             bearer()
             contentType(ContentType.Application.Json)
-            setBody(settingsBodyJson.encodeToString(ProfileV1.serializer(), profile))
+            setBody(settingsBodyJson.encodeToString(ProfileV1PutBody.serializer(), profile))
         }
         mapSettingsResponse(log, resp) { it.body<ProfileV1>() }
     }

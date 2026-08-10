@@ -40,16 +40,35 @@ async function main(): Promise<void> {
     if (!Array.isArray(users) || users.length === 0) {
         throw new Error(`mint: ${usersPath} has no users — run wizard first`);
     }
-    const admin = users.find((u) => u && u.isAdmin === true);
+    // Accepts either shape: `role: "admin"` (current) or the pre-role
+    // `isAdmin: true`, since a dev box may not have rewritten users.json yet.
+    const admin = users.find((u) => u && (u.role === "admin" || u.isAdmin === true));
     if (!admin) {
         throw new Error(`mint: ${usersPath} has no admin user`);
     }
 
-    const tokens = createTokenService({ secret, ttlSeconds: DEV_TTL_SECONDS });
-    const token = await tokens.issue({
-        userId: String(admin.userId),
-        isAdmin: true,
+    // IDENTITY ONLY — the token names the user and confers nothing. The cube
+    // gets whatever this account's record says it may do, resolved per request
+    // by the gateway, so a baked token cannot outlive a role change.
+    // (`gateway/scripts/` is outside tsconfig's `include`, so nothing would
+    // have caught a stale `role:` argument here at build time.)
+    // This script ONLY issues. The floor is required so that nothing can
+    // assemble a token service that would validate without one — and a script
+    // that never validates has no business owning a second implementation of
+    // the `credentialsValidFrom ?? createdAt` precedence, which would be a
+    // third copy free to drift (and to fail OPEN on an unparseable instant).
+    // It throws instead: if this ever runs, the assumption above is wrong and
+    // the caller should hear so loudly.
+    const tokens = createTokenService({
+        secret,
+        ttlSeconds: DEV_TTL_SECONDS,
+        credentialFloor: {
+            validFromMsFor(): Promise<number | null> {
+                throw new Error("mint-cube-token never validates");
+            },
+        },
     });
+    const token = await tokens.issue({ userId: String(admin.userId) });
 
     process.stdout.write(token);
     process.stderr.write(`[mint-cube-token] minted for userId=${admin.userId} ttl=${DEV_TTL_SECONDS}s\n`);

@@ -1,0 +1,64 @@
+image: sentient/inbound-proxy:local
+container_name: sentient-inbound-proxy
+# sentient-edge, and ONLY sentient-edge. Its single upstream is host loopback,
+# so it needs no reachability to any sibling addon; its own network is what
+# denies that reach. Non-internal because docker silently drops port publishing
+# when every attached network is internal.
+networks: [sentient-edge]
+# THE ONE PUBLIC PUBLISH IN THE WHOLE STACK. Permitted only because this
+# service's policy entry sets `public_ports: true`, and only for 80/443 —
+# see gateway/src/system-orchestrator/types.ts#isAllowedPortMapping.
+# Container-side ports are unprivileged; nothing here runs as root.
+ports:
+  - "0.0.0.0:443:8443"
+  - "0.0.0.0:80:8080"
+volumes:
+  # Outward identity: the real acme.sh cert in prod, the gateway's self-signed
+  # material in dev. Resolved by phase-orchestrator.ts, which falls back to the
+  # gateway's certs dir when the configured path does not exist — a fresh mini
+  # has no acme.sh cert yet and the door still has to open.
+  - "${INBOUND_CERT_DIR}:/etc/sentient/outward:ro"
+  # Upstream trust anchor: ALWAYS the gateway's own self-signed cert, in both
+  # environments. This is what makes the loopback hop verified rather than
+  # merely encrypted.
+  #
+  # SINGLE FILE, not the whole certs dir. A trust anchor needs the PUBLIC
+  # certificate only — nginx reads nothing else from this path
+  # (proxy_ssl_trusted_certificate in nginx.conf points at cert.pem alone) —
+  # and that directory also holds key.pem, the gateway's own TLS private key.
+  # This is the one container that terminates raw LAN/internet traffic, so it
+  # is the highest-value target in the stack, and mounting a whole directory to
+  # read one file out of it is unearned reach: code execution in this nginx
+  # reads whatever is mounted straight off disk regardless of 0600, since the
+  # nginx master runs as root in the container.
+  #
+  # WHAT THIS DOES AND DOES NOT BUY, precisely — it depends on the OTHER mount:
+  #   - `inbound_proxy.cert_dir` CONFIGURED (prod, acme.sh): the two mounts name
+  #     two different directories, and the gateway's key.pem is then reachable
+  #     from nowhere inside this container. The property holds outright.
+  #   - cert_dir NULL — the FALLBACK (dev, and a fresh mini before acme.sh has
+  #     ever run): INBOUND_CERT_DIR resolves to the gateway's own certs dir, so
+  #     the mount above already carries key.pem. The two cert roles deliberately
+  #     SHARE one key there (design 2026-08-04 §2.5) — a proxy must hold some
+  #     private key to terminate TLS at all, and the fallback chose that one so
+  #     an infra-class door still opens on a host with no real cert. This mount
+  #     narrows nothing that the other mount has already granted.
+  # In both shapes this line is still the right one: it keeps the trust anchor a
+  # single public file, so the configured shape is clean rather than accidentally
+  # equivalent to the fallback.
+  - "${GATEWAY_CERTS_DIR}/cert.pem:/etc/sentient/upstream/cert.pem:ro"
+# DELIBERATELY NO extra_hosts. An earlier revision carried
+# `host.docker.internal:host-gateway` here on the (reasonable-looking, wrong)
+# assumption that it was required for the name to resolve at all. It is not:
+# Docker Desktop's embedded DNS (127.0.0.11) answers `host.docker.internal`
+# on its own, IPv4-only, with no /etc/hosts entry needed — verified by running
+# a container on this same network with NO extra_hosts and diffing
+# `getent ahosts host.docker.internal` before/after. Worse, KEEPING it was
+# actively harmful: on this Docker Desktop version, `--add-host
+# name:host-gateway` writes a DUAL-STACK (IPv4 + IPv6) pair into /etc/hosts,
+# and nginx.conf's upstream resolves that name via /etc/hosts at startup,
+# unless it goes through nginx's own resolver (see nginx.conf's `resolve` +
+# `zone` on the upstream server) — so the extra_hosts entry was the actual
+# root cause of an IPv6 connect() failing on every fresh upstream connection.
+mem_limit_bytes: 134217728    # 128 MiB — nginx, two server blocks, TLS termination
+cpus: 0.5

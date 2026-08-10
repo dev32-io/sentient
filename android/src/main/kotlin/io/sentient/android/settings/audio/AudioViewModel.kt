@@ -15,6 +15,7 @@ import io.sentient.mobiledata.usecase.settings.ApplyState
 import io.sentient.mobiledata.usecase.settings.ProfileMutation
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.toPutBody
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -79,7 +80,7 @@ class AudioViewModel(private val component: SettingsComponent) : ViewModel() {
         if (!state.dirty || state.saving) return
         log.info("save", mapOf("tts" to next.audio.ttsEnabled, "channel" to next.audio.channel))
         viewModelScope.launch {
-            component.applyProfileChange(ProfileMutation.PutProfile(previous, next)).collect { st ->
+            component.applyProfileChange(ProfileMutation.PutProfile(previous, next.toPutBody())).collect { st ->
                 _ui.update { it.foldApply(st) }
                 if (st is ApplyState.Ready) refetch()
             }

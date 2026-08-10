@@ -1,0 +1,83 @@
+appId: io.dev32.sentient.debug
+tags:
+  - chat
+  - device-actuating
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable.
+  QA_USER_ID: u_0417d3b0
+---
+# 12-permission-confirm — the NATIVE arm of `permission-confirm` (spec §9.2).
+#
+# WHY THIS FILE EXISTS: the predecessor spec's matrix names only WEB viewports for
+# `permission-confirm-web`. There was no native case at all — a genuine gap in the
+# spec, not a deliberate omission. This is that case, for Android; the iOS twin is
+# ios/12-permission-confirm.yaml.
+#
+# Scenario: ask for something that needs a SIDE-EFFECTING tool (ha_call_service).
+# The gateway's L3 PEP must block on a real confirm prompt rather than let the
+# model's tool call authorise itself, the app must surface it as a decision-required
+# dialog, and Allow must let the tool dispatch.
+#
+# ⚠️ `device-actuating`: the Allow arm ACTUATES A REAL LIGHT via the live Home
+# Assistant integration — there is no dev/prod split for physical state. This is
+# why the flow carries the `device-actuating` tag in addition to `chat`:
+# `qa/mobile/run-e2e.sh`'s BASE_EXCLUDE keeps it out of every `--tags` batch
+# (including `--tags chat`), unconditionally — same treatment as fault-armed /
+# physical-only. To run it deliberately, invoke Maestro directly on this file
+# (`maestro test qa/mobile/flows/android/12-permission-confirm.yaml`), never
+# through the tag-filtered runner. See agents/docs/testing-knowledge.md's tag
+# taxonomy section for the incident that added this tag.
+#
+# Expected gateway log trail:
+#   runtime:permission-broker  permission-broker.request  timeoutMs=120000
+#   runtime:permission-broker  permission-resolved        outcome="allowed"
+#   tools:tool-broker          tool-broker.pdp.decision   action="allow"
+# Deny arm -> outcome="denied" + tool-broker.dispatch.denied; the 120 s timeout arm
+# is a web-only case (a 2-minute native flow is not worth the batch time).
+#
+# ⚠️ STATUS 2026-07-30 (Task 9e): D12 is CLOSED. The send now reaches the gateway,
+# the model calls the tool, and the PDP raises a real prompt. This flow is STILL RED
+# on Android — for a NEW and different reason, D13. Do not re-diagnose it as D12.
+# D13: `uiautomator dump` taken while the dialog is on screen shows EVERY node with
+# `resource-id=""`, so `id: chat-permission-allow` can never resolve; the tap times
+# out and the gateway logs `dispatch.denied reason="permission request timed out"`.
+# Cause: `testTagsAsResourceId` is enabled once, on AppNavHost.kt's `Surface`, and a
+# Compose `AlertDialog` composes into its own window outside that subtree. Fix is
+# one line in android/** — the same `Modifier.semantics { testTagsAsResourceId =
+# true }` that settings/components/RowSelect.kt:87 already applies for this exact
+# trap. DO NOT EDIT THIS FLOW: its ids ARE the ids in the source.
+# The iOS twin PASSES (30s), which proves the gateway's L3 round trip end to end
+# from a device and localises this red to the client.
+# Evidence: qa/mobile/evidence/2026-07-30-t9e-session-new/ (§ D13).
+#
+# SELECTOR NOTE (spec correction): the ids are NOT symmetric across platforms.
+# Android: chat-permission-allow / chat-permission-deny (PermissionPromptDialog.kt).
+# iOS:     permission-allow      / permission-deny      (ChatPermissionAlert.swift).
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
+- assertVisible: { id: "composer-input" }
+- tapOn: { id: "composer-input" }
+- inputText: "turn on the kitchen light"
+- tapOn: { id: "chat-send" }
+- hideKeyboard
+# The prompt only appears after a provider round-trip decides to call the tool —
+# that is an LLM round-trip, so this budget is genuinely long. The broker's own
+# timeout is 120 s (permission-broker.request timeoutMs=120000), so 40 s here
+# cannot race the expiry.
+- extendedWaitUntil:
+    visible: { id: "chat-permission-allow" }
+    timeout: 40000
+- assertVisible: { id: "chat-permission-description" }
+- takeScreenshot: "12-permission-prompt"
+# --- Allow arm: the tool dispatches and the turn finishes with a real answer ---
+- tapOn: { id: "chat-permission-allow" }
+- extendedWaitUntil:
+    notVisible: { id: "chat-permission-allow" }
+    timeout: 3000
+# 40000ms: permission broker fail-closed budget (up to 2 min for a human answer)
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 40000
+- takeScreenshot: "12-permission-allowed"

@@ -11,6 +11,9 @@ import io.sentient.mobiledata.usecase.ObserveSessionsUseCase
 import io.sentient.mobiledata.usecase.RenameSessionUseCase
 import io.sentient.mobiledata.usecase.SendMessageUseCase
 import io.sentient.mobiledata.usecase.SwitchConversationUseCase
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
+import io.sentient.mobilesdk.connectors.PermissionPrompt
+import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
@@ -34,6 +37,16 @@ import kotlin.time.Clock as KtClock
 open class ChatComponent(
     private val sdk: SentientSdk,
     clock: Clock = Clock { KtClock.System.now().toEpochMilliseconds() },
+    /**
+     * Reads the user's stored audio preferences (`GET /profile/me`'s `audio`),
+     * or null when unavailable. Called once per [connect] to seed the SDK.
+     *
+     * A lambda rather than a repository so the cross-platform wiring stays HERE
+     * and each platform factory supplies only the fetch — the connection-scope
+     * rule's "don't duplicate wiring per platform". Defaults to null so tests
+     * and any caller that does not care keep the DEFAULT preferences.
+     */
+    private val loadAudioPreferences: (suspend () -> AudioPreferences?)? = null,
 ) {
     // VM-facing repos are the pure SDK passthroughs: data in, data out, no accumulated
     // state. The active conversation is anchored by the SDK ([currentSessionId]); the
@@ -61,6 +74,34 @@ open class ChatComponent(
         get() = conversationRepository.liveEvents
             .filterIsInstance<SdkEvent.ReopenFailed>()
             .map { }
+
+    /**
+     * Open L3 permission prompts (design §7.1) — the DI seam both platform ViewModels
+     * wrap. Continuous state, so a StateFlow: every value carries every still-open
+     * prompt, which makes conflation harmless. Thin passthrough, no accumulation.
+     */
+    val permissions: StateFlow<List<PermissionPrompt>> get() = sdk.permissions
+
+    /** Live background-delegation rows (design §5.4). Thin passthrough. */
+    val delegations: StateFlow<List<DelegationSnapshotItem>> get() = sdk.delegations
+
+    /**
+     * One-shot prompt arrivals off the SDK's NO-LOSS event stream. A VM that renders
+     * dialogs from a queue collects this; a VM that renders "the current prompt" reads
+     * [permissions]. Never fold a request away — a dropped prompt blocks a turn until
+     * the gateway's 2-minute timeout denies it.
+     */
+    val permissionRequests: Flow<PermissionPrompt>
+        get() = conversationRepository.liveEvents
+            .filterIsInstance<SdkEvent.PermissionRequested>()
+            .map { it.prompt }
+
+    /** One-shot resolutions (allowed | denied | timeout) — the dismiss signal. */
+    val permissionResolutions: Flow<SdkEvent.PermissionResolved>
+        get() = conversationRepository.liveEvents.filterIsInstance<SdkEvent.PermissionResolved>()
+
+    /** The user's Allow / Deny. Fail-closed: silence is never approval (§7.1). */
+    fun respondToPermission(requestId: String, approved: Boolean) = sdk.respondToPermission(requestId, approved)
 
     val observeChat = ObserveChatUseCase(conversationRepository, clock)
     val switchConversation = SwitchConversationUseCase(sessionsRepository)
@@ -100,7 +141,7 @@ open class ChatComponent(
      */
     suspend fun patchAudioPreferences(patch: AudioPreferencesPatch) = sdk.patchAudioPreferences(patch)
 
-    /** UI Stop — idempotent hard interrupt of the active cycle + audio. */
+    /** UI Stop — idempotent hard interrupt of the active turn + audio. */
     fun interrupt() = sdk.interrupt()
 
     /** Manual reconnect — re-arm the reconnect controller and drive recovery. */
@@ -117,8 +158,28 @@ open class ChatComponent(
     /** Foreground presence — one-shot liveness probe; reconnect only if the socket is dead. */
     fun onForeground() = sdk.onForeground()
 
-    /** Open the WS, authenticate, reach READY. Suspends until settled. */
-    suspend fun connect() = sdk.connect()
+    /**
+     * Open the WS, authenticate, reach READY. Suspends until settled.
+     *
+     * Seeds the SDK's audio preferences first, so the chat TTS toggle renders
+     * the user's STORED value rather than [AudioPreferences.DEFAULT]. The
+     * gateway sends no preferences frame at `session.configure`, so without
+     * this the client shows TTS on for a user who turned it off — and every tap
+     * then derives the next value from that wrong baseline.
+     *
+     * Best-effort and never fatal: a failed or absent read leaves the defaults
+     * and connect proceeds. A preference is not worth blocking the socket for.
+     */
+    suspend fun connect() {
+        seedAudioPreferences()
+        sdk.connect()
+    }
+
+    private suspend fun seedAudioPreferences() {
+        val load = loadAudioPreferences ?: return
+        val prefs = runCatching { load() }.getOrNull() ?: return
+        sdk.seedAudioPreferences(prefs)
+    }
 
     /**
      * Tear down the WS + loops. [clearSession] true clears the in-session slice

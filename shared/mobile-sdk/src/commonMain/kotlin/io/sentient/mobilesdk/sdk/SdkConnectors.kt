@@ -28,16 +28,21 @@ import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.connectors.CognitionStatusConnector
 import io.sentient.mobilesdk.connectors.Connector
 import io.sentient.mobilesdk.connectors.ConversationHistoryConnector
-import io.sentient.mobilesdk.connectors.CycleErrorConnector
+import io.sentient.mobilesdk.connectors.DelegationProgressConnector
+import io.sentient.mobilesdk.connectors.DelegationSnapshotItem
 import io.sentient.mobilesdk.connectors.InFlightMessageConnector
+import io.sentient.mobilesdk.connectors.PermissionConnector
+import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.connectors.PreferencesConnector
 import io.sentient.mobilesdk.connectors.SessionsConnector
-import io.sentient.mobilesdk.connectors.TaskStatusConnector
+import io.sentient.mobilesdk.connectors.TaskListConnector
+import io.sentient.mobilesdk.connectors.TurnErrorConnector
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.connectors.UserTextInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.SdkEvent
+import io.sentient.mobilesdk.protocol.TaskListItem
 import io.sentient.mobilesdk.sessions.SessionsHttpClient
 import io.sentient.mobilesdk.util.Clock
 import kotlinx.coroutines.CoroutineScope
@@ -50,16 +55,16 @@ import kotlinx.coroutines.launch
  * echoGate lifecycle + FSM). Defaults are no-ops so the text-only path (no
  * pipeline) compiles unchanged.
  *
- * @param onAudioStart connector.audio.start → pipeline.onAudioStart.
+ * @param onAudioStart turn.audio.start → pipeline.onAudioStart.
  * @param onAudioFrame binary downlink → pipeline.onAudioFrame.
- * @param onAudioDone connector.audio.done → pipeline.onAudioDone.
+ * @param onAudioDone turn.audio.done → pipeline.onAudioDone.
  * @param onPlaybackStop playback.stop → pipeline.onPlaybackStop.
  */
 class AudioDownlinkHooks(
-    val onAudioStart: (cycleId: String, encoding: String?, sampleRate: Int?) -> Unit = { _, _, _ -> },
-    val onAudioFrame: (frame: ByteArray, cycleId: String) -> Unit = { _, _ -> },
-    val onAudioDone: (cycleId: String) -> Unit = {},
-    val onPlaybackStop: (reason: String, cycleId: String) -> Unit = { _, _ -> },
+    val onAudioStart: (turnId: String, encoding: String?, sampleRate: Int?) -> Unit = { _, _, _ -> },
+    val onAudioFrame: (frame: ByteArray, turnId: String) -> Unit = { _, _ -> },
+    val onAudioDone: (turnId: String) -> Unit = {},
+    val onPlaybackStop: (reason: String, turnId: String) -> Unit = { _, _ -> },
 )
 
 /**
@@ -77,6 +82,12 @@ class AudioDownlinkHooks(
  *   factory; null in text-only / test paths where REST is not exercised.
  * @param scope SDK coroutine scope; used to launch REST history fetches on switch.
  * @param audioHooks Downlink side-effect hooks wired to the AudioPipeline (E3).
+ * @param onCognitionChanged Folds a cognition transition into the deriver + re-emits.
+ * @param onPermissionsChanged Publishes the OPEN permission-prompt list (§7.1) as SDK state.
+ * @param onDelegationsChanged Publishes the background-delegation row list (§5.4) as SDK state.
+ * @param onTasksChanged Publishes the composer task strip's mirror (`tasklist.state`, FULL
+ *   STATE every frame) as SDK state. The chat timeline no longer needs this list — tool
+ *   activity was struck from `deriveMessages` — but the composer strip still renders it.
  */
 class SdkConnectors(
     private val deriver: StateDeriver,
@@ -92,6 +103,9 @@ class SdkConnectors(
     private val scope: CoroutineScope? = null,
     private val audioHooks: () -> AudioDownlinkHooks = { AudioDownlinkHooks() },
     private val onCognitionChanged: (CognitionState) -> Unit = { state -> deriver.cognition = state; emit() },
+    private val onPermissionsChanged: (List<PermissionPrompt>) -> Unit = {},
+    private val onDelegationsChanged: (List<DelegationSnapshotItem>) -> Unit = {},
+    private val onTasksChanged: (List<TaskListItem>) -> Unit = {},
 ) {
     private val log = createLogger("sdk", "connectors")
 
@@ -119,15 +133,15 @@ class SdkConnectors(
         onEvent = emitEvent,
     )
 
-    val cycleError = CycleErrorConnector(
-        onErrorChange = { hasError -> deriver.lastCycleError = hasError; emit() },
+    val turnError = TurnErrorConnector(
+        onErrorChange = { hasError -> deriver.lastTurnError = hasError; emit() },
         onEvent = emitEvent,
     )
 
     val preferences = PreferencesConnector(
         send = send,
         // Fold a server-driven prefs change into the deriver + re-emit for the UI toggle
-        // state. The downlink engine is LAZY-ARMED on connector.audio.start (mirrors
+        // state. The downlink engine is LAZY-ARMED on turn.audio.start (mirrors
         // web-sdk), not from the preference flag — the gateway only sends audio.* when TTS
         // is on, so arming follows the actual audio, no preference→configure coupling.
         onChange = { prefs ->
@@ -136,9 +150,8 @@ class SdkConnectors(
         },
     )
 
-    val tasks = TaskStatusConnector(
-        onList = { list -> deriver.tasks = list; emit() },
-        onEvent = emitEvent,
+    val tasks = TaskListConnector(
+        onUpdate = { _, list -> onTasksChanged(list) },
     )
 
     val sessions = SessionsConnector(
@@ -157,15 +170,29 @@ class SdkConnectors(
     )
 
     val audioOutput = AssistantAudioResponseConnector(
-        onAudioStart = { cycleId, encoding, sampleRate -> audioHooks().onAudioStart(cycleId, encoding, sampleRate) },
-        onAudioFrame = { frame, cycleId -> audioHooks().onAudioFrame(frame, cycleId) },
-        onAudioDone = { cycleId -> audioHooks().onAudioDone(cycleId) },
-        onPlaybackStop = { reason, cycleId -> audioHooks().onPlaybackStop(reason, cycleId) },
+        onAudioStart = { turnId, encoding, sampleRate -> audioHooks().onAudioStart(turnId, encoding, sampleRate) },
+        onAudioFrame = { frame, turnId -> audioHooks().onAudioFrame(frame, turnId) },
+        onAudioDone = { turnId -> audioHooks().onAudioDone(turnId) },
+        onPlaybackStop = { reason, turnId -> audioHooks().onPlaybackStop(reason, turnId) },
+    )
+
+    /** L3 confirm prompts (§7.1). The open list is published as continuous state; the
+     *  arrival/resolution one-shots ride the SDK's no-loss event stream via [emitEvent]. */
+    val permission = PermissionConnector(
+        send = send,
+        onPending = { prompts -> onPermissionsChanged(prompts) },
+        onEvent = emitEvent,
+    )
+
+    val delegation = DelegationProgressConnector(
+        onList = { list -> onDelegationsChanged(list) },
+        onEvent = emitEvent,
     )
 
     /** All connectors, broadcast targets for the MessageRouter. */
     val all: List<Connector> = listOf(
-        text, history, inflight, cognition, cycleError, preferences, tasks, sessions, audioInput, audioOutput,
+        text, history, inflight, cognition, turnError, preferences, tasks, sessions,
+        audioInput, audioOutput, permission, delegation,
     )
 
     /** Capability strings every connector advertises (merged into session.configure). */

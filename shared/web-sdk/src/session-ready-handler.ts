@@ -20,7 +20,10 @@ export function handleSessionReady(
     return;
   }
   if (!callback) return;
-  const { type: _type, playback, ...rest } = parsed.data;
-  const payload: SessionReadyPayload = playback !== undefined ? { ...rest, playback } : rest;
-  callback(payload);
+  // `rest` may still carry gateway fields the SDK does not surface (e.g. the
+  // dead `playback` preempt tunables). Structural assignment drops them, and
+  // NOT destructuring `playback` by name keeps this compiling whether or not
+  // the protocol schema still declares the optional field.
+  const { type: _type, ...rest } = parsed.data;
+  callback(rest);
 }

@@ -22,7 +22,7 @@ tags:
 - inputText: "hi"
 - tapOn: { id: "chat-send" }
 - tapOn: { id: "chat-message-list" }
-# assistant reply — Hermes LLM round-trip, genuinely slow.
+# assistant reply — provider round-trip, genuinely slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000

@@ -3,10 +3,11 @@ tags:
   - settings-soul
   - destructive-profile
 ---
-# 45-model-slow-save — Model settings: pick a different model; Save triggers the
-# SLOW path (PUT profile + POST /profile/apply, blocking "Applying — restarting…"
-# progress, then re-fetch server truth). Restarts the user's Hermes worker —
-# acceptable on the local dev stack. Original model (deepseek-v4-flash:cloud) is
+# 45-model-slow-save — Model settings: pick a different model; Save runs the
+# apply path (PUT profile + POST /profile/apply, then re-fetch server truth).
+# The name is historical: on 2.0 this path is NOT slow. It used to restart the
+# user's supervisord-managed Hermes worker; the native cutover removed both, and
+# the gateway now answers in 5-12 ms. Original model (deepseek-v4-flash:cloud) is
 # restored by 45b-model-restore.yaml (runs next via executionOrder). Batch-safe.
 - launchApp
 - runFlow:
@@ -33,11 +34,21 @@ tags:
 - tapOn: { id: "settings-model-card-kimi-k2.5:cloud" }
 - assertVisible: { id: "settings-model-save" }
 - tapOn: { id: "settings-model-save" }
-- assertVisible: { id: "settings-apply-notice" }
+# The apply notice is a ~10 ms transient on 2.0 (apply.ready elapsedMs=5..12), so a
+# hard assertVisible here is a race the runner loses — it FAILED that way on
+# 2026-07-30 while the save itself was fine. Optional, exactly like 47/48; the
+# real proof of the save is the persisted value asserted further down.
+- extendedWaitUntil:
+    visible: { id: "settings-apply-notice" }
+    timeout: 3000
+    optional: true
 - takeScreenshot: "45-model-applying"
-# SLOW: apply-notice clears only after the full supervisord restart + Hermes
-# worker boot — keep the long budget.
+# apply completes in 5-12 ms on 2.0 (measured: `apply:orchestrator apply.ready
+# elapsedMs=5..12`, 4 samples 2026-07-30). There is no supervisord and no Hermes
+# worker to restart, so the old 45 s budget was padding that would have let a 30 s
+# hang pass. 8000 ms = ~600x the measured server time, enough for the emulator/sim
+# re-fetch + recomposition, tight enough to catch a real stall.
 - extendedWaitUntil:
     notVisible: { id: "settings-apply-notice" }
-    timeout: 45000
+    timeout: 8000
 - takeScreenshot: "45-model-after"

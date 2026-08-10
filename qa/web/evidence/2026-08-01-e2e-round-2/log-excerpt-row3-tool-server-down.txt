@@ -1,0 +1,123 @@
+2026-08-01T16:41:12.427 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=296 turnId="52301cb0-e623-4938-80c6-eb4a026fd156"
+2026-08-01T16:41:12.428 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156"
+2026-08-01T16:41:12.429 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" trigger="user"
+2026-08-01T16:41:12.429 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" trigger="user" lastProcessedSeq=296
+2026-08-01T16:41:12.429 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" maxIterations=10 toolCount=29
+2026-08-01T16:41:12.430 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:41:12.430 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:41:12.431 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=13 toolCount=29
+2026-08-01T16:41:12.436 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:41:12.436 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:41:13.667 INFO  [provider:openai] stream-end | durationMs=1236 finishReason="tool_calls" promptTokens=20794 cachedTokens=0 completionTokens=88 cacheHitRatio=0
+2026-08-01T16:41:13.669 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:41:13.670 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="search_web" toolCallId="call_iwyx1gsc" action="allow" reason="Read-only web search" rule="allow_search_web"
+2026-08-01T16:41:13.699 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="searxng" name="search_web" isError=false contentLength=131 elapsedMs=29
+2026-08-01T16:41:13.700 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="search_web" toolCallId="call_iwyx1gsc" isError=false contentLength=131
+2026-08-01T16:41:13.701 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" toolCallId="call_iwyx1gsc" toolName="search_web" isError=false resultLength=131
+2026-08-01T16:41:13.702 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=15 toolCount=29
+2026-08-01T16:41:15.128 INFO  [provider:openai] stream-end | durationMs=1426 finishReason="tool_calls" promptTokens=20905 cachedTokens=0 completionTokens=98 cacheHitRatio=0
+2026-08-01T16:41:15.128 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" iteration=2 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:41:15.129 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_1sqkmfe8" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:41:15.644 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=false contentLength=2256 elapsedMs=515
+2026-08-01T16:41:15.644 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_1sqkmfe8" isError=false contentLength=2256
+2026-08-01T16:41:15.645 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" toolCallId="call_1sqkmfe8" toolName="fetch" isError=false resultLength=2256
+2026-08-01T16:41:15.647 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=17 toolCount=29
+2026-08-01T16:41:16.907 INFO  [provider:openai] stream-end | durationMs=1260 finishReason="stop" promptTokens=22143 cachedTokens=0 completionTokens=63 cacheHitRatio=0
+2026-08-01T16:41:16.907 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" iteration=3 forceFinal=false finishReason="stop" toolCallCount=0 textLength=44 cacheHitRatio=0
+2026-08-01T16:41:16.908 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" iterations=3 forceFinal=false
+2026-08-01T16:41:16.908 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" completed=true failed=false iterations=3
+2026-08-01T16:41:16.909 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156"
+2026-08-01T16:41:17.922 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" encoding="opus" sampleRate=48000
+2026-08-01T16:41:17.922 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" encoding="opus" sampleRate=48000 firstFrameMs=5492
+2026-08-01T16:41:19.723 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=4
+2026-08-01T16:41:19.724 INFO  [tts:local-tts] dispose
+2026-08-01T16:41:19.724 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:41:19.724 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" framesSent=157
+2026-08-01T16:41:19.724 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msb09m5r-46751n6z" turnId="52301cb0-e623-4938-80c6-eb4a026fd156" frameCount=4 bytesSent=46149 elapsedMs=7294
+2026-08-01T16:41:19.800 WARN  [system-orch:health-watch] service.unhealthy | service="searxng" reason="health-probe-failed" attempt=1 maxAttempts=5
+2026-08-01T16:41:19.805 INFO  [system-orch:service-registry] registry.built | count=9 services=egress-proxy,ingress-proxy,ha-mcp,ma-mcp,fetch-mcp,searxng,searxng-mcp,whisper-stt,local-tts
+2026-08-01T16:41:19.806 INFO  [system-orch:orchestrator] apply.start | targets=searxng mode="subset"
+2026-08-01T16:41:20.812 INFO  [system-orch:docker-driver] driver.recreated | service="searxng" id="8e91ef8464bf68bfa19e3076b318c473e3d52bfedf06981985e63da22ca3794b"
+2026-08-01T16:41:20.813 INFO  [system-orch:orchestrator] apply.complete | state="ready" durationMs=1007 ready=1 degraded=0 failed=0 blocked=0
+2026-08-01T16:41:20.813 INFO  [system-orch:factory] health-watch.reapplied | service="searxng" state="ready" reason=null
+2026-08-01T16:41:20.813 INFO  [system-orch:health-watch] reapply.dispatched | service="searxng" attempt=1 nextRetryInMs=15000
+2026-08-01T16:41:36.124 INFO  [system-orch:health-watch] service.recovered | service="searxng" reason="healthy-after-reapply" attempts=1
+2026-08-01T16:43:07.444 WARN  [system-orch:health-watch] service.unhealthy | service="searxng" reason="health-probe-failed" attempt=1 maxAttempts=5
+2026-08-01T16:43:07.450 INFO  [system-orch:service-registry] registry.built | count=9 services=egress-proxy,ingress-proxy,ha-mcp,ma-mcp,fetch-mcp,searxng,searxng-mcp,whisper-stt,local-tts
+2026-08-01T16:43:07.450 INFO  [system-orch:orchestrator] apply.start | targets=searxng mode="subset"
+2026-08-01T16:43:08.405 INFO  [system-orch:docker-driver] driver.recreated | service="searxng" id="90b3dd65316e895577752e0435d2d967ff3490cb81177f57886df1e4910d2b7a"
+2026-08-01T16:43:08.406 INFO  [system-orch:orchestrator] apply.complete | state="ready" durationMs=956 ready=1 degraded=0 failed=0 blocked=0
+2026-08-01T16:43:08.406 INFO  [system-orch:factory] health-watch.reapplied | service="searxng" state="ready" reason=null
+2026-08-01T16:43:08.407 INFO  [system-orch:health-watch] reapply.dispatched | service="searxng" attempt=1 nextRetryInMs=15000
+2026-08-01T16:43:23.682 INFO  [system-orch:health-watch] service.recovered | service="searxng" reason="healthy-after-reapply" attempts=1
+2026-08-01T16:43:35.979 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" kind="conversational" seq=302 turnId="42444316-d245-48b2-a5b3-248d659ea005"
+2026-08-01T16:43:35.980 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005"
+2026-08-01T16:43:35.980 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005" trigger="user"
+2026-08-01T16:43:35.981 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" trigger="user" lastProcessedSeq=302
+2026-08-01T16:43:35.981 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" maxIterations=10 toolCount=29
+2026-08-01T16:43:35.982 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T16:43:35.982 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:43:35.983 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=19 toolCount=29
+2026-08-01T16:43:35.985 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T16:43:35.986 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T16:43:37.516 INFO  [provider:openai] stream-end | durationMs=1533 finishReason="tool_calls" promptTokens=22185 cachedTokens=0 completionTokens=144 cacheHitRatio=0
+2026-08-01T16:43:37.517 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:43:37.518 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="search_web" toolCallId="call_w8r166ee" action="allow" reason="Read-only web search" rule="allow_search_web"
+2026-08-01T16:43:41.986 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="searxng" name="search_web" isError=false contentLength=1826 elapsedMs=4468
+2026-08-01T16:43:41.986 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="search_web" toolCallId="call_w8r166ee" isError=false contentLength=1826
+2026-08-01T16:43:41.988 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_w8r166ee" toolName="search_web" isError=false resultLength=1826
+2026-08-01T16:43:41.989 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=21 toolCount=29
+2026-08-01T16:43:43.568 INFO  [provider:openai] stream-end | durationMs=1579 finishReason="tool_calls" promptTokens=22850 cachedTokens=0 completionTokens=129 cacheHitRatio=0
+2026-08-01T16:43:43.569 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=2 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:43:43.571 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_y3akpg0k" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:43:44.040 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=true contentLength=85 elapsedMs=469
+2026-08-01T16:43:44.041 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_y3akpg0k" isError=true contentLength=85
+2026-08-01T16:43:44.042 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_y3akpg0k" toolName="fetch" isError=true resultLength=85
+2026-08-01T16:43:44.044 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=23 toolCount=29
+2026-08-01T16:43:45.609 INFO  [provider:openai] stream-end | durationMs=1565 finishReason="tool_calls" promptTokens=22967 cachedTokens=0 completionTokens=107 cacheHitRatio=0
+2026-08-01T16:43:45.610 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=3 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:43:45.612 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_jx6hlx7p" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:43:45.901 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=true contentLength=974 elapsedMs=289
+2026-08-01T16:43:45.901 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_jx6hlx7p" isError=true contentLength=974
+2026-08-01T16:43:45.902 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_jx6hlx7p" toolName="fetch" isError=true resultLength=974
+2026-08-01T16:43:45.904 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=25 toolCount=29
+2026-08-01T16:43:47.428 INFO  [provider:openai] stream-end | durationMs=1524 finishReason="tool_calls" promptTokens=23339 cachedTokens=0 completionTokens=151 cacheHitRatio=0
+2026-08-01T16:43:47.429 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=4 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:43:47.431 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_xaxzx5l2" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:43:52.524 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=true contentLength=83 elapsedMs=5093
+2026-08-01T16:43:52.524 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_xaxzx5l2" isError=true contentLength=83
+2026-08-01T16:43:52.525 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_xaxzx5l2" toolName="fetch" isError=true resultLength=83
+2026-08-01T16:43:52.526 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=27 toolCount=29
+2026-08-01T16:43:53.817 INFO  [provider:openai] stream-end | durationMs=1291 finishReason="tool_calls" promptTokens=23491 cachedTokens=0 completionTokens=106 cacheHitRatio=0
+2026-08-01T16:43:53.817 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=5 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:43:53.818 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_8grs6id7" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:44:05.084 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=false contentLength=3178 elapsedMs=11266
+2026-08-01T16:44:05.084 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_8grs6id7" isError=false contentLength=3178
+2026-08-01T16:44:05.085 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_8grs6id7" toolName="fetch" isError=false resultLength=3178
+2026-08-01T16:44:05.087 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=29 toolCount=29
+2026-08-01T16:44:06.523 INFO  [provider:openai] stream-end | durationMs=1436 finishReason="tool_calls" promptTokens=24837 cachedTokens=0 completionTokens=155 cacheHitRatio=0
+2026-08-01T16:44:06.524 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=6 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:44:06.525 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_9tt194hf" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:44:07.120 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=false contentLength=372 elapsedMs=595
+2026-08-01T16:44:07.121 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_9tt194hf" isError=false contentLength=372
+2026-08-01T16:44:07.122 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_9tt194hf" toolName="fetch" isError=false resultLength=372
+2026-08-01T16:44:07.125 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=31 toolCount=29
+2026-08-01T16:44:08.566 INFO  [provider:openai] stream-end | durationMs=1441 finishReason="tool_calls" promptTokens=25035 cachedTokens=0 completionTokens=128 cacheHitRatio=0
+2026-08-01T16:44:08.567 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=7 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-08-01T16:44:08.569 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_77pqquyz" action="allow" reason="Read-only URL fetch" rule="allow_fetch"
+2026-08-01T16:44:08.736 INFO  [tools:mcp-client] mcp.call-tool.ok | serverName="fetch" name="fetch" isError=false contentLength=2247 elapsedMs=167
+2026-08-01T16:44:08.737 INFO  [tools:tool-broker] tool-broker.dispatch.foreground.done | sessionId="s-msb09m5r-46751n6z" tool="fetch" toolCallId="call_77pqquyz" isError=false contentLength=2247
+2026-08-01T16:44:08.738 INFO  [runtime:react-loop] react-loop.tool-dispatch.foreground | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" toolCallId="call_77pqquyz" toolName="fetch" isError=false resultLength=2247
+2026-08-01T16:44:08.741 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=33 toolCount=29
+2026-08-01T16:44:09.921 INFO  [provider:openai] stream-end | durationMs=1180 finishReason="stop" promptTokens=26122 cachedTokens=0 completionTokens=94 cacheHitRatio=0
+2026-08-01T16:44:09.921 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iteration=8 forceFinal=false finishReason="stop" toolCallCount=0 textLength=171 cacheHitRatio=0
+2026-08-01T16:44:09.922 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" iterations=8 forceFinal=false
+2026-08-01T16:44:09.922 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::6e2aad99-4b3c-453b-bfd4-103441e1944d" turnId="42444316-d245-48b2-a5b3-248d659ea005" completed=true failed=false iterations=8
+2026-08-01T16:44:09.922 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005"
+2026-08-01T16:44:10.981 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005" encoding="opus" sampleRate=48000
+2026-08-01T16:44:10.983 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005" encoding="opus" sampleRate=48000 firstFrameMs=35001
+2026-08-01T16:44:18.280 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=11
+2026-08-01T16:44:18.280 INFO  [tts:local-tts] dispose
+2026-08-01T16:44:18.280 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T16:44:18.280 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005" framesSent=168
+2026-08-01T16:44:18.280 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msb09m5r-46751n6z" turnId="42444316-d245-48b2-a5b3-248d659ea005" frameCount=11 bytesSent=137045 elapsedMs=42298

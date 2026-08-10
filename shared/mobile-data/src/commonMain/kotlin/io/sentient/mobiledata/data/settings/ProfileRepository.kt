@@ -18,6 +18,7 @@ import io.sentient.mobilesdk.settings.MemorySlot
 import io.sentient.mobilesdk.settings.ModelCatalog
 import io.sentient.mobilesdk.settings.PersonalityList
 import io.sentient.mobilesdk.settings.ProfileV1
+import io.sentient.mobilesdk.settings.ProfileV1PutBody
 import io.sentient.mobilesdk.settings.SoulDefaultDoc
 import io.sentient.mobilesdk.settings.SoulDoc
 
@@ -25,7 +26,8 @@ import io.sentient.mobilesdk.settings.SoulDoc
 interface ProfileRepository {
     // Core profile
     suspend fun getProfile(): SentientResult<ProfileV1>
-    suspend fun putProfile(profile: ProfileV1): SentientResult<ProfileV1>
+    /** [profile] is the PATCH-shaped wire body — build one via `ProfileV1.toPutBody()`. */
+    suspend fun putProfile(profile: ProfileV1PutBody): SentientResult<ProfileV1>
     suspend fun apply(): ApplyResult
 
     // Soul (system prompt)

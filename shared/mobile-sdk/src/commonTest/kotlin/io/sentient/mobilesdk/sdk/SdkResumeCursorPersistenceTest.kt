@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // SdkResumeCursorPersistenceTest — pins the durable resume-cursor lifecycle
-// (Task 4.7): SEED on resume-prep, SAVE on cursor advance (coalesced to the cycle
+// (Task 4.7): SEED on resume-prep, SAVE on cursor advance (coalesced to the turn
 // boundary), CLEAR on a non-recovered reset. These are the three hooks the
 // orchestrator drives against the injected [ResumeCursorStore].
 //
@@ -66,11 +66,11 @@ class SdkResumeCursorPersistenceTest {
     private fun createdFrame(uuid: String) =
         "{\"type\":\"session.created\",\"sessionId\":\"$uuid\",\"ts\":1}"
 
-    private fun cycleStartedSeq(seq: Long, cycleId: String = "c1") =
-        "{\"type\":\"cycle.started\",\"cycleId\":\"$cycleId\",\"seq\":$seq,\"epoch\":3}"
+    private fun turnStartedSeq(seq: Long, turnId: String = "t1") =
+        "{\"type\":\"turn.started\",\"turnId\":\"$turnId\",\"trigger\":\"user\",\"seq\":$seq,\"epoch\":3}"
 
-    private fun cycleCompletedFrame(cycleId: String = "c1") =
-        "{\"type\":\"cycle.completed\",\"cycleId\":\"$cycleId\"}"
+    private fun turnCompletedFrame(turnId: String = "t1") =
+        "{\"type\":\"turn.completed\",\"turnId\":\"$turnId\"}"
 
     private fun streamResumedFrame(recovered: Boolean) =
         "{\"type\":\"stream.resumed\",\"recovered\":$recovered,\"epoch\":3}"
@@ -115,7 +115,7 @@ class SdkResumeCursorPersistenceTest {
     // ── SAVE ────────────────────────────────────────────────────────────────────
 
     @Test
-    fun cursor_advance_persists_snapshot_at_cycle_boundary() = runTest {
+    fun cursor_advance_persists_snapshot_at_turn_boundary() = runTest {
         val store = RecordingResumeCursorStore()
         val fake = FakeWebSocketEngine()
         val sdk = buildSdk(fake, resumeCursorStore = store)
@@ -125,15 +125,15 @@ class SdkResumeCursorPersistenceTest {
         sdk.currentSessionId.first { it == anchoredUuid }
 
         // A seq-stamped frame advances the in-memory cursor (epoch 3, lastSeq 9) but
-        // the SAVE is coalesced — it does not write until the cycle boundary.
-        fake.emit(WsIncoming.Text(cycleStartedSeq(seq = 9)))
+        // the SAVE is coalesced — it does not write until the turn boundary.
+        fake.emit(WsIncoming.Text(turnStartedSeq(seq = 9)))
         runCurrent()
         assertTrue(store.saves.isEmpty(), "advance alone must NOT write (coalesced), saves=${store.saves}")
 
-        // cycle.completed flushes the dirty cursor → exactly one save with the snapshot.
-        fake.emit(WsIncoming.Text(cycleCompletedFrame()))
+        // turn.completed flushes the dirty cursor → exactly one save with the snapshot.
+        fake.emit(WsIncoming.Text(turnCompletedFrame()))
         runCurrent()
-        assertEquals(1, store.saves.size, "cycle boundary must flush exactly one save, saves=${store.saves}")
+        assertEquals(1, store.saves.size, "turn boundary must flush exactly one save, saves=${store.saves}")
         assertEquals(anchoredUuid to CursorSnapshot(epoch = 3, lastSeq = 9), store.saves.single())
     }
 
@@ -149,7 +149,7 @@ class SdkResumeCursorPersistenceTest {
         fake.emit(WsIncoming.Text(createdFrame(anchoredUuid)))
         sdk.currentSessionId.first { it == anchoredUuid }
         // Advance the cursor so a reconnect attempts resume.
-        fake.emit(WsIncoming.Text(cycleStartedSeq(seq = 5)))
+        fake.emit(WsIncoming.Text(turnStartedSeq(seq = 5)))
         runCurrent()
 
         fake.failIncoming("network drop")

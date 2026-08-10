@@ -1,14 +1,23 @@
 import { getLog } from "../logging/logger.js";
 import { type DepMap, blockedByFailedDeps, topoOrder } from "./dep-graph.js";
-import type { DockerDriver } from "./docker-driver.js";
 import { type HealthIO, pollHealthy } from "./health.js";
-import type { ManagedService, OrchestratorStatus, ServiceName, ServiceState, ServiceStatus } from "./types.js";
+import type {
+  LaunchKind,
+  ManagedService,
+  OrchestratorStatus,
+  ServiceDriver,
+  ServiceName,
+  ServiceState,
+  ServiceStatus,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "orchestrator"]);
 
 export interface SystemOrchestratorDeps {
   registry: Map<ServiceName, ManagedService>;
-  driver: DockerDriver;
+  /** One backend per launch kind. The apply loop dispatches on the service's
+   *  own `launch` discriminator, so it never learns which backend it is on. */
+  drivers: Record<LaunchKind, ServiceDriver>;
   healthIO: HealthIO;
   pollIntervalMs: number;
   applyTimeoutMs: number;
@@ -109,7 +118,7 @@ async function runApply(
     mark(statuses, name, "starting");
     emit(snapshot(statuses, "applying", startedAt));
 
-    const recr = await deps.driver.recreate(ms);
+    const recr = await deps.drivers[ms.config.launch].recreate(ms);
     if (!recr.ok) {
       const newState: ServiceState = ms.config.optional ? "degraded" : "failed";
       mark(statuses, name, newState, recr.error.reason);
@@ -134,6 +143,19 @@ async function runApply(
       continue;
     }
 
+    // The probe above proved only that SOMETHING answers. Before calling this
+    // service ready, prove the answerer is the unit we just started — an
+    // orphan holding the port is how a whole fleet reported ready while both
+    // native addons were dead.
+    const identity = await deps.drivers[ms.config.launch].verifyIdentity(ms);
+    if (!identity.ok) {
+      const newState: ServiceState = ms.config.optional ? "degraded" : "failed";
+      mark(statuses, name, newState, identity.error.reason);
+      if (!ms.config.optional) failedRequired.add(name);
+      emit(snapshot(statuses, "applying", startedAt));
+      continue;
+    }
+
     mark(statuses, name, "ready");
     emit(snapshot(statuses, "applying", startedAt));
   }
@@ -149,7 +171,10 @@ async function runApply(
     failed: services.filter((s) => s.state === "failed").length,
     blocked: services.filter((s) => s.state === "blocked-by-dep").length,
   };
-  log.info("apply.complete", { state: finalState, durationMs: Date.now() - startedAt, counts });
+  // Spread, not nested: the formatter stringifies a nested object as
+  // "[object Object]", so the one line that summarises a whole boot said
+  // nothing. Read it dozens of times while chasing this task's defect.
+  log.info("apply.complete", { state: finalState, durationMs: Date.now() - startedAt, ...counts });
 
   return final;
 }

@@ -21,22 +21,35 @@ const WS_READY_STATE_OPEN = 1;
 // ---------------------------------------------------------------------------
 // Per-tab "current session" pointer
 //
-// sessionStorage["sentient.currentSessionId"] anchors a tab to a Hermes chain
-// across reloads + reconnects. The SDK appends it to the WS connect URL as
-// `?session_id=`, the gateway runs the resume flow, and (on success) emits a
-// session.switched frame that re-anchors the pointer.
+// sessionStorage["sentient.currentSessionId"] anchors a tab to one conversation
+// across reloads + reconnects. The tab PRESENTS it as `conversationId` on
+// `session.configure`, and the gateway answers with exactly one of two frames
+// (ws-session-configure.ts): `session.attached` when the id resolved to a
+// session this caller's store holds, or `session.draft` when it refused it and
+// started a fresh draft instead. Those two frames are the only inputs here.
 //
-// Exposed here (not in a separate module) because the URL builder + the
-// snapshot/switched handlers in sentient-sdk.ts are the only call sites.
+// THE POINTER IS DROPPED ON AN EXPLICIT REFUSAL, NEVER ON A CLOCK. An earlier
+// shape armed a ~200ms timer on `conversation.snapshot` and deleted the id
+// unless a `session.switched` disarmed it. Only the drawer path sends
+// `switched`; a plain reload confirms with `session.attached`, so the timer
+// deleted an id that had just resolved CORRECTLY — and the tab, now presenting
+// nothing, landed in a new empty chat on the next reconnect and fragmented one
+// conversation into several. A timer fires on SILENCE, which is why a correct
+// resume tripped it; only the server can say no.
+//
+// Exposed here (not in a separate module) because the session-pointer handlers
+// in sentient-sdk.ts are the only call sites.
 // ---------------------------------------------------------------------------
 
 export const CURRENT_SESSION_STORAGE_KEY = "sentient.currentSessionId";
 
-// Set by buildConnectUrl when a stored session id is attached to the URL.
-// Cleared by markResumeResolved (success) or clearStaleResumeId (404 fallback).
-// Module-level state survives the URL-builder call → the message handlers in
-// sentient-sdk.ts read it back when correlating snapshot/switched frames.
-let pendingResume: string | null = null;
+// The id this connection PRESENTED on `session.configure` — a session id or an
+// unspent draft key — held until the gateway answers it. Set by
+// `markSessionPresented`, cleared by `setCurrentSessionId` (honoured) or
+// `clearRefusedSessionId` (refused). `null` means this connection presented
+// NOTHING, which is a first-ever connect and not a refusal: it is the left half
+// of the conjunction `clearRefusedSessionId` guards on.
+let presentedSessionId: string | null = null;
 
 function readSessionStorage(key: string): string | null {
   try {
@@ -66,92 +79,73 @@ function removeSessionStorage(key: string): void {
 }
 
 /**
- * Build the WS connect URL from the configured gateway URL plus the current
- * sessionStorage["sentient.currentSessionId"] (when present). Captures the id
- * into module-level pendingResume so the snapshot/switched correlation can
- * detect a 404 fallback later. Idempotent — safe to call on every connect.
+ * Record the id `session.configure` is about to present, so a later refusal can
+ * be told apart from a first-ever connect. Called from the one place that reads
+ * the pointer for the wire, so "what was presented" cannot drift from what
+ * actually went out. An empty value presents nothing.
  */
-export function buildConnectUrl(base: string): string {
-  let url: URL;
-  try {
-    url = new URL(base);
-  } catch {
-    // Non-URL gateway strings (rare; e.g. mock/test seams) — fall through
-    // unmodified rather than throw mid-connect.
-    pendingResume = null;
-    return base;
-  }
-  const stored = readSessionStorage(CURRENT_SESSION_STORAGE_KEY);
-  if (stored !== null && stored !== "") {
-    url.searchParams.set("session_id", stored);
-    pendingResume = stored;
-  } else {
-    pendingResume = null;
-  }
-  return url.toString();
+export function markSessionPresented(sessionId: string | null): void {
+  presentedSessionId = sessionId === "" ? null : sessionId;
 }
 
 /**
- * Update sessionStorage["sentient.currentSessionId"]. Called from the SDK
- * message router on session.created / session.switched. Also clears
- * pendingResume — the resume completed successfully, so a subsequent snapshot
- * is NOT a 404 fallback signal.
+ * Anchor this tab to [sessionId] — the gateway HONOURED an id, or named a new
+ * one. Called on session.attached / session.created / session.switched, and on
+ * the draft key a `session.draft` carries. Clears the presented marker: the
+ * answer has arrived, so nothing later on this connection is a refusal of it.
  */
 export function setCurrentSessionId(sessionId: string): void {
   if (!sessionId) return;
   writeSessionStorage(CURRENT_SESSION_STORAGE_KEY, sessionId);
-  pendingResume = null;
+  presentedSessionId = null;
 }
 
 /**
- * Detect the "snapshot without preceding session.switched" 404 fallback.
- * Called from the SDK message router when conversation.snapshot arrives.
- * If a resume was pending and no switched cleared it first, the stored id
- * is stale → drop sessionStorage and pendingResume so the next reconnect
- * starts a fresh chain instead of hammering a deleted id forever.
+ * Drop the pointer because the gateway did NOT honour the id this tab
+ * presented — it answered `session.draft` where `session.attached` was the
+ * honouring answer (ws-session-configure.ts logs
+ * `session-configure.session.refused`). Without this the tab re-presents a
+ * session its store cannot resolve on every reconnect, forever.
  *
- * NOTE: on a successful resume the gateway sends `session.switched` BEFORE
- * `conversation.snapshot` (ws-session-configure.ts onSnapshot callback —
- * order required by the ConversationHistoryConnector's awaitingSnapshot
- * gate). `setCurrentSessionId` therefore clears `pendingResume` first; the
- * subsequent snapshot sees `hasPendingResume() === false` and never arms
- * the stale timer. The 404 fallback path sends snapshot only — no switched
- * — so `hasPendingResume()` is still true at snapshot time and the timer
- * arms; if no switched arrives within STALE_RESUME_CHECK_MS, the stored id
- * is dropped.
+ * THE CONDITION IS A CONJUNCTION — presented AND not honoured. A first-ever
+ * connect presents nothing and is answered with `session.draft` too; reading
+ * that as a refusal would have it delete a pointer it never had. Pressing "+"
+ * is NOT an exception to write around: it also answers `session.draft`, and
+ * dropping the pointer there is exactly right — the user asked for a new chat.
+ *
+ * [answeredDraftKey] is for the LOG, never for the decision: a tab that
+ * reloaded mid-draft presents its draft key and gets the SAME key back, which
+ * the gateway records as `draft.resumed`. The drop still runs (the caller
+ * re-anchors on that key immediately, so the net effect is identical), but a
+ * line reading "refused" there would contradict the gateway's own trail for a
+ * case it honoured. `null` means the answer was not a draft frame at all.
  */
-export function clearStaleResumeId(): void {
-  if (pendingResume === null) return;
-  sdkLog.info("session-resume.fallback-cleared", {
-    staleId: pendingResume,
-    reason: "snapshot-without-switched",
+export function clearRefusedSessionId(answeredDraftKey: string | null): void {
+  if (presentedSessionId === null) return;
+  sdkLog.info("session-pointer.dropped", {
+    presentedId: presentedSessionId,
+    answeredDraftKey,
+    reason:
+      answeredDraftKey === presentedSessionId
+        ? "gateway resumed the draft this tab presented — re-anchoring on the same key"
+        : "gateway did not honour the presented id — dropping it so the next connect starts clean",
   });
   removeSessionStorage(CURRENT_SESSION_STORAGE_KEY);
-  pendingResume = null;
-}
-
-/** True iff a resume id is in flight (URL-attached, not yet acknowledged). */
-export function hasPendingResume(): boolean {
-  return pendingResume !== null;
+  presentedSessionId = null;
 }
 
 /** Test helper — reset module state between tests. */
-export function _resetResumeStateForTests(): void {
-  pendingResume = null;
+export function _resetSessionPointerForTests(): void {
+  presentedSessionId = null;
 }
 
 /**
  * Read the current tab's session id from sessionStorage.
- * Shared by `sentient-sdk.ts` (triggerHistoryRefetch) and
+ * Shared by `sentient-sdk.ts` (the id presented on session.configure) and
  * `stream-resume-handler.ts` to avoid inlining the storage key literal.
  */
 export function getCurrentSessionId(): string | null {
-  try {
-    if (typeof sessionStorage === "undefined") return null;
-    return sessionStorage.getItem(CURRENT_SESSION_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+  return readSessionStorage(CURRENT_SESSION_STORAGE_KEY);
 }
 
 export interface ReconnectControllerDeps {

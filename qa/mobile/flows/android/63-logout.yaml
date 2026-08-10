@@ -26,6 +26,7 @@ tags:
 - scroll
 - takeScreenshot: "63-logout-row"
 - tapOn: { id: "settings-logout" }
+# 10000ms: settings apply round-trip to the gateway
 - extendedWaitUntil:
     visible: { id: "login-backend-setup" }
     timeout: 10000

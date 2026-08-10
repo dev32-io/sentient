@@ -1,12 +1,15 @@
 appId: io.dev32.sentient.debug
 tags:
   - auth
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable, not a literal.
+  QA_USER_ID: u_0417d3b0
 ---
 # 00-login — standalone auth smoke (case T1). clearState wipes the persisted
 # token, then a real avatar + PIN 1234 login lands on the chat screen. This is
 # the ONE flow that actually exercises the login path end-to-end; the
 # _helpers/login.yaml subflow used elsewhere is a no-op when a token persists.
-# Leaves the app logged in as Kevin, priming the rest of a batch run.
+# Leaves the app logged in as the QA fixture user, priming the rest of a batch run.
 - launchApp:
     clearState: true
 # cold clearState launch + avatar-grid fetch from the gateway.
@@ -14,7 +17,7 @@ tags:
     visible: "Who's here?"
     timeout: 5000
 - tapOn:
-    id: "login-avatar-u_8c866990"
+    id: "login-avatar-${QA_USER_ID}"
 - extendedWaitUntil:
     visible: { id: "pin-key-1" }
     timeout: 3000

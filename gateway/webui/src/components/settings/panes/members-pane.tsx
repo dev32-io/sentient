@@ -24,6 +24,7 @@ export function MembersPane(): JSX.Element {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [applying, setApplying] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UserSummary | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<UserSummary | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
   const isAuthed = auth.status === "authenticated";
@@ -56,6 +57,7 @@ export function MembersPane(): JSX.Element {
   }
 
   const handleToggleAdmin = async (u: UserSummary) => {
+    setToggleTarget(null);
     const r = await api.setIsAdmin(token, u.userId, !u.isAdmin);
     if (r.ok) {
       setUsers((arr) => arr.map((x) => (x.userId === u.userId ? r.value.user : x)));
@@ -86,7 +88,7 @@ export function MembersPane(): JSX.Element {
 
   return (
     <>
-      <SpinnerOverlay open={applying} heading="Applying changes…" body="Restarting agent — do not close this tab" />
+      <SpinnerOverlay open={applying} heading="Applying changes…" body="This may take a moment — do not close this tab" />
 
       <PaneHead title="Members" sub="Everyone with a recognized voice or account in this home." />
 
@@ -125,7 +127,7 @@ export function MembersPane(): JSX.Element {
               </span>
               {u.userId !== authUserId && (
                 <div class="lst-acts">
-                  <Btn kind="ghost" size="sm" onClick={() => void handleToggleAdmin(u)}>
+                  <Btn kind="ghost" size="sm" onClick={() => setToggleTarget(u)}>
                     {u.isAdmin ? "Demote" : "Promote"}
                   </Btn>
                   <Btn
@@ -173,6 +175,32 @@ export function MembersPane(): JSX.Element {
           }
         >
           <p class="modal-lead">This signs them out and removes their agent. This cannot be undone.</p>
+        </Modal>
+      )}
+
+      {toggleTarget && (
+        <Modal
+          title={`${toggleTarget.isAdmin ? "Demote" : "Promote"} ${toggleTarget.displayName}?`}
+          onClose={() => setToggleTarget(null)}
+          footer={
+            <>
+              <Btn kind="ghost" size="sm" onClick={() => setToggleTarget(null)}>Cancel</Btn>
+              <Btn
+                kind="primary"
+                size="sm"
+                danger={toggleTarget.isAdmin}
+                onClick={() => void handleToggleAdmin(toggleTarget)}
+              >
+                {toggleTarget.isAdmin ? "Demote" : "Promote"}
+              </Btn>
+            </>
+          }
+        >
+          <p class="modal-lead">
+            {toggleTarget.isAdmin
+              ? `This signs ${toggleTarget.displayName} out on every device, right now. Once demoted, they can't restore their own admin access — only another admin can promote them back.`
+              : `This signs ${toggleTarget.displayName} out on every device, right now. They'll need to log back in before they can use their new admin access.`}
+          </p>
         </Modal>
       )}
     </>

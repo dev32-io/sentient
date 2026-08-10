@@ -1,0 +1,29 @@
+[stack-integrity] config=qa/web/fixtures/stack-integrity-negative-control.yaml
+[stack-integrity] runDir=/private/tmp/claude-501/-Users-kevinye-Development-sentient/abdbdc11-3d60-47c3-8879-390b92244bc3/scratchpad/fake-run
+[stack-integrity] log=/Users/kevinye/.sentient/gateway/logs/2026-07-31.log (boot window starts line 2016)
+[stack-integrity] declared=3 services
+
+  FAIL           qa-absent-required (docker)
+      running  absent
+      identity n/a
+      health   n/a
+      note     declared REQUIRED but no container carries sentient.service=<name>
+
+  SKIP-OPTIONAL  qa-absent-optional (docker)
+      running  absent
+      identity n/a
+      health   n/a
+      note     declared optional and no labelled container exists — operator has not configured it
+
+  FAIL           qa-port-impostor (native)
+      running  pid 28031 is gone
+      identity IMPOSTOR OR ORPHAN: :8086 held by [1508], orchestrator recorded 28031
+      health   tcp 127.0.0.1:8086 ok
+      note     recordedPid=28031 alive=false
+      note     listeningPids=[1508] on :8086
+
+[stack-integrity] log-window: clean
+  2026-07-31T14:13:12.105 INFO [system-orch:orchestrator] apply.complete | state="ready" durationMs=12798 ready=9 degraded…
+
+[stack-integrity] RESULT FAIL — pass=0 fail=2 skip-optional=1 of 3 declared
+negative-control exit=1

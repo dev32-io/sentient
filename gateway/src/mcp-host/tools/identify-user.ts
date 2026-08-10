@@ -4,6 +4,15 @@ import type { ToolHandler } from "../mcp-server.js";
 
 const log = getLog(["sentient", "mcp-host", "identify-user"]);
 
+/** The one channel on which "I am X" is a thing a person can have SAID. */
+const VOICE_CHANNEL = "voice";
+
+/** What the caller is told outside a voice session. Model-facing copy: it says
+ *  what to do instead, because the useful answer is available to the model
+ *  directly and this tool adds nothing to it. */
+const OUTSIDE_VOICE =
+  "identify_user applies to a voice session only. In a text session, tell the person directly that they need to log out and log back in as the account they want.";
+
 export interface IdentifyUserDeps {
   userStore: Pick<UserStore, "list">;
 }
@@ -14,11 +23,22 @@ export interface IdentifyUserDeps {
  * SECURITY INVARIANT: a live session's identity is set by the auth token at
  * connect and is immutable for the session's lifetime. Switching accounts must
  * go through re-authentication (log out → log in as X), which yields a fresh
- * session under X's isolated scope (its own PersonSession, Hermes worker, and
- * conversation). This tool therefore NEVER rebinds the session — a silent
+ * session under X's isolated scope (its own per-user session state, Hermes
+ * worker, and conversation). This tool therefore NEVER rebinds the session — a silent
  * in-place identity change would grant the current session another user's live
  * worker + memory without proof of identity. It only validates that X is a
  * known household member and returns guidance to re-authenticate.
+ *
+ * THE CHANNEL GUARD, and why it lives here rather than in a permission table.
+ * The retired `mcp-policy.yaml` carried one rule that survives the move to
+ * impact tiers + per-person permissions: `no_identify_user_outside_voice`. It
+ * is conditioned on `session.channel`, which is per-SESSION — not per-user and
+ * not per-role — so no permission table can express it, and the two gates in
+ * `tools/tool-broker.ts` deliberately do not try. It is also not really an
+ * authorization rule: it says WHEN this tool is meaningful, which is a fact
+ * about the tool. So the tool owns it, reading the channel off the `ToolContext`
+ * it is already handed. Anyone who re-tiers or re-permissions this tool later
+ * cannot accidentally drop the constraint, because it is not in either table.
  */
 export function createIdentifyUserTool(deps: IdentifyUserDeps): ToolHandler {
   return {
@@ -38,6 +58,14 @@ export function createIdentifyUserTool(deps: IdentifyUserDeps): ToolHandler {
       },
     },
     async run(args, ctx) {
+      if (ctx.sessionChannel !== VOICE_CHANNEL) {
+        log.info("identify_user.outside-voice", {
+          sessionChannel: ctx.sessionChannel,
+          socketUser: ctx.userId ?? null,
+          reason: "an identity claim is a spoken utterance; in text the model can answer without this tool",
+        });
+        return { isError: true, content: [{ type: "text", text: OUTSIDE_VOICE }] };
+      }
       const rawName = typeof args.name === "string" ? args.name.trim() : "";
       if (!rawName) {
         return {

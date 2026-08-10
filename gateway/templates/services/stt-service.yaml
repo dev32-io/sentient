@@ -1,6 +1,0 @@
-image: sentient/stt-service:local
-container_name: sentient-stt-service
-networks: [sentient-internal]
-volumes:
-  - ${HOST_HOME}/.sentient/stt-service/logs:/app/logs
-  - ${HOST_HOME}/.sentient/stt-service/data/recordings:/app/data/recordings

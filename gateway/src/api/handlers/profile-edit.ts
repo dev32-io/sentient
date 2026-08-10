@@ -1,6 +1,5 @@
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
-import type { ProfileRestartError, ProfileRestartOrchestrator } from "../../admin/profile-restart-orchestrator.js";
 import { getLog } from "../../logging/logger.js";
 import { MEMORY_CHAR_LIMIT, USER_CHAR_LIMIT } from "../../profile-store/memory-constants.js";
 import type { PersonalityStore } from "../../profile-store/personality-store.js";
@@ -26,8 +25,6 @@ const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_INTERNAL = 500;
-const HTTP_BAD_GATEWAY = 502;
-const HTTP_TIMEOUT = 504;
 
 const SOUL_FILENAME = "SOUL.md";
 const SOUL_FILE_MODE = 0o600;
@@ -51,8 +48,6 @@ export interface ProfileEditDeps extends PersonalityHandlerDeps {
   tokens: Pick<TokenService, "validate">;
   /** Resolve the absolute path of the user's profile dir (for SOUL.md). */
   resolveProfileDir: (userId: string) => string;
-  /** Phase D restart orchestrator. */
-  restartOrchestrator: ProfileRestartOrchestrator;
   /** Load the seed SOUL template. Used by the "Restore to default"
    *  action — returns the operator-shipped builtin or shared/templates
    *  override so the user can roll back without remembering the canonical
@@ -121,6 +116,7 @@ async function getSoul(deps: ProfileEditDeps, userId: string): Promise<Response>
 }
 
 async function putSoul(deps: ProfileEditDeps, request: Request, userId: string): Promise<Response> {
+  const startedAt = Date.now();
   const body = await readJson(request);
   if (!body.ok) return body.response;
   const content = (body.value as { content?: unknown }).content;
@@ -133,7 +129,7 @@ async function putSoul(deps: ProfileEditDeps, request: Request, userId: string):
     log.warn("soul.put.io-error", { userId, reason: (e as Error).message });
     return jsonError(HTTP_INTERNAL, "io-error");
   }
-  return runRestart(deps, userId);
+  return editApplied(userId, startedAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +172,7 @@ async function getMemory(deps: ProfileEditDeps, userId: string, slot: MemorySlot
 }
 
 async function putMemory(deps: ProfileEditDeps, request: Request, userId: string, slot: MemorySlot): Promise<Response> {
+  const startedAt = Date.now();
   const body = await readJson(request);
   if (!body.ok) return body.response;
   const content = (body.value as { content?: unknown }).content;
@@ -194,7 +191,7 @@ async function putMemory(deps: ProfileEditDeps, request: Request, userId: string
     log.warn("memory.put.io-error", { userId, slot, reason: (e as Error).message });
     return jsonError(HTTP_INTERNAL, "io-error");
   }
-  return runRestart(deps, userId);
+  return editApplied(userId, startedAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -202,13 +199,14 @@ async function putMemory(deps: ProfileEditDeps, request: Request, userId: string
 // ---------------------------------------------------------------------------
 
 async function handlePersonalities(deps: ProfileEditDeps, request: Request, userId: string): Promise<Response> {
+  const startedAt = Date.now();
   if (request.method === "GET") return listPersonalities(deps, userId);
   if (request.method === "POST") {
     const body = await readJson(request);
     if (!body.ok) return body.response;
     const r = await addPersonality(deps, userId, body.value);
     if (r.status >= 400) return r;
-    return runRestart(deps, userId);
+    return editApplied(userId, startedAt);
   }
   return methodNotAllowed();
 }
@@ -219,44 +217,20 @@ async function handlePersonalityNamed(
   userId: string,
   name: string,
 ): Promise<Response> {
+  const startedAt = Date.now();
   if (request.method === "PUT") {
     const body = await readJson(request);
     if (!body.ok) return body.response;
-    // Capture activeName BEFORE the update so we know which name to re-fire
-    // after restart. The update writes a new body to the YAML map but the
-    // pre-update agent.system_prompt may no longer match — list() after
-    // update would resolve activeName=null. We need the original name to
-    // tell Hermes to switch back.
-    const wasActiveName = (await isEditingActivePersonality(deps, userId, name)) ? name : null;
     const r = await updatePersonality(deps, userId, name, body.value);
     if (r.status >= 400) return r;
-    return runRestart(deps, userId, wasActiveName);
+    return editApplied(userId, startedAt);
   }
   if (request.method === "DELETE") {
     const r = await removePersonality(deps, userId, name);
     if (r.status >= 400) return r;
-    return runRestart(deps, userId);
+    return editApplied(userId, startedAt);
   }
   return methodNotAllowed();
-}
-
-async function isEditingActivePersonality(deps: ProfileEditDeps, userId: string, name: string): Promise<boolean> {
-  const list = await deps.buildPersonalityStore(userId).list();
-  return list.ok && list.value.activeName === name;
-}
-
-// Active-personality re-apply formerly fired `/personality <name>` over
-// the legacy custom-WS pool after a profile restart so Hermes' agent
-// system_prompt picked the personality slot back up before the next user
-// turn. ACP has no slash-command equivalent today; the personality file
-// still lands on disk, so the next fresh session reads it. Logged no-op
-// pending the ACP-side rewrite (see acp-rewire-todo.md).
-async function reapplyActivePersonality(_deps: ProfileEditDeps, userId: string, name: string): Promise<void> {
-  log.warn("reapplyActive.skipped-acp-no-equivalent", {
-    userId,
-    name,
-    reason: "ACP wire has no /personality slash-command equivalent — see acp-rewire-todo.md",
-  });
 }
 
 async function handleActive(deps: ProfileEditDeps, request: Request, userId: string): Promise<Response> {
@@ -267,7 +241,7 @@ async function handleActive(deps: ProfileEditDeps, request: Request, userId: str
 }
 
 // ---------------------------------------------------------------------------
-// Auth + JSON + restart helpers
+// Auth + JSON + edit-outcome helpers
 // ---------------------------------------------------------------------------
 
 interface AuthOk {
@@ -307,57 +281,23 @@ async function readJson(request: Request): Promise<JsonOk | JsonErr> {
   }
 }
 
-// `forceActiveName` overrides the post-restart active-personality reapply.
-// Used by the active-personality PUT path where the update itself desyncs
-// agent.system_prompt and list().activeName becomes null mid-flight.
-// Falls back to whatever the personality store reports as active otherwise.
-async function runRestart(
-  deps: ProfileEditDeps,
-  userId: string,
-  forceActiveName: string | null = null,
-): Promise<Response> {
-  log.info("runRestart.begin", { userId, forceActiveName });
-  const r = await deps.restartOrchestrator.restart(userId);
-  if (!r.ok) {
-    log.warn("runRestart.orchestrator-failed", { userId, error: r.error.kind });
-    return mapRestartError(r.error);
-  }
-  log.info("runRestart.orchestrator-ready", { userId, elapsedMs: r.value.elapsedMs });
-  // Hermes /reset (fired by the orchestrator) clears agent.system_prompt
-  // back to SOUL.md only. If the user has an active personality, we need
-  // to re-fire `/personality <name>` so Hermes re-builds the personality
-  // slot for the next user message. Without this, the persona silently
-  // disappears on every SOUL/personality CRUD restart.
-  let activeName = forceActiveName;
-  if (activeName === null) {
-    const list = await deps.buildPersonalityStore(userId).list();
-    if (list.ok && list.value.activeName !== null) {
-      activeName = list.value.activeName;
-      log.debug("runRestart.active-resolved-from-store", { userId, activeName });
-    } else {
-      log.debug("runRestart.no-active-personality", { userId, listOk: list.ok });
-    }
-  }
-  if (activeName !== null) {
-    log.info("runRestart.reapply-begin", { userId, activeName });
-    await reapplyActivePersonality(deps, userId, activeName);
-    log.info("runRestart.reapply-end", { userId, activeName });
-  }
-  log.info("runRestart.done", { userId });
-  return Response.json(r.value, { status: HTTP_OK });
-}
-
-function mapRestartError(error: ProfileRestartError): Response {
-  switch (error.kind) {
-    case "supervisord-failed":
-      return Response.json({ error: "supervisord-failed", reason: error.reason }, { status: HTTP_BAD_GATEWAY });
-    case "ws-not-ready":
-      return Response.json({ error: "ws-not-ready", reason: error.reason }, { status: HTTP_TIMEOUT });
-    case "resolve-failed":
-      return Response.json({ error: "resolve-failed", reason: error.reason }, { status: HTTP_INTERNAL });
-    default:
-      return assertNever(error);
-  }
+// A profile edit is complete the moment it is on disk.
+//
+// This used to restart the per-user Hermes daemon (`ProfileRestartOrchestrator`
+// → `supervisorctl restart hermes-<userId>-*`) and then re-fire
+// `/personality <name>` so the running worker re-read its system prompt. There
+// is no running worker in the native stack: Hermes is a one-shot exec whose
+// `cwd` is the profile dir (tools/hermes-runner.ts), so the NEXT delegation
+// reads whatever was just written. Both steps had already decayed to logged
+// no-ops during the ACP purge; they are now gone rather than stubbed.
+//
+// The response body is unchanged (`{ state, elapsedMs }`) — webui and the
+// mobile SDK consume that shape. `forceActiveName` is likewise gone: it only
+// existed to steer the reapply.
+function editApplied(userId: string, startedAt: number): Response {
+  const elapsedMs = Date.now() - startedAt;
+  log.info("editApplied", { userId, elapsedMs });
+  return Response.json({ state: "ready", elapsedMs }, { status: HTTP_OK });
 }
 
 function readBearer(request: Request): string | null {
@@ -366,10 +306,6 @@ function readBearer(request: Request): string | null {
   const parts = h.split(" ");
   if (parts.length !== 2 || parts[0]?.toLowerCase() !== "bearer") return null;
   return parts[1] ?? null;
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unreachable: ${JSON.stringify(value)}`);
 }
 
 /** Default helper for production wiring: resolve hermes-consumed profile dir. */

@@ -1,0 +1,69 @@
+2026-07-30T00:28:47.479 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="conversational" seq=19 turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80"
+2026-07-30T00:28:47.479 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms76hhz6-dmukblpw" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80"
+2026-07-30T00:28:47.480 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms76hhz6-dmukblpw" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" trigger="user"
+2026-07-30T00:28:47.480 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" trigger="user" lastProcessedSeq=19
+2026-07-30T00:28:47.480 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" maxIterations=10 toolCount=19
+2026-07-30T00:28:47.480 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=20 toolCount=19
+2026-07-30T00:28:47.480 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-30T00:28:47.481 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default"
+2026-07-30T00:28:47.483 INFO  [tts:local-tts-socket] ws-opened
+2026-07-30T00:28:47.484 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="default"
+2026-07-30T00:28:49.448 INFO  [provider:openai] stream-end | durationMs=1968 finishReason="tool_calls" promptTokens=11857 cachedTokens=0 completionTokens=38 cacheHitRatio=0
+2026-07-30T00:28:49.448 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" iteration=1 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-07-30T00:28:49.449 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" toolCallId="call_euydw7t9" action="allow" reason="Delegation is mediated by the DelegationGuard, not the tool PDP" rule="allow_delegate_task"
+2026-07-30T00:28:49.451 INFO  [tools:delegation-guard] delegation-guard.evaluate | agent="hermes" action="allow" reason=undefined tier="low" findingsCount=0
+2026-07-30T00:28:49.451 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6" agent="hermes" action="allow"
+2026-07-30T00:28:49.451 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_0417d3b0" cwd="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" timeoutMs=600000
+2026-07-30T00:28:49.454 INFO  [tools:tool-broker] tool-broker.dispatch.background.started | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" toolCallId="call_euydw7t9" taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6"
+2026-07-30T00:28:49.454 INFO  [ws:turn-emitter] turn-emitter.delegation-progress | sessionId="s-ms76hhz6-dmukblpw" taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" agent="hermes" status="running"
+2026-07-30T00:28:49.455 INFO  [runtime:react-loop] react-loop.tool-dispatch.background | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" toolCallId="call_euydw7t9" toolName="delegateTask" taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6"
+2026-07-30T00:28:49.455 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:28:49.456 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=21 toolCount=19
+2026-07-30T00:28:49.519 WARN  [tools:hermes-runner] hermes-runner.run.non-zero-exit | userId="u_0417d3b0" code=1 elapsedMs=67 reasonLength=93
+2026-07-30T00:28:49.519 WARN  [tools:delegate-task] delegate-task.run.failed | taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6" agent="hermes" reason="Error: Profile 'u_0417d3b0' does not exist. Create it with: hermes profile create u_0417d3b0
+"
+2026-07-30T00:28:49.519 INFO  [ws:turn-emitter] turn-emitter.delegation-progress | sessionId="s-ms76hhz6-dmukblpw" taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" agent="hermes" status="error"
+2026-07-30T00:28:49.520 INFO  [tools:tool-broker] tool-broker.dispatch.background.completed | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" taskId="17fae882-47e4-4fcc-b3b0-819712e11ec6" isError=true contentLength=93
+2026-07-30T00:28:49.520 INFO  [runtime:session-runtime] session-runtime.submit.steer | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="background-completion" seq=22 turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80"
+2026-07-30T00:28:50.684 INFO  [provider:openai] stream-end | durationMs=1228 finishReason="tool_calls" promptTokens=11889 cachedTokens=0 completionTokens=39 cacheHitRatio=0
+2026-07-30T00:28:50.686 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" iteration=2 forceFinal=false finishReason="tool_calls" toolCallCount=1 textLength=0 cacheHitRatio=0
+2026-07-30T00:28:50.688 INFO  [tools:tool-broker] tool-broker.pdp.decision | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" toolCallId="call_0dhzc0sc" action="allow" reason="Delegation is mediated by the DelegationGuard, not the tool PDP" rule="allow_delegate_task"
+2026-07-30T00:28:50.689 INFO  [tools:delegation-guard] delegation-guard.evaluate | agent="hermes" action="allow" reason=undefined tier="low" findingsCount=0
+2026-07-30T00:28:50.690 INFO  [tools:delegate-task] delegate-task.run.guard-decision | taskId="63d18a1e-829e-4231-b217-327b4cee716c" agent="hermes" action="allow"
+2026-07-30T00:28:50.690 INFO  [tools:hermes-runner] hermes-runner.run.start | userId="u_0417d3b0" cwd="/Users/kevinye/.sentient/gateway/u_0417d3b0/profiles/u_0417d3b0" timeoutMs=600000
+2026-07-30T00:28:50.691 INFO  [tools:tool-broker] tool-broker.dispatch.background.started | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" toolCallId="call_0dhzc0sc" taskId="63d18a1e-829e-4231-b217-327b4cee716c"
+2026-07-30T00:28:50.691 INFO  [ws:turn-emitter] turn-emitter.delegation-progress | sessionId="s-ms76hhz6-dmukblpw" taskId="63d18a1e-829e-4231-b217-327b4cee716c" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" agent="hermes" status="running"
+2026-07-30T00:28:50.692 INFO  [runtime:react-loop] react-loop.tool-dispatch.background | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" toolCallId="call_0dhzc0sc" toolName="delegateTask" taskId="63d18a1e-829e-4231-b217-327b4cee716c"
+2026-07-30T00:28:50.693 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:28:50.693 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_0dhzc0sc
+2026-07-30T00:28:50.693 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=23 toolCount=19
+2026-07-30T00:28:50.758 WARN  [tools:hermes-runner] hermes-runner.run.non-zero-exit | userId="u_0417d3b0" code=1 elapsedMs=67 reasonLength=93
+2026-07-30T00:28:50.758 WARN  [tools:delegate-task] delegate-task.run.failed | taskId="63d18a1e-829e-4231-b217-327b4cee716c" agent="hermes" reason="Error: Profile 'u_0417d3b0' does not exist. Create it with: hermes profile create u_0417d3b0
+"
+2026-07-30T00:28:50.758 INFO  [ws:turn-emitter] turn-emitter.delegation-progress | sessionId="s-ms76hhz6-dmukblpw" taskId="63d18a1e-829e-4231-b217-327b4cee716c" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" agent="hermes" status="error"
+2026-07-30T00:28:50.759 INFO  [tools:tool-broker] tool-broker.dispatch.background.completed | sessionId="s-ms76hhz6-dmukblpw" tool="delegateTask" taskId="63d18a1e-829e-4231-b217-327b4cee716c" isError=true contentLength=93
+2026-07-30T00:28:50.759 INFO  [runtime:session-runtime] session-runtime.submit.steer | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="background-completion" seq=25 turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80"
+2026-07-30T00:28:58.741 INFO  [provider:openai] stream-end | durationMs=8048 finishReason="stop" promptTokens=11990 cachedTokens=0 completionTokens=611 cacheHitRatio=0
+2026-07-30T00:28:58.741 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" iteration=3 forceFinal=false finishReason="stop" toolCallCount=0 textLength=428 cacheHitRatio=0
+2026-07-30T00:28:58.742 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" iterations=3 forceFinal=false
+2026-07-30T00:28:58.743 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" completed=true iterations=3
+2026-07-30T00:28:58.743 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms76hhz6-dmukblpw" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80"
+2026-07-30T00:28:58.743 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:28:58.743 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_0dhzc0sc
+2026-07-30T00:28:58.744 INFO  [runtime:session-runtime] session-runtime.turn.next-turn-trigger | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" previousTurnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" nextTurnId="a101306b-7174-4004-b8d0-1de03dd5fa84" trigger="background-completion"
+2026-07-30T00:28:58.744 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms76hhz6-dmukblpw" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84"
+2026-07-30T00:28:58.744 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms76hhz6-dmukblpw" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" trigger="background-completion"
+2026-07-30T00:28:58.744 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" trigger="background-completion" lastProcessedSeq=26
+2026-07-30T00:28:58.744 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" maxIterations=10 toolCount=19
+2026-07-30T00:28:58.745 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:28:58.745 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_0dhzc0sc
+2026-07-30T00:28:58.745 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=25 toolCount=19
+2026-07-30T00:28:59.587 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms76hhz6-dmukblpw" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" encoding="opus" sampleRate=48000
+2026-07-30T00:28:59.587 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms76hhz6-dmukblpw" turnId="d7baf654-5af8-4b88-b8f4-15c97bddea80" encoding="opus" sampleRate=48000 firstFrameMs=12107
+2026-07-30T00:28:59.601 INFO  [provider:openai] stream-end | durationMs=856 finishReason="stop" promptTokens=12182 cachedTokens=0 completionTokens=1 cacheHitRatio=0
+2026-07-30T00:28:59.601 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=0 cacheHitRatio=0
+2026-07-30T00:28:59.601 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" iterations=1 forceFinal=false
+2026-07-30T00:28:59.602 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84" completed=true iterations=1
+2026-07-30T00:28:59.602 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms76hhz6-dmukblpw" turnId="a101306b-7174-4004-b8d0-1de03dd5fa84"
+2026-07-30T00:28:59.603 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:28:59.603 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_0dhzc0sc

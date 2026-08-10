@@ -1,8 +1,8 @@
 import type { StartupConfig } from "../config/startup-config.ts";
 import { getLog } from "../logging/logger.ts";
-import type { TTSProviderFactory } from "../providers/tts/tts-types.ts";
 import { createStreamingTtsSynthesizer } from "../tts/streaming-tts-synthesizer.ts";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
+import type { TTSSessionOpener } from "./tts-factory.ts";
 
 const log = getLog(["sentient", "bootstrap", "text-stream-synthesizer"]);
 
@@ -12,16 +12,18 @@ const log = getLog(["sentient", "bootstrap", "text-stream-synthesizer"]);
  */
 export function createTextStreamSynthesizer(
   cfg: StartupConfig,
-  createTTSProvider: TTSProviderFactory | null,
+  openTTSSession: TTSSessionOpener | null,
 ): TextStreamSynthesizer | null {
-  if (!cfg.tts || !createTTSProvider) {
+  if (!cfg.tts || !openTTSSession) {
     log.info("tts-disabled", { reason: "tts-absent" });
     return null;
   }
 
   const synth = createStreamingTtsSynthesizer({
     sessionFactory: {
-      createSession: async () => createTTSProvider(),
+      // Awaited: the opener reads the user's voice pack from their profile
+      // here, at open time, rather than from a session-held copy.
+      createSession: () => openTTSSession(),
     },
   });
 

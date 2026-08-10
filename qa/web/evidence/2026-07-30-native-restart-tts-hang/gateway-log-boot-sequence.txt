@@ -1,0 +1,78 @@
+2026-07-30T00:56:10.572 INFO  [sentient] gateway-started | host="0.0.0.0" port=8888
+2026-07-30T00:56:10.575 INFO  [bootstrap:mcp-host] mcp-host-created | users=u_0417d3b0 toolCount=4
+2026-07-30T00:56:10.576 WARN  [system-orch:native-driver] native.orphan-reaped | service="whisper-stt" pid=83452 reason="pid file survived a gateway restart"
+2026-07-30T00:56:10.576 INFO  [system-orch:native-io] io.group-terminated | pid=83452
+32 |       // Allow the Hermes container (UID 10000, non-root) to connect to the
+33 |       // socket the gateway (root) creates. The bind-mounted directory is
+34 |       // only shared between gateway + its hermes peer, so 0666 is safe.
+35 |       const { chmodSync } = await import("node:fs");
+36 | 
+37 |       server = Bun.listen<{ id: string; buffer: string }>({
+                        ^
+error: Failed to listen at /run/sentient/mcp-u_0417d3b0.sock
+ syscall: "listen",
+   errno: 2,
+ address: "/run/sentient/mcp-u_0417d3b0.sock",
+    code: "ENOENT"
+
+      at start (/Users/kevinye/Development/sentient/gateway/src/mcp-host/unix-socket-listener.ts:37:20)
+      at async start (/Users/kevinye/Development/sentient/gateway/src/bootstrap/create-mcp-host.ts:81:21)
+2026-07-30T00:56:10.577 WARN  [system-orch:native-driver] native.orphan-reaped | service="local-tts" pid=83475 reason="pid file survived a gateway restart"
+2026-07-30T00:56:10.577 INFO  [system-orch:native-io] io.group-terminated | pid=83475
+2026-07-30T00:56:10.587 INFO  [system-orch:service-registry] registry.built | count=9 services=egress-proxy,ingress-proxy,ha-mcp,ma-mcp,fetch-mcp,searxng,searxng-mcp,whisper-stt,local-tts
+2026-07-30T00:56:10.619 INFO  [system-orch:boot-reconciler] reconcile.applying | count=9
+2026-07-30T00:56:10.620 INFO  [system-orch:orchestrator] apply.start | targets=egress-proxy,ingress-proxy,ha-mcp,ma-mcp,fetch-mcp,searxng,searxng-mcp,whisper-stt,local-tts mode="all"
+2026-07-30T00:56:11.948 INFO  [system-orch:docker-driver] driver.recreated | service="egress-proxy" id="7958b88a64a23430c7274396902dff042e1919b3947b3b646f452e731fdde8cf"
+2026-07-30T00:56:11.948 INFO  [system-orch:docker-driver] driver.ports-published | service="ingress-proxy" ports=127.0.0.1:8088:8088,127.0.0.1:8087:8087
+2026-07-30T00:56:12.413 WARN  [system-orch:docker-driver] recreate.pull-failed-using-local | image="sentient/ingress-proxy:local" reason="(HTTP code 404) unexpected - pull access denied for sentient/ingress-proxy, repository does not exist or may require 'docker login' "
+2026-07-30T00:56:13.101 INFO  [system-orch:docker-driver] driver.recreated | service="ingress-proxy" id="bea709d5999908b48540e8fb68dd53e5f1871c6bf3acda5af0ad4c5be129fea9"
+2026-07-30T00:56:13.106 INFO  [system-orch:docker-driver] driver.ports-published | service="ha-mcp" ports=127.0.0.1:8086:8086
+2026-07-30T00:56:15.440 INFO  [system-orch:docker-driver] driver.recreated | service="ha-mcp" id="5b747ebd6feef4eda353ecc1ac52c450b3db611e9f37be06fa33dac63afcd85d"
+2026-07-30T00:56:15.441 INFO  [system-orch:docker-driver] driver.ports-published | service="ma-mcp" ports=127.0.0.1:8668:8668
+2026-07-30T00:56:15.896 WARN  [system-orch:docker-driver] recreate.pull-failed-using-local | image="sentient/ma-mcp:local" reason="(HTTP code 404) unexpected - pull access denied for sentient/ma-mcp, repository does not exist or may require 'docker login' "
+2026-07-30T00:56:16.390 INFO  [system-orch:docker-driver] driver.recreated | service="ma-mcp" id="054c3e93273cfd679d6fda7aa18fb09074ba08df5415ffbf086c3f9407c45577"
+2026-07-30T00:56:16.428 INFO  [ws] client-connected
+2026-07-30T00:56:16.428 INFO  [ws] session-opened | sessionId="s-ms77z5po-jycwjrok"
+2026-07-30T00:56:16.436 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-ms77z5po-jycwjrok" userId="u_0417d3b0"
+2026-07-30T00:56:16.438 INFO  [ws:replay-registry] replay-registry.fresh | surfaceKey="u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" epoch=1 priorEpoch=null leaseId=1 reason="no-prior-journal"
+2026-07-30T00:56:16.438 INFO  [bootstrap:text-stream-synthesizer] text-stream-synthesizer-created
+2026-07-30T00:56:16.439 WARN  [tools:mcp-client] mcp.entry.stdio-skipped | serverName="gateway" reason="v1 only dials http transport"
+2026-07-30T00:56:16.439 INFO  [bootstrap:phase-services] session-runtime.factory.build | userId="u_0417d3b0" conversationId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" connectionId="s-ms77z5po-jycwjrok"
+2026-07-30T00:56:16.443 INFO  [store:session-store] store.opened | userId="u_0417d3b0"
+2026-07-30T00:56:16.443 INFO  [ws:session-configure] session-configured | sessionId="s-ms77z5po-jycwjrok" userId="u_0417d3b0" capabilities=stream.resume,audio.input,text.input,audio.output,cognition.status,conversation.history,message.stream,tool.status,permission.confirm,delegation.progress,sessions,session.preferences clientType="webui" language="en" deviceId="6e952001-ebae-410e-b4eb-5ae4efbcec80" surfaceId="2b9a32f5-292f-4e62-b38b-0502baf96220" hasRuntime=true hasVoice=true epoch=1 resumed=false requestedResumeLastSeq=3311 conversationId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220"
+2026-07-30T00:56:16.444 INFO  [ws:resume] resume.not-recovered | sessionId="s-ms77z5po-jycwjrok" surfaceKey="u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" epoch=1 requestedEpoch=3 requestedLastSeq=3311 reason="fresh-journal-or-epoch-mismatch"
+2026-07-30T00:56:16.444 INFO  [ws:turn-emitter] turn-emitter.conversation-snapshot | sessionId="s-ms77z5po-jycwjrok" itemCount=48
+2026-07-30T00:56:16.445 INFO  [runtime:conversation-feed] conversation-feed.snapshot | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" itemCount=48 throughSeq=59
+2026-07-30T00:56:16.445 INFO  [session-handlers:voice-prefs] voice-prefs.loaded | sessionId="s-ms77z5po-jycwjrok" userId="u_0417d3b0" voiceId="default" speak=true
+2026-07-30T00:56:16.446 WARN  [tools:mcp-client] mcp.list-tools.failed | serverName="music_assistant" reason="The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()" elapsedMs=7
+2026-07-30T00:56:16.447 WARN  [tools:mcp-client] mcp.list-tools.failed | serverName="home_assistant" reason="The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()" elapsedMs=8
+2026-07-30T00:56:16.451 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="fetch" totalCount=1 filteredCount=1 elapsedMs=12
+2026-07-30T00:56:16.464 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="searxng" totalCount=5 filteredCount=1 elapsedMs=25
+2026-07-30T00:56:16.464 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-ms77z5po-jycwjrok" toolCount=2
+2026-07-30T00:56:16.858 WARN  [system-orch:docker-driver] recreate.pull-failed-using-local | image="sentient/fetch-mcp:local" reason="(HTTP code 404) unexpected - pull access denied for sentient/fetch-mcp, repository does not exist or may require 'docker login' "
+2026-07-30T00:56:17.170 INFO  [system-orch:docker-driver] driver.recreated | service="fetch-mcp" id="c3154661a9519c832b5f46aecc63fa0546514a2d3f56b22c90e95e09f28da21a"
+2026-07-30T00:56:18.005 INFO  [system-orch:docker-driver] driver.recreated | service="searxng" id="35a93fb58ead901830900b8e0f2ed4d04c7afdb5b02d95c5129b43ca4be55f0b"
+2026-07-30T00:56:18.487 WARN  [system-orch:docker-driver] recreate.pull-failed-using-local | image="sentient/searxng-mcp:local" reason="(HTTP code 404) unexpected - pull access denied for sentient/searxng-mcp, repository does not exist or may require 'docker login' "
+2026-07-30T00:56:18.812 INFO  [system-orch:docker-driver] driver.recreated | service="searxng-mcp" id="2aea110dbedb55bcae5deeca8d864a2302db7040c536fa24cfecd603c2a55409"
+2026-07-30T00:56:18.831 INFO  [system-orch:native-driver] native.started | service="whisper-stt" pid=15466 argc=3
+2026-07-30T00:59:31.067 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="conversational" seq=60 turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb"
+2026-07-30T00:59:31.069 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms77z5po-jycwjrok" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb"
+2026-07-30T00:59:31.070 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms77z5po-jycwjrok" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb" trigger="user"
+2026-07-30T00:59:31.070 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb" trigger="user" lastProcessedSeq=60
+2026-07-30T00:59:31.070 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="8c5f6c77-4ddd-462e-8ef2-6356f732c5fb" maxIterations=10 toolCount=3
+2026-07-30T00:59:31.071 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_euydw7t9
+2026-07-30T00:59:31.071 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_0dhzc0sc
+2026-07-30T00:59:31.071 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_04kxekkh
+2026-07-30T00:59:31.071 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_edh41grl
+2026-07-30T00:59:31.071 WARN  [store:model-projection] projection.dropped-unreplied-tool-calls | reason="unreplied-in-block" toolCallIds=call_qg0ajdyn
+2026-07-30T00:59:31.073 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=56 toolCount=3
+2026-07-30T00:59:31.074 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-30T00:59:31.076 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default"
+2026-07-30T00:59:31.080 ERROR [tts:local-tts-socket] ws-error | message="WebSocket connection to 'ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default' failed: Failed to connect"
+2026-07-30T00:59:31.080 INFO  [tts:local-tts-socket] ws-closed
+2026-07-30T00:59:31.080 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=0
+2026-07-30T00:59:31.080 INFO  [tts:local-tts] dispose
+2026-07-30T01:03:24 PDT
+---
+lsof 8770/8771 at investigation time: no listeners
+ps local_tts: no process

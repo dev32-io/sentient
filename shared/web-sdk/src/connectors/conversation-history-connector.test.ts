@@ -32,8 +32,8 @@ function assistantItem(content: string, ts = 2): ConversationFeedItem {
   return { entryId: `assistant:${ts}:${content}`, ts, kind: "assistant", content };
 }
 
-function toolItem(summary: string, ts = 3): ConversationFeedItem {
-  return { entryId: `tool:${ts}:${summary}`, ts, kind: "tool", toolName: "speak", status: "finished", summary };
+function triggerItem(summary: string, ts = 3): ConversationFeedItem {
+  return { entryId: `trigger:${ts}:${summary}`, ts, kind: "trigger", source: "background-completion", summary };
 }
 
 describe("ConversationHistoryConnector", () => {
@@ -74,41 +74,78 @@ describe("ConversationHistoryConnector", () => {
     internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
     internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
     internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: assistantItem("hello") });
-    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: toolItem("said hi") });
+    internal.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: triggerItem("task finished"),
+    });
 
     expect(connector.items()).toHaveLength(3);
-    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "tool"]);
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "trigger"]);
     expect(onEntry).toHaveBeenCalledTimes(3);
     // 1 for snapshot + 3 for entries
     expect(onUpdate).toHaveBeenCalledTimes(4);
   });
 
-  it("re-attaches the frame cycleId to a committed assistant entry (no client-side id invention)", () => {
+  it("upserts by entryId instead of appending — a reply re-delivered at the turn boundary replaces its snapshot twin in place", () => {
+    const onEntry = vi.fn();
+    const onUpdate = vi.fn();
+    const connector = new ConversationHistoryConnector({ onEntry, onUpdate });
+    const internal = createMockInternal();
+    connector.attach(internal);
+
+    // Mid-turn attach: the snapshot already carries the reply-so-far under a
+    // stable entryId (== replyId, per the gateway's fold-into-one-item contract).
+    const partial: ConversationFeedItem = { entryId: "reply-1", ts: 2, kind: "assistant", content: "partial answ" };
+    internal.messageHandlers.get("conversation.snapshot")?.({
+      type: "conversation.snapshot",
+      items: [userItem("hi", 1), partial],
+    });
+    expect(connector.items()).toHaveLength(2);
+
+    // Turn boundary: the SAME entryId arrives again as a conversation.entry
+    // carrying the full reply. Must replace in place, not append a second
+    // overlapping bubble.
+    const full: ConversationFeedItem = {
+      entryId: "reply-1",
+      ts: 2,
+      kind: "assistant",
+      content: "partial answer, complete",
+    };
+    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: full });
+
+    expect(connector.items()).toHaveLength(2);
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant"]);
+    expect((connector.items()[1] as { content: string }).content).toBe("partial answer, complete");
+    expect(onEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-attaches the frame turnId to a committed assistant entry (no client-side id invention)", () => {
     const onEntry = vi.fn();
     const connector = new ConversationHistoryConnector({ onEntry });
     const internal = createMockInternal();
     connector.attach(internal);
 
-    internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
     internal.messageHandlers.get("conversation.entry")?.({
       type: "conversation.entry",
-      cycleId: "c-1",
+      turnId: "t-1",
       item: assistantItem("hello"),
     });
 
-    expect(connector.items()[0]?.cycleId).toBe("c-1");
-    expect(onEntry).toHaveBeenCalledWith(expect.objectContaining({ cycleId: "c-1", kind: "assistant" }));
+    expect(connector.items()[0]?.turnId).toBe("t-1");
+    expect(onEntry).toHaveBeenCalledWith(expect.objectContaining({ turnId: "t-1", kind: "assistant" }));
   });
 
-  it("leaves cycleId undefined for an entry with no originating cycle (user echo)", () => {
+  it("leaves turnId undefined for an entry with no originating turn (user echo)", () => {
     const connector = new ConversationHistoryConnector();
     const internal = createMockInternal();
     connector.attach(internal);
 
-    internal.messageHandlers.get("conversation.snapshot")?.({ type: "conversation.snapshot", items: [] });
-    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+    internal.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: userItem("hi"),
+    });
 
-    expect(connector.items()[0]?.cycleId).toBeUndefined();
+    expect(connector.items()[0]?.turnId).toBeUndefined();
   });
 
   it("ignores malformed entry messages", () => {
@@ -131,7 +168,7 @@ describe("ConversationHistoryConnector", () => {
     expect(connector.items()).toEqual([]);
   });
 
-  it("resets the mirror on detach", () => {
+  it("keeps the mirror across detach — detach is transport teardown, not session teardown", () => {
     const connector = new ConversationHistoryConnector();
     const internal = createMockInternal();
     connector.attach(internal);
@@ -140,18 +177,60 @@ describe("ConversationHistoryConnector", () => {
     expect(connector.items()).toHaveLength(1);
 
     connector.detach();
-    expect(connector.items()).toEqual([]);
+    expect(connector.items()).toHaveLength(1);
   });
 
-  it("subsequent attach resets the mirror for the new session", () => {
-    const connector = new ConversationHistoryConnector();
-    const internal1 = createMockInternal();
-    connector.attach(internal1);
-    internal1.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+  it("stops delivering entries after detach", () => {
+    const onEntry = vi.fn();
+    const connector = new ConversationHistoryConnector({ onEntry });
+    const internal = createMockInternal();
+    connector.attach(internal);
     connector.detach();
 
+    expect(internal.messageHandlers.size).toBe(0);
+    expect(onEntry).not.toHaveBeenCalled();
+  });
+
+  // The reconnect FSM: teardownWsForReconnect detaches every connector, the
+  // reconnect re-attaches them on session.ready, and a `recovered:true` resume
+  // replays ONLY the frames the client missed — deliberately no
+  // conversation.snapshot (ws-session-configure.ts). If attach cleared the
+  // mirror, the next replayed entry would be the ONLY item the UI ever sees
+  // and the whole chat would collapse to a single bubble.
+  it("preserves the mirror across a reconnect detach/attach cycle and appends the replayed entries", () => {
+    const onUpdate = vi.fn();
+    const connector = new ConversationHistoryConnector({ onUpdate });
+    const internal1 = createMockInternal();
+    connector.attach(internal1);
+    internal1.messageHandlers.get("conversation.snapshot")?.({
+      type: "conversation.snapshot",
+      items: [userItem("hi"), assistantItem("hello")],
+    });
+    expect(connector.items()).toHaveLength(2);
+
+    // Reconnect: teardown detaches, session.ready re-attaches.
+    connector.detach();
     const internal2 = createMockInternal();
     connector.attach(internal2);
+
+    // recovered:true replay — the missed entry only, no snapshot.
+    internal2.messageHandlers.get("conversation.entry")?.({
+      type: "conversation.entry",
+      item: userItem("and again", 3),
+    });
+
+    expect(connector.items().map((i) => i.kind)).toEqual(["user", "assistant", "user"]);
+    expect(onUpdate).toHaveBeenLastCalledWith(expect.arrayContaining([expect.objectContaining({ kind: "assistant" })]));
+  });
+
+  it("reset() clears the mirror on a genuine session/identity teardown", () => {
+    const connector = new ConversationHistoryConnector();
+    const internal = createMockInternal();
+    connector.attach(internal);
+    internal.messageHandlers.get("conversation.entry")?.({ type: "conversation.entry", item: userItem("hi") });
+    expect(connector.items()).toHaveLength(1);
+
+    connector.reset();
     expect(connector.items()).toEqual([]);
   });
 });
@@ -240,7 +319,8 @@ describe("ConversationHistoryConnector — snapshot replace semantics", () => {
     await Promise.resolve();
     expect(c.items()).toHaveLength(1);
     expect((c.items()[0] as { content: string }).content).toBe("fresh");
-    sdk.emit("conversation.entry", { item: { entryId: "e", kind: "user", ts: 5, channel: "text", content: "live" } });
+    // Distinct entryId — a genuinely new row, not a re-delivery of "e".
+    sdk.emit("conversation.entry", { item: { entryId: "e2", kind: "user", ts: 5, channel: "text", content: "live" } });
     expect(c.items()).toHaveLength(2);
   });
 

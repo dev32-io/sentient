@@ -51,7 +51,8 @@ private val log = createLogger("update", "checker-factory", "ios")
  * same gateway URL as the SDK. [deriveHostRoot] maps the WS URL to the gateway
  * root the `/download/manifest.json` GET hangs off.
  *
- * @param gatewayWsUrl Full WS URL, e.g. `wss://localhost:8888/api/v1/ws`.
+ * @param gatewayWsUrl Full WS URL, e.g. `wss://localhost/api/v1/ws` — inbound-proxy's 443,
+ *   which is the default and is typically omitted from the URL.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  * @param installedBuild The running build number (iOS CFBundleVersion).
  * @param installedVersionName The running marketing version (CFBundleShortVersionString).

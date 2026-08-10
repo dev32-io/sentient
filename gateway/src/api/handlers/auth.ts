@@ -1,4 +1,6 @@
 import { AUDIO_PREFS_DEFAULT } from "@sentient/audio-prefs";
+import type { McpCatalog } from "@sentient/config";
+import { ADMIN_ROLE } from "@sentient/protocol";
 import { z } from "zod";
 import type { InstallState } from "../../admin/install-state.js";
 import type { SecretsStore } from "../../admin/secrets-store.js";
@@ -37,6 +39,11 @@ export interface AuthHandlerDeps {
    *  the advance fails — the user is already created and the wizard can
    *  recover via /wizard/finalize (cursor-mismatch UI). */
   installState?: InstallState;
+  /** `config.yaml#mcp_catalog`. REQUIRED, and not optional-with-a-fallback:
+   *  the first admin's permission table is seeded from it, and an empty
+   *  catalog would seed an empty table — i.e. the household's operator would
+   *  come out of setup with no tools at all, silently. */
+  mcpCatalog: McpCatalog;
 }
 
 const PIN_REGEX = /^\d{4}$/;
@@ -106,12 +113,11 @@ async function parseSetupBody(request: Request): Promise<ParsedSetup | Response>
 }
 
 async function createFirstAdmin(
-  auth: AuthService,
+  deps: AuthHandlerDeps,
   provisioner: UserProvisioner,
   data: ParsedSetup,
-  secretsStore?: SecretsStore,
-  installState?: InstallState,
 ): Promise<Response> {
+  const { auth, secretsStore, installState } = deps;
   // Goes through the provisioner so the new admin gets the same materialization
   // a regularly-created user does: slot binding, profile.json, supervisord
   // program with self-bootstrapping `hermes profile create` prefix. Without
@@ -122,12 +128,17 @@ async function createFirstAdmin(
   // schemaVersion is always the current constant.
   const partial = data.profile ?? buildDefaultProfileBody(secretsStore);
   const rawProfile = { ...partial, schemaVersion: PROFILE_SCHEMA_VERSION as 1, userId: "" };
-  const profile = applyProfileDefaults(rawProfile);
+  // First run: this account IS the household's operator, so it gets the one
+  // role that reaches the admin REST surface and the `admin` impact tier. The
+  // SAME role seeds its permission table one line down — the record and the
+  // table cannot disagree about who this person is because they read one
+  // constant.
+  const profile = applyProfileDefaults(rawProfile, { role: ADMIN_ROLE, mcpCatalog: deps.mcpCatalog });
 
   const r = await provisioner.createUser({
     displayName: data.displayName,
     pin: data.pin,
-    isAdmin: true,
+    role: ADMIN_ROLE,
     profile,
   });
   if (!r.ok) {
@@ -156,18 +167,7 @@ async function createFirstAdmin(
     }
   }
 
-  return Response.json(
-    {
-      token: authResult.value.token,
-      user: {
-        userId: authResult.value.user.userId,
-        displayName: authResult.value.user.displayName,
-        isAdmin: authResult.value.user.isAdmin,
-        avatarTint: authResult.value.user.avatarTint,
-      },
-    },
-    { status: HTTP_OK },
-  );
+  return buildAuthResponse(authResult.value.token, authResult.value.user);
 }
 
 async function handleSetup(deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -183,7 +183,7 @@ async function handleSetup(deps: AuthHandlerDeps, request: Request): Promise<Res
     log.warn("setup.no-provisioner");
     return jsonError(HTTP_INTERNAL, "no-provisioner");
   }
-  return createFirstAdmin(deps.auth, deps.userProvisioner, bodyOrError, deps.secretsStore, deps.installState);
+  return createFirstAdmin(deps, deps.userProvisioner, bodyOrError);
 }
 
 /** Build a profile body when SetupScreen submits without one. Reads the
@@ -209,8 +209,16 @@ function buildDefaultProfileBody(secretsStore?: SecretsStore): Omit<ProfileV1, "
     // local-tts grows a multi-voice catalog.
     voice: { provider: "local-tts", id: "default" },
     audio: AUDIO_PREFS_DEFAULT,
+    // Mirrors profileV1Schema's own `.default({spark: true, dreaming: true})` —
+    // this body is hand-built, not zod-parsed, so the schema default never
+    // gets a chance to fill it in.
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {}, toolsets: [] },
+    // `permissions` is OMITTED, not `{}`: an empty table is a table naming no
+    // server, which the ToolBroker reads as every server off. Absent means
+    // "never set", which is what `applyProfileDefaults` seeds the starter set
+    // into a line later.
+    tools: { toolsets: [] },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };
@@ -254,18 +262,7 @@ async function handleLogin(deps: AuthHandlerDeps, request: Request): Promise<Res
     log.debug("login.rejected", { userId: bodyOrError.userId, reason: r.error });
     return jsonError(HTTP_UNAUTHORIZED, "invalid-credentials");
   }
-  return Response.json(
-    {
-      token: r.value.token,
-      user: {
-        userId: r.value.user.userId,
-        displayName: r.value.user.displayName,
-        isAdmin: r.value.user.isAdmin,
-        avatarTint: r.value.user.avatarTint,
-      },
-    },
-    { status: HTTP_OK },
-  );
+  return buildAuthResponse(r.value.token, r.value.user);
 }
 
 function jsonError(status: number, code: string): Response {
@@ -300,9 +297,18 @@ function readBearer(request: Request): string | null {
   return parts[1] ?? null;
 }
 
-function buildMeResponse(token: string, user: UserRecord): Response {
-  const { userId, displayName, isAdmin, avatarTint } = user;
-  return Response.json({ token, user: { userId, displayName, isAdmin, avatarTint } }, { status: HTTP_OK });
+/** The `{ token, user }` body every auth route answers with.
+ *
+ *  `isAdmin` is DERIVED from `role`, never stored. It stays on the wire beside
+ *  `role` so webui / Android / iOS keep compiling and behaving correctly
+ *  through the rest of plan 2026-08-07-tool-permissions; they migrate to
+ *  reading `role` in tasks 6–9 and the derived field retires after that. */
+function buildAuthResponse(token: string, user: UserRecord): Response {
+  const { userId, displayName, role, avatarTint } = user;
+  return Response.json(
+    { token, user: { userId, displayName, role, isAdmin: role === ADMIN_ROLE, avatarTint } },
+    { status: HTTP_OK },
+  );
 }
 
 async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -321,9 +327,13 @@ async function handleMe(deps: AuthHandlerDeps, request: Request): Promise<Respon
     log.warn("me.user-vanished", { userId: valid.value.userId });
     return jsonError(HTTP_UNAUTHORIZED, "user-not-found");
   }
-  const refreshed = await deps.auth.tokens.refresh(token);
-  if (!refreshed.ok) return jsonError(HTTP_UNAUTHORIZED, refreshed.error);
-  return buildMeResponse(refreshed.value, userR.value);
+  // Renewal mints a fresh IDENTITY token — there is no authority in it to
+  // converge. The `role` in the body below is read off the record on this
+  // request and is display data for the client (draw the admin section or
+  // not); the server re-resolves it from the record on every call regardless,
+  // so a client rendering a stale copy cannot turn that into access.
+  const fresh = await deps.auth.tokens.issue({ userId: userR.value.userId });
+  return buildAuthResponse(fresh, userR.value);
 }
 
 async function handleLogout(_deps: AuthHandlerDeps, request: Request): Promise<Response> {
@@ -354,7 +364,7 @@ async function handleUpdateMe(deps: AuthHandlerDeps, request: Request): Promise<
     return jsonError(HTTP_INTERNAL, "io-error");
   }
   log.info("updateMe.ok", { userId: valid.value.userId });
-  return buildMeResponse(token, r.value);
+  return buildAuthResponse(token, r.value);
 }
 
 async function handleChangePin(deps: AuthHandlerDeps, request: Request): Promise<Response> {

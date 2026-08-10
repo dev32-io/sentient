@@ -3,8 +3,29 @@ import { getLog } from "../logging/logger.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { getUsersJsonPath } from "./paths.js";
 import type { StoreResult, UserRecord } from "./types.js";
+import { isLegacyUserRecord, migrateUserRecord } from "./user-record-migration.js";
 
 const log = getLog(["sentient", "gateway", "user-auth", "user-store"]);
+
+// The role migration is applied on READ, in memory, and persists the first time
+// anything writes the file. It is announced ONCE per process: `readAll` runs on
+// every get/list, so logging per read would spam a line per request until an
+// unrelated mutation happened to rewrite users.json.
+let loggedLegacyMigration = false;
+
+function migrateAll(rows: unknown[]): UserRecord[] {
+  const migrated = rows.map(migrateUserRecord);
+  const legacyCount = rows.filter(isLegacyUserRecord).length;
+  if (legacyCount > 0 && !loggedLegacyMigration) {
+    loggedLegacyMigration = true;
+    log.info("read.role-migrated", {
+      legacyCount,
+      total: rows.length,
+      reason: "records stored isAdmin and no role; derived one on read (true→admin, otherwise adult)",
+    });
+  }
+  return migrated;
+}
 
 export interface UserStore {
   list(): Promise<StoreResult<UserRecord[]>>;
@@ -38,7 +59,7 @@ async function readAll(): Promise<StoreResult<UserRecord[]>> {
     log.warn("list.corrupt", { path, reason: "not an array" });
     return { ok: false, error: "corrupt-file" };
   }
-  return { ok: true, value: parsed as UserRecord[] };
+  return { ok: true, value: migrateAll(parsed) };
 }
 
 async function writeAll(users: UserRecord[]): Promise<StoreResult<void>> {

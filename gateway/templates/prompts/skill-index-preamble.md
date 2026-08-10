@@ -1,0 +1,1 @@
+Skills are instruction sets this user has taught you. When a request matches a skill's description below, you MUST call `skill_use` with that skill's name and follow the returned instructions before acting on the request.

@@ -23,10 +23,13 @@ The proxy exists to provide:
 
 It is **not** the primary defense against:
 
-- **Prompt injection.** Handled by the gateway's tool-result injection
-  scanner (`gateway/src/security/tool-result-scanner.*`).
-- **Risky tool invocations.** Handled by the policy-as-code engine at the
-  MCP tool boundary and the Hermes `approvals.fail_closed: true` setting.
+- **Prompt injection.** Handled by the gateway's injection scanner
+  (`gateway/src/security/injection-scanner.*`).
+- **Risky tool invocations.** Handled at the MCP tool boundary by the role
+  gate (`canExecute(role, tier)`, `shared/protocol/src/roles.ts`) and each
+  person's per-tool permission — `allow` / `ask` / `deny` / `off`, resolved
+  in `gateway/src/tools/`. A `confirm`-tier tool an `ask` resolves to is a
+  real permission prompt, never auto-approved.
 - **Runaway agents.** Handled by the session risk accumulator.
 - **Data exfiltration via DNS.** Handled upstream — see *DNS caveat* below.
 

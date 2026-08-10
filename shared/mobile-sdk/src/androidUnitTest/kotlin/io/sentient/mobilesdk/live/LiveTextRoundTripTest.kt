@@ -239,8 +239,8 @@ class LiveTextRoundTripTest {
                 "an assistant reply should arrive within ${ROUND_TRIP_TIMEOUT_MS}ms",
             )
             val reply = withReply.last { it.role == ROLE_ASSISTANT && !it.streaming }
-            // cycleId correlation: the gateway stamps each cycle; the reply commit
-            // is the cycle.done terminal. Log a short preview (≤120 chars) only.
+            // turnId correlation: the gateway stamps each turn; the reply commit
+            // is the turn.completed terminal. Log a short preview (≤120 chars) only.
             println(
                 "[live] round_trip OK — assistant reply: \"" +
                     reply.content.take(120) + "\" (timeline=${withReply.size})",

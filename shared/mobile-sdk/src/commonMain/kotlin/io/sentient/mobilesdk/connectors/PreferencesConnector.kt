@@ -48,20 +48,56 @@ class PreferencesConnector(
      * Seed the current state from external storage (e.g. profile) WITHOUT
      * emitting a frame. Use when the app loads the profile before the SDK has
      * received any server-driven preference update.
+     *
+     * Fires [onChange] when the seed actually differs, because that callback is
+     * the only route into the state deriver (SdkConnectors) and therefore into
+     * the UI. Setting `state` silently would fix what the connector reports and
+     * leave the rendered toggle showing the DEFAULT — which is the bug this
+     * seeding exists to close, not a smaller version of it.
      */
     fun seed(prefs: AudioPreferences) {
-        log.info("seed", mapOf("ttsEnabled" to prefs.ttsEnabled, "channel" to prefs.channel))
+        val changed = prefs != state
+        log.info(
+            "seed",
+            mapOf("ttsEnabled" to prefs.ttsEnabled, "channel" to prefs.channel, "applied" to changed),
+        )
         state = prefs
+        if (changed) onChange?.invoke(prefs)
     }
 
-    /** Send a patch to the gateway. Server echoes via session.preferences.changed. */
+    /**
+     * Send a patch to the gateway AND apply it locally, right away.
+     *
+     * OPTIMISTIC BY NECESSITY, not by preference. `user.preferences.patch` is
+     * fire-and-forget on the wire — the gateway persists it and applies it to
+     * the live session but deliberately never answers
+     * (session-handlers/handle-preferences-patch.ts), so there is no ack to
+     * wait on. Sending without applying left `state` frozen at whatever it was,
+     * which is how the chat TTS toggle rendered permanently ON while every tap
+     * computed `!true` and posted `ttsEnabled=false` again: the icon reads this
+     * state, and so does the caller deriving the next value from it.
+     *
+     * Merging (rather than replacing) matters because a patch is partial — a
+     * null field means "unchanged", so a ttsEnabled-only patch must not blank
+     * the channel.
+     */
     fun patch(p: AudioPreferencesPatch) {
-        log.info("patch", mapOf("ttsEnabled" to p.ttsEnabled, "channel" to p.channel))
+        val next = AudioPreferences(
+            ttsEnabled = p.ttsEnabled ?: state.ttsEnabled,
+            channel = p.channel ?: state.channel,
+        )
+        val changed = next != state
+        log.info(
+            "patch",
+            mapOf("ttsEnabled" to p.ttsEnabled, "channel" to p.channel, "applied" to changed),
+        )
+        state = next
         send(
             ClientMessage.UserPreferencesPatch(
                 payload = PreferencesPatchPayload(ttsEnabled = p.ttsEnabled, channel = p.channel),
             ),
         )
+        if (changed) onChange?.invoke(next)
     }
 
     override fun handle(msg: ServerMessage) {

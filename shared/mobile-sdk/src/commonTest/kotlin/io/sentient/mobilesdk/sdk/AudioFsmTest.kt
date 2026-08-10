@@ -37,7 +37,7 @@ class AudioFsmTest {
         // Audio/cycle frames can arrive on the text path while mic is off — they
         // must NOT pull the FSM out of INACTIVE (voiceMode display stays inactive).
         assertEquals(AudioState.INACTIVE, f.next(AudioInput.MicOnset))
-        assertEquals(AudioState.INACTIVE, f.next(AudioInput.CycleStart))
+        assertEquals(AudioState.INACTIVE, f.next(AudioInput.TurnStart))
         assertEquals(AudioState.INACTIVE, f.next(AudioInput.AudioStart))
         assertEquals(AudioState.INACTIVE, f.next(AudioInput.AudioDone))
         assertEquals(AudioState.INACTIVE, f.next(AudioInput.Interrupt))
@@ -54,7 +54,7 @@ class AudioFsmTest {
 
     @Test
     fun listening_cycleStart_to_processing() {
-        assertEquals(AudioState.PROCESSING, fsm(AudioState.LISTENING).next(AudioInput.CycleStart))
+        assertEquals(AudioState.PROCESSING, fsm(AudioState.LISTENING).next(AudioInput.TurnStart))
     }
 
     @Test
@@ -81,7 +81,7 @@ class AudioFsmTest {
 
     @Test
     fun userSpeaking_cycleStart_to_processing() {
-        assertEquals(AudioState.PROCESSING, fsm(AudioState.USER_SPEAKING).next(AudioInput.CycleStart))
+        assertEquals(AudioState.PROCESSING, fsm(AudioState.USER_SPEAKING).next(AudioInput.TurnStart))
     }
 
     @Test
@@ -107,7 +107,7 @@ class AudioFsmTest {
 
     @Test
     fun processing_cycleDone_to_listening() {
-        assertEquals(AudioState.LISTENING, fsm(AudioState.PROCESSING).next(AudioInput.CycleDone))
+        assertEquals(AudioState.LISTENING, fsm(AudioState.PROCESSING).next(AudioInput.TurnDone))
     }
 
     @Test
@@ -152,7 +152,7 @@ class AudioFsmTest {
     fun assistantSpeaking_cycleDone_stays_speaking() {
         // cycle.done can arrive while audio is still physically draining — the
         // display stays "Speaking..." until AudioDone / playback-stop.
-        assertEquals(AudioState.ASSISTANT_SPEAKING, fsm(AudioState.ASSISTANT_SPEAKING).next(AudioInput.CycleDone))
+        assertEquals(AudioState.ASSISTANT_SPEAKING, fsm(AudioState.ASSISTANT_SPEAKING).next(AudioInput.TurnDone))
     }
 
     @Test
@@ -172,7 +172,7 @@ class AudioFsmTest {
 
     @Test
     fun interrupting_cycleDone_to_listening() {
-        assertEquals(AudioState.LISTENING, fsm(AudioState.INTERRUPTING).next(AudioInput.CycleDone))
+        assertEquals(AudioState.LISTENING, fsm(AudioState.INTERRUPTING).next(AudioInput.TurnDone))
     }
 
     @Test

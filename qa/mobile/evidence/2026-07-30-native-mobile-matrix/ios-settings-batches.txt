@@ -1,0 +1,117 @@
+iOS settings batches — driven 2026-07-30 on sim 43FC67B5-6A96-4EE7-A23B-778C8849D23F
+(iPhone 17, iOS 26.5) against the native dev gateway on :8888.
+
+WHY THIS FILE EXISTS
+--------------------
+The first pass of Task 10 ran the settings-root/settings-admin and settings-soul
+batches on ANDROID ONLY, then edited 7 iOS flows (45, 45b, 47, 48, 48b, 49, 49b)
+to the Android-measured apply budget (45000 -> 8000 ms) without ever driving them
+on a simulator. Step 11 of the task body says `run-e2e.sh all`, i.e. both
+platforms. This is that missing iOS half, run for real.
+
+
+BATCH 1 — ./qa/mobile/run-e2e.sh ios --tags settings-root,settings-admin
+------------------------------------------------------------------------
+  [PASS] Gateway healthy
+  [PASS] QA fixture user u_0417d3b0 present
+  [PASS] iOS simulator 43FC67B5-6A96-4EE7-A23B-778C8849D23F ready
+  5 flows (ordered): 40-settings-root 56-secrets-presence 41-members-add-cap
+                     42-settings-non-admin-gate 43-members-delete-cleanup
+
+  [Passed] 40-settings-root (16s)
+  [Passed] 56-secrets-presence (20s)
+  [Failed] 41-members-add-cap (20s) (Assertion is false: id: settings-members-add-name is visible)
+  [Failed] 42-settings-non-admin-gate (19s) (Element not found: Id matching regex: login-avatar-u_11d9ec21)
+  [Failed] 43-members-delete-cleanup (24s) (Assertion is false: "Remove" is visible)
+
+  flows run: 5 (passed=2 failed=3)   wall 109s   per-flow avg 21s
+
+  Reading:
+  - 41 fails EXACTLY where its committed header predicted it would at the 3-user
+    cap ("the flow dies at `settings-members-add-name is visible`"). The header
+    was written from the Android run; the iOS run confirms the prediction.
+  - 42 had never been driven on EITHER platform before this run. It fails at
+    `login-avatar-u_11d9ec21` — the Temp1 user that 41 was supposed to create.
+    That is a cascade from 41's pre-state, not a product defect, and it is now
+    an observed fact rather than an inference.
+  - 43 cascades likewise ("Remove" belongs to the Temp rows 41 never created).
+  - PRE-STATE, NOT PRODUCT, on both platforms. Now pre-flighted by
+    check_admin_trio_precondition in run-e2e.sh so the next runner is told
+    before any JVM starts.
+
+
+BATCH 2 — ./qa/mobile/run-e2e.sh ios --tags settings-soul
+---------------------------------------------------------
+  12 flows (ordered): 44-audio-fast-save 44b-audio-restore 45-model-slow-save
+                      45b-model-restore 46-memory-cap
+                      47-system-prompt-restore-default 48-advanced-sliders
+                      48b-advanced-restore 49-tools-toggle 49b-tools-restore
+                      50-personalities-create-activate 59-audio-dirty-back-discard
+
+  [Failed] 44-audio-fast-save (20s)   (Assertion is false: id: settings-audio-save is visible)
+  [Failed] 44b-audio-restore (21s)    (Assertion is false: id: settings-audio-save is visible)
+  [Passed] 45-model-slow-save (26s)
+  [Passed] 45b-model-restore (26s)
+  [Passed] 46-memory-cap (1m 50s)
+  [Failed] 47-system-prompt-restore-default (42s) (Element not found: Id matching regex: settings-system-prompt-restore)
+  [Passed] 48-advanced-sliders (30s)
+  [Passed] 48b-advanced-restore (32s)
+  [Passed] 49-tools-toggle (24s)
+  [Passed] 49b-tools-restore (24s)
+  [Failed] 50-personalities-create-activate (31s) (Assertion is false: id: settings-personalities-activate-e2e-test is visible)
+  [Failed] 59-audio-dirty-back-discard (21s) (Assertion is false: id: settings-audio-save is visible)
+
+  flows run: 12 (passed=7 failed=5)   wall 417s   per-flow avg 34s
+
+
+THE QUESTION THIS RUN EXISTED TO ANSWER
+---------------------------------------
+"Is an 8000 ms apply budget, measured only on the Android emulator, a flake
+generator on the iOS simulator?"
+
+Answer: NO. Of the 7 iOS files re-baselined in 79200fe:
+  45, 45b, 48, 48b, 49, 49b  -> 6/7 PASS on iOS at 8000 ms.
+  47                         -> fails, but at a step AFTER its first 8000 ms
+                                wait was already crossed (it dies at the
+                                Restore-default tap, not at the wait), so the
+                                re-baseline is not implicated in it either.
+
+iOS-side confirmation of the server timing, same log field the Android
+measurement used (`apply:orchestrator apply.ready`), during THIS iOS batch:
+
+  2026-07-30T06:42:45.529 INFO [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=6
+  2026-07-30T06:43:12.152 INFO [apply:orchestrator] apply.ready | userId="u_0417d3b0" elapsedMs=8
+
+Both inside the 5-12 ms band the Android run measured. 8000 ms is ~1000x the
+observed iOS-driven apply, and the flows cross it with ~26 s total flow time.
+
+
+NEW iOS RESIDUALS SURFACED BY DRIVING (none of these were knowable statically)
+------------------------------------------------------------------------------
+1. 44 / 44b / 59 — FIXED AND RE-DRIVEN GREEN.
+   The RowToggle point-tap "85%,24%" resolved to (342,210) on this sim; the
+   switch bounds are [305,214][366,242] (measured with Maestro inspect_screen,
+   screen 402x874). The tap landed 4 px above the switch, so it silently
+   no-opped and the form never dirtied. Re-calibrated to "83%,26%" = (334,227).
+   Re-driven after the fix:
+       Tap on point (83%,26%)... COMPLETED
+       Assert that id: settings-audio-save is visible... COMPLETED
+       [Passed] 44-audio-fast-save
+       [Passed] 44b-audio-restore (20s)
+       [Passed] 59-audio-dirty-back-discard (23s)
+   44b restores ttsEnabled=true, so the profile is back at baseline.
+
+2. 47 — STILL RED, recorded not patched. Dies at `settings-system-prompt-restore`
+   AFTER the first 8000 ms wait completed. The id exists in the product
+   (SystemPromptScreen.swift:99, unconditional Button), so it is neither a stale
+   selector nor the re-baselined wait. Hypothesis (unverified): the multi-line
+   marker + soft keyboard push the button out of the visible hierarchy.
+
+3. 50 — STILL RED, recorded not patched. Dies at the chevron point-tap
+   "89%,21%" — the same coordinate class just measured wrong in (1), but it
+   needs a rendered personality card to re-measure. Separately, its header still
+   carries the pre-2.0 DEFECT-4 narrative that the Android twin was re-grounded
+   off in 01341bf, and it asserts neither the old nor the new behaviour.
+
+Neither 47 nor 50 was edited toward green without a drive to prove it — that is
+the exact failure mode this whole iOS run exists to correct.

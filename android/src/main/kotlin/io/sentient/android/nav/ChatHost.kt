@@ -159,6 +159,8 @@ internal fun ChatHost(
             onReconnect = chatVm::reconnect,
             onComposerFocus = chatVm::onComposerFocus,
             onDismissReopenFailed = chatVm::dismissReopenFailedNotice,
+            onAllowPermission = chatVm::allowPermission,
+            onDenyPermission = chatVm::denyPermission,
         )
     }
 }

@@ -1,3 +1,4 @@
+import { type CommandBindingState, createCommandBindingState } from "./command-binding.ts";
 import type {
   Connector,
   ReconnectConfig,
@@ -20,11 +21,11 @@ import {
 import { type MessageRouterDeps, dispatchMessage } from "./sdk-message-router.ts";
 import {
   type ReconnectController,
-  buildConnectUrl,
-  clearStaleResumeId,
+  clearRefusedSessionId,
   createReconnectController,
   createSettlePair,
-  hasPendingResume,
+  getCurrentSessionId,
+  markSessionPresented,
   setCurrentSessionId,
 } from "./sdk-reconnect.ts";
 import { type SdkTimers, createSdkTimers } from "./sdk-timers.ts";
@@ -42,15 +43,6 @@ const USER_DISCONNECT_REASON = "User disconnect";
 const WS_READY_STATE_OPEN = 1;
 const WS_AUTH_TIMEOUT_CODE = 4001;
 const WS_READY_TIMEOUT_CODE = 4002;
-// Window for the snapshot-without-switched fallback. On a successful
-// resume the gateway emits `session.switched` BEFORE `conversation.snapshot`
-// inside the same onSnapshot callback (ws-session-configure.ts), so the
-// switched-handler clears `pendingResume` first and the snapshot-handler
-// sees `hasPendingResume() === false` (no timer armed). On a 404 fallback,
-// only `conversation.snapshot` is sent (no preceding switched) — the timer
-// arms and, after this many ms with no switched, the stale id is dropped.
-// Generous slack for slow networks.
-const STALE_RESUME_CHECK_MS = 200;
 
 const DEFAULT_RECONNECT: ReconnectConfig = {
   baseMs: 1_000,
@@ -64,6 +56,23 @@ type ErrorKind = "auth" | "network" | "timeout" | null;
 
 const NOOP_RELEASE = (): void => {};
 
+/**
+ * A connector that holds SESSION state outliving the socket — today the
+ * conversation mirror and the live tool-call cache (the two halves the UI
+ * merges into one rendered strip) plus the delegation-progress rows. `detach`
+ * is transport teardown and runs on every reconnect; `reset` is session
+ * teardown and runs only when the consumer disconnects. Kept as a structural
+ * opt-in so connectors with no session state (the audio and input connectors)
+ * declare nothing.
+ */
+interface ResettableConnector {
+  reset(): void;
+}
+
+function isResettable(connector: Connector): connector is Connector & ResettableConnector {
+  return typeof (connector as Partial<ResettableConnector>).reset === "function";
+}
+
 export class SentientSDK {
   private readonly config: SentientSDKConfig;
   private readonly connectors: Connector[] = [];
@@ -73,6 +82,9 @@ export class SentientSDK {
   private readonly deviceId: string;
   private readonly surfaceId: string;
   private readonly cursor: ResumeCursorState;
+  /** This tab's `{sessionId, generation}` attachment (gateway spec §3.7).
+   *  Stamped onto every outbound command in `sendRaw`. */
+  private readonly binding: CommandBindingState;
 
   private currentStatus: SDKStatus = "disconnected";
   private ws: WebSocket | null = null;
@@ -81,9 +93,6 @@ export class SentientSDK {
   private lastErrorKind: ErrorKind = null;
   // True when the current connect cycle is a reconnect (not the first connect).
   private isReconnectCycle = false;
-  // Pending stale-resume timer. conversation.snapshot arms it; session.switched
-  // disarms. If it fires, the resume 404'd and the stored id is dropped.
-  private staleResumeTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly timers: SdkTimers;
   private readonly presence: PresenceCoordinator | null;
   private readonly reconnect: ReconnectController;
@@ -94,6 +103,7 @@ export class SentientSDK {
     this.deviceId = getOrCreateDeviceId();
     this.surfaceId = getOrCreateSurfaceId();
     this.cursor = createResumeCursor();
+    this.binding = createCommandBindingState();
     this.timers = createSdkTimers({
       onAuthTimeout: () => {
         this.lastErrorKind = "timeout";
@@ -126,17 +136,21 @@ export class SentientSDK {
       }
       // Clear stale handlers from prior socket — detach prevents N-stacked listeners.
       this.detachAll();
+      // An attachment dies with its socket. Carrying one across a reconnect
+      // would stamp the first command on the new socket with a generation the
+      // gateway has already retired, and it would be refused as stale.
+      this.binding.clear("connect");
       this.wireSessionPointerHandlers();
       this.presence?.clearIdleClosed();
       this.consumerDisconnected = false;
       this.lastErrorKind = null;
       this.setStatus("connecting");
       const createWs = this.config.createWebSocket ?? ((url: string) => new WebSocket(url));
-      // buildConnectUrl appends `?session_id=` from sessionStorage so the
-      // gateway can resume the tab's last chain. Captures pendingResume for
-      // the snapshot-without-switched fallback detection below.
-      const connectUrl = buildConnectUrl(this.config.gatewayUrl);
-      this.ws = createWs(connectUrl);
+      // The connect URL carries NO session hint. Which conversation this tab is
+      // looking at rides in `session.configure`'s `conversationId` (below),
+      // where the gateway actually reads it — the `?session_id=` param this used
+      // to append had no reader on the upgrade path at all.
+      this.ws = createWs(this.config.gatewayUrl);
       this.ws.binaryType = "arraybuffer";
       const { ok, fail } = createSettlePair(resolve, reject);
       this.ws.onopen = () => {
@@ -163,8 +177,12 @@ export class SentientSDK {
     this.reconnect.cancel();
     this.connectionMonitor.dispose();
     this.timers.clearAll();
-    this.clearStaleResumeTimer();
     this.detachAll();
+    this.binding.clear("disconnect");
+    // Consumer-driven teardown ends the SESSION, not just the socket — so this
+    // is the one path that drops connector session state. The reconnect path
+    // (teardownWsForReconnect / softCloseForIdle) detaches only.
+    this.resetAll();
     this.presence?.dispose();
     this.pendingPresenceReconnect = false;
     this.isReconnectCycle = false;
@@ -232,6 +250,12 @@ export class SentientSDK {
     this.binaryHandlers.clear();
   }
 
+  private resetAll(): void {
+    for (const connector of this.connectors) {
+      if (isResettable(connector)) connector.reset();
+    }
+  }
+
   private addMessageHandler(type: string, handler: (msg: unknown) => void): () => void {
     let set = this.messageHandlers.get(type);
     if (set === undefined) {
@@ -253,58 +277,92 @@ export class SentientSDK {
   }
 
   /**
-   * Track the per-tab "current session" pointer. session.created /
-   * session.switched update sessionStorage; conversation.snapshot without a
-   * following switched (within STALE_RESUME_CHECK_MS) treats the stored id as
-   * stale and clears it (the resume 404'd and the gateway gave us a fresh
-   * empty snapshot instead).
+   * Track the per-tab "current session" pointer (sdk-reconnect.ts).
+   *
+   * TWO EVENT RULES, no clock. The tab presents its stored id on
+   * `session.configure` and the gateway answers with exactly one of two frames:
+   *
+   *   - `session.attached` (or `session.switched`) — honoured. Keep the id, and
+   *     re-anchor on the one the frame names.
+   *   - `session.draft` — refused. Drop the id, and take the draft key in its
+   *     place (`clearRefusedSessionId` is a no-op when this tab presented
+   *     nothing, which is what a first-ever connect does).
    *
    * Re-registered on every connect (detachAll clears the prior socket's
    * subscriptions) so the handlers stay live across reconnects.
    */
   private wireSessionPointerHandlers(): void {
+    // THE ATTACHMENT BINDING (gateway spec §3.7). Registered here rather than
+    // in a connector because it must be live from the moment the socket opens:
+    // the gateway sends `session.attached` from inside the bind, which is
+    // BEFORE `session.ready` — and connectors are attached only once ready
+    // arrives, so a connector-owned handler would miss the first one.
+    this.addMessageHandler("session.attached", (msg: unknown) => {
+      const m = msg as { sessionId?: string; generation?: number };
+      if (typeof m.sessionId !== "string") return;
+      // THE HONOURING ANSWER, and therefore the pointer's confirmation. A plain
+      // reload resolves here and NEVER sends `session.switched`, so anything
+      // that waited on switched to confirm a resume was confirming only the
+      // drawer path.
+      setCurrentSessionId(m.sessionId);
+      if (typeof m.generation !== "number") return;
+      this.binding.attached({ sessionId: m.sessionId, generation: m.generation });
+    });
+    // A REFUSED COMMAND, said out loud. The gateway never silently drops one,
+    // so the consumer always gets a chance to act — re-enable a composer, drop
+    // a spinner, retry a `session_busy` — instead of waiting on a reply that is
+    // never coming.
+    this.addMessageHandler("command.rejected", (msg: unknown) => {
+      const m = msg as { command?: string; reason?: string; pendingId?: string };
+      sdkLog.warn("command.rejected", { command: m.command, reason: m.reason, pendingId: m.pendingId });
+      if (typeof m.command !== "string" || typeof m.reason !== "string") return;
+      this.config.onCommandRejected?.({
+        command: m.command,
+        reason: m.reason,
+        ...(m.pendingId === undefined ? {} : { pendingId: m.pendingId }),
+      });
+    });
     this.addMessageHandler("session.created", (msg: unknown) => {
       const m = msg as { sessionId?: string };
       if (m.sessionId) setCurrentSessionId(m.sessionId);
     });
+    // A draft has no session id. The gateway's draft key takes the pointer's
+    // place so this tab keeps re-presenting the SAME draft across reloads and
+    // reconnects — which is what makes the mint idempotent, since that key IS
+    // the mint key. It is replaced by the real id on the `session.created` the
+    // first message triggers.
+    this.addMessageHandler("session.draft", (msg: unknown) => {
+      const m = msg as { draftKey?: string };
+      // THE REFUSING ANSWER. If this tab presented an id, the gateway did not
+      // honour it — drop it, so the next connect stops re-presenting a session
+      // this user's store cannot resolve. Guarded on having presented one, so a
+      // first-ever connect (which is answered with a draft too) deletes nothing.
+      // Must run BEFORE the draft key is stored, or it would delete the key it
+      // was just handed.
+      clearRefusedSessionId(m.draftKey ?? null);
+      if (m.draftKey) setCurrentSessionId(m.draftKey);
+      // A draft has NO attachment, so the binding must go with it. Keeping the
+      // previous session's pair would stamp it onto this draft's first
+      // `text.input` — the one frame that mints the next session — and the
+      // gateway would refuse it as stale. The chat would simply never start.
+      this.binding.clear("session.draft");
+    });
     this.addMessageHandler("session.switched", (msg: unknown) => {
       const m = msg as { sessionId?: string };
       if (m.sessionId) setCurrentSessionId(m.sessionId);
-      // setCurrentSessionId clears pendingResume on success → arms-and-disarms
-      // are coordinated through pendingResume rather than a local flag.
-      this.clearStaleResumeTimer();
     });
-    this.addMessageHandler("conversation.snapshot", (_msg: unknown) => {
-      if (!hasPendingResume()) return;
-      // Snapshot fired with a resume in flight. Wait briefly for the
-      // session.switched that pairs with it on a successful resume; if it
-      // doesn't arrive, treat the stored id as stale.
-      this.clearStaleResumeTimer();
-      this.staleResumeTimer = setTimeout(() => {
-        this.staleResumeTimer = null;
-        clearStaleResumeId();
-      }, STALE_RESUME_CHECK_MS);
-    });
-    // Resume-time `forbidden` (e.g. user deleted the session in another
-    // tab between connect and switch) — drop the stored id NOW so the next
-    // reconnect doesn't loop on the revoked id. Broader than requestId
-    // matching: the gateway-side resume path uses `resume-<sessionId>` as
-    // the requestId; matching purely by code+pending-resume window is
-    // robust to that wiring detail.
+    // The drawer path's own explicit rejection — the session was deleted in
+    // another tab between presenting it and switching onto it. Same rule as
+    // `session.draft`: an id this tab presented was refused out loud, so it
+    // goes, and the next connect starts clean instead of looping on it.
+    // Matching on the code rather than a requestId is deliberate: the
+    // gateway-side resume path names its request `resume-<sessionId>`, and
+    // this must not depend on that wiring detail.
     this.addMessageHandler("sessions.error", (msg: unknown) => {
       const m = msg as { code?: string };
       if (m.code !== "forbidden") return;
-      if (!hasPendingResume()) return;
-      this.clearStaleResumeTimer();
-      clearStaleResumeId();
+      clearRefusedSessionId(null);
     });
-  }
-
-  private clearStaleResumeTimer(): void {
-    if (this.staleResumeTimer !== null) {
-      clearTimeout(this.staleResumeTimer);
-      this.staleResumeTimer = null;
-    }
   }
 
   private buildPresence(): PresenceCoordinator | null {
@@ -354,6 +412,17 @@ export class SentientSDK {
         // resume synchronously off configure, no separate stream.resume frame,
         // no send-ordering race.
         const resume = isReconnect ? buildConfigureResume(this.cursor) : undefined;
+        // Present what this tab is looking at — a session id, or an unspent
+        // draft key. REQUIRED, not an optimisation: the gateway no longer
+        // derives an id from the principal and the surface, so a configure
+        // that presents nothing starts a fresh draft and the tab's history is
+        // gone on every reload. The gateway checks membership and refuses
+        // anything this user's store does not hold.
+        const current = getCurrentSessionId();
+        // Remember WHAT was presented, so the answer can be read as an answer:
+        // `session.draft` means "refused" only for a tab that presented
+        // something, and means "here is your first draft" for one that did not.
+        markSessionPresented(current);
         this.sendRaw({
           type: "session.configure",
           capabilities: { supports: [...this.capabilities] },
@@ -361,6 +430,7 @@ export class SentientSDK {
           deviceId: this.deviceId,
           surfaceId: this.surfaceId,
           ...(resume ? { resume } : {}),
+          ...(current ? { conversationId: current } : {}),
         });
       },
       onSessionReady: this.config.onSessionReady,
@@ -409,7 +479,10 @@ export class SentientSDK {
       if (this.currentStatus === "ready" || this.currentStatus === "authenticating") this.reconnect.forceReconnect();
       return;
     }
-    this.ws.send(JSON.stringify(message));
+    // ONE STAMP SEAM (gateway spec §3.7). Every frame leaves through here, so
+    // a command cannot escape unbound and no connector has to remember to bind
+    // one — the client mirror of the gateway's own single choke point.
+    this.ws.send(JSON.stringify(this.binding.stamp(message)));
   }
 
   private sendBinaryRaw(data: ArrayBuffer | Uint8Array): void {

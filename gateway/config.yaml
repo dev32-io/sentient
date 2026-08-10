@@ -4,13 +4,19 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.2"
+schema_version: "0.1.5"
 
 # ---------------------------------------------------------------------------
 # Server
 # ---------------------------------------------------------------------------
 port: 8888
-host: 0.0.0.0
+# LOOPBACK ONLY. inbound-proxy (managed_services below) owns the LAN-facing
+# 443 and proxies here over the loopback interface; the gateway itself is not
+# reachable from another host. Setting this back to 0.0.0.0 puts the API on
+# every interface with no policy in front of it.
+# Note: https://localhost:8888 still works FROM THIS HOST — that is the
+# diagnostic door, not the one browser smoke uses.
+host: 127.0.0.1
 max_sessions: 100                        # Max concurrent WS connections (mobile + webui + cube, multi-user). Range 1–1000.
 auth_timeout_ms: 5000
 
@@ -25,7 +31,7 @@ logging:
   # chasing a stall, without bumping the whole gateway to debug. Requires restart.
   level_overrides: {}
     # Example:
-    #   sentient:cerebrum:hermes-event-translator: debug
+    #   sentient:ws:session-configure: debug
 
 # ---------------------------------------------------------------------------
 # Log sink — receives UDP datagrams from cube firmware after WiFi connect
@@ -39,18 +45,37 @@ log_sink:
     bind: 0.0.0.0             # bind address; LAN-reachable on Mac dev
 
 # ---------------------------------------------------------------------------
-# TLS — self-signed cert for HTTPS/WSS on the LAN.
+# TLS — the gateway's own self-signed material.
 #
 # Browsers refuse `new WebSocket("ws://…")` from an HTTPS page (mixed
 # content), and the web client is HTTPS so the gateway must speak WSS too.
 #
-# The gateway OWNS cert generation. It writes cert.pem + key.pem into the
-# certs dir (mounted from ~/.sentient/certs in docker), and the web
-# container reads the same files. Sharing one cert across both services
-# means the user accepts ONE browser warning per device, not two.
+# The gateway OWNS this material. It is a native process, not a container: it
+# writes cert.pem + key.pem into ~/.sentient/gateway/certs (override with
+# GATEWAY_CERTS_DIR) and inbound-proxy mounts them from there. Two roles, one
+# directory (design 2026-08-04 §2.5):
+#   - upstream trust anchor — ALWAYS this cert.pem, in dev and prod alike. It
+#     is what makes the proxy's loopback hop to :8888 verified, not merely
+#     encrypted.
+#   - outward identity on 443 — this material too, but only while
+#     `inbound_proxy.cert_dir` below is null (the dev default and the
+#     fresh-host fallback). Set that key and the door presents a real cert
+#     instead; this one keeps serving as the upstream anchor.
 #
-# To add a new hostname later: edit `hostnames`, delete ~/.sentient/certs,
-# restart both containers.
+# CHANGING `hostnames` (e.g. adding a LAN IP so a phone's browser will grant
+# the microphone — a SAN mismatch refuses getUserMedia outright):
+#   1. edit the list below
+#   2. restart the gateway — dev: `bun run dev`; prod:
+#      `sudo launchctl kickstart -k system/io.sentient.gateway`. The SAN
+#      marker (certs/san.txt) no longer matches, so the cert is regenerated
+#      in place. Nothing needs deleting; do NOT `rm -rf` the certs DIRECTORY
+#      while a container has it bind-mounted — the mount would follow the old,
+#      deleted inode.
+#   3. `docker kill -s HUP sentient-inbound-proxy` — nginx re-reads the file.
+#      The gateway restart alone does NOT do this: the container spec is
+#      unchanged, so the infra-class proxy is skipped as unchanged and keeps
+#      the old cert loaded in memory.
+#   4. re-accept the new self-signed cert on each device.
 # ---------------------------------------------------------------------------
 tls:
   enabled: true                      # only flip false for localhost-only debugging
@@ -60,27 +85,414 @@ tls:
     # - "sentient.local"             # add the mDNS / DNS name if you use one
 
 # ---------------------------------------------------------------------------
-# Session — turn detection, barge-in, inactivity
+# inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2)
+# ---------------------------------------------------------------------------
+inbound_proxy:
+  # Directory holding the cert.pem + key.pem presented on 443. null = use the
+  # gateway's own self-signed material (~/.sentient/gateway/certs), which is the
+  # dev default and the fresh-host fallback. On the mini, point this at the
+  # acme.sh-managed real cert:
+  #   cert_dir: /Users/OPERATOR/.data/certs/sentient.dev32.io
+  cert_dir: null
+
+# ---------------------------------------------------------------------------
+# stack — dev launcher budgets (scripts/stack.sh)
+# ---------------------------------------------------------------------------
+stack:
+  readiness_timeout_ms: 60000   # total wait for gateway health AND https://localhost/. Range 5000-300000.
+  readiness_poll_ms: 500        # retry interval within that budget. Range 100-5000.
+  docker_wait_s: 30             # seconds to wait for the docker daemon before refusing. Range 0-120.
+
+# ---------------------------------------------------------------------------
+# Session — connection limits, journal and retention
 # ---------------------------------------------------------------------------
 session:
-  # Barge-in: user interrupts assistant mid-speech
-  barge_in:
-    no_interrupt_ms: 500             # ignore audio for this long after assistant starts speaking
-    min_speech_duration_ms: 50      # sustained audio required before confirming barge-in
-
-  # Grace window (ms) between server TTS completion and the point where the
-  # client's audio buffer is assumed drained. Mic-onset within this window
-  # still sends playback.stop so the user can interrupt tail audio. WebRTC
-  # loopback buffers 200–500ms depending on browser + network; 2000 is safe.
-  # Range: 0–5000. Default 2000.
-  tts_drain_grace_ms: 2000
-
-  # WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   ws_idle_timeout_ms: 255000         # Range: 1000–255000. Bun WS idle close; Bun takes SECONDS (cap 255), gateway converts ms→s.
-  replay_buffer_max_bytes: 16777216  # 16 MB. Range: 65536–268435456 (64 KB–256 MB). Per device-session ring cap (evict-oldest).
   per_user_max_sessions: 40           # max concurrent WS sessions for ONE user (1–100). Bounds memory under churn.
-  idle_timeout_ms: 900000             # 15 min. Reap a device buffer + its session after this much silence across
-                                      # WS (in/out) AND Hermes ACP (in/out). Resets on any activity; ping/pong excluded.
+  # --- Session journal: reconnect gap-fill AND multi-window join ---
+  # Every SESSION-lane frame is allocated one monotonic seq inside an epoch and
+  # journaled ONCE per session; every attached window is a cursor into it. So a
+  # client that reconnects with `resume: {epoch, lastSeq}` in session.configure
+  # replays exactly what it missed, and a second window joining reads the same
+  # bytes rather than a second seq space. Connection-lane frames (auth, pong,
+  # resume coordination, session-ready, the attach answer) are NEVER journaled.
+  # RE-TUNED 16 MB -> 32 MB with derived retention. One journal now serves N
+  # windows, so a window that was away gap-fills everything the SESSION produced
+  # while it was gone, including other windows' turns — per-surface, a detached
+  # surface's journal simply stopped growing because nobody was writing to it.
+  # And a session now stays resident while a background task runs, so a whole
+  # turn's text AND its Opus audio can be journaled with ZERO windows attached:
+  # new production, not a redistribution of old. Sized off retention_ms rather
+  # than a round number — at the ~33 KB/s max_window_lag_bytes below anchors
+  # 48 kHz Opus at, 15 min of continuous speech is ~30 MB, and a smaller cap
+  # would silently break the promise retention_ms makes (a window returning at
+  # minute 14 would find its cursor evicted). Note a journal can now live up to
+  # 2x retention_ms: the replay registry's own clock starts when the journal is
+  # RELEASED, which is at disposal — itself retention_ms after the session went
+  # idle. That does not change the answer, because the 33 KB/s anchor is several
+  # times above real Opus speech bitrate and this is a CEILING on an
+  # evict-oldest ring, never an allocation.
+  replay_journal_max_bytes: 33554432    # 32 MB per session. Range 65536–268435456 (64 KB–256 MB). Evict-oldest, down to empty — a lone stale frame must not pin itself as the whole replay window.
+  # --- Session retention (spec §5) ---
+  # A session stays resident because WORK IS HAPPENING — a turn, a foreground
+  # tool call, a background task, an open permission prompt, an auxiliary task —
+  # or because a window is attached. That predicate is DERIVED on every
+  # evaluation and never stored (gateway/src/runtime/session-retention.ts); this
+  # key is only the grace window after it goes false. Renamed from
+  # replay_journal_retention_ms: it now governs SESSION lifetime, not journal
+  # bytes, and the journal's survival hangs off the same window because the
+  # journal is released when the session's handles are.
+  retention_ms: 900000                  # 15 min. Range 1000–3600000. Grace between "nothing holds this session" and teardown; also how long its journal outlives its last holder.
+  # A background task still registered past this cannot be running: delegateTask's
+  # runner kills its Hermes child at orchestrator.delegation.hermes_timeout_ms
+  # (600000) and settles. Anything older is a bookkeeping leak, so it is dropped
+  # from the predicate and WARNed — otherwise a worker that dies without
+  # reporting holds its session resident for the life of the process.
+  # MUST stay above hermes_timeout_ms.
+  # The ordering is ENFORCED at boot, not left to this comment: the effective
+  # value is floored at hermes_timeout_ms + 60s with a WARN, so raising
+  # hermes_timeout_ms alone cannot orphan a live delegation.
+  lost_task_threshold_ms: 660000        # 11 min = hermes_timeout_ms + 1 min slack. Range 60000–3600000.
+  # Derived retention REMOVED a bound that used to hold implicitly: under "the
+  # last one out disposes", residency was bounded by live attachments. Now
+  # conversation.activate builds a full session per target and each one lingers
+  # for retention_ms, so walking the past-chats drawer would leave one resident
+  # session per chat visited — each holding a bun:sqlite handle, a ToolBroker
+  # with warmed MCP definitions, a voice and a journal. RETAINED sessions are
+  # never counted or evicted; eviction runs the ordinary disposal path, which
+  # re-derives first, so this can never cut work.
+  max_idle_resident_sessions: 16        # sessions kept resident with NOTHING holding them. Range 1–500. Oldest idle released first.
+  # Work COMPLETING is not an attach or a detach, so the registry has no event
+  # for it. SessionRegistry.reevaluate covers the normal case (a turn settling);
+  # this timer bounds the abnormal one, and it ticks only for a session held by
+  # work with no window attached.
+  retention_recheck_interval_ms: 30000  # 30 s. Range 1000–600000.
+  # Slow-window policy (spec §8.1) — DECIDED: disconnect, not forced re-snapshot.
+  # A window whose transport backlog (or attach buffer) passes this is closed
+  # with RFC 6455 1013 "try again later"; both SDKs then reconnect, present
+  # their cursor, and take either a contiguous replay or a fresh snapshot.
+  # Writing more to a socket that cannot drain does not make it drain, and a
+  # bespoke re-snapshot path would be a second recovery mechanism for the same
+  # condition — reachable only under load, and therefore never exercised.
+  # The ceiling is Bun's own backpressureLimit default (16 MB): past that
+  # ws.send() returns 0 and the frame is DROPPED silently, so a threshold above
+  # it could never be reached and this policy would be unreachable.
+  max_window_lag_bytes: 4194304         # 4 MB (~2 min of 48 kHz Opus queued). Range 65536–16777216 (64 KB–16 MB).
+  # Input arbitration (spec §8.3) — "a connection is a window onto the session,
+  # and the first window to talk wins." Two windows sending inside this span are
+  # racing at one dispatch: the first is applied, the second is refused
+  # `session_busy` and can retry immediately.
+  # It does NOT prevent two concurrent turns — that is already structural
+  # (handlers run serially and submit sets in-flight synchronously, so a later
+  # message always steers). Its only effect is turning a would-be steer into a
+  # refusal, which is right for a genuine race and pure loss outside one: webui
+  # has no optimistic echo, so a refused message just vanishes. Hence sized to
+  # the race (two frames sent at the same instant + loopback jitter), not to
+  # human patience.
+  input_arbitration_window_ms: 100      # 100 ms. Range 0–5000. 0 disables arbitration (every input applied).
+
+# ---------------------------------------------------------------------------
+# Access — capability minting + per-user physical isolation (spec §2.1, §2.5)
+# ---------------------------------------------------------------------------
+access:
+  # Root under which every user gets their own home directory:
+  # <user_data_root>/<userId>/ holds that user's session DB, files, and scratch.
+  # Per-user physical separation is defense-in-depth beneath the capability model.
+  user_data_root: ~/.sentient/gateway/users
+  # OPTIONAL root for household-shared state (memory-system spec §2), keyed by
+  # householdId under it: <shared_data_root>/<householdId>/. Left unset here —
+  # consumers derive join(dirname(user_data_root), "shared") when absent, so
+  # this key only needs setting to relocate the shared root elsewhere.
+  # shared_data_root: ~/.sentient/gateway/shared
+
+# ---------------------------------------------------------------------------
+# Store — durable per-user session history (spec §3)
+# ---------------------------------------------------------------------------
+store:
+  # SQLite filename created inside each user's home dir (<user_data_root>/<userId>/).
+  # One DB per user: physical isolation plus a natural per-user WAL write lane.
+  db_filename: sessions.db
+
+# ---------------------------------------------------------------------------
+# Orchestrator — the native LLM agent loop (Sentient 2.0, spec §4/§5).
+# Wired by the Plan 2 composition root (gateway/src/bootstrap/phase-services.ts).
+# Section is optional at the schema level (shared/config/src/schema.ts) — a
+# fresh clone / `bun run dev` / `docker compose up` boots fine without it,
+# the orchestrator just stays disabled (services.provider / .createSessionRuntime
+# are null).
+#
+# The API key + base_url are NOT read from here (and NOT from any env var):
+# the composition root resolves them from the operator's 1.0 secrets store
+# (`~/.sentient/gateway/secrets/keys.yaml`, already populated by the wizard —
+# see SecretsStore.getActiveLlm() in gateway/src/admin/secrets-store.ts). The
+# `model` below is a plain gateway-config tunable — override it to match
+# whichever provider is active in that store (OpenRouter, Ollama Cloud, or a
+# custom OpenAI-compatible endpoint).
+# ---------------------------------------------------------------------------
+orchestrator:
+  provider:
+    # OPTIONAL override, consulted only when the secrets store's own
+    # base_url is empty (its OpenRouter entry ships with none by default —
+    # see gateway/templates/wizard/keys.yaml.tmpl). Ollama-cloud/custom
+    # entries normally carry their own base_url, which always wins over this.
+    # Defaulted to Ollama Cloud's OpenAI-compat endpoint (Task 10: the
+    # reference dev/operator install's active secrets-store LLM is
+    # ollama-cloud with no stored base_url, so THIS fallback is what the
+    # native orchestrator actually dials). Operators whose active provider
+    # is OpenRouter must override this to https://openrouter.ai/api/v1 (or
+    # set the secrets-store entry's own base_url, which always wins).
+    base_url: https://ollama.com/v1
+    # Tool-calling-capable, widely-available Ollama Cloud default (verified
+    # live against https://ollama.com/api/tags — resolves to model tag
+    # `gpt-oss:20b-cloud`, see providers/catalogs/ollama-fetcher.ts's
+    # `toCloudTag`). Override to match the operator's active secrets-store
+    # provider/model if it isn't ollama-cloud/gpt-oss:20b.
+    model: gpt-oss:20b-cloud
+    # Per-request ANSWER cap (1-32000). Reasoning tokens are charged against
+    # this SAME budget, so a reasoning model (gpt-oss:20b emits a Harmony
+    # reasoning channel first) can exhaust it before producing any visible
+    # text — finish_reason:"length" with an EMPTY reply, which the loop used
+    # to silently commit as a completed turn (D17, docs/native-todo.md § 1:
+    # an 81KB ha_get_history tool result was enough to trigger it live, 2/2
+    # reproduced). This is the SAME question as compaction's
+    # summarizer_max_output_tokens below — that key is the summarizer's own
+    # version of this budget; this one is the main loop's. 8000 clears the
+    # observed failure with headroom (owner-approved). Do NOT raise it
+    # further "for safety": the requested generation size is used by some
+    # backends as an initial estimate with compute reserved for its
+    # duration, so an oversized cap has a real scheduling cost.
+    max_output_tokens: 8000
+    request_timeout_ms: 120000               # per-request deadline (1000-600000)
+    site_name: Sentient                      # OpenRouter attribution header
+    # Constrains how much the model reasons before answering ("unset",
+    # "none", "minimal", "low", "medium", "high", "xhigh", "max" —
+    # provider-dependent support). Reasoning is the invisible phase that
+    # delays the first spoken word, and a household voice assistant wants an
+    # answer sooner. "low" rather than "minimal" is deliberate: minimal
+    # reasoning effort can degrade TOOL SELECTION, and picking the wrong tool
+    # is worse than a slightly slower reply.
+    #
+    # SENT UNCONDITIONALLY on every value except "unset" (see
+    # openai-provider.ts) — never sent before task 18 (grep confirmed only
+    # comments mentioned "reasoning" anywhere in gateway/src/provider/). A
+    # strict OpenAI-compatible endpoint that 400s on an unrecognized field
+    # will fail EVERY turn until reconfigured. If that happens, set this to
+    # "unset" — the field is then omitted from the request entirely. Do NOT
+    # use "none" for that: it is a real value the OpenAI SDK types as "zero
+    # reasoning effort", still sent and still a 400 risk on a provider that
+    # doesn't recognize the field at all.
+    reasoning_effort: low
+  loop:
+    max_iterations: 10                       # ReAct iteration cap (1-50)
+  permission:
+    request_timeout_ms: 120000               # confirm-prompt deadline before auto-deny (5000-600000)
+  tools:
+    foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
+    max_concurrent_background_tasks: 50      # per session (1-500)
+    # Chars of the originating request echoed into a background completion, so
+    # the model can tell which in-flight task came back after compaction has
+    # summarised the dispatch away (32-2000).
+    background_completion_request_echo_chars: 240
+    # Ceiling on a SINGLE tool result's character length before it reaches
+    # the model, enforced at the broker (tool-broker.ts) so every tool
+    # inherits the guarantee rather than each tool author remembering to
+    # bound its own output. ha_get_history returning ~81KB was the first
+    # result big enough to crowd the answer out of provider.max_output_tokens
+    # entirely (D17); read_file/write_file hit the same ceiling next.
+    # Truncated HEAD-AND-TAIL, not head-only — history/log-shaped data
+    # carries meaning at both ends — with a marker naming roughly how much
+    # was cut, so the model can narrow its next query instead of silently
+    # reasoning over a fragment. Convention, not invention: Codex truncates
+    # tool output at 10 KiB / 256 lines head-and-tail; Pi caps at 2000 lines
+    # / 50 KB and tells the model to paginate. Range 1000-200000.
+    max_tool_result_chars: 20000
+  # SKILLS — the per-user/operator SKILL.md library surfaced to the model as
+  # a system-prompt index plus on-demand bodies (skill-system spec).
+  skills:
+    max_index_entries: 50    # skills listed in the system-prompt index; overflow WARNs and truncates newest-first (1-500)
+    max_body_chars: 20000    # max SKILL.md body accepted at write; ~5k tokens (1000-100000)
+  delegation:
+    frontmatter_dir: ./config/delegation     # static per-agent envelope dir (relative to gateway/)
+    hermes_timeout_ms: 600000                # per Hermes one-shot (1000-3600000)
+    # Hermes profile every NEW gateway user's own profile is cloned from
+    # (`hermes profile create <userId> --clone-from <this>`). The clone is what
+    # carries provider + model + credentials across, so this must name a
+    # profile the operator has already configured and can answer a prompt —
+    # verify with `hermes -p <this> -z "say ok"`. Without the clone a fresh
+    # profile has no bound model and a delegated task dies on HTTP 401. The
+    # gateway never reads or stores a Hermes credential itself; Hermes copies
+    # its own. "default" is the profile `hermes setup` creates.
+    hermes_source_profile: default
+    # The Hermes profile a delegation actually RUNS under (`hermes -p <this>`),
+    # and therefore whose provider credential it uses. Any profile name the
+    # operator has configured; verify with `hermes -p <this> -z "say ok"`.
+    #
+    # NOT the same knob as hermes_source_profile above, even when the value
+    # matches: that one is only the clone template used once at user creation.
+    # The clone copies a credential at a point in time and nothing re-syncs it,
+    # so reconfiguring Hermes silently strands every earlier clone — measured
+    # 2026-07-31, one of three per-user profiles answered `HTTP 401: User not
+    # found.` to every delegation while the other two worked.
+    #
+    # INTERIM (owner, 2026-07-31): one shared profile for every household
+    # member's delegations. Per-user isolation for delegated agents — what a
+    # delegated agent may see and act on per person — is product design and gets
+    # its own spec. Per-user CONTEXT is unaffected: the subprocess `cwd` is still
+    # the calling user's own profile dir, which is where hermes loads
+    # tools/memory/rules/AGENTS.md from.
+    hermes_delegation_profile: default
+    # Deadline for one `hermes profile create` invocation (ms). It writes a few
+    # small files and exits; anything past this is a wedged CLI, not a slow
+    # one. Range 1000-120000.
+    hermes_profile_create_timeout_ms: 30000
+    # Deadline for the WHOLE verify-and-provide phase (ms) that runs inside
+    # `delegateTask` immediately before the delegated agent is spawned: a
+    # `hermes config get`, a `hermes mcp add` if the entry is missing or has
+    # drifted, and a second `config get` to read the change back. The budget is
+    # shared across those calls, not granted to each, because this now sits on
+    # the hot path of a user-visible action — a wedged CLI must not become a
+    # wedged delegation. On expiry the delegation proceeds anyway with whatever
+    # tools the profile already had. `mcp add` connects to the socket and lists
+    # its tools before saving, so it is slower than a config write.
+    # Range 1000-120000.
+    hermes_mcp_register_timeout_ms: 30000
+  # AUXILIARY TASKS — the out-of-band model calls that are ABOUT a conversation
+  # rather than part of it. Session titling is the first user of this seam;
+  # tags, follow-up suggestions and summarisation are the named next ones, and
+  # each is a prompt template plus a caller rather than a new config block.
+  # That is why only the two `title_*` keys below are task-specific.
+  auxiliary:
+    # Master switch for EVERY auxiliary task. false = the gateway never makes
+    # an out-of-band model call; a session then keeps the fallback title its
+    # own first message produced, and is never left "New chat".
+    enabled: true
+    # Baked-in template dir, relative to the gateway asset root (the repo's
+    # gateway/ in a checkout, the unpacked share/ dir beside a compiled
+    # binary). Ships with the build: gateway/system_prompts/auxiliary/title.md.
+    template_dir: system_prompts/auxiliary
+    # OPERATOR OVERRIDE dir, same root, consulted FIRST. Drop a file of the
+    # same name here to retune a prompt without a rebuild. Normally absent —
+    # a miss is logged at DEBUG, not WARN, because absence is the usual state.
+    #
+    # SURVIVES A RESTART, NOT AN UPGRADE. This resolves inside the INSTALLED
+    # RELEASE's asset root, and setup-prod.py installs each upgrade into a new
+    # versioned dir — so an override written here is left behind by the next
+    # deploy and the baked-in template silently takes over again. Same caveat
+    # as every other operator file under the release root; re-apply after an
+    # upgrade, or keep the edit in the repo template instead.
+    override_dir: config/auxiliary
+    # Output cap for ONE auxiliary call (32-2000). A structured five-word
+    # answer needs nothing like the loop's 8000-token answer cap, and every
+    # token here is spent on something the user never reads. 200 leaves room
+    # for a short reasoning preamble on a model that emits one anyway.
+    max_output_tokens: 200
+    # Ceiling on the CHARACTERS of substituted input in one auxiliary prompt,
+    # shared across every variable rather than granted to each (200-20000).
+    # Bounds the SEAM, not each caller: a pasted document in the first message
+    # must not blow the titling prompt — same class as max_tool_result_chars.
+    input_truncation_chars: 4000
+    # Reasoning effort for auxiliary calls only ("unset" | "none" | "minimal" |
+    # "low" | "medium" | "high" | "xhigh" | "max"). "none" — a title needs no
+    # reasoning phase, and reasoning tokens are charged against the cap above.
+    # `provider.reasoning_effort: unset` still wins globally, so an operator
+    # who had to disable the field for a strict endpoint stays protected.
+    reasoning_effort: none
+    # TITLING — words a generated title should aim for (2-12). Substituted
+    # into the template, so it is a target the prompt states, not a cap the
+    # code enforces. 3-5 is the Open WebUI convention.
+    title_word_target: 5
+    # TITLING — hard ceiling on a stored/emitted title in characters, and the
+    # length the fallback truncates the first user message to (8-200). MUST
+    # stay at or below the wire contract's own 200-char TITLE_MAX or the
+    # session.title frame is rejected before it leaves the gateway.
+    title_max_chars: 60
+  compaction:
+    enabled: true                            # master switch; false = never compact (window grows until the provider rejects the request)
+    # Estimated model-window tokens (chars/4 heuristic, see compaction.ts)
+    # that trigger compaction at the next turn boundary (1000-1000000).
+    # gpt-oss:20b-cloud's REAL window is 131072 (verified 2026-07-30 against
+    # the OpenAI gpt-oss-20b model spec — the previous 24000 default was
+    # picked blind, before this was ever checked). 8000 (~6% of the real
+    # window) is deliberately conservative: it (a) fires inside a realistic
+    # multi-turn agent-driven E2E session without dozens of live-LLM round
+    # trips — see qa/web/evidence/2026-07-30-compaction-continue — and (b)
+    # bounds per-turn context growth for a latency-sensitive voice
+    # assistant, where a much larger threshold buys context depth nobody
+    # asked for at the cost of slower time-to-first-token on every turn
+    # once a session runs long.
+    compact_threshold_tokens: 8000
+    keep_recent_turns: 4                     # most-recent turns copied VERBATIM into the summary marker rather than summarized away (0-50)
+    # Output cap for the compaction summarizer specifically — the SAME
+    # question as provider.max_output_tokens above, fixed independently here
+    # because the summarizer is a separate request: a reasoning model
+    # (gpt-oss:20b emits a Harmony reasoning channel first) can exhaust the
+    # budget before producing any visible text. Historically the main loop's
+    # cap was 1024 and this summarizer inherited nothing from it — that
+    # undersized 1024 is what failed compaction silently and forever
+    # (observed 2/2 live — qa/web/evidence/2026-07-30-compaction-continue)
+    # before this key existed. Kept smaller than the main loop's now-8000 cap
+    # (task 18) because digesting a transcript into a summary is a terser
+    # workload than an answer that may also narrate tool use. Range 512-8000.
+    summarizer_max_output_tokens: 4000
+    # Consecutive failed compactions before the runtime stops attempting one at
+    # every turn boundary, logs a single ERROR with the reason, and retries on
+    # an exponentially widening turn interval instead. Range 1-20.
+    max_consecutive_failures: 3
+    # Ceiling on that widening interval, in turn boundaries. Uncapped, the
+    # 2^n doubling reaches ~1M turns after ~20 more failures — indistinguishable
+    # from the permanent give-up this gate is documented NOT to be. On hitting
+    # the cap the ERROR line carries backoffCapped=true, so a stalled summarizer
+    # stays visible. Range 1-256.
+    max_backoff_turns: 16
+  # MEMORY (memory-system spec §11) — MEMORY.md + topic files + spark recall +
+  # the dreamer nightly consolidation pass. SLICE STAGING: spark.enabled and
+  # dreamer.enabled ship false here even though their zod defaults are true
+  # (missing-block resilience); later slices flip each on (T15 spark, T20
+  # dreamer) once their consumers land.
+  memory:
+    enabled: true                    # master switch for the whole memory module
+    core_max_lines: 300              # MEMORY.md line cap; injected every session. Range 50-2000
+    core_max_chars: 12000            # dual cap with lines, first hit wins. Range 2000-100000
+    topic_max_lines: 2000            # topic files are read on demand. Range 100-10000
+    topic_max_chars: 80000           # Range 10000-500000
+    read_max_chars: 8000             # per memory_read page, head-and-tail capped. Range 1000-40000
+    prompt_budget_chars: 20000       # aggregate memory block budget in the system prompt. Range 5000-100000
+    service:
+      # LOOPBACK ONLY — the deep-memory service is a native managed addon
+      # (like whisper-stt/local-tts), never LAN- or internet-reachable.
+      # 8772: whisper-stt owns 8768/8769 (WS/health) and local-tts owns
+      # 8770/8771 (WS/health) — must match managed_services.deep-memory's
+      # healthcheck below and the service's own server.port.
+      url: http://127.0.0.1:8772
+      request_timeout_ms: 5000       # deadline on every DeepMemoryClient call. Range 200-60000
+    spark:
+      enabled: true                  # S2 activation (T15): per-turn associative recall is live; zod default is true
+      min_similarity: 0.78           # relevance gate (cosine, 0-1) — gates alone; prefer empty over weak. Calibrated for multilingual-e5-small: unrelated text ~0.74, genuine match ~0.86+; a different embedding model needs recalibration. Range 0-1
+      max_snippets: 3                # hard cap on injected snippets. Range 1-10
+      token_budget: 250              # hard cap on the injected spark section. Range 50-2000
+      recency_half_life_days: 90     # ordering decay half-life. Range 7-3650
+      recency_floor: 0.35            # decay floor — orders passed hits, never gates them. Range 0-1
+      timeout_ms: 500                # per-turn search deadline; expiry = spark withheld. Range 50-5000
+      raw_chunks: false              # index raw transcript chunks (noisy; costly)
+    recall:
+      k: 5                           # hits per memory_recall. Range 1-20
+      context_entries: 2             # entries of context around a drill-down hit. Range 0-10
+    dreamer:
+      enabled: true                  # S3 activation (T20) — nightly episodic consolidation; zod default is true
+      # First enable on an existing gateway SEEDS each user's mark to the current
+      # head (status "initialized") — it never dreams the back-history through the
+      # provider, so no uncontrolled paid spend at boot. Catch-up dreaming applies
+      # only when a mark already EXISTS but its last run is stale (a missed night).
+      hour: 3                        # local time, nightly. Range 0-23
+      preservation_pct: 75           # refuse op batches shrinking MEMORY.md below this. Range 0-100
+      max_input_chars_per_call: 60000  # per map-call session window. Range 4000-400000
+      max_output_tokens: 3000        # per dreamer LLM call. Range 200-16000
+      catch_up_threshold_hours: 24   # boot catch-up when last mark older. Range 1-168
+      yield_check_ms: 5000           # defer while user has an active turn. Range 500-60000
+      # dreamer-only model; runs via the configured provider — this tag is Ollama
+      # Cloud's DeepSeek V4 Flash; pinned alternative deepseek-v4-flash:0731-cloud.
+      # Set "" to inherit provider.model.
+      model: deepseek-v4-flash:cloud
 
 # ---------------------------------------------------------------------------
 # STT — local-stt service (Silero VAD + Smart-Turn v3 + SenseVoice-Small)
@@ -88,9 +500,12 @@ session:
 # ---------------------------------------------------------------------------
 stt:
   provider: local-stt
-  # WS endpoint. In Pi docker-compose this resolves via service name;
-  # for local dev override to ws://localhost:8766.
-  url: ws://sentient-stt-service:8766
+  # WS endpoint. The gateway is a native host process and whisper-stt is a
+  # native managed service bound to loopback, so this is a plain localhost dial
+  # — no docker DNS, and no container-to-host hop. Port must match
+  # managed_services.whisper-stt's healthcheck and the service's own
+  # server.port (capabilityServices/WhisperSTTService/config).
+  url: ws://127.0.0.1:8768
 
   # Language drives the pause-renderer template and the system-prompt
   # language hint file (gateway/system_prompts/language-prompt-<lang>.md).
@@ -99,7 +514,7 @@ stt:
   # Client capture rate. Adapter downsamples to 16 kHz before sending to STT.
   input_sample_rate: 48000
 
-  # Echo-suppression cooldown (ms). On connector.audio.start, the mic is
+  # Echo-suppression cooldown (ms). On turn.audio.start, the mic is
   # hard-muted for this long so the browser's WebRTC AEC can converge on the
   # initial TTS burst before frames start reaching STT again. Residual echo
   # past the cooldown is now handled by the webui-edge RNNoise neural
@@ -118,13 +533,14 @@ stt:
 # normalization, paragraph aggregation) service-side. No gateway-side
 # aggregation stage or knobs exist for this pipeline.
 #
-# `url` is the native local-tts service. It needs Metal/MLX GPU access, so
-# it runs on the host (not containerized) — reached via host.docker.internal,
-# same pattern as native-whisper STT. format=opus @ 48000 is the local-tts
-# live-path contract (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
+# `url` is the native local-tts service. It needs Metal/MLX GPU access, so it
+# runs on the host (not containerized) — and so does the gateway now, which
+# retires the old container-to-host bridge hop in favour of a plain
+# loopback dial. format=opus @ 48000 is the local-tts live-path contract
+# (see local-tts-provider.ts's LIVE_ENCODING/LIVE_SAMPLE_RATE).
 # ---------------------------------------------------------------------------
 tts:
-  url: ws://host.docker.internal:8770 # local-tts (LocalTTSService) WS endpoint
+  url: ws://127.0.0.1:8770         # local-tts (LocalTTSService) WS endpoint, loopback-bound
   voice_id: default                  # gateway-wide fallback voice. Per-user voice from profile.json#voice.id wins.
   format: opus                       # ONLY valid value (schema-enforced) — gateway live path is opus-only; end-to-end opus pivot (OGG-Opus → ogg-opus-decoder WASM in webui).
   sample_rate: 48000                 # Opus standard rate.
@@ -196,102 +612,40 @@ downloads:
   public_base_url: https://sentient.dev32.io
 
 # ---------------------------------------------------------------------------
-# Cerebrum — cognitive cycle orchestration
-# ---------------------------------------------------------------------------
-cerebrum:
-  # Provider: only "hermes" since Phase 1.9 (in-process cerebrum removed).
-  provider: hermes
-
-  cycle:
-    debounce_window_ms: 80            # coalesce events within this window before waking
-    standard_threshold: 50            # per-effect salience to fire a cycle at window close
-    immediate_wake_threshold: 100     # per-effect salience to fire cycle before window close
-    max_per_hour: 120                 # cost-control safety net; rolling 1h window
-    max_iterations: 10                # ReAct loop cap: consecutive auto-triggered cycles between external stimuli
-    max_iter_warn_ahead: 3            # cycles before the cap to inject a silent ReAct-budget warning into ConversationHistory
-    history_max_tokens: 4096          # per-cycle token budget for the conversation-history transcript layer
-
-  # Sticky-note-in-pocket surface: running + recently completed tasks the
-  # model can cross-reference via taskId.
-  task_table:
-    window: 30                        # last N completed tasks visible alongside running tasks
-
-  # OOM guard for the in-memory ConversationHistory log. Per-cycle token
-  # fitting is separate (see cycle.history_max_tokens).
-  conversation_history:
-    max_entries: 10000                # FIFO cap; evicts oldest once exceeded
-
-  salience_map_path: /app/config/salience_map.yaml
-
-  # Bypass the family-friendly persona guardrails for local / uncensored-model
-  # testing. When true, loads system_prompts/system_prompt_unlimited.md (STT +
-  # TTS mechanics only) and skips persona.md. Keep false in production.
-  unlimited_mode: false
-
-# ---------------------------------------------------------------------------
-# Hermes Agent integration — spec §5, §7.
-# Feature-flagged: set cerebrum.provider to "hermes" to use.
+# Hermes — what the gateway still needs to know about Hermes now that Hermes
+# is NOT a managed service. It is a one-shot exec (`hermes -p <userId> -z
+# <prompt>`) behind delegateTask, so it has no port, container, or lifecycle:
+# the `worker:` block (container_name / url_template / port_base) and `tts:`
+# (markdown/emoji stripping) were deleted in the native-stack migration after
+# a per-key check found no reader for either.
+#
+# What remains is the two blocks with live readers.
 # ---------------------------------------------------------------------------
 hermes:
-  # Single Hermes worker template. Every user gets a supervisord-managed
-  # child inside the `sentient-hermes` overlay container. Port is allocated
-  # at user-create time (port_base + idx, monotonic, unbounded). The gateway
-  # dials url_template with {port} substituted from the user-port-store.
-  worker:
-    container_name: sentient-hermes
-    url_template: "http://sentient-hermes:{port}"
-    port_base: 8650
-
-  # ACP wire resilience. The gateway→Hermes ACP WebSocket auto-reconnects on ANY
-  # remote close — abnormal (1006 after a gateway restart / resumed-session flap)
-  # AND a clean remote 1000 (the overlay evicts the prior wire when another client
-  # for the same user connects). On the next dispatch the wire re-opens + re-runs
-  # `initialize` so the session keeps dispatching cycles. Only a LOCAL teardown
-  # (dispose — the last PersonSession attachment releases the ref-counted wire) is
-  # terminal. Reconnect is bounded; after exhaustion the dispatch surfaces a
-  # terminal error rather than hanging.
-  acp_wire:
-    open_timeout_ms: 5000          # per WS open handshake deadline (500-60000)
-    reconnect_base_ms: 500         # first backoff delay (50-10000)
-    reconnect_max_ms: 5000         # backoff ceiling (100-60000)
-    reconnect_jitter_ms: 250       # random jitter added per backoff (0-10000)
-    reconnect_max_attempts: 5      # max re-open attempts before a send fails (1-20)
-
-  defaults:
-    max_output_tokens: 512                   # per-turn token cap
-
   web_tools:
     provider: searxng
     searxng:
       enabled: true
 
-  home_assistant_observer:
-    enabled: true
-    url: "ws://homeassistant.local:8123/api/websocket"
-    token_env: HA_OBSERVE_TOKEN
-    watch_domains: [binary_sensor, climate, alarm_control_panel, light, lock, cover]
-
+  # The gateway's OWN MCP server, which the delegated Hermes dials back into
+  # (identify_user, pause_audio, update_user_settings). Read by
+  # bootstrap/create-mcp-host.ts.
   mcp_host:
     transport: unix_socket
-    # Base directory for per-user sockets. Actual paths are /run/sentient/mcp-<userId>.sock
-    socket_path: "/run/sentient/mcp.sock"
-
-  # Satellite device → default user mapping. `default_user` is matched
-  # against UserStore.displayName (case-insensitive) at consumption time.
-  # No active consumers in v1 — populate when satellite hardware ships.
-  satellite_devices: []
-
-  ambient:
-    event_log:
-      enabled: true
-      retention_count: 10000
-      persist_path: "./data/ambient-events.db"
-    dispatch:
-      steward_enabled: false                # v1.5+
-
-  tts:
-    markdown_stripping_enabled: true
-    emoji_stripping_enabled: true
+    # Base path for the per-user sockets: only the DIRECTORY is used, the actual
+    # paths are always <dir>/mcp-<userId>.sock. MUST be an absolute, user-owned,
+    # writable directory — this was /run/sentient/mcp.sock while Hermes ran in a
+    # container with a bind-mount there; on a native macOS host /run does not
+    # exist and its parent is SIP-read-only, so no socket could ever open and
+    # every delegated Hermes ran with ZERO gateway tools. Keep the total path
+    # under 104 bytes (the sun_path ABI limit); mcp-host/socket-path.ts logs an
+    # error if a userId pushes it over.
+    #
+    # ONE PATH, TWO SIDES — the gateway LISTENS here and the rendered Hermes
+    # profile DIALS it via mcp_catalog.gateway.args below. Both spell it with
+    # the same ${HOME} so they cannot drift; changing one without the other
+    # fails SILENTLY (hermes connects to nothing and reports no tools).
+    socket_path: "${HOME}/.sentient/run/mcp.sock"
 
 # ---------------------------------------------------------------------------
 # Auth — user-facing login (PIN + PASETO token)
@@ -307,20 +661,6 @@ auth:
   argon2_parallelism: 1
 
 # ---------------------------------------------------------------------------
-# Apply — settings-change orchestration (docker restart + health check)
-# ---------------------------------------------------------------------------
-apply:
-  docker_restart_timeout_ms: 30000   # max wait for `docker restart` to return
-  health_check_timeout_ms: 30000     # max wait for Hermes /health 200 after restart
-  health_poll_interval_ms: 1000      # poll cadence during health-checking state
-  # Phase D personality/SOUL restart orchestrator. Used after a SOUL.md or
-  # personality-structure edit triggers a per-user supervisord restart; the
-  # orchestrator waits up to this long for the WS adapter to come back online.
-  profile_restart_timeout_ms: 30000      # 5000–60000
-  profile_restart_poll_interval_ms: 250  # 50–1000
-  dispatch_ping_timeout_ms: 8000         # max wait for ping→pong after pool upsert (user creation); 1000–30000
-
-# ---------------------------------------------------------------------------
 # Providers — external catalog endpoints + cache TTLs
 # ---------------------------------------------------------------------------
 providers:
@@ -330,25 +670,6 @@ providers:
   external_fetch_timeout_ms: 5000
 
 # ---------------------------------------------------------------------------
-# Sessions — past-sessions feature: pagination caps, search bounds, title
-# length, override-store location, source tag, HTTP + switch-teardown
-# timeouts. All keys are operator-tunable; the webui reads search_debounce_ms
-# from session.ready and applies it to the search input.
-# ---------------------------------------------------------------------------
-sessions:
-  list_page_size: 20         # default page size for sessions.list (1-100)
-  search_max_results: 20     # cap on FTS results (1-50)
-  search_min_chars: 2        # debounce floor; queries shorter dropped (0-10)
-  search_debounce_ms: 300    # client-side debounce — surfaced for tuning (50-1000)
-  title_max_chars: 200       # rename input bound (10-500)
-  title_override_dir: ~/.sentient/gateway/session-titles  # legacy per-profile JSON store; migrator moves to user_data_root
-  user_data_root: ~/.sentient/gateway/users  # per-user, per-category data root: <user_data_root>/<userId>/<category>/<file>
-  source_tag: sentient-user  # adapter writes this on every new chain
-  hermes_http_timeout_ms: 5000           # per-request timeout for Hermes /api/sessions/* (1000-30000)
-  switch_teardown_timeout_ms: 3000       # max wait for cycle-cancel before switch proceeds (500-10000)
-  min_new_interval_ms: 500               # min ms between client session.new — blocks spam/double-fire, not human-paced new chats (0-60000)
-
-# ---------------------------------------------------------------------------
 # Companions — on-demand version resolution for co-deployed services.
 #
 # The gateway fetches hermes and STT versions lazily (on first API call that
@@ -356,16 +677,18 @@ sessions:
 # degrades to "unknown" independently on error; the other keeps resolving.
 # ---------------------------------------------------------------------------
 companions:
-  stt_health_url: http://sentient-stt-service:8767/health   # STT /health endpoint; returns {"version":"..."}
-  tts_health_url: http://host.docker.internal:8771/health   # local-tts /health endpoint (host-run service); returns {"version":"..."}
+  stt_health_url: http://127.0.0.1:8769/health   # whisper-stt /health endpoint (native, loopback); returns {"version":"..."}
+  tts_health_url: http://127.0.0.1:8771/health   # local-tts /health endpoint (native, loopback); returns {"version":"..."}
   hermes_version_path: /data/supervisor/.versions/hermes    # file hermes writes on boot into the shared volume
   version_cache_ttl_ms: 300000    # cache resolved versions for 5 min; 10000–3600000
   version_fetch_timeout_ms: 3000  # per-source HTTP timeout for STT health fetch; 500–30000
 
 # ---------------------------------------------------------------------------
-# MCP catalog — inventory of available MCP servers, ops-managed.
-# Per-user profiles reference these by name in profile.tools.enabled[].
-# Add a new MCP by editing this section (no code change required).
+# MCP catalog — inventory of available MCP servers, ops-managed, and THE
+# enumeration of the tool universe: which tools exist and what impact tier each
+# carries. Per-user profiles address these by server + tool name in
+# profile.tools.permissions; the old profile.tools.enabled[] name list is
+# retired. Add a new MCP by editing this section (no code change required).
 #
 # Variable substitution in command/args/url/env values:
 #   {{userId}}   real auth-derived user id (e.g. u_6ae26974); used as
@@ -375,11 +698,52 @@ companions:
 # Transports:
 #   transport: http   → HTTP MCP (url required)
 #   transport: stdio  → STDIO MCP (command + args, optional env)
+#
+# EVERY tool in a `tools.include` list declares its IMPACT TIER, and the
+# gateway refuses to boot on one that does not — naming it. The tier is the
+# input to the role gate (`canExecute` in shared/protocol/src/roles.ts): it
+# decides WHO may reach the tool at all. What happens when they do is the
+# person's own per-tool permission, a separate table on their profile.
+#
+#   tier: read     answers a question, or acts only on the caller's own
+#                  session                     → admin, adult, child, guest
+#   tier: write    routine reversible change to HOUSEHOLD state
+#                  (shopping item, speaker grouping)  → admin, adult, child
+#   tier: confirm  irreversible, reaches outside the house, spends, or touches
+#                  a security-relevant device class (locks, alarms)
+#                                                     → admin, adult
+#   tier: admin    reserved for operator-level control of the system itself
+#                  (HA restart/backup/addon management and the like, none of
+#                  which this catalog exposes today)  → admin ONLY
+#
+# `admin` IS A ROLE, not a flag beside one — the household's operator. An
+# ordinary adult does NOT reach the `admin` tier: that is the whole point of
+# the tier existing. Tier something `admin` and you are saying "only the
+# operator", not "only a grown-up". The table above is the rendering of
+# `ROLE_PERMISSIONS` in shared/protocol/src/roles.ts; that file is the
+# authority, this is the operator-facing copy of it.
+#
+# WHAT TIERING IS FOR, stated once so it is not re-litigated per tool: it
+# governs tools that reach THE HOUSEHOLD — Home Assistant, Music Assistant,
+# searxng, fetch. That is where a guest or a child genuinely may not go.
+#
+# It does NOT police someone's own session. Every tool the gateway hosts
+# itself (the `gateway:` entry below — `gateway/src/mcp-host/tools/`) resolves
+# the CALLER's own session and acts only on that: their TTS playback, their
+# settings, their identity. A person is by definition allowed to govern their
+# own session, so all of those are `read`, as a rule and not as a per-tool
+# judgement. Tiering one of them up buys no safety and costs the model a
+# utility it needs to work — an assistant that cannot pause or mute itself on
+# request is broken, not safe.
+#
+# There is no default and no fallback. Guessing `read` hands a guest a tool
+# nobody meant to give them; guessing higher silently takes one away from an
+# adult. Both are worse than refusing to start.
 # ---------------------------------------------------------------------------
 mcp_catalog:
   home_assistant:
     transport: http
-    url: http://sentient-ha-mcp:8086/mcp
+    url: http://127.0.0.1:8086/mcp
     timeout: 30
     connect_timeout: 5
     description: Home Assistant smart-home control via ha-mcp sidecar.
@@ -394,41 +758,82 @@ mcp_catalog:
     tools:
       include:
         # query / state
-        - ha_get_overview
-        - ha_get_state
-        - ha_search_entities
-        - ha_get_history
-        - ha_eval_template
-        - ha_get_operation_status
+        - { name: ha_get_overview, tier: read }
+        - { name: ha_get_state, tier: read }
+        - { name: ha_search, tier: read }
+        - { name: ha_get_history, tier: read }
+        - { name: ha_eval_template, tier: read }
+        - { name: ha_get_operation_status, tier: read }
         # spatial
-        - ha_list_floors_areas
-        - ha_get_zone
-        - ha_get_camera_image
-        # action
-        - ha_call_service
-        - ha_bulk_control
-        # todos / shopping list
-        - ha_get_todo
-        - ha_set_todo_item
-        - ha_remove_todo_item
-        # calendar
-        - ha_config_get_calendar_events
-        - ha_config_set_calendar_event
-        - ha_config_remove_calendar_event
+        - { name: ha_list_floors_areas, tier: read }
+        - { name: ha_get_zone, tier: read }
+        - { name: ha_get_camera_image, tier: read }
+        # action. Both are GENERIC dispatchers whose blast radius includes
+        # locks and alarms — a security-relevant device class, hence confirm
+        # rather than write, and hence out of a child's reach.
+        - { name: ha_call_service, tier: confirm }
+        - { name: ha_bulk_control, tier: confirm }
+        # todos / shopping list. A list line is a string anyone in the house
+        # re-adds in a second, so both halves are routine writes.
+        - { name: ha_get_todo, tier: read }
+        - { name: ha_set_todo_item, tier: write }
+        - { name: ha_remove_todo_item, tier: write }
+        # calendar. Creating/editing is reversible; DELETING destroys a
+        # household commitment whose details nothing else holds.
+        - { name: ha_config_get_calendar_events, tier: read }
+        - { name: ha_config_set_calendar_event, tier: write }
+        - { name: ha_config_remove_calendar_event, tier: confirm }
 
-  # Gateway-hosted MCP — exposes per-user tools (identify_user, channel
-  # control, audio control). One Unix socket per Hermes slot.
+  # Gateway-hosted MCP — the SECOND TIER of MCP a delegated agent gets, on top
+  # of whatever the user configured for themselves. One Unix socket per user;
+  # `nc -U` bridges the delegated Hermes's stdio MCP transport onto it.
+  #
+  # It serves two kinds of tool, and `tools.include` below covers only the
+  # first:
+  #   * gateway-HOSTED tools (identify_user, audio control), implemented
+  #     in-process;
+  #   * PROXIED tools — the `read` tier of the http entries in this same
+  #     catalog (HA reads, fetch, searxng), forwarded through the gateway's
+  #     ToolBroker so its PDP evaluates every delegated call.
+  # BOTH sets are derived at runtime from the `tier:` declarations in this very
+  # file, never from a second list: a delegated run has nobody to confirm a
+  # prompt, so only the `read` tier — the one tier that never prompts — may be
+  # advertised on that socket. Editing `tools.include` below therefore DOES
+  # change what a delegated agent can reach, in both halves.
+  #
+  # THIS IS THE DIALLING SIDE of hermes.mcp_host.socket_path above — the two
+  # MUST name the same directory. `${HOME}` is expanded once at config load
+  # (shared/config/loader.ts) so both sides derive from the one value; `nc` gets
+  # its path as argv with no shell, so a literal `~` here would NOT expand.
+  # {{userId}} is substituted per user at profile render time.
   gateway:
     transport: stdio
     command: nc
-    args: ["-U", "/run/sentient/mcp-{{userId}}.sock"]
+    args: ["-U", "${HOME}/.sentient/run/mcp-{{userId}}.sock"]
     description: Sentient gateway tools (identify, audio, channel).
     tools:
+      # EVERY tool here is `read`, and that is a RULE about this server, not a
+      # judgement made four times (see the tier legend above). All of them are
+      # implemented in `gateway/src/mcp-host/tools/` and all of them resolve
+      # `ctx.userId` to the CALLER's own session before doing anything:
+      #
+      #   identify_user         inert — looks a name up in the household list
+      #                         and returns text telling that person to sign
+      #                         in. It never rebinds; the session's identity is
+      #                         fixed by the auth token at connect.
+      #   pause_audio           pauses the caller's own TTS playback.
+      #   resume_audio          resumes it.
+      #   update_user_settings  the caller's own ttsEnabled / channel / voice /
+      #                         model.
+      #
+      # None reaches the household, so there is nothing for a tier to defend.
+      # These are the model's own utility tools: an assistant that cannot pause
+      # or mute itself on request is broken, not safe.
       include:
-        - identify_user
-        - pause_audio
-        - resume_audio
-        - update_user_settings
+        - { name: identify_user, tier: read }
+        - { name: pause_audio, tier: read }
+        - { name: resume_audio, tier: read }
+        - { name: update_user_settings, tier: read }
 
   # Music Assistant — dockerized HTTP MCP at gateway/mcp/ma-mcp/.
   # Built from the davidpadbury/music-assistant-mcp fork (the upstream
@@ -439,26 +844,67 @@ mcp_catalog:
   # the upstream uses raw WS that tinyproxy CONNECT cannot proxy.
   music_assistant:
     transport: http
-    url: http://sentient-ma-mcp:8668/mcp
+    url: http://127.0.0.1:8668/mcp
     timeout: 30
     connect_timeout: 5
     description: Music Assistant playback control.
+    # Curated tool surface — the full set the pinned fork registers
+    # (players/playback/queue/music, gateway/mcp/ma-mcp/Dockerfile pins the
+    # commit). Enumerated rather than left open so the surface cannot grow
+    # silently on a fork bump, and tiered here so nothing reaches the model
+    # untiered.
+    #
+    # Playback transport is `read` and that is deliberate: it changes only
+    # what is audible right now, stops mattering when the music does, and the
+    # next voice command undoes it. Prompting on "play some jazz" / "turn it
+    # down" would make voice music control unusable. Queue and grouping
+    # OUTLIVE the current track — someone else's queue, another room's
+    # speakers — so they are writes.
+    tools:
+      include:
+        # library reads
+        - { name: ma_search, tier: read }
+        - { name: ma_browse, tier: read }
+        # players
+        - { name: ma_list_players, tier: read }
+        - { name: ma_volume, tier: read }
+        - { name: ma_group, tier: write }
+        # playback
+        - { name: ma_playback, tier: read }
+        - { name: ma_play_media, tier: read }
+        # queue. `ma_queue` is a mixed read/write tool upstream — the same
+        # call that reports the queue can clear it or flip shuffle/repeat —
+        # so it is tiered by its worst case.
+        - { name: ma_queue, tier: write }
+        - { name: ma_queue_item, tier: write }
+        - { name: ma_transfer_queue, tier: write }
 
   # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
   # Outbound HTTP fetches route through egress-proxy.
   fetch:
     transport: http
-    url: http://sentient-fetch-mcp:8088/mcp
+    url: http://127.0.0.1:8088/mcp
     timeout: 30
     connect_timeout: 5
     description: Fetch URL contents as markdown.
+    # mcp-server-fetch registers exactly one tool (gateway/mcp/fetch-mcp/
+    # run_http.py). Named explicitly for the same reason as above.
+    tools:
+      # Read-only: what it returns is untrusted content. It is genuinely
+      # handled now (docs/native-todo.md's HIGH-PRIORITY SECURITY item,
+      # CLOSED 2026-08-08) — every result crosses the inbound gate
+      # (gateway/src/security/inbound-gate.ts), which runs the injection
+      # scanner (injection-scanner.ts) and raises PDP risk on findings; that
+      # is the control, not this tier.
+      include:
+        - { name: fetch, tier: read }
 
   # SearXNG metasearch — dockerized HTTP MCP at gateway/mcp/searxng-mcp/.
   # Adapter forwards queries to the sibling searxng container which
   # fans out across configured upstream engines via egress-proxy.
   searxng:
     transport: http
-    url: http://sentient-searxng-mcp:8087/mcp
+    url: http://127.0.0.1:8087/mcp
     timeout: 30
     connect_timeout: 5
     description: SearXNG metasearch web search.
@@ -468,8 +914,45 @@ mcp_catalog:
     # fetch_url is suppressed because our dedicated fetch-mcp container
     # owns URL fetching (cleaner separation, smaller per-tool prompt).
     tools:
+      # Read-only: same rationale and same control as fetch above — results
+      # are untrusted content, screened by the inbound gate
+      # (gateway/src/security/inbound-gate.ts + injection-scanner.ts), not by
+      # this tier. Lost when mcp-policy.yaml's rules retired; restored here.
       include:
-        - search_web
+        - { name: search_web, tier: read }
+
+# ─────────────────────────────────────────────────────────────────────────
+# system_orchestrator
+# ─────────────────────────────────────────────────────────────────────────
+# Policy for the ORCHESTRATOR ITSELF, as opposed to the per-service map in
+# managed_services below. Note this is NOT the `orchestrator:` block further
+# up — that one is the native LLM agent loop. Two subsystems, one word.
+# (These knobs cannot live under managed_services: every key there must be a
+# service name, or the registry build fails.)
+system_orchestrator:
+  # How often the orchestrator re-probes addon health after boot and re-applies
+  # anything that has gone unhealthy. Range 5000-300000. Without this a crashed
+  # addon never recovers: apply() otherwise runs only at boot/admin/wizard.
+  health_watch_interval_ms: 15000
+  # Consecutive failed re-apply attempts before the watchdog gives up on one
+  # service and logs an ERROR naming it. Range 1-20. Stops a service that cannot
+  # start (bad config, port already taken) being recreated forever. Probing
+  # continues after a give-up, so fixing the cause re-arms the watchdog.
+  health_watch_max_attempts: 5
+  # Multiplier applied to the interval after each failed attempt, so retries
+  # widen instead of hammering. Range 1-10; 1 = fixed interval, no widening.
+  health_watch_backoff_factor: 2
+  # How long a native addon's launch waits for its declared port to be released
+  # by the previous holder before giving up. Range 1000-60000. A signalled
+  # process does not release a listening socket instantly, and launching onto a
+  # still-held port is what made both native addons die on EADDRINUSE every
+  # boot. Halfway through this budget a holder that is OURS (recorded in
+  # ~/.sentient/run/<svc>.pid) is escalated from SIGTERM to SIGKILL; a holder we
+  # cannot identify as ours is never signalled at all, only named.
+  native_port_settle_timeout_ms: 8000
+  # How often the port is re-checked while waiting above. Range 50-5000. Each
+  # check is one `lsof`, so smaller values buy responsiveness at process cost.
+  native_port_settle_poll_ms: 250
 
 # ─────────────────────────────────────────────────────────────────────────
 # managed_services
@@ -484,36 +967,74 @@ managed_services:
     template: egress-proxy.yaml
     allowed_images: ["kalaksi/tinyproxy:latest"]
     networks: ["sentient-internal", "sentient-external"]
-    healthcheck:
-      tcp: "sentient-egress-proxy:3128"
-      timeout_ms: 30000
-    depends_on: []
-    optional: false
-
-  sentient-hermes:
-    template: sentient-hermes.yaml
-    allowed_images: ["sentient/hermes:local"]
-    networks: ["sentient-internal", "sentient-external"]
-    # Hermes runs supervisord with no TCP-bound services until per-user
-    # programs are added at user-creation time. The container itself can
-    # only be probed via supervisord's unix socket, which is not exposed
-    # to the gateway. Use noop and rely on docker's restart policy +
-    # downstream cycle dispatch failures to detect crashes.
+    # egress-proxy is the ONE addon that stays unpublished. It is an OUTBOUND
+    # path — nothing on the host dials it, only sibling containers do — so
+    # publishing it would add host attack surface for zero reachability gain.
+    # The consequence is that the native gateway has no route on which to probe
+    # it, hence `noop`: recreate-success implies ready and docker's
+    # restart-policy detects crashes. Same trade-off, same reason, as the
+    # supervisord-only container that used to sit below this entry.
     healthcheck:
       noop: true
-    depends_on: ["egress-proxy"]
-    optional: false
-
-  stt-service:
-    template: stt-service.yaml
-    allowed_images: ["sentient/stt-service:local"]
-    networks: ["sentient-internal"]
-    healthcheck:
-      url: "http://sentient-stt-service:8767/health"
-      timeout_ms: 60000
     depends_on: []
     optional: false
 
+  ingress-proxy:
+    template: ingress-proxy.yaml
+    allowed_images: ["sentient/ingress-proxy:local"]
+    # The inverse of egress-proxy, and the ONE service that spans both networks
+    # so that no MCP has to. Docker silently drops port publishing when every
+    # attached network is `internal: true` (verified on docker 29.2.1:
+    # NetworkSettings.Ports reads back EMPTY and the host port answers nothing),
+    # which made loopback reachability and network-enforced egress confinement
+    # mutually exclusive FOR ONE CONTAINER. This is that one container: it holds
+    # the publishes, forwards inward over sentient-internal, and lets fetch-mcp
+    # and searxng-mcp go back to internal-only.
+    networks: ["sentient-internal", "sentient-external"]
+    # Probes the ingress path the gateway itself uses. One nginx process serves
+    # both listeners, so :8088 answering means :8087 does too.
+    healthcheck:
+      tcp: "127.0.0.1:8088"
+      timeout_ms: 30000
+    # Deliberately EMPTY. nginx resolves its upstreams at request time (see
+    # nginx.conf's resolver), so it does not need the services it fronts to
+    # exist yet — and depending on them would let one broken addon block the
+    # shared ingress and take the other addon's reachability with it.
+    depends_on: []
+    optional: false
+
+  inbound-proxy:
+    template: inbound-proxy.yaml
+    allowed_images: ["sentient/inbound-proxy:local"]
+    networks: ["sentient-edge"]
+    # INFRASTRUCTURE class — see gateway/src/system-orchestrator/types.ts#infra.
+    # Applied before the wizard (it IS the route to the wizard), never given up
+    # on by the watchdog, and not recreated while unchanged and healthy.
+    infra: true
+    # Grants the ONE public-port exception in the stack. Admits 0.0.0.0:80 and
+    # 0.0.0.0:443 only, enforced at three layers.
+    public_ports: true
+    # Probes the door the LAN actually uses. Self-signed in dev, so the probe is
+    # TCP rather than HTTP — an HTTP probe would need a trust anchor the
+    # orchestrator has no reason to carry.
+    healthcheck:
+      tcp: "127.0.0.1:443"
+      timeout_ms: 30000
+    # Deliberately EMPTY. nginx resolves its upstream at request time, so it does
+    # not need the gateway to be up first — and it must not, since the gateway is
+    # what starts it.
+    depends_on: []
+    optional: false
+
+  # NOT here, deliberately:
+  #   sentient-hermes — hermes has no lifecycle in 2.0. It is `hermes -p <userId>
+  #     -z <prompt>`, spawned and exited by delegateTask (gateway/src/tools/
+  #     hermes-runner.ts). Registering it would resurrect the per-user worker
+  #     fleet 2.0 deleted, and its image no longer exists (deploy/hermes-overlay/
+  #     is gone).
+  #   stt-service — the containerised SenseVoice STT is retired; `whisper-stt`
+  #     below supersedes it as a native addon (Metal/MLX needs host GPU access
+  #     no container can reach).
   ha-mcp:
     template: ha-mcp.yaml
     allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"]
@@ -532,7 +1053,7 @@ managed_services:
       HA_LOCAL_HOST: home_assistant.url:host
       HA_LOCAL_IP: home_assistant.local_ip
     healthcheck:
-      tcp: "sentient-ha-mcp:8086"
+      tcp: "127.0.0.1:8086"
       timeout_ms: 30000
     depends_on: ["egress-proxy"]
     optional: true
@@ -552,7 +1073,7 @@ managed_services:
       MASS_LOCAL_HOST: music_assistant.url:host
       MASS_LOCAL_IP: music_assistant.local_ip
     healthcheck:
-      tcp: "sentient-ma-mcp:8668"
+      tcp: "127.0.0.1:8668"
       timeout_ms: 30000
     depends_on: []
     optional: true
@@ -560,31 +1081,161 @@ managed_services:
   fetch-mcp:
     template: fetch-mcp.yaml
     allowed_images: ["sentient/fetch-mcp:local"]
+    # INTERNAL ONLY. This is the addon that dereferences attacker-chosen URLs,
+    # so it gets the HARD backstop: with no non-internal network it has no route
+    # off the bridge, and egress-proxy is not a policy it could ignore but the
+    # only way out. It publishes nothing — ingress-proxy holds its host port and
+    # forwards inward, which is what buys back this membership.
     networks: ["sentient-internal"]
+    # `noop`, for the same reason as searxng below: nothing on the host can reach
+    # this container directly any more. Probing 127.0.0.1:8088 would probe
+    # ingress-proxy, which listens whether or not this MCP is alive — a green
+    # light for a dead service. A dead fetch-mcp surfaces as a failed `fetch`
+    # tool call (nginx 502), not as a boot failure.
     healthcheck:
-      tcp: "sentient-fetch-mcp:8088"
-      timeout_ms: 30000
-    depends_on: ["egress-proxy"]
+      noop: true
+    # ingress-proxy is a dependency for REACHABILITY: without it this MCP is up
+    # but undialable, and blocked-by-dep names that cause instead of showing a
+    # green service the gateway cannot talk to.
+    depends_on: ["egress-proxy", "ingress-proxy"]
     optional: false
 
   searxng:
     template: searxng.yaml
     allowed_images: ["searxng/searxng:latest"]
+    # Internal-only, and publishes NO host port (searxng.yaml declares no
+    # `ports:`) — and unlike the two MCPs it needs no ingress-proxy entry either,
+    # because nothing on the host dials searxng at all: its only consumer is the
+    # sibling searxng-mcp over sentient-internal.
+    # Upstream engine traffic goes through egress-proxy,
+    # declared in searxng/settings.yml#outgoing.proxies (searxng's httpx ignores
+    # HTTP_PROXY env, so the env vars alone would not route it).
     networks: ["sentient-internal"]
     secrets:
       SEARXNG_SECRET: internal.searxng_secret
+    # No host-reachable port to probe (see above), hence `noop` — the same
+    # trade-off, for the same reason, as egress-proxy above: recreate-success
+    # implies ready and docker's restart policy detects crashes. A searxng that
+    # is up but not yet serving surfaces as a failed search_web tool call, not
+    # as a boot failure.
     healthcheck:
-      tcp: "sentient-searxng:8080"
-      timeout_ms: 30000
+      noop: true
     depends_on: ["egress-proxy"]
     optional: false
 
   searxng-mcp:
     template: searxng-mcp.yaml
     allowed_images: ["sentient/searxng-mcp:local"]
+    # INTERNAL ONLY. Its one upstream is sentient-searxng over
+    # sentient-internal, so it never needed egress — it only ever carried
+    # sentient-external to make its own publish take effect, and ingress-proxy
+    # owns that publish now.
     networks: ["sentient-internal"]
+    # `noop` — see fetch-mcp above. 127.0.0.1:8087 is ingress-proxy's listener,
+    # so probing it would report on the proxy, not on this adapter.
     healthcheck:
-      tcp: "sentient-searxng-mcp:8087"
-      timeout_ms: 30000
-    depends_on: ["searxng"]
+      noop: true
+    depends_on: ["searxng", "ingress-proxy"]
     optional: false
+
+  # Native (non-container) services. `launch: native` swaps the docker backend
+  # for a plain host process the gateway spawns into its own process group; the
+  # entries above omit `launch` and therefore default to `docker`. These two
+  # need Metal/MLX on the host GPU, which no container can reach.
+  whisper-stt:
+    launch: native
+    # argv[0] is the pinned interpreter; ${SENTIENT_CODE} resolves to the
+    # root-owned release dir (/opt/sentient/current) in prod, or the staged tree
+    # in dev. Every ${VAR} in THIS file is resolved from the gateway's process
+    # env while the file is being loaded, and an unset var becomes the EMPTY
+    # STRING — it does not stay literal. (The "stays literal" rule belongs to
+    # templates/services/*.yaml, which are substituted later and elsewhere.) So
+    # an unset SENTIENT_CODE yields "/whisper-stt/venv/bin/python", which
+    # prepare() rejects as not executable; an unset HOST_HOME yielded
+    # "/.sentient/..." and both addons died on `config file not found` every
+    # boot. main.ts therefore defaults HOST_HOME before the first config read.
+    exec: ["${SENTIENT_CODE}/whisper-stt/venv/bin/python", "-m", "whisper_stt"]
+    python: "3.14"                                  # pinned; prepare() verifies before start
+    # CODE under ${SENTIENT_CODE} (root-owned, immutable), STATE under
+    # ${HOST_HOME}/.sentient (user-owned, mutable) — the layout invariant. Both
+    # come from the gateway's own process env; the launchd plist
+    # (deploy/mac-prod/io.sentient.gateway.plist) sets them in prod.
+    env:
+      PYTHONPATH: "${SENTIENT_CODE}/whisper-stt/src"
+      WHISPER_STT_CONFIG_PATH: "${HOST_HOME}/.sentient/whisper-stt/config/config.yaml"
+      WHISPER_STT_MODEL_DIR: "${HOST_HOME}/.sentient/whisper-stt/models"
+      WHISPER_STT_LOG_DIR: "${HOST_HOME}/.sentient/whisper-stt/logs"
+      WHISPER_STT_RECORDING_DIR: "${HOST_HOME}/.sentient/whisper-stt/recordings"
+    # 8768 is the WhisperSTTService WS port (server.port in its config), NOT the
+    # retired containerized SenseVoice service's 8766. Must match stt.url above.
+    healthcheck: { tcp: "127.0.0.1:8768", timeout_ms: 30000 }   # STT WS port
+    depends_on: []
+    optional: false
+
+  local-tts:
+    launch: native
+    exec: ["${SENTIENT_CODE}/local-tts/venv/bin/python", "-m", "local_tts"]
+    python: "3.11"                                  # 3.11 REQUIRED: mlx-audio ships no 3.14 wheels
+    env:
+      PYTHONPATH: "${SENTIENT_CODE}/local-tts/src"
+      LOCAL_TTS_CONFIG_PATH: "${HOST_HOME}/.sentient/local-tts/config/config.yaml"
+      LOCAL_TTS_MODEL_DIR: "${HOST_HOME}/.sentient/local-tts/models"
+      LOCAL_TTS_LOG_DIR: "${HOST_HOME}/.sentient/local-tts/logs"
+      LOCAL_TTS_VOICE_DIR: "${HOST_HOME}/.sentient/local-tts/voices"
+    healthcheck: { tcp: "127.0.0.1:8770", timeout_ms: 30000 }   # TTS WS port; must match tts.url above
+    depends_on: []
+    optional: false
+
+  deep-memory:
+    launch: native
+    # Plain HTTP (aiohttp), not WS — one port serves every §5.2 endpoint
+    # including /health, unlike whisper-stt/local-tts's separate WS+health
+    # ports. Same ${VAR} resolution rule as the two native entries above:
+    # every placeholder here is resolved from the gateway's own process env
+    # at config-load time, and an unset var becomes the empty string.
+    exec: ["${SENTIENT_CODE}/deep-memory/venv/bin/python", "-m", "deep_memory"]
+    python: "3.14"                                  # pinned; whole engine stack (mlx/mlx-embeddings/sqlite-vec) verified on 3.14 in T9b
+    env:
+      # REQUIRED — mirrors whisper-stt/local-tts above. The service's own
+      # package is never pip-installed into the venv (only its dependencies
+      # are, from vendored wheels); `-m deep_memory` resolves the package via
+      # PYTHONPATH pointing at the staged src/ tree, not site-packages.
+      # Without this, `-m deep_memory` is a ModuleNotFoundError at every
+      # launch. Cross-process contract: deploy/mac-prod/setup-prod.py:161-165,
+      # guarded by test_setup_prod.py::test_release_layout_matches_the_native_exec_contract.
+      PYTHONPATH: "${SENTIENT_CODE}/deep-memory/src"
+      DEEP_MEMORY_CONFIG_PATH: "${HOST_HOME}/.sentient/deep-memory/config/config.yaml"
+      DEEP_MEMORY_LOG_DIR: "${HOST_HOME}/.sentient/deep-memory/logs"
+      # Two bearer tokens (admin/data plane — CONTRACT.md §2), never on disk
+      # in this file. The operator (or setup-prod.py at first install) must
+      # generate them and set them as real process env vars on the GATEWAY
+      # itself (launchd plist EnvironmentVariables in prod, exported before
+      # `bun run dev` in dev) — the same ${VAR}-against-process-env mechanism
+      # SENTIENT_CODE/HOST_HOME use above, not the docker `secrets:` store
+      # (which only ever renders into container templates, never into a
+      # native service's env). See deploy/README.md#deep-memory for the
+      # provisioning note. An unset var resolves to "", and the service
+      # refuses to boot on an empty token (auth.py) rather than come up open.
+      DEEP_MEMORY_ADMIN_TOKEN: "${DEEP_MEMORY_ADMIN_TOKEN}"
+      DEEP_MEMORY_DATA_TOKEN: "${DEEP_MEMORY_DATA_TOKEN}"
+    # Optional: the memory system (orchestrator.memory) degrades non-fatally
+    # when this addon is absent or unhealthy — memory_recall/memory tools
+    # simply go unavailable rather than blocking boot or voice traffic (spec
+    # §11 degradation model). Mirrors ha-mcp/ma-mcp's optional:true, not
+    # whisper-stt/local-tts's optional:false (those are voice-path critical).
+    healthcheck: { url: "http://127.0.0.1:8772/health", timeout_ms: 30000 }
+    depends_on: []
+    optional: true
+
+# ---------------------------------------------------------------------------
+# Security — inbound prompt-injection scanning (gateway/src/security/)
+# ---------------------------------------------------------------------------
+security:
+  inbound_scan:
+    enabled: true            # master switch for scanning non-person text entering model context
+    channels:                # per-channel toggles; a channel off = that text passes unscanned (logged at boot)
+      tool_result: true            # screen MCP + native tool results before they reach the model
+      background_completion: true  # screen delegated-agent payloads before the completion note
+      skill_body: true             # use-time screening of skill bodies loaded by skill_use; write-time authoring scan is unconditional and not governed by this
+      delegation_prompt: true      # CURRENTLY INERT — the delegation prompt is always scanned via prompt-classifier directly, not the gate; see docs/native-todo.md
+      memory_body: true            # read-time screening of sparked snippets, memory_recall hits, and drill-down session reads (memory-system spec §3.1); MEMORY.md rendered into the system prompt is NOT gated here — write-time + edit-ingest scanning cover it instead

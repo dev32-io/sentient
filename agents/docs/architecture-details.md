@@ -65,9 +65,9 @@ gateway/src/
   tests/           # tests separated from source — hard to find
 ```
 
-## File Size Limits
+## Decomposition
 
-When a file approaches 250 lines, proactively split it. A 300-line file is a bug.
+Split a file the moment its responsibilities diverge — let logical cohesion, not size, drive the boundary. A file doing more than one clear job wants splitting regardless of length; a long file with one tight responsibility does not.
 
 Split strategies:
 - Extract a helper function into its own file

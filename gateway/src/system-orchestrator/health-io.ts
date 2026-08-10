@@ -29,6 +29,7 @@ export const defaultHealthIO: HealthIO = {
       });
       sock.once("error", () => {
         clearTimeout(timer);
+        sock.destroy();
         resolve(false);
       });
     }),

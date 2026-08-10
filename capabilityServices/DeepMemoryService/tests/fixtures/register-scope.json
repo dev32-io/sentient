@@ -1,0 +1,15 @@
+{
+  "endpoint": "/register-scope",
+  "method": "POST",
+  "plane": "admin",
+  "note": "indexPath must resolve inside data_root. The <DATA_ROOT> token is substituted with the live storage.data_root at test time; on the wire the gateway sends a concrete absolute path and the response echoes the resolved path.",
+  "request": {
+    "scopeId": "user:alice",
+    "indexPath": "<DATA_ROOT>/user-alice/index.db"
+  },
+  "response": {
+    "scopeId": "user:alice",
+    "indexPath": "<DATA_ROOT>/user-alice/index.db",
+    "registered": true
+  }
+}

@@ -12,3 +12,10 @@ volumes:
   - ${HOST_CONFIG_DIR}/searxng/settings.yml:/etc/searxng/settings.yml:ro
 mem_limit_bytes: 536870912    # 512 MiB — searxng's resident set
 cpus: 0.5
+# NO host publishing, deliberately. Nothing on the host dials searxng: its only
+# consumer is the sibling searxng-mcp over sentient-internal, and its upstream
+# engine traffic goes out through egress-proxy. Publishing it would force a
+# non-internal network on (docker drops a publish when every attached network is
+# internal), which would hand the container that talks to ten third-party search
+# engines a direct route off the proxy. Health is `noop` in config.yaml for the
+# same reason — there is no host-side port to probe.

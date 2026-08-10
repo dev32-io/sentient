@@ -33,9 +33,7 @@ export interface LocalTtsSocket {
 // openLocalTtsSocket — owns the raw WS: connect-time query params, the
 // connect-timeout guard, and event wiring. Pure transport; synthesis
 // lifecycle (ready/pushText/audioFrames bookkeeping) lives in
-// local-tts-provider.ts, which supplies the handlers. Mirrors the
-// socket/protocol split already used by
-// hermes-adapter-client/acp-wire-socket.ts.
+// local-tts-provider.ts, which supplies the handlers.
 // ---------------------------------------------------------------------------
 
 export function openLocalTtsSocket(cfg: LocalTtsSocketConfig, handlers: LocalTtsSocketHandlers): LocalTtsSocket {

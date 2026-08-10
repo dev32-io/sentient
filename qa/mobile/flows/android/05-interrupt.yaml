@@ -5,13 +5,27 @@ tags:
 # 05-interrupt — send a long-reply prompt, assert streaming starts, confirm no
 # crash. Batch-safe.
 #
-# ⚠ FLAG (Android + iOS): the chat-interrupt button is gated on TTS audio state
-# (canInterrupt = connection.isSpeaking || audioState PROCESSING/ASSISTANT_SPEAKING/
-# INTERRUPTING), NOT on text-streaming cognition state. In a TTS-disabled session
-# (default emulator setup without a reachable local-tts service) the interrupt
-# button never appears during text streaming — so this flow can only prove the
-# send→stream path + no-crash here, not the interrupt tap. Full interrupt E2E
-# needs TTS enabled on a device with a reachable local-tts service.
+# This flow PASSES (driven 2026-07-30, Task 9e, 27s). What it proves is
+# send -> stream -> app alive. It does NOT prove interrupt.
+#
+# INTERRUPT ARM: STILL UNASSERTED — one live blocker, two dead ones.
+#
+# LIVE: `chat-interrupt` is gated on TTS audio state (canInterrupt =
+#   connection.isSpeaking || audioState PROCESSING/ASSISTANT_SPEAKING/
+#   INTERRUPTING), NOT on text-streaming cognition. The session must have
+#   `speak=true` AND an armed audio downlink (lazy-armed on the first
+#   `audio.start`) before the button exists to tap.
+#
+# DEAD — do not re-quote either:
+#   - D12 ("the gateway never answers `session.new`") is CLOSED (Task 9e). This
+#     flow was driven green against the fix:
+#     qa/mobile/evidence/2026-07-30-t9e-session-new/.
+#   - "A reachable local-tts service on the device" was never the blocker:
+#     local-tts is dialled by the GATEWAY (ws://127.0.0.1:8770, loopback,
+#     host-side); the device only receives the audio downlink over its existing WS.
+#
+# The assertions below are honest about covering send->stream+alive ONLY; the flow
+# does not pretend to tap interrupt.
 - launchApp
 - runFlow:
     when: { visible: { id: "login-backend-setup" } }
@@ -21,7 +35,9 @@ tags:
 - inputText: "tell me a very long story about the history of computing in great detail"
 - tapOn: { id: "chat-send" }
 - hideKeyboard
-# streaming bubble proves send→gateway→Hermes works — LLM budget.
+# streaming bubble proves send -> gateway -> native ReAct loop -> turn.text.delta.
+# LLM round-trip budget (the provider call, not a Hermes hop — Hermes is only a
+# delegated tool on 2.0).
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 40000

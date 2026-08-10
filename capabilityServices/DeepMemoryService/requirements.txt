@@ -1,0 +1,30 @@
+# Deep-memory Service — pinned dependencies.
+#
+# This file exists alongside pyproject.toml because the native launcher installs
+# from it directly (`pip install -r requirements.txt`), the same as the sibling
+# whisper-stt / local-tts services. Keep both files in sync: a runtime dep added
+# to pyproject.toml [project.dependencies] goes here too.
+#
+# PINNED VERSIONS verified against current PyPI releases at implementation time
+# (pinned-versions rule). Validated interpreter: Python 3.14.6 — the full engine
+# stack (mlx, mlx-embeddings, sqlite-vec + transitive sentencepiece/tokenizers)
+# installs and imports on cp314 arm64, proven end-to-end in T9b. The 3.11 pin on
+# local-tts is a mlx-AUDIO limitation only; it does not apply here.
+
+# --- Runtime ------------------------------------------------------------------
+
+# Async HTTP server (aiohttp.web). 3.x is the current major; cp314 wheels exist.
+aiohttp>=3.14,<4
+
+# YAML config loader.
+pyyaml>=6
+
+# --- Index engine (T9b) — ACTIVE ----------------------------------------------
+# The real engine (SQLite + FTS5 + sqlite-vec + MLX embeddings) uses these.
+# mlx-embeddings pulls a broad MLX toolchain (mlx-lm/vlm/audio, transformers,
+# tokenizers, sentencepiece) transitively — expected. Loading the pinned model
+# downloads a few hundred MB of weights on first run.
+sqlite-vec>=0.1.9,<0.2       # loadable SQLite vector extension (py3 wheels)
+mlx>=0.32,<0.34              # Apple-Silicon array framework (cp314 arm64 wheels)
+mlx-embeddings>=0.1.0,<0.2   # MLX embedding runtime (multilingual e5 model)
+numpy>=1.26

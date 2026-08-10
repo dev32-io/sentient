@@ -1,0 +1,23 @@
+2026-08-01T15:36:44.492 INFO  [ws:session-new] session.new.answered | sessionId="s-msay91hh-x7y921mg" requestId="f3a71909-78bd-4f64-ba20-1c9bfb4c7603" conversationId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6"
+2026-08-01T15:37:08.603 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" kind="conversational" seq=147 turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb"
+2026-08-01T15:37:08.604 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb"
+2026-08-01T15:37:08.604 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" trigger="user"
+2026-08-01T15:37:08.604 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" trigger="user" lastProcessedSeq=147
+2026-08-01T15:37:08.604 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" maxIterations=10 toolCount=29
+2026-08-01T15:37:08.605 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-08-01T15:37:08.605 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T15:37:08.606 INFO  [provider:openai] stream-start | model="deepseek-v4-flash:cloud" messageCount=6 toolCount=29
+2026-08-01T15:37:08.608 INFO  [tts:local-tts-socket] ws-opened
+2026-08-01T15:37:08.609 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="c624a6ca980346ec9dc38bb434fec506"
+2026-08-01T15:37:10.208 INFO  [provider:openai] stream-end | durationMs=1602 finishReason="stop" promptTokens=15477 cachedTokens=0 completionTokens=173 cacheHitRatio=0
+2026-08-01T15:37:10.208 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=10 cacheHitRatio=0
+2026-08-01T15:37:10.209 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" iterations=1 forceFinal=false
+2026-08-01T15:37:10.209 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::16a4b56e-7731-4941-b7eb-da494f814ae6" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" completed=true failed=false iterations=1
+2026-08-01T15:37:10.209 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb"
+2026-08-01T15:37:10.826 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" encoding="opus" sampleRate=48000
+2026-08-01T15:37:10.826 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" encoding="opus" sampleRate=48000 firstFrameMs=2221
+2026-08-01T15:37:10.828 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=2
+2026-08-01T15:37:10.828 INFO  [tts:local-tts] dispose
+2026-08-01T15:37:10.828 INFO  [tts:local-tts-socket] ws-closed
+2026-08-01T15:37:10.828 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" framesSent=2
+2026-08-01T15:37:10.828 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-msay91hh-x7y921mg" turnId="154873c9-cf59-4047-9a80-14a8a93ee5fb" frameCount=2 bytesSent=8906 elapsedMs=2223

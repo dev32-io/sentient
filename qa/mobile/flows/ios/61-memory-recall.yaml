@@ -1,0 +1,39 @@
+appId: io.dev32.sentient.debug
+tags:
+  - memory
+  - chat
+env:
+  # See _helpers/login.yaml for why the avatar id is a variable (server-minted).
+  QA_USER_ID: u_0417d3b0
+---
+# 61-memory-recall — native memory RECALL (memory-system S1/S2, spec §5/§6).
+#
+# A NEW session renders the user's MEMORY.md into the system prompt at its first
+# turn, so "what do you remember about me?" reflects the fact written by
+# 60-memory-write WITHOUT a tool call (prompt-rendered; deep-memory spark may also
+# fire). Batch order matters: 60 (write) runs before 61 (recall), and the fresh
+# `new-chat` session here is what picks up the just-written MEMORY.md — the write's
+# own session had already rendered its (pre-write) prompt block.
+#
+# Reads only; no house/state mutation, so no restore.
+- runFlow: _helpers/login.yaml
+- tapOn: { id: "new-chat" }
+- extendedWaitUntil:
+    visible: { id: "composer-input" }
+    timeout: 3000
+- tapOn: { id: "composer-input" }
+- inputText: "What do you remember about me?"
+- tapOn: { id: "chat-send" }
+- tapOn: { id: "chat-message-list" }
+# Assistant reply is provider-paced (fresh session) — long budget, same reason as
+# the send flows.
+- extendedWaitUntil:
+    visible: { id: "assistant-bubble" }
+    timeout: 45000
+# The reply must reference the fact written by 60. Maestro's text matcher is
+# full-string regex (IGNORE_CASE), so anchor the substring with `.*…*` to match
+# it inside the longer reply bubble.
+- extendedWaitUntil:
+    visible: ".*[Cc]ilantro.*"
+    timeout: 3000
+- takeScreenshot: "61-memory-recall"

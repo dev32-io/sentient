@@ -49,12 +49,10 @@ import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import io.sentient.android.chat.brand.InitialAvatar
 import io.sentient.android.chat.brand.SentientMark
-import io.sentient.android.chat.tool.ToolPillStrip
 import io.sentient.android.chat.voice.AvatarRipple
 import io.sentient.android.chat.voice.bubbleSpeakingWave
 import io.sentient.android.chat.voice.MarkMode
 import io.sentient.android.theme.LocalTokens
-import io.sentient.mobilesdk.connectors.TaskSnapshotItem
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.sdk.ChatMessage
 
@@ -158,19 +156,15 @@ private fun BubbleBody(message: ChatMessage, isUser: Boolean, avatarMode: MarkMo
     ) {
         val showPulse = message.streaming && message.content.isEmpty()
         if (showPulse) {
-            // Still thinking, no answer text yet — show the pulse plus any tool
-            // pills already running so they surface live, before any text arrives
-            // (webui parity — show info as early as possible).
-            Column(verticalArrangement = Arrangement.spacedBy(tokens.space.xs)) {
-                PulseDots()
-                if (message.tools.isNotEmpty()) ToolPillStrip(message.tools)
-            }
+            // Still thinking, no answer text yet — show the pulse. Tool rows no
+            // longer render here: they live in the composer's task strip, which
+            // has no bubble to anchor to (see ComposerTaskStrip).
+            PulseDots()
         } else {
             BubbleText(
                 text = message.content,
                 streaming = message.streaming,
                 cutoffKind = message.cutoffKind,
-                tools = message.tools,
             )
         }
     }
@@ -181,7 +175,6 @@ private fun BubbleText(
     text: String,
     streaming: Boolean,
     cutoffKind: String?,
-    tools: List<TaskSnapshotItem> = emptyList(),
 ) {
     val tokens = LocalTokens.current
     // GFM rendered to Compose (mikepenz). The data layer (mobile-data Reveal ticker)
@@ -222,16 +215,24 @@ private fun BubbleText(
                 ),
             ),
         )
-        if (cutoffLabel(cutoffKind) != null) {
-            Text(text = "⏹ interrupted", color = Color(Colors.ink3), fontSize = tokens.type.sm)
+        cutoffLabel(cutoffKind)?.let { label ->
+            Text(text = "$CUTOFF_GLYPH $label", color = Color(Colors.ink3), fontSize = tokens.type.sm)
         }
-        if (tools.isNotEmpty()) ToolPillStrip(tools)
     }
 }
 
-/** Interrupt / barge-in both surface as "interrupted"; null when not cut short. */
+private const val CUTOFF_GLYPH = "⏹"
+
+/**
+ * Cut-short marker copy; null when not cut short. The two gestures read
+ * differently on purpose and match webui's InterruptChip word-for-word:
+ * "interrupted" is the Stop button, "barge-in" is the user talking over the
+ * reply. Collapsing them told the user their tap stopped a reply their voice
+ * had already cut off.
+ */
 private fun cutoffLabel(cutoffKind: String?): String? = when (cutoffKind) {
-    "interrupt", "barge-in" -> "interrupted"
+    "barge-in" -> "barge-in"
+    "interrupt" -> "interrupted"
     else -> null
 }
 

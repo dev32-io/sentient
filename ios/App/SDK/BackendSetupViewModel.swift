@@ -26,7 +26,7 @@ final class BackendSetupViewModel: ObservableObject {
 
     init(existing: BackendConfig?, reconfigure: @escaping (BackendConfig) -> Void) {
         self.host = existing?.host ?? ""
-        self.port = existing.map { String($0.port) } ?? "8888"
+        self.port = existing.map { String($0.port) } ?? "443"
         self.security = existing?.security ?? .tlsValid
         self.reconfigure = reconfigure
     }

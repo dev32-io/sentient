@@ -15,7 +15,7 @@ const log = getLog(["sentient", "tts", "streaming-tts-synthesizer"]);
 //
 // Depends only on the abstract TTSProvider (tts-types.ts), so it drives ANY
 // provider behind that interface — the local LocalTTSService today.
-// The handler (speak-effect.ts) sees only frames in / frames out.
+// The caller (runtime/turn-voice.ts) sees only frames in / frames out.
 // Provider-specific session management lives entirely in this file.
 // ---------------------------------------------------------------------------
 

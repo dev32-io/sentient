@@ -37,18 +37,21 @@ export interface Connector {
   onCancelled?(): void;
 }
 
-/** Payload extracted from the `session.ready` message. */
+/**
+ * Payload extracted from the `session.ready` message.
+ *
+ * The pre-2.0 `playback { minEagerEndMs, preemptFadeoutMs }` pair is
+ * deliberately absent: both values existed only to tune the retired preempt
+ * policy, and §7.2 forbids preemption outright. `createTurnAudioQueue` is a
+ * strict FIFO with no tunables, so the SDK does not surface them even if a
+ * gateway build still sends them.
+ */
 export interface SessionReadyPayload {
   sessionId: string;
   audioEncoding: string;
   inputSampleRate: number;
   outputSampleRate: number;
   enabledEffects: string[];
-  /** Playback tunables sent by the gateway. Absent on older builds. */
-  playback?: {
-    minEagerEndMs: number;
-    preemptFadeoutMs: number;
-  };
 }
 
 /**
@@ -138,6 +141,25 @@ export interface SentientSDKConfig {
    * and, when the user opts in, call `sdk.forceReconnect()` to retry.
    */
   onConnectionLost?: () => void;
+  /**
+   * The gateway REFUSED a command this SDK sent (gateway spec §3.7).
+   *
+   * Every refusal is explicit — the gateway never drops one silently, because
+   * silence is indistinguishable from a lost network and would leave the UI
+   * waiting on a reply that is never coming. The four reasons and what a
+   * consumer should do with each:
+   *
+   *  - `session_busy` — another window won a simultaneous input race. The
+   *    message was NOT sent. Retryable immediately.
+   *  - `stale_generation` — the command was issued against a session this tab
+   *    has since left. Do not retry it; it belongs to the old conversation.
+   *  - `not_attached` — the command needed a session and this tab is in none.
+   *  - `credential_expired` — the token expired; re-authenticate.
+   *
+   * `pendingId` is echoed when the refused frame carried one, so a consumer
+   * that tracks optimistic state can settle the exact message.
+   */
+  onCommandRejected?: (rejection: { command: string; reason: string; pendingId?: string }) => void;
 }
 
 /**

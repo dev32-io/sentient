@@ -13,8 +13,9 @@ const PROFILE_BODY = {
   model: { provider: "ollama-cloud", id: "m1" },
   voice: { provider: "local-tts", id: "v-old" },
   audio: { ttsEnabled: true, channel: "voice" },
+  memory: { spark: true, dreaming: true },
   persona: { template: "default", overrides: "" },
-  tools: { enabled: {} },
+  tools: {},
   compression: { threshold: 0.5 },
   advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
 };

@@ -27,7 +27,7 @@ private const val REVEAL_TICK_MS = 16L
  * Projects the single chat list a screen renders for the ACTIVE conversation:
  * folds [ConversationRepository.liveEvents] → reveal (typewriter ticker runs inside this
  * flow), then combines committed [ConversationRepository.timeline] + the revealed bubble +
- * the VM's [pending] outbound cache. Applies one-bubble-per-cycle (suppress the committed
+ * the VM's [pending] outbound cache. Applies one-bubble-per-reply (suppress the committed
  * twin while its live bubble is on screen) and reconcile-by-pendingId.
  *
  * Per-conversation: the reveal fold + ticker live inside the returned flow, so they are
@@ -72,34 +72,49 @@ class ObserveChatUseCase(
         combine(
             conversation.timeline,
             revealFlow(),
-            pending,
+            // Paired to stay within combine's 5-flow arity — no relationship between
+            // the two beyond both being plain per-emission lists.
+            combine(pending, conversation.tasks) { pendingMsgs, tasks -> pendingMsgs to tasks },
             historyLoadingFlow(),
             conversation.echoedPendingIds,
-        ) { committed, rs, pendingMsgs, loading, echoedPendingIds ->
+        ) { committed, rs, (pendingMsgs, tasks), loading, echoedPendingIds ->
             // Reconcile against the LIVE echo's echoedPendingIds, not committed.pendingId:
             // cold REST snapshots carry pendingId=null (there is no DB), so
             // committed.mapNotNull { it.pendingId } would be empty and the optimistic
             // bubble would never drop. echoedPendingIds is sourced from the SDK's in-memory
             // timeline before any null-strip (see ConversationRepository.echoedPendingIds).
             val visiblePending = pendingMsgs.filter { it.id !in echoedPendingIds }
-            val liveCycleId = rs.bubble?.cycleId
+            // Hide ONLY the committed row this live bubble is painting, matched on the
+            // reply and nothing else.
+            //
+            // The turn fallback this replaces was the bug: a row with no replyId — a
+            // user row, a tool tile, an entry written before the column existed —
+            // matched on turnId alone and vanished behind the bubble for the length of
+            // the reveal. The gateway now folds a reply into ONE committed item
+            // carrying its own replyId, so there is exactly one row to hide and no
+            // reason to guess.
+            val bubble = rs.bubble
             val visibleCommitted =
-                if (liveCycleId == null) committed
-                else committed.filter { it.cycleId != liveCycleId }
+                if (bubble?.replyId == null) {
+                    committed
+                } else {
+                    committed.filter { it.replyId != bubble.replyId }
+                }
             val liveBubble = rs.bubble?.let {
                 ChatMessage(
                     ts = 0,
                     role = "assistant",
                     content = rs.visibleContent(),
                     streaming = true,
-                    cycleId = it.cycleId,
+                    turnId = it.turnId,
+                    replyId = it.replyId,
                 )
             }
             ChatModel(
                 committed = visibleCommitted,
                 pending = visiblePending,
                 live = liveBubble,
-                tasks = rs.tasks,
+                tasks = tasks,
                 historyLoading = loading,
                 reconciledPendingIds = echoedPendingIds,
             )

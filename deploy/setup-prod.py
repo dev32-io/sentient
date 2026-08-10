@@ -532,10 +532,7 @@ def build_images(backend: Optional[str]) -> bool:
         return True
 
     info("Building images. First run takes ~10-20 min (Hermes image bakes).")
-    # Explicit working set — skip signal-cli (optional Signal bridge): its
-    # upstream Dockerfile currently fails on a libsignal-client jar version
-    # mismatch and it's not part of the core voice/chat path. Add it back here
-    # once that pin is fixed.
+    # Explicit working set — only the services named above are built here.
     profile_args = [arg for p in profiles for arg in ("--profile", p)]
     cmd = [
         "docker", "compose", "-f", str(COMPOSE_FILE),

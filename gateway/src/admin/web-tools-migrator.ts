@@ -1,3 +1,4 @@
+import type { ToolPermission } from "@sentient/config";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { ProfileV1 } from "../profile-store/profile-types.js";
@@ -12,8 +13,13 @@ export interface WebToolsMigrationDeps {
 
 /**
  * One-shot, idempotent boot migration: rename per-user
- * `tools.enabled.duckduckgo` to `tools.enabled.searxng` + `tools.enabled.fetch`
- * (both initialized to `[]`, meaning "inherit catalog defaults").
+ * `tools.permissions.duckduckgo` to `tools.permissions.searxng` +
+ * `tools.permissions.fetch` (both initialized to `{}`, meaning "inherit").
+ *
+ * Structurally the same rename this migration always did — only the map's
+ * value shape changed (per-tool `ToolPermission` map instead of a narrowing
+ * `string[]`) when `tools.enabled` was retired for `tools.permissions` (see
+ * profile-types.ts). No enforcement semantics live here.
  *
  * No-op for users whose profile already has the new keys. Best-effort:
  * per-user failures log and continue.
@@ -36,19 +42,21 @@ export async function migrateWebToolsEnabled(deps: WebToolsMigrationDeps): Promi
       continue;
     }
     const profile = profileResult.value;
-    const enabled = profile.tools.enabled;
-    const hasLegacy = "duckduckgo" in enabled;
+    const permissions = profile.tools.permissions;
+    // An unset table has no keys to rename, and writing one here would turn
+    // "never set → inherit" into "these five servers, everything else off".
+    const hasLegacy = permissions !== undefined && "duckduckgo" in permissions;
     if (!hasLegacy) {
       log.debug("migration.noop", { userId: user.userId });
       continue;
     }
 
-    const { duckduckgo: _dropped, ...rest } = enabled;
-    const next: Record<string, string[]> = rest;
-    if (!("searxng" in next)) next.searxng = [];
-    if (!("fetch" in next)) next.fetch = [];
+    const { duckduckgo: _dropped, ...rest } = permissions;
+    const next: Record<string, Record<string, ToolPermission>> = rest;
+    if (!("searxng" in next)) next.searxng = {};
+    if (!("fetch" in next)) next.fetch = {};
 
-    const updated: ProfileV1 = { ...profile, tools: { ...profile.tools, enabled: next } };
+    const updated: ProfileV1 = { ...profile, tools: { ...profile.tools, permissions: next } };
     const saveResult = await deps.profileStore.save(updated);
     if (!saveResult.ok) {
       log.warn("migration.save-error", { userId: user.userId, error: saveResult.error });

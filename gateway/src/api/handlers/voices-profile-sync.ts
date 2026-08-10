@@ -12,10 +12,6 @@ const DEFAULT_VOICE_ID = "default";
 
 export interface ProfileSyncDeps {
   readonly profileStore: ProfileStore;
-  /** Re-applies the per-user voice to the live PersonSession — called after
-   *  every `voice.id`-changing write so a create/delete takes effect on the
-   *  next TTS turn without a restart. */
-  readonly refreshVoice: (userId: string) => Promise<void>;
 }
 
 /** Sets `profile.voice = {provider:"local-tts", id: voiceId}` and live-propagates it.
@@ -56,7 +52,6 @@ async function writeVoiceId(deps: ProfileSyncDeps, userId: string, voiceId: stri
   const saved = await deps.profileStore.save(updated);
   if (!saved.ok) return mapProfileStoreError(saved.error);
 
-  await deps.refreshVoice(userId);
   return { ok: true, value: undefined };
 }
 

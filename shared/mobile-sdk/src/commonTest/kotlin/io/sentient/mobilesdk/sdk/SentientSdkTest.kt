@@ -12,7 +12,7 @@
 //
 // NOTE: cognition and transcript fields are NOT exposed on the new surfaces
 // (connection/timeline/events). Tests that only exercised those SdkState-only
-// fields (cognition_thinking_on_cycle_started_idle_on_completed,
+// fields (cognition_thinking_on_turn_started_idle_on_completed,
 // is_speaking_true_between_audio_start_and_done streaming bubble) were
 // pinning the removed aggregate; they are deleted here.
 // ---------------------------------------------------------------------------
@@ -111,18 +111,18 @@ class SentientSdkTest {
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
-        fake.emit(WsIncoming.Text("{\"type\":\"cycle.started\",\"cycleId\":\"c1\"}"))
-        fake.emit(WsIncoming.Text("{\"type\":\"message.delta\",\"cycleId\":\"c1\",\"delta\":\"par\"}"))
-        fake.emit(WsIncoming.Text("{\"type\":\"message.delta\",\"cycleId\":\"c1\",\"delta\":\"tial\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.started\",\"turnId\":\"c1\",\"trigger\":\"user\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.text.delta\",\"turnId\":\"c1\",\"text\":\"par\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.text.delta\",\"turnId\":\"c1\",\"text\":\"tial\"}"))
 
-        // committed entry arrives, then message.done clears inflight
+        // committed entry arrives, then turn.completed clears inflight
         fake.emit(
             WsIncoming.Text(
                 "{\"type\":\"conversation.entry\",\"item\":" +
                     "{\"kind\":\"assistant\",\"ts\":200,\"content\":\"partial\"}}",
             ),
         )
-        fake.emit(WsIncoming.Text("{\"type\":\"message.done\",\"cycleId\":\"c1\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.completed\",\"turnId\":\"c1\"}"))
 
         // Timeline is committed-only (no streaming bubble); wait for the entry.
         sdk.timeline.first { msgs -> msgs.any { it.role == "assistant" && it.content == "partial" } }
@@ -138,11 +138,11 @@ class SentientSdkTest {
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
-        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.start\",\"cycleId\":\"c1\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.audio.start\",\"turnId\":\"c1\",\"encoding\":\"pcm\",\"sampleRate\":24000}"))
         sdk.connection.first { it.isSpeaking }
         assertTrue(sdk.connection.value.isSpeaking)
 
-        fake.emit(WsIncoming.Text("{\"type\":\"connector.audio.done\",\"cycleId\":\"c1\"}"))
+        fake.emit(WsIncoming.Text("{\"type\":\"turn.audio.done\",\"turnId\":\"c1\"}"))
         sdk.connection.first { !it.isSpeaking }
         assertTrue(!sdk.connection.value.isSpeaking)
     }

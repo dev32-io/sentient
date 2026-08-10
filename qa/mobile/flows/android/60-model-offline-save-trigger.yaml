@@ -10,6 +10,7 @@ tags:
 # picked model, NOT reverted), no crash. The runner restores connectivity + runs
 # 60-...-recover after. fault-armed; excluded from the default batch.
 - tapOn: { id: "settings-model-save" }
+# 15000ms: apply retry / offline model save round-trip to the gateway
 - extendedWaitUntil:
     visible: { id: "settings-apply-notice" }
     timeout: 15000

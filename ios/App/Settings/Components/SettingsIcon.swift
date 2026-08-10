@@ -25,7 +25,6 @@ enum SettingsIcon {
     case systemPrompt
     case advanced
     case account
-    case devices
     case members
     case secrets
     case diagnostics
@@ -42,7 +41,6 @@ enum SettingsIcon {
         case .systemPrompt: return "book"
         case .advanced: return "slider.horizontal.3"
         case .account: return "person.circle"
-        case .devices: return "iphone"
         case .members: return "person.3"
         case .secrets: return "key"
         case .diagnostics: return "waveform.path.ecg"

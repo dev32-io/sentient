@@ -1,33 +1,50 @@
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
+import { createLogger } from "../logger.ts";
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
+const log = createLogger(["sentient", "sdk", "connectors", "assistant-audio-response"]);
+
+/** Wire encoding of the outbound TTS byte stream, read off `turn.audio.start`. */
+export interface AssistantAudioFormat {
+  readonly encoding: "opus" | "pcm";
+  readonly sampleRate: number;
+}
 
 export interface AssistantAudioResponseConfig {
-  /** Called for each incoming audio frame (raw PCM bytes). cycleId ties the
-   *  frame to the cycle that produced it (from the preceding audio.start). */
-  onAudioFrame?: (frame: Uint8Array, cycleId: string) => void;
-  /** Called when a new audio stream starts for the given cycle. */
-  onAudioStart?: (cycleId: string) => void;
-  /** Called when the audio stream completes normally for the given cycle. */
-  onAudioDone?: (cycleId: string) => void;
-  /** Called when the gateway signals mid-stream playback halt (barge-in
-   *  or interrupt). Client should drop any queued/buffered audio now so
-   *  the user stops hearing the assistant immediately. Further incoming
-   *  frames for the current stream are suppressed automatically; the
-   *  next `connector.audio.start` re-enables playback. */
-  onPlaybackStop?: (reason: "barge-in" | "interrupt", cycleId: string) => void;
+  /** One outbound audio frame (payload bytes, header already peeled by the
+   *  router). `turnId` comes from the most recent `turn.audio.start` — the
+   *  binary frame itself carries no turn id. */
+  onAudioFrame?: (frame: Uint8Array, turnId: string) => void;
+  /** A new audio stream started. `format` is omitted if the gateway did not
+   *  send both fields — the connector never invents a codec or a rate. */
+  onAudioStart?: (turnId: string, format?: AssistantAudioFormat) => void;
+  /** The audio stream for this turn completed normally. */
+  onAudioDone?: (turnId: string) => void;
+  /** Gateway signalled a mid-stream playback halt. Drop queued audio NOW.
+   *  Emitted ONLY on barge-in (mic onset) or interrupt (UI Stop) — a new
+   *  turnId never produces this frame (spec §4.7 / §7.2). */
+  onPlaybackStop?: (reason: "barge-in" | "interrupt", turnId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
-// AssistantAudioResponseConnector — receives assistant audio from gateway.
+// AssistantAudioResponseConnector — receives assistant TTS audio.
 //
 // Capability: "audio.output"
 // Direction: output
 //
-// Receives: connector.audio.start, binary audio frames, connector.audio.done
-// On connector.cancelled: immediately stop, dump buffer.
+// Receives (2.0 wire contract):
+//   turn.audio.start  → open a stream, remember its turnId
+//   binary frames     → payload bytes attributed to the open stream
+//   turn.audio.done   → close the stream
+//   playback.stop     → user-initiated halt; suppress frames until the next start
+//
+// FRAME ATTRIBUTION CONTRACT: outbound binary audio carries no turn id, so
+// the gateway emits one turn's audio at a time, delimited by
+// turn.audio.start / turn.audio.done. Overlapping streams would make frames
+// unattributable — the connector WARNs loudly rather than silently
+// mislabelling the tail of the previous turn. Sequential EMISSION does not
+// mean sequential PLAYBACK: the next turn's frames still arrive while the
+// previous turn's audio is buffered in the output pipeline, which is exactly
+// what TurnAudioQueue exists to serialize (§7.2).
 // ---------------------------------------------------------------------------
 
 export class AssistantAudioResponseConnector implements Connector {
@@ -38,8 +55,8 @@ export class AssistantAudioResponseConnector implements Connector {
   private unsubs: (() => void)[] = [];
   private isReceiving = false;
   private isCancelled = false;
-  /** cycleId of the currently active audio stream (set on audio.start). */
-  private activeCycleId = "";
+  /** turnId the currently arriving binary frames belong to. */
+  private activeTurnId = "";
 
   constructor(config: AssistantAudioResponseConfig = {}) {
     this.config = config;
@@ -49,42 +66,58 @@ export class AssistantAudioResponseConnector implements Connector {
     this.isCancelled = false;
 
     this.unsubs.push(
-      sdk.onMessage("connector.audio.start", (msg) => {
-        const m = msg as { cycleId?: string };
-        this.activeCycleId = m.cycleId ?? "";
+      sdk.onMessage("turn.audio.start", (msg: unknown) => {
+        const m = msg as { turnId?: string; encoding?: string; sampleRate?: number };
+        if (this.isReceiving) {
+          log.warn("audio-start-while-receiving", {
+            reason: "overlapping turn audio streams — frames cannot be attributed",
+            previousTurnId: this.activeTurnId,
+            turnId: m.turnId ?? "",
+          });
+        }
+        this.activeTurnId = m.turnId ?? "";
         this.isReceiving = true;
         this.isCancelled = false;
-        this.config.onAudioStart?.(this.activeCycleId);
+        const { encoding, sampleRate } = m;
+        // Annotated so the narrowed literal union survives object-literal
+        // widening — the connector never invents a codec or a rate.
+        const format: AssistantAudioFormat | undefined =
+          (encoding === "opus" || encoding === "pcm") && typeof sampleRate === "number"
+            ? { encoding, sampleRate }
+            : undefined;
+        log.debug("audio-start", { turnId: this.activeTurnId, encoding, sampleRate });
+        this.config.onAudioStart?.(this.activeTurnId, format);
       }),
     );
 
     this.unsubs.push(
       sdk.onBinary((data: ArrayBuffer) => {
         if (!this.isReceiving || this.isCancelled) return;
-        this.config.onAudioFrame?.(new Uint8Array(data), this.activeCycleId);
+        this.config.onAudioFrame?.(new Uint8Array(data), this.activeTurnId);
       }),
     );
 
     this.unsubs.push(
-      sdk.onMessage("connector.audio.done", (msg) => {
-        const m = msg as { cycleId?: string };
-        const doneId = m.cycleId ?? this.activeCycleId;
+      sdk.onMessage("turn.audio.done", (msg: unknown) => {
+        const m = msg as { turnId?: string };
+        const doneTurnId = m.turnId ?? this.activeTurnId;
         this.isReceiving = false;
-        if (!this.isCancelled) {
-          this.config.onAudioDone?.(doneId);
-        }
+        log.debug("audio-done", { turnId: doneTurnId, suppressed: this.isCancelled });
+        if (!this.isCancelled) this.config.onAudioDone?.(doneTurnId);
       }),
     );
 
     this.unsubs.push(
-      sdk.onMessage("playback.stop", (msg) => {
-        const m = msg as { cycleId?: string; reason?: "barge-in" | "interrupt" };
-        // Mark this stream dropped. `isReceiving` stays false until a
-        // fresh `connector.audio.start` arrives — the next cycle's
-        // audio re-enables playback automatically.
+      sdk.onMessage("playback.stop", (msg: unknown) => {
+        const m = msg as { turnId?: string; reason?: "barge-in" | "interrupt" };
+        // Mark the stream dropped. `isReceiving` stays false until a fresh
+        // turn.audio.start arrives — the next turn's audio re-enables playback
+        // automatically.
         this.isCancelled = true;
         this.isReceiving = false;
-        this.config.onPlaybackStop?.(m.reason ?? "barge-in", m.cycleId ?? "");
+        const reason = m.reason ?? "barge-in";
+        log.info("playback-stop", { reason, turnId: m.turnId ?? "" });
+        this.config.onPlaybackStop?.(reason, m.turnId ?? "");
       }),
     );
   }
@@ -94,12 +127,12 @@ export class AssistantAudioResponseConnector implements Connector {
     this.unsubs = [];
     this.isReceiving = false;
     this.isCancelled = false;
-    this.activeCycleId = "";
+    this.activeTurnId = "";
   }
 
   onCancelled(): void {
     this.isCancelled = true;
     this.isReceiving = false;
-    this.activeCycleId = "";
+    this.activeTurnId = "";
   }
 }

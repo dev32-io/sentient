@@ -1,5 +1,4 @@
 import { getLog } from "../logging/logger.js";
-import type { PolicyDecision, PolicyEngine } from "../security/policy-engine.js";
 import {
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -20,7 +19,12 @@ export interface ToolHandler {
 export interface ToolContext {
   sessionId: string | null;
   userId: string | null;
-  role: "adult" | "child" | "guest" | "user";
+  /** Read by the tools that are only MEANINGFUL on one channel — today just
+   *  `identify-user.ts`, which owns that constraint itself because no
+   *  permission table can express "only during a voice session" (it is
+   *  per-session, not per-user or per-role). Carries no authorization weight:
+   *  who may hold a tool on this socket is decided by `delegated-tool-tier.ts`
+   *  before the registry is built. */
   sessionChannel: "voice" | "text";
 }
 
@@ -29,14 +33,61 @@ export interface ToolRegistry {
   get(name: string): ToolHandler | null;
 }
 
+/**
+ * WHERE THE AUTHORIZATION IS, since it is deliberately not in this file.
+ *
+ * A `tools/call` here has already passed the one gate that applies to it: the
+ * registry only ever contains tools `external-tools/delegated-tool-tier.ts`
+ * admitted, and it admits only the `read` tier — the tier every role reaches
+ * and whose default permission is prompt-free. That is the boundary for the
+ * gateway's own HOSTED tools, which run in-process with no human to ask.
+ * PROXIED catalog tools are a different path: `tools/proxied-catalog-tool.ts`
+ * dispatches them through the DELEGATOR's own `ToolBroker`, whose role gate and
+ * permission table mediate every one.
+ *
+ * There used to be a second, name-keyed policy evaluation here, over
+ * `gateway/mcp-policy.yaml`. Its `confirm` verdict auto-approved — there is
+ * nobody on a delegated socket to prompt — so it could only ever deny, and
+ * everything it denied the tier filter already withholds. Two classifications
+ * of the same tools that must agree is a thing that eventually does not.
+ */
 export interface McpServerDeps {
   registry: ToolRegistry;
-  policy: PolicyEngine;
   contextFor(connectionId: string): ToolContext;
+  /**
+   * Re-derive any dynamic part of the registry before answering `tools/list`.
+   *
+   * The gateway's own hosted tools are fixed at construction, but the PROXIED
+   * catalog tier is not: an addon that came up after the gateway did would
+   * otherwise stay invisible until a restart, and one that went away would
+   * stay advertised. Awaited on the LIST path only — a `tools/call` names a
+   * tool the caller has already listed, and re-dialing the whole catalog
+   * before every call would put the catalog's connect timeouts on the inner
+   * loop of a delegated run.
+   *
+   * MUST NOT throw and MUST be bounded by its own implementation; a rejection
+   * here is caught and the previous surface answers.
+   */
+  refreshTools?: () => Promise<void>;
+}
+
+/** Refresh the dynamic tool tier without ever failing the listing: an
+ *  unreachable catalog leaves the previous surface in place, which degrades the
+ *  delegated agent to fewer tools rather than closing its connection. */
+async function refreshSafely(deps: McpServerDeps): Promise<void> {
+  if (!deps.refreshTools) return;
+  try {
+    await deps.refreshTools();
+  } catch (err: unknown) {
+    log.warn("tools/list.refresh-failed", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
- * Handle one JSON-RPC request. Pure (no I/O). Caller owns the transport.
+ * Handle one JSON-RPC request. The only I/O it may do is `refreshTools` on the
+ * listing path; the caller owns the transport.
  */
 export async function handleRpc(
   req: JsonRpcRequest,
@@ -58,6 +109,7 @@ export async function handleRpc(
   }
 
   if (req.method === "tools/list") {
+    await refreshSafely(deps);
     return {
       jsonrpc: "2.0",
       id,
@@ -94,28 +146,6 @@ export async function handleRpc(
         : {};
     try {
       const ctx = deps.contextFor(connectionId);
-      const decision: PolicyDecision = deps.policy.evaluate({
-        tool: params.name,
-        userId: ctx.userId,
-        role: ctx.role,
-        sessionChannel: ctx.sessionChannel,
-        args,
-      });
-      if (decision.action === "deny") {
-        log.debug("tools/call.denied", { tool: params.name, rule: decision.rule, reason: decision.reason });
-        return {
-          jsonrpc: "2.0",
-          id,
-          result: {
-            content: [{ type: "text", text: `denied: ${decision.reason ?? "policy restriction"}` }],
-            isError: true,
-          },
-        };
-      }
-      // confirm: auto-approve for now (full UX in Phase 2)
-      if (decision.action === "confirm") {
-        log.debug("tools/call.confirmed-auto", { tool: params.name, rule: decision.rule });
-      }
       const result = await handler.run(args, ctx);
       return { jsonrpc: "2.0", id, result };
     } catch (err: unknown) {

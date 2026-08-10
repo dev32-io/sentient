@@ -1,7 +1,7 @@
 import { audioPrefsPatchSchema } from "@sentient/audio-prefs";
 import { z } from "zod";
 import { modelProviderSchema, voiceProviderSchema } from "../../profile-store/profile-types.js";
-import type { SessionRouter } from "../../session-router.js";
+import type { ActiveSessionLookup } from "../active-session-lookup.js";
 import type { ToolHandler } from "../mcp-server.js";
 
 const patchSchema = z
@@ -24,7 +24,7 @@ export interface UserSettingsControls {
 
 export interface UpdateUserSettingsDeps {
   controls: UserSettingsControls;
-  router: SessionRouter;
+  router: ActiveSessionLookup;
 }
 
 export function createUpdateUserSettingsTool(deps: UpdateUserSettingsDeps): ToolHandler {

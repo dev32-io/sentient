@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gatewayStateDir } from "../../config/startup-config.js";
 import { getLog } from "../../logging/logger.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 
@@ -25,11 +26,21 @@ const REF_LEN = 6;
 const CRASH_SENTINEL = "=== CRASH ===";
 
 /**
- * Default base directory for client log files (overridden by env in tests).
+ * Sub-path of the client-log dir under the gateway's writable state root
+ * (`~/.sentient/gateway/clientLogs`), overridable by `CLIENT_LOGS_DIR`.
+ *
+ * Uploaded logs are mutable STATE, so they live under the user-owned state
+ * root — the same rule the gateway's own log dir follows. This used to default
+ * to "/app/clientLogs", the path the dir was MOUNTED at back when the gateway
+ * shipped as a container; the native binary has no /app and `/` is read-only,
+ * so every upload 500'd on `EROFS: mkdir '/app'` and mobile vitals was dead in
+ * dev and prod alike. Resolve through `gatewayStateDir` — never hardcode a
+ * writable absolute path.
+ *
  * Growth of clientLogs/ is operator-managed: external rotation/cleanup is
  * deferred to the operator (e.g. logrotate, cron). No automatic pruning here.
  */
-const DEFAULT_CLIENT_LOGS_DIR = "/app/clientLogs";
+const CLIENT_LOGS_STATE_DIR = "clientLogs";
 
 /** Sub-directory under CLIENT_LOGS_DIR for mobile uploads. */
 const MOBILE_SUBDIR = "mobile";
@@ -92,7 +103,9 @@ async function handleDiagnostics(deps: DiagnosticsDeps, request: Request): Promi
   const crashTag = crashed ? "-crash" : "";
   const name = `${safe(userId)}-${ts}${crashTag}-${ref}.log`;
 
-  const clientLogsDir = process.env.CLIENT_LOGS_DIR ?? DEFAULT_CLIENT_LOGS_DIR;
+  // Resolved per request, not at module load, so an env change (tests, an
+  // operator override) is honoured without re-importing the module.
+  const clientLogsDir = process.env.CLIENT_LOGS_DIR ?? gatewayStateDir(CLIENT_LOGS_STATE_DIR);
   const dir = join(clientLogsDir, MOBILE_SUBDIR);
   try {
     await mkdir(dir, { recursive: true });

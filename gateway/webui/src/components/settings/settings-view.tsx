@@ -27,7 +27,6 @@ import { ToolsPane } from "./panes/tools-pane.tsx";
 import { AdvancedPane } from "./panes/advanced-pane.tsx";
 import { AccountPane } from "./panes/account-pane.tsx";
 import { MembersPane } from "./panes/members-pane.tsx";
-import { DevicesPane } from "./panes/devices-pane.tsx";
 import { SecretsPane } from "./panes/secrets-pane.tsx";
 import { GetAppPane } from "./panes/get-app-pane.tsx";
 
@@ -75,6 +74,13 @@ export function SettingsView({
 
   const isAuthed = auth.status === "authenticated";
   const token = isAuthed ? auth.token : "";
+  // DERIVED from the record the gateway sent with this session's `auth.ok` /
+  // `/me` — never latched, never stored, and re-derived on every sign-in. It
+  // decides what the sidebar DRAWS; every admin call it leads to is still
+  // resolved against the record server-side. Defaults to false when the view
+  // renders before auth settles, so the admin surface appears only once the
+  // record has actually said so.
+  const isAdmin = isAuthed && auth.user.isAdmin;
 
   useEffect(() => {
     if (!isAuthed || profileOriginal) return;
@@ -91,10 +97,11 @@ export function SettingsView({
 
   const profileDiff = useMemo(() => {
     if (!profileDraft || !profileOriginal) {
-      return { audio: false, model: false, tools: false, advanced: false };
+      return { audio: false, memory: false, model: false, tools: false, advanced: false };
     }
     return {
       audio: !eq(profileDraft.audio, profileOriginal.audio),
+      memory: !eq(profileDraft.memory, profileOriginal.memory),
       model: !eq(profileDraft.model, profileOriginal.model),
       tools: !eq(profileDraft.tools, profileOriginal.tools),
       advanced:
@@ -123,11 +130,15 @@ export function SettingsView({
   // Profile sub-trees coalesce into one op so Apply does a single PUT.
   const derivedOps = useMemo<PendingOpWithPayload[]>(() => {
     const ops: PendingOpWithPayload[] = [];
-    if (profileDraft && (profileDiff.audio || profileDiff.model || profileDiff.tools || profileDiff.advanced)) {
-      // Audio is gateway-side — no Hermes restart needed. Voice is no longer
+    if (
+      profileDraft &&
+      (profileDiff.audio || profileDiff.memory || profileDiff.model || profileDiff.tools || profileDiff.advanced)
+    ) {
+      // Audio and memory toggles are gateway-side — neither touches the
+      // Hermes profile render/write, so both stay "fast". Voice is no longer
       // part of this draft/apply flow at all (see VoicesPanel — immediate ops).
-      const needsRestart = profileDiff.model || profileDiff.tools || profileDiff.advanced;
-      ops.push({ key: "profile", kind: needsRestart ? "slow" : "fast", payload: profileDraft });
+      const needsProfileRewrite = profileDiff.model || profileDiff.tools || profileDiff.advanced;
+      ops.push({ key: "profile", kind: needsProfileRewrite ? "slow" : "fast", payload: profileDraft });
     }
     if (soulDirty && soulDraft !== null) {
       ops.push({ key: "systemPrompt.soul", kind: "slow", payload: soulDraft });
@@ -153,7 +164,7 @@ export function SettingsView({
     if (profileDiff.tools) s.add("tools");
     if (profileDiff.advanced) s.add("advanced");
     if (soulDirty) s.add("systemPrompt");
-    if (memoryDirty.memory || memoryDirty.user) s.add("memory");
+    if (profileDiff.memory || memoryDirty.memory || memoryDirty.user) s.add("memory");
     if (imperativeOps.some((op) => op.key.startsWith("personalities."))) s.add("personalities");
     if (imperativeOps.some((op) => op.key === "secrets.changed")) s.add("secrets");
     return s;
@@ -181,8 +192,9 @@ export function SettingsView({
       setSoulDraft(s.value.content);
     }
     // Re-fetch any memory slot the user touched so the editor reflects the
-    // post-restart on-disk state (Hermes may have updated the file during
-    // restart).
+    // latest on-disk state (Hermes writes and prunes memory autonomously
+    // between conversations, so the file may have changed since it was
+    // last loaded here).
     for (const slot of ["memory", "user"] as const) {
       if (memoryOriginals[slot] === null) continue;
       const m = await profileApi.getMemoryDoc(token, slot);
@@ -225,13 +237,13 @@ export function SettingsView({
   return (
     <div class="settings-v2">
       <aside class="s-side">
-        <SidebarNav active={tab} onChange={setTab} dirtyKeys={dirtyKeys} />
+        <SidebarNav active={tab} onChange={setTab} dirtyKeys={dirtyKeys} isAdmin={isAdmin} />
         <SidebarStatus token={isAuthed ? auth.token : null} />
       </aside>
 
       <main class="s-main">
         <div class="s-pane" key={tab}>
-          {tab === "memory" && (
+          {tab === "memory" && profileDraft && (
             <MemoryPane
               api={profileApi}
               token={token}
@@ -239,6 +251,8 @@ export function SettingsView({
               originals={memoryOriginals}
               setOriginal={setMemoryOriginalSlot}
               setDraft={setMemoryDraftSlot}
+              memoryToggles={profileDraft.memory}
+              onDraftMemoryToggles={(memory) => setProfileDraft({ ...profileDraft, memory })}
             />
           )}
           {tab === "systemPrompt" && profileDraft && (
@@ -297,7 +311,6 @@ export function SettingsView({
           )}
           {tab === "account" && <AccountPane />}
           {tab === "members" && <MembersPane />}
-          {tab === "devices" && <DevicesPane />}
           {tab === "secrets" && <SecretsPane onMark={markImperative} />}
           {tab === "getApp" && <GetAppPane />}
         </div>
@@ -361,10 +374,13 @@ function makeApplyDeps(
     },
     waitForRestart: async () => {
       // Trigger the gateway's apply pipeline: render config.yaml + SOUL.md
-      // into the Hermes worker's profile dir, then supervisorctl-restart
-      // the worker, then poll /health until it accepts auth. Without this,
-      // a model/tools/advanced change saves to profile.json but never
-      // reaches the running worker — silent stale config, hard to debug.
+      // into the Hermes profile dir (gateway/src/apply/orchestrator.ts).
+      // Hermes runs as a one-shot exec per delegation with that dir as its
+      // cwd, so writing the file IS the entire operation — the next
+      // delegation reads it, no restart or health-check involved. Without
+      // this call, a model/tools/advanced change saves to profile.json but
+      // never reaches the rendered Hermes config — silent stale config,
+      // hard to debug.
       const r = await profileApi.apply(token);
       if (!r.ok) return { state: "failed", elapsedMs: 0 };
       return { state: "ready", elapsedMs: r.value.elapsedMs };

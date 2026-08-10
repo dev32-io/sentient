@@ -7,7 +7,7 @@ tags:
 # 45-model-slow-save — Model page: pick a different ollama-cloud model, Save
 # triggers the SLOW path (PUT profile + POST /profile/apply, blocking
 # "Applying — assistant restarting…" progress, then re-fetch server truth). This
-# restarts the user's Hermes worker — acceptable on the local dev stack.
+# used to restart the user's supervisord Hermes worker; on 2.0 neither exists.
 # Self-navigating. Original model (deepseek-v4-flash:cloud) is restored by
 # 45b-model-restore.yaml (adjacent).
 - runFlow: _helpers/open-settings.yaml
@@ -36,9 +36,10 @@ tags:
     timeout: 3000
     optional: true
 - takeScreenshot: "45-model-applying"
-# blocking progress clears once the restart completes — full supervisord restart
-# + Hermes worker boot, genuinely slow.
+# apply completes in 5-12 ms on 2.0 (measured: `apply:orchestrator apply.ready
+# elapsedMs=5..12`, 4 samples 2026-07-30) — no supervisord, no Hermes worker to
+# restart. 8000 ms leaves headroom for the sim re-fetch without hiding a stall.
 - extendedWaitUntil:
     notVisible: { id: "settings-applying" }
-    timeout: 45000
+    timeout: 8000
 - takeScreenshot: "45-model-after"

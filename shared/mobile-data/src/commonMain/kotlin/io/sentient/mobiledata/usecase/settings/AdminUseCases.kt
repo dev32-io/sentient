@@ -97,15 +97,18 @@ fun canAddUser(userCount: Int): Boolean = userCount < HOUSEHOLD_POOL_SIZE
  * model/voice/audio/compression/advanced verbatim (guarantees a valid
  * model.id — the gateway requires min-length 1); reset persona to the default
  * template with no overrides and clear extraSystemPrompt, so a new member
- * never inherits the caller's persona or scratch prompt. tools reset to
- * empty — the gateway's applyProfileDefaults seeds tools/toolsets afterward.
+ * never inherits the caller's persona or scratch prompt. tools.permissions
+ * left UNSET (`null`, not `emptyMap()`) — a set-but-empty table would mean
+ * "every server off"; `null` is "never configured", which is what lets the
+ * gateway's applyProfileDefaults seed tools/toolsets for the new member
+ * afterward (see ProfileTools.permissions's doc comment for the distinction).
  */
 internal fun templateMemberProfile(from: ProfileV1): ProfileBody = ProfileBody(
     model = from.model,
     voice = from.voice,
     audio = from.audio,
     persona = ProfilePersona(template = NEW_MEMBER_PERSONA_TEMPLATE, overrides = ""),
-    tools = ProfileTools(enabled = emptyMap()),
+    tools = ProfileTools(),
     compression = from.compression,
     advanced = from.advanced.copy(extraSystemPrompt = ""),
 )

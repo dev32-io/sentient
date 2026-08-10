@@ -47,7 +47,8 @@ private val log = createLogger("vitals", "factory", "ios")
  * the same gateway URL the SDK uses. The Swift app builds this ONLY when the
  * backend resolves configured (else a prior crash auto-uploads on a later launch).
  *
- * @param gatewayWsUrl Full WS URL, e.g. `wss://host:8888/api/v1/ws`.
+ * @param gatewayWsUrl Full WS URL, e.g. `wss://host/api/v1/ws` — inbound-proxy's 443,
+ *   which is the default and is typically omitted from the URL.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  * @param token Lambda returning the current PASETO session token ("" when absent).
  */

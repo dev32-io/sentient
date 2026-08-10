@@ -4,11 +4,21 @@ import Dockerode from "dockerode";
 import { getLog } from "../logging/logger.js";
 import { reconcileOnBoot } from "./boot-reconciler.js";
 import { type DockerodeLike, createDockerDriver } from "./docker-driver.js";
-import type { HealthIO } from "./health.js";
+import { createHealthWatch } from "./health-watch.js";
+import { type HealthIO, probeOnce } from "./health.js";
+import { createNativeDriver } from "./native-driver.js";
+import { createNativeIO } from "./native-io.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
 import { buildServiceRegistry } from "./service-registry.js";
 import type { SecretAccessor } from "./template-loader.js";
-import type { ManagedService, OrchestratorStatus, ServiceName } from "./types.js";
+import {
+  type LaunchKind,
+  MANAGED_NETWORK_TOPOLOGY,
+  type ManagedService,
+  type OrchestratorStatus,
+  type ServiceDriver,
+  type ServiceName,
+} from "./types.js";
 
 const log = getLog(["sentient", "system-orch", "factory"]);
 
@@ -27,6 +37,13 @@ export interface SystemOrchestratorService {
   applySubset(names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus>;
   getStatus(): OrchestratorStatus;
   reconcile(): Promise<OrchestratorStatus>;
+  /** Boot path for a host that has NOT finished the wizard. Applies only the
+   *  infra class and arms the watchdog. The wizard still owns the first apply of
+   *  every capability addon, so its bringup screen is unchanged. */
+  reconcileInfraOnly(): Promise<OrchestratorStatus>;
+  /** Stops the post-boot health watchdog. Called on gateway shutdown so a
+   *  pending tick cannot re-apply into a torn-down driver. Idempotent. */
+  stopHealthWatch(): void;
   getRequiredServicesStatus(
     gatewayVersion: string,
     hermesVersionPath: string,
@@ -45,7 +62,31 @@ export interface FactoryDeps {
   /** Host-side env values (HOST_HOME, TZ, HOST_DOCKER_GID, HOST_CONFIG_DIR,
    *  MASS_LOCAL_IP) substituted into templates after secrets are tried. */
   hostEnv?: Record<string, string>;
+  /** User-owned, mutable dir where the native backend keeps one pid file per
+   *  service. Never under the root-owned code tree. */
+  nativeRunDir: string;
+  /** Post-boot health watchdog policy, from
+   *  `config.yaml#system_orchestrator`. See health-watch.ts for why apply()
+   *  alone cannot deliver "restart on crash". */
+  healthWatch: {
+    intervalMs: number;
+    maxAttempts: number;
+    backoffFactor: number;
+  };
+  /** How long a native launch waits for its port to be released by the previous
+   *  holder, and how often it re-checks. From `config.yaml#system_orchestrator`;
+   *  see native-driver.ts's `waitForPortFree` for why launching onto a held
+   *  socket is never acceptable. */
+  nativePortSettle: {
+    timeoutMs: number;
+    pollMs: number;
+  };
 }
+
+/** The one `ManagedProcessInfo.state` that counts as alive. A backend protocol
+ *  string (docker's container state, the native driver's own literal), not a
+ *  tunable. */
+const RUNNING_UNIT_STATE = "running";
 
 const EMPTY_STATUS: OrchestratorStatus = {
   state: "idle",
@@ -59,12 +100,39 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
 
   // Dockerode connects to /var/run/docker.sock by default.
   const docker = new Dockerode() as unknown as DockerodeLike;
-  const driver = createDockerDriver({ docker });
+  const nativeDriver = createNativeDriver(createNativeIO({ runDir: deps.nativeRunDir }), {
+    portSettleTimeoutMs: deps.nativePortSettle.timeoutMs,
+    portSettlePollMs: deps.nativePortSettle.pollMs,
+  });
+  // One backend per launch kind; everything above this line stays agnostic.
+  const drivers: Record<LaunchKind, ServiceDriver> = {
+    docker: createDockerDriver({ docker, networks: MANAGED_NETWORK_TOPOLOGY }),
+    native: nativeDriver,
+  };
 
   // Mutable cell — registry is rebuilt before each apply so newly-written
   // secrets and config edits flow through without a gateway restart.
   let currentRegistry: Map<ServiceName, ManagedService> = new Map();
   let lastStatus: OrchestratorStatus = { ...EMPTY_STATUS };
+
+  // Applies are SERIALIZED. Each one rebuilds the shared `currentRegistry`
+  // cell, so two overlapping applies would interleave writes to it and could
+  // recreate the same container twice. The watchdog below makes overlap a
+  // routine possibility rather than an operator-only edge case, so the
+  // serialization is load-bearing, not defensive.
+  let applyChain: Promise<unknown> = Promise.resolve();
+  let applyDepth = 0;
+
+  function serializeApply<T>(fn: () => Promise<T>): Promise<T> {
+    applyDepth += 1;
+    // `then(fn, fn)` so a REJECTED predecessor still lets the next apply run —
+    // one failed apply must not wedge the chain for the process lifetime.
+    const run = applyChain.then(fn, fn);
+    applyChain = run.catch(() => undefined);
+    return run.finally(() => {
+      applyDepth -= 1;
+    });
+  }
 
   async function rebuildRegistry(): Promise<Map<ServiceName, ManagedService> | null> {
     const reg = await buildServiceRegistry({
@@ -81,9 +149,39 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     return reg.value;
   }
 
-  async function withFreshOrchestrator<T>(
-    fn: (orch: ReturnType<typeof createSystemOrchestrator>) => Promise<T>,
-  ): Promise<T> {
+  /** `targets` names the services this apply actually touched, or null for an
+   *  applyAll. A subset apply reports every NON-target as "pending" (runApply
+   *  seeds all registry entries that way and only walks its targets), so
+   *  replacing `lastStatus` wholesale would blank the status page for every
+   *  service the apply never looked at. Keep the previous entry for those. */
+  function mergeStatus(
+    prev: OrchestratorStatus,
+    next: OrchestratorStatus,
+    targets: ReadonlySet<ServiceName> | null,
+  ): OrchestratorStatus {
+    if (targets === null) return next;
+    const prevByName = new Map(prev.services.map((s) => [s.name, s]));
+    return {
+      ...next,
+      services: next.services.map((s) => (targets.has(s.name) ? s : (prevByName.get(s.name) ?? s))),
+    };
+  }
+
+  /** Rebuild-or-fail, shared by every path that needs a live orchestrator built
+   *  from the current on-disk config. `withFreshOrchestrator` below is one
+   *  caller; `reconcileInfraOnly` is the other, and it needs the freshly built
+   *  REGISTRY (not just an orchestrator instance) to decide what to apply
+   *  before it can call anything — factored out so that decision never has to
+   *  duplicate the failure handling, and the registry is built exactly once
+   *  either way. */
+  async function buildFreshOrchestrator(): Promise<
+    | {
+        readonly ok: true;
+        readonly orch: ReturnType<typeof createSystemOrchestrator>;
+        readonly registry: Map<ServiceName, ManagedService>;
+      }
+    | { readonly ok: false; readonly failed: OrchestratorStatus }
+  > {
     const reg = await rebuildRegistry();
     if (!reg) {
       // Registry build failed — required service has unresolvable bindings
@@ -96,35 +194,198 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
         finishedAt: Date.now(),
       };
       lastStatus = failed;
-      return failed as T;
+      return { ok: false, failed };
     }
     const orch = createSystemOrchestrator({
       registry: reg,
-      driver,
+      drivers,
       healthIO: deps.healthIO,
       pollIntervalMs: deps.pollIntervalMs,
       applyTimeoutMs: deps.applyTimeoutMs,
     });
-    const result = await fn(orch);
-    lastStatus = orch.getStatus();
+    return { ok: true, orch, registry: reg };
+  }
+
+  async function withFreshOrchestrator<T>(
+    fn: (orch: ReturnType<typeof createSystemOrchestrator>) => Promise<T>,
+    targets: ReadonlySet<ServiceName> | null = null,
+  ): Promise<T> {
+    const build = await buildFreshOrchestrator();
+    if (!build.ok) return build.failed as T;
+    const result = await fn(build.orch);
+    lastStatus = mergeStatus(lastStatus, build.orch.getStatus(), targets);
     return result;
   }
+
+  const applySubsetSerialized = (names: ReadonlySet<ServiceName>): Promise<OrchestratorStatus> =>
+    serializeApply(() => withFreshOrchestrator(async (o) => o.applySubset(names), names));
+
+  /**
+   * Backend-level liveness for a service that declares no probe of its own.
+   *
+   * `healthcheck: noop` means "recreate-success implies ready" — there is no
+   * host-reachable port to dial (egress-proxy, searxng, fetch-mcp,
+   * searxng-mcp all sit behind a proxy). Those four used to be filtered OUT of
+   * the watch list on the grounds that docker's `unless-stopped` policy
+   * restarts them. That is true of a container that CRASHED and false of one
+   * that was never CREATED — which is exactly what a boot whose apply failed
+   * (docker's daemon still starting, a template that would not load) leaves
+   * behind, and nothing else ever retries it. So they are watched too, and the
+   * probe is the backend's OWN view of the unit rather than a network round
+   * trip: present and running, or the watchdog re-applies.
+   */
+  async function isUnitRunning(ms: ManagedService): Promise<boolean> {
+    const units = await drivers[ms.config.launch].listManaged();
+    const running = units.some((u) => u.service === ms.name && u.state === RUNNING_UNIT_STATE);
+    log.debug("health-watch.unit-probe", { service: ms.name, launch: ms.config.launch, running });
+    return running;
+  }
+
+  // ── Post-boot health watchdog ─────────────────────────────────────────────
+  // apply() runs at boot, from the admin endpoint and from the wizard — never
+  // when a service dies later. This is the other half of "restart on crash".
+  const healthWatch = createHealthWatch({
+    intervalMs: deps.healthWatch.intervalMs,
+    maxAttempts: deps.healthWatch.maxAttempts,
+    backoffFactor: deps.healthWatch.backoffFactor,
+    // EVERY registry entry, `noop` healthchecks included — see `isUnitRunning`.
+    listServices: () => Array.from(currentRegistry.keys()),
+    probe: async (name) => {
+      const ms = currentRegistry.get(name);
+      if (!ms) {
+        log.debug("health-watch.probe-skipped", { service: name, reason: "not-in-registry" });
+        return true;
+      }
+      const live =
+        "noop" in ms.config.healthcheck
+          ? await isUnitRunning(ms)
+          : await probeOnce(ms.config.healthcheck, deps.healthIO);
+      if (!live) return false;
+      // Same contract the apply path gates on: liveness AND identity. Without
+      // this the watchdog would keep declaring a service healthy for as long as
+      // ANY process held its port, so a foreign listener would suppress
+      // recovery forever instead of triggering it.
+      const identity = await drivers[ms.config.launch].verifyIdentity(ms);
+      if (identity.ok) return true;
+      log.warn("health-watch.identity-failed", { service: name, reason: identity.error.reason });
+      return false;
+    },
+    reapply: async (name) => {
+      const status = await applySubsetSerialized(new Set([name]));
+      // Surface the RESULT on the watchdog's own trail. Without this the only
+      // record of why a recovery failed is the driver's line, which carries no
+      // attempt number to tie it to the watchdog's back-off sequence.
+      const svc = status.services.find((s) => s.name === name);
+      log.info("health-watch.reapplied", {
+        service: name,
+        state: svc?.state ?? "unknown",
+        reason: svc?.lastError ?? null,
+      });
+    },
+    isApplyInFlight: () => applyDepth > 0,
+    // Infra services are the ones with no second path back — see types.ts#infra.
+    neverGiveUp: (name) => currentRegistry.get(name)?.config.infra === true,
+  });
 
   return {
     get registry() {
       return currentRegistry;
     },
-    applyAll: async () => withFreshOrchestrator(async (o) => o.applyAll()),
-    applySubset: async (names) => withFreshOrchestrator(async (o) => o.applySubset(names)),
+    applyAll: async () => serializeApply(() => withFreshOrchestrator(async (o) => o.applyAll())),
+    applySubset: async (names) => applySubsetSerialized(names),
     getStatus: () => lastStatus,
-    reconcile: async () =>
-      withFreshOrchestrator(async (o) =>
-        reconcileOnBoot({
-          driver,
-          registry: currentRegistry,
-          orchestrator: { applyAll: () => o.applyAll() },
-        }),
-      ),
+    stopHealthWatch: () => healthWatch.stop(),
+    reconcile: async () => {
+      // ARMING THE WATCHDOG IS UNCONDITIONAL — hence the `finally`, not a line
+      // after the apply. The watchdog is the ONLY thing that recovers a service
+      // after boot, and a boot that went wrong is exactly when it is needed
+      // most. When a failure here could skip it, one unreachable docker daemon
+      // (launchd starts the gateway before auto-login starts Docker Desktop)
+      // left the whole fleet — including the native addons docker has nothing
+      // to do with — with no crash recovery for the entire process lifetime.
+      // The two throwing paths are closed at their source as well
+      // (docker-driver's `listManaged`, service-registry's template read); this
+      // is the structural guarantee that no third one can reopen the hole.
+      //
+      // Ordering is still respected on the happy path: `start()` runs after the
+      // apply has settled, so the watchdog never races the bringup, and it is
+      // idempotent.
+      try {
+        // A SIGKILLed gateway cannot run a shutdown hook, so native children
+        // from the previous process may still hold their ports. Reap before
+        // anything tries to bind them.
+        await nativeDriver.reapOrphans();
+        return await serializeApply(() =>
+          withFreshOrchestrator(async (o) =>
+            reconcileOnBoot({
+              drivers,
+              registry: currentRegistry,
+              orchestrator: { applyAll: () => o.applyAll() },
+            }),
+          ),
+        );
+      } finally {
+        healthWatch.start();
+      }
+    },
+    reconcileInfraOnly: async () => {
+      // Same unconditional-arming contract as reconcile() — see its comment.
+      // The watchdog is what recovers the public door when Docker Desktop comes
+      // up after the gateway, which is the routine case on a rebooted mini.
+      try {
+        // A SIGKILLed gateway cannot run a shutdown hook, so native children
+        // from the previous process may still hold their ports. Reap
+        // unconditionally, like reconcile() — reapOrphans() sweeps EVERY
+        // native pid file, not just infra ones, and on a fresh install this
+        // is the only boot-time reap that will ever run (reconcile() never
+        // fires this session), so gating it on the infra set below would
+        // leave a non-infra orphan (e.g. whisper-stt) unreaped for the rest
+        // of the process's lifetime.
+        await nativeDriver.reapOrphans();
+        // The infra filter must run against a FRESHLY BUILT registry: on a
+        // fresh install this call is the FIRST thing to ever touch the
+        // orchestrator, so `currentRegistry` is still the empty Map it was
+        // constructed with. That build is also a write to the same shared
+        // registry cell every other apply writes to (see the `applyChain`
+        // comment above — "the serialization is load-bearing, not
+        // defensive"), so it cannot happen standalone: a concurrent admin
+        // apply landing in the window before this settles would reintroduce
+        // the exact torn-write hazard that comment warns about. Building,
+        // filtering, and applying are therefore ONE serialized unit, and the
+        // registry is built exactly once.
+        return await serializeApply(async () => {
+          const build = await buildFreshOrchestrator();
+          if (!build.ok) {
+            // Distinct from "nothing configured" below. A broken template or a
+            // missing secret must not be reported as a benign empty infra set —
+            // that would leave the fresh-install deadlock open while this line
+            // calls the situation harmless. buildFreshOrchestrator() already
+            // logged the cause (factory.registry-rebuild-failed); this line
+            // exists so the infra-only boot path has its own honest record of
+            // why it did not apply anything.
+            log.warn("boot-reconcile.infra-only.registry-failed", {
+              reason: "registry rebuild failed — see the factory.registry-rebuild-failed line above for the cause",
+            });
+            return build.failed;
+          }
+          const infraNames = new Set(
+            Array.from(build.registry.values())
+              .filter((ms) => ms.config.infra)
+              .map((ms) => ms.name),
+          );
+          if (infraNames.size === 0) {
+            log.info("boot-reconcile.infra-only.empty", { reason: "no infra services in the registry" });
+            return lastStatus;
+          }
+          log.info("boot-reconcile.infra-only", { services: Array.from(infraNames) });
+          const result = await build.orch.applySubset(infraNames);
+          lastStatus = mergeStatus(lastStatus, build.orch.getStatus(), infraNames);
+          return result;
+        });
+      } finally {
+        healthWatch.start();
+      }
+    },
     getRequiredServicesStatus: (gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl) =>
       resolveVersions(() => lastStatus, gatewayVersion, hermesVersionPath, sttHealthUrl, ttsHealthUrl),
   };

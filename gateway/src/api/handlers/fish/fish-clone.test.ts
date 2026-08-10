@@ -115,8 +115,9 @@ function sampleProfile(userId = "alice", voiceId = "old-voice"): ProfileV1 {
     model: { provider: "openrouter", id: "google/gemini-2.5-flash" },
     voice: { provider: "local-tts", id: voiceId },
     audio: { ttsEnabled: true, channel: "voice" as const },
+    memory: { spark: true, dreaming: true },
     persona: { template: "default", overrides: "" },
-    tools: { enabled: {} },
+    tools: { permissions: {} },
     compression: { threshold: 0.5 },
     advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
   };
@@ -140,7 +141,6 @@ function makeDeps(overrides: Partial<FishCloneDeps> = {}): {
     fishApiKey: null,
     externalFetchTimeoutMs: 5000,
     profileStore: makeProfileStore(),
-    refreshVoice: vi.fn(async () => undefined),
     ttsUrl: "ws://host.docker.internal:8770",
     connectTimeoutMs: 1000,
     opTimeoutMs: 1000,
@@ -474,7 +474,7 @@ describe("POST /api/v1/providers/voices/:id/clone (mount)", () => {
         validate: vi.fn(
           async (): Promise<TokenResult<TokenPayload>> => ({
             ok: true,
-            value: { userId: "alice", isAdmin: false, issuedAt: 0, expiresAt: 9999999999 },
+            value: { userId: "alice", issuedAt: 0, expiresAt: 9999999999 },
           }),
         ),
       },

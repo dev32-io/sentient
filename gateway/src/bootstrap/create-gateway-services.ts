@@ -1,41 +1,40 @@
+import { join } from "node:path";
 import type {
-  ApplyConfig,
   AuthConfig,
-  CerebrumConfig,
   HermesBuiltinTools,
   HermesConfig,
   McpCatalog,
   ProvidersConfig,
   SessionConfig,
-  SessionsConfig,
   TTSConfig,
   WebuiConfig,
 } from "@sentient/config";
+import type { AccessManager } from "../access/access-manager.js";
 import type { InstallState } from "../admin/install-state.js";
-import type { KeyRotationOrchestrator } from "../admin/key-rotation.js";
-import type { ProfileRestartOrchestrator } from "../admin/profile-restart-orchestrator.js";
 import type { SecretsStore } from "../admin/secrets-store.js";
 import type { LlmProvider } from "../admin/secrets-store.js";
 import type { UnlockCode } from "../admin/unlock-code.js";
 import type { UserLifecycle } from "../admin/user-lifecycle.js";
-import type { UserPortStore } from "../admin/user-port-store.js";
 import type { UserProvisioner } from "../admin/user-provisioner.js";
-import type { DevicesHandlerDeps } from "../api/handlers/devices.js";
 import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
-import type { SalienceMap } from "../cerebrum/short-term-context-types.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
-import type { HealthPoller } from "../infrastructure/health-poller.js";
+import type { ExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import { getLog } from "../logging/logger.ts";
-import type { PersonSessionRegistry } from "../person-session/person-session-registry.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
+import type { CreateSessionRuntime } from "../runtime/session-handles.js";
+import { createSessionRetentionPolicy } from "../runtime/session-retention-policy.js";
+import { type AuthenticatedSockets, createAuthenticatedSockets } from "../session-handlers/authenticated-sockets.js";
+import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
+import { type SessionRegistry, createSessionRegistry } from "../session-handlers/session-registry.js";
 import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
-import type { SessionRouter } from "../session-router.js";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
+import type { OrchestratorStatus } from "../system-orchestrator/types.js";
+import type { McpClient } from "../tools/mcp-client.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import { type AuthService, createAuthService } from "../user-auth/auth-service.ts";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -45,6 +44,7 @@ import { runPhaseServices } from "./phase-services.ts";
 import { runPhaseState } from "./phase-state.ts";
 import type { SttService } from "./stt-factory.ts";
 import type { TtsService } from "./tts-factory.ts";
+import type { UserModelProvider } from "./user-model-provider.ts";
 
 const log = getLog(["sentient", "bootstrap"]);
 const TEST_PROVIDER_TIMEOUT_MS = 5000;
@@ -80,12 +80,10 @@ export interface GatewayServices {
   readonly unlockCodePath: string;
   readonly gatewayVersion: string;
   readonly sessionManager: SessionManager;
-  readonly sessionRouter: SessionRouter;
-  readonly personSessions: PersonSessionRegistry;
   readonly sessionControls: SessionControlsRegistry;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
-  readonly createSynthesizerFor: (getVoiceId: () => string | null) => TextStreamSynthesizer | null;
+  readonly createSynthesizerFor: (getVoiceId: () => Promise<string | null>) => TextStreamSynthesizer | null;
   /** Raw `tts:` config block — needed by the voices handler (Fix C) for its
    *  own short-lived voice-mgmt WS ops, which bypass the TtsService/provider
    *  abstraction entirely. */
@@ -94,20 +92,32 @@ export interface GatewayServices {
   readonly tls: GatewayTlsMaterial | undefined;
   readonly webDistDir: string | undefined;
   readonly downloads: { artifactsDir: string; publicBaseUrl: string };
-  readonly cerebrum: CerebrumConfig;
   readonly hermes: HermesConfig | null;
   readonly session: SessionConfig;
-  readonly sessions: SessionsConfig;
-  readonly salienceMap: SalienceMap;
-  readonly persona: string;
-  readonly systemPrompt: string;
+  /** Per-surface outbound frame journals, keyed `${userId}::${surfaceId}`
+   *  (Plan 3 Task 10, spec §11 slice 6). Deliberately NOT per-connection:
+   *  the journal must survive the socket that filled it so a reconnecting
+   *  client can replay the frames it missed. Built here rather than in a
+   *  phase because it depends on nothing but `cfg.session`. */
+  readonly replayRegistry: ReplayRegistry;
+  /** The resident sessions: exactly one `SessionRuntime` per durable session,
+   *  with the set of connections attached to it. Sits beside `replayRegistry`
+   *  because it answers the same overlapping-connection question for the
+   *  other shared resource — the store partition — though with the opposite
+   *  remedy: connections JOIN a session rather than take it over. Depends on
+   *  no config at all. */
+  readonly sessionRegistry: SessionRegistry;
+  /** Every live authenticated socket, reachable by `userId`. Answers the
+   *  question `sessionRegistry` cannot — which sockets does this account hold,
+   *  including the ones that have not run `session.configure` yet — so a
+   *  credential revocation closes a signed-in window that never started a
+   *  conversation. Populated at the auth gate, released on close. */
+  readonly authenticatedSockets: AuthenticatedSockets;
   readonly webui: WebuiConfig;
   readonly auth: AuthService;
   readonly authConfig: AuthConfig;
   readonly profileStore: ProfileStore;
   readonly templateLoader: TemplateLoader;
-  readonly healthPoller: HealthPoller;
-  readonly applyConfig: ApplyConfig;
   readonly applyDeps: ApplyDeps;
   readonly providersConfig: ProvidersConfig;
   /** Fish Audio API key for the voice-browse proxy. Plain env var (not
@@ -116,20 +126,85 @@ export interface GatewayServices {
   readonly fishApiKey: string | null;
   readonly mcpCatalog: McpCatalog;
   readonly hermesBuiltinTools: HermesBuiltinTools;
-  readonly userPortStore: UserPortStore | null;
   readonly secretsStore: SecretsStore | null;
   readonly userProvisioner: UserProvisioner | null;
-  readonly keyRotation: KeyRotationOrchestrator | null;
   readonly userLifecycle: UserLifecycle;
-  readonly profileRestartOrchestrator: ProfileRestartOrchestrator;
   readonly buildPersonalityStore: (userId: string) => PersonalityStore;
   readonly systemOrchestrator: SystemOrchestratorService | null;
-  /** Deps bag for the `/api/v1/devices*` handler. Null in headless / CI builds
-   *  where hermes + supervisordControl are not configured. */
-  readonly devicesHandlerDeps: DevicesHandlerDeps | null;
+  /** Apply-complete signal for the boot reconcile — see phase-orchestrator.ts.
+   *  `null` when no reconcile ran. Startup steps that write configuration
+   *  pointing at an addon MUST wait on this or skip. */
+  readonly bootReconcile: Promise<OrchestratorStatus> | null;
   /** Returns the shared Hermes bearer token used for per-user ACP / plugin auth. */
   readonly hermesApiKey: () => string;
   resolveProfileDir(userId: string): string;
+
+  // --- Native orchestrator composition root (spec §2.6, Plan 2 Task 9) ------
+  /** L1 capability minter (spec §2.1) — always present. */
+  readonly accessManager: AccessManager;
+  /** `store.db_filename` (config.yaml#store) — the session-store db every
+   *  short-lived readback handle opens. Threaded from config so an operator
+   *  override is honoured, not silently replaced by the "sessions.db" default. */
+  readonly dbFileName: string;
+  /** Shared MCP client dialing `mcp_catalog` — always present (a no-op with
+   *  an empty catalog). */
+  readonly mcpClient: McpClient;
+  /** Mints the orchestrator's OpenAI-compatible client for one user, resolving
+   *  that user's own selected model (`profile.json#model`) against the
+   *  operator's ACTIVE secrets-store connection (never an env var). A factory
+   *  rather than one client because the KEY is household-wide and the MODEL is
+   *  not — see bootstrap/user-model-provider.ts. `null` when `orchestrator:` is
+   *  absent from config, or present with no active key configured yet — either
+   *  way the gateway still boots. */
+  readonly provider: UserModelProvider | null;
+  /** Per-session runtime factory. Takes a `SessionRuntimeRequest`, whose two
+   *  ids are named apart on purpose — `conversationId` is the durable store
+   *  partition, `connectionId` is the socket whose attach built the session and
+   *  only ever reaches logs. Returns the `SessionRuntimeHandles` pair (runtime
+   *  + its permission broker, Plan 3 Task 6), which the session registry keeps
+   *  and disposes when the session is released — NOT per connection. `null`
+   *  only when `orchestrator:` is absent from
+   *  config.yaml. When present but `provider` is null, calling it throws a
+   *  clear error rather than the gateway failing to boot. */
+  readonly createSessionRuntime: CreateSessionRuntime | null;
+  /** Late-bound holder for the delegated worker's own configuration
+   *  (`external-tools/external-tool-slot.ts`). Settled in `main.ts` right after
+   *  the MCP host exists — the host is what knows the delegated tool surface —
+   *  and BEFORE the server accepts a connection. Resolved per dispatch by
+   *  `delegateTask`'s setup phase. */
+  readonly delegatedExternalTool: ExternalToolSlot;
+}
+
+/** Slack over `hermes_timeout_ms` for the runner's own kill-and-settle tail. */
+const LOST_TASK_SLACK_MS = 60_000;
+
+/**
+ * `session.lost_task_threshold_ms`, floored so it can never sit BELOW the
+ * longest a background task may legitimately run.
+ *
+ * The only background-task producer is `delegateTask`, whose runner kills its
+ * Hermes child at `orchestrator.delegation.hermes_timeout_ms` and settles. A
+ * threshold under that marks live work "lost", drops it from the retention
+ * predicate, and re-arms the exact orphan this policy exists to close — and the
+ * operator who causes it is the one RAISING `hermes_timeout_ms`, who has no
+ * reason to read the session block at all. So the constraint is enforced here
+ * rather than left to the two config comments to coordinate: this is the one
+ * scope holding both keys, which a per-key zod schema is not.
+ */
+function resolveLostTaskThresholdMs(cfg: StartupConfig): number {
+  const configured = cfg.session.lost_task_threshold_ms;
+  const hermesTimeoutMs = cfg.orchestrator?.delegation.hermes_timeout_ms;
+  if (hermesTimeoutMs === undefined) return configured;
+  const floor = hermesTimeoutMs + LOST_TASK_SLACK_MS;
+  if (configured >= floor) return configured;
+  log.warn("session.lost-task-threshold-raised", {
+    configured,
+    hermesTimeoutMs,
+    applied: floor,
+    reason:
+      "session.lost_task_threshold_ms is below orchestrator.delegation.hermes_timeout_ms — a live delegation would be marked lost and orphaned, so the floor is applied instead",
+  });
+  return floor;
 }
 
 export async function createGatewayServices(cfg: StartupConfig): Promise<GatewayServices> {
@@ -143,36 +218,44 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     hermesVersionPath,
     secretsStore,
     internalSecretsStore,
-    userPortStore,
-    supervisordControl,
   } = state;
 
-  const services = await runPhaseServices({
-    cfg,
-    auth,
-    secretsStore,
-    internalSecretsStore,
-    userPortStore,
-    supervisordControl,
-  });
+  const services = await runPhaseServices({ cfg, auth, secretsStore });
 
-  const { systemOrchestrator } = await runPhaseOrchestrator({
+  const { systemOrchestrator, bootReconcile } = await runPhaseOrchestrator({
     cfg,
     installState,
     secretsStore,
     internalSecretsStore,
     gatewayRuntimeDir: state.gatewayRuntimeDir,
-    // Container-side path for seeding default service configs into the
-    // host config dir BEFORE the orchestrator first recreates a container
-    // whose template references ${HOST_CONFIG_DIR}/* bind mounts.
-    // SENTIENT_HOME mirrors HOST_HOME/.sentient inside the container.
-    hostConfigDirContainerPath: `${process.env.SENTIENT_HOME ?? "/sentient"}/gateway/config`,
+    sentientHome: state.sentientHome,
+    // Where default service configs are seeded before the orchestrator first
+    // recreates a container whose template references ${HOST_CONFIG_DIR}/*
+    // bind mounts. Reuses the state root phase-state already resolved, rather
+    // than re-reading SENTIENT_HOME with a DIFFERENT fallback: the old default
+    // here was a literal "/sentient", a path that only ever existed inside the
+    // retired gateway container and is unwritable on a native host.
+    hostConfigDirContainerPath: join(state.sentientHome, "gateway", "config"),
   });
 
-  const routes = runPhaseRoutes({
-    cfg,
-    personSessions: services.personSessions,
-  });
+  const routes = runPhaseRoutes({ cfg });
+
+  // Residency is DERIVED from observable work, not from which window closed last
+  // (session-model spec §5). Built here (not inline below) so the nightly dreamer
+  // can bind its yield gate to the live registry — the registry does not exist
+  // until now, which is why `startDreamScheduler` is late-bound (phase-services).
+  const sessionRegistry = createSessionRegistry(
+    createSessionRetentionPolicy({
+      retentionMs: cfg.session.retention_ms,
+      recheckIntervalMs: cfg.session.retention_recheck_interval_ms,
+      lostTaskThresholdMs: resolveLostTaskThresholdMs(cfg),
+      maxIdleResidentSessions: cfg.session.max_idle_resident_sessions,
+    }),
+  );
+
+  // Arm the nightly dreamer (memory-system spec §8) now that the registry exists.
+  // No-op when the dreamer is not wired (memory/dreamer off, or no provider).
+  services.startDreamScheduler?.(sessionRegistry);
 
   log.info("services-composed", {
     stt: services.stt !== null,
@@ -180,6 +263,8 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     tls: services.tls !== undefined,
     language: cfg.language,
     systemOrchestrator: systemOrchestrator !== null,
+    orchestrator: cfg.orchestrator !== undefined,
+    orchestratorProvider: services.provider !== null,
   });
 
   return {
@@ -191,8 +276,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     unlockCodePath,
     gatewayVersion,
     sessionManager: routes.sessionManager,
-    sessionRouter: services.sessionRouter,
-    personSessions: routes.personSessions,
     sessionControls: routes.sessionControls,
     stt: services.stt,
     tts: services.tts,
@@ -204,35 +287,43 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     tls: services.tls,
     webDistDir: cfg.webDistDir,
     downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
-    cerebrum: services.cerebrumServices.cerebrumConfig,
     hermes: cfg.hermes ?? null,
     session: cfg.session,
-    sessions: cfg.sessions,
-    salienceMap: services.cerebrumServices.salienceMap,
-    persona: services.cerebrumServices.persona,
-    systemPrompt: services.cerebrumServices.systemPrompt,
+    replayRegistry: createReplayRegistry({
+      maxBytesPerSession: cfg.session.replay_journal_max_bytes,
+      retentionMs: cfg.session.retention_ms,
+    }),
+    // Residency is DERIVED from observable work, not from which window closed
+    // last (session-model spec §5). Substituted into the disposal hook the
+    // registry has always exposed — the registry itself is unchanged.
+    sessionRegistry,
+    // No config at all, and no dependency on the registry above: the two answer
+    // different questions about the same fleet, and this one has to stay
+    // answerable for a connection no session has ever heard of.
+    authenticatedSockets: createAuthenticatedSockets(),
     webui: cfg.webui,
     auth,
     authConfig: cfg.auth,
     profileStore: services.profileStore,
     templateLoader: services.templateLoader,
-    healthPoller: services.healthPoller,
     applyDeps: services.applyDeps,
-    applyConfig: cfg.apply,
     providersConfig: cfg.providers,
     fishApiKey: process.env.FISH_AUDIO_API_KEY ?? null,
     mcpCatalog: cfg.mcpCatalog,
     hermesBuiltinTools: cfg.hermesBuiltinTools,
-    userPortStore,
     secretsStore,
     userProvisioner: services.userProvisioner,
-    keyRotation: services.keyRotation,
     userLifecycle: services.userLifecycle,
-    profileRestartOrchestrator: services.profileRestartOrchestrator,
     buildPersonalityStore: services.buildPersonalityStore,
     systemOrchestrator,
-    devicesHandlerDeps: services.devicesHandlerDeps,
+    bootReconcile,
     hermesApiKey: () => internalSecretsStore.getHermesAuthTokenSync(),
     resolveProfileDir: getHermesProfileDir,
+    accessManager: services.accessManager,
+    dbFileName: cfg.store.db_filename,
+    mcpClient: services.mcpClient,
+    provider: services.provider,
+    createSessionRuntime: services.createSessionRuntime,
+    delegatedExternalTool: services.delegatedExternalTool,
   };
 }

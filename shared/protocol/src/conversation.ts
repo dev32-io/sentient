@@ -6,11 +6,17 @@ import { z } from "zod";
 // This is the CLIENT-facing shape of a conversation entry — deliberately
 // narrower than the gateway's internal `ConversationEntry`. Internal
 // plumbing (taskId) is stripped from the ITEM; only fields the UI needs to
-// render chat bubbles + the task sidebar remain.
+// render chat bubbles remain.
 //
-// NOTE on cycleId: it is stripped from the ITEM but carried on the
+// THERE IS NO TOOL ITEM. A tool call is the MODEL's record of what it did — the
+// store keeps `tool_call` / `tool_result` entries forever and the model
+// projection replays them as context — but it is not a user-facing artifact.
+// Live tool activity is the composer task strip (`tasklist.state`), which is
+// ephemeral by design.
+//
+// NOTE on turnId: it is stripped from the ITEM but carried on the
 // `conversation.entry` FRAME (see messages.ts conversationEntrySchema). Clients
-// re-attach the frame cycleId to a live assistant entry so the committed twin
+// re-attach the frame turnId to a live assistant entry so the committed twin
 // joins its streaming bubble by id — the client never invents/derives the id.
 //
 // `entryId` — stable, opaque string id assigned at commit time (live path)
@@ -20,22 +26,23 @@ import { z } from "zod";
 //
 // Shape stays a discriminated union on `kind`, so the client can filter
 // without string parsing:
-//   feed.filter(i => i.kind === "tool")   → sidebar rows
 //   feed.filter(i => i.kind === "user" || i.kind === "assistant") → chat
 // ---------------------------------------------------------------------------
 
 export const conversationUserChannelSchema = z.enum(["text", "speech"]);
 export type ConversationUserChannel = z.infer<typeof conversationUserChannelSchema>;
 
-export const conversationToolStatusSchema = z.enum(["finished", "cancelled", "failed"]);
-export type ConversationToolStatus = z.infer<typeof conversationToolStatusSchema>;
-
 // Why an assistant reply was cut short. Absent on normal completions.
 // `barge-in`: user spoke mid-TTS, playback stopped; LLM stream finished
 //             normally but the audio was interrupted.
-// `interrupt`: cycle was hard-aborted (UI button or `interrupt` tool).
-//              `cancelledTaskIds` lets the UI / model correlate tasks
-//              that died with this interrupt specifically.
+// `interrupt`: turn was hard-aborted (UI button or `interrupt` tool).
+//              `cancelledTaskIds` is STRUCTURALLY ALWAYS EMPTY: an interrupt
+//              cancels the turn and nothing else, and nothing anywhere
+//              cancels a background task (gateway tools/delegate-task.ts).
+//              The field is kept because removing it is a wire change, and
+//              because a later model-facing task-management tool — which
+//              cancels by NAMED taskId — is what would finally populate it.
+//              Never render it as "these died with your Stop"; nothing did.
 export const conversationAssistantCutoffSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("barge-in") }),
   z.object({
@@ -66,24 +73,19 @@ export const conversationFeedAssistantItemSchema = z.object({
   entryId: z.string(),
   ts: z.number().int().nonnegative(),
   kind: z.literal("assistant"),
+  /** WHICH REPLY this item is. Carried on the ITEM, not only on the
+   *  `conversation.entry` frame: a window that attaches mid-turn is answered
+   *  with a snapshot, which has no frame to hang it on, and without it that
+   *  window cannot tell which committed row its live bubble is painting. */
+  replyId: z.string().optional(),
   content: z.string(),
   cutoff: conversationAssistantCutoffSchema.optional(),
-});
-
-export const conversationFeedToolItemSchema = z.object({
-  entryId: z.string(),
-  ts: z.number().int().nonnegative(),
-  kind: z.literal("tool"),
-  toolName: z.string(),
-  status: conversationToolStatusSchema,
-  summary: z.string(),
 });
 
 export const conversationFeedItemSchema = z.discriminatedUnion("kind", [
   conversationFeedUserItemSchema,
   conversationFeedTriggerItemSchema,
   conversationFeedAssistantItemSchema,
-  conversationFeedToolItemSchema,
 ]);
 
 export type ConversationFeedItem = z.infer<typeof conversationFeedItemSchema>;

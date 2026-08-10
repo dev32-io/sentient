@@ -7,8 +7,21 @@ tags:
 # MEMORY.md) truncates client-side and the counter reflects the cap. Never saved
 # (no PUT) → real MEMORY.md is untouched, no restore needed. Batch-safe.
 #
+# 2026-07-30 (native-stack migration): this typed only 2009 chars and so depended,
+# silently, on the user's MEMORY.md ALREADY holding ≥191 chars to reach the cap. On
+# a user with no MEMORY.md the counter read "2009 / 2200" and the flow failed at
+# `assertVisible: "2200 / 2200"` — a pre-state dependency, not a product defect
+# (MEMORY_CHAR_LIMIT is still 2200: gateway/src/profile-store/memory-constants.ts:7).
+# Now types 2260 chars, which exceeds the cap from an EMPTY field, so the counter
+# reads "2200 / 2200" regardless of pre-state.
+#
+# EXPECTED-INERT (2.0): MEMORY.md renders and persists, but long-term memory does
+# not yet change assistant behaviour — the gateway owns the loop now and the
+# memory surface transitions in a later spec. This flow asserts the cap UI only,
+# which is exactly the half that must still pass.
+#
 # SLOW: Maestro's inputText simulates individual keystrokes (~7 chars/sec) — this
-# types ~2200 chars in ~260-char chunks (one long call hits the 120s gRPC
+# types 2260 chars in 251-char chunks (one long call hits the 120s gRPC
 # deadline). Tagged `slow`; excluded when the runner is asked to skip slow flows.
 #
 # NOTE: once the field is focused, a drag gesture is consumed by the TextField's
@@ -34,6 +47,7 @@ tags:
 - takeScreenshot: "46-memory-before"
 - tapOn: { id: "settings-memory-editor" }
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+- inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 - inputText: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

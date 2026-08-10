@@ -1,36 +1,137 @@
 import { z } from "zod";
+import { accessConfigSchema } from "./schemas/access-config";
 import { hermesBuiltinToolsSchema } from "./schemas/hermes-builtin-tools";
 import { hermesConfigSchema } from "./schemas/hermes-config";
 import { mcpCatalogSchema } from "./schemas/mcp-catalog";
+import { orchestratorConfigSchema } from "./schemas/orchestrator-config";
+import { storeConfigSchema } from "./schemas/store-config";
+import { systemOrchestratorConfigSchema } from "./schemas/system-orchestrator-config";
 
 // ---------------------------------------------------------------------------
-// Session — turn detection, barge-in, inactivity
+// Session — connection + inactivity limits
 // ---------------------------------------------------------------------------
-
-export const bargeInConfigSchema = z.object({
-  no_interrupt_ms: z.number().int().min(0).default(500),
-  min_speech_duration_ms: z.number().int().min(0).default(50),
-});
-
-export type BargeInConfig = z.output<typeof bargeInConfigSchema>;
 
 export const sessionConfigSchema = z.object({
-  tts_drain_grace_ms: z.number().int().min(0).max(5000).default(2000),
-  barge_in: bargeInConfigSchema.default({}),
-  // WS resilience (resumable sequenced stream + replay buffer) — Slice 3
   // Bun WS idle close timeout in ms; gateway converts to seconds at boot.
   // Bun's idleTimeout cap is 255 s → max effective value 255000 ms.
   ws_idle_timeout_ms: z.number().int().min(1000).max(255000),
-  // Per device-session replay ring buffer cap in bytes (evict-oldest).
-  // Range: 65536–268435456 (64 KB – 256 MB).
-  replay_buffer_max_bytes: z.number().int().min(65_536).max(268_435_456),
   // Per-user concurrent WS session cap. Bounds memory under churn (one user /
   // reconnect-loop). Range 1–100.
   per_user_max_sessions: z.number().int().min(1).max(100),
-  // Single activity-based idle window. A device buffer + its session are reaped
-  // after this much silence across BOTH boundaries (client WS in/out + Hermes
-  // ACP in/out). Resets on any activity; ping/pong excluded. Range: 60000–86400000.
-  idle_timeout_ms: z.number().int().min(60_000).max(86_400_000),
+  // Reconnect gap-fill + multi-window join (session-model spec §2.1). Per-
+  // SESSION cap on the outbound frame journal that every attached window reads
+  // from. Oldest frames evict first — including the last one, so a stale
+  // `turn.started` cannot pin itself as the sole survivor. Range
+  // 65536–268435456 (64 KB–256 MB).
+  // `.default()` (unlike this block's two older keys) so an operator's
+  // existing config.yaml keeps booting without an operator-config-migrator
+  // schema_version bump.
+  //
+  // RE-TUNED 16 MB → 32 MB with derived retention (task 8), for two reasons
+  // that both point the same way:
+  //  1. One journal now serves N windows, and a window that was away has to
+  //     gap-fill everything the SESSION produced while it was gone — including
+  //     other windows' turns. Per-surface, a detached surface's journal simply
+  //     stopped growing; there was nobody writing to it.
+  //  2. A session now stays resident while a background task runs, so a whole
+  //     turn — text AND its Opus audio — can be journaled with ZERO windows
+  //     attached. That is new production, not a redistribution of old.
+  // Sized off the retention window rather than a round number: at the ~33 KB/s
+  // this journal's own `max_window_lag_bytes` comment anchors 48 kHz Opus at,
+  // `retention_ms` (15 min) of continuous speech is ~30 MB. A cap below that
+  // would silently break the promise `retention_ms` makes — a window returning
+  // at minute 14 would find its cursor evicted and take a fresh snapshot
+  // anyway. Note a journal can live up to 2x `retention_ms`: the replay
+  // registry's clock starts when the journal is RELEASED, which is at disposal
+  // — itself `retention_ms` after the session went idle. That does not move the
+  // answer, because the 33 KB/s anchor is several times above real Opus speech
+  // bitrate and this is a CEILING on an evict-oldest ring, not an allocation.
+  replay_journal_max_bytes: z.number().int().min(65536).max(268435456).default(33554432),
+  // How long a SESSION is kept once nothing observable is working on it, and
+  // for the same window afterwards, how long its journal survives its last
+  // holder. Renamed from `replay_journal_retention_ms` (task 8): the key now
+  // governs session lifetime, not journal bytes, and a key that
+  // under-describes its job is how the dead `session.idle_timeout_ms` survived
+  // with zero readers. What "retained" MEANS is derived, never stored — see
+  // gateway/src/runtime/session-retention.ts. Range 1000–3600000 (1 s–1 h).
+  retention_ms: z.number().int().min(1000).max(3600000).default(900000),
+  // When a still-registered background task is treated as LOST: dropped from
+  // the retention predicate and WARNed. MUST exceed the longest a task can
+  // legitimately run — for `delegateTask` that is
+  // `orchestrator.delegation.hermes_timeout_ms` (600000), after which the
+  // runner kills the child and settles. Anything still registered past this is
+  // a bookkeeping leak, not work, and without the bound it would hold its
+  // session resident for the life of the process. Range 60000–3600000.
+  //
+  // The ordering constraint is ENFORCED at boot, not left to this comment:
+  // `create-gateway-services.ts` floors the effective value at
+  // `hermes_timeout_ms + 60s` and WARNs, because getting it wrong marks live
+  // work lost and re-arms the orphan derived retention exists to close. This
+  // key is only the floor's lower bound, so raising `hermes_timeout_ms` alone
+  // is safe.
+  lost_task_threshold_ms: z.number().int().min(60000).max(3600000).default(660000),
+  // Cap on sessions kept resident while NOTHING holds them — no window, no
+  // turn, no tool, no task, no prompt — waiting out `retention_ms`. The oldest
+  // idle session is released first when the cap is exceeded.
+  //
+  // It exists because derived retention REMOVED a bound that used to hold
+  // implicitly: under "the last one out disposes", residency was bounded by
+  // live attachments (`max_sessions`, `per_user_max_sessions`). Now
+  // `conversation.activate` builds a full session per target and each one
+  // lingers, so walking the past-chats drawer would leave one resident session
+  // per chat visited, each holding a `bun:sqlite` handle, a `ToolBroker` with
+  // warmed MCP definitions, a voice and a journal. RETAINED sessions are never
+  // counted or evicted — eviction runs the ordinary disposal path, which
+  // re-derives first, so this can never cut work. Range 1–500.
+  max_idle_resident_sessions: z.number().int().min(1).max(500).default(16),
+  // How often a session held ONLY by work, with no window attached, is
+  // re-derived. Work COMPLETING is not an attach or a detach, so the registry
+  // has no event for it; `SessionRegistry.reevaluate` covers the normal case
+  // and this timer bounds the abnormal one. Range 1000–600000 (1 s–10 min).
+  retention_recheck_interval_ms: z.number().int().min(1000).max(600000).default(30000),
+  // Maximum bytes one window may have queued (transport backpressure, or the
+  // attach buffer) before the gateway CLOSES it with RFC 6455 1013. With a
+  // shared journal a slow window's prerequisite frames can be evicted while it
+  // lags, so it must not be allowed to lag without bound. Disconnect rather
+  // than forced re-snapshot: both SDKs already reconnect and gap-fill, and
+  // writing more to a socket that cannot drain does not make it drain.
+  //
+  // The ceiling is Bun's own `backpressureLimit` default (16 MB), NOT an
+  // arbitrary round number. The gateway sets no `backpressureLimit` and leaves
+  // `closeOnBackpressureLimit` false, so past that limit `ws.send()` returns 0
+  // and Bun DROPS the message silently. A threshold above it could never be
+  // reached — this policy would be unreachable and the silent loss it exists to
+  // bound would be back. Range 65536–16777216 (64 KB–16 MB).
+  max_window_lag_bytes: z.number().int().min(65536).max(16777216).default(4194304),
+  // How long after one window's input the SESSION's input floor stays that
+  // window's (session-model spec §8.3). Two windows sending inside this span are
+  // contending simultaneously: the first is applied, the second is refused
+  // `session_busy`. Outside it, a later message STEERS the running turn through
+  // the ordinary stimulus seam — arbitration is for races, never a floor lock
+  // for the whole turn, which would let one speaker own the session until their
+  // reply finished and defeat multi-window entirely.
+  //
+  // WHAT IT DOES *NOT* DO, stated first because the obvious reading is wrong:
+  // it does not prevent two concurrent turns. Bun runs WS handlers to
+  // completion serially on one thread and `SessionRuntime.submit` sets its
+  // in-flight marker synchronously, so by the time a second window's frame
+  // dispatches the first turn is ALWAYS already running and the second message
+  // would steer. One-turn-at-a-time is structural, not something this key
+  // defends.
+  //
+  // Its only observable effect is converting a would-be steer into a
+  // `session_busy` refusal while the window is open. That is worth doing for a
+  // genuine race — two people pressing send on the same idle session produce
+  // one message and one clear "try again" rather than a spliced double
+  // prompt — and it is pure loss outside one, because webui has no optimistic
+  // echo and a refused message simply vanishes from the composer.
+  //
+  // So it is sized to the RACE, not to human patience: ~100 ms covers two
+  // clients whose frames left at the same instant plus loopback jitter.
+  // Anything longer starts destroying messages that would have been absorbed
+  // perfectly well by the running turn. 0 disables arbitration entirely — every
+  // input is applied, which is the pre-§8.3 behaviour. Range 0–5000.
+  input_arbitration_window_ms: z.number().int().min(0).max(5000).default(100),
 });
 
 export type SessionConfig = z.output<typeof sessionConfigSchema>;
@@ -118,6 +219,37 @@ export const tlsConfigSchema = z.object({
 export type TlsConfig = z.output<typeof tlsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// inbound-proxy — the public host/LAN entrance
+// ---------------------------------------------------------------------------
+
+export const inboundProxyConfigSchema = z.object({
+  // Directory holding the cert.pem + key.pem the proxy presents on 443. Null
+  // (the default) means "use the gateway's own self-signed material". Prod
+  // points this at the externally-managed acme.sh cert. A configured path that
+  // does not exist falls back to the self-signed material rather than failing
+  // to start — a fresh host has no real cert yet and still needs a door.
+  cert_dir: z.string().nullable().default(null),
+});
+export type InboundProxyConfig = z.output<typeof inboundProxyConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// stack — the dev launcher (scripts/stack.sh)
+// ---------------------------------------------------------------------------
+
+export const stackConfigSchema = z.object({
+  // How long `bun run dev` waits for BOTH the gateway's loopback health and the
+  // proxied https://localhost/ before declaring the launch failed. Range
+  // 5000-300000. Must outlast a cold image pull plus nginx start.
+  readiness_timeout_ms: z.number().int().min(5000).max(300000).default(60000),
+  // How often each readiness probe retries within that budget. Range 100-5000.
+  readiness_poll_ms: z.number().int().min(100).max(5000).default(500),
+  // Seconds to wait for the docker daemon before refusing to launch. Range
+  // 0-120. Docker Desktop takes a while from cold on a rebooted machine.
+  docker_wait_s: z.number().int().min(0).max(120).default(30),
+});
+export type StackConfig = z.output<typeof stackConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Logging — file retention
 // ---------------------------------------------------------------------------
 
@@ -131,67 +263,13 @@ export const loggingConfigSchema = z.object({
   retention_days: z.number().int().min(0).max(365).default(7),
 
   // Per-category level overrides, keyed by colon-joined LogTape category
-  // path (e.g. "sentient:cerebrum:hermes-event-translator"). Anything not
-  // listed inherits the top-level `level`. Use this to flip debug on for
-  // a specific path while chasing a stall, without redeploying with a
-  // global debug level.
+  // path (e.g. "sentient:session-router"). Anything not listed inherits
+  // the top-level `level`. Use this to flip debug on for a specific path
+  // while chasing a stall, without redeploying with a global debug level.
   level_overrides: z.record(z.string(), z.enum(["debug", "info", "warning", "error"])).default({}),
 });
 
 export type LoggingConfig = z.output<typeof loggingConfigSchema>;
-
-// ---------------------------------------------------------------------------
-// Cerebrum — cognitive cycle orchestration
-// ---------------------------------------------------------------------------
-
-export const cerebrumCycleConfigSchema = z.object({
-  debounce_window_ms: z.number().int().min(10).max(5000).default(80),
-  standard_threshold: z.number().min(0).max(100).default(50),
-  immediate_wake_threshold: z.number().min(0).max(200).default(100),
-  max_per_hour: z.number().int().min(1).max(1000).default(120),
-  max_iterations: z.number().int().min(1).max(50).default(10),
-  max_iter_warn_ahead: z.number().int().min(1).max(20).default(3),
-  history_max_tokens: z.number().int().min(256).max(32768).default(4096),
-});
-
-export type CerebrumCycleConfig = z.output<typeof cerebrumCycleConfigSchema>;
-
-export const cerebrumTaskTableConfigSchema = z.object({
-  // Last N completed tasks to include alongside running tasks in the
-  // per-cycle task table. Raising this gives the model longer recall of
-  // what it's done; lowering it saves tokens.
-  window: z.number().int().min(1).max(500).default(30),
-});
-
-export type CerebrumTaskTableConfig = z.output<typeof cerebrumTaskTableConfigSchema>;
-
-export const cerebrumConversationHistoryConfigSchema = z.object({
-  // Hard cap on in-memory history entries (FIFO eviction). OOM guard only;
-  // per-cycle token budget is controlled by cycle.history_max_tokens.
-  // At default 10000 entries × ~300 B/entry the memory ceiling is ~3-5 MB,
-  // plenty of headroom for realistic family-voice-assistant sessions.
-  max_entries: z.number().int().min(100).max(1_000_000).default(10_000),
-});
-
-export type CerebrumConversationHistoryConfig = z.output<typeof cerebrumConversationHistoryConfigSchema>;
-
-export const cerebrumConfigSchema = z.object({
-  // Sole supported provider since Phase 1.9. The "in-process" cerebrum
-  // (CognitiveCycle / TaskManager / effects) was deleted; only Hermes
-  // remains. Kept as a single-value enum for future provider plugins.
-  provider: z.literal("hermes").default("hermes"),
-  cycle: cerebrumCycleConfigSchema.default({}),
-  task_table: cerebrumTaskTableConfigSchema.default({}),
-  conversation_history: cerebrumConversationHistoryConfigSchema.default({}),
-  salience_map_path: z.string().default("/app/config/salience_map.yaml"),
-  // Bypass the family-friendly persona guardrails. When true, loads
-  // `system_prompts/system_prompt_unlimited.md` (STT + TTS mechanics only,
-  // no safety/behavior rules) instead of `persona.md` + `system_prompt.md`.
-  // Use for testing local / uncensored models; keep `false` in production.
-  unlimited_mode: z.boolean().default(false),
-});
-
-export type CerebrumConfig = z.output<typeof cerebrumConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // WebUI — client-side playback tuning relayed via session.ready
@@ -234,37 +312,6 @@ export const authConfigSchema = z.object({
 export type AuthConfig = z.output<typeof authConfigSchema>;
 
 // ---------------------------------------------------------------------------
-// Apply — settings-change orchestration (docker restart + health check)
-// ---------------------------------------------------------------------------
-
-export const applyConfigSchema = z.object({
-  // Max wall time for `docker restart hermes-<user>` to return.
-  docker_restart_timeout_ms: z.number().int().min(5000).default(30000),
-  // Max wall time for Hermes /health to return 200 after the restart command.
-  // Hermes boot is not just process-up: MCP discovery (3–10s × N servers) +
-  // auxiliary-client provider detect + tool registration + session-db open
-  // all happen before /health flips to 200. Cold cache + busy upstream
-  // routinely pushes past 30s; the old default produced false-positive
-  // "agent didn't come back" UX in the apply-bar.
-  health_check_timeout_ms: z.number().int().min(1000).default(90000),
-  // Poll cadence for /health during the health-checking state.
-  health_poll_interval_ms: z.number().int().min(100).default(1000),
-  // Max wall time for the Phase D personality/SOUL profile-restart orchestrator
-  // to wait for the per-user WS adapter to come back online after supervisord
-  // restarts the Hermes process. Same boot-cost story as health_check_timeout_ms
-  // above — kept in the same neighbourhood. Range: 5000–120000.
-  profile_restart_timeout_ms: z.number().int().min(5000).default(90000),
-  // Cadence between WS-readiness polls during the profile-restart orchestrator's
-  // polling phase. Range: 50–1000.
-  profile_restart_poll_interval_ms: z.number().int().min(50).default(250),
-  // Max wait for a ping→pong round-trip after pool upsert during user creation,
-  // confirming the new worker can accept dispatches. Range: 1000–30000.
-  dispatch_ping_timeout_ms: z.number().int().min(1000).default(8000),
-});
-
-export type ApplyConfig = z.output<typeof applyConfigSchema>;
-
-// ---------------------------------------------------------------------------
 // Providers — external catalog endpoints + cache TTLs
 // ---------------------------------------------------------------------------
 
@@ -284,53 +331,6 @@ export const providersConfigSchema = z.object({
 });
 
 export type ProvidersConfig = z.output<typeof providersConfigSchema>;
-
-// ---------------------------------------------------------------------------
-// Sessions — past-sessions feature: pagination, search, titles, switch flow
-// ---------------------------------------------------------------------------
-
-export const sessionsConfigSchema = z.object({
-  // Default page size for the sessions.list wire request. Range: 1–100.
-  list_page_size: z.number().int().positive().max(100).default(20),
-  // Hard cap on FTS results returned by sessions.search. Range: 1–50.
-  search_max_results: z.number().int().positive().max(50).default(20),
-  // Minimum query length; shorter queries are dropped before hitting the
-  // server. Range: 0–10.
-  search_min_chars: z.number().int().min(0).max(10).default(2),
-  // Client-side debounce floor for sessions.search keystrokes. Surfaced
-  // here so operators can tune without rebuilding the webui. Range: 50–1000.
-  search_debounce_ms: z.number().int().min(50).max(1000).default(300),
-  // Upper bound on user-supplied session titles (rename input). Range: 10–500.
-  title_max_chars: z.number().int().min(10).max(500).default(200),
-  // Per-profile JSON store directory for title overrides (legacy layout).
-  // Migrator runs at startup; once migrated to user_data_root the file at
-  // <title_override_dir>/<userId>.json moves to
-  // <user_data_root>/<userId>/sessions/titles.json. Kept for the migration
-  // window only; remove once all profiles have been migrated.
-  title_override_dir: z.string().min(1).default("~/.sentient/gateway/session-titles"),
-  // Per-user, per-category data root. Layout:
-  //   <user_data_root>/<userId>/sessions/titles.json
-  //   <user_data_root>/<userId>/preferences/...   (future)
-  //   <user_data_root>/<userId>/memory/...        (future)
-  // Outermost dir is the userId so per-user wipe/backup is one rm. Categories
-  // nest under each userId so future stores drop in without restructuring.
-  user_data_root: z.string().min(1).default("~/.sentient/gateway/users"),
-  // Adapter-side `source` tag written on every new Hermes chain so the
-  // gateway can distinguish UI-created sessions from agent-spawned ones.
-  source_tag: z.string().min(1).default("sentient-user"),
-  // Per-request timeout for the gateway → Hermes /api/sessions/* HTTP
-  // calls (list, search, getMessages, rename, …). Range: 1000–30000.
-  hermes_http_timeout_ms: z.number().int().min(1000).max(30_000).default(5000),
-  // Max wall time SwitchFlow waits for the active cycle to cancel before
-  // proceeding with the switch anyway. Range: 500–10000.
-  switch_teardown_timeout_ms: z.number().int().min(500).max(10_000).default(3000),
-  // Min ms between client session.new — blocks spam/double-fire, not
-  // human-paced new chats. Per-connection (one client), NOT per-user.
-  // Range: 0–60000.
-  min_new_interval_ms: z.number().int().min(0).max(60_000).default(500),
-});
-
-export type SessionsConfig = z.output<typeof sessionsConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Companions — version resolution for co-deployed services
@@ -373,36 +373,111 @@ export const downloadsConfigSchema = z.object({
 export type DownloadsConfig = z.output<typeof downloadsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Security — inbound prompt-injection scanning (gateway/src/security/)
+// ---------------------------------------------------------------------------
+
+export const inboundScanConfigSchema = z
+  .object({
+    // Master switch for scanning non-person text before it enters model
+    // context (tool results, background-task completions, skill bodies,
+    // delegation prompts). Missing block or missing key = scanning ON —
+    // secure by default, never opt-in.
+    enabled: z.boolean().default(true),
+    // Per-channel toggles. A channel set to false lets that text pass
+    // unscanned into model context — logged at boot so a silently-disabled
+    // channel is visible in the log trail, not just the YAML.
+    channels: z
+      .object({
+        tool_result: z.boolean().default(true),
+        background_completion: z.boolean().default(true),
+        skill_body: z.boolean().default(true),
+        // ADVISORY-ONLY / no-op toggle (kept for config upgrade-safety, never
+        // remove-then-reintroduce). Unlike the other channels, the delegation
+        // prompt does NOT transit `inbound-gate.ts` — `prompt-classifier.ts`
+        // scans it UNCONDITIONALLY via `scanContent` directly (see CLAUDE.md's
+        // security bullet + phase-services.ts:450). So setting this to `false`
+        // does NOT disable delegation-prompt scanning; the scan always runs
+        // (which is the safer posture). Wire it only if a real opt-out is ever
+        // wanted — today nothing reads this key.
+        delegation_prompt: z.boolean().default(true),
+        // Read-time gate on sparked snippets, memory_recall hits, and
+        // drill-down session reads (memory-system spec §3.1). MEMORY.md
+        // rendered into the system prompt does NOT transit this gate at
+        // read time (same as skill descriptions) — it relies on write-time
+        // + edit-ingest scanning instead.
+        memory_body: z.boolean().default(true),
+      })
+      .default({}),
+  })
+  // Block-level default: operator configs are edited in place and predate
+  // this key — a missing block must never brick boot for a gateway that was
+  // working yesterday. Because every field here also defaults to `true`, the
+  // secure-by-default posture holds even when the whole block is absent.
+  .default({});
+
+export type InboundScanConfig = z.output<typeof inboundScanConfigSchema>;
+
+export const securityConfigSchema = z.object({
+  inbound_scan: inboundScanConfigSchema,
+});
+
+export type SecurityConfig = z.output<typeof securityConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Root
 // ---------------------------------------------------------------------------
 
 export const gatewayConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(8888),
-  host: z.string().default("0.0.0.0"),
+  // LOOPBACK ONLY. inbound-proxy owns the LAN-facing 443 and proxies here over
+  // the loopback interface; the gateway itself is not reachable from another
+  // host. Reverting this to 0.0.0.0 puts the API on every interface with no
+  // policy in front of it. This default must agree with the checked-in
+  // config.yaml default — a reader assumes the two match.
+  host: z.string().default("127.0.0.1"),
   max_sessions: z.number().int().min(1).max(1000).default(100),
   auth_timeout_ms: z.number().int().min(1000).default(5000),
   tls: tlsConfigSchema.default({}),
-  // session block is required — no default; WS-resilience fields must be
-  // explicitly present in every config.yaml (fail loud if missing per config rule).
+  // inbound-proxy — the ONE outward-facing door (design 2026-08-04 §2).
+  // `.default({})` so a config predating this block still parses; cert_dir
+  // falls back to null (gateway's own self-signed material).
+  inbound_proxy: inboundProxyConfigSchema.default({}),
+  // stack — dev launcher budgets (scripts/stack.sh). `.default({})` for the
+  // same reason as inbound_proxy above.
+  stack: stackConfigSchema.default({}),
+  // session block is required — no default; connection/inactivity fields
+  // must be explicitly present in every config.yaml (fail loud if missing
+  // per config rule).
   session: sessionConfigSchema,
+  // Access — capability minting + per-user physical isolation (spec §2.1, §2.5).
+  // Required — no default; every deployment must pick a user_data_root.
+  access: accessConfigSchema,
+  // Store — durable per-user session history (spec §3). Optional; the
+  // filename default matches the standard single-DB-per-user layout.
+  store: storeConfigSchema.default({}),
+  // Orchestrator — the native LLM agent loop (spec §4/§5). Optional during
+  // the mid-transition state: the runtime isn't wired to a consumer yet
+  // (Plan 2). The composition root that constructs the orchestrator runtime
+  // MUST fail loudly if this is absent when the orchestrator is enabled.
+  orchestrator: orchestratorConfigSchema.optional(),
   logging: loggingConfigSchema.default({}),
   stt: sttConfigSchema,
   tts: ttsConfigSchema,
-  cerebrum: cerebrumConfigSchema.default({}),
   webui: webuiConfigSchema.default({}),
   hermes: hermesConfigSchema.optional(),
   auth: authConfigSchema.default({}),
-  apply: applyConfigSchema.default({}),
   providers: providersConfigSchema.default({}),
-  // Past-sessions feature tunables: pagination, search bounds, title length,
-  // override-store location, source tag, HTTP + switch-teardown timeouts.
-  sessions: sessionsConfigSchema.default({}),
   // Co-deployed companion service configuration: version resolution URLs,
   // file paths, and cache knobs. Defaults work for the standard docker compose.
   companions: companionsConfigSchema.default({}),
-  // Operator-managed inventory of available MCP servers. Per-user
-  // profiles reference these by name in `tools.enabled[]`. Add a new MCP
-  // by editing this section in config.yaml (no code change required).
+  // Operator-managed inventory of available MCP servers, and the ONE
+  // enumeration of the tool universe: it declares which tools exist and what
+  // impact tier each carries, which is what the role gate and every per-role
+  // permission template are derived from. A person's profile addresses these
+  // by server + tool name in `tools.permissions` (the retired `tools.enabled[]`
+  // name list is gone). Add a new MCP by editing this section in config.yaml
+  // (no code change required) — but every tool needs a `tier:`, or the gateway
+  // refuses to boot.
   mcp_catalog: mcpCatalogSchema,
   // Per-tool inventory of Hermes built-in tools. Powers the webui Tools
   // page's "Hermes built-ins" category (per-tool toggles backed by
@@ -415,10 +490,20 @@ export const gatewayConfigSchema = z.object({
   // Each key is a service name; values are ManagedServiceConfig records
   // validated by the orchestrator's own schema at runtime.
   managed_services: z.record(z.string(), z.unknown()).optional(),
+  // Policy for the system orchestrator itself (health watchdog cadence and
+  // back-off) as opposed to the per-service map above. `.default({})` so an
+  // operator config.yaml predating this block keeps booting without an
+  // operator-config-migrator schema_version bump.
+  system_orchestrator: systemOrchestratorConfigSchema.default({}),
   // Public /download page + mobile OTA artifact serving. Always present;
   // defaults match the standard docker-compose volume layout. Override
   // artifacts_dir and public_base_url in config.yaml for your deployment.
   downloads: downloadsConfigSchema.default({}),
+  // Security — inbound prompt-injection scanning master switch + per-channel
+  // toggles (gateway/src/security/). `.default({})` so an operator config
+  // predating this block keeps booting, and every leaf field also defaults
+  // to `true` so a missing block lands on scanning ON, never OFF.
+  security: securityConfigSchema.default({}),
 });
 
 export type GatewayConfig = z.output<typeof gatewayConfigSchema>;

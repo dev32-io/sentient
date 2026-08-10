@@ -11,6 +11,7 @@ context, network membership, healthcheck) is documented in
 | `searxng-mcp/` | `search_web` | `sentient/searxng-mcp:local` | Wraps the searxng-mcp adapter; talks to `searxng:8080`. |
 | `fetch-mcp/` | `fetch` | `sentient/fetch-mcp:local` | Wraps Anthropic's `mcp-server-fetch`. |
 | `ma-mcp/` | Music Assistant tools | `sentient/ma-mcp:local` | Davidpadbury fork; LAN egress on `sentient-external`. |
+| `ingress-proxy/` | (no MCP — reverse proxy) | `sentient/ingress-proxy:local` | The ONLY container on both networks. Publishes the loopback ports `fetch-mcp` and `searxng-mcp` cannot publish themselves (docker drops publishing on an internal-only container) and forwards inward, so those two keep network-enforced egress confinement. Inverse of `egress-proxy`. |
 
 Templates that bind these images to their per-container config (env,
 networks, secrets, healthcheck) live at

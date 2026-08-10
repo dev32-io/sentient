@@ -4,21 +4,26 @@ import type { UpdateUserSettingsPatch } from "../mcp-host/tools/update-user-sett
 const log = getLog(["sentient", "session-controls-registry"]);
 
 /**
- * Per-session control surface exposed to the MCP host. Each WS session
- * registers its handle on configure; MCP tools (update_user_settings,
- * pause_audio, etc.) look it up by sessionId and invoke directly — no
- * global state, no broadcast, no cross-session hazards.
+ * Per-session control surface exposed to the MCP host. Intended usage: each
+ * WS session registers its handle here on configure, and MCP tools
+ * (update_user_settings, pause_audio, etc.) look it up by sessionId and
+ * invoke directly — no global state, no broadcast, no cross-session hazards.
  *
- * This is a stepping stone toward the SessionInstance refactor: once that
- * lands, the instance itself becomes the registered value and this interface
- * collapses into it.
+ * Producer side is currently UNWIRED: the legacy-brain purge stripped
+ * ws-session-configure.ts to auth+hold, so nothing calls `register()` today
+ * and this registry is permanently empty. `update_user_settings` /
+ * `pause_audio` / `resume_audio` therefore always resolve "no session" until
+ * Plan 2's `SessionRuntime` registers here (or replaces this registry
+ * outright). Not a stub to remove — the interface is the intended shape,
+ * just missing its producer.
  */
 export interface SessionControls {
   /**
    * Apply a user-settings patch to this session. Persistent fields are
-   * written to the profile store; live-applicable fields (channel,
-   * ttsEnabled) are pushed into the session's PreferenceManager so the
-   * next cycle's gates see them. voice/model do not hot-swap mid-session.
+   * written to the profile store; live-applicable fields would be pushed to
+   * the session's live runtime so the next turn's gates see them — but see
+   * the unwired-producer note above; today nothing consumes this in
+   * production. voice/model are not intended to hot-swap mid-session.
    */
   updateUserSettings(sessionId: string, userId: string, patch: UpdateUserSettingsPatch): Promise<void>;
 }

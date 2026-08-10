@@ -59,7 +59,10 @@ test("returns parse-error for bad yaml", async () => {
   expect(r.error.kind).toBe("parse-error");
 });
 
-test("returns policy-violation when template carries ports", async () => {
+// SECURITY: a template may publish a host port only on loopback. Docker's
+// default bind for a bare "80:80" is 0.0.0.0 — LAN-wide exposure of an addon
+// that is supposed to be reachable only by the native gateway.
+test("SECURITY: returns policy-violation when a template port omits the loopback bind", async () => {
   const r = await loadServiceTemplate({
     yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["80:80"]\n`,
     secretBindings: {},
@@ -68,6 +71,28 @@ test("returns policy-violation when template carries ports", async () => {
   expect(r.ok).toBe(false);
   if (r.ok) return;
   expect(r.error.kind).toBe("policy-violation");
+});
+
+test("SECURITY: returns policy-violation when a template port binds the wildcard address", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["0.0.0.0:80:80"]\n`,
+    secretBindings: {},
+    secrets: accessor,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("accepts a loopback-bound template port", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: `image: alpine\ncontainer_name: x\nnetworks: [sentient-internal]\nports: ["127.0.0.1:8086:8086"]\n`,
+    secretBindings: {},
+    secrets: accessor,
+  });
+  expect(r.ok).toBe(true);
+  if (!r.ok) return;
+  expect(r.value.ports).toEqual(["127.0.0.1:8086:8086"]);
 });
 
 test("missing-secret error carries envVar + path payload", async () => {
@@ -119,4 +144,61 @@ test("redacts substituted secret values from schema-error reason", async () => {
   expect(r.error.kind).toBe("schema-error");
   if (r.error.kind !== "schema-error") return;
   expect(r.error.reason.includes(SECRET)).toBe(false);
+});
+
+// SECURITY: the public-port exception (§2.3) is the one narrow hole in the
+// loopback rule. It must stay fail-closed on its own — no policy grant means
+// no wildcard publish, full stop.
+const noSecrets: SecretAccessor = { resolve: () => null };
+
+function templateWithPorts(ports: string[]): string {
+  return [
+    "image: nginx:1.30-alpine",
+    "container_name: c",
+    "networks: [sentient-edge]",
+    `ports: [${ports.map((p) => `"${p}"`).join(", ")}]`,
+  ].join("\n");
+}
+
+test("SECURITY: rejects a 0.0.0.0 publish when public_ports is not granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:443:8443"]),
+    secretBindings: {},
+    secrets: noSecrets,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("SECURITY: accepts 0.0.0.0:443 and 0.0.0.0:80 when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:443:8443", "0.0.0.0:80:8080"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("SECURITY: rejects a public port other than 80 or 443 even when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["0.0.0.0:8888:8888"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(false);
+  if (r.ok) return;
+  expect(r.error.kind).toBe("policy-violation");
+});
+
+test("SECURITY: still accepts loopback publishes when public_ports is granted", async () => {
+  const r = await loadServiceTemplate({
+    yamlBody: templateWithPorts(["127.0.0.1:8088:8088"]),
+    secretBindings: {},
+    secrets: noSecrets,
+    allowPublicPorts: true,
+  });
+  expect(r.ok).toBe(true);
 });

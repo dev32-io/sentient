@@ -1,22 +1,33 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyConfigSchema,
   companionsConfigSchema,
   gatewayConfigSchema,
   loggingConfigSchema,
   sessionConfigSchema,
-  sessionsConfigSchema,
   sttConfigSchema,
   ttsConfigSchema,
 } from "./schema.ts";
+import { mcpCatalogSchema } from "./schemas/mcp-catalog.ts";
+import { NATIVE_TOOL_SERVER_KEY } from "./schemas/tool-permission.ts";
 
-// Shared WS-resilience session fields required in every gateway config
-// (no code defaults — YAML is the source of truth per config rules).
+// Shared session fields required in every gateway config (no code defaults —
+// YAML is the source of truth per config rules).
 const wsResilienceSession = {
   ws_idle_timeout_ms: 255000,
-  replay_buffer_max_bytes: 16777216,
   per_user_max_sessions: 40,
-  idle_timeout_ms: 900000,
+};
+
+// Shared access/orchestrator fixtures. `access` is required (no `.default()`
+// at the root), so every gatewayConfigSchema.parse() fixture below must
+// supply it. `orchestrator` is optional (mirrors `hermes`) but every fixture
+// still supplies it so the shape-when-present assertions below keep exercising
+// a fully-populated orchestrator block.
+const minimalAccess = { user_data_root: "/tmp/sentient-test-users" };
+const minimalOrchestrator = {
+  provider: { base_url: "https://openrouter.ai/api/v1", model: "test-model" },
+  loop: {},
+  tools: {},
+  delegation: {},
 };
 
 describe("gatewayConfigSchema", () => {
@@ -24,35 +35,27 @@ describe("gatewayConfigSchema", () => {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("accepts a minimal config and applies defaults", () => {
     const result = gatewayConfigSchema.parse(minimalValidConfig);
 
     expect(result.port).toBe(8888);
-    expect(result.host).toBe("0.0.0.0");
+    // No `host` key in minimalValidConfig — this pins the absent-key path at
+    // the config-parsing boundary: it must resolve to loopback, not 0.0.0.0,
+    // the exact address the gateway is meant to be off of by default.
+    expect(result.host).toBe("127.0.0.1");
     expect(result.max_sessions).toBe(100);
     expect(result.auth_timeout_ms).toBe(5000);
   });
 
-  it("applies session defaults", () => {
-    const result = gatewayConfigSchema.parse(minimalValidConfig);
-    expect(result.session.tts_drain_grace_ms).toBe(2000);
-    expect(result.session.barge_in.no_interrupt_ms).toBe(500);
-    expect(result.session.barge_in.min_speech_duration_ms).toBe(50);
-  });
+  it("accepts a config with no orchestrator block — orchestrator is optional (mirrors hermes)", () => {
+    const { orchestrator, ...withoutOrchestrator } = minimalValidConfig;
+    const result = gatewayConfigSchema.parse(withoutOrchestrator);
 
-  it("accepts custom tts_drain_grace_ms", () => {
-    const result = gatewayConfigSchema.parse({
-      ...minimalValidConfig,
-      session: { ...wsResilienceSession, tts_drain_grace_ms: 500 },
-    });
-    expect(result.session.tts_drain_grace_ms).toBe(500);
-  });
-
-  it("rejects tts_drain_grace_ms above max", () => {
-    const invalid = { ...minimalValidConfig, session: { ...wsResilienceSession, tts_drain_grace_ms: 6000 } };
-    expect(gatewayConfigSchema.safeParse(invalid).success).toBe(false);
+    expect(result.orchestrator).toBeUndefined();
   });
 
   it("applies TTS defaults", () => {
@@ -74,14 +77,13 @@ describe("gatewayConfigSchema", () => {
         format: "opus",
         sample_rate: 44100,
       },
-      session: { ...wsResilienceSession, barge_in: { no_interrupt_ms: 300 } },
+      session: wsResilienceSession,
     });
     expect(result.stt.language).toBe("zh");
     expect(result.tts.url).toBe("ws://localhost:8770");
     expect(result.tts.voice_id).toBe("custom");
     expect(result.tts.format).toBe("opus");
     expect(result.tts.sample_rate).toBe(44100);
-    expect(result.session.barge_in.no_interrupt_ms).toBe(300);
   });
 
   it("rejects port out of range", () => {
@@ -211,12 +213,12 @@ describe("loggingConfigSchema", () => {
   it("accepts per-category level overrides", () => {
     expect(
       loggingConfigSchema.parse({
-        level_overrides: { "sentient:cerebrum:hermes-event-translator": "debug" },
+        level_overrides: { "sentient:session-router": "debug" },
       }),
     ).toEqual({
       level: "info",
       retention_days: 7,
-      level_overrides: { "sentient:cerebrum:hermes-event-translator": "debug" },
+      level_overrides: { "sentient:session-router": "debug" },
     });
   });
 
@@ -233,32 +235,14 @@ describe("loggingConfigSchema", () => {
   });
 });
 
-describe("sessionsConfigSchema rate-limit fields", () => {
-  it("applies the default for the session.new min-interval", () => {
-    const result = sessionsConfigSchema.parse({});
-    expect(result.min_new_interval_ms).toBe(500);
-  });
-
-  it("accepts a custom min-interval within bounds", () => {
-    const result = sessionsConfigSchema.parse({ min_new_interval_ms: 1000 });
-    expect(result.min_new_interval_ms).toBe(1000);
-  });
-
-  it("rejects min_new_interval_ms below 0", () => {
-    expect(sessionsConfigSchema.safeParse({ min_new_interval_ms: -1 }).success).toBe(false);
-  });
-
-  it("rejects min_new_interval_ms above 60000", () => {
-    expect(sessionsConfigSchema.safeParse({ min_new_interval_ms: 60001 }).success).toBe(false);
-  });
-});
-
 describe("gatewayConfigSchema logging field", () => {
   it("includes a default logging section when omitted", () => {
     const minimal = {
       stt: { provider: "local-stt" },
       tts: {},
       session: wsResilienceSession,
+      access: minimalAccess,
+      orchestrator: minimalOrchestrator,
     };
     const parsed = gatewayConfigSchema.parse(minimal);
     expect(parsed.logging).toEqual({ level: "info", retention_days: 7, level_overrides: {} });
@@ -270,6 +254,8 @@ describe("gatewayConfigSchema webui field", () => {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("applies webui playback defaults when section is omitted", () => {
@@ -296,11 +282,13 @@ describe("gatewayConfigSchema webui field", () => {
   });
 });
 
-describe("gateway config — auth/apply/providers sections", () => {
+describe("gateway config — auth/providers sections", () => {
   const minimal = {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
   };
 
   it("defaults auth.token_ttl_seconds to 7 days", () => {
@@ -320,21 +308,6 @@ describe("gateway config — auth/apply/providers sections", () => {
     expect(cfg.auth.argon2_parallelism).toBe(1);
   });
 
-  it("defaults apply.docker_restart_timeout_ms to 30000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.docker_restart_timeout_ms).toBe(30000);
-  });
-
-  it("defaults apply.health_check_timeout_ms to 90000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.health_check_timeout_ms).toBe(90000);
-  });
-
-  it("defaults apply.health_poll_interval_ms to 1000", () => {
-    const cfg = gatewayConfigSchema.parse(minimal);
-    expect(cfg.apply.health_poll_interval_ms).toBe(1000);
-  });
-
   it("defaults providers.ollama_cloud_base_url to https://ollama.com/v1", () => {
     const cfg = gatewayConfigSchema.parse(minimal);
     expect(cfg.providers.ollama_cloud_base_url).toBe("https://ollama.com/v1");
@@ -351,51 +324,13 @@ describe("gateway config — auth/apply/providers sections", () => {
   });
 });
 
-describe("applyConfigSchema", () => {
-  it("parses an empty object to the simplified default shape", () => {
-    expect(applyConfigSchema.parse({})).toEqual({
-      dispatch_ping_timeout_ms: 8000,
-      docker_restart_timeout_ms: 30000,
-      health_check_timeout_ms: 90000,
-      health_poll_interval_ms: 1000,
-      profile_restart_timeout_ms: 90000,
-      profile_restart_poll_interval_ms: 250,
-    });
-  });
-
-  it("rejects health_poll_interval_ms below 100", () => {
-    expect(applyConfigSchema.safeParse({ health_poll_interval_ms: 99 }).success).toBe(false);
-  });
-
-  it("rejects docker_restart_timeout_ms below 5000", () => {
-    expect(applyConfigSchema.safeParse({ docker_restart_timeout_ms: 4999 }).success).toBe(false);
-  });
-
-  it("rejects health_check_timeout_ms below 1000", () => {
-    expect(applyConfigSchema.safeParse({ health_check_timeout_ms: 999 }).success).toBe(false);
-  });
-
-  it("accepts custom values within bounds", () => {
-    const cfg = applyConfigSchema.parse({
-      docker_restart_timeout_ms: 45000,
-      health_check_timeout_ms: 20000,
-      health_poll_interval_ms: 500,
-    });
-    expect(cfg.docker_restart_timeout_ms).toBe(45000);
-    expect(cfg.health_check_timeout_ms).toBe(20000);
-    expect(cfg.health_poll_interval_ms).toBe(500);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// sessionConfigSchema — WS-resilience knobs (Slice 3, Task 3.1)
-// ---------------------------------------------------------------------------
-
 describe("gatewayConfigSchema downloads field", () => {
   const minimalWithDownloads = {
     stt: { provider: "local-stt" },
     tts: {},
     session: wsResilienceSession,
+    access: minimalAccess,
+    orchestrator: minimalOrchestrator,
     downloads: {
       artifacts_dir: "/app/releases",
       public_base_url: "https://sentient.dev32.io",
@@ -418,19 +353,15 @@ describe("gatewayConfigSchema downloads field", () => {
   });
 });
 
-describe("sessionConfigSchema — WS-resilience fields", () => {
+describe("sessionConfigSchema", () => {
   const validSession = {
     ws_idle_timeout_ms: 255000,
-    replay_buffer_max_bytes: 16777216,
     per_user_max_sessions: 40,
-    idle_timeout_ms: 900000,
   };
 
-  it("parses a valid session config with WS-resilience fields", () => {
+  it("parses a valid session config", () => {
     const result = sessionConfigSchema.parse(validSession);
     expect(result.ws_idle_timeout_ms).toBe(255000);
-    expect(result.replay_buffer_max_bytes).toBe(16777216);
-    expect(result.idle_timeout_ms).toBe(900000);
   });
 
   it("rejects ws_idle_timeout_ms above Bun cap (255000 ms)", () => {
@@ -440,12 +371,31 @@ describe("sessionConfigSchema — WS-resilience fields", () => {
   it("rejects ws_idle_timeout_ms below min (1000 ms)", () => {
     expect(sessionConfigSchema.safeParse({ ...validSession, ws_idle_timeout_ms: 500 }).success).toBe(false);
   });
+});
 
-  it("rejects replay_buffer_max_bytes above max (268435456 bytes)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 300000000 }).success).toBe(false);
+describe("mcpCatalogSchema — the reserved 'native' server key", () => {
+  const validServer = {
+    transport: "http",
+    url: "http://127.0.0.1:9000/mcp",
+    tools: { include: [{ name: "get_weather", tier: "read" }] },
+  };
+
+  it("accepts an ordinary operator-named server", () => {
+    const result = mcpCatalogSchema.safeParse({ "test-mcp": validServer });
+    expect(result.success).toBe(true);
   });
 
-  it("rejects replay_buffer_max_bytes below min (65536 bytes)", () => {
-    expect(sessionConfigSchema.safeParse({ ...validSession, replay_buffer_max_bytes: 1024 }).success).toBe(false);
+  it("rejects a server literally named 'native' — it would alias the synthetic permission namespace", () => {
+    const result = mcpCatalogSchema.safeParse({ [NATIVE_TOOL_SERVER_KEY]: validServer });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected the reserved-name refinement to reject");
+    const issue = result.error.issues.find((i) => i.path.includes(NATIVE_TOOL_SERVER_KEY));
+    expect(issue?.message).toContain("reserved");
+  });
+
+  it("rejects 'native' even alongside legitimately-named servers", () => {
+    const result = mcpCatalogSchema.safeParse({ "test-mcp": validServer, [NATIVE_TOOL_SERVER_KEY]: validServer });
+    expect(result.success).toBe(false);
   });
 });

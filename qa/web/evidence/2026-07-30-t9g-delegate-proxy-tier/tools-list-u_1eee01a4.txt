@@ -1,0 +1,17 @@
+# `tools/list` on ~/.sentient/run/mcp-u_1eee01a4.sock, 2026-07-30, gateway on the 9g branch.
+# Raw JSON-RPC over the unix socket; no hermes involved.
+
+pause_audio
+resume_audio
+ha_list_floors_areas
+ha_config_get_calendar_events
+ha_get_camera_image
+ha_get_history
+ha_get_overview
+ha_get_state
+ha_get_operation_status
+ha_get_todo
+ha_eval_template
+ha_get_zone
+fetch
+search_web

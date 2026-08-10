@@ -27,17 +27,27 @@
 #   surface : chat session reconnect outbox voice-loop auth settings-root
 #             settings-soul settings-voice settings-user settings-admin
 #             settings-diagnostics update logout
-#   behavior: fault-armed physical-only slow destructive-profile restore helper
+#   behavior: fault-armed physical-only device-actuating slow destructive-profile
+#             restore helper
 #
 # Behaviour:
 #   - Default batch (no --tags) = every flow EXCEPT fault-armed / physical-only /
-#     helper, in one `maestro test` invocation; then the fault-armed flows run
-#     individually with their pre-arming (broadcast / network-kill / gateway-stop).
+#     device-actuating / helper, in one `maestro test` invocation; then the
+#     fault-armed flows run individually with their pre-arming (broadcast /
+#     network-kill / gateway-stop).
 #   - --tags X,Y = one include-tags batch (still excludes fault-armed/physical-only
-#     /helper); no fault phase ? targeted runs stay fast.
+#     /device-actuating/helper); no fault phase ? targeted runs stay fast.
+#   - NONE of fault-armed/physical-only/device-actuating can be selected via
+#     --tags -- EFFECTIVE_EXCLUDE always wins over INCLUDE_TAGS (see
+#     flow_matches). fault-armed's deliberate opt-in is --fault-only (a separate
+#     named-flow phase, not tag-driven); physical-only and device-actuating have
+#     NO opt-in through this runner at all -- run them with a direct
+#     `maestro test <file>` invocation instead. See testing-knowledge.md's tag
+#     taxonomy section for why (device-actuating: an agent-driven run actuated a
+#     real light in the user's house at night -- see 12-permission-confirm.yaml).
 #
 # Prerequisites:
-#   - Local gateway stack healthy (deploy/macos: docker compose up -d).
+#   - Local gateway healthy (native: `cd gateway && bun --hot src/main.ts`; see deploy/README.md).
 #   - Android emulator-5554 booted; iOS simulator booted; debug apps installed.
 #   - ~/.maestro/bin/maestro on PATH (or MAESTRO=...); adb + xcrun on PATH.
 #
@@ -49,8 +59,10 @@
 #
 # iOS specifics: IOS_DEVICE auto-detects the booted sim (override via env). Mic
 # permission is granted with `xcrun simctl privacy`. iOS has no adb-broadcast fault
-# channel, so its fault phase is gateway-stop orchestration (58b/60 via docker
-# stop; 04c continuity via docker restart between parts); 08/18/20 are Android-only.
+# channel, so its fault phase is gateway-stop orchestration (58b/60 via
+# gw_stop_or_flag; 04c continuity via gw_restart_or_flag between parts, same
+# wrappers the Android 18-auth-expired case uses) -- native process, not a container
+# (see the "Gateway lifecycle" block below); 08/18/20 are Android-only.
 #
 # Exit code: 0 if every selected flow passed, 1 otherwise.
 # ---------------------------------------------------------------------------
@@ -68,8 +80,11 @@ IOS_DEVICE="${IOS_DEVICE:-}"
 ANDROID_APP="io.dev32.sentient.debug"
 IOS_APP="io.dev32.sentient.debug"
 
-# Always excluded from batch runs: harness-orchestrated + reusable subflows.
-BASE_EXCLUDE="fault-armed,physical-only,helper"
+# Always excluded from batch runs: harness-orchestrated flows, reusable
+# subflows, and anything that writes real-world device state (device-actuating
+# -- lights, media, thermostat, locks; excluded unconditionally, same as
+# fault-armed/physical-only -- see the tag-taxonomy comment above).
+BASE_EXCLUDE="fault-armed,physical-only,device-actuating,helper"
 
 # -- Args ----------------------------------------------------------------------
 TARGET="all"
@@ -114,16 +129,88 @@ fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
 flag() { echo -e "${YELLOW}[FLAG]${NC} $*"; }
 
+# -- Gateway lifecycle -----------------------------------------------------------
+# The gateway is a native host process now, not a container (native-stack
+# migration, 2026-07-29) -- there is no `sentient-gateway` to `docker ps` /
+# stop / start / restart any more. Dev: `cd gateway && bun --hot src/main.ts`
+# (see deploy/README.md "Local dev -- macOS"); prod: launchd, never touched by
+# this LOCAL-ONLY harness. These helpers manage the dev process directly: probe
+# its health endpoint, and find/signal whatever is bound to :8888 rather than a
+# container name. gw_start relaunches it exactly the documented dev way -- STT/TTS
+# keep working regardless, since the gateway dials whichever native-addon
+# processes already own their ports, independent of this restart.
+GATEWAY_HEALTH_URL="https://127.0.0.1:8888/api/v1/health"
+GATEWAY_USERS_URL="https://127.0.0.1:8888/api/v1/auth/users"
+GATEWAY_PORT=8888
+# QA_USER_ID - the login-picker avatar every authed flow taps. Server-minted, so
+# it is passed to Maestro as an env var (each login helper declares the same
+# default) and pre-flighted by check_qa_user before any JVM starts.
+QA_USER_ID="${QA_USER_ID:-u_0417d3b0}"
+GATEWAY_DEV_LOG="$REPO_ROOT/qa/mobile/logs/gateway-dev.log"
+
+gateway_health_code() {
+  curl -sk -o /dev/null -m 3 -w "%{http_code}" "$GATEWAY_HEALTH_URL" 2>/dev/null || echo "000"
+}
+
 # -- Pre-flight ----------------------------------------------------------------
 check_gateway() {
-  info "Checking local gateway stack..."
-  local healthy
-  healthy=$(docker ps --filter "name=sentient-gateway" --filter "health=healthy" --format "{{.Names}}" 2>/dev/null || true)
-  if [[ -z "$healthy" ]]; then
-    fail "sentient-gateway is not running or not healthy. Start: cd deploy/macos && docker compose up -d"
+  info "Checking local gateway..."
+  local code
+  code=$(gateway_health_code)
+  if [[ "$code" != "200" ]]; then
+    fail "the gateway is not running or not healthy at $GATEWAY_HEALTH_URL (got HTTP $code). Start it natively: cd gateway && bun --hot src/main.ts"
     exit 1
   fi
   pass "Gateway healthy"
+}
+
+# check_qa_user - prove the login-picker avatar the flows tap actually exists.
+#
+# WHY THIS EXISTS: QA_USER_ID is a SERVER-MINTED id. The native-stack cutover
+# moved the gateway state root and the previous fixture user did not come with
+# it; every authed flow then failed at `tapOn: login-avatar-<id>` — a SELECTOR
+# failure that reads like a product regression. This turns that into one clear
+# diagnostic before any JVM starts. Override with QA_USER_ID=<id> in the env.
+check_qa_user() {
+  info "Checking QA fixture user $QA_USER_ID..."
+  local users
+  users=$(curl -sk -m 5 "$GATEWAY_USERS_URL" 2>/dev/null || echo "")
+  if [[ -z "$users" ]]; then
+    fail "could not read $GATEWAY_USERS_URL — cannot verify the QA fixture user."
+    exit 1
+  fi
+  if ! grep -q "\"$QA_USER_ID\"" <<<"$users"; then
+    fail "QA fixture user $QA_USER_ID is NOT in the gateway's login list. The flows will fail at the avatar selector, not at their assertions."
+    printf '       gateway knows: %s\n' "$(grep -o '"userId":"[^"]*"' <<<"$users" | cut -d'"' -f4 | tr '\n' ' ')"
+    printf '       fix: re-run with QA_USER_ID=<an existing admin id>, or recreate the fixture user.\n'
+    exit 1
+  fi
+  pass "QA fixture user $QA_USER_ID present"
+}
+
+# check_admin_trio_precondition - name the settings-admin pre-state BEFORE the run.
+#
+# WHY THIS EXISTS: 41-members-add-cap adds two users to walk the household 1/3 ->
+# 3/3, so it is only driveable from a ONE-user household. Against a household
+# already at the cap, "Add user" is correctly DISABLED, the tap no-ops, and the
+# flow dies at `settings-members-add-name is visible` -- a SELECTOR failure that
+# reads like a broken Add-user sheet and is not one. 42 (logs in as the Temp1 that
+# 41 creates) and 43 (deletes it) then cascade off it. Driven on both platforms
+# 2026-07-30: Android and iOS fail identically, from pre-state, not from product.
+# Same doctrine as check_qa_user: turn a mystery selector failure into one named
+# diagnostic before any JVM starts. Advisory, not fatal -- settings-admin batches
+# also carry 40/56, which legitimately pass at any household size.
+HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO=1
+check_admin_trio_precondition() {
+  [[ "$INCLUDE_TAGS" == *"settings-admin"* || -z "$INCLUDE_TAGS" ]] || return 0
+  local users count
+  users=$(curl -sk -m 5 "$GATEWAY_USERS_URL" 2>/dev/null || echo "")
+  count=$(grep -o '"userId":"[^"]*"' <<<"$users" | wc -l | tr -d ' ')
+  [[ "$count" == "$HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO" ]] && return 0
+  flag "PRE-STATE: household holds $count users; 41/42/43 need exactly $HOUSEHOLD_MAX_USERS_FOR_ADMIN_TRIO."
+  flag "  41 will fail at 'settings-members-add-name is visible' (Add user correctly DISABLED at the cap)."
+  flag "  42/43 then cascade. This is PRE-STATE, not a product defect -- do not file it as one."
+  flag "  Satisfy it by deleting the extra members through the Members UI first."
 }
 
 # reset_gateway - restart the LOCAL gateway to clear per-user WS session state.
@@ -134,28 +221,57 @@ check_gateway() {
 # --fresh-gateway before a large run. LOCAL dev stack only (never prod).
 reset_gateway() {
   info "Restarting gateway (--fresh-gateway: clear per-user WS session cap)..."
-  docker restart sentient-gateway >/dev/null 2>&1 || true
-  local i s
-  for i in $(seq 1 40); do
-    s=$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null || true)
-    [[ "$s" == "healthy" ]] && break
-    sleep 3
-  done
-  pass "Gateway restarted + healthy"
+  if gw_restart; then
+    pass "Gateway restarted + healthy"
+  else
+    fail "gateway did not come back healthy within budget -- check $GATEWAY_DEV_LOG"
+    exit 1
+  fi
 }
 
 # Gateway stop/start/restart helpers used by the fault phases (offline / reconnect).
 gw_wait_healthy() {
-  local i s
+  local i
   for i in $(seq 1 40); do
-    s=$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null || true)
-    [[ "$s" == "healthy" ]] && return 0
+    [[ "$(gateway_health_code)" == "200" ]] && return 0
     sleep 2
   done
+  return 1
 }
-gw_stop() { docker stop sentient-gateway >/dev/null 2>&1 || true; }
-gw_start() { docker start sentient-gateway >/dev/null 2>&1 || true; gw_wait_healthy; }
-gw_restart() { docker restart sentient-gateway >/dev/null 2>&1 || true; gw_wait_healthy; }
+# pid of whatever is LISTENing on the gateway port; empty (not an error) when none.
+gw_pid() { lsof -ti "tcp:${GATEWAY_PORT}" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
+gw_stop() {
+  local pid i
+  pid=$(gw_pid)
+  [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null
+  for i in $(seq 1 20); do
+    [[ -z "$(gw_pid)" ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+gw_start() {
+  mkdir -p "$(dirname "$GATEWAY_DEV_LOG")"
+  ( cd "$REPO_ROOT/gateway" && nohup bun --hot src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
+  gw_wait_healthy
+}
+gw_restart() { gw_stop; gw_start; }
+
+# Fault-phase call sites use these wrappers, never gw_stop/gw_start bare: those
+# return non-zero when they miss their budget, which under `set -e` would abort the
+# whole suite mid-phase. A missed budget is a degraded fault setup, not a harness
+# crash -> flag the reason, mark the batch failed, keep running the remaining flows.
+gw_stop_or_flag() {
+  if gw_stop; then return 0; fi
+  flag "  gateway still LISTENing on :$GATEWAY_PORT after the stop budget - the next flow may not see a DOWN gateway"
+  BATCH_RESULT=1
+}
+gw_start_or_flag() {
+  if gw_start; then return 0; fi
+  flag "  gateway did not come back healthy within budget - check $GATEWAY_DEV_LOG"
+  BATCH_RESULT=1
+}
+gw_restart_or_flag() { gw_stop_or_flag; gw_start_or_flag; }
 
 check_android() {
   info "Checking Android $ANDROID_DEVICE..."
@@ -217,13 +333,20 @@ arm_fault() {
   sleep 1
 }
 
+# push_and_arm_fixture - DORMANT. Kept as the shape the capability had, called by
+# nothing, because the SDK end of it was deleted by the VoiceAudio refactor:
+# FaultHooks now exposes only armExpiredToken/armMalformedFrame, and
+# DebugFaultReceiver sends every other kind to `fault.broadcast.unknown-kind`.
+# The push still works; the arm is silently discarded. Re-enable ONLY together
+# with a fixture capture source in the SDK's voice engine — details, the proven
+# speech fixture, and the hold-vs-tap blocker: qa/mobile/fixtures/README.md.
 push_and_arm_fixture() {
-  local fixture_local="$FIXTURES_DIR/silence-500ms.pcm"
+  local fixture_local="$FIXTURES_DIR/speech-what-is-two-plus-two.pcm"
   local cache_path="/data/user/0/$ANDROID_APP/cache/sentient-fixture.pcm"
   info "  Pushing fixture to app cache: $cache_path"
   cat "$fixture_local" | adb -s "$ANDROID_DEVICE" shell "run-as $ANDROID_APP sh -c 'cat > $cache_path'" 2>/dev/null \
     || info "  WARNING: fixture push via run-as failed"
-  adb -s "$ANDROID_DEVICE" shell am broadcast -a io.sentient.debug.FAULT -p "$ANDROID_APP" --es kind fixture --es name sentient-fixture.pcm 2>/dev/null || true
+  flag "  fixture arm is a NO-OP on this build (SDK has no fixture capture source) - not asserting on it"
   sleep 1
 }
 
@@ -249,8 +372,13 @@ grep_logcat_for() {
 CANONICAL_ORDER=(
   login
   verify-newchat
-  01-chat-send 01-send-stream 02-drawer 03-new-chat 05-interrupt
+  # 01b asserts on the conversation 01-send-stream creates (one-bubble reply,
+  # empty strip) after a kill-and-relaunch, so the pair MUST stay adjacent.
+  01-chat-send 01-send-stream 01b-reply-survives-relaunch 02-drawer 03-new-chat 05-interrupt
   06-switch-session 07-rename-delete 10-outbox 11-mic-control
+  # 12 is the native permission-confirm case (both platforms). Ordered after the
+  # plain chat flows: it needs a working send, so if those are red it is red too.
+  12-permission-confirm
   40-settings-root
   44-audio-fast-save 44b-audio-restore
   45-model-slow-save 45b-model-restore
@@ -258,7 +386,7 @@ CANONICAL_ORDER=(
   48-advanced-sliders 48b-advanced-restore
   49-tools-toggle 49b-tools-restore
   50-personalities-create-activate 59-audio-dirty-back-discard
-  51-account-rename 51b-account-restore 52-pin-wrong-current 53-devices-link-cancel
+  51-account-rename 51b-account-restore 52-pin-wrong-current
   54-voice-preview-pick 54b-voice-restore
   55-voice-create-record 55b-voice-delete-user-pack
   62-fish-clone-happy 62b-fish-clone-cleanup
@@ -335,7 +463,7 @@ run_batch() {
   set +e
   # Explicit ordered files (deterministic). --exclude-tags helper is belt-and-braces
   # (helpers live in _helpers/ and are never in the resolved list anyway).
-  "$MAESTRO" --device "$device" test "${selected[@]}" --exclude-tags helper 2>&1 | tee "$out"
+  "$MAESTRO" --device "$device" test -e "QA_USER_ID=$QA_USER_ID" "${selected[@]}" --exclude-tags helper 2>&1 | tee "$out"
   local rc=${PIPESTATUS[0]}
   set -e
   end=$(date +%s); elapsed=$((end - start))
@@ -369,7 +497,7 @@ android_log_trail() {
 
 # -- Fault-armed phase (Android only) ------------------------------------------
 run_flow_file() { # <device> <platform> <basename> ; returns maestro rc
-  "$MAESTRO" --device "$1" test "$FLOWS_DIR/$2/$3.yaml"
+  "$MAESTRO" --device "$1" test -e "QA_USER_ID=$QA_USER_ID" "$FLOWS_DIR/$2/$3.yaml"
 }
 run_one() { run_flow_file "$ANDROID_DEVICE" android "$1"; }   # android fault phase
 
@@ -386,15 +514,15 @@ fault_phase_android() {
     grep_logcat_for "fault\.malformed-frame|decode-failed" "decode-failed" || BATCH_RESULT=1
   else fail "  20-malformed-frame"; BATCH_RESULT=1; fi
 
-  # 08-voice-loop ? push fixture + arm, then run.
-  echo ""; info "-> 08-voice-loop"
-  adb -s "$ANDROID_DEVICE" logcat -c 2>/dev/null || true
-  push_and_arm_fixture
-  if run_one "08-voice-loop"; then pass "  08-voice-loop"; sleep 1
-    grep_logcat_for "fixture-utterance" "fixture-utterance" || BATCH_RESULT=1
-    grep_logcat_for "startMic" "startMic" || BATCH_RESULT=1
-    flag "  08-voice-loop: FULL STT->LLM->TTS needs a real speech fixture (silence only here)"
-  else fail "  08-voice-loop"; BATCH_RESULT=1; fi
+  # 08-voice-loop - mic uplink CONTROL PLANE only. It is now also tagged
+  # physical-only, so it is not in any batch and this phase does not arm a fixture:
+  # the fixture-injection channel no longer exists in the SDK (FaultHooks kept only
+  # expired/malformed; DebugFaultReceiver logs fault.broadcast.unknown-kind for
+  # anything else), so `--es kind fixture` is delivered and discarded. Greping for
+  # `fixture-utterance` used to fail this phase against a log line no code emits.
+  # A real voice round-trip is a physical-device case. See qa/mobile/fixtures/README.md.
+  echo ""; info "-> 08-voice-loop (control plane; SKIPPED - physical-only)"
+  flag "  08-voice-loop: real STT->LLM->TTS needs (a) a fixture capture source back in the SDK and (b) a HELD mic (tapOn = ~147ms = 1 frame). Physical device case -> handover."
 
   # 58b-update-footer-offline ? self-navigating; kill net around it.
   echo ""; info "-> 58b-update-footer-offline (network kill)"
@@ -428,20 +556,19 @@ fault_phase_android() {
   adb -s "$ANDROID_DEVICE" logcat -c 2>/dev/null || true
   arm_fault "expired"
   info "  Stopping gateway to force reconnect"
-  docker stop sentient-gateway >/dev/null 2>&1 || true
+  gw_stop_or_flag
   if run_one "18-auth-expired"; then pass "  18-auth-expired"; sleep 1
     grep_logcat_for "fault\.expired-token|hasSession\.clear" "expired-token / hasSession.clear" || BATCH_RESULT=1
   else fail "  18-auth-expired"; BATCH_RESULT=1; fi
   info "  Restarting gateway"
-  docker start sentient-gateway >/dev/null 2>&1 || true
-  until [[ "$(docker inspect --format '{{.State.Health.Status}}' sentient-gateway 2>/dev/null)" == "healthy" ]]; do sleep 2; done
+  gw_start_or_flag
   # 18 left the app on the login screen ? log back in so the device is usable after.
   run_one "login" >/dev/null 2>&1 || true
 
   # 04-reconnect ? emulator can't drop WiFi (physical-only). Flag; skip on emulator.
   echo ""; info "-> 04-reconnect"
   if [[ "$ANDROID_DEVICE" == emulator-* ]]; then
-    flag "  04-reconnect SKIPPED (emulator uses virtual Ethernet; WiFi toggle is a no-op). Needs a physical device or a Docker gateway stop."
+    flag "  04-reconnect SKIPPED (emulator uses virtual Ethernet; WiFi toggle is a no-op). Needs a physical device or a gateway stop (gw_stop_or_flag)."
   else
     flag "  04-reconnect on a physical device: disable WiFi, run 04, re-enable, run 04b (not automated here)."
   fi
@@ -474,23 +601,23 @@ fault_phase_ios() {
 
   # 58b-update-footer-offline: gateway DOWN -> "Check failed".
   echo ""; info "-> 58b-update-footer-offline (gateway stop)"
-  gw_stop
+  gw_stop_or_flag
   run_ios_one "58b-update-footer-offline" && pass "  58b-update-footer-offline" || { fail "  58b-update-footer-offline"; BATCH_RESULT=1; }
-  gw_start
+  gw_start_or_flag
 
   # 60-model-offline-save: setup while UP -> stop -> trigger -> start -> recover.
   echo ""; info "-> 60-model-offline-save (setup up -> stop -> trigger -> start -> recover)"
   if run_ios_one "60-model-offline-save-setup"; then
-    gw_stop
+    gw_stop_or_flag
     run_ios_one "60-model-offline-save-trigger" && pass "  60 trigger" || { fail "  60 trigger"; BATCH_RESULT=1; }
-    gw_start
+    gw_start_or_flag
     run_ios_one "60-model-offline-save-recover" && pass "  60 recover" || { fail "  60 recover"; BATCH_RESULT=1; }
   else fail "  60 setup"; BATCH_RESULT=1; fi
 
-  # 04c warm-continuity: login-send -> docker restart gateway (between) -> followup.
+  # 04c warm-continuity: login-send -> restart the native gateway (between) -> followup.
   echo ""; info "-> 04c warm-reconnect continuity (gateway restart between parts)"
   if run_ios_one "04c-reconnect-continue-login-send"; then
-    gw_restart
+    gw_restart_or_flag
     run_ios_one "04c-reconnect-continue-followup" && pass "  04c continuity" || { fail "  04c continuity"; flag "  verify gateway log: dispatch.end conversationId unchanged, NO dispatch.session-new.lazy"; BATCH_RESULT=1; }
   else fail "  04c part 1"; BATCH_RESULT=1; fi
 }
@@ -502,6 +629,8 @@ echo "Target: $TARGET   tags: [${INCLUDE_TAGS:-<all>}]   fault: $RUN_FAULT"
 echo ""
 
 check_gateway
+check_qa_user
+check_admin_trio_precondition
 if should_reset_gateway; then reset_gateway; fi
 BATCH_RESULT=0
 

@@ -6,9 +6,8 @@ paths:
 # C / C++ Clean Code Rules
 
 - One class per (.h + .cc) pair. Filename matches primary class.
-- Header file ≤300 lines. Impl file ≤600 lines per class. Free-function / utility-only files (no class) ≤300 lines.
-- Class cohesion is the split test, not pure line count. If a class needs more than 600 lines of impl, the class is doing too much — refactor responsibilities, not file boundaries.
-- Functions ≤40 lines. Extract at 50.
+- Class cohesion is the split test, never a line count. When a class outgrows a single clear responsibility, refactor the responsibilities — don't just carve file boundaries.
+- Decompose large functions along logical boundaries the moment one does more than one thing.
 - Max nesting 3 levels. Use early returns to flatten.
 - Line length 120 chars. 4-space indent. Never tabs.
 - No magic numbers in source. Tunables live in Kconfig (`sdkconfig`) or a config struct passed in at construction.

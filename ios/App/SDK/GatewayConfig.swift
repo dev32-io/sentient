@@ -13,7 +13,9 @@ enum GatewayConfig {
         let fromBundle = (Bundle.main.object(forInfoDictionaryKey: "GatewayWSURL") as? String) ?? ""
         if !fromBundle.isEmpty { return fromBundle }
         #if DEBUG
-        return "wss://localhost:8888/api/v1/ws"
+        // See BackendSetupViewModel — inbound-proxy owns 443, the gateway is
+        // loopback-only behind it.
+        return "wss://localhost/api/v1/ws"
         #else
         return ""
         #endif

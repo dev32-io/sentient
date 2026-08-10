@@ -14,6 +14,75 @@ test("ManagedServiceConfigSchema parses a valid entry", () => {
   expect(r.success).toBe(true);
 });
 
+// CONTRACT: `launch` is the discriminator between the docker and native
+// backends. Every pre-existing config.yaml entry omits it, so the default must
+// hold byte-identically or the cutover breaks eight services at once.
+test("an entry with no `launch` key parses as docker", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    template: "ha-mcp.yaml",
+    allowed_images: ["sentient/ha-mcp:local"],
+    networks: ["sentient-internal"],
+    healthcheck: { tcp: "127.0.0.1:8086", timeout_ms: 30000 },
+  });
+  expect(parsed.launch).toBe("docker");
+});
+
+test("a native entry needs neither allowed_images nor networks", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    launch: "native",
+    exec: ["/opt/sentient/current/whisper-stt/venv/bin/python", "-m", "whisper_stt"],
+    python: "3.14",
+    healthcheck: { tcp: "127.0.0.1:8766", timeout_ms: 30000 },
+  });
+  expect(parsed.launch).toBe("native");
+  if (parsed.launch !== "native") throw new Error("unreachable");
+  expect(parsed.exec[0]).toContain("whisper-stt");
+});
+
+// CONTRACT: deep-memory is the first native entry that is (a) plain HTTP
+// (`url` healthcheck, not `tcp` — whisper-stt/local-tts probe a WS port) and
+// (b) `optional: true` (whisper-stt/local-tts are voice-path-critical and
+// default `optional` to false). Both must round-trip through the same
+// discriminated-union schema whisper-stt uses above.
+test("a native HTTP entry (deep-memory shape) parses with url healthcheck and optional:true", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    launch: "native",
+    exec: ["/opt/sentient/current/deep-memory/venv/bin/python", "-m", "deep_memory"],
+    python: "3.14",
+    env: {
+      DEEP_MEMORY_CONFIG_PATH: "/Users/op/.sentient/deep-memory/config/config.yaml",
+      DEEP_MEMORY_ADMIN_TOKEN: "tok-admin",
+      DEEP_MEMORY_DATA_TOKEN: "tok-data",
+    },
+    healthcheck: { url: "http://127.0.0.1:8772/health", timeout_ms: 30000 },
+    optional: true,
+  });
+  expect(parsed.launch).toBe("native");
+  if (parsed.launch !== "native") throw new Error("unreachable");
+  expect(parsed.exec[0]).toContain("deep-memory");
+  expect(parsed.optional).toBe(true);
+  expect(parsed.healthcheck).toEqual({ url: "http://127.0.0.1:8772/health", timeout_ms: 30000 });
+});
+
+test("rejects a native entry with an empty exec argv", () => {
+  const r = ManagedServiceConfigSchema.safeParse({
+    launch: "native",
+    exec: [],
+    healthcheck: { noop: true },
+  });
+  expect(r.success).toBe(false);
+});
+
+test("rejects a native entry whose pinned python is not major.minor", () => {
+  const r = ManagedServiceConfigSchema.safeParse({
+    launch: "native",
+    exec: ["/usr/bin/python3"],
+    python: "3.11.9",
+    healthcheck: { noop: true },
+  });
+  expect(r.success).toBe(false);
+});
+
 test("ManagedServiceConfigSchema rejects empty allowed_images", () => {
   const r = ManagedServiceConfigSchema.safeParse({
     template: "x.yaml",
@@ -34,12 +103,42 @@ test("ServiceTemplateSchema parses a minimal spec", () => {
   expect(r.success).toBe(true);
 });
 
-test("ServiceTemplateSchema rejects port bindings", () => {
-  const r = ServiceTemplateSchema.safeParse({
-    image: "alpine:latest",
-    container_name: "test",
-    networks: ["sentient-internal"],
-    ports: ["80:80"],
-  });
+// SECURITY: the gateway is native now, so it reaches addons over published
+// host ports instead of docker DNS. Docker's DEFAULT bind for a bare
+// "8086:8086" is 0.0.0.0 — that would put every MCP on the LAN. The schema is
+// the boundary that makes the loopback bind mandatory rather than a habit.
+const portBase = {
+  image: "sentient/ha-mcp:local",
+  container_name: "sentient-ha-mcp",
+  networks: ["sentient-internal"],
+};
+
+test("SECURITY: ServiceTemplateSchema accepts a loopback-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["127.0.0.1:8086:8086"] });
+  expect(r.success).toBe(true);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects a port mapping with no bind address", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["8086:8086"] });
   expect(r.success).toBe(false);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects an explicitly wildcard-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["0.0.0.0:8086:8086"] });
+  expect(r.success).toBe(false);
+});
+
+test("SECURITY: ServiceTemplateSchema rejects a LAN-IP-bound port mapping", () => {
+  const r = ServiceTemplateSchema.safeParse({ ...portBase, ports: ["192.168.1.40:8086:8086"] });
+  expect(r.success).toBe(false);
+});
+
+test("returns infra: false when a service entry omits it", () => {
+  const parsed = ManagedServiceConfigSchema.parse({
+    template: "x.yaml",
+    allowed_images: ["a:b"],
+    networks: ["sentient-internal"],
+    healthcheck: { noop: true },
+  });
+  expect(parsed.infra).toBe(false);
 });

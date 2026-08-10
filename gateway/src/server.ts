@@ -1,10 +1,9 @@
-import { homedir } from "node:os";
+import { ADMIN_ROLE } from "@sentient/protocol";
 import type { Server, ServerWebSocket } from "bun";
 import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
 import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
-import { createDevicesHandler } from "./api/handlers/devices.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
 import { renderDownloadPage } from "./api/handlers/downloads-page.ts";
 import { renderItmsPlist } from "./api/handlers/downloads-plist.ts";
@@ -16,9 +15,9 @@ import { createProfileEditHandler } from "./api/handlers/profile-edit.ts";
 import { createProfileHandler } from "./api/handlers/profile.ts";
 import { createProvidersHandler } from "./api/handlers/providers.ts";
 import { createReadyHandler } from "./api/handlers/ready.ts";
-import { createSecretsHandler } from "./api/handlers/secrets.ts";
+import { type RequireAdminFn, createSecretsHandler } from "./api/handlers/secrets.ts";
 import { createServicesVersionsHandler } from "./api/handlers/services-versions.ts";
-import { createSessionsHttpHandler } from "./api/handlers/sessions.ts";
+import { createSessionsHandler } from "./api/handlers/sessions.ts";
 import { createSystemStatusHandler } from "./api/handlers/system-status.ts";
 import { createVoicesHandler } from "./api/handlers/voices.ts";
 import { createWebuiHandler } from "./api/handlers/webui.ts";
@@ -30,22 +29,28 @@ import { runApply } from "./apply/orchestrator.ts";
 import type { RouterDeps } from "./apply/router.ts";
 import { testProviderImpl } from "./bootstrap/create-gateway-services.ts";
 import type { GatewayServices } from "./bootstrap/create-gateway-services.ts";
-import { listSessionsForUser, resolvePluginClientForUser } from "./hermes-adapter-client/per-user-plugin.js";
-import type { PerUserPluginDeps } from "./hermes-adapter-client/per-user-plugin.js";
 import { getLog } from "./logging/logger.ts";
 import {
-  type ClientData,
+  type SessionData,
   cleanupSession,
   handleWebSocketMessage,
   openSession,
 } from "./session-handlers/ws-handlers.ts";
-import { createTitleStore } from "./sessions/title-store.js";
+import { errorMessage } from "./session-handlers/ws-helpers.ts";
 import type { TokenService } from "./user-auth/token-service.ts";
+import type { UserStore } from "./user-auth/user-store.ts";
 
-export type { ClientData };
+export type { SessionData };
 export type { GatewayTlsMaterial } from "./session-handlers/ws-handlers.ts";
 
 const log = getLog(["sentient", "ws"]);
+
+// RFC 6455 — 1011: server encountered an unexpected condition. Used only when
+// a websocket.message handler throws; Bun's Bun.serve `error()` hook is
+// fetch-only and is never invoked for WS message-handler exceptions, so an
+// uncaught throw there otherwise crashes the whole process (exit 1, taking
+// every connected user with it).
+const WS_INTERNAL_ERROR = 1011;
 
 function makeThrowProxy(name: string): never {
   return new Proxy(
@@ -64,7 +69,7 @@ export interface GatewayServerOptions {
   services: GatewayServices;
 }
 
-export function createGatewayServer(options: GatewayServerOptions): Server<ClientData> {
+export function createGatewayServer(options: GatewayServerOptions): Server<SessionData> {
   const { services } = options;
   const adminToken = process.env.ADMIN_TOKEN;
   let activeConnections = 0;
@@ -88,27 +93,28 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
   const handleSecrets = createSecretsHandler({
     installState: services.installState,
     secretsStore: services.secretsStore ?? makeThrowProxy("SecretsStore"),
-    requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken),
+    requireAdmin: buildRequireAdmin(services.auth.tokens, adminToken, services.auth.users),
   });
   const handleAuth = createAuthHandler({
     auth: services.auth,
     ...(services.userProvisioner ? { userProvisioner: services.userProvisioner } : {}),
     ...(services.secretsStore ? { secretsStore: services.secretsStore } : {}),
     installState: services.installState,
+    mcpCatalog: services.mcpCatalog,
   });
   const handleEdit = createProfileEditHandler({
     tokens: services.auth.tokens,
     buildPersonalityStore: services.buildPersonalityStore,
     resolveProfileDir: services.resolveProfileDir,
-    restartOrchestrator: services.profileRestartOrchestrator,
     templateLoader: services.templateLoader,
   });
   const handleProfile = createProfileHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
+    users: services.auth.users,
+    mcpCatalog: services.mcpCatalog,
     runApply: (userId) => runApply(services.applyDeps, userId),
     handleEdit,
-    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
   });
   const handleProviders = createProvidersHandler({
     tokens: services.auth.tokens,
@@ -125,7 +131,6 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
       fishApiKey: services.fishApiKey,
       externalFetchTimeoutMs: services.providersConfig.external_fetch_timeout_ms,
       profileStore: services.profileStore,
-      refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
       ttsUrl: services.ttsConfig.url,
       connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
       opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
@@ -138,6 +143,8 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     tokens: services.auth.tokens,
     catalog: services.mcpCatalog,
     hermesBuiltinTools: services.hermesBuiltinTools,
+    users: services.auth.users,
+    profileStore: services.profileStore,
   });
   const handleServicesVersions = createServicesVersionsHandler({
     installState: services.installState,
@@ -168,14 +175,9 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     systemOrchestrator: services.systemOrchestrator,
   });
   const handleApply = buildApplyHandler(services, services.auth.tokens);
-  const handleDevices = services.devicesHandlerDeps
-    ? createDevicesHandler({ tokens: services.auth.tokens, ...services.devicesHandlerDeps })
-    : async (_req: Request) => new Response("Service Unavailable", { status: 503 });
-  const handleSessions = buildSessionsHandler(services);
   const handleVoices = createVoicesHandler({
     tokens: services.auth.tokens,
     profileStore: services.profileStore,
-    refreshVoice: (userId) => services.personSessions.refreshVoice(userId),
     ttsUrl: services.ttsConfig.url,
     connectTimeoutMs: services.ttsConfig.connect_timeout_ms,
     opTimeoutMs: services.ttsConfig.voice_op_timeout_ms,
@@ -186,8 +188,14 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
     maxTags: services.ttsConfig.voice_max_tags,
   });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
+  const handleSessions = createSessionsHandler({
+    tokens: services.auth.tokens,
+    users: services.auth.users,
+    accessManager: services.accessManager,
+    dbFileName: services.dbFileName,
+  });
 
-  return Bun.serve<ClientData>({
+  return Bun.serve<SessionData>({
     port: options.port,
     hostname: options.host,
     // Bun's idleTimeout is in whole seconds, capped at 255. Convert from the
@@ -217,50 +225,76 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Clien
         handleWizard,
         handleSystemStatus,
         handleApply,
-        handleDevices,
-        handleSessions,
         handleVoices,
         handleDiagnostics,
+        handleSessions,
         handleStatic,
       });
       return router(request);
     },
 
     websocket: {
-      open(ws: ServerWebSocket<ClientData>) {
+      open(ws: ServerWebSocket<SessionData>) {
         activeConnections++;
         log.info("client-connected");
         openSession(ws, services);
       },
-      async message(ws: ServerWebSocket<ClientData>, message: string | Buffer) {
-        await handleWebSocketMessage(ws, message, services);
+      async message(ws: ServerWebSocket<SessionData>, message: string | Buffer) {
+        // Bun's websocket.message handler has no equivalent of the fetch
+        // error() hook — an unhandled rejection here terminates the whole
+        // process (all connected users), not just this connection. Catch at
+        // this boundary per .claude/rules/error-handling.md.
+        try {
+          await handleWebSocketMessage(ws, message, services);
+        } catch (err: unknown) {
+          log.warn("ws-message-handler-threw", {
+            sessionId: ws.data.sessionId,
+            reason: errorMessage(err, "unknown error"),
+          });
+          ws.close(WS_INTERNAL_ERROR, "internal error");
+        }
       },
-      close(ws: ServerWebSocket<ClientData>) {
+      close(ws: ServerWebSocket<SessionData>) {
         activeConnections--;
         log.info("client-disconnected");
-        // Transport close: attempt resumable disconnect if the client
-        // advertised stream.resume capability and a device buffer exists.
-        // Falls through to full teardown when the capability is absent.
-        cleanupSession(ws, services, { full: false });
+        cleanupSession(ws, services);
       },
     },
   });
 }
 
-/** Builds a requireAdmin function for the secrets handler from TokenService + static admin token. */
-function buildRequireAdmin(
+/** Builds a requireAdmin function for the secrets handler from TokenService +
+ *  static admin token.
+ *
+ *  EXPORTED FOR ITS TEST, not for reuse — it is the gate on the household's API
+ *  keys and was the one admin resolver nothing constructed (`secrets.test.ts`
+ *  stubs `requireAdmin` wholesale), so its fail-closed paths had never run. */
+export function buildRequireAdmin(
   tokenService: TokenService,
   adminToken: string | undefined,
-): (req: Request) => Promise<{ ok: true; value: { isAdmin: boolean } } | { ok: false }> {
+  userStore: Pick<UserStore, "get">,
+): RequireAdminFn {
   const BEARER_PREFIX = "Bearer ";
   return async (req) => {
     const header = req.headers.get("Authorization") ?? "";
     if (!header.startsWith(BEARER_PREFIX)) return { ok: false };
     const token = header.slice(BEARER_PREFIX.length);
-    if (adminToken && token === adminToken) return { ok: true, value: { isAdmin: true } };
+    // The static machine-to-machine token is the operator's own out-of-band
+    // credential, not a user — there is no record behind it to resolve.
+    if (adminToken && token === adminToken) return { ok: true, value: { role: ADMIN_ROLE } };
     const result = await tokenService.validate(token);
-    if (result.ok) return { ok: true, value: { isAdmin: result.value.isAdmin } };
-    return { ok: false };
+    if (!result.ok) return { ok: false };
+    // The token said WHO. The record says WHAT THEY MAY DO, as of now — a
+    // demoted account is refused on its next call with nothing to invalidate.
+    const stored = await userStore.get(result.value.userId);
+    if (!stored.ok || stored.value === null) {
+      log.warn("require-admin.no-record", {
+        userId: result.value.userId,
+        reason: stored.ok ? "token names a user with no record" : stored.error,
+      });
+      return { ok: false };
+    }
+    return { ok: true, value: { role: stored.value.role } };
   };
 }
 
@@ -273,10 +307,14 @@ function buildApplyHandler(
   const BEARER_PREFIX = "Bearer ";
 
   const routerDeps: RouterDeps = {
-    isAdmin: async (uid) => {
+    // Resolved from the RECORD, not the caller's token: a system-level apply is
+    // the highest-authority thing the REST surface does, so it reads the
+    // household's current answer rather than whatever a possibly-stale token
+    // was minted with.
+    roleOf: async (uid) => {
       const r = await services.auth.users.get(uid);
-      if (!r.ok || !r.value) return false;
-      return r.value.isAdmin;
+      if (!r.ok || !r.value) return null;
+      return r.value.role;
     },
     diffSecrets: (s) => {
       const store = services.secretsStore;
@@ -309,50 +347,6 @@ function buildApplyHandler(
   return createApplyHandler(applyHandlerDeps);
 }
 
-/** Builds the `/api/v1/sessions*` handler from GatewayServices.
- *
- * Per-user resolution:
- *   resolvePluginClient — derives http base URL (hermes + userPortStore),
- *     shifts port by DASHBOARD_PORT_OFFSET to reach the sentient-plugin sidecar,
- *     constructs a SentientPluginClient with the shared Hermes bearer token.
- *   listSessions — dials a dedicated ephemeral ACP wire per call (never
- *     pooled or shared with a surface wire), calls session/list, disposes
- *     the wire in finally.
- *   resolveTitleStore — creates a per-user TitleStore scoped to the user's data
- *     dir; each call for the same userId within a request returns a fresh
- *     instance (stateless file-backed store — no identity requirement).
- *
- * Falls back to a 503 handler when hermes or userPortStore is absent (headless
- * / CI builds where Hermes is not configured). */
-function buildSessionsHandler(services: GatewayServices): (req: Request) => Promise<Response> {
-  if (!services.hermes || !services.userPortStore) {
-    return async (_req: Request) => new Response("Service Unavailable", { status: 503 });
-  }
-  const pluginDeps: PerUserPluginDeps = {
-    hermes: services.hermes,
-    userPortStore: services.userPortStore,
-    hermesApiKey: services.hermesApiKey,
-    timeoutMs: services.sessions.hermes_http_timeout_ms,
-    acpOpenTimeoutMs: services.hermes.acp_wire.open_timeout_ms,
-  };
-  const userDataRoot = expandHome(services.sessions.user_data_root);
-  return createSessionsHttpHandler({
-    tokens: services.auth.tokens,
-    resolvePluginClient: (userId) => resolvePluginClientForUser(userId, pluginDeps),
-    listSessions: (userId) => listSessionsForUser(userId, pluginDeps),
-    resolveTitleStore: (userId) => createTitleStore({ userDataRoot, userId }),
-  });
-}
-
-// TODO(cleanup): dedup expandHome into a shared gateway/src/util path helper (also in ws-session-configure.ts).
-/** Expands a leading `~` to the OS home directory. Absolute and env-derived
- *  paths are returned unchanged. */
-function expandHome(rawPath: string): string {
-  if (rawPath === "~") return homedir();
-  if (rawPath.startsWith("~/")) return `${homedir()}/${rawPath.slice(2)}`;
-  return rawPath;
-}
-
 /** Builds AdminDeps from GatewayServices. Nullable admin stores are stubbed
  *  with throw-on-access proxies — unreached in deployments with hermes
  *  configured (the only path where admin features are exposed). */
@@ -366,6 +360,6 @@ function buildAdminDeps(
     tokenService,
     provisioner: services.userProvisioner ?? makeThrowProxy("UserProvisioner"),
     userStore: services.auth.users,
-    userPortStore: services.userPortStore ?? makeThrowProxy("UserPortStore"),
+    mcpCatalog: services.mcpCatalog,
   };
 }

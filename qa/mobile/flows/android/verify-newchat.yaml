@@ -7,7 +7,7 @@ tags:
 # in a brand-new conversation triggers a lazy session-create + a brief WS re-sync
 # that re-keys the optimistic user bubble (message-bubble-0 -> committed entryId),
 # so the exact user-text bubble is only briefly present. The assistant-bubble is
-# the stable end-state and proves the whole new-chat -> send -> Hermes path.
+# the stable end-state and proves the whole new-chat -> send -> native-loop path.
 # Batch-safe.
 - launchApp
 - runFlow:

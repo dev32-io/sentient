@@ -9,7 +9,27 @@ export interface RowMenuProps {
 
 const POPOVER_HEIGHT_GUESS = 88;
 
-export function RowMenu({ onRename, onDelete }: RowMenuProps): JSX.Element {
+/**
+ * Whether this menu has anything that works.
+ *
+ * Rename and Delete are its only two entries, and BOTH 404 today: the
+ * gateway's sessions REST surface is list + messages only
+ * (`gateway/src/api/handlers/sessions.ts`) — `PATCH` and `DELETE` are not
+ * implemented, and no task in the session-model plan adds them.
+ *
+ * Shipping them wired was worse than not shipping them. `use-sessions.ts`
+ * calls `sessions.rename` as `void …`, so the dialog closed on Save, the row
+ * silently kept its old name, and the ONLY feedback anywhere was a
+ * browser-console WARN. Two affordances presented as working.
+ *
+ * The whole trigger is hidden rather than the two items, because a "Chat
+ * options" button opening an empty popover is the same defect with an extra
+ * click. The dialogs, the handlers and the SDK methods all stay — flip this to
+ * `true` when the routes land and the feature is whole again.
+ */
+const ROW_ACTIONS_AVAILABLE = false;
+
+export function RowMenu({ onRename, onDelete }: RowMenuProps): JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [flipUp, setFlipUp] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -69,6 +89,10 @@ export function RowMenu({ onRename, onDelete }: RowMenuProps): JSX.Element {
     "row-menu__pop",
     flipUp && "row-menu__pop--up",
   ].filter(Boolean).join(" ");
+
+  // AFTER the hooks, never before: an early return above them would change the
+  // hook order between renders the moment this flips to true.
+  if (!ROW_ACTIONS_AVAILABLE) return null;
 
   return (
     <div class="row-menu" ref={wrapRef}>

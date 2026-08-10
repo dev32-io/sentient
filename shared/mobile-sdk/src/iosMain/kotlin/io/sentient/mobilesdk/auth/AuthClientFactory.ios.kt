@@ -53,7 +53,8 @@ private val log = createLogger("auth", "factory", "ios")
  * the same gateway URL as the SDK. [deriveBaseUrl] (inside AuthClient) maps the
  * WS URL to the REST base.
  *
- * @param gatewayWsUrl Full WS URL, e.g. `wss://localhost:8888/api/v1/ws`.
+ * @param gatewayWsUrl Full WS URL, e.g. `wss://localhost/api/v1/ws` — inbound-proxy's 443,
+ *   which is the default and is typically omitted from the URL.
  * @param allowSelfSignedDevHost Debug-only TLS bypass. MUST be false in release.
  */
 fun createAuthClient(

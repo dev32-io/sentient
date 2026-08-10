@@ -42,6 +42,7 @@ tags:
 - tapOn: { text: "New PIN" }
 - inputText: "5555"
 - tapOn: "Update PIN"
+# 5000ms: provider / apply round-trip on the local stack (exceeds the 3s visibility budget)
 - extendedWaitUntil:
     visible: "Current PIN is wrong"
     timeout: 5000

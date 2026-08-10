@@ -1,0 +1,13 @@
+2026-07-30T10:49:45.744 INFO  [ws] session-opened | sessionId="s-ms7t6e1b-d6e2x7i3"
+2026-07-30T10:49:45.796 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-ms7t6e1b-d6e2x7i3" userId="u_0417d3b0"
+2026-07-30T10:49:45.825 INFO  [ws:session-new] session.new.answered | sessionId="s-ms7t6e1b-d6e2x7i3" requestId="-77c36405019e0eee" conversationId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62"
+2026-07-30T10:49:52.638 INFO  [ws:session-new] session.new.answered | sessionId="s-ms7t6e1b-d6e2x7i3" requestId="-2afb21dcfdeab52a" conversationId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62"
+2026-07-30T10:50:01.546 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62" kind="conversational" seq=88 turnId="c9eb5c99-a912-4a2b-bb7f-3daede96fb70"
+2026-07-30T10:50:01.547 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62" turnId="c9eb5c99-a912-4a2b-bb7f-3daede96fb70" maxIterations=10 toolCount=19
+2026-07-30T10:50:02.984 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms7t6e1b-d6e2x7i3" turnId="c9eb5c99-a912-4a2b-bb7f-3daede96fb70"
+2026-07-30T10:50:02.986 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62" turnId="fed98dac-1262-4721-9590-9d1c6e5bc7b2" maxIterations=10 toolCount=19
+2026-07-30T10:50:03.824 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms7t6e1b-d6e2x7i3" turnId="fed98dac-1262-4721-9590-9d1c6e5bc7b2"
+2026-07-30T10:50:03.824 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62" turnId="350590ec-5697-4436-a641-2022305147e6" maxIterations=10 toolCount=19
+2026-07-30T10:50:05.722 INFO  [ws] session-opened | sessionId="s-ms7t6tga-c8y1y3xi"
+2026-07-30T10:50:05.752 INFO  [gateway:session-handlers:ws-auth-gate] auth.ok | sessionId="s-ms7t6tga-c8y1y3xi" userId="u_0417d3b0"
+2026-07-30T10:50:05.823 INFO  [ws:session-new] session.new.answered | sessionId="s-ms7t6tga-c8y1y3xi" requestId="-97ce6f6450097c0" conversationId="c::u_0417d3b0::8e0a4b02-2feb-41c8-a54d-6b41d0b08e62"

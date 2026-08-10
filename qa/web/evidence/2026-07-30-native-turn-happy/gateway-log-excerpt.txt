@@ -1,0 +1,26 @@
+2026-07-30T00:14:32.947 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="searxng" totalCount=5 filteredCount=1 elapsedMs=43
+2026-07-30T00:14:32.949 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="fetch" totalCount=1 filteredCount=1 elapsedMs=45
+2026-07-30T00:14:32.956 INFO  [tools:mcp-client] mcp.list-tools.ok | serverName="home_assistant" totalCount=78 filteredCount=16 elapsedMs=53
+2026-07-30T00:14:32.956 INFO  [tools:tool-broker] tool-broker.mcp-warmup.ok | sessionId="s-ms76hhz6-dmukblpw" toolCount=18
+2026-07-30T00:18:27.662 INFO  [runtime:session-runtime] session-runtime.submit.start-turn | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" kind="conversational" seq=1 turnId="235ab571-856c-467b-85f1-f4a562896b7e"
+2026-07-30T00:18:27.663 INFO  [runtime:turn-voice] turn-voice.begin | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e"
+2026-07-30T00:18:27.663 INFO  [ws:turn-emitter] turn-emitter.turn-started | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e" trigger="user"
+2026-07-30T00:18:27.663 INFO  [runtime:session-runtime] session-runtime.turn.start | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="235ab571-856c-467b-85f1-f4a562896b7e" trigger="user" lastProcessedSeq=1
+2026-07-30T00:18:27.664 INFO  [runtime:react-loop] react-loop.start | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="235ab571-856c-467b-85f1-f4a562896b7e" maxIterations=10 toolCount=19
+2026-07-30T00:18:27.665 INFO  [provider:openai] stream-start | model="gpt-oss:20b-cloud" messageCount=2 toolCount=19
+2026-07-30T00:18:27.667 INFO  [tts:streaming-tts-synthesizer] synthesize-start
+2026-07-30T00:18:27.669 INFO  [tts:local-tts-socket] ws-open-requested | url="ws://127.0.0.1:8770/?format=opus&sample_rate=48000&voice=default"
+2026-07-30T00:18:27.675 INFO  [tts:local-tts-socket] ws-opened
+2026-07-30T00:18:27.678 INFO  [tts:local-tts] ready-received | format="opus" sampleRate=48000 voice="default"
+2026-07-30T00:18:29.395 INFO  [provider:openai] stream-end | durationMs=1730 finishReason="stop" promptTokens=8858 cachedTokens=0 completionTokens=65 cacheHitRatio=0
+2026-07-30T00:18:29.396 INFO  [runtime:react-loop] react-loop.iteration.stream-done | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="235ab571-856c-467b-85f1-f4a562896b7e" iteration=1 forceFinal=false finishReason="stop" toolCallCount=0 textLength=14 cacheHitRatio=0
+2026-07-30T00:18:29.396 INFO  [runtime:react-loop] react-loop.completed | sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="235ab571-856c-467b-85f1-f4a562896b7e" iterations=1 forceFinal=false
+2026-07-30T00:18:29.397 INFO  [runtime:session-runtime] session-runtime.turn.end | userId="u_0417d3b0" sessionId="c::u_0417d3b0::2b9a32f5-292f-4e62-b38b-0502baf96220" turnId="235ab571-856c-467b-85f1-f4a562896b7e" completed=true iterations=1
+2026-07-30T00:18:29.397 INFO  [ws:turn-emitter] turn-emitter.turn-completed | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e"
+2026-07-30T00:18:30.285 INFO  [ws:turn-emitter] turn-emitter.audio-start | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e" encoding="opus" sampleRate=48000
+2026-07-30T00:18:30.285 INFO  [runtime:turn-voice] turn-voice.audio.start | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e" encoding="opus" sampleRate=48000 firstFrameMs=2618
+2026-07-30T00:18:30.476 INFO  [tts:streaming-tts-synthesizer] synthesize-done | frameCount=3
+2026-07-30T00:18:30.476 INFO  [tts:local-tts] dispose
+2026-07-30T00:18:30.476 INFO  [tts:local-tts-socket] ws-closed
+2026-07-30T00:18:30.476 INFO  [ws:turn-emitter] turn-emitter.audio-done | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e" framesSent=3
+2026-07-30T00:18:30.476 INFO  [runtime:turn-voice] turn-voice.audio.done | sessionId="s-ms76hhz6-dmukblpw" turnId="235ab571-856c-467b-85f1-f4a562896b7e" frameCount=3 bytesSent=18684 elapsedMs=2809

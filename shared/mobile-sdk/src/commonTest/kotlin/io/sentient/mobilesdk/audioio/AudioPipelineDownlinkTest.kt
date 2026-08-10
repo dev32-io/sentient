@@ -9,7 +9,7 @@
 //   - opus decode wiring (chunk → PCM → playFrame, in order).
 //   - pcm16 passthrough (decoder NOT called).
 //   - opus audio.done resets the decoder.
-//   - cycle supersede flushes playback + stale frames from the prior cycle are dropped.
+//   (per-turn queueing + stale-frame drop live in AudioPipelineTurnQueueTest.)
 //   - drain-watch holds speaking while the player reports busy, clears once idle + settle.
 //
 // Drives a FakeVoiceAudio via an armPlayback lambda that configures it (mirrors the real
@@ -60,10 +60,10 @@ class AudioPipelineDownlinkTest {
         val dec = cannedDecoder()
         val p = pipeline(sink, this, dec)
 
-        p.onAudioStart("c1", encoding = "opus", sampleRate = 24000)
+        p.onAudioStart("t1", encoding = "opus", sampleRate = 24000)
         advanceUntilIdle() // arm settles
-        p.onAudioFrame(byteArrayOf(1), "c1")
-        p.onAudioFrame(byteArrayOf(2), "c1")
+        p.onAudioFrame(byteArrayOf(1), "t1")
+        p.onAudioFrame(byteArrayOf(2), "t1")
 
         assertEquals(2, dec.decodedChunks.size, "decoder invoked once per opus chunk")
         assertEquals(2, sink.playedFrames.size, "one PCM frame played per chunk")
@@ -77,10 +77,10 @@ class AudioPipelineDownlinkTest {
         val dec = FakeOpusDecoderPort()
         val p = pipeline(sink, this, dec)
 
-        p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        p.onAudioStart("t1", encoding = "pcm16", sampleRate = 24000)
         advanceUntilIdle() // arm settles
         val raw = byteArrayOf(7, 8, 9, 10)
-        p.onAudioFrame(raw, "c1")
+        p.onAudioFrame(raw, "t1")
 
         assertEquals(0, dec.decodedChunks.size, "decoder NOT called in pcm16 mode")
         assertEquals(1, sink.playedFrames.size, "raw bytes passed straight to playFrame")
@@ -93,37 +93,15 @@ class AudioPipelineDownlinkTest {
         val dec = cannedDecoder()
         val p = pipeline(sink, this, dec)
 
-        p.onAudioStart("c1", encoding = "opus", sampleRate = 48000)
+        p.onAudioStart("t1", encoding = "opus", sampleRate = 48000)
         advanceUntilIdle() // arm settles
         val afterStart = dec.resetCount
-        p.onAudioDone("c1")
+        p.onAudioDone("t1")
 
         assertTrue(dec.resetCount > afterStart, "decoder.reset() called on opus audio.done")
     }
 
-    // ── Cycle supersede + physical-drain hold ─────────────────────────────────────
-
-    @Test
-    fun newerCycle_supersedesOld_flushesPlayback_andDropsStaleFrames() = runTest {
-        val sink = FakeVoiceAudio()
-        val p = pipeline(sink, this)
-
-        p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
-        advanceUntilIdle() // c1 arm settles
-        p.onAudioFrame(byteArrayOf(1), "c1")
-        assertEquals(1, sink.playedFrames.size, "c1 frame played")
-
-        // A newer cycle's audio arrives while c1 is still active → flush c1's audio.
-        p.onAudioStart("c2", encoding = "pcm16", sampleRate = 24000)
-        advanceUntilIdle() // c2 arm settles (already armed → configure no-op, still armed)
-        assertTrue(sink.flushCount >= 1, "flushPlayback called when c2 supersedes c1")
-
-        // A late c1 frame is stale → dropped; only the newer c2 frame plays.
-        p.onAudioFrame(byteArrayOf(99), "c1")
-        p.onAudioFrame(byteArrayOf(2), "c2")
-        assertEquals(1, sink.playedFrames.size, "stale c1 frame dropped; only c2's new frame present")
-        assertTrue(sink.playedFrames.last().contentEquals(byteArrayOf(2)), "the newest played frame is c2's")
-    }
+    // ── Physical-drain hold ───────────────────────────────────────────────────────
 
     @Test
     fun speaking_heldWhilePlayerBusy_clearedOnceIdleAndSettled() = runTest {
@@ -142,9 +120,9 @@ class AudioPipelineDownlinkTest {
             disarmPlayback = { },
         )
 
-        p.onAudioStart("c1", encoding = "pcm16", sampleRate = 24000)
+        p.onAudioStart("t1", encoding = "pcm16", sampleRate = 24000)
         runCurrent() // arm settles (playback active), but player still not idle
-        p.onAudioDone("c1")
+        p.onAudioDone("t1")
         // Player still reports busy → speaking is HELD past audio.done.
         advanceTimeBy(500)
         runCurrent()

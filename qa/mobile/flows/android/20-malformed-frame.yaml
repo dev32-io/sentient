@@ -18,6 +18,7 @@ tags:
 - inputText: "what is 2 plus 2"
 - tapOn: { id: "chat-send" }
 - hideKeyboard
+# 8000ms: LLM round-trip on the local model (provider latency, not UI nav)
 - extendedWaitUntil:
     visible: { id: "composer-input" }
     timeout: 8000

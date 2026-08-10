@@ -1,5 +1,5 @@
 import type { ConversationUserChannel } from "@sentient/protocol";
-import type { CommittedFeedItem, InFlightMessage, TaskSnapshotItem } from "@sentient/web-sdk";
+import type { CommittedFeedItem, InFlightMessage } from "@sentient/web-sdk";
 import type { ChatMessage } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ export interface CycleStatusInputs {
   runningTasks: number;
   /**
    * Client-side optimistic flag. True from the moment the user hits Send
-   * until the gateway emits cycle.completed for the resulting turn. Covers
+   * until the gateway emits turn.completed for the resulting turn. Covers
    * the network RTT window where cognition is still "idle" server-side but
    * the user already expects interrupt/stop to be available. Claude-Code-
    * style ESC: available the instant you hit Send.
@@ -42,7 +42,7 @@ export interface CycleStatusInputs {
  *
  * "Speaking" tracks the chunk-level `audioPlaying` flag so the avatar
  * pulse and interrupt button respond to actual audio activity, not the
- * cycle boundary. `audioPlaying` is fed by the playback adapter with a
+ * turn boundary. `audioPlaying` is fed by the playback adapter with a
  * short debounce upstream (use-voice-client.ts) — long enough to bridge
  * TTS prosody gaps, short enough to feel snappy when the stream
  * actually stops.
@@ -52,92 +52,6 @@ export function deriveCycleStatus(inputs: CycleStatusInputs): CycleStatus {
   if (inputs.cognition !== "idle" || inputs.awaitingResponse) return "streaming";
   if (inputs.runningTasks > 0) return "awaiting-tasks";
   return "idle";
-}
-
-// ---------------------------------------------------------------------------
-// attachToolsToAssistantMessages
-//
-// Groups TaskSnapshotItems onto assistant ChatMessages that share a cycleId.
-// Orphaned tasks (no assistant bubble with that cycleId — typical of ReAct
-// tool-only cycles that produced no text) are forwarded to the first
-// subsequent assistant message that has a cycleId. Tasks with no valid
-// continuation bubble are dropped. Preserves message order; sorts attached
-// tasks by startedAtMs ascending.
-// ---------------------------------------------------------------------------
-
-/**
- * Finds the first assistant message (with a cycleId) that could receive an
- * orphaned task. Iterates `messages` in order, skipping entries before
- * `startedAtMs`. Stops (returns null) upon hitting a user message, which
- * marks a turn boundary the orphan must not cross.
- */
-function findOrphanTarget(messages: readonly ChatMessage[], startedAtMs: number): ChatMessage | null {
-  for (const msg of messages) {
-    if (msg.timestamp < startedAtMs) continue;
-    if (msg.role === "user") return null;
-    if (msg.role === "assistant" && msg.cycleId !== undefined) return msg;
-  }
-  return null;
-}
-
-export function attachToolsToAssistantMessages(
-  messages: readonly ChatMessage[],
-  tasks: readonly TaskSnapshotItem[],
-): ChatMessage[] {
-  if (tasks.length === 0) return messages as ChatMessage[];
-
-  // Index tasks by cycleId for O(n) grouping.
-  const tasksByCycleId = new Map<string, TaskSnapshotItem[]>();
-  for (const task of tasks) {
-    const group = tasksByCycleId.get(task.cycleId) ?? [];
-    group.push(task);
-    tasksByCycleId.set(task.cycleId, group);
-  }
-
-  // Track which cycleIds were matched to a message for orphan detection.
-  const matchedCycleIds = new Set<string>();
-
-  const result = messages.map((msg): ChatMessage => {
-    if (msg.role !== "assistant" || !msg.cycleId) return msg;
-    const group = tasksByCycleId.get(msg.cycleId);
-    if (!group || group.length === 0) return msg;
-    matchedCycleIds.add(msg.cycleId);
-    const sorted = [...group].sort((a, b) => a.startedAtMs - b.startedAtMs);
-    return { ...msg, tools: sorted };
-  });
-
-  // Orphaned tasks: their cycleId had no text content in that cycle, so no
-  // message bubble was created for them. Attach them to the next chronological
-  // assistant message (the continuation reply that followed the tool call).
-  // This covers ReAct chains where tool-call cycles produce no text.
-  const orphanedTasks: TaskSnapshotItem[] = [];
-  for (const [cycleId, group] of tasksByCycleId) {
-    if (!matchedCycleIds.has(cycleId)) {
-      for (const task of group) orphanedTasks.push(task);
-    }
-  }
-  if (orphanedTasks.length === 0) return result;
-
-  // For each orphaned task, find the first subsequent assistant message (in
-  // commit order) that has a cycleId and timestamp >= the task's startedAtMs.
-  // Stop at the first user message — orphans must not cross a user-turn boundary.
-  // Merge orphaned tasks onto that message. Only cycle-tracked messages
-  // participate — messages without a cycleId came from cycles we cannot correlate.
-  const orphansByTarget = new Map<string, TaskSnapshotItem[]>();
-  for (const task of orphanedTasks) {
-    const target = findOrphanTarget(result, task.startedAtMs);
-    if (!target) continue;
-    const group = orphansByTarget.get(target.id) ?? [];
-    group.push(task);
-    orphansByTarget.set(target.id, group);
-  }
-
-  return result.map((msg): ChatMessage => {
-    const extras = orphansByTarget.get(msg.id);
-    if (!extras || extras.length === 0) return msg;
-    const merged = [...(msg.tools ?? []), ...extras].sort((a, b) => a.startedAtMs - b.startedAtMs);
-    return { ...msg, tools: merged };
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -165,78 +79,119 @@ function buildAssistantMessage(id: string, item: CommittedFeedItem & { kind: "as
     text: item.content,
     timestamp: item.ts,
     isStreaming: false,
-    // cycleId is the gateway-owned join key carried on the conversation.entry
+    // turnId is the gateway-owned join key carried on the conversation.entry
     // frame (CommittedFeedItem) — read straight through, never invented client-side.
-    ...(item.cycleId ? { cycleId: item.cycleId } : {}),
+    ...(item.turnId ? { turnId: item.turnId } : {}),
+    ...(item.replyId ? { replyId: item.replyId } : {}),
     ...(item.cutoff ? { cutoff: item.cutoff } : {}),
   };
 }
 
-function appendCommittedItems(
-  out: ChatMessage[],
-  items: readonly CommittedFeedItem[],
-  suppressAssistantCycleId?: string,
-): void {
+/** Accumulator for the committed-feed walk. */
+interface FeedWalk {
+  readonly out: ChatMessage[];
+}
+
+function appendCommittedItems(walk: FeedWalk, items: readonly CommittedFeedItem[], suppressAssistantReplyId?: string) {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item) continue;
     const stableId = `feed-${item.ts}-${i}`;
 
+    // There is no `kind: "tool"` item on the wire any more: tool activity is
+    // the composer task strip (`tasklist.state`), which is ephemeral by design.
+
     if (item.kind === "user") {
       if (item.content.length === 0) continue; // barge-in markers don't render
-      out.push(buildUserMessage(stableId, item));
+      walk.out.push(buildUserMessage(stableId, item));
       continue;
     }
 
-    if (item.kind === "assistant") {
-      if (item.content.length === 0 && !item.cutoff) continue;
-      const msg = buildAssistantMessage(stableId, item);
-      // While the typewriter is draining a cycle, suppress the committed
-      // assistant entry for that cycleId so the inflight (typewriter) bubble
-      // stays the sole render until it catches up. Prevents the "chunk pop"
-      // from committed text replacing a mid-reveal bubble.
-      if (suppressAssistantCycleId && msg.cycleId === suppressAssistantCycleId) continue;
-      out.push(msg);
+    if (item.kind === "trigger") {
+      // A stimulus nobody typed — today a delegated task's settled result — is
+      // CONTEXT FOR THE MODEL, not a user-facing artifact (owner, 2026-07-31).
+      // The model synthesises its reply from it and that reply is what the user
+      // sees and hears; it is also the only shape that works in voice, where
+      // there is no card to render. So the walk skips it deliberately, which is
+      // a different thing from the "Phase-2 sensor events, ignored in Phase-1
+      // UI" that used to sit here and dropped it by accident.
+      continue;
     }
-    // "tool" entries ignored — driven by TaskStatusConnector.
-    // "trigger" is Phase-2 sensor events, ignored in Phase-1 UI.
+
+    if (item.kind !== "assistant") continue;
+    if (item.content.length === 0 && !item.cutoff) continue;
+    const msg = buildAssistantMessage(stableId, item);
+
+    // Hide ONLY the committed row this live bubble is painting, matched on the
+    // reply and nothing else. Prevents the "chunk pop" of committed text
+    // replacing a mid-reveal bubble.
+    //
+    // THE TURN FALLBACK THIS REPLACES WAS THE BUG. The gateway rotates
+    // `replyId` INSIDE one turnId (a message the person types mid-reply draws
+    // a line), so one turn can commit two assistant rows sharing a turnId —
+    // and a turn-keyed predicate matched BOTH, blanking the first stretch of
+    // the reply for the length of the reveal. Mobile fixed exactly this in
+    // `ObserveChatUseCase`; there is one row to hide and no reason to guess.
+    if (suppressAssistantReplyId && msg.replyId === suppressAssistantReplyId) continue;
+    walk.out.push(msg);
   }
 }
 
-function appendInflightMessage(out: ChatMessage[], inflight: InFlightMessage | null, visibleOverride?: string): void {
-  if (!inflight) return;
-  // Phase 1 placeholder: the bubble appears as soon as cycle.started fires,
-  // even before the first delta. bubble-text renders a three-dot pulse when
-  // text is empty AND isStreaming — so the user has feedback during LLM TTFB.
-  const text = visibleOverride ?? inflight.text;
-  out.push({
-    id: `inflight-${inflight.cycleId}`,
-    role: "assistant",
-    text,
-    timestamp: Date.now(),
-    isStreaming: true,
-    cycleId: inflight.cycleId,
-  });
+/**
+ * Renders ONE streaming bubble per in-flight turn (spec §7.2). The SDK's
+ * `InFlightMessageConnector.list()` is a list, not a single slot, so a
+ * self-initiated follow-up turn never clobbers a still-open bubble.
+ *
+ * `visibleOverride` is the typewriter's partial reveal and applies to the
+ * NEWEST bubble only — the typewriter tracks exactly one turn (the one
+ * currently producing tokens); anything older already has its full text.
+ */
+function appendInflightMessages(walk: FeedWalk, inflight: readonly InFlightMessage[], visibleOverride?: string): void {
+  for (let i = 0; i < inflight.length; i++) {
+    const entry = inflight[i];
+    if (!entry) continue;
+    const isNewest = i === inflight.length - 1;
+    // Placeholder: the bubble appears as soon as turn.started fires, even
+    // before the first delta. bubble-text renders a three-dot pulse when text
+    // is empty AND isStreaming — so the user has feedback during LLM TTFB.
+    const text = isNewest && visibleOverride !== undefined ? visibleOverride : entry.text;
+    walk.out.push({
+      // Keyed by REPLY, falling back to the turn only against a gateway that
+      // does not stamp deltas. A rotation puts two open bubbles under one
+      // turnId, and a turn-keyed render id makes those two Preact siblings
+      // with the same key.
+      id: `inflight-${entry.replyId ?? entry.turnId}`,
+      role: "assistant",
+      text,
+      timestamp: Date.now(),
+      isStreaming: true,
+      turnId: entry.turnId,
+      ...(entry.replyId ? { replyId: entry.replyId } : {}),
+    });
+  }
 }
 
 /**
- * Derives the full chat message list from committed history + inflight.
- * Does NOT attach tools — call `attachToolsToAssistantMessages` after.
+ * Derives the full chat message list from committed history + inflight turns.
+ * One reply is one `conversation.entry` (the gateway folds it), so this walk
+ * never merges consecutive rows itself — it renders exactly what the feed and
+ * the inflight buffer say.
  *
- * `visibleOverride` substitutes the inflight bubble's text with the typewriter's
- * partial reveal. `suppressAssistantCycleId` hides the committed assistant entry
- * for a cycle that is still mid-drain — keeping the typewriter bubble onscreen
- * until it catches up, instead of letting the committed full-text bubble pop in.
- * The committed entry's cycleId is the gateway-owned one off its frame.
+ * `visibleOverride` substitutes the newest inflight bubble's text with the
+ * typewriter's partial reveal. `suppressAssistantReplyId` hides the committed
+ * assistant entry for the REPLY that is still mid-drain — keeping the
+ * typewriter bubble onscreen until it catches up, instead of letting the
+ * committed full-text bubble pop in. Both ids are the gateway-owned ones off
+ * the frame; nothing here derives either.
  */
 export function deriveMessages(
   items: readonly CommittedFeedItem[],
-  inflight: InFlightMessage | null,
+  inflight: readonly InFlightMessage[],
   visibleOverride?: string,
-  suppressAssistantCycleId?: string,
+  suppressAssistantReplyId?: string,
 ): ChatMessage[] {
-  const messages: ChatMessage[] = [];
-  appendCommittedItems(messages, items, suppressAssistantCycleId);
-  appendInflightMessage(messages, inflight, visibleOverride);
-  return messages;
+  const walk: FeedWalk = { out: [] };
+  appendCommittedItems(walk, items, suppressAssistantReplyId);
+  appendInflightMessages(walk, inflight, visibleOverride);
+  return walk.out;
 }

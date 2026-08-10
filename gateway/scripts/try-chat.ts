@@ -28,8 +28,10 @@ function prompt() {
       return;
     }
     if (text.trim() === "/quit") {
-      ws.send(JSON.stringify({ type: "session.end" }));
-      console.info("\n  Session ended. Bye!\n");
+      // Just disconnect. There is no `session.end` frame — a client that is
+      // done closes its socket, and the gateway derives liveness from attached
+      // connections plus in-flight work (runtime/session-retention.ts).
+      console.info("\n  Disconnecting. Bye!\n");
       ws.close();
       rl.close();
       process.exit(0);
@@ -58,7 +60,7 @@ ws.onmessage = (event) => {
       prompt();
       break;
 
-    case "response.text.delta":
+    case "turn.text.delta":
       if (!isStreaming) {
         process.stdout.write("\x1b[33msentient:\x1b[0m ");
         isStreaming = true;
@@ -66,10 +68,20 @@ ws.onmessage = (event) => {
       process.stdout.write(msg.text);
       break;
 
-    case "response.text.done":
+    case "turn.completed":
       process.stdout.write("\n\n");
       isStreaming = false;
       prompt();
+      break;
+
+    case "turn.aborted":
+      process.stdout.write(`\n  \x1b[31m[cut off: ${msg.cutoff}]\x1b[0m\n\n`);
+      isStreaming = false;
+      prompt();
+      break;
+
+    case "turn.tool.update":
+      console.info(`  \x1b[35m[tool]\x1b[0m ${msg.toolName} ${msg.status}`);
       break;
 
     case "pong":

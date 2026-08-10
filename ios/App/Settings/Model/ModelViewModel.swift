@@ -119,7 +119,7 @@ final class ModelViewModel {
         guard let o = original, isDirty else { return }
         log.info("save.start model=\(draftModelId)")
         let next = nextProfile(from: o)
-        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutProfile(previous: o, next: next)) {
+        for await state in settings.applyProfileChange.invoke(mutation: ProfileMutationPutProfile(previous: o, next: next.toPutBody())) {
             switch onEnum(of: state) {
             case .idle: break
             case .saving: save = .saving
@@ -148,8 +148,7 @@ final class ModelViewModel {
             persona: o.persona,
             tools: o.tools,
             compression: o.compression,
-            advanced: o.advanced,
-            devices: o.devices
+            advanced: o.advanced
         )
     }
 }

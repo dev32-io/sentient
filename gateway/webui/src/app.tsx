@@ -14,6 +14,7 @@ import type { SentientMarkMode } from "./components/common/sentient-mark.tsx";
 import { Composer } from "./components/dock/composer.tsx";
 import { LoginScreen } from "./components/auth/login-screen.tsx";
 import { SetupScreen } from "./components/auth/setup-screen.tsx";
+import { PermissionDialog } from "./components/permission/permission-dialog.tsx";
 import { Drawer } from "./components/sessions/drawer.tsx";
 import { SettingsView } from "./components/settings/settings-view.tsx";
 import { AppShell } from "./components/shell/app-shell.tsx";
@@ -207,6 +208,16 @@ function AppInner() {
   useEffect(() => {
     prefsSeededRef.current = false;
   }, [token]);
+  // A REFUSED COMMAND, surfaced. There is no optimistic echo in this UI — a
+  // message the gateway refuses simply never appears — so without this the
+  // person watches their text vanish with no explanation. Consumed on show, so
+  // an identical second refusal still raises a second toast.
+  const commandRejection = client.commandRejection.value;
+  useEffect(() => {
+    if (commandRejection === null) return;
+    toast.show(commandRejection, "error");
+    client.commandRejection.value = null;
+  }, [commandRejection, toast, client.commandRejection]);
   useEffect(() => {
     if (prefsSeededRef.current) return;
     let cancelled = false;
@@ -278,7 +289,7 @@ function AppInner() {
             <ChatView
               messages={client.messages.value}
               transcript={client.transcript.value}
-              currentCycleId={client.currentCycleId.value}
+              currentTurnId={client.currentTurnId.value}
               activeCycleMode={activeCycleMode}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
             />
@@ -300,6 +311,7 @@ function AppInner() {
               connectionReady={connectionReady}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
+              tasks={client.tasks.value}
               onSendText={client.sendText}
               onMicStart={async () => {
                 try {
@@ -351,6 +363,9 @@ function AppInner() {
       />
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       {connectionLost && <ConnectionLostBanner onReconnect={client.reconnect} />}
+      {client.permissionRequest.value && (
+        <PermissionDialog request={client.permissionRequest.value} onRespond={client.respondToPermission} />
+      )}
       <ToastHost />
     </SessionsProvider>
   );

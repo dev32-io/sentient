@@ -84,7 +84,7 @@ final class AudioViewModel {
     func save() async {
         guard let o = original, isDirty else { return }
         log.info("save.start tts=\(ttsEnabled) channel=\(channel)")
-        let mutation = ProfileMutationPutProfile(previous: o, next: nextProfile(from: o))
+        let mutation = ProfileMutationPutProfile(previous: o, next: nextProfile(from: o).toPutBody())
         for await state in settings.applyProfileChange.invoke(mutation: mutation) {
             switch onEnum(of: state) {
             case .idle: break
@@ -120,8 +120,7 @@ final class AudioViewModel {
             persona: o.persona,
             tools: o.tools,
             compression: o.compression,
-            advanced: o.advanced,
-            devices: o.devices
+            advanced: o.advanced
         )
     }
 }

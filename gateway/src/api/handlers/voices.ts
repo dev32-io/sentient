@@ -66,10 +66,6 @@ const VOICE_PREVIEW_PATH_RE = /^\/api\/v1\/voices\/([^/]+)\/preview$/;
 export interface VoicesHandlerDeps {
   tokens: Pick<TokenService, "validate">;
   profileStore: ProfileStore;
-  /** Re-applies the per-user voice to the live PersonSession — see profile.ts's
-   *  identical dep. Called after every `voice.id`-changing write so a
-   *  create/delete takes effect on the next TTS turn without a restart. */
-  refreshVoice: (userId: string) => Promise<void>;
   ttsUrl: string;
   connectTimeoutMs: number;
   opTimeoutMs: number;

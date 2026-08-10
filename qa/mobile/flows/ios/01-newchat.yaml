@@ -32,7 +32,7 @@ tags:
 # Dismiss the keyboard by tapping the message list so the assistant bubble shows.
 - tapOn:
     id: "chat-message-list"
-# COMMITTED assistant reply (the fix under test) — Hermes LLM round-trip, slow.
+# COMMITTED assistant reply (the fix under test) — provider round-trip, slow.
 - extendedWaitUntil:
     visible: { id: "assistant-bubble" }
     timeout: 60000
