@@ -13,7 +13,8 @@ plugins {
 // split touched ChatComponent's DI wiring (TalkModeController injection).
 // Bumped to 0.3.0 in lockstep with shared/mobile-sdk: 2.0 wire rebase (turnId rename)
 // + permission / delegation passthroughs on ChatComponent.
-version = "0.3.0"
+// Bumped to 0.4.0: lockstep with mobile-sdk 0.4.0 (2.0 memory-branch release).
+version = "0.4.0"
 
 kotlin {
     androidTarget {
