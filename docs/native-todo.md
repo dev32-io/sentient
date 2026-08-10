@@ -568,6 +568,10 @@ The skill system (per-user `SKILL.md` skills, five gateway-native tools, lazy-lo
 6. **Scanner Layer 3 — model-based classifier.** The injection scanner (`gateway/src/security/injection-scanner.ts`) ships Layers 0–2 (normalization, bilingual pattern bank, structural envelope detection) as deterministic regex/parse logic. Layer 3 — an LLM-based classifier for paraphrases and non-English/non-Chinese renderings the pattern bank cannot reach — is a designed-for config extension (the pattern table's shape already anticipates it), not implemented. See the HIGH-PRIORITY SECURITY closure above for what Layers 0–2 do and do not catch.
 7. **Multi-file reference bundles (progressive-disclosure level 3).** v1 is a single `SKILL.md` per skill; the Agent Skills standard's level-3 shape (a skill referencing companion files loaded on demand) is not built.
 
+### Mobile protocol cleanup (2026-08-10 whole-branch review I13)
+
+- **Two dead inbound decoders in the KMP SDK** — `SessionPreferencesChanged` and `ConnectorTranscriptFinal` in `ServerMessage.kt` decode frames the gateway never emits (`connector.transcript.final` is in the protocol test's explicit retired reject-list). Their handler branches in `PreferencesConnector`/`UserAudioInputConnector` are dead inbound arms on otherwise-live connectors. Removal cascades into ~6 files + tests — parked as a deliberate mobile-cleanup task, not a quick fix. Do not mistake the wiring for liveness: the frames never arrive.
+
 ### Memory system deferrals (2026-08-08 spec §14) — recorded by that spec
 
 The memory system (file memory + deep-memory service + spark/recall + nightly dreamer) is specified in `docs/superpowers/specs/2026-08-08-memory-system-design.md`. **All four implementation slices have landed** (S1 file memory, S2a/S2b deep-memory service + retrieval, S3a/S3b dreamer episodic + reconciliation, S4 family scope + on-demand deep-dream trigger — `.superpowers/sdd/2026-08-08-memory-system/progress.md`), each proven live end-to-end, zero paid spend beyond the local provider. Two calibration/security rulings came out of that e2e work and are now pinned in config/code, not just this doc:
