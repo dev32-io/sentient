@@ -248,29 +248,53 @@ describe("createDreamTransaction.skipAndAdvance", () => {
   });
 });
 
-describe("createDreamTransaction.catchUpDueFor", () => {
+describe("createDreamTransaction.initialize", () => {
+  it("seeds the mark to head WITHOUT any provider call (first-run, no backlog dreaming)", async () => {
+    const dir = memoryDir();
+    const runMapStage = vi.fn(async () => ONE_SESSION_RESULT); // the ONLY provider path
+    const handle = makeHandle(dir, { runMapStage, maxSeq: 999 });
+    const writeOutputs = vi.fn((): WriteDreamOutputsResult => WRITE_OK);
+    const tx = createDreamTransaction({
+      openDreamScope: () => handle,
+      readDreamMark: () => ({ lastSeq: 0, lastRunAt: null }),
+      cfg: memoryCfg,
+      writeOutputs,
+    });
+
+    const outcome = await tx.initialize("u_alice");
+
+    expect(outcome.result).toBe("initialized");
+    // ZERO provider invocations — the whole point of the fix.
+    expect(runMapStage).not.toHaveBeenCalled();
+    expect(writeOutputs).not.toHaveBeenCalled();
+    expect(handle.advanceMark).toHaveBeenCalledWith(dir, 999, expect.any(String));
+    expect(readStatus(dir)).toMatchObject({ result: "initialized", reason: "first-run" });
+  });
+});
+
+describe("createDreamTransaction.bootDecisionFor", () => {
   const NOW = 1_700_000_000_000; // a realistic epoch-ms "now"
   const HOUR = 60 * 60 * 1000;
   const base = createDreamTransaction({
     openDreamScope: () => null,
     readDreamMark: (userId) => {
-      if (userId === "never") return { lastSeq: 0, lastRunAt: null };
+      if (userId === "missing") return { lastSeq: 0, lastRunAt: null };
       if (userId === "recent") return { lastSeq: 0, lastRunAt: new Date(NOW - HOUR).toISOString() };
-      return { lastSeq: 0, lastRunAt: new Date(NOW - 100 * HOUR).toISOString() }; // ancient (> 24h)
+      return { lastSeq: 0, lastRunAt: new Date(NOW - 100 * HOUR).toISOString() }; // stale (> 24h)
     },
     cfg: memoryCfg,
     now: () => NOW,
   });
 
-  it("is due when the mark has never run", async () => {
-    await expect(base.catchUpDueFor("never")).resolves.toBe(true);
+  it("initializes when the mark is missing / never run (no back-history dream)", async () => {
+    await expect(base.bootDecisionFor("missing")).resolves.toBe("initialize");
   });
 
-  it("is NOT due when the last run is within the threshold", async () => {
-    await expect(base.catchUpDueFor("recent")).resolves.toBe(false);
+  it("skips when an existing mark ran within the threshold", async () => {
+    await expect(base.bootDecisionFor("recent")).resolves.toBe("skip");
   });
 
-  it("is due when the last run is older than the threshold", async () => {
-    await expect(base.catchUpDueFor("ancient")).resolves.toBe(true);
+  it("dreams when an existing mark is older than the threshold (a missed night)", async () => {
+    await expect(base.bootDecisionFor("stale")).resolves.toBe("dream");
   });
 });

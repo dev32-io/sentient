@@ -479,6 +479,10 @@ orchestrator:
       context_entries: 2             # entries of context around a drill-down hit. Range 0-10
     dreamer:
       enabled: true                  # S3 activation (T20) — nightly episodic consolidation; zod default is true
+      # First enable on an existing gateway SEEDS each user's mark to the current
+      # head (status "initialized") — it never dreams the back-history through the
+      # provider, so no uncontrolled paid spend at boot. Catch-up dreaming applies
+      # only when a mark already EXISTS but its last run is stale (a missed night).
       hour: 3                        # local time, nightly. Range 0-23
       preservation_pct: 75           # refuse op batches shrinking MEMORY.md below this. Range 0-100
       max_input_chars_per_call: 60000  # per map-call session window. Range 4000-400000

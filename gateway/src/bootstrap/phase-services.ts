@@ -897,7 +897,8 @@ function buildDreamScheduler(
       scheduler = createDreamScheduler({
         runDreamFor: transaction.runDreamFor,
         skipAndAdvance: transaction.skipAndAdvance,
-        catchUpDueFor: transaction.catchUpDueFor,
+        initialize: transaction.initialize,
+        bootDecisionFor: transaction.bootDecisionFor,
         listUsers,
         dreamingEnabledFor: async (userId) => (await memoryTogglesFor(deps.profileStore, userId)).dreaming,
         cfg: memoryCfg,

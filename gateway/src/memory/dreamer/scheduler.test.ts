@@ -4,13 +4,14 @@
 import type { OrchestratorConfig } from "@sentient/config";
 import { orchestratorConfigSchema } from "@sentient/config";
 import { describe, expect, it, vi } from "vitest";
-import type { DreamOutcome } from "./dream-transaction.js";
+import type { BootDecision, DreamOutcome } from "./dream-transaction.js";
 import { type DreamClock, type DreamTimer, createDreamScheduler, msUntilNextHour } from "./scheduler.js";
 
 const memoryCfg: OrchestratorConfig["memory"] = orchestratorConfigSchema.shape.memory.parse({}); // dreamer.hour = 3
 
 const OK: DreamOutcome = { result: "ok", sessions: 1, ops: 0, durationMs: 1 };
 const SKIPPED: DreamOutcome = { result: "skipped", sessions: 0, ops: 0, durationMs: 1, reason: "dreaming-off" };
+const INITIALIZED: DreamOutcome = { result: "initialized", sessions: 0, ops: 0, durationMs: 1, reason: "first-run" };
 
 /** A fake clock: no time passes on its own. `fireNext` runs the earliest pending
  *  timer, advancing `now` to that timer's fire time (so a reschedule computes the
@@ -45,7 +46,7 @@ function fakeClock(start: Date): DreamClock & { fireNext(): boolean; pending(): 
 interface StubOverrides {
   users?: string[];
   enabled?: boolean;
-  catchUpDue?: boolean;
+  bootDecision?: BootDecision;
   runDreamFor?: (userId: string) => Promise<DreamOutcome>;
   skipAndAdvance?: (userId: string) => Promise<DreamOutcome>;
 }
@@ -53,10 +54,12 @@ interface StubOverrides {
 function stubDeps(clock: DreamClock, o: StubOverrides = {}) {
   const runDreamFor = vi.fn(o.runDreamFor ?? (async () => OK));
   const skipAndAdvance = vi.fn(o.skipAndAdvance ?? (async () => SKIPPED));
+  const initialize = vi.fn(async () => INITIALIZED);
   return {
     runDreamFor,
     skipAndAdvance,
-    catchUpDueFor: vi.fn(async () => o.catchUpDue ?? false),
+    initialize,
+    bootDecisionFor: vi.fn(async (): Promise<BootDecision> => o.bootDecision ?? "skip"),
     listUsers: vi.fn(async () => o.users ?? ["u_a"]),
     dreamingEnabledFor: vi.fn(async () => o.enabled ?? true),
     cfg: memoryCfg,
@@ -79,7 +82,7 @@ describe("msUntilNextHour", () => {
 describe("createDreamScheduler", () => {
   it("fires exactly one pass per day at the configured hour", async () => {
     const clock = fakeClock(new Date(2026, 7, 9, 1, 0, 0)); // 01:00, hour=3
-    const deps = stubDeps(clock, { catchUpDue: false });
+    const deps = stubDeps(clock, { bootDecision: "skip" });
     const scheduler = createDreamScheduler(deps);
 
     scheduler.start();
@@ -97,22 +100,37 @@ describe("createDreamScheduler", () => {
     scheduler.stop();
   });
 
-  it("runs a boot catch-up dream when the user's mark is stale", async () => {
+  it("runs a boot catch-up dream when an existing mark is stale", async () => {
     const clock = fakeClock(new Date(2026, 7, 9, 1, 0, 0));
-    const deps = stubDeps(clock, { catchUpDue: true });
+    const deps = stubDeps(clock, { bootDecision: "dream" });
     const scheduler = createDreamScheduler(deps);
 
     scheduler.start();
     await scheduler.idle();
 
-    expect(deps.catchUpDueFor).toHaveBeenCalledWith("u_a");
+    expect(deps.bootDecisionFor).toHaveBeenCalledWith("u_a");
     expect(deps.runDreamFor).toHaveBeenCalledWith("u_a");
+    expect(deps.initialize).not.toHaveBeenCalled();
     scheduler.stop();
   });
 
-  it("skips a not-due user on boot catch-up without dreaming", async () => {
+  it("initializes a missing-mark user on boot WITHOUT dreaming the back-history", async () => {
     const clock = fakeClock(new Date(2026, 7, 9, 1, 0, 0));
-    const deps = stubDeps(clock, { catchUpDue: false });
+    const deps = stubDeps(clock, { bootDecision: "initialize" });
+    const scheduler = createDreamScheduler(deps);
+
+    scheduler.start();
+    await scheduler.idle();
+
+    expect(deps.initialize).toHaveBeenCalledWith("u_a");
+    expect(deps.runDreamFor).not.toHaveBeenCalled();
+    expect(deps.skipAndAdvance).not.toHaveBeenCalled();
+    scheduler.stop();
+  });
+
+  it("skips a recent-mark user on boot catch-up without dreaming", async () => {
+    const clock = fakeClock(new Date(2026, 7, 9, 1, 0, 0));
+    const deps = stubDeps(clock, { bootDecision: "skip" });
     const scheduler = createDreamScheduler(deps);
 
     scheduler.start();
@@ -120,6 +138,7 @@ describe("createDreamScheduler", () => {
 
     expect(deps.runDreamFor).not.toHaveBeenCalled();
     expect(deps.skipAndAdvance).not.toHaveBeenCalled();
+    expect(deps.initialize).not.toHaveBeenCalled();
     scheduler.stop();
   });
 
@@ -132,7 +151,7 @@ describe("createDreamScheduler", () => {
     });
     const deps = stubDeps(clock, {
       users: ["u_a", "u_b"],
-      catchUpDue: true,
+      bootDecision: "dream",
       runDreamFor: async (userId) => {
         started.push(userId);
         if (userId === "u_a") await gateA;
@@ -153,9 +172,9 @@ describe("createDreamScheduler", () => {
     scheduler.stop();
   });
 
-  it("skips-and-advances a toggled-off user instead of dreaming (mark still moves)", async () => {
+  it("skips-and-advances a toggled-off user with a stale mark instead of dreaming (mark still moves)", async () => {
     const clock = fakeClock(new Date(2026, 7, 9, 1, 0, 0));
-    const deps = stubDeps(clock, { catchUpDue: true, enabled: false });
+    const deps = stubDeps(clock, { bootDecision: "dream", enabled: false });
     const scheduler = createDreamScheduler(deps);
 
     scheduler.start();

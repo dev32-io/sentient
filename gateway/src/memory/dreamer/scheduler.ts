@@ -21,7 +21,7 @@
 
 import type { OrchestratorConfig } from "@sentient/config";
 import { getLog } from "../../logging/logger.js";
-import type { DreamOutcome } from "./dream-transaction.js";
+import type { BootDecision, DreamOutcome } from "./dream-transaction.js";
 
 const log = getLog(["sentient", "memory", "dreamer", "scheduler"]);
 
@@ -50,8 +50,12 @@ export interface DreamSchedulerDeps {
   runDreamFor(userId: string): Promise<DreamOutcome>;
   /** The DISABLED-path transaction: advance the mark without running. */
   skipAndAdvance(userId: string): Promise<DreamOutcome>;
-  /** Whether a stale mark warrants a boot catch-up run for this user. */
-  catchUpDueFor(userId: string): Promise<boolean>;
+  /** The FIRST-RUN path: seed a missing mark to the current head WITHOUT dreaming
+   *  the back-history (the paid-spend guard). */
+  initialize(userId: string): Promise<DreamOutcome>;
+  /** The boot decision from this user's mark: `initialize` (missing mark), `dream`
+   *  (existing stale mark = a missed night), or `skip` (recent). */
+  bootDecisionFor(userId: string): Promise<BootDecision>;
   /** Every user the gateway knows about (profile/user store surface). */
   listUsers(): Promise<string[]>;
   /** This user's `dreaming` toggle, read at decision time (no snapshot). */
@@ -107,14 +111,26 @@ export function createDreamScheduler(deps: DreamSchedulerDeps): DreamScheduler {
     return chain;
   }
 
-  /** One user's turn: read the toggle, run the enabled or the skip-advance path.
-   *  On catch-up, gate on the mark's staleness first. Never throws — a failure
-   *  is logged and swallowed so the pass continues to the next user. */
+  /** One user's turn. On a BOOT catch-up pass the mark decides first: a missing
+   *  mark INITIALIZES (seed to head, never dream the back-history — the paid-spend
+   *  guard); a recent mark is skipped; only an existing STALE mark falls through to
+   *  a real dream. A NIGHTLY pass goes straight to the toggle branch (unaffected).
+   *  Never throws — a failure is logged and swallowed so the pass continues. */
   async function processUser(userId: string, isCatchUp: boolean): Promise<void> {
     try {
-      if (isCatchUp && !(await deps.catchUpDueFor(userId))) {
-        log.debug("dreamer.catchup.not-due", { userId });
-        return;
+      if (isCatchUp) {
+        const decision = await deps.bootDecisionFor(userId);
+        if (decision === "skip") {
+          log.debug("dreamer.catchup.not-due", { userId });
+          return;
+        }
+        if (decision === "initialize") {
+          const outcome = await deps.initialize(userId);
+          log.info("dreamer.user.done", { userId, result: outcome.result, catchUp: true });
+          return;
+        }
+        // decision === "dream": an existing stale mark — fall through to the
+        // toggle branch and run a real catch-up dream.
       }
       const enabled = await deps.dreamingEnabledFor(userId);
       const outcome = enabled ? await deps.runDreamFor(userId) : await deps.skipAndAdvance(userId);

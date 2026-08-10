@@ -54,15 +54,26 @@ const MS_PER_HOUR = 3_600_000;
 // ---------------------------------------------------------------------------
 
 /** One dream's result label + counts, returned to the scheduler for its per-user
- *  log line and (in tests) assertions. `ops` is always 0 in S3a (episodic only). */
+ *  log line and (in tests) assertions. `ops` is always 0 in S3a (episodic only).
+ *  `initialized` is the FIRST-RUN outcome — the mark was missing (first-ever boot
+ *  with the dreamer enabled), so we advance it to the current head WITHOUT dreaming
+ *  the entire back-history through the paid provider. */
 export interface DreamOutcome {
-  result: "ok" | "skipped" | "failed";
+  result: "ok" | "skipped" | "failed" | "initialized";
   sessions: number;
   ops: number;
   durationMs: number;
-  /** Present on `skipped`/`failed` — the greppable reason. */
+  /** Present on `skipped`/`failed`/`initialized` — the greppable reason. */
   reason?: string;
 }
+
+/** The boot-time decision for one user, from the mark alone (no scope open):
+ *   - `initialize` — NO mark yet (first-ever boot with the dreamer on): advance
+ *     to head, do NOT dream the back-history (the paid-spend hazard).
+ *   - `dream` — a mark EXISTS but its `lastRunAt` is stale (the gateway was down
+ *     over a night): a real catch-up dream of `(lastSeq, maxSeq]`.
+ *   - `skip` — a mark exists and is recent: nothing to do at boot. */
+export type BootDecision = "initialize" | "dream" | "skip";
 
 /** Everything one user's dream operates on, opened by the composition root (it
  *  owns the AccessManager, provider and deep-memory app). Returned by
@@ -114,9 +125,15 @@ export interface DreamTransaction {
   /** The DISABLED path: advance the mark to the current maxSeq WITHOUT running,
    *  so a toggled-off user never accrues an unbounded backlog. NEVER throws. */
   skipAndAdvance(userId: string): Promise<DreamOutcome>;
-  /** True iff this user's mark is stale enough to warrant a boot catch-up run
-   *  (older than `catch_up_threshold_hours`, or never run). */
-  catchUpDueFor(userId: string): Promise<boolean>;
+  /** The FIRST-RUN path: advance the mark to the current maxSeq WITHOUT dreaming
+   *  the back-history (spec §8 checkpoint init). Reuses `skipAndAdvance`'s
+   *  mechanics; distinct status/log so an operator can see the mark was seeded
+   *  rather than a night skipped. NEVER throws. */
+  initialize(userId: string): Promise<DreamOutcome>;
+  /** The boot decision from the mark alone (no scope open). `initialize` when the
+   *  mark is missing / `lastRunAt` null / unparseable; `dream` when it exists and
+   *  is stale; `skip` when it exists and is recent. */
+  bootDecisionFor(userId: string): Promise<BootDecision>;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +250,16 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
     return { result: "ok", sessions, ops: 0, durationMs };
   }
 
-  async function skipAndAdvance(userId: string): Promise<DreamOutcome> {
+  /** Advance the mark to the current head WITHOUT dreaming — the shared mechanic
+   *  behind both the toggle-off skip (`skipped`) and the first-run seed
+   *  (`initialized`). No journal, no index entries, NO provider call: nothing is
+   *  distilled, so the back-history is never fed to the LLM. */
+  async function advanceWithoutDreaming(
+    userId: string,
+    result: "skipped" | "initialized",
+    reason: string,
+    logEvent: string,
+  ): Promise<DreamOutcome> {
     const startedAt = now();
     const handle = deps.openDreamScope(userId);
     if (handle === null) {
@@ -242,30 +268,36 @@ export function createDreamTransaction(deps: DreamTransactionDeps): DreamTransac
     }
     const { maxSeq } = handle.readWindow();
     const runAtIso = new Date(now()).toISOString();
-    // Advance to the current head WITHOUT running — the toggle-off no-backlog
-    // rule. No journal, no index entries: nothing was distilled.
     handle.runner.advanceMark(handle.memoryDir, maxSeq, runAtIso);
     const durationMs = now() - startedAt;
-    await writeStatus(handle.memoryDir, {
-      lastRunAt: runAtIso,
-      result: "skipped",
-      sessions: 0,
-      ops: 0,
-      durationMs,
-      reason: "dreaming-off",
-    });
-    log.info("dreamer.run.skipped", { userId, reason: "dreaming-off", advancedTo: maxSeq, duration_ms: durationMs });
-    return { result: "skipped", sessions: 0, ops: 0, durationMs, reason: "dreaming-off" };
+    await writeStatus(handle.memoryDir, { lastRunAt: runAtIso, result, sessions: 0, ops: 0, durationMs, reason });
+    log.info(logEvent, { userId, reason, advancedTo: maxSeq, duration_ms: durationMs });
+    return { result, sessions: 0, ops: 0, durationMs, reason };
   }
 
-  async function catchUpDueFor(userId: string): Promise<boolean> {
+  function skipAndAdvance(userId: string): Promise<DreamOutcome> {
+    // Toggle-off no-backlog rule (spec §8 per-user toggle).
+    return advanceWithoutDreaming(userId, "skipped", "dreaming-off", "dreamer.run.skipped");
+  }
+
+  function initialize(userId: string): Promise<DreamOutcome> {
+    // First-run mark seed — the paid-spend guard: a dreamer freshly enabled on a
+    // gateway with existing session history must NOT dream that whole history at
+    // boot. Seed the mark to the current head; the next NIGHTLY dreams only what
+    // arrives after this point.
+    return advanceWithoutDreaming(userId, "initialized", "first-run", "dreamer.run.initialized");
+  }
+
+  async function bootDecisionFor(userId: string): Promise<BootDecision> {
     const mark = deps.readDreamMark(userId);
-    if (mark.lastRunAt === null) return true;
+    // Missing / never-run / unparseable ⇒ FIRST RUN: seed the mark, do not dream.
+    if (mark.lastRunAt === null) return "initialize";
     const lastRunMs = Date.parse(mark.lastRunAt);
-    if (Number.isNaN(lastRunMs)) return true; // unreadable timestamp ⇒ treat as due
+    if (Number.isNaN(lastRunMs)) return "initialize";
+    // A mark exists with a real timestamp: catch up ONLY when it is stale.
     const ageMs = now() - lastRunMs;
-    return ageMs > deps.cfg.dreamer.catch_up_threshold_hours * MS_PER_HOUR;
+    return ageMs > deps.cfg.dreamer.catch_up_threshold_hours * MS_PER_HOUR ? "dream" : "skip";
   }
 
-  return { runDreamFor, skipAndAdvance, catchUpDueFor };
+  return { runDreamFor, skipAndAdvance, initialize, bootDecisionFor };
 }
