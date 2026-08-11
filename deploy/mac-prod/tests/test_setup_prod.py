@@ -28,6 +28,7 @@ from setup_prod import (
     SERVICE_SOURCES,
     RELEASE_INSTALL_VENV,
     RELEASE_NATIVE_SOURCES_DIR,
+    RELEASE_REQUIREMENTS_DIR,
     RELEASE_WHEELS_DIR,
     STATE_DIRS,
     STATE_ROOT,
@@ -1020,6 +1021,9 @@ def test_staging_prefers_the_self_contained_release_payload(tmp_path):
         module.mkdir(parents=True)
         (module / "__init__.py").write_text("")
         (release / RELEASE_WHEELS_DIR / service).mkdir(parents=True)
+        requirements = release / RELEASE_REQUIREMENTS_DIR
+        requirements.mkdir(exist_ok=True)
+        (requirements / f"{service}.lock").write_text("# pinned\n")
 
     stage_native_services(
         repo, release, wheels_root=release / RELEASE_WHEELS_DIR,
@@ -1032,6 +1036,22 @@ def test_staging_prefers_the_self_contained_release_payload(tmp_path):
             str(helper), service,
             str(release / service / "venv"), str(release / RELEASE_WHEELS_DIR / service),
         ] in recorded, service
+
+
+def test_staging_rejects_a_self_contained_payload_without_pinned_locks(tmp_path):
+    repo = tmp_path / "repo"
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / RELEASE_INSTALL_VENV).write_text("#!/bin/sh\nexit 0\n")
+    for service, spec in SERVICE_SOURCES.items():
+        (release / RELEASE_NATIVE_SOURCES_DIR / service / spec["module"]).mkdir(parents=True)
+        (release / RELEASE_WHEELS_DIR / service).mkdir(parents=True)
+
+    with pytest.raises(InstallError, match="requirements/whisper-stt.lock"):
+        stage_native_services(
+            repo, release, wheels_root=release / RELEASE_WHEELS_DIR,
+            runner=_recording_runner([]),
+        )
 
 
 def test_staging_refuses_a_release_missing_its_service_source(tmp_path):

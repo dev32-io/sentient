@@ -231,6 +231,7 @@ WHEELS_ROOT = "dist/wheels"
 RELEASE_WHEELS_DIR = "wheels"
 RELEASE_NATIVE_SOURCES_DIR = "native-sources"
 RELEASE_INSTALL_VENV = "install-venv.sh"
+RELEASE_REQUIREMENTS_DIR = "requirements"
 # Build-host artefacts, never part of a release: stale bytecode can shadow the
 # real sources, and egg-info describes the build tree rather than the release.
 STAGE_EXCLUDES = ("__pycache__", "*.pyc", "*.egg-info")
@@ -684,6 +685,12 @@ def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=s
         raise InstallError(f"missing the offline venv helper {helper}")
 
     for service, spec in SERVICE_SOURCES.items():
+        if bundled_helper.is_file() and not (
+            release / RELEASE_REQUIREMENTS_DIR / f"{service}.lock"
+        ).is_file():
+            raise InstallError(
+                f"self-contained release is missing requirements/{service}.lock"
+            )
         bundled_source = release / RELEASE_NATIVE_SOURCES_DIR / service
         source = bundled_source if bundled_source.is_dir() else repo / spec["src"]
         if not (source / spec["module"]).is_dir():

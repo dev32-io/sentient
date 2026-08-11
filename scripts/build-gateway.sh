@@ -76,6 +76,10 @@ cp -R capabilityServices/LocalTTSService/src    "$OUT/native-sources/local-tts"
 cp -R capabilityServices/DeepMemoryService/src  "$OUT/native-sources/deep-memory"
 cp -R "$REPO/dist/wheels" "$OUT/wheels"
 cp deploy/mac-prod/native/install-venv.sh "$OUT/install-venv.sh"
+# The helper resolves its lock as `<helper-dir>/requirements/<service>.lock`.
+# Keep the locks beside the bundled helper so the archive has no dependency on
+# a mutable checkout at install time.
+cp -R deploy/mac-prod/native/requirements "$OUT/requirements"
 
 echo "==> smoke: assets must resolve from the compiled binary"
 # A deliberately-absent config path. The binary must get PAST asset loading and
