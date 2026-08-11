@@ -8,6 +8,20 @@ async function advanceTicks(ticks: number, intervalMs: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ticks * intervalMs + 5));
 }
 
+/**
+ * Wait for an observable watchdog outcome rather than assuming an overloaded
+ * CI runner delivered every 10 ms timer by a particular wall-clock instant.
+ * The deadline remains below the uncapped seventh dispatch (640 ms), so this
+ * still distinguishes a real plateau from an exponentially growing backoff.
+ */
+async function waitFor(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error(`condition was not met within ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 describe("health-watch", () => {
   it("INVARIANT: an unhealthy service triggers exactly one re-apply", async () => {
     const applied: string[] = [];
@@ -124,12 +138,11 @@ describe("health-watch", () => {
     });
 
     watch.start();
-    // Capped dispatch times are 10,20,40,80,160,240,320,400 — comfortably
-    // inside this window. An uncapped backoff would still be doubling
-    // (10,20,40,80,160,320,640,...) and would only reach 6 dispatches by
-    // t=320, one short of the 7 this window requires — so a deleted or
-    // off-by-one cap fails the length assertion below on its own.
-    await advanceTicks(40, intervalMs);
+    // Capped dispatch times are 10,20,40,80,160,240,320,400. An uncapped
+    // backoff's seventh dispatch is at 640ms, so 600ms still rejects a deleted
+    // or off-by-one cap while not assuming GitHub Actions wakes every timer at
+    // its nominal millisecond.
+    await waitFor(() => dispatchedAt.length >= 7, 600);
     watch.stop();
 
     const gaps: number[] = [];
