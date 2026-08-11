@@ -310,7 +310,13 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
 
     const holder = await deps.listeningPidFor(port);
     if (holder === null) return identityFailed(name, `nothing is listening on port ${port}${died}`);
-    if (holder !== ourPid) {
+    // A watchdog recovery constructs a fresh driver, so its in-memory
+    // `running` map is empty even though the durable per-service pid record
+    // proves the listener is our child. Treat that narrow, service-scoped
+    // record as identity; do not mistake a still-warming native addon for a
+    // foreign process and restart it again before it can become healthy.
+    const ownedByThisService = holder === ourPid || (ourPid === null && (await isOurs(name, holder)));
+    if (!ownedByThisService) {
       const cmd = (await deps.describePid(holder)) ?? "unreadable";
       const ours = ourPid === null ? `this gateway started no child for it${died}` : `not our child pid ${ourPid}`;
       return identityFailed(name, `foreign listener on port ${port}: pid ${holder} (${cmd}), ${ours}`);
