@@ -224,6 +224,21 @@ describe("native-driver", () => {
     expect(r.error.kind).toBe("identity-failed");
   });
 
+  it("accepts a listener recorded in this service's durable pid file after a gateway restart", async () => {
+    // Watchdog recovery uses a fresh driver instance. It has no in-memory
+    // child handle, but the pid file is the durable ownership proof written by
+    // the previous gateway process for this exact service.
+    const svc = portedService("whisper-stt", 8768);
+    const driver = createNativeDriver(
+      stubDeps({
+        listeningPidFor: async () => 4242,
+        readPidFiles: async () => [{ name: "whisper-stt", pid: 4242 }],
+      }),
+    );
+
+    expect((await driver.verifyIdentity(svc)).ok).toBe(true);
+  });
+
   it("INVARIANT: a service whose probe names no port falls back to our own pid record, never to a pass", async () => {
     // `noop` / `exec` healthchecks give the driver no socket to attribute, so
     // the strongest honest claim left is "the child we recorded is alive". It

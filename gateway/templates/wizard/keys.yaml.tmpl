@@ -6,7 +6,9 @@ llm:
 
   ollama_cloud:
     api_key: null
-    base_url: "http://host.docker.internal:11434/v1"
+    # Ollama Cloud is internet-hosted. `host.docker.internal` was the retired
+    # Docker-local endpoint and cannot resolve from the native macOS gateway.
+    base_url: "https://ollama.com/v1"
 
   openrouter:
     api_key: null
