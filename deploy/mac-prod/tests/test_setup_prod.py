@@ -26,6 +26,9 @@ from setup_prod import (
     RELEASE_ROOT_PLACEHOLDER,
     RELEASES_SUBDIR,
     SERVICE_SOURCES,
+    RELEASE_INSTALL_VENV,
+    RELEASE_NATIVE_SOURCES_DIR,
+    RELEASE_WHEELS_DIR,
     STATE_DIRS,
     STATE_ROOT,
     HealthProbe,
@@ -998,6 +1001,36 @@ def test_staging_installs_each_venv_from_vendored_wheels(tmp_path):
         assert [
             str(installer), service,
             str(release / service / "venv"), str(wheels / service),
+        ] in recorded, service
+
+
+def test_staging_prefers_the_self_contained_release_payload(tmp_path):
+    """A release archive must be sufficient to install: no second wheel/source
+    transfer from the build checkout is allowed."""
+    repo = tmp_path / "repo"
+    # Deliberately do not create repo service sources or its install helper.
+    release = tmp_path / "release"
+    release.mkdir()
+    helper = release / RELEASE_INSTALL_VENV
+    helper.write_text("#!/bin/sh\nexit 0\n")
+    recorded = []
+
+    for service, spec in SERVICE_SOURCES.items():
+        module = release / RELEASE_NATIVE_SOURCES_DIR / service / spec["module"]
+        module.mkdir(parents=True)
+        (module / "__init__.py").write_text("")
+        (release / RELEASE_WHEELS_DIR / service).mkdir(parents=True)
+
+    stage_native_services(
+        repo, release, wheels_root=release / RELEASE_WHEELS_DIR,
+        runner=_recording_runner(recorded),
+    )
+
+    for service, spec in SERVICE_SOURCES.items():
+        assert (release / service / "src" / spec["module"] / "__init__.py").is_file()
+        assert [
+            str(helper), service,
+            str(release / service / "venv"), str(release / RELEASE_WHEELS_DIR / service),
         ] in recorded, service
 
 

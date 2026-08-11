@@ -4,8 +4,13 @@
 #   ./scripts/build-gateway.sh              debug   (sourcemaps, no minify)
 #   ./scripts/build-gateway.sh --release    release (minified + bytecode)
 #
-# Output: dist/gateway/<version>/{bin/sentient-gateway, share/...} plus a
-# tarball and a sha256 the installer verifies.
+# Output: dist/gateway/<version>/{bin/sentient-gateway, share/..., wheels/,
+# native-sources/...} plus a tarball and a sha256 the installer verifies.
+#
+# The archive is deliberately self-contained.  `setup-prod.py install` must
+# never depend on a second rsync/scp of dist/wheels or on mutable source files
+# in the checkout: it stages the native services and builds their venvs from
+# this payload with `pip --no-index`.
 #
 # Both dev Mac and mini are arm64 macOS, so there is no cross-compilation.
 set -euo pipefail
@@ -53,6 +58,24 @@ cp    gateway/persona.md      "$OUT/share/persona.md"
 mkdir -p "$OUT/share/config"
 cp -R gateway/config/delegation "$OUT/share/config/delegation"
 cp -R gateway/webui/dist      "$OUT/share/webui"
+
+echo "==> staging native-service install payload"
+if [ ! -d "$REPO/dist/wheels" ]; then
+  echo "ERROR: dist/wheels is missing — run ./scripts/build-python-wheels.sh before packaging a release." >&2
+  exit 1
+fi
+for service in whisper-stt local-tts deep-memory; do
+  if [ ! -d "$REPO/dist/wheels/$service" ]; then
+    echo "ERROR: dist/wheels/$service is missing — run ./scripts/build-python-wheels.sh before packaging a release." >&2
+    exit 1
+  fi
+done
+mkdir -p "$OUT/native-sources"
+cp -R capabilityServices/WhisperSTTService/src "$OUT/native-sources/whisper-stt"
+cp -R capabilityServices/LocalTTSService/src    "$OUT/native-sources/local-tts"
+cp -R capabilityServices/DeepMemoryService/src  "$OUT/native-sources/deep-memory"
+cp -R "$REPO/dist/wheels" "$OUT/wheels"
+cp deploy/mac-prod/native/install-venv.sh "$OUT/install-venv.sh"
 
 echo "==> smoke: assets must resolve from the compiled binary"
 # A deliberately-absent config path. The binary must get PAST asset loading and

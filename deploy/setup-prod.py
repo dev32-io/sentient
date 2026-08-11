@@ -28,13 +28,20 @@ Idempotent: re-run any time after `git pull` to refresh images / re-sync the
 backend. Persistent state under ~/.sentient/ (secrets, gateway-data, brain)
 is never wiped — only the gateway config is patched in place.
 
+This file used to drive the container-era deployment.  For 2.0 it is a
+compatibility entry point for the native macOS installer: with no arguments it
+installs the newest release archive in `dist/gateway/`.  The container-era
+workflow remains available only as `--legacy` for recovery work.
+
 Usage:
-    python3 deploy/setup-prod.py            # targets deploy/mac-prod (production)
-    python3 deploy/setup-prod.py <name>     # target deploy/<name> instead
+    python3 deploy/setup-prod.py
+    python3 deploy/setup-prod.py install [<archive>] [installer options]
+    python3 deploy/setup-prod.py --legacy [<name>]
 """
 from __future__ import annotations
 
 import grp
+import json
 import os
 import platform
 import pwd
@@ -49,7 +56,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Which deploy/<dir> to target. Defaults to mac-prod (current production —
 # Apple-silicon Mac mini). Pass a name to target another prod env, e.g.
 #   python3 deploy/setup-prod.py docker
-DEPLOY_NAME = sys.argv[1] if len(sys.argv) > 1 else "mac-prod"
+DEPLOY_NAME = (
+    sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "--legacy"
+    else "mac-prod"
+)
 DEPLOY_DIR = REPO_ROOT / "deploy" / DEPLOY_NAME
 COMPOSE_FILE = DEPLOY_DIR / "docker-compose.yml"
 ENV_FILE = DEPLOY_DIR / ".env"
@@ -793,7 +803,7 @@ def print_next_steps(backend: Optional[str]) -> None:
     )
 
 
-def main() -> int:
+def legacy_main() -> int:
     print(f"{BOLD}Sentient — production setup{RESET}  {DIM}(deploy/{DEPLOY_NAME}){RESET}\n")
 
     if not COMPOSE_FILE.exists():
@@ -871,6 +881,119 @@ def main() -> int:
 
     print_next_steps(backend)
     return 0
+
+
+def main() -> int:
+    """Dispatch 2.0 deployments to the native installer.
+
+    Keeping this stable top-level path prevents an operator from accidentally
+    running the retired Compose workflow, which still refers to a `gateway`
+    Docker service that no longer exists in 2.0.
+    """
+    argv = sys.argv[1:]
+    if argv and argv[0] == "--legacy":
+        sys.argv = [sys.argv[0], *argv[1:]]
+        return legacy_main()
+
+    installer = REPO_ROOT / "deploy" / "mac-prod" / "setup-prod.py"
+    if not installer.is_file():
+        fail(f"2.0 native installer missing: {installer}")
+        return 1
+
+    # `deploy/setup-prod.py` on its own is the supported production command.
+    # It prepares a current, self-contained archive on the target first: an
+    # operator never has to copy a tarball or a wheel directory to the mini.
+    if not argv:
+        try:
+            archive = prepare_native_release()
+        except subprocess.CalledProcessError as e:
+            fail(f"2.0 release preparation failed: {' '.join(str(part) for part in e.cmd)}")
+            return 1
+        except RuntimeError as e:
+            fail(str(e))
+            return 1
+        argv = ["install", str(archive)]
+    elif argv[0] != "install":
+        # Pass uninstall/rollback/help through unchanged; install supports an
+        # explicit archive for CI and recovery operations.
+        pass
+
+    return subprocess.call([sys.executable, str(installer), *argv], cwd=REPO_ROOT)
+
+
+def _command(name: str) -> str | None:
+    return shutil.which(name)
+
+
+def _brew_install(formula: str) -> None:
+    brew = _command("brew")
+    if brew is None:
+        raise RuntimeError(
+            f"{formula} is required to prepare a 2.0 release, but Homebrew is not installed. "
+            f"Install Homebrew and re-run this same command."
+        )
+    info(f"Installing required build tool: {formula}")
+    subprocess.run([brew, "install", formula], cwd=REPO_ROOT, check=True)
+
+
+def _ensure_build_tool(command: str, formula: str) -> None:
+    if _command(command) is None:
+        _brew_install(formula)
+    if _command(command) is None:
+        raise RuntimeError(f"{formula} installed but `{command}` is still not on PATH; open a new shell and re-run.")
+
+
+def _wheel_payload_complete() -> bool:
+    wheels = REPO_ROOT / "dist" / "wheels"
+    return all(
+        any((wheels / service).glob("*.whl"))
+        for service in ("whisper-stt", "local-tts", "deep-memory")
+    )
+
+
+def prepare_native_release() -> Path:
+    """Build every local prerequisite for a self-contained 2.0 release.
+
+    This is intentionally the only build path used by the top-level command.
+    The source checkout supplies source code; the resulting archive contains
+    the gateway, native-service sources, and offline wheels.  There is no
+    follow-up artifact transfer step.
+    """
+    _ensure_build_tool("bun", "bun")
+    # The wheel builder resolves these exact formulas too.  Installing them
+    # here makes a fresh mini reproducible instead of failing after it has
+    # already begun a partial wheel build.
+    _ensure_build_tool("python3.11", "python@3.11")
+    _ensure_build_tool("python3.14", "python@3.14")
+    if _command("docker") is None:
+        raise RuntimeError("Docker Desktop is required for Sentient addon images; install and start it, then re-run.")
+
+    subprocess.run(["bun", "install", "--frozen-lockfile"], cwd=REPO_ROOT, check=True)
+    if not _wheel_payload_complete():
+        info("Building missing offline native-service wheels (first run may take several minutes)")
+        subprocess.run(["bash", "scripts/build-python-wheels.sh"], cwd=REPO_ROOT, check=True)
+    else:
+        ok("offline native-service wheels already present")
+
+    info("Building self-contained native gateway release")
+    subprocess.run(["bash", "scripts/build-gateway.sh", "--release"], cwd=REPO_ROOT, check=True)
+
+    # Compose has no gateway service in 2.0.  It only bakes image tags for the
+    # launchd-managed gateway's Docker addons.
+    info("Building 2.0 addon images")
+    subprocess.run(
+        ["docker", "compose", "-f", "deploy/mac-prod/docker-compose.yml",
+         "--profile", "build-only", "build"],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+
+    version = json.loads((REPO_ROOT / "gateway" / "package.json").read_text())["version"]
+    archive = REPO_ROOT / "dist" / "gateway" / f"{version}.tar.gz"
+    sidecar = archive.with_suffix(archive.suffix + ".sha256")
+    if not archive.is_file() or not sidecar.is_file():
+        raise RuntimeError(f"release build completed without {archive.name} and its checksum")
+    return archive
 
 
 if __name__ == "__main__":

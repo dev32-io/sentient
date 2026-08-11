@@ -37,8 +37,8 @@ Invariants this script exists to hold:
     is operator-owned and `chmod a-w`; `~/.sentient/**` is also operator-owned.
     Nothing executable lives under $HOME in either domain.
   * NOTHING FETCHES AT DEPLOY TIME. The gateway binary embeds its JS
-    dependencies; python services install from vendored wheels with
-    `pip install --no-index`.
+    dependencies; the release archive embeds its native-service sources and
+    vendored wheels, which install with `pip install --no-index`.
   * THE OPERATOR'S config.yaml IS NEVER CLOBBERED. It is seeded once from the
     template and hand-edited thereafter.
   * TLS VERIFICATION IS NEVER DISABLED. Two health probes gate a successful
@@ -225,6 +225,12 @@ SERVICE_VENV_DIR = "venv"
 INSTALL_VENV_SCRIPT = "deploy/mac-prod/native/install-venv.sh"
 # Per-service vendored wheels, produced by scripts/build-python-wheels.sh.
 WHEELS_ROOT = "dist/wheels"
+# Self-contained archives produced by scripts/build-gateway.sh carry everything
+# needed to stage native services.  Keep the checkout paths as a legacy
+# fallback so previously-built archives remain installable.
+RELEASE_WHEELS_DIR = "wheels"
+RELEASE_NATIVE_SOURCES_DIR = "native-sources"
+RELEASE_INSTALL_VENV = "install-venv.sh"
 # Build-host artefacts, never part of a release: stale bytecode can shadow the
 # real sources, and egg-info describes the build tree rather than the release.
 STAGE_EXCLUDES = ("__pycache__", "*.pyc", "*.egg-info")
@@ -672,12 +678,14 @@ def stage_native_services(repo: Path, release: Path, wheels_root: Path, runner=s
     `--no-index` from the per-service vendored wheels: nothing fetches at deploy
     time.
     """
-    helper = repo / INSTALL_VENV_SCRIPT
+    bundled_helper = release / RELEASE_INSTALL_VENV
+    helper = bundled_helper if bundled_helper.is_file() else repo / INSTALL_VENV_SCRIPT
     if not helper.is_file():
         raise InstallError(f"missing the offline venv helper {helper}")
 
     for service, spec in SERVICE_SOURCES.items():
-        source = repo / spec["src"]
+        bundled_source = release / RELEASE_NATIVE_SOURCES_DIR / service
+        source = bundled_source if bundled_source.is_dir() else repo / spec["src"]
         if not (source / spec["module"]).is_dir():
             raise InstallError(
                 f"{service}: no {spec['module']} package under {source} — the release "
@@ -1346,7 +1354,6 @@ def run_install(args) -> None:
     operator = args.operator or resolve_operator(os.environ, domain)
     home = args.home or Path(f"/Users/{operator}")
     repo = args.repo
-    wheels = args.wheels or repo / WHEELS_ROOT
     plist = args.plist or repo / PLIST_SOURCE
     ca_bundle = args.ca_bundle or home / STATE_ROOT / CERT_RELATIVE
 
@@ -1404,7 +1411,17 @@ def run_install(args) -> None:
 
     def prepare(staged: str) -> None:
         info(f"staging native services into {version}")
-        stage_native_services(repo, fs.release_dir(staged), wheels)
+        release = fs.release_dir(staged)
+        # New archives are self-contained; the checkout fallback keeps old
+        # archives installable and is intentionally announced so it cannot
+        # quietly reintroduce a hidden deployment dependency.
+        bundled_wheels = release / RELEASE_WHEELS_DIR
+        wheels = bundled_wheels if bundled_wheels.is_dir() else (args.wheels or repo / WHEELS_ROOT)
+        if bundled_wheels.is_dir():
+            ok("using native-service payload embedded in release archive")
+        else:
+            warn("legacy release archive has no native-service payload; using checkout wheels")
+        stage_native_services(repo, release, wheels)
         ok("whisper-stt + local-tts venvs built from vendored wheels")
 
     def health() -> tuple[bool, str | None]:
