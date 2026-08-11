@@ -135,6 +135,13 @@ def rewrite_requirements(lines: list[str], wheels: dict[tuple[str, str], Path]) 
     index = 0
     while index < len(lines):
         line = lines[index]
+        # A development venv can contribute an editable absolute path beside
+        # the normal, versioned requirement. The versioned entry is pinned to
+        # the vendored wheel below; the editable path is neither portable nor
+        # compatible with --require-hashes at install time.
+        if line.strip().startswith(("-e ", "--editable ")):
+            index += 1
+            continue
         match = REQUIREMENT_RE.match(line)
         if not match:
             if not line.lstrip().startswith("#"):

@@ -107,7 +107,7 @@ assert_wheels_install_on_target() {
 }
 
 build() {
-  local service="$1" pyver="$2" override_var="$3" requirements="$4"
+  local service="$1" pyver="$2" override_var="$3" requirements="$4" project_root="${5:-}"
   local py
   # Lock presence is a HARD precondition — fail loud and actionable instead of the
   # confusing `grep: no such file` (or a partial wheel set) a missing lock caused
@@ -123,8 +123,19 @@ build() {
   echo "==> $service (python$pyver: $py, MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET)"
   rm -rf "$OUT/$service"; mkdir -p "$OUT/$service"
   local unhashed; unhashed="$(mktemp)"
-  grep -v -- '--hash=' "$REQ/$service.lock" | sed 's/[[:space:]]*\\$//' > "$unhashed"
+  grep -v -- '--hash=' "$REQ/$service.lock" | \
+    grep -vE '^[[:space:]]*(-e|--editable)[[:space:]]+' | \
+    sed 's/[[:space:]]*\\$//' > "$unhashed"
+  # Build a service's own wheel from its local source rather than an editable
+  # path from a developer venv. Its versioned lock entry remains and is hashed
+  # against this wheel by rehash-python-lock.py.
+  if [[ -n "$project_root" ]]; then
+    sed -i '' "/^${service}==/d" "$unhashed"
+  fi
   "$py" -m pip wheel -r "$unhashed" -w "$OUT/$service" --cache-dir "$CACHE_DIR"
+  if [[ -n "$project_root" ]]; then
+    "$py" -m pip wheel --no-deps "$project_root" -w "$OUT/$service" --cache-dir "$CACHE_DIR"
+  fi
   rm -f "$unhashed"
   assert_wheels_install_on_target "$service"
   "$py" "$REHASH" --lock "$REQ/$service.lock" --wheels "$OUT/$service" \
@@ -137,6 +148,6 @@ build local-tts 3.11 LOCAL_TTS_PYTHON capabilityServices/LocalTTSService/require
 # 3.14: mlx/mlx-embeddings/sqlite-vec all ship cp314 arm64 wheels, verified in T9b.
 # deep-memory.lock is NOT committed yet — `build` above fails loud with the
 # generate recipe if it is missing, rather than producing a partial wheel set.
-build deep-memory 3.14 DEEP_MEMORY_PYTHON capabilityServices/DeepMemoryService/requirements.txt
+build deep-memory 3.14 DEEP_MEMORY_PYTHON capabilityServices/DeepMemoryService/requirements.txt capabilityServices/DeepMemoryService
 
 echo "✓ wheels in $OUT"
