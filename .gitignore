@@ -98,3 +98,6 @@ scripts/release.local.conf
 fastlane/report.xml
 fastlane/Preview.html
 fastlane/README.md
+
+#Pi/PiBox
+/.pibox/
