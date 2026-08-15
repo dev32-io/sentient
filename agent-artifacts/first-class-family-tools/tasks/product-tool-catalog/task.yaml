@@ -1,0 +1,29 @@
+schemaVersion: 1
+id: product-tool-catalog
+title: Govern tools by stable product group
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: high
+    rationale: Default high routing for a bounded contribution.
+assembly:
+  stageId: 01-governance
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun test
+      gateway/src/tools/resolve-tool-permission.test.ts
+      gateway/src/tools/tool-broker.test.ts
+      gateway/src/api/handlers/mcp-catalog.test.ts
+      gateway/src/admin/web-tools-migrator.test.ts
+    - source scripts/env.sh && bun --cwd gateway/webui test --run
+      src/components/settings/panes/tool-permission-patch.test.ts
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+    - source scripts/env.sh && bun run typecheck
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.

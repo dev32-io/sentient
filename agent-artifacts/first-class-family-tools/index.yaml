@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 5
+  revision: 6
 artifacts:
   - id: intent
     type: intent
@@ -27,10 +27,15 @@ artifacts:
     path: specs/testing-environment-boundary.md
     status: draft
     narrativeSchemaVersion: 2
-tasks: []
+tasks:
+  - id: product-tool-catalog
+    path: tasks/product-tool-catalog/task.yaml
 integrationUnits: []
 evaluations: []
-executionStages: []
+executionStages:
+  - id: 01-governance
+    tasks:
+      - product-tool-catalog
 delivery:
   branchType: feature
   branchMode: create
