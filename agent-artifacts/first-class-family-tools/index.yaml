@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 12
+  revision: 13
 artifacts:
   - id: intent
     type: intent
@@ -42,6 +42,8 @@ tasks:
     path: tasks/native-music-primitives/task.yaml
   - id: composed-music-play
     path: tasks/composed-music-play/task.yaml
+  - id: core-tool-cutover
+    path: tasks/core-tool-cutover/task.yaml
 integrationUnits: []
 evaluations: []
 executionStages:
@@ -66,6 +68,9 @@ executionStages:
   - id: 07-music-play
     tasks:
       - composed-music-play
+  - id: 08-cutover
+    tasks:
+      - core-tool-cutover
 delivery:
   branchType: feature
   branchMode: create
