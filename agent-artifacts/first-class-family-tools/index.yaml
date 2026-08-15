@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 23
+  revision: 24
 artifacts:
   - id: intent
     type: intent
@@ -53,9 +53,6 @@ evaluations:
   - id: family-integration-safety-review
     path: evaluations/family-integration-safety-review/evaluation.yaml
 executionStages:
-  - id: 08-cutover
-    tasks:
-      - core-tool-cutover
   - id: 01-governance
     tasks:
       - product-tool-catalog
@@ -69,6 +66,9 @@ executionStages:
       - grounded-web-search
       - native-home-configuration
       - composed-music-play
+  - id: 04-cutover
+    tasks:
+      - core-tool-cutover
 delivery:
   branchType: feature
   branchMode: create

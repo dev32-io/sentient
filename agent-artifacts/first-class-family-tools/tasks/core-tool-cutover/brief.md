@@ -28,7 +28,7 @@ Web, Home Assistant, and Music Assistant run exclusively through the reviewed fi
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 08-cutover.
+Deliver this contribution for integration in stage 04-cutover.
 
 ## Context
 
@@ -50,6 +50,7 @@ Deliver this contribution for integration in stage 08-cutover.
 - Delegated native projection is derived from authoritative tool metadata and eligibility rules, not a second hand-maintained allowlist
 - Obsolete-service reaping uses existing harness ownership labels and never deletes unowned containers
 - Migration is idempotent and safe across repeated boot/apply operations
+- This final barrier consumes all three completed branches: grounded web search, Home configuration coverage, and composed Music playback
 
 ## Constraints
 

@@ -3,15 +3,22 @@ id: core-tool-cutover
 title: Cut over core capabilities and retire their MCP sidecars
 status: draft
 dependsOn:
+  - grounded-web-search
+  - native-home-configuration
   - composed-music-play
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - core-tool-cutover
+    - managed-service-graph
+    - legacy-permission-cutover
+    - delegated-native-read-projection
   assignment:
     agent: implementer
     tier: high
-    rationale: Default high routing for a bounded contribution.
+    rationale: This contribution coordinates migration, service retirement,
+      delegated capability projection, and whole-system compatibility.
 assembly:
-  stageId: 08-cutover
+  stageId: 04-cutover
   intermediateState: complete
 verification:
   timing: task
