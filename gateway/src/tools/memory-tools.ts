@@ -409,7 +409,15 @@ function definitionFor(
   description: string,
   parameters: Record<string, unknown>,
 ): ToolDefinition {
-  return { name, description, parameters, category: "foreground", tier };
+  return {
+    name,
+    description,
+    parameters,
+    category: "foreground",
+    tier,
+    productGroup: "memory",
+    defaultExposure: "standard",
+  };
 }
 
 const memoryListDefinition = definitionFor(

@@ -743,6 +743,8 @@ companions:
 # ---------------------------------------------------------------------------
 mcp_catalog:
   home_assistant:
+    product_group: home
+    default_exposure: standard
     transport: http
     url: http://127.0.0.1:8086/mcp
     timeout: 30
@@ -808,6 +810,8 @@ mcp_catalog:
   # its path as argv with no shell, so a literal `~` here would NOT expand.
   # {{userId}} is substituted per user at profile render time.
   gateway:
+    product_group: gateway
+    default_exposure: advanced
     transport: stdio
     command: nc
     args: ["-U", "${HOME}/.sentient/run/mcp-{{userId}}.sock"]
@@ -844,6 +848,8 @@ mcp_catalog:
   # MA_SERVER_URL (LAN host); container joins sentient-external because
   # the upstream uses raw WS that tinyproxy CONNECT cannot proxy.
   music_assistant:
+    product_group: music
+    default_exposure: standard
     transport: http
     url: http://127.0.0.1:8668/mcp
     timeout: 30
@@ -883,6 +889,8 @@ mcp_catalog:
   # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
   # Outbound HTTP fetches route through egress-proxy.
   fetch:
+    product_group: web
+    default_exposure: standard
     transport: http
     url: http://127.0.0.1:8088/mcp
     timeout: 30
@@ -904,6 +912,8 @@ mcp_catalog:
   # Adapter forwards queries to the sibling searxng container which
   # fans out across configured upstream engines via egress-proxy.
   searxng:
+    product_group: web
+    default_exposure: standard
     transport: http
     url: http://127.0.0.1:8087/mcp
     timeout: 30

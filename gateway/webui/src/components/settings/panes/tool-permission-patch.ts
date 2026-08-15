@@ -140,6 +140,11 @@ export function effectiveToolPermission(
  * explicit pending edit exists, and it happens to be null" apart from "no
  * edit was made here at all".
  */
+/** Product-group spelling for new callers; retained server-named helpers are
+ * wire-compatible aliases during the client migration. */
+export const withProductGroupToolPermission = withToolPermission;
+export const withProductGroupMasterPermission = withServerMasterPermission;
+
 export function effectiveWildcardPermission(
   permissions: ToolPermissionPatchMap | undefined,
   serverId: string,
@@ -157,3 +162,6 @@ export function effectiveWildcardPermission(
   }
   return catalogWildcard;
 }
+
+export const effectiveProductGroupToolPermission = effectiveToolPermission;
+export const effectiveProductGroupWildcardPermission = effectiveWildcardPermission;

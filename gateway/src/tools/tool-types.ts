@@ -3,6 +3,7 @@
 // first tool producer/consumer; Task 4 (ToolBroker) and later the ReAct loop
 // import from this module rather than redefining the shapes locally.
 
+import type { ProductToolMetadata } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 
 /** Dispatch lane a tool runs on. `foreground` blocks the current ReAct turn
@@ -19,7 +20,10 @@ export interface ToolResult {
 }
 
 /** A tool's advertised shape, as presented to the model's tool-list. */
-export interface ToolDefinition {
+export interface ToolDefinition extends Partial<ProductToolMetadata> {
+  /** Required on every production contribution. Optional at the structural
+   * boundary only for backwards-compatible third-party/test definitions; the
+   * broker normalizes those to a stable group before resolving policy. */
   name: string;
   description: string;
   parameters: Record<string, unknown>;

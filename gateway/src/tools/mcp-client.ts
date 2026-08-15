@@ -23,7 +23,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import type { McpCatalog, McpServerEntry, McpToolDescriptor } from "@sentient/config";
+import type {
+  McpCatalog,
+  McpServerEntry,
+  McpToolDescriptor,
+  ProductToolGroup,
+  ToolDefaultExposure,
+} from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { getLog } from "../logging/logger.js";
 import type { ToolResult } from "./tool-types.js";
@@ -190,6 +196,8 @@ export interface AdvertisedTool {
  *  table, the settings API) needs the tier and none of them may invent one. */
 export interface McpToolRef extends AdvertisedTool {
   tier: ImpactTier;
+  productGroup?: ProductToolGroup;
+  defaultExposure?: ToolDefaultExposure;
 }
 
 export interface McpClient {
@@ -243,6 +251,7 @@ export interface AllowlistFilterResult {
 export function filterByAllowlist(
   tools: AdvertisedTool[],
   include: readonly McpToolDescriptor[],
+  metadata: { productGroup?: ProductToolGroup; defaultExposure?: ToolDefaultExposure } = {},
 ): AllowlistFilterResult {
   const advertised = new Map(tools.map((tool) => [tool.name, tool]));
   const kept: McpToolRef[] = [];
@@ -253,7 +262,12 @@ export function filterByAllowlist(
       unmatched.push(curated.name);
       continue;
     }
-    kept.push({ ...tool, tier: curated.tier });
+    kept.push({
+      ...tool,
+      tier: curated.tier,
+      productGroup: metadata.productGroup ?? tool.serverName,
+      defaultExposure: metadata.defaultExposure ?? "standard",
+    });
   }
   return { kept, unmatched };
 }
@@ -368,7 +382,10 @@ export function createMcpClient(catalog: McpCatalog, opts: { includeServers?: st
   }
 
   function finishListTools(serverName: string, entry: McpHttpEntry, refs: AdvertisedTool[], startedAt: number) {
-    const { kept, unmatched } = filterByAllowlist(refs, entry.tools.include);
+    const { kept, unmatched } = filterByAllowlist(refs, entry.tools.include, {
+      productGroup: entry.product_group ?? serverName,
+      defaultExposure: entry.default_exposure ?? "standard",
+    });
     // D19: an include entry naming a tool the server no longer (or never
     // did) advertise is catalog drift, not a mere zero-hit filter — WARN so
     // it surfaces instead of rotting silently in the allowlist. Note this

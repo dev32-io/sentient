@@ -2,7 +2,7 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
-import { NATIVE_TOOL_SERVER_KEY, type ToolPermission } from "@sentient/config";
+import type { ToolPermission } from "@sentient/config";
 import type {
   HermesBuiltinToolView,
   McpCatalogView,
@@ -128,17 +128,17 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     );
   }
 
-  const serverIds = Object.keys(catalog.servers).sort();
+  const serverIds = Object.keys(catalog.groups).sort();
   const wildcardKey = catalog.wildcardPermissionKey;
 
   return (
     <>
       <PaneHead
         title="Tools"
-        sub="Pick Allow / Ask / Deny / Off per tool. A server's master switch can hide all of its tools at once, or reset them all to their role defaults — resetting clears any per-tool choices you made on that server too, since the stored table can't tell a default from a deliberate choice. Changes apply after you save settings."
+        sub="Pick Allow / Ask / Deny / Off per tool. A product group's master switch can hide all of its tools at once, or reset them to role defaults. Changes apply after you save settings."
       />
 
-      <Card title="MCP servers" padding={false}>
+      <Card title="Product tools" padding={false}>
         <div class="mcp-list">
           {serverIds.length === 0 && (
             <div class="empty-pad">
@@ -146,7 +146,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
             </div>
           )}
           {serverIds.map((id) => {
-            const entry = catalog.servers[id];
+            const entry = catalog.groups[id];
             if (!entry) return null;
             return (
               <McpServerSection
@@ -172,40 +172,6 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
         </div>
       </Card>
 
-      {catalog.nativeTools.length > 0 && (
-        <Card
-          title="Gateway tools"
-          sub="Built into the gateway itself, not an MCP server. Most rows (skill tools) are governed per-person like any other tool; delegateTask is governed by role only — no stored key can address it yet."
-          padding={false}
-        >
-          <PermissionToolTable
-            rows={catalog.nativeTools.map((t) => ({
-              key: t.name,
-              name: t.name,
-              description: t.description,
-              // `NATIVE_TOOL_SERVER_KEY` ("native") is the reserved server key
-              // the gateway resolves these tools' stored overrides under
-              // (`resolve-tool-permission.ts`) — the SAME namespace for every
-              // row here, settable or not, so this can read pending/stored
-              // edits exactly like an MCP server's tool table.
-              permission: effectiveToolPermission(permissions, NATIVE_TOOL_SERVER_KEY, t),
-              settable: t.settable,
-              onChange: (permission: ToolPermission) => {
-                // `settable: false` (today, only `delegateTask`) renders the
-                // Select natively `disabled` — no click reaches here — but the
-                // guard stays explicit rather than relying on that alone: a
-                // `serverName: null` native tool (delegateTask) has no stored
-                // address at all, so writing it under NATIVE_TOOL_SERVER_KEY
-                // would be silently discarded by the resolver, not merely
-                // redundant.
-                if (!t.settable) return;
-                handleToolPermissionChange(NATIVE_TOOL_SERVER_KEY, t.name, permission);
-              },
-            }))}
-          />
-        </Card>
-      )}
-
       <HermesBuiltinsCard
         tools={catalog.hermesBuiltins}
         enabledToolsets={toolsets}
@@ -224,7 +190,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
 interface McpServerSectionProps {
   id: string;
-  entry: McpCatalogView["servers"][string];
+  entry: McpCatalogView["groups"][string];
   wildcardKey: string;
   permissions: ProfileV1["tools"]["permissions"];
   isOpen: boolean;

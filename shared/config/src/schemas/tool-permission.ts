@@ -23,8 +23,28 @@ import { z } from "zod";
 export const toolPermissionSchema = z.enum(["allow", "ask", "deny", "off"]);
 export type ToolPermission = z.infer<typeof toolPermissionSchema>;
 
+/** Stable authorization/settings identity for a family of tools. It is
+ * deliberately independent of the execution transport: several MCP servers
+ * and gateway-native runners may contribute tools to the same group. */
+export const productToolGroupSchema = z
+  .string()
+  .min(1)
+  .regex(/^[a-z][a-z0-9_-]*$/);
+export type ProductToolGroup = z.infer<typeof productToolGroupSchema>;
+
+/** Standard groups participate in role defaults. Advanced groups are opt-in:
+ * they contribute no model definitions until a profile explicitly enables
+ * the group or one of its tools. */
+export const toolDefaultExposureSchema = z.enum(["standard", "advanced"]);
+export type ToolDefaultExposure = z.infer<typeof toolDefaultExposureSchema>;
+
+export interface ProductToolMetadata {
+  readonly productGroup: ProductToolGroup;
+  readonly defaultExposure: ToolDefaultExposure;
+}
+
 /**
- * One person's whole permission table: MCP server name → tool name →
+ * One person's whole permission table: stable product group → tool name →
  * permission. The stored shape of `ProfileV1["tools"]["permissions"]`, named
  * once here because the ToolBroker, its composition roots and the profile
  * schema all have to spell it.

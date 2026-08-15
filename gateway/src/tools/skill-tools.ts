@@ -248,7 +248,15 @@ const NAME_PROPERTY = { type: "string", description: "The exact skill name (lowe
 
 function definitionFor(name: SkillToolName, description: string, parameters: Record<string, unknown>): ToolDefinition {
   const tier = SKILL_TOOL_SETTINGS.find((s) => s.name === name)?.tier ?? CONFIRM_TIER;
-  return { name, description, parameters, category: "foreground", tier };
+  return {
+    name,
+    description,
+    parameters,
+    category: "foreground",
+    tier,
+    productGroup: "skills",
+    defaultExposure: "standard",
+  };
 }
 
 const skillListDefinition = definitionFor(

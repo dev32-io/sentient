@@ -63,7 +63,6 @@
 // `mcp-host/tools/identify-user.ts`, which is the only place that knows both
 // the channel and what the tool means without one.
 
-import { NATIVE_TOOL_SERVER_KEY } from "@sentient/config";
 import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
 import { type ImpactTier, canExecute } from "@sentient/protocol";
@@ -425,9 +424,9 @@ export interface ToolBrokerDeps {
  *  there, and the tool's IMPACT TIER — carried alongside so the role gate and
  *  the execution path can never be judging two different tools. */
 type ResolvedTarget =
-  | { kind: "background"; runner: BackgroundToolRunner; tier: ImpactTier }
-  | { kind: "native"; runner: NativeToolRunner; tier: ImpactTier }
-  | { kind: "foreground"; serverName: string; tier: ImpactTier };
+  | { kind: "background"; runner: BackgroundToolRunner; definition: ToolDefinition }
+  | { kind: "native"; runner: NativeToolRunner; definition: ToolDefinition }
+  | { kind: "foreground"; serverName: string; definition: ToolDefinition };
 
 export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
   const {
@@ -488,6 +487,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
             // Straight off the catalog entry that curated this tool — see
             // `filterByAllowlist`. Nothing here decides a tier.
             tier: ref.tier,
+            ...(ref.productGroup ? { productGroup: ref.productGroup } : {}),
+            ...(ref.defaultExposure ? { defaultExposure: ref.defaultExposure } : {}),
           }));
           mcpDefsByName = new Map(mcpDefs.map((def) => [def.name, def]));
           log.info("tool-broker.mcp-warmup.ok", { sessionId, toolCount: refs.length });
@@ -528,22 +529,6 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     }
   }
 
-  /** tool name → its MCP server, or `null` for a tool no server owns. The ONE
-   *  mapping used for both existence (`resolveTarget`) and permission lookup,
-   *  so the two can never disagree about which server a tool belongs to. */
-  function serverOf(toolName: string): string | null {
-    // Background tools (`delegateTask`) are gateway-native AND structurally
-    // non-overridable: no MCP server and no permission key at all — `null`.
-    if (backgroundTools.has(toolName)) return null;
-    // Foreground-native tools (skill tools) are also serverless, but they ARE
-    // overridable: they resolve their stored permission under the reserved
-    // `"native"` namespace, so a `native[tool]` override is honoured while the
-    // catalog-built role template (which has no `"native"` key) is bypassed for
-    // the tier default. See resolve-tool-permission.ts.
-    if (nativeTools.has(toolName)) return NATIVE_TOOL_SERVER_KEY;
-    return mcpIndex?.get(toolName) ?? null;
-  }
-
   /**
    * THE RESOLUTION, total by construction — every tool has exactly one answer,
    * `undefined` is not one of them, and the answer says WHICH table produced it.
@@ -563,11 +548,29 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    * carries the actual precedence rule (profile → role template → fail-closed
    * backstop) plus the gateway-native serverless case (`delegateTask`).
    */
-  function resolvePermission(toolName: string, tier: ImpactTier): ResolvedPermission {
+  function resolvePermission(definition: ToolDefinition): ResolvedPermission {
+    if (definition.productGroup !== undefined) {
+      return resolveToolPermission({
+        toolName: definition.name,
+        tier: definition.tier,
+        productGroup: definition.productGroup,
+        defaultExposure: definition.defaultExposure ?? "standard",
+        storedPermissions: permissions,
+        roleTemplate,
+      });
+    }
+    // Migration compatibility for old third-party/test definitions. Production
+    // providers always carry product metadata; this path preserves the retired
+    // native/server semantics only while stale definitions are draining.
+    const serverName = backgroundTools.has(definition.name)
+      ? null
+      : nativeTools.has(definition.name)
+        ? "native"
+        : (mcpIndex?.get(definition.name) ?? null);
     return resolveToolPermission({
-      toolName,
-      tier,
-      serverName: serverOf(toolName),
+      toolName: definition.name,
+      tier: definition.tier,
+      serverName,
       storedPermissions: permissions,
       roleTemplate,
     });
@@ -588,7 +591,8 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    * call never read this session's `tools[]` at all. A model-emitted tool call
    * is never itself an authorization decision.
    */
-  async function resolveDecision(inv: ToolInvocation, tier: ImpactTier): Promise<PdpDecision> {
+  async function resolveDecision(inv: ToolInvocation, definition: ToolDefinition): Promise<PdpDecision> {
+    const { tier } = definition;
     // Per call, never captured: a settings save reaches the very next dispatch
     // rather than waiting for a new broker.
     await refreshPermissions();
@@ -605,7 +609,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       return { action: "deny", reason: roleDeniedReason(inv.name) };
     }
 
-    const resolved = resolvePermission(inv.name, tier);
+    const resolved = resolvePermission(definition);
     let permission: ToolPermission = resolved.permission;
     let source: string = resolved.source;
 
@@ -748,14 +752,14 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    *  absorbs, not a decision anyone should be asked to make. */
   async function resolveTarget(inv: ToolInvocation): Promise<ResolvedTarget | null> {
     const runner = backgroundTools.get(inv.name);
-    if (runner) return { kind: "background", runner, tier: runner.definition.tier };
+    if (runner) return { kind: "background", runner, definition: runner.definition };
     // Native foreground tools resolve BEFORE the MCP index, same choke as the
     // background registry — their tier travels with the target so the role gate
     // and the run path judge the same tool.
     const nativeRunner = nativeTools.get(inv.name);
-    if (nativeRunner) return { kind: "native", runner: nativeRunner, tier: nativeRunner.definition.tier };
+    if (nativeRunner) return { kind: "native", runner: nativeRunner, definition: nativeRunner.definition };
     await ensureMcpWarm();
-    const serverName = serverOf(inv.name);
+    const serverName = mcpIndex?.get(inv.name);
     if (!serverName) return null;
     const def = mcpDefsByName.get(inv.name);
     // Unreachable in practice — `serverOf` and `mcpDefsByName` are filled from
@@ -772,7 +776,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
       });
       return null;
     }
-    return { kind: "foreground", serverName, tier: def.tier };
+    return { kind: "foreground", serverName, definition: def };
   }
 
   /** How a foreground result is labelled to the inbound scanner. A `skill_use`
@@ -1004,7 +1008,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
         roleWithheld.push(`${def.name}:${def.tier}`);
         continue;
       }
-      const { permission, source } = resolvePermission(def.name, def.tier);
+      const { permission, source } = resolvePermission(def);
       if (!isVisibleToModel(permission)) {
         permissionWithheld.push(`${def.name}:${permission}/${source}`);
         continue;
@@ -1077,7 +1081,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
     // natural `auto` implementation (a classifier that answers "ask") would
     // return exactly that. Testing for `deny` would have dispatched it
     // unmediated; testing for `allow` cannot.
-    const decision = await resolveDecision(inv, target.tier);
+    const decision = await resolveDecision(inv, target.definition);
     if (decision.action !== "allow") {
       log.warn("tool-broker.dispatch.denied", {
         sessionId,

@@ -89,6 +89,7 @@ import type { AuthService } from "../user-auth/auth-service.js";
 import { getHermesProfileDir } from "../user-auth/paths.js";
 import { hashPin } from "../user-auth/pin-service.js";
 import { createTextStreamSynthesizer } from "./content-tts-factory.ts";
+import { composeProductToolProviders } from "./product-tool-providers.ts";
 import { resolveProviderConnection } from "./resolve-provider-connection.ts";
 import type { SttService } from "./stt-factory.ts";
 import { createSttService } from "./stt-factory.ts";
@@ -606,11 +607,10 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     });
   }
 
-  // Boot migration: rename per-user tools.permissions.duckduckgo →
-  // tools.permissions.searxng + tools.permissions.fetch. Idempotent.
-  if (cfg.hermes) {
-    await migrateWebToolsEnabled({ userStore: auth.users, profileStore });
-  }
+  // Boot migration from legacy MCP/native permission keys to stable product
+  // groups. Authorization is gateway-owned, so this runs even when Hermes is
+  // disabled. Idempotent and conservative on collisions.
+  await migrateWebToolsEnabled({ userStore: auth.users, profileStore });
 
   // Re-render the inner Hermes profile (config.yaml + SOUL.md) for every
   // existing user. Idempotent — picks up template changes (e.g. model
@@ -1338,6 +1338,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // `buildSessionMemory` hands back an ARRAY of runners.
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
+    // Bootstrap-owned web/Home/Music slots are always composed, even while
+    // empty. Later foundations replace only their independently-owned slot.
+    for (const [name, runner] of composeProductToolProviders()) nativeTools.set(name, runner);
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(

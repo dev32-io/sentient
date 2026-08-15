@@ -61,21 +61,18 @@ private const val PROFILE_JSON_UNCONFIGURED_TOOLS = """{
 // Includes one server with a settable, resolved tool + a wildcard, plus nativeTools'
 // one settable:false entry (delegateTask, structurally unwritable via a PUT).
 private const val MCP_CATALOG_JSON = """{
-  "servers":{
-    "home-assistant":{
+  "groups":{
+    "home":{
       "tools":[
-        {"name":"get_state","description":"Get entity state.","tier":"read","permission":"allow","settable":true},
-        {"name":"call_service","description":"Call a service.","tier":"write","permission":"ask","settable":true}
+        {"name":"get_state","description":"Get entity state.","tier":"read","permission":"allow","settable":true,"dispatch":{"kind":"mcp","serverName":"home-assistant"}},
+        {"name":"call_service","description":"Call a service.","tier":"write","permission":"ask","settable":true,"dispatch":{"kind":"native"}}
       ],
-      "defaultInclude":["get_state"],
       "wildcardPermission":"ask",
+      "defaultExposure":"standard",
       "description":"Home Assistant"
     }
   },
   "wildcardPermissionKey":"*",
-  "nativeTools":[
-    {"name":"delegateTask","description":"Hand a task to a background worker agent.","tier":"confirm","permission":"ask","settable":false}
-  ],
   "hermesBuiltins":[
     {"name":"remember","description":"Save a memory.","toolset":"memory"}
   ]
@@ -219,22 +216,17 @@ class ProfileHttpClientTest {
 
         assertEquals("*", view.wildcardPermissionKey)
 
-        val server = view.servers["home-assistant"]
-        assertEquals(2, server?.tools?.size)
-        val getState = server?.tools?.first { it.name == "get_state" }
+        val group = view.groups["home"]
+        assertEquals(2, group?.tools?.size)
+        val getState = group?.tools?.first { it.name == "get_state" }
         assertEquals(ImpactTier.READ, getState?.tier)
         assertEquals(ToolPermission.ALLOW, getState?.permission)
         assertEquals(true, getState?.settable)
-        assertEquals(listOf("get_state"), server?.defaultInclude)
-        assertEquals(ToolPermission.ASK, server?.wildcardPermission)
-        assertEquals("Home Assistant", server?.description)
-
-        assertEquals(1, view.nativeTools.size)
-        val delegateTask = view.nativeTools.first()
-        assertEquals("delegateTask", delegateTask.name)
-        assertEquals(ImpactTier.CONFIRM, delegateTask.tier)
-        assertEquals(ToolPermission.ASK, delegateTask.permission)
-        assertEquals(false, delegateTask.settable, "delegateTask is the one tool a PUT can never change")
+        assertEquals(ToolDispatchKind.MCP, getState?.dispatch?.kind)
+        assertEquals("home-assistant", getState?.dispatch?.serverName)
+        assertEquals(ToolPermission.ASK, group?.wildcardPermission)
+        assertEquals(ToolDefaultExposure.STANDARD, group?.defaultExposure)
+        assertEquals("Home Assistant", group?.description)
 
         assertEquals(1, view.hermesBuiltins.size)
         assertEquals("memory", view.hermesBuiltins.first().toolset)

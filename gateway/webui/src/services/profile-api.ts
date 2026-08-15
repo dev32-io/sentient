@@ -1,4 +1,4 @@
-import type { ToolPermission, ToolPermissionPatchMap } from "@sentient/config";
+import type { ProductToolGroup, ToolDefaultExposure, ToolPermission, ToolPermissionPatchMap } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { createLogger } from "@sentient/web-sdk";
 import { type ApiHttpError, bearerHeaders, handleFetch, jsonHeaders } from "./_helpers";
@@ -145,30 +145,14 @@ export interface McpToolView {
   readonly description: string;
   readonly tier: ImpactTier;
   readonly permission: ToolPermission;
-  /** Whether a PUT to `/api/v1/profile/me` can actually change this tool's
-   *  `permission`. `false` for a gateway-native tool (`delegateTask`, under
-   *  `McpCatalogView.nativeTools`): no MCP server addresses it, so no key a
-   *  client writes back is ever read for it. A client MUST render an
-   *  unsettable tool read-only — branch on THIS FIELD, never on the tool's
-   *  name; the wire never special-cases `delegateTask` by name either. */
   readonly settable: boolean;
+  readonly dispatch?: { readonly kind: "mcp"; readonly serverName: string } | { readonly kind: "native" };
 }
 
-export interface McpCatalogEntryView {
-  /** Role-narrowed: a tool this account's role can never execute is omitted
-   *  entirely, never shown locked. Always non-empty when the server key
-   *  itself is present (see `McpCatalogView.servers` below). */
+export interface ProductToolGroupView {
   readonly tools: readonly McpToolView[];
-  /** Operator-curated default whitelist, predates per-tool permissions;
-   *  superseded for governance purposes by each tool's own `permission`
-   *  above. Mirrored for wire fidelity, not read by this pane. */
-  readonly defaultInclude: readonly string[];
-  /** This server's own `"*"` wildcard entry, or `null` when unset. `null`
-   *  does NOT mean every tool resolves to the role template — a person may
-   *  still have per-tool overrides this field doesn't reflect. To turn a
-   *  whole server off, PUT `permissions[server][wildcardPermissionKey] =
-   *  "off"` — NEVER delete the server's key (see `servers` below). */
   readonly wildcardPermission: ToolPermission | null;
+  readonly defaultExposure: ToolDefaultExposure;
   readonly description?: string;
 }
 
@@ -181,28 +165,8 @@ export interface HermesBuiltinToolView {
 }
 
 export interface McpCatalogView {
-  /** A server key is present here iff it has >= 1 tool this role can govern.
-   *  Do NOT infer "off" from a missing key in THIS READ view — a server can
-   *  be absent for three unrelated reasons (stdio transport, zero
-   *  role-governable tools, or simply not in the catalog) that this shape
-   *  does not distinguish. Contrast the STORED table a PUT writes back,
-   *  where an absent server key is NOT neutral: it means "off" permanently.
-   *  A PUT body's `permissions` must carry forward every server key it
-   *  means to keep — build it from what changed, never by re-deriving the
-   *  whole map from this view (that would silently drop the three kinds of
-   *  absence above and write `off` for them forever). */
-  readonly servers: Record<string, McpCatalogEntryView>;
-  /** The literal sentinel key a client writes into `permissions[server]` to
-   *  set every tool on that server at once. Read this rather than
-   *  hardcoding `"*"` — if the sentinel ever changes, this field changes
-   *  with it. */
+  readonly groups: Record<ProductToolGroup, ProductToolGroupView>;
   readonly wildcardPermissionKey: string;
-  /** Gateway-native tools with no MCP server (today just `delegateTask`).
-   *  Governed by the same resolver and role gate as every catalog tool, just
-   *  addressed by declared tier instead of by server — cannot live under
-   *  `servers` because no `mcp_catalog` entry curates it. Empty for a role
-   *  that cannot reach the `confirm` tier (child, guest). */
-  readonly nativeTools: readonly McpToolView[];
   readonly hermesBuiltins: readonly HermesBuiltinToolView[];
 }
 

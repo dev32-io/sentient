@@ -106,9 +106,12 @@ export function defaultPermissionsFor(role: UserRole, catalog: McpCatalog): Tool
       withheld += 1;
       continue;
     }
-    const perServer = table[tool.server] ?? {};
-    perServer[tool.name] = defaultPermissionForTier(tool.tier);
-    table[tool.server] = perServer;
+    // Advanced groups are intentionally absent from the role template. Their
+    // metadata, not their transport, makes them default-off.
+    if (tool.defaultExposure === "advanced") continue;
+    const perGroup = table[tool.productGroup] ?? {};
+    perGroup[tool.name] = defaultPermissionForTier(tool.tier);
+    table[tool.productGroup] = perGroup;
   }
 
   log.debug("role-defaults.built", {

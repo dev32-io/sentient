@@ -123,6 +123,22 @@ fun effectiveWildcardPermission(
     return serverMap[wildcardKey]
 }
 
+/** Product-group spellings for new mobile settings callers. */
+fun withProductGroupToolPermission(
+    permissions: ToolPermissionPatchMap?,
+    groupId: String,
+    toolName: String,
+    permission: ToolPermission?,
+): ToolPermissionPatchMap = withToolPermission(permissions, groupId, toolName, permission)
+
+fun withProductGroupMasterPermission(
+    permissions: ToolPermissionPatchMap?,
+    groupId: String,
+    toolNames: List<String>,
+    wildcardKey: String,
+    turnOn: Boolean,
+): ToolPermissionPatchMap = withServerMasterPermission(permissions, groupId, toolNames, wildcardKey, turnOn)
+
 /**
  * Merges a session's accumulated pending edits ([overlay] — built incrementally via
  * [withToolPermission] / [withServerMasterPermission], seeded from an empty map) on top of

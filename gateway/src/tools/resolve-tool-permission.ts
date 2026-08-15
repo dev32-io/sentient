@@ -18,8 +18,8 @@
 // itself — never the resolution rule. So the inputs are parameters here, and
 // the rule lives in exactly one place.
 
-import { ALL_TOOLS_PERMISSION_KEY, NATIVE_TOOL_SERVER_KEY } from "@sentient/config";
-import type { ToolPermission, ToolPermissionMap } from "@sentient/config";
+import { ALL_TOOLS_PERMISSION_KEY } from "@sentient/config";
+import type { ProductToolGroup, ToolDefaultExposure, ToolPermission, ToolPermissionMap } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { defaultPermissionForTier } from "./role-defaults.js";
 
@@ -71,18 +71,18 @@ export interface ResolvedPermission {
  */
 export function storedPermissionFor(
   permissions: ToolPermissionMap | undefined,
-  serverName: string | null,
+  productGroup: ProductToolGroup | null,
   toolName: string,
 ): ToolPermission | undefined {
-  if (serverName === null) return undefined;
-  if (permissions === undefined) return undefined;
-  const perServer = permissions[serverName];
-  if (perServer === undefined) {
-    // A real server absent from a non-empty table is a stored `off`; the
-    // synthetic `"native"` namespace absent from it is merely unanswered.
-    return serverName === NATIVE_TOOL_SERVER_KEY ? undefined : "off";
-  }
-  return perServer[toolName] ?? perServer[ALL_TOOLS_PERMISSION_KEY];
+  if (productGroup === null || permissions === undefined) return undefined;
+  // An explicitly empty table retains its historic "everything off" meaning.
+  if (Object.keys(permissions).length === 0) return "off";
+  const perGroup = permissions[productGroup];
+  // Product groups are independent contributions: an unrelated group being
+  // present must not switch this one off. Legacy server omissions are handled
+  // separately below during the migration window.
+  if (perGroup === undefined) return undefined;
+  return perGroup[toolName] ?? perGroup[ALL_TOOLS_PERMISSION_KEY];
 }
 
 /**
@@ -111,20 +111,46 @@ export function resolveToolPermission(params: {
    *  (the broker) and callers iterating a static catalog (the API
    *  projection) compute this the same way: the server they found the tool
    *  under, or `null` when it belongs to no server at all. */
-  serverName: string | null;
+  /** Stable identity used by new callers. `serverName` is accepted only as a
+   * persisted/test compatibility input during the profile migration window. */
+  productGroup?: ProductToolGroup;
+  serverName?: string | null;
+  defaultExposure?: ToolDefaultExposure;
   storedPermissions: ToolPermissionMap | undefined;
   roleTemplate: ToolPermissionMap;
 }): ResolvedPermission {
-  const { toolName, tier, serverName, storedPermissions, roleTemplate } = params;
-  const stored = storedPermissionFor(storedPermissions, serverName, toolName);
+  const { toolName, tier, storedPermissions, roleTemplate } = params;
+  const productGroup = params.productGroup ?? params.serverName ?? "native";
+  const defaultExposure = params.defaultExposure ?? "standard";
+  const legacyCaller = params.productGroup === undefined;
+  const legacyNative = legacyCaller && (params.serverName === null || params.serverName === "native");
+  let stored: ToolPermission | undefined;
+  if (legacyNative && storedPermissions?.native === undefined) {
+    stored = undefined;
+  } else if (
+    legacyCaller &&
+    storedPermissions !== undefined &&
+    params.serverName !== null &&
+    storedPermissions[productGroup] === undefined
+  ) {
+    // Retired MCP server semantics: a missing server in a non-empty table was
+    // an explicit off. Kept only for metadata-less compatibility callers.
+    stored = "off";
+  } else {
+    stored = storedPermissionFor(storedPermissions, productGroup, toolName);
+  }
   if (stored !== undefined) return { permission: stored, source: "profile" };
-  // Both serverless tools (`delegateTask`, `null`) and foreground-native tools
-  // (`"native"`) resolve their default from the tier mapping: the role template
-  // is built from the MCP catalog and carries no key for either.
-  if (serverName === null || serverName === NATIVE_TOOL_SERVER_KEY) {
+  // Advanced is an explicit product default, never inferred from MCP/native
+  // transport. It contributes no model definition until enabled.
+  if (defaultExposure === "advanced") return { permission: "off", source: "role-template" };
+  const templated = roleTemplate[productGroup]?.[toolName];
+  if (templated !== undefined) return { permission: templated, source: "role-template" };
+  // Native contributors are not necessarily present in the startup MCP
+  // catalog. Explicit product metadata is authoritative enough to apply the
+  // standard tier default. Legacy server-only callers retain the fail-closed
+  // catalog backstop.
+  if (params.productGroup !== undefined || legacyNative) {
     return { permission: defaultPermissionForTier(tier), source: "role-template" };
   }
-  const templated = roleTemplate[serverName]?.[toolName];
-  if (templated !== undefined) return { permission: templated, source: "role-template" };
   return { permission: "off", source: "catalog-backstop" };
 }

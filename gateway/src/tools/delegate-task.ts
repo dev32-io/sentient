@@ -95,6 +95,8 @@ export const delegateTaskDefinition: ToolDefinition = {
     required: ["agent", "taskPrompt"],
   },
   category: "background",
+  productGroup: "delegation",
+  defaultExposure: "standard",
   // `confirm`, and not because delegation is a "write": this is the one tool
   // that hands a free-form instruction to another agent holding its OWN tools
   // (file system, shell) and lets it run unsupervised until it finishes. That

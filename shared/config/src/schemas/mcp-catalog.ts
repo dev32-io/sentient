@@ -1,6 +1,12 @@
 import { type ImpactTier, impactTierSchema } from "@sentient/protocol";
 import { z } from "zod";
-import { NATIVE_TOOL_SERVER_KEY } from "./tool-permission";
+import {
+  NATIVE_TOOL_SERVER_KEY,
+  type ProductToolGroup,
+  type ToolDefaultExposure,
+  productToolGroupSchema,
+  toolDefaultExposureSchema,
+} from "./tool-permission";
 
 // ---------------------------------------------------------------------------
 // MCP Catalog — operator-managed inventory of available MCP servers
@@ -105,7 +111,15 @@ const mcpToolFilterSchema = z.object({
 });
 export type McpToolFilter = z.output<typeof mcpToolFilterSchema>;
 
+const productMetadataFields = {
+  /** Stable settings/authorization identity. Defaults to the server key for
+   * third-party MCP extensibility; built-in product surfaces declare it. */
+  product_group: productToolGroupSchema.optional(),
+  default_exposure: toolDefaultExposureSchema.optional(),
+} as const;
+
 const mcpHttpEntrySchema = z.object({
+  ...productMetadataFields,
   transport: z.literal("http"),
   url: z.string().min(1),
   timeout: z.number().int().min(1).max(600).default(30),
@@ -117,6 +131,7 @@ const mcpHttpEntrySchema = z.object({
 });
 
 const mcpStdioEntrySchema = z.object({
+  ...productMetadataFields,
   transport: z.literal("stdio"),
   command: z.string().min(1),
   args: z.array(z.string()).default([]),
@@ -154,7 +169,10 @@ export type McpCatalog = z.output<typeof mcpCatalogSchema>;
 
 /** One curated tool, joined to the server that exposes it. */
 export interface CatalogTool extends McpToolDescriptor {
+  /** Dispatch identity retained independently from authorization identity. */
   server: string;
+  productGroup: ProductToolGroup;
+  defaultExposure: ToolDefaultExposure;
 }
 
 /** Every tool the operator curated, across every server, in catalog order.
@@ -162,7 +180,16 @@ export interface CatalogTool extends McpToolDescriptor {
  *  permission table and the settings API all read the same list, so none of
  *  them can disagree about which tools exist or what tier one carries. */
 export function catalogTools(catalog: McpCatalog): CatalogTool[] {
-  return Object.entries(catalog).flatMap(([server, entry]) => entry.tools.include.map((tool) => ({ ...tool, server })));
+  return Object.entries(catalog).flatMap(([server, entry]) =>
+    entry.tools.include.map((tool) => ({
+      ...tool,
+      server,
+      // A general MCP's server key is a stable default group. Product-owned
+      // surfaces declare a transport-independent group explicitly.
+      productGroup: entry.product_group ?? server,
+      defaultExposure: entry.default_exposure ?? "standard",
+    })),
+  );
 }
 
 /** The impact tier of one tool by name, or `undefined` when no catalog server
