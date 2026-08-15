@@ -1,0 +1,50 @@
+schemaVersion: 1
+id: tool-governance-migration-review
+type: regression
+scope:
+  workItem: first-class-family-tools
+status: planned
+required: true
+attempt: 0
+methods:
+  - "Context: The stage-01 product-tool-catalog task is the early governance
+    gate: its resolver, migration, catalog, provider-composition, web, and KMP
+    checks must pass before the parallel web/Home/Music frontier is released."
+  - "Context: After final cutover, independently rerun the complete review
+    against the assembled branch so native replacement and retired-key cleanup
+    cannot drift from the accepted stage-01 foundation."
+  - "Context: This review is independent of implementation tests because an
+    authorization drift can hide tools, widen permissions, or let native calls
+    bypass the existing PDP."
+  - "Verify: Every model-facing native and MCP tool has one authoritative
+    product group, impact, exposure default, and execution identity."
+  - "Verify: Definitions and dispatch resolve the same role and permission
+    decision, with dispatch rechecking current settings."
+  - "Verify: Explicit per-tool values outrank group wildcard; group wildcard
+    outranks role/catalog default; role remains an independent ceiling;
+    unanswered cases fail closed."
+  - "Verify: Advanced tools are off and absent by default."
+  - "Verify: Legacy explicit deny/off and wildcard restrictions for fetch,
+    searxng, HA, MA, gateway, and native tools never become allow/ask or
+    disappear during migration."
+  - "Verify: Web and KMP settings cannot reconstruct or overwrite hidden
+    role-filtered permissions accidentally."
+  - "Verify: Delegated gateway-MCP projection cannot reach side-effecting native
+    tools without an answerable permission path."
+  - "Verify: The stage-01 web, Home, and Music contribution slots preserve one
+    authoritative composition boundary while allowing the three stage-02
+    implementations to remain independently owned."
+  - "Run: source scripts/env.sh && bun test
+    gateway/src/tools/resolve-tool-permission.test.ts
+    gateway/src/tools/tool-broker.test.ts
+    gateway/src/api/handlers/mcp-catalog.test.ts
+    gateway/src/admin/web-tools-migrator.test.ts
+    gateway/src/bootstrap/product-tool-providers.test.ts"
+  - "Run: source scripts/env.sh && bun --cwd gateway/webui test --run
+    src/components/settings/panes/tool-permission-patch.test.ts"
+  - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
+checkpoint: planned
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 2

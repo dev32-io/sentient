@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 25
+  revision: 26
 artifacts:
   - id: intent
     type: intent
@@ -50,6 +50,8 @@ evaluations:
     path: evaluations/outbound-content-containment-review/evaluation.yaml
   - id: family-integration-safety-review
     path: evaluations/family-integration-safety-review/evaluation.yaml
+  - id: tool-governance-migration-review
+    path: evaluations/tool-governance-migration-review/evaluation.yaml
 executionStages:
   - id: 01-governance
     tasks:
