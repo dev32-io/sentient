@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 4
+  revision: 5
 artifacts:
   - id: intent
     type: intent
@@ -31,3 +31,7 @@ tasks: []
 integrationUnits: []
 evaluations: []
 executionStages: []
+delivery:
+  branchType: feature
+  branchMode: create
+  baseBranch: develop
