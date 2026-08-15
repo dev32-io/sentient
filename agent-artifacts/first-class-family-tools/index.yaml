@@ -5,13 +5,19 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 1
+  revision: 2
 artifacts:
   - id: intent
     type: intent
     path: intent.md
     status: draft
     narrativeSchemaVersion: 2
+  - id: family-tools-behavior
+    type: spec
+    path: specs/family-tools-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
 tasks: []
 integrationUnits: []
 evaluations: []
+executionStages: []
