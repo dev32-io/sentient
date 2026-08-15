@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 10
+  revision: 11
 artifacts:
   - id: intent
     type: intent
@@ -38,6 +38,8 @@ tasks:
     path: tasks/native-home-runtime/task.yaml
   - id: native-home-configuration
     path: tasks/native-home-configuration/task.yaml
+  - id: native-music-primitives
+    path: tasks/native-music-primitives/task.yaml
 integrationUnits: []
 evaluations: []
 executionStages:
@@ -56,6 +58,9 @@ executionStages:
   - id: 05-home-config
     tasks:
       - native-home-configuration
+  - id: 06-music-primitives
+    tasks:
+      - native-music-primitives
 delivery:
   branchType: feature
   branchMode: create
