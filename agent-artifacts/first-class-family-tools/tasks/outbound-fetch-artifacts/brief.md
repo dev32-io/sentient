@@ -28,7 +28,7 @@ A family member can call first-class fetch_content and read_web_content tools th
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 02-fetch.
+Deliver this contribution for integration in stage 02-foundations.
 
 ## Context
 
@@ -51,6 +51,7 @@ Deliver this contribution for integration in stage 02-fetch.
 - Web artifacts are addressed by opaque IDs and ownership is checked from the broker-held user capability, not a caller-supplied userId
 - read_web_content supports either bounded offset/limit retrieval or bounded passage matching, not an unbounded dump
 - Operator-tunable limits and domain policy live in YAML/config surfaces; protocol constants and extraction details remain in code
+- Implement only the pre-wired web provider contribution and web-owned configuration/service fragments established in stage 01; do not modify Home or Music contributions
 
 ## Constraints
 

@@ -5,20 +5,24 @@ status: draft
 dependsOn:
   - product-tool-catalog
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - native-web-provider
+    - outbound-worker-service
+    - web-artifact-store
   assignment:
     agent: implementer
     tier: max
-    rationale: Default max routing for a bounded contribution.
+    rationale: This contribution creates the security-sensitive network confinement
+      and untrusted-content storage boundary.
 assembly:
-  stageId: 02-fetch
+  stageId: 02-foundations
   intermediateState: complete
 verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && bun test gateway/src/tools gateway/src/security
-      gateway/src/system-orchestrator
+    - source scripts/env.sh && bun test gateway/src/tools/web
+      gateway/src/security gateway/src/system-orchestrator
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && bun run lint
     - source scripts/env.sh && git diff --check
