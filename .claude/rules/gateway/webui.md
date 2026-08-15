@@ -9,4 +9,7 @@ paths:
 - Leaf components are pure and receive state/actions; effects and data loading stay at screen/container boundaries.
 - Voice capture and playback use AudioWorklets and the established PCM/ring-buffer path, not `MediaRecorder`. Barge-in stops playback, clears buffered audio, and signals the gateway.
 - Mic denial must leave a usable text-only client. COOP/COEP headers remain intact where `SharedArrayBuffer` is required.
+- Browser AEC is an opt-in playback enhancement; do not make voice capture depend on WebRTC loopback being available.
 - Use semantic HTML and accessible controls. Validate responsive behavior at desktop and mobile-sized browser viewports against the local stack.
+
+When a rule is unclear, read `agents/docs/gateway/webui/audio-cycle-serialization-details.md`, `agents/docs/gateway/webui/awaiting-tracker-fsm-details.md`, `agents/docs/gateway/webui/webrtc-loopback-details.md`, or `agents/docs/e2e-testing-details.md`.

@@ -6,3 +6,5 @@
 - Test at stable boundaries: wire contracts, state machines, security controls, and regressions. Avoid tests coupled to internal wiring or incidental presentation.
 - Never log secrets or user content. Use sanitized structured fields such as ids, types, sizes, state transitions, and reasons.
 - Local E2E uses the real local stack. Production is observational-only without explicit per-action approval.
+
+When a rule is unclear, read `agents/docs/error-handling-details.md`, `agents/docs/logging-details.md`, `agents/docs/testing-details.md`, or `agents/docs/e2e-testing-details.md` for the applicable repository-specific detail.

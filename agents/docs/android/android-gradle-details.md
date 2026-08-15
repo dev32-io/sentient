@@ -1,116 +1,31 @@
-# Gradle Conventions — Details & Templates
+# Gradle details
 
-This file expands `.claude/rules/android/android-gradle.md`. The mobile build is three modules — `:shared:mobile-sdk`, `:shared:mobile-data`, `:android` — with the app as a single module. No `build-logic/`, no annotation processors, no `:feature:*`/`:core:*` split.
+This expands `.claude/rules/android.md`. Build files use Kotlin DSL and `gradle/libs.versions.toml`.
 
-## `settings.gradle.kts` (real)
+## Modules and toolchain
 
-```kotlin
-pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositories { google(); mavenCentral() } }
-rootProject.name = "sentient-mobile"
-include(":shared:mobile-sdk")
-include(":shared:mobile-data")
-include(":android")
+The Android graph is the single app module `:android` plus shared `:shared:mobile-sdk` and `:shared:mobile-data`; settings includes those three modules. Do not add `build-logic`, feature/core splits, or annotation processors.
+
+Current pins in the catalog:
+
+- Kotlin `2.3.10`; Compose compiler plugin follows Kotlin.
+- AGP `8.13.2`, Gradle `8.13`, Java/Kotlin JVM target 17.
+- compile/target SDK `36`; min SDK `26`.
+- Koin `4.1.0`; Navigation Compose `2.9.5`.
+- Compose BOM `2026.05.01`; coroutines `1.11.0`.
+
+The app applies the Android application, Kotlin Android, and Compose compiler plugins. Compose dependencies use the BOM. Production DI dependencies are Koin runtime, Android, Compose, and navigation integrations; there is no Hilt or KSP.
+
+## Backend build configuration
+
+Debug reads `sentient.gatewayUrl` from gitignored `local.properties`. If absent, `GATEWAY_WS_URL` is:
+
+```text
+wss://10.0.2.2:443/api/v1/ws
 ```
 
-## `gradle/libs.versions.toml` (shape — keep aligned with the real catalog)
+Release bakes an empty URL so the app opens backend setup. Debug has application ID suffix `.debug`; application IDs are `io.dev32.sentient.debug` and `io.dev32.sentient`.
 
-```toml
-[versions]
-kotlin = "2.3.10"
-agp = "8.13.2"
-skie = "0.10.11"
-coroutines = "1.11.0"
-ktor = "3.5.0"
-androidx-lifecycle = "2.10.0"
-compileSdk = "36"
-minSdk = "26"
-targetSdk = "36"
+## Tests and build
 
-[plugins]
-android-application = { id = "com.android.application", version.ref = "agp" }
-android-library     = { id = "com.android.library",     version.ref = "agp" }
-kotlin-android      = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
-kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
-compose-compiler    = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-skie                = { id = "co.touchlab.skie", version.ref = "skie" }
-```
-
-There is NO `hilt`, `ksp`, `mockk`, or `junit4` entry — the app has no DI framework and tests use `kotlin-test` only.
-
-## `android/build.gradle.kts` (real, single module)
-
-```kotlin
-plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.compose.compiler)
-}
-android {
-    namespace = "io.sentient.android"
-    compileSdk = libs.versions.compileSdk.get().toInt()
-    defaultConfig {
-        applicationId = "io.dev32.sentient"
-        minSdk = libs.versions.minSdk.get().toInt()
-        targetSdk = libs.versions.targetSdk.get().toInt()
-    }
-    buildFeatures { compose = true; buildConfig = true }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
-    buildTypes {
-        getByName("debug")   { applicationIdSuffix = ".debug"; buildConfigField("String", "GATEWAY_WS_URL", "\"$debugGatewayUrl\"") }
-        getByName("release") {
-            buildConfigField("String", "GATEWAY_WS_URL", "\"\"")    // empty → in-app setup page
-            isMinifyEnabled = true; isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-        }
-    }
-}
-dependencies {
-    implementation(project(":shared:mobile-sdk"))
-    implementation(project(":shared:mobile-data"))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.process)          // ProcessLifecycleOwner → PresenceCoordinator
-    implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.ktor.client.okhttp)                  // AuthClient REST engine
-    implementation(platform(libs.compose.bom))
-    implementation(libs.compose.material3); implementation(libs.compose.ui)
-    implementation(libs.markdown.renderer.m3)                // assistant-bubble GFM
-    implementation(libs.androidx.core.splashscreen)
-    testImplementation(libs.kotlin.test)                     // Layer 1 JVM unit tests only
-}
-```
-
-The debug gateway URL is read from gitignored `local.properties` (`sentient.gatewayUrl`, default `wss://10.0.2.2:8888/...` emulator loopback). Debug suffix `.debug` lets both variants co-install.
-
-## `proguard-rules.pro` reference
-
-```proguard
-# kotlinx.serialization — keep generated serializers (wire protocol DTOs).
--keepattributes *Annotation*, InnerClasses
--keep,includedescriptorclasses class **$$serializer { *; }
--keepclassmembers class * { *** Companion; }
--keepclasseswithmembers class * { kotlinx.serialization.KSerializer serializer(...); }
-```
-
-## Pinned toolchain values (sentient repo)
-
-These live in `gradle/libs.versions.toml` — update the catalog entry, not the rule or source.
-
-- `compileSdk` / `targetSdk` = **36**; `minSdk` = **26**
-- Kotlin = **2.3.10**; SKIE = **0.10.11** (must match Kotlin)
-- AGP = **8.13.2** (paired with Gradle 8.13). Do NOT bump to AGP 9.x — needs Gradle 9.1+.
-- `sourceCompatibility`/`targetCompatibility` = `VERSION_17`; `jvmTarget = JVM_17`
-- Compose compiler = `org.jetbrains.kotlin.plugin.compose`, version pinned WITH Kotlin
-
-Verify all pins against upstream latest before any bump (per verify-pinned-versions feedback).
-
-## Future — NOT adopted (do not add preemptively)
-
-These are migration TARGETS if the app outgrows a single module — none are wired today:
-
-- **Convention plugins + multi-module**: a `build-logic/` included build hosting `androidApplication`/`androidLibrary`/`androidFeature` convention plugins, with a `:app` + `:feature:*` + `:core:*` graph (the "Now in Android" shape). Only worthwhile past a handful of screens.
-- **Hilt + KSP**: add `com.google.dagger.hilt.android` + `com.google.devtools.ksp` plugins and `ksp(libs.hilt.compiler)` (KSP, never KAPT). Until adopted, DI is hand-wired (`android-di`).
-- **Baseline Profile + Macrobenchmark**: `androidx.baselineprofile` in `:android` + a `:benchmark` module + JankStats. A release-perf step for later.
+JVM tests use `kotlin-test` and `kotlinx-coroutines-test`; the app has no configured MockK, Robolectric, Roborazzi, Macrobenchmark, or JankStats. Do not document or add those tools as if they were present. Keep dependency changes in the catalog and module build file together, and run the repository's normal Gradle checks after build changes.

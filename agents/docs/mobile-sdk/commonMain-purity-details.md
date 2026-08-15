@@ -1,57 +1,9 @@
-# commonMain Purity — Details
+# commonMain purity details
 
-commonMain code must compile for every target (JVM/Android, iOS/Native) without any platform-specific import.
+This file expands `.claude/rules/mobile-shared.md` for Kotlin Multiplatform boundaries.
 
-## Examples
+`commonMain` must compile for Android/JVM and iOS/Native without platform imports or platform types in common signatures. Keep domain models, state machines, protocol serialization, and injected interfaces common.
 
-**Inject Clock instead of calling platform time directly:**
-```kotlin
-// commonMain — correct
-interface Clock { fun nowMs(): Long }
+Inject platform capabilities such as clocks, logging, storage, and WebSocket engines. Use `expect`/`actual` only for a minimal capability boundary; keep platform implementations in the relevant source set. `kotlin.time.Clock.System` and `kotlin.random.Random` are portable; JVM classes such as `System.currentTimeMillis()` and `java.util.Random` are not.
 
-class IdleDetector(private val clock: Clock) {
-    fun isIdle(lastActiveMs: Long, thresholdMs: Long): Boolean =
-        clock.nowMs() - lastActiveMs > thresholdMs
-}
-
-// androidMain actual
-class AndroidClock : Clock {
-    override fun nowMs() = System.currentTimeMillis()
-}
-
-// commonTest — deterministic
-class FakeClock(var time: Long = 0L) : Clock {
-    override fun nowMs() = time
-}
-```
-
-**Inject WebSocket engine via interface:**
-```kotlin
-// commonMain — never import ktor or okhttp here
-interface WsEngine {
-    suspend fun connect(url: String, token: String): WsSession
-}
-
-interface WsSession {
-    val incoming: Flow<WsFrame>
-    suspend fun send(frame: WsFrame)
-    suspend fun close()
-}
-```
-
-**Gate logic in commonTest (no platform):**
-```kotlin
-@Test fun `opens on voice onset, closes after hold`() {
-    val gate = SpeechGate(holdMs = 300, fakeClock)
-    gate.onVoiceOnset()
-    assertTrue(gate.isOpen)
-    fakeClock.advance(301); gate.tick()
-    assertFalse(gate.isOpen)
-}
-```
-
-## Gotchas
-
-- `kotlinx.datetime.Clock.System.now()` is fine in commonMain, but `System.currentTimeMillis()` is JVM-only and breaks the iOS target — inject a Clock.
-- `kotlin.random.Random` is fine; `java.util.Random` is not.
-- `println()` compiles everywhere but produces no output on iOS release — use the injected LogSink instead.
+Common tests should exercise the pure state machine with fakes. Do not “fix” a platform issue by weakening this boundary or adding an Android/iOS import to `commonMain`.

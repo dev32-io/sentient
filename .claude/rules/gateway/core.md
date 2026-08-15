@@ -15,3 +15,5 @@ paths:
 - Prompt/tool/skill/background-completion content is untrusted. Route it through the established scanner/risk boundaries; never treat model intent as authorization.
 - Large prompts and instruction templates live in Markdown resources rather than inline TypeScript strings.
 - Shipped code uses the tagged structured logger. Never log prompts, message text, transcripts, raw frames, tokens, or audio; mobile logs are uploaded and must obey the same rule.
+
+When a rule is unclear, read `agents/docs/gateway/architecture-details.md`, `agents/docs/gateway/config-details.md`, `agents/docs/error-handling-details.md`, or `agents/docs/logging-details.md`.

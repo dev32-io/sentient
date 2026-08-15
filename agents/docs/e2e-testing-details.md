@@ -1,14 +1,8 @@
-# E2E Smoke — Details & Examples
+# E2E testing — details
 
-The driver depends on the surface: **web** (webui) → Playwright MCP; **native mobile** (Android + iOS apps) → Maestro + `adb`/`xcrun simctl`. The rule file (`.claude/rules/e2e-testing.md`) defines the bar; this doc shows how to execute it well. Both surfaces smoke against the same local stack — addons via docker, gateway native.
+Local smoke uses the real stack: the gateway runs natively, while managed addon services run under the gateway's system orchestrator. Browser tests drive the outward door at `https://localhost/`; production is observation-only.
 
 ## Bringup
-
-`bun run dev` from the repo root is the whole-stack launcher (see the root
-`CLAUDE.md`): preflight (docker-daemon wait, webui build, addon-image bake)
-then gateway (`bun --watch`, never `--hot` — refused outright, see
-`gateway/CLAUDE.md`) plus vite plus every docker/native addon plus
-`inbound-proxy`.
 
 ```bash
 source scripts/env.sh
@@ -16,174 +10,26 @@ bun run dev &
 until curl -sk -o /dev/null -w "%{http_code}" https://localhost/ | grep -q 200; do sleep 1; done
 ```
 
-The gateway's own `system-orchestrator/` creates and starts every addon
-container — `inbound-proxy` included — from the images preflight baked;
-there is no `docker compose up` for this stack. Open `https://localhost` via
-Playwright MCP `browser_navigate` — the one door all browser smoke drives
-against, proxy in front of the gateway, identical to prod. The self-signed
-cert is already trusted in the chromium profile that ships with the MCP — no
-clickthrough needed. (`https://localhost:8888` still answers directly from
-the host, for diagnostics only — not the smoke URL.)
+Use Playwright MCP against `https://localhost/`, not the diagnostic gateway port. The local self-signed certificate is handled by the configured browser profile. `bun --watch` is the development restart path; never use `bun --hot`.
 
-## Native mobile bringup (Maestro)
+For mobile, use the same stack: the Android emulator fallback is `wss://10.0.2.2:443/api/v1/ws`, while iOS simulator traffic uses the configured host endpoint. Build/install the app, then run the repository's Maestro flow. Physical devices, device sensors, paid providers, and production user actions belong in operator follow-up.
 
-Same gateway stack; the apps point at it (Android emulator loopback `wss://10.0.2.2:8888`, iOS sim via the LAN host). Drive with Maestro:
+## Matrix
 
-```bash
-# Android: build+install debug, then run a flow (resource-id selectors)
-adb install -r android/build/outputs/apk/debug/android-debug.apk
-maestro test qa/mobile/flows/android/01-send-stream.yaml      # or: qa/mobile/run-e2e.sh
-adb logcat -d | grep -i sentient                              # log trail (not browser console)
-# Faults (debug build only): adb shell am broadcast -a io.sentient.debug.FAULT --es kind malformed-frame
-
-# iOS: boot a sim, build via xcodebuild, run the flow (accessibilityIdentifier selectors)
-xcrun simctl boot "iPhone 16 Pro"; maestro test qa/mobile/flows/ios/01-send-stream.yaml
-# Login subflow: qa/mobile/flows/ios/login.yaml (avatar + PIN 1234). iOS has no fault-arming channel yet.
-```
-
-PIN for local test logins is `1234`. Known native gaps (iOS fault-arming, swipe rename/delete, physical-device reconnect) are flagged in the mobile-testing rules.
-
-## Viewport matrix
-
-Run every case at both viewports unless the feature is desktop-only or
-mobile-only.
-
-```text
-desktop  → browser_resize(1280, 900)
-mobile   → browser_resize(390, 844)   # iPhone 16 Pro physical width
-```
-
-For features that need additional breakpoints (tablet, narrow desktop),
-add them to the matrix in the spec doc.
-
-## Smoke matrix shape (inline in the spec AND the plan)
-
-Every spec and every implementation plan defines its matrix inline as a
-table (never a separate file). Native mobile e2e (Maestro / `android`
-CLI) uses the same column shape; write driver flows at run time and save
-evidence to the feature's screenshot dir.
+Run each applicable case at desktop `1280x900` and mobile `390x844`. Record screenshot, console messages, and network requests when the contract matters.
 
 ```markdown
-| Case                              | Viewport      | Pre-state          | Action                        | Expected user-visible           | Expected log trail              |
-|-----------------------------------|---------------|--------------------|-------------------------------|--------------------------------|---------------------------------|
-| Empty list, fresh user            | desktop+mobile| no sessions        | open drawer                   | empty-state copy renders       | no WARN / ERROR                 |
-| Switch mid-cycle                  | desktop       | cycle streaming    | click old session in drawer   | bubbles re-render to old chat  | `cycle.aborted` then `snapshot` |
-| Reconnect with stale session_id   | desktop       | sessionStorage set | kill+restart gateway          | drops to new chat              | one WARN: `session 404 fallback`|
+| Case | Viewport | Pre-state | Action | Expected result |
+|---|---|---|---|---|
+| Fresh session | both | no sessions | open chat | empty state and no warning |
+| Follow-up while audio plays | desktop | active turn | send text | second turn queues; first audio is not cut off |
+| Reconnect | both | attached session | restart local gateway | SDK reconnects and resumes or snapshots |
 ```
 
-Running the matrix is part of done. Capture evidence per row: screenshot
-post-action, console messages, network requests if contract matters.
+Prefer Playwright interactions (`browser_click`, `browser_fill`, `browser_press_key`) to DOM-evaluated clicks. Use `browser_console_messages` and `browser_network_requests` as evidence, not just a screenshot. Reset local state between cases rather than reusing a fixture session.
 
-## Driving Preact / signals via Playwright MCP
+## Boundaries
 
-Preact's onClick handlers run in the bubble phase. JavaScript-evaluated
-`btn.click()` sometimes fails to fire the handler reliably. Prefer the
-MCP's high-level interactions:
-
-- `browser_click` over `evaluate_script` for buttons.
-- `browser_fill` (or `browser_type`) over property-set + dispatch for
-  textareas. The MCP simulates real input events.
-- `browser_press_key` for Enter / Escape / Tab.
-
-When you need to mutate state programmatically (seed localStorage,
-inject a fixture session_id), use `browser_evaluate` — it has full DOM
-access and persists across actions in the same page.
-
-## Console + network capture
-
-```text
-browser_console_messages       # filter by tag prefix
-browser_network_requests       # check WS handshakes, HTTP shape
-```
-
-Tag-filter examples for sentient:
-
-- `[sentient.webui.audio-playback]` — audio path.
-- `[sentient.webui.cycle-audio-queue]` — cycle serialization.
-- `[sentient.web-sdk.presence]` — idle-detector transitions.
-- `[sentient.webui.voice-client]` — SDK construction.
-- `[sentient.sessions.*]` — sessions feature.
-
-A case is green only when console + network match expectations. A
-silent UI pass with WARN noise in the console is not green.
-
-## Cross-tab smoke
-
-Use `browser_tabs` to open a second tab to the same URL, drive both
-tabs interleaved. Useful for BroadcastChannel / cross-tab sync flows
-(e.g. delete in tab A, observe tab B's list).
-
-## Reconnect / restart smoke
-
-To exercise WS reconnect, restart the native gateway process while a tab is
-open (dev, `bun --watch` from `gateway/` — never `--hot`, see
-`gateway/CLAUDE.md`):
-
-```bash
-pkill -f "bun --watch src/main.ts"; cd gateway && bun --watch src/main.ts &
-```
-
-Wait for `/health` to come back, then verify the tab reconnected. The
-SDK's exponential-backoff path is in `shared/web-sdk/src/sdk-reconnect.ts`.
-Addon containers are untouched by this — only the gateway process restarts.
-
-## Production smoke (macOS mini — NOT agent-driven)
-
-Production runs on the Apple-silicon Mac mini (`mini0@mini0.lan`) as a native
-compiled binary under `launchd`. Rebuild + health-check + log-level smoke
-only:
-
-```bash
-ssh mini0@mini0.lan
-cd ~/sentient && git pull
-docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build   # addon images
-./scripts/build-gateway.sh --release
-sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
-launchctl print system/io.sentient.gateway | grep -E "state|path"
-tail -200 ~/.sentient/gateway/logs/$(date +%F).log | grep -E "WARN|ERROR" || echo "clean"
-```
-
-Real-user smoke on prod is the operator's job, not the agent's. On PROD the
-agent is **observational only** — inspect container / mount / log state via
-SSH; never inject test chats or actively probe the live family assistant, and
-assume no prod credentials.
-
-## When a case is genuinely unreachable
-
-Cases the agent cannot reach in chromium MUST be flagged in handover:
-
-- iOS Safari audio-session quirks (transient activation, AC ghost state).
-- Real-device sensors (camera, mic permissions on physical hardware).
-- Paid-service-dependent flows (a paid LLM provider when no key is
-  available — TTS is local-tts, free, and always available).
-- Real LAN multicast / mDNS discovery from outside the docker network.
-
-Format: a `## Operator follow-up` section in the handover note, listing
-each case with the smallest reproduction steps.
-
-## Reusable case library
-
-`agents/docs/testing-knowledge.md` is the project's catalog of reusable
-smoke cases. Append new cases there with:
-
-- **Scenario** — one paragraph.
-- **Why added** — what regression / contract this guards.
-- **Steps** — numbered, MCP-callable.
-- **Expected** — user-visible + log-trail.
-
-The case library is the source of truth across features; the per-spec
-matrix references it instead of duplicating.
-
-## Anti-patterns
-
-- **Mocking in smoke.** Mocks belong in unit tests. Smoke runs against
-  real services or it provides no defense.
-- **Skipping the mobile viewport "because the feature looks desktopy".**
-  Layout regressions land most often where the agent didn't look.
-- **Declaring done without console evidence.** A passing UI screenshot
-  with WARN noise is not green.
-- **Reusing fixture sessions across cases.** Each case starts from a
-  known pre-state; if needed, reset via Hermes `DELETE /api/sessions/{id}`
-  or `rm -rf ~/.sentient/<...>` before the run.
-- **Smoking against prod.** Use the local Mac stack. Pi push is verified
-  by build + health + log smoke only.
+- Smoke tests do not mock the gateway, native runtime, store, or addon services.
+- Do not inject chats or probe a production assistant. On production, inspect health and logs only.
+- Keep secrets, prompts, transcripts, and other user content out of captured logs and evidence.

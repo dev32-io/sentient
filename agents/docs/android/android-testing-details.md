@@ -1,129 +1,44 @@
-# Android Testing -- Details & Examples
+# Android testing details
 
-This file expands `.claude/rules/android/android-testing.md`.
-Code skeletons for each test layer plus the fake-vs-mock decision
-example.
+This expands `.claude/rules/android.md`. Prefer deterministic behavior tests and fakes at app boundaries.
 
-## Unit test -- ViewModel + reducer
+## JVM tests
 
-Setup uses `runTest`, a `TestDispatcher`, and a `Dispatchers.Main`
-replacement so `viewModelScope.launch { ... }` runs on the test
-dispatcher.
+The Android module's configured unit-test dependencies are `kotlin-test` and `kotlinx-coroutines-test`. Existing tests live under `android/src/test/kotlin/io/sentient/android/`, including `ChatViewModelTest`, permission/reconnect tests, state and mapper tests, and the composer gesture/layout tests.
+
+For coroutine-driven ViewModels, use `runTest`, a test dispatcher where needed, `advanceUntilIdle()`, and assert public state/behavior. Do not test implementation call counts when an observable outcome is sufficient. Fake shared components or repositories you own; use a real boundary only when the behavior under test requires it.
 
 ```kotlin
-@OptIn(ExperimentalCoroutinesApi::class)
-class LoginViewModelTest {
+@Test
+fun `failure keeps the last model and shows a retryable banner`() {
+    val prior = ChatUiState(model = ChatModel(committed = listOf(message)))
+    val next = reduceChatUi(prior, SentientResult.Failure(SentientError.Connection("lost")))
 
-    private val testDispatcher = StandardTestDispatcher()
-
-    @Before fun setUp() = Dispatchers.setMain(testDispatcher)
-    @After fun tearDown() = Dispatchers.resetMain()
-
-    @Test
-    fun `EmailChanged updates state and clears email error`() = runTest {
-        val vm = LoginViewModel(FakeAuthRepository())
-        // Seed state with an error so we can verify it clears.
-        vm.dispatch(LoginIntent.EmailChanged("invalid"))
-        vm.dispatch(LoginIntent.SubmitTapped)
-        advanceUntilIdle()
-        check(vm.state.value.emailError != null)
-
-        vm.dispatch(LoginIntent.EmailChanged("a@b.c"))
-
-        assertEquals("a@b.c", vm.state.value.email)
-        assertNull(vm.state.value.emailError)
-    }
-
-    @Test
-    fun `SubmitTapped on network failure emits ShowError effect`() = runTest {
-        val fake = FakeAuthRepository().apply {
-            nextOutcome = LoginOutcome.NetworkFailure
-        }
-        val vm = LoginViewModel(fake)
-        val effects = mutableListOf<LoginEffect>()
-        val job = launch(testDispatcher) { vm.effects.toList(effects) }
-
-        vm.dispatch(LoginIntent.EmailChanged("a@b.c"))
-        vm.dispatch(LoginIntent.PasswordChanged("hunter2"))
-        vm.dispatch(LoginIntent.SubmitTapped)
-        advanceUntilIdle()
-
-        assertEquals(LoginEffect.ShowError("Network unavailable"), effects.single())
-        job.cancel()
-    }
+    assertEquals(prior.model, next.model)
+    assertTrue(next.banner?.canRetry == true)
 }
 ```
 
-Pattern points:
-- `Dispatchers.setMain(testDispatcher)` so `viewModelScope` uses
-  the test dispatcher.
-- `advanceUntilIdle()` drains pending coroutines.
-- `runTest`'s built-in `TestScope` lets you `launch` collectors
-  alongside the unit under test.
+Use the existing `reduceChatUi` seam for reducer behavior. Current Android tests do not provide a general `ChatComponent` test double; do not claim one exists. If a ViewModel change truly requires construction, introduce the smallest boundary fake in the same change and preserve the invariant that teardown does not close the `UserSessionManager` connection.
 
-## Compose UI test -- isolated component
+## Compose-facing behavior
 
-```kotlin
-class NameFieldTest {
+The module does not currently configure an `androidTest`/AndroidX Compose UI-test stack. Prefer pure reducers and extracted helpers for deterministic behavior; add device/Compose infrastructure only for a failure that cannot be pinned at a cheaper stable boundary.
 
-    @get:Rule val composeRule = createComposeRule()
+The repository's pure composer tests cover the tricky gesture/layout contracts: `ComposerSwipeGestureTest.kt`, `ComposerTaskStripLayoutTest.kt`, and `MicCornerGestureTest.kt`. Preserve those tests when changing `Composer.kt`, `ComposerTaskStrip.kt`, or their helpers. Avoid sleeps—advance test schedulers or wait on an explicit condition.
 
-    @Test
-    fun typingFiresOnChangeCallback() {
-        var captured = ""
-        composeRule.setContent {
-            AppTheme {
-                NameField(name = "", onNameChange = { captured = it })
-            }
-        }
+## Maestro E2E
 
-        composeRule.onNodeWithText("Name").performTextInput("Ada")
-
-        assertEquals("Ada", captured)
-    }
-}
-```
-
-No Activity, no Hilt -- just the composable.
-
-## Compose UI test -- screen with a fake (no Hilt)
-
-VMs are constructed directly from fakes — the same constructors production uses. No `@HiltAndroidTest`/`HiltTestActivity`/`@TestInstallIn`.
-
-```kotlin
-@RunWith(AndroidJUnit4::class)
-class LoginScreenTest {
-    @get:Rule val composeRule = createComposeRule()
-
-    @Test
-    fun submitFailureShowsSnackbar() {
-        val fakeAuth = FakeAuthRepository().apply { nextOutcome = LoginOutcome.NetworkFailure }
-        val vm = LoginViewModel(fakeAuth)                 // plain constructor with the fake
-
-        composeRule.setContent { AppTheme { LoginScreen(onLoggedIn = {}, onForgotPassword = {}, viewModel = vm) } }
-        composeRule.onNodeWithText("Email").performTextInput("a@b.c")
-        composeRule.onNodeWithText("Password").performTextInput("hunter2")
-        composeRule.onNodeWithText("Submit").performClick()
-
-        composeRule.onNodeWithText("Network unavailable").assertIsDisplayed()
-    }
-}
-```
-
-The fake sets up "what happens next" before driving the UI — no DI framework, no module swap.
-
-## Instrumented test -- Room migration (Future — not used)
-
-There is no Room/DataStore in the app today, so there are currently no migration tests. If a local store is added, migrations are the canonical case for the instrumented (`androidTest`) layer — `MigrationTestHelper.createDatabase(db, 1)` then `runMigrationsAndValidate(db, 2, true, MIGRATION_1_2)` against real SQLite, which fakes can't simulate.
-
-## Maestro E2E flow (real sentient shape)
+Maestro is the configured emulator E2E driver. Reusable charters are in `qa/android/charters/`; numbered Android flows are in `qa/mobile/flows/android/`, driven by `qa/mobile/run-e2e.sh`.
 
 ```yaml
-# qa/mobile/flows/android/01-send-stream.yaml (driven by qa/mobile/run-e2e.sh)
+# qa/mobile/flows/android/01-send-stream.yaml
 appId: io.dev32.sentient.debug
 ---
 - launchApp
-- runFlow: login.yaml            # avatar tap + PIN 1234 (conditional; no-op if already authed)
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "_helpers/login.yaml"
 - assertVisible:
     id: "composer-input"
 - tapOn:
@@ -132,158 +47,9 @@ appId: io.dev32.sentient.debug
 - tapOn:
     id: "chat-send"
 - assertVisible:
-    id: "assistant-bubble"       # appears once the gateway streams the first token
+    id: "assistant-bubble"
 ```
 
-Elements are targeted by resource-id (Compose `testTag` surfaced via `testTagsAsResourceId`). Reusable charters live in `qa/android/charters/`; the numbered drive flows in `qa/mobile/flows/android/`. Faults are armed with `adb shell am broadcast -a io.sentient.debug.FAULT --es kind <fault>` (debug build only).
+Compose tags are surfaced as resource IDs through `testTagsAsResourceId`. Debug fault scenarios use `adb shell am broadcast -a io.sentient.debug.FAULT --es kind <fault>`.
 
-## Fake vs mock -- the decision
-
-A mock asserts on calls; a fake provides behavior. The
-difference matters when you refactor.
-
-```kotlin
-// MOCK -- breaks on benign refactors.
-@Test
-fun loginCallsApiOnce() {
-    val api: AuthApi = mockk(relaxed = true)
-    coEvery { api.login(any(), any()) } returns LoginResp.Ok("u-1")
-
-    val vm = LoginViewModel(DefaultAuthRepository(api, FakeTokenStore()))
-    vm.dispatch(LoginIntent.SubmitTapped)
-
-    coVerify(exactly = 1) { api.login(any(), any()) }  // brittle
-}
-```
-
-If the repository starts caching, this test fails even though
-the user-visible behavior is unchanged.
-
-```kotlin
-// FAKE -- asserts behavior, not implementation.
-@Test
-fun loginNavigatesToHome() = runTest {
-    val fake = FakeAuthRepository().apply {
-        nextOutcome = LoginOutcome.Success(UserId("u-1"))
-    }
-    val vm = LoginViewModel(fake)
-    val effects = mutableListOf<LoginEffect>()
-    val job = launch { vm.effects.toList(effects) }
-
-    vm.dispatch(LoginIntent.EmailChanged("a@b.c"))
-    vm.dispatch(LoginIntent.PasswordChanged("hunter2"))
-    vm.dispatch(LoginIntent.SubmitTapped)
-    advanceUntilIdle()
-
-    assertEquals(LoginEffect.NavigateToHome(UserId("u-1")), effects.single())
-    job.cancel()
-}
-```
-
-Caching, retries, batching, request deduplication -- the
-repository can change all of these and the test passes as long
-as the success path produces a `NavigateToHome` effect.
-
-The rule: mock at the SDK / network / static-Java boundary
-where you don't own the type; fake your own interfaces.
-
-## Robolectric + Compose on JVM (audit A13)
-
-Robolectric 4.13+ supports compileSdk 36. Configure:
-
-```kotlin
-// build.gradle.kts (Compose-aware library)
-android {
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-        }
-    }
-}
-
-dependencies {
-    testImplementation(libs.robolectric)
-    testImplementation(libs.androidx.compose.ui.test.junit4)
-    testImplementation(libs.androidx.compose.ui.test.manifest)
-}
-```
-
-```kotlin
-@RunWith(AndroidJUnit4::class)
-@Config(sdk = [36])
-class CounterScreenRobolectricTest {
-    @get:Rule val composeTestRule = createComposeRule()
-
-    @Test fun increments_on_click() {
-        composeTestRule.setContent {
-            AppTheme { CounterScreen(state = CounterUiState(0), onIncrement = {}) }
-        }
-        composeTestRule.onNodeWithText("0").assertIsDisplayed()
-    }
-}
-```
-
-## Roborazzi screenshot regression
-
-```kotlin
-dependencies {
-    testImplementation(libs.roborazzi)
-    testImplementation(libs.roborazzi.compose)
-    testImplementation(libs.roborazzi.junit.rule)
-}
-```
-
-```kotlin
-@RunWith(AndroidJUnit4::class)
-@GraphicsMode(GraphicsMode.Mode.NATIVE)
-class CounterScreenSnapshotTest {
-    @get:Rule val composeTestRule = createComposeRule()
-
-    @Test fun snapshot_default() {
-        composeTestRule.setContent { AppTheme { CounterScreen(state = CounterUiState(0)) {} } }
-        composeTestRule.onRoot().captureRoboImage("src/test/snapshots/counter_default.png")
-    }
-}
-```
-
-Run `./gradlew recordRoborazziDebug` to create baselines; `./gradlew verifyRoborazziDebug` on PR to diff.
-
-## Macrobenchmark + JankStats (audit G2b)
-
-Cold start:
-
-```kotlin
-@RunWith(AndroidJUnit4::class)
-class StartupBenchmark {
-    @get:Rule val rule = MacrobenchmarkRule()
-
-    @Test
-    fun cold() = rule.measureRepeated(
-        packageName = "io.dev32.sample",
-        metrics = listOf(StartupTimingMetric()),
-        iterations = 5,
-        startupMode = StartupMode.COLD,
-    ) {
-        pressHome()
-        startActivityAndWait()
-    }
-}
-```
-
-JankStats in production Activity:
-
-```kotlin
-class MainActivity : ComponentActivity() {
-    private lateinit var jankStats: JankStats
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        jankStats = JankStats.createAndTrack(window) { frameData ->
-            if (frameData.isJank) Log.d("jank", "$frameData")
-        }
-        setContent { AppTheme { App() } }
-    }
-}
-```
-
-`JankStats.OnFrameListener` callback fires per frame; gate logging to debug builds or report to analytics on release with sampling.
+MockK, Robolectric, Roborazzi, Macrobenchmark, and JankStats are not configured. Do not add examples, commands, or claims that depend on them.

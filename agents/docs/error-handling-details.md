@@ -1,72 +1,34 @@
-# Error Handling Rules — Details & Examples
+# Error handling — details
 
-## Result Type Pattern
-
-Use a discriminated union for failable operations instead of try/catch.
+Use typed results for expected domain failures and exceptions for unexpected failures. Translate errors at process, network, and adapter boundaries; do not make every internal function catch and rethrow.
 
 ```typescript
-// shared/protocol/src/result.ts
-export type Result<T, E = string> =
+export type Result<T, E> =
   | { ok: true; value: T }
   | { ok: false; error: E };
-```
 
-### Usage
-
-```typescript
-export function parseMessage(raw: string): Result<ClientMessage> {
+function parseFrame(raw: string): Result<ClientMessage, "malformed"> {
   try {
-    const parsed = JSON.parse(raw);
-    const validated = clientMessageSchema.safeParse(parsed);
-    if (!validated.success) {
-      return { ok: false, error: `Invalid message: ${validated.error.message}` };
-    }
-    return { ok: true, value: validated.data };
+    const value: unknown = JSON.parse(raw);
+    const parsed = clientMessageSchema.safeParse(value);
+    return parsed.success
+      ? { ok: true, value: parsed.data }
+      : { ok: false, error: "malformed" };
   } catch {
-    return { ok: false, error: "Malformed JSON" };
+    return { ok: false, error: "malformed" };
   }
 }
-
-// Consumer
-const result = parseMessage(raw);
-if (!result.ok) {
-  logger.warn("Bad message", { error: result.error, raw });
-  return;
-}
-// result.value is typed correctly here
-processMessage(result.value);
 ```
 
-## Boundary Error Handling
+At a WebSocket or HTTP boundary, validate first, map known failures to the existing wire error shape, and log only a reason/code plus stable identifiers. Never include the raw frame, prompt, message, transcript, or provider response in the log.
 
-Catch and translate errors only at system boundaries:
+External calls have a bounded timeout and cancellation path:
 
 ```typescript
-// Good — boundary handler catches and logs
-server.ws("/ws", {
-  message(ws, raw) {
-    try {
-      handleMessage(ws, raw);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      logger.error("WebSocket handler failed", { error: message });
-      ws.send(JSON.stringify({ type: "error", code: "internal", message }));
-    }
-  },
-});
-
-// Good — business logic returns Result, never throws
-function handleMessage(ws: WebSocket, raw: string): Result<void> {
-  const parsed = parseMessage(raw);
-  if (!parsed.ok) return parsed;
-  // ...
-}
+const bounded = AbortSignal.any([callerSignal, AbortSignal.timeout(5_000)]);
+const response = await fetch(url, { signal: bounded });
 ```
 
-## Timeouts
+Thread the caller's `AbortSignal` when available. Close iterators, sockets, streams, and temporary resources in `finally`. A cancelled turn must settle its turn state and stop TTS without killing unrelated background work.
 
-Every external call MUST have a timeout:
-
-```typescript
-const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
-```
+Provider, MCP, and service adapters report boundary failures; retry/supervisor policy belongs to the owning runtime or system orchestrator. A failed optional dependency must not take down unrelated sessions. Permission and authorization failures fail closed at the tool boundary.
