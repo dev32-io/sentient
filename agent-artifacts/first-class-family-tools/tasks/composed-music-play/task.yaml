@@ -5,19 +5,27 @@ status: draft
 dependsOn:
   - native-music-primitives
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - native-music-provider
+    - music-adapter
+    - composed-music-play
   assignment:
     agent: implementer
     tier: high
-    rationale: Default high routing for a bounded contribution.
+    rationale: This contribution implements a bounded composed state machine with
+      authorization, ranking, verification, cancellation, and ambiguous
+      side-effect handling.
 assembly:
-  stageId: 07-music-play
+  stageId: 03-capabilities
   intermediateState: complete
 verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && bun test gateway/src/tools
+    - source scripts/env.sh && bun test
+      gateway/src/tools/music/music-play-state-machine.test.ts
+      gateway/src/tools/music/music-play-tools.test.ts
+      gateway/src/tools/tool-broker.test.ts
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && bun run lint
     - source scripts/env.sh && git diff --check

@@ -28,7 +28,7 @@ A common request such as “play some lo-fi music in the living room” resolves
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 07-music-play.
+Deliver this contribution for integration in stage 03-capabilities.
 
 ## Context
 
@@ -51,6 +51,7 @@ Deliver this contribution for integration in stage 07-music-play.
 - Resolution and ranking are deterministic for the same bounded adapter results; uncertain matches are surfaced, not guessed
 - Verification uses adapter observations and never equates command acknowledgement alone with playing
 - No mutating sub-operation is automatically replayed after ambiguous dispatch
+- Extend only the Music-owned provider and adapter surfaces delivered by native-music-primitives; do not modify web or Home contributions
 
 ## Constraints
 
