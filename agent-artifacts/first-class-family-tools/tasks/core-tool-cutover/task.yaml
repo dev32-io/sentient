@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: core-tool-cutover
 title: Cut over core capabilities and retire their MCP sidecars
-status: draft
+status: blocked
 dependsOn:
   - grounded-web-search
   - native-home-configuration

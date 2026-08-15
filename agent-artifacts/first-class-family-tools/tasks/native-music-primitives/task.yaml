@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-music-primitives
 title: Expose standard Music Assistant discovery and playback primitives
-status: draft
+status: blocked
 dependsOn:
   - product-tool-catalog
 execution:

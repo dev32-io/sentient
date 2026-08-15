@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: product-tool-catalog
 title: Govern tools by stable product group
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims:

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-home-runtime
 title: Observe and operate the home through native tools
-status: draft
+status: blocked
 dependsOn:
   - product-tool-catalog
 execution:
