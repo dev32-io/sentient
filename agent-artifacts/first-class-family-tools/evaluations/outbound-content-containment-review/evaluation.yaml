@@ -1,0 +1,38 @@
+schemaVersion: 1
+id: outbound-content-containment-review
+type: regression
+scope:
+  workItem: first-class-family-tools
+status: planned
+required: true
+attempt: 0
+methods:
+  - "Context: Run after native web search/fetch and cutover are integrated."
+  - "Context: The review must establish both network/request policy and the
+    promise that complete pages do not enter model context implicitly."
+  - "Verify: Only outbound-worker dereferences model-supplied public URLs, and
+    its external route depends on egress-proxy."
+  - "Verify: HTTP/HTTPS, allowed ports, DNS failure handling, canonical hostname
+    normalization, suffix-aware dangerous-domain denial, and
+    redirect-by-redirect checks are enforced."
+  - "Verify: Timeout, redirect, compressed/decompressed byte, extraction,
+    concurrency, and cancellation bounds cannot be bypassed by malformed
+    responses."
+  - "Verify: Artifact IDs are opaque and user-scoped; foreign, expired,
+    malformed, and evicted artifacts reveal no content."
+  - "Verify: web_search and fetch_content return bounded material; complete
+    pages are absent from the ReAct messages unless explicitly sliced through
+    read_web_content."
+  - "Verify: Search snippets, fetched bodies, and utility summaries cross the
+    inbound scanner and never enter logs."
+  - "Verify: User-model, DeepSeek Flash, and deterministic summary fallbacks are
+    bounded and send tools:[] on every model attempt."
+  - "Run: source scripts/env.sh && bun test gateway/src/tools
+    gateway/src/security gateway/src/system-orchestrator gateway/src/provider"
+  - "Run: source scripts/env.sh && bun run typecheck"
+  - "Run: source scripts/env.sh && git diff --check"
+checkpoint: planned
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 2
