@@ -3,21 +3,28 @@ id: native-music-primitives
 title: Expose standard Music Assistant discovery and playback primitives
 status: draft
 dependsOn:
-  - native-home-configuration
+  - product-tool-catalog
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - native-music-provider
+    - music-adapter
   assignment:
     agent: implementer
     tier: max
-    rationale: Default max routing for a bounded contribution.
+    rationale: This contribution owns a persistent external protocol, credentials,
+      concurrent correlation, and ambiguous side-effect handling.
 assembly:
-  stageId: 06-music-primitives
+  stageId: 02-foundations
   intermediateState: complete
 verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap
+    - source scripts/env.sh && bun test
+      gateway/src/tools/music/music-adapter.test.ts
+      gateway/src/tools/music/music-resolver.test.ts
+      gateway/src/tools/music/music-tools.test.ts
+      gateway/src/tools/tool-broker.test.ts
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && bun run lint
     - source scripts/env.sh && git diff --check

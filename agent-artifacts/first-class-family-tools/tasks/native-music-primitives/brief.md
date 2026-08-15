@@ -28,7 +28,7 @@ Family members and the model can search, inspect, select, and operate Music Assi
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 06-music-primitives.
+Deliver this contribution for integration in stage 02-foundations.
 
 ## Context
 
@@ -49,6 +49,7 @@ Deliver this contribution for integration in stage 06-music-primitives.
 - Read operations may retry only when proven not dispatched and safe; mutating operations are never transparently replayed after ambiguity
 - Direct play accepts stable media/player identities returned by search/browse/list operations
 - Tool results use bounded stable fields rather than raw MA payloads
+- Implement only the pre-wired Music provider contribution and Music-owned configuration fragments established in stage 01; do not modify web or Home contributions
 
 ## Constraints
 
