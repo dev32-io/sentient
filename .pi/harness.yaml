@@ -1,0 +1,65 @@
+# PiBox harness repository policy.
+# Scaffold profile: standard. Arrays replace inherited defaults.
+schemaVersion: 2
+modelTiers:
+  max:
+    - openai-codex/gpt-5.6-sol#high
+  high:
+    - openai-codex/gpt-5.6-sol#medium
+  medium:
+    - openai-codex/gpt-5.6-luna#max
+  low:
+    - openai-codex/gpt-5.6-luna#medium
+agents:
+  code-reviewer:
+    description: Code review against specifications and acceptance contracts
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/code-reviewer.md
+    tier: high
+    workspace: repository
+    canDelegate: false
+  e2e-tester:
+    description: End-to-end and user-visible behavior verification
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/e2e-tester.md
+    tier: medium
+    workspace: repository
+    canDelegate: false
+  explorer:
+    description: Evidence-driven repository exploration and technical diagnosis
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/explorer.md
+    tier: medium
+    workspace: repository
+    canDelegate: false
+  general-purpose:
+    description: Open-ended delegation for research, analysis, implementation,
+      testing, and other bounded work
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/general-purpose.md
+    tier: medium
+    workspace: repository
+    canDelegate: false
+  implementer:
+    description: General implementation work for managed tasks
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/implementer.md
+    tier: medium
+    workspace: repository
+    canDelegate: false
+    completionSchema: implementer-v1
+  plan-critic:
+    description: Independent critique of delivery plans
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/plan-critic.md
+    tier: medium
+    workspace: repository
+    canDelegate: false
+  repair-implementer:
+    description: Focused repairs in managed review and fix loops
+    prompt: /Users/kevinye/Development/PiBox/agent-definitions/repair-implementer.md
+    tier: high
+    workspace: repository
+    canDelegate: false
+orchestrator:
+  modelSwitching: auto-visible
+limits:
+  maxConcurrency: 4
+  maxActiveSubagentsPerSession: 16
+  maxSubagentDepth: 1
+  protocolNudges: 1
+  repairRounds: 2
