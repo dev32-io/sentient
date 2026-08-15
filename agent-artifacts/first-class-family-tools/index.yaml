@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 8
+  revision: 9
 artifacts:
   - id: intent
     type: intent
@@ -34,6 +34,8 @@ tasks:
     path: tasks/outbound-fetch-artifacts/task.yaml
   - id: grounded-web-search
     path: tasks/grounded-web-search/task.yaml
+  - id: native-home-runtime
+    path: tasks/native-home-runtime/task.yaml
 integrationUnits: []
 evaluations: []
 executionStages:
@@ -46,6 +48,9 @@ executionStages:
   - id: 03-search
     tasks:
       - grounded-web-search
+  - id: 04-home-runtime
+    tasks:
+      - native-home-runtime
 delivery:
   branchType: feature
   branchMode: create

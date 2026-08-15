@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: native-home-runtime
+title: Observe and operate the home through native tools
+status: draft
+dependsOn:
+  - grounded-web-search
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: max
+    rationale: Default max routing for a bounded contribution.
+assembly:
+  stageId: 04-home-runtime
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap
+      gateway/src/security
+    - source scripts/env.sh && bun run typecheck
+    - source scripts/env.sh && bun run lint
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
