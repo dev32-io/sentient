@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 18
+  revision: 19
 artifacts:
   - id: intent
     type: intent
@@ -56,9 +56,6 @@ executionStages:
   - id: 03-search
     tasks:
       - grounded-web-search
-  - id: 04-home-runtime
-    tasks:
-      - native-home-runtime
   - id: 05-home-config
     tasks:
       - native-home-configuration
@@ -77,6 +74,7 @@ executionStages:
   - id: 02-foundations
     tasks:
       - outbound-fetch-artifacts
+      - native-home-runtime
 delivery:
   branchType: feature
   branchMode: create

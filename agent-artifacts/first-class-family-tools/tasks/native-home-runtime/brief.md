@@ -11,7 +11,7 @@ Family members can discover household resources, read home state, and invoke rou
 - Register standard dedicated activation/control tools for routine entities, scenes, scripts, and automations without exposing raw service-call syntax as the primary model contract
 - Resolve natural names and room/area constraints deterministically; return candidate identifiers on ambiguity instead of guessing
 - Normalize results into semantic outcomes such as succeeded, not_found, ambiguous, unavailable, rejected, failed, and accepted_unverified
-- Classify impact honestly so observation is read, routine household actions are mediated as routine/write, and sensitive controls cannot hide inside a broadly allowed read tool
+- Classify impact honestly so observation is read, routine household actions are mediated as write, and sensitive controls cannot hide inside a broadly allowed read tool
 - Route all native definitions and dispatches through product-group permissions and the existing inbound scanner/result cap
 - Degrade HA unavailability per call without affecting web, music, or session channels
 
@@ -22,13 +22,13 @@ Family members can discover household resources, read home state, and invoke rou
 - Register standard dedicated activation/control tools for routine entities, scenes, scripts, and automations without exposing raw service-call syntax as the primary model contract
 - Resolve natural names and room/area constraints deterministically; return candidate identifiers on ambiguity instead of guessing
 - Normalize results into semantic outcomes such as succeeded, not_found, ambiguous, unavailable, rejected, failed, and accepted_unverified
-- Classify impact honestly so observation is read, routine household actions are mediated as routine/write, and sensitive controls cannot hide inside a broadly allowed read tool
+- Classify impact honestly so observation is read, routine household actions are mediated as write, and sensitive controls cannot hide inside a broadly allowed read tool
 - Route all native definitions and dispatches through product-group permissions and the existing inbound scanner/result cap
 - Degrade HA unavailability per call without affecting web, music, or session channels
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 04-home-runtime.
+Deliver this contribution for integration in stage 02-foundations.
 
 ## Context
 
@@ -52,6 +52,7 @@ Deliver this contribution for integration in stage 04-home-runtime.
 - Side-effecting calls are never transparently retried after dispatch ambiguity
 - Dedicated activation hides generic service plumbing while preserving the resolved target and semantic outcome
 - Tool descriptions and schemas stay compact enough for always-visible standard use
+- Implement only the pre-wired Home provider contribution and Home-owned configuration fragments established in stage 01; do not modify web or Music contributions
 
 ## Constraints
 

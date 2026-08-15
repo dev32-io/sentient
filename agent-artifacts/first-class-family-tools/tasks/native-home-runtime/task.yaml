@@ -3,22 +3,28 @@ id: native-home-runtime
 title: Observe and operate the home through native tools
 status: draft
 dependsOn:
-  - grounded-web-search
+  - product-tool-catalog
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - native-home-provider
+    - home-adapter
   assignment:
     agent: implementer
     tier: max
-    rationale: Default max routing for a bounded contribution.
+    rationale: This contribution crosses credential handling, external protocol
+      validation, authorization, and non-retry side-effect semantics.
 assembly:
-  stageId: 04-home-runtime
+  stageId: 02-foundations
   intermediateState: complete
 verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap
-      gateway/src/security
+    - source scripts/env.sh && bun test
+      gateway/src/tools/home/home-adapter.test.ts
+      gateway/src/tools/home/home-resolver.test.ts
+      gateway/src/tools/home/home-tools.test.ts
+      gateway/src/tools/tool-broker.test.ts gateway/src/security
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && bun run lint
     - source scripts/env.sh && git diff --check
