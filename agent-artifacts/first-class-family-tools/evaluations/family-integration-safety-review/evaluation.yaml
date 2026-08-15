@@ -1,0 +1,43 @@
+schemaVersion: 1
+id: family-integration-safety-review
+type: regression
+scope:
+  workItem: first-class-family-tools
+status: planned
+required: true
+attempt: 0
+methods:
+  - "Context: Run after Home and Music native tools and cutover are integrated."
+  - "Context: The evaluator may use the real local Sentient stack and PIN 1234,
+    but must not issue any live HA or MA mutation. Production remains
+    observational-only."
+  - "Verify: Home and Music adapters validate unknown upstream payloads, bound
+    waits, and degrade without killing unrelated session channels."
+  - "Verify: Natural resource/player/media resolution returns not_found or
+    bounded ambiguity rather than guessing."
+  - "Verify: Side-effecting calls distinguish rejected, failed, and
+    accepted_unverified and are never automatically retried after possible
+    dispatch."
+  - "Verify: music_play performs one broker authorization and uses the minimum
+    internal adapter sequence; standard music primitives remain independently
+    available."
+  - "Verify: Scenes, automations, and scripts support standard discovery,
+    activation, inspection, creation, and modification contracts while
+    administrative escape hatches remain off by default."
+  - "Verify: All mutating acceptance is proven with mocks, fakes, or isolated
+    fixtures."
+  - "Verify: Any live local evidence is limited to HA
+    overview/search/state/history and MA search/browse/player/status/queue
+    inspection; no device, climate, scene, automation, script, todo, calendar,
+    playback, volume, queue, transfer, or grouping state changes occur."
+  - "Verify: PIN 1234 is used only for local-development authentication and is
+    absent from logs/evidence."
+  - "Run: source scripts/env.sh && bun test gateway/src/tools
+    gateway/src/bootstrap"
+  - "Run: source scripts/env.sh && bun run typecheck"
+  - "Run: source scripts/env.sh && git diff --check"
+checkpoint: planned
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 2
