@@ -54,6 +54,8 @@ evaluations:
     path: evaluations/tool-governance-migration-review/evaluation.yaml
   - id: final-e2e
     path: evaluations/final-e2e/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
 executionStages:
   - id: 01-governance
     tasks:
