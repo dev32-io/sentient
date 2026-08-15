@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 6
+  revision: 7
 artifacts:
   - id: intent
     type: intent
@@ -30,12 +30,17 @@ artifacts:
 tasks:
   - id: product-tool-catalog
     path: tasks/product-tool-catalog/task.yaml
+  - id: outbound-fetch-artifacts
+    path: tasks/outbound-fetch-artifacts/task.yaml
 integrationUnits: []
 evaluations: []
 executionStages:
   - id: 01-governance
     tasks:
       - product-tool-catalog
+  - id: 02-fetch
+    tasks:
+      - outbound-fetch-artifacts
 delivery:
   branchType: feature
   branchMode: create
