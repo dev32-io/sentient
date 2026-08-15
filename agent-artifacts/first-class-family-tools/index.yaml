@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: planning
 state: active
 planning:
-  revision: 20
+  revision: 21
 artifacts:
   - id: intent
     type: intent
@@ -53,9 +53,6 @@ evaluations:
   - id: family-integration-safety-review
     path: evaluations/family-integration-safety-review/evaluation.yaml
 executionStages:
-  - id: 03-search
-    tasks:
-      - grounded-web-search
   - id: 05-home-config
     tasks:
       - native-home-configuration
@@ -73,6 +70,9 @@ executionStages:
       - outbound-fetch-artifacts
       - native-home-runtime
       - native-music-primitives
+  - id: 03-capabilities
+    tasks:
+      - grounded-web-search
 delivery:
   branchType: feature
   branchMode: create

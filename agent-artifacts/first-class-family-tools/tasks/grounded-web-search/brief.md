@@ -28,7 +28,7 @@ A family member can ask one first-class web_search tool for current information 
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 03-search.
+Deliver this contribution for integration in stage 03-capabilities.
 
 ## Context
 
@@ -50,6 +50,7 @@ Deliver this contribution for integration in stage 03-search.
 - User-model resolution happens at call time so settings changes apply to the next search
 - Fallback attempts share a bounded workload deadline and never recurse into the ReAct loop
 - SearXNG and fetched responses are validated as unknown external data
+- Extend only the web-owned provider and worker surfaces delivered by outbound-fetch-artifacts; the concurrent Home and Music foundation contributions are consumed only at final cutover
 
 ## Constraints
 
