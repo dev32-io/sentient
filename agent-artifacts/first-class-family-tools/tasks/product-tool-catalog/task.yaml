@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: product-tool-catalog
 title: Govern tools by stable product group
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims:
@@ -33,3 +33,9 @@ verification:
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/first-class-family-tools
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: 9aa1adf660d456771c94ae1ea0b50962978d6bce
+  lastRunId: d1a54506-1111-453b-bc1c-c2aa92398af4
