@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: composed-music-play
+title: Play natural-language music in a room with one tool call
+status: draft
+dependsOn:
+  - native-music-primitives
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: high
+    rationale: Default high routing for a bounded contribution.
+assembly:
+  stageId: 07-music-play
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun test gateway/src/tools
+    - source scripts/env.sh && bun run typecheck
+    - source scripts/env.sh && bun run lint
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
