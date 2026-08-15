@@ -4,11 +4,16 @@ title: Govern tools by stable product group
 status: draft
 dependsOn: []
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - product-tool-catalog
+    - tool-permission-migration
+    - product-tool-provider-composition
+    - tool-settings-contract
   assignment:
     agent: implementer
     tier: high
-    rationale: Default high routing for a bounded contribution.
+    rationale: Authorization migration and shared provider composition establish the
+      safety and parallelization boundary for every later contribution.
 assembly:
   stageId: 01-governance
   intermediateState: complete
@@ -21,6 +26,7 @@ verification:
       gateway/src/tools/tool-broker.test.ts
       gateway/src/api/handlers/mcp-catalog.test.ts
       gateway/src/admin/web-tools-migrator.test.ts
+      gateway/src/bootstrap/product-tool-providers.test.ts
     - source scripts/env.sh && bun --cwd gateway/webui test --run
       src/components/settings/panes/tool-permission-patch.test.ts
     - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests

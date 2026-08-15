@@ -12,9 +12,11 @@
 - A fresh profile sees standard tools according to role defaults and no advanced tools
 - Legacy deny/off values for fetch, SearXNG, HA, MA, gateway, and native tools cannot become allow/ask after migration
 - Web and KMP clients decode, display, edit, reset, and save the same product-group permission contract
+- Empty web, Home, and Music contribution slots compose successfully and can be implemented independently after this stage without changing the authoritative registry shape
 
 ## Boundary Proof
 
 - Focused resolver tests cover precedence, role ceiling, standard/advanced defaults, native/MCP parity, and mid-turn rechecks
 - Migration fixtures cover every legacy group, collisions, absent maps, empty maps, wildcard values, per-tool values, and unmappable restrictive entries
 - Gateway API, web patch helper, and KMP patch helper tests pin one shared wire shape and reset semantics
+- Provider-composition tests prove the three group slots are independently replaceable and produce one authoritative catalog
