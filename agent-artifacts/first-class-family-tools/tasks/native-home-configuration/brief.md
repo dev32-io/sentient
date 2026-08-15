@@ -28,7 +28,7 @@ Family members can inspect, create, modify, and deliberately remove common Home 
 
 ## Integration Expectation
 
-Deliver this contribution for integration in stage 05-home-config.
+Deliver this contribution for integration in stage 03-capabilities.
 
 ## Context
 
@@ -50,6 +50,7 @@ Deliver this contribution for integration in stage 05-home-config.
 - Delete contracts are separate from create/update so permissions can require confirmation without making routine edits invisible
 - Adapter output validation distinguishes accepted, queryable/verified, rejected, conflict, not_found, failed, and accepted_unverified
 - Tool definitions remain bounded; detailed guidance belongs in prompt resources or code validation, not multi-thousand-character inline descriptions
+- Extend only the Home-owned provider and adapter surfaces delivered by native-home-runtime; do not modify web or Music contributions
 
 ## Constraints
 

@@ -5,19 +5,27 @@ status: draft
 dependsOn:
   - native-home-runtime
 execution:
-  resourceClaims: []
+  resourceClaims:
+    - native-home-provider
+    - home-adapter
+    - home-configuration-tools
   assignment:
     agent: implementer
     tier: max
-    rationale: Default max routing for a bounded contribution.
+    rationale: This contribution combines validation, optimistic concurrency,
+      authorization, and high-impact household configuration write semantics.
 assembly:
-  stageId: 05-home-config
+  stageId: 03-capabilities
   intermediateState: complete
 verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap
+    - source scripts/env.sh && bun test
+      gateway/src/tools/home/home-config-contracts.test.ts
+      gateway/src/tools/home/home-config-state-machine.test.ts
+      gateway/src/tools/home/home-tools.test.ts
+      gateway/src/tools/tool-broker.test.ts gateway/src/security
     - source scripts/env.sh && bun run typecheck
     - source scripts/env.sh && bun run lint
     - source scripts/env.sh && git diff --check
