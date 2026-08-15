@@ -2,10 +2,6 @@
 
 Bun/TypeScript voice gateway. Orchestrates STT→LLM→TTS streaming pipeline. Ships as a compiled native binary supervised by `launchd` on the production Mac mini (the Pi 5 deploy is retired) — not a Docker container. See `deploy/README.md`.
 
-## MANDATORY — Read Rules First
-
-Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-specific at `.claude/rules/gateway/*.md`. Auto-loaded by Claude Code via `paths:` frontmatter when you read matching source. Subproject details are at `agents/docs/gateway/*-details.md`; cross-cutting details at `agents/docs/*-details.md`.
-
 ## Stack
 
 - Runtime: Bun

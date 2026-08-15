@@ -2,10 +2,6 @@
 
 Preact web client for Sentient voice assistant. Served as static files from the gateway.
 
-## MANDATORY — Read Rules First
-
-Rules live at the repo root: cross-cutting at `.claude/rules/*.md`, gateway-cross-cutting at `.claude/rules/gateway/*.md`, webui-specific at `.claude/rules/gateway/webui/*.md`. Auto-loaded by Claude Code via `paths:` frontmatter when you read matching source. Webui details: `agents/docs/gateway/webui/*-details.md`.
-
 ## Stack
 
 - Framework: Preact + Vite
