@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: product-tool-catalog
 title: Govern tools by stable product group
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims:
@@ -39,3 +39,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: 9aa1adf660d456771c94ae1ea0b50962978d6bce
   lastRunId: d1a54506-1111-453b-bc1c-c2aa92398af4
+  completedCommit: a6c4ac9a0383bb82cef87585d0e142141d47a406
