@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: fresh-chat-boundary
 title: Make cold launch and New Chat establish a fresh conversation boundary
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

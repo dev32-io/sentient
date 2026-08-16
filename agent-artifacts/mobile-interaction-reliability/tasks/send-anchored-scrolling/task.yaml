@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: send-anchored-scrolling
 title: Anchor mobile chat on the newly sent user message
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: sdk-mic-envelope-waveform
 title: Drive the existing mobile waveform from the SDK mic envelope
-status: draft
+status: blocked
 dependsOn:
   - shared-talkmode-barge-in
 execution:

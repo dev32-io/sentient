@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: shared-talkmode-barge-in
 title: Make shared TalkMode authoritative for hold-to-talk barge-in
-status: draft
+status: blocked
 dependsOn:
   - fresh-chat-boundary
 execution:

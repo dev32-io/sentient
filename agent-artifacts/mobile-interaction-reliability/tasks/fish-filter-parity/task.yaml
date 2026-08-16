@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: fish-filter-parity
 title: Bring web-equivalent Fish catalog filters to mobile
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []
