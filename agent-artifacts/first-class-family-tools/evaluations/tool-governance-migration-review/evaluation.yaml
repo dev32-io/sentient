@@ -50,11 +50,8 @@ loop:
   maxIterations: 2
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
   reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
-  managerPrompt: Re-review the governance repair at commit 5715e0c9 against
-    TGMR-001 and TGMR-002, rerunning the focused migration, delegated
-    permission, settings, web, KMP, typecheck, and diff checks. Confirm no
-    permission widening and no delegated advertisement or dispatch for
-    ask/deny/off or role-denied native tools.
+  managerPrompt: Repair commit 5715e0c9 is clean and ready for the same reviewer
+    to re-review TGMR-001 and TGMR-002.
   fixerAgentId: 90645254-c592-4d24-bdf2-cc91bee9f5e1
 findings:
   - id: TGMR-001
