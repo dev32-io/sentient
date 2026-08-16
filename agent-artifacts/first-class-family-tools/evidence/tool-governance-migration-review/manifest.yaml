@@ -1,44 +1,15 @@
 schemaVersion: 1
 evaluation: tool-governance-migration-review
-recordedAt: 2026-08-16T01:04:43.027Z
+recordedAt: 2026-08-16T03:02:12.261Z
 entries:
-  - result: 107 pass, 0 fail
-    command: source scripts/env.sh && bun test
-      gateway/src/tools/resolve-tool-permission.test.ts
-      gateway/src/tools/tool-broker.test.ts
-      gateway/src/api/handlers/mcp-catalog.test.ts
-      gateway/src/admin/web-tools-migrator.test.ts
-      gateway/src/bootstrap/product-tool-providers.test.ts
-    path: files/1-tool-governance-gateway-tests.log
-    checksum: sha256:7dd06eea1b8570bf918b84e207f9ac48c269f1e434db685434e1c374fcb726a2
-  - result: 19 pass, 0 fail
-    command: source scripts/env.sh && bun --cwd gateway/webui test --run
-      src/components/settings/panes/tool-permission-patch.test.ts
-    path: files/2-tool-governance-webui-tests.log
-    checksum: sha256:6068c0d52c405c6e4f389744987b2fa764b19034cbe512d9ef1c7173f40b939d
-  - result: BUILD SUCCESSFUL; most tasks UP-TO-DATE
-    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
-    path: files/3-tool-governance-kmp-tests.log
-    checksum: sha256:f2dca8ef475fc30ddcbe7459edb026149232b7cf4be28c1c8527376cb9c88019
-  - result: 12 pass, 0 fail across 3 discovered files
-    command: source scripts/env.sh && bun test
-      gateway/src/mcp-host/native-tool-surface.test.ts
-      gateway/src/mcp-host/proxied-tool-surface.test.ts
-      gateway/src/bootstrap/create-mcp-host.test.ts
-      gateway/src/external-tools/delegated-tool-tier.test.ts
-    path: files/4-tool-governance-delegation-tests.log
-    checksum: sha256:3fe35149f5377a10a88fe4bca58e76fc496e849a61782da82a2d354ef4db82e8
-  - result: All workspace typechecks exited 0
-    command: source scripts/env.sh && bun run typecheck
-    path: files/5-tool-governance-typecheck.log
-    checksum: sha256:6a3ab3e9bcf0792bd8b8d69507f2cbac9dbac46c541e4078fec836eedc5f5029
-  - result: Legacy absent searxng resolved profile off; after migration native
-      web_search resolved role-template allow.
-    command: bun -e <legacy-vs-migrated permission comparison>
-    path: files/6-tool-governance-partial-migration-repro.log
-    checksum: sha256:8c041c8715de18b5351377a25e1c1ed13c650afc9cc05797514666252fd4b00e
-  - result: Hosted gateway tools are selected only by tier at
-      create-mcp-host.ts:149-158; stdio catalog entries are excluded by
-      mcp-catalog.ts:132-135; shipped gateway is advanced stdio at
-      config.yaml:792-821.
-    description: Static code evidence
+  - result: 123 passed, 0 failed
+    command: focused gateway migration/catalog/broker/delegation suite
+  - result: 15 shapes idempotent; 8 deny/off mappings preserved
+    command: partial legacy migration matrix
+  - result: 21 passed, 0 failed
+    command: web settings permission tests
+  - result: BUILD SUCCESSFUL
+    command: JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+      ./gradlew :shared:mobile-sdk:allTests
+  - result: Passed
+    command: source scripts/env.sh && bun run typecheck && git diff --check

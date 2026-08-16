@@ -3,9 +3,9 @@ id: tool-governance-migration-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - "Context: The stage-01 product-tool-catalog task is the early governance
     gate: its resolver, migration, catalog, provider-composition, web, and KMP
@@ -45,9 +45,9 @@ methods:
   - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
 checkpoint: planned
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 2
+  state: passed
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
   reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
   managerPrompt: Repair commit 5715e0c9 is clean and ready for the same reviewer
@@ -56,25 +56,24 @@ loop:
 findings:
   - id: TGMR-001
     severity: high
-    status: open
+    status: resolved
     criterion: Conservative migration preserves restrictive legacy intent and
-      absent/empty semantics (AC-009)
-    location: gateway/src/admin/web-tools-migrator.ts:119-183
-    summary: Partial legacy permission maps silently enable formerly-off core groups
-      after migration.
+      absent/empty semantics
+    location: gateway/src/admin/web-tools-migrator.ts:136-161
+    summary: Partial and repeated migrations preserve omitted core groups as off and
+      explicit restrictions without widening.
     blocking: true
   - id: TGMR-002
     severity: high
-    status: open
-    criterion: Every model-facing tool is product-permission governed; legacy
-      gateway restrictions remain effective; advanced tools default off
-    location: gateway/src/bootstrap/create-mcp-host.ts:149-158;
-      gateway/src/api/handlers/mcp-catalog.ts:132-135;
-      gateway/config.yaml:792-821
-    summary: Delegated gateway-hosted tools bypass product permissions and their
-      advanced gateway group is hidden from settings.
+    status: resolved
+    criterion: Delegated and advanced gateway tools remain product-permission governed
+    location: gateway/src/mcp-host/native-tool-surface.ts;
+      gateway/src/mcp-host/hosted-tool-surface.ts;
+      gateway/src/api/handlers/mcp-catalog.ts
+    summary: Advertisement and dispatch enforce current allow-only policy while
+      preserving settings visibility and third-party MCP behavior.
     blocking: true
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/tool-governance-migration-review/manifest.yaml
