@@ -20,6 +20,14 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.settings.CloneFromFishRequest
 import io.sentient.mobilesdk.settings.FishResult
 import io.sentient.mobilesdk.settings.FishVoiceEntry
+import io.sentient.mobilesdk.settings.FishFilterOptions
+import io.sentient.mobilesdk.settings.FishFilterState
+import io.sentient.mobilesdk.settings.FishSort
+import io.sentient.mobilesdk.settings.deriveFishFilterOptions
+import io.sentient.mobilesdk.settings.filterFishVoices
+import io.sentient.mobilesdk.settings.isFishFilterActive
+import io.sentient.mobilesdk.settings.sortFishVoices
+import io.sentient.mobilesdk.settings.toggleFishValue
 import io.sentient.mobilesdk.settings.VoiceFieldCaps
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -39,7 +47,17 @@ data class FishCloneUiState(
     val featureDisabled: Boolean = false,
     val errorMessage: String? = null,
     val query: String = "",
+    /** Loaded server entries; [voices] is the client-side facet projection. */
+    val allVoices: List<FishVoiceEntry> = emptyList(),
     val voices: List<FishVoiceEntry> = emptyList(),
+    val options: FishFilterOptions = FishFilterOptions(emptyList(), emptyList(), emptyList(), emptyList()),
+    val language: String = "",
+    val genders: List<String> = emptyList(),
+    val ages: List<String> = emptyList(),
+    val vibes: List<String> = emptyList(),
+    val cloneLanguage: String = "",
+    val sort: FishSort = FishSort.POPULAR,
+    val filterActive: Boolean = false,
     val hasMore: Boolean = false,
     val loadingMore: Boolean = false,
     val playingId: String? = null,
@@ -47,7 +65,6 @@ data class FishCloneUiState(
     val name: String = "",
     val description: String = "",
     val tags: List<String> = emptyList(),
-    val language: String = "",
     val cloning: Boolean = false,
     val done: Boolean = false,
 )
@@ -63,6 +80,7 @@ class FishCloneViewModel(
 
     private var page = 1
     private var searchJob: Job? = null
+    private var browseGeneration = 0
 
     init {
         browse()
@@ -79,15 +97,42 @@ class FishCloneViewModel(
 
     fun retry() = browse()
 
+    fun setLanguage(value: String) = updateFilters { it.copy(language = value) }
+    fun toggleGender(value: String) = updateFilters { it.copy(genders = toggleFishValue(it.genders, value)) }
+    fun toggleAge(value: String) = updateFilters { it.copy(ages = toggleFishValue(it.ages, value)) }
+    fun toggleVibe(value: String) = updateFilters { it.copy(vibes = toggleFishValue(it.vibes, value)) }
+    fun setSort(value: FishSort) = updateFilters { it.copy(sort = value) }
+    fun clearFilters() {
+        _state.update { it.copy(query = "", language = "", genders = emptyList(), ages = emptyList(), vibes = emptyList(), sort = FishSort.POPULAR) }
+        searchJob?.cancel()
+        browse()
+    }
+
+    private fun updateFilters(transform: (FishFilterState) -> FishFilterState) {
+        val s = _state.value
+        val next = transform(FishFilterState(s.query, s.language, s.genders, s.ages, s.vibes, s.sort))
+        _state.update { it.copy(language = next.language, genders = next.genders, ages = next.ages, vibes = next.vibes, sort = next.sort) }
+        recompute()
+    }
+
+    private fun recompute() {
+        val s = _state.value
+        val filter = FishFilterState(s.query, s.language, s.genders, s.ages, s.vibes, s.sort)
+        _state.update { it.copy(voices = sortFishVoices(filterFishVoices(it.allVoices, filter), filter.sort), filterActive = isFishFilterActive(filter)) }
+    }
+
     /** (Re)load page 1 for the current query. */
     fun browse() {
+        val generation = ++browseGeneration
         _state.update { it.copy(loading = true, errorMessage = null, featureDisabled = false) }
         page = 1
         viewModelScope.launch {
             when (val r = voices.fishBrowse(currentQuery(), page)) {
                 is FishResult.Success -> {
+                    if (generation != browseGeneration) return@launch
                     log.info("browse.ok", mapOf("count" to r.value.voices.size, "hasMore" to r.value.hasMore))
-                    _state.update { it.copy(loading = false, voices = r.value.voices, hasMore = r.value.hasMore) }
+                    _state.update { it.copy(loading = false, allVoices = r.value.voices, hasMore = r.value.hasMore) }
+                    recompute()
                 }
                 FishResult.FeatureDisabled -> {
                     log.warn("browse.feature-disabled")
@@ -106,13 +151,16 @@ class FishCloneViewModel(
         if (!s.hasMore || s.loadingMore || s.loading) return
         _state.update { it.copy(loadingMore = true) }
         val next = page + 1
+        val generation = browseGeneration
         viewModelScope.launch {
             when (val r = voices.fishBrowse(currentQuery(), next)) {
                 is FishResult.Success -> {
+                    if (generation != browseGeneration) return@launch
                     page = next
                     _state.update { cur ->
-                        cur.copy(loadingMore = false, voices = dedup(cur.voices, r.value.voices), hasMore = r.value.hasMore)
+                        cur.copy(loadingMore = false, allVoices = dedup(cur.allVoices, r.value.voices), hasMore = r.value.hasMore)
                     }
+                    recompute()
                 }
                 FishResult.FeatureDisabled -> {
                     log.warn("loadMore.feature-disabled")
@@ -152,7 +200,7 @@ class FishCloneViewModel(
                 name = cap(entry.title, VoiceFieldCaps.NAME_MAX_LEN),
                 description = cap(entry.description, VoiceFieldCaps.DESCRIPTION_MAX_LEN),
                 tags = entry.tags.take(VoiceFieldCaps.MAX_TAGS),
-                language = normalizeVoiceLanguage(entry.languages.firstOrNull() ?: ""),
+                cloneLanguage = normalizeVoiceLanguage(entry.languages.firstOrNull() ?: ""),
                 errorMessage = null,
             )
         }
@@ -165,7 +213,7 @@ class FishCloneViewModel(
     fun setDescription(text: String) =
         _state.update { it.copy(description = cap(text, VoiceFieldCaps.DESCRIPTION_MAX_LEN)) }
 
-    fun setLanguage(language: String) = _state.update { it.copy(language = language) }
+    fun setCloneLanguage(language: String) = _state.update { it.copy(cloneLanguage = language) }
 
     fun addTag(raw: String) {
         val tag = cap(raw.trim(), VoiceFieldCaps.TAG_MAX_LEN)
@@ -185,7 +233,7 @@ class FishCloneViewModel(
         val s = _state.value
         _state.update { it.copy(cloning = true, errorMessage = null) }
         viewModelScope.launch {
-            val req = CloneFromFishRequest(name, s.description.trim(), s.tags, s.language)
+            val req = CloneFromFishRequest(name, s.description.trim(), s.tags, s.cloneLanguage)
             when (val r = voices.fishClone(entry.id, req)) {
                 is FishResult.Success -> {
                     log.info("clone.ok", mapOf("warning" to (r.value.warning ?: "none")))
