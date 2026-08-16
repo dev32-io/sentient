@@ -28,8 +28,9 @@ function provider<G extends FoundationProductGroup>(group: G, toolName: string):
 }
 
 describe("product tool provider composition", () => {
-  it("composes the three empty pre-wired slots", () => {
-    expect([...composeProductToolProviders()]).toEqual([]);
+  it("composes native Home definitions even when HA is unavailable", () => {
+    expect([...composeProductToolProviders().keys()]).toContain("home_overview");
+    expect([...composeProductToolProviders().keys()]).toContain("home_activate_scene");
   });
 
   it("lets web, Home, and Music be independently replaced while producing one registry", () => {
