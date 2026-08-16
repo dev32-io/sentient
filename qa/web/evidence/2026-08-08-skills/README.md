@@ -1,12 +1,12 @@
 # Skill System — E2E evidence (Task 13)
 
 - **Date:** 2026-08-08 · **Branch:** feature/native-orchestrator
-- **Stack:** local `bun run dev` (443 door = https://localhost, real bundle). Gateway v1.13.1.
+- **Stack:** local `bun run dev` (443 door = https://localhost, real bundle). Gateway v1.14.0.
 - **Provider:** ollama-cloud `gpt-oss:20b-cloud` (free tier).
 - **Driver:** Playwright MCP @ https://localhost (desktop 1280×900; mobile checks at 390×844).
 - **Login:** Ada (admin, PIN 1234). Child-role row used a purpose-made test user (created + removed, see Row 5).
 - **Gateway log:** `~/.sentient/gateway/logs/2026-08-08.log` (local tz). Skills root: `~/.sentient/gateway/users/u_0417d3b0/skills/`.
-- **Deployable artifact:** `dist/gateway/1.13.1.tar.gz` (sha256 `fbdcba12fb28c74e88de356f888e9f721429f1e0ffa8499c2b1a58ff411f7c3d`). Built via `./scripts/build-gateway.sh` (compiled-binary asset smoke passed).
+- **Deployable artifact:** `dist/gateway/1.14.0.tar.gz` (sha256 `fbdcba12fb28c74e88de356f888e9f721429f1e0ffa8499c2b1a58ff411f7c3d`). Built via `./scripts/build-gateway.sh` (compiled-binary asset smoke passed).
 
 ## Verdicts
 

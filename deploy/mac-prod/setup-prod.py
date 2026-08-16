@@ -26,8 +26,8 @@ Two domains:
     root-owned. The original design — the gateway must be up with nobody logged
     in.
 
-    python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.13.1.tar.gz
-    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.13.1.tar.gz --domain system
+    python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.14.0.tar.gz
+    sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/1.14.0.tar.gz --domain system
 
 Invariants this script exists to hold:
 

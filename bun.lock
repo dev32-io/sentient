@@ -12,7 +12,7 @@
     },
     "gateway": {
       "name": "@sentient/gateway",
-      "version": "1.13.1",
+      "version": "1.14.0",
       "dependencies": {
         "@logtape/file": "^2.0.5",
         "@logtape/logtape": "^2.0.5",
