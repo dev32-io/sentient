@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: natural-settings-navigation
 title: Make settings Back follow the actual page stack
-status: contribution_complete
+status: merged
 dependsOn:
   - fresh-chat-boundary
   - fish-filter-parity
@@ -31,3 +31,4 @@ runtime:
   baseCommit: 457f15156b88b7d858e5a3f82794a00e4bf87a7f
   lastRunId: 0880d3cc-3d7f-4ccd-bfb0-65e61614f200
   completedCommit: f4404d17f9e9b1669cd21e0acf1e80ea71618d60
+  mergedCommit: abe1c9c86cdbeef27238e15da6e49e9a313ace04
