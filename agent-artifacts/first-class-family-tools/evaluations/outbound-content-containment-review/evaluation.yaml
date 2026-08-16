@@ -3,7 +3,7 @@ id: outbound-content-containment-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -33,7 +33,7 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: fixing
+  state: rereviewing
   iteration: 1
   maxIterations: 2
   reviewerAgentId: 52864b4e-613b-406b-8d4f-d2ff7ce99e7b
@@ -51,6 +51,7 @@ loop:
     typed bounded failures. Add focused streaming/oversize tests. Run the
     evaluation test suite, typecheck, lint, and git diff --check. Do not weaken
     network confinement, ownership checks, inbound scanning, or logging safety."
+  fixerAgentId: 1119f7fb-3692-4f0d-9808-a821c0d47824
 findings:
   - id: OCCR-001
     severity: high
