@@ -2,7 +2,7 @@ schemaVersion: 1
 id: first-class-family-tools
 kind: story
 title: First-class web, home, and music tools
-phase: execution
+phase: evaluation
 state: active
 planning:
   revision: 30

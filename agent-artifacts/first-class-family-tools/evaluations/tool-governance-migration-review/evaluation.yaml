@@ -3,9 +3,9 @@ id: tool-governance-migration-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - "Context: The stage-01 product-tool-catalog task is the early governance
     gate: its resolver, migration, catalog, provider-composition, web, and KMP
@@ -45,8 +45,33 @@ methods:
   - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
 checkpoint: planned
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 2
+  state: awaiting_manager
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
   reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
+findings:
+  - id: TGMR-001
+    severity: high
+    status: open
+    criterion: Conservative migration preserves restrictive legacy intent and
+      absent/empty semantics (AC-009)
+    location: gateway/src/admin/web-tools-migrator.ts:119-183
+    summary: Partial legacy permission maps silently enable formerly-off core groups
+      after migration.
+    blocking: true
+  - id: TGMR-002
+    severity: high
+    status: open
+    criterion: Every model-facing tool is product-permission governed; legacy
+      gateway restrictions remain effective; advanced tools default off
+    location: gateway/src/bootstrap/create-mcp-host.ts:149-158;
+      gateway/src/api/handlers/mcp-catalog.ts:132-135;
+      gateway/config.yaml:792-821
+    summary: Delegated gateway-hosted tools bypass product permissions and their
+      advanced gateway group is hidden from settings.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/tool-governance-migration-review/manifest.yaml
