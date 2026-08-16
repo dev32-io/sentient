@@ -13,7 +13,7 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 - iOS and Android explicit New Chat behavior and conversation isolation
 - Hold-to-talk barge-in sequencing and native gesture synchronization
 - Mobile chat send-anchored scrolling
-- Privacy-safe real-input waveform behavior built on the existing visual design
+- SDK-owned privacy-safe rolling microphone-level envelope rendered through the existing waveform design
 - Mobile Fish catalog filter and sort parity with web
 - Natural stack-based Back behavior across nested settings pages
 - Fully agentic E2E for driveable journeys and deterministic automated verification at voice/audio boundaries
@@ -23,7 +23,7 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 - A user-triggered New Chat produces an isolated durable conversation while restart does not create a phantom session
 - Deterministic tests prove one hold press orders interrupt before manual capture and survives transient inactive state
 - A sent user message anchors at the viewport top and assistant output never programmatically moves it
-- Injected capture levels drive the existing waveform design through bounded, normalized UI state
+- The SDK derives a bounded rolling 32-level envelope from existing capture PCM and native waveform views render it without receiving audio buffers
 - Mobile Fish results support the same search, facets, sorting, and reset semantics as web
 - Back always returns to the immediately previous visible settings page with route-scoped state preserved
 - All approved fully agentic E2E cases pass locally; physical-device voice behavior remains an explicit residual risk for later owner build testing outside the workflow
@@ -39,9 +39,9 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 
 ## Constraints
 
-- Current repository architecture remains authoritative: shared mobile layers own session/audio semantics and native apps remain thin UI layers
+- Current repository architecture remains authoritative: the SDK capture layer owns PCM access, level derivation, normalization, smoothing, history, and lifecycle; native ViewModels/UI only consume the resulting level signal
 - All UI work reuses current components, typography, spacing, colors, motion, accessibility conventions, and navigation patterns
-- Raw audio and high-frequency level history must not enter UI state, logs, or retained evidence
+- Raw PCM and high-frequency level history must not cross into native UI state, logs, or retained evidence
 - App launch/resume and explicit user-requested New Chat must remain distinct operations
 - Every planned E2E case must be executable to completion by an agent without user intervention
 - Production remains observational-only
