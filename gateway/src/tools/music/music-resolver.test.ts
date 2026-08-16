@@ -34,11 +34,22 @@ describe("resolveMusicPlayer", () => {
     });
   });
 
-  it("resolves a unique partial natural room name", () => {
+  it("resolves a unique partial natural room name and bounded adapter aliases", () => {
     expect(resolveMusicPlayer(players, "speaker")).toMatchObject({
       kind: "resolved",
       player: { id: "stable-living-speaker" },
     });
+    const aliased: MusicPlayer[] = [
+      {
+        ...(players[0] as MusicPlayer),
+        aliases: ["Cooking Room", ...Array.from({ length: 10 }, (_, i) => `alias-${i}`)],
+      },
+    ];
+    expect(resolveMusicPlayer(aliased, "Cooking Room")).toMatchObject({
+      kind: "resolved",
+      player: { id: "stable-kitchen" },
+    });
+    expect(resolveMusicPlayer(aliased, "alias-9")).toEqual({ kind: "not_found", query: "alias-9" });
   });
 
   it("returns explicit ambiguity instead of guessing", () => {

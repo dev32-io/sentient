@@ -78,8 +78,12 @@ class FakeAdapter implements MusicAdapter {
       truncated: false,
     };
   }
-  async play(playerId: string, mediaUri: string): Promise<MusicCommandResult> {
-    return this.record("play", playerId, mediaUri);
+  async play(
+    playerId: string,
+    mediaUri: string,
+    queueMode: "replace" | "add" | "play_next",
+  ): Promise<MusicCommandResult> {
+    return this.record("play", playerId, mediaUri, queueMode);
   }
   async transport(
     playerId: string,
@@ -128,6 +132,7 @@ describe("native music tools", () => {
       "music_status",
       "music_queue",
       "music_play",
+      "music_play_media",
       "music_transport",
       "music_volume",
       "music_transfer",
@@ -164,7 +169,7 @@ describe("native music tools", () => {
 
   it("exposes ambiguity and not-found without dispatching a mutation", async () => {
     const adapter = new FakeAdapter();
-    const play = byName(createMusicTools(adapter), "music_play");
+    const play = byName(createMusicTools(adapter), "music_play_media");
     expect(parsed(await run(play, { player: "living", media_id: track.id }))).toMatchObject({
       outcome: "ambiguous",
       matches: [{ id: "p-living" }, { id: "p-living-speaker" }],
@@ -179,7 +184,9 @@ describe("native music tools", () => {
   it("direct play, transport, volume, transfer and grouping return semantic outcomes", async () => {
     const adapter = new FakeAdapter();
     const tools = createMusicTools(adapter);
-    expect(parsed(await run(byName(tools, "music_play"), { player: "Kitchen", media_id: track.id }))).toMatchObject({
+    expect(
+      parsed(await run(byName(tools, "music_play_media"), { player: "Kitchen", media_id: track.id })),
+    ).toMatchObject({
       outcome: "completed",
       player: { id: "p-kitchen" },
     });

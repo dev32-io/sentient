@@ -31,6 +31,8 @@ export interface MusicMedia {
 export interface MusicPlayer {
   readonly id: string;
   readonly name: string;
+  /** Optional household aliases supplied by the adapter, always bounded. */
+  readonly aliases?: readonly string[];
   readonly available: boolean;
   readonly powered: boolean;
   readonly state: PlaybackState;
@@ -75,6 +77,9 @@ export interface MusicCommandResult {
   readonly outcome: MusicCommandOutcome;
 }
 
+/** Queue behavior understood by Music Assistant's atomic play_media command. */
+export type MusicQueueMode = "replace" | "add" | "play_next";
+
 export type MusicTransportAction = "play" | "pause" | "stop" | "next" | "previous" | "seek";
 
 export interface MusicAdapter {
@@ -87,7 +92,7 @@ export interface MusicAdapter {
   listPlayers(signal: AbortSignal): Promise<readonly MusicPlayer[]>;
   playerStatus(playerId: string, signal: AbortSignal): Promise<MusicPlayerStatus>;
   queue(playerId: string, limit: number, signal: AbortSignal): Promise<MusicQueue>;
-  play(playerId: string, mediaUri: string, signal: AbortSignal): Promise<MusicCommandResult>;
+  play(playerId: string, mediaUri: string, queueMode: MusicQueueMode, signal: AbortSignal): Promise<MusicCommandResult>;
   transport(
     playerId: string,
     action: MusicTransportAction,
@@ -243,6 +248,12 @@ export function normalizePlayer(value: unknown): MusicPlayer | null {
   const name = text(raw.name ?? raw.display_name);
   if (!id || !name) return null;
   const available = bool(raw.available, true);
+  const aliases = Array.isArray(raw.aliases)
+    ? raw.aliases
+        .map((value) => text(value))
+        .filter(Boolean)
+        .slice(0, 10)
+    : [];
   const members = Array.isArray(raw.group_members)
     ? raw.group_members
         .map((v) => text(v))
@@ -252,6 +263,7 @@ export function normalizePlayer(value: unknown): MusicPlayer | null {
   return {
     id,
     name,
+    aliases,
     available,
     powered: bool(raw.powered, available),
     state: playbackState(raw.playback_state ?? raw.state, available),
@@ -553,9 +565,9 @@ export class NativeMusicAdapter implements MusicAdapter {
   ): Promise<MusicCommandResult> {
     const result = await this.request(command, args, signal, true);
     if (object(result)?.outcome === "accepted_unverified") return result as MusicCommandResult;
-    // MA's success response proves that its handler acknowledged the command,
-    // not that the physical player reached the requested state.
-    return { outcome: "accepted_unverified" };
+    // MA's success response proves only handler acknowledgement. Composed
+    // callers must still observe player/queue state before claiming playback.
+    return { outcome: "accepted" };
   }
 
   async search(
@@ -641,8 +653,14 @@ export class NativeMusicAdapter implements MusicAdapter {
       truncated: allItems.length > bounded,
     };
   }
-  play(playerId: string, mediaUri: string, signal: AbortSignal): Promise<MusicCommandResult> {
-    return this.mutation("player_queues/play_media", { queue_id: playerId, media: [mediaUri] }, signal);
+  play(
+    playerId: string,
+    mediaUri: string,
+    queueMode: MusicQueueMode,
+    signal: AbortSignal,
+  ): Promise<MusicCommandResult> {
+    const option = queueMode === "play_next" ? "next" : queueMode;
+    return this.mutation("player_queues/play_media", { queue_id: playerId, media: [mediaUri], option }, signal);
   }
   transport(
     playerId: string,

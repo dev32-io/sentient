@@ -41,6 +41,7 @@ describe("product tool provider composition", () => {
       "music_status",
       "music_queue",
       "music_play",
+      "music_play_media",
       "music_transport",
       "music_volume",
       "music_transfer",
