@@ -14,19 +14,23 @@ import MobileData
 struct VoiceFishScreen: View {
     let settings: SettingsComponent
     let onBack: () -> Void
+    let onOpenEditor: ((FishVoiceEntry) -> Void)?
+    let editorEntry: FishVoiceEntry?
 
     @State private var vm: VoiceFishViewModel
 
-    init(settings: SettingsComponent, onBack: @escaping () -> Void) {
+    init(settings: SettingsComponent, onBack: @escaping () -> Void, onOpenEditor: ((FishVoiceEntry) -> Void)? = nil, editorEntry: FishVoiceEntry? = nil) {
         self.settings = settings
         self.onBack = onBack
+        self.onOpenEditor = onOpenEditor
+        self.editorEntry = editorEntry
         _vm = State(initialValue: VoiceFishViewModel(settings: settings))
     }
 
     var body: some View {
         SettingsPageScaffold(title: "Clone from Fish", screenId: "settings-voice-fish") {
             noticeBanner
-            if vm.selected != nil {
+            if vm.selected != nil || editorEntry != nil {
                 cloneEditor
             } else {
                 searchField
@@ -34,7 +38,10 @@ struct VoiceFishScreen: View {
                 content
             }
         }
-        .task { await vm.load() }
+        .task {
+            if let editorEntry { vm.select(editorEntry) }
+            else { await vm.load() }
+        }
         .onChange(of: vm.done) { _, done in if done { onBack() } }
         .onDisappear { vm.teardown() }
     }
@@ -71,7 +78,10 @@ struct VoiceFishScreen: View {
                     playDisabled: entry.previewAudioUrl == nil,
                     accessory: .none,
                     accessibilityId: "settings-voice-fish-row-\(entry.id)",
-                    onSelect: { vm.select(entry) },
+                    onSelect: {
+                        vm.select(entry)
+                        onOpenEditor?(entry)
+                    },
                     onPlay: { vm.toggleSample(entry) }
                 )
             }
@@ -132,7 +142,7 @@ struct VoiceFishScreen: View {
                 onSelect: { vm.cloneLanguage = $0 }
             )
             HStack(spacing: Space.sm) {
-                Button("Cancel") { vm.cancelSelect() }
+                Button("Cancel") { editorEntry == nil ? vm.cancelSelect() : onBack() }
                     .font(Typo.ui(TypeScale.sm, .semibold))
                     .foregroundStyle(DuskColors.ink2)
                     .accessibilityIdentifier("settings-voice-fish-clone-cancel")
