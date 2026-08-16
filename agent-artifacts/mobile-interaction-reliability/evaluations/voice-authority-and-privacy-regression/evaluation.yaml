@@ -35,11 +35,23 @@ methods:
   - "Run: git diff --check"
 checkpoint: planned
 loop:
-  iteration: 0
+  state: fixing
+  iteration: 1
   maxIterations: 2
-  state: awaiting_manager
   reviewerAgentId: 11e7f3f8-0e0d-4ff1-9ab1-0a67d2682a2e
   reviewedCommit: 936a2a47b18a6aca01934758cc1603e0cb743964
+  managerPrompt: Address all three voice review findings. Keep MicLevelEnvelope as
+    the native visualization contract instead of flattening it into [Float] in
+    ChatViewModel/Composer; pass the envelope (or an envelope-preserving
+    read-only adapter if SKIE requires) through to PttBigWave and keep UI free
+    of PCM/platform audio types. Reorder capture delivery so the existing uplink
+    trySend/deliver happens before best-effort meter.accept on Android
+    VoiceAudioRecord and both iOS MicCaptureEngine/DuplexEngine, while ensuring
+    metering exceptions remain isolated and frames are metered only according to
+    the documented accepted/dropped-frame policy. Add focused Android and iOS
+    waveform rendering/feed tests with injected envelopes, preserving the
+    existing 32-bar design and reduced-motion behavior. Run the affected shared
+    SDK, Android, and pinned iOS 18.3.1 simulator checks plus git diff --check.
 findings:
   - id: voice-envelope-ios-native-array-surface
     severity: medium
