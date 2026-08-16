@@ -75,6 +75,8 @@ import { createDelegationGuard, loadDelegationFrontmatterDir } from "../tools/de
 import type { DelegationGuard } from "../tools/delegation-guard.js";
 import { createHermesRunner } from "../tools/hermes-runner.js";
 import type { HermesRunner } from "../tools/hermes-runner.js";
+import { createHomeAdapter } from "../tools/home/home-adapter.js";
+import type { HomeAdapter } from "../tools/home/home-adapter.js";
 import { createMcpClient } from "../tools/mcp-client.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { MEMORY_TOOL_NAMES, buildMemoryTools } from "../tools/memory-tools.js";
@@ -788,6 +790,21 @@ export async function buildOrchestratorServices(
 
   const orchestratorCfg = cfg.orchestrator;
   const provider = await buildOrchestratorProvider(orchestratorCfg, secretsStore, profileStore);
+  let homeAdapter: HomeAdapter | null = null;
+  try {
+    const home = secretsStore?.loadSync().home_assistant;
+    const readToken = home?.observe_token ?? home?.mcp_server_token;
+    if (home?.url && readToken) {
+      homeAdapter = createHomeAdapter({
+        baseUrl: home.url,
+        readToken,
+        ...(home.mcp_server_token ? { writeToken: home.mcp_server_token } : {}),
+        openWebSocket: (url) => new WebSocket(url),
+      });
+    }
+  } catch {
+    log.warn("home.adapter.unavailable", { reason: "invalid or unreadable Home Assistant configuration" });
+  }
 
   // App-lifetime deep-memory wiring (spec §5/§6) — one client + one per-scope
   // outbox ledger for the whole process. Null when memory is off OR its two env
@@ -819,6 +836,7 @@ export async function buildOrchestratorServices(
     inboundScan: cfg.inboundScan,
     deepMemoryApp,
     dbFileName: cfg.store.db_filename,
+    homeAdapter,
   });
 
   // Nightly dreamer (memory-system spec §8, S3a). Wired only when memory + the
@@ -1173,6 +1191,9 @@ interface CreateSessionRuntimeFactoryDeps {
    *  runtime + memory readback in this factory opens. Threaded so an operator
    *  override is honoured, not silently replaced by the "sessions.db" default. */
   dbFileName: string;
+  /** Credential-owning app adapter; null still contributes definitions whose
+   * calls degrade locally without disturbing the session. */
+  homeAdapter: HomeAdapter | null;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -1185,7 +1206,15 @@ interface CreateSessionRuntimeFactoryDeps {
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
   const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
-  const { delegatedExternalTool, profileStore, auth, inboundScan: inboundScanCfg, deepMemoryApp, dbFileName } = deps;
+  const {
+    delegatedExternalTool,
+    profileStore,
+    auth,
+    inboundScan: inboundScanCfg,
+    deepMemoryApp,
+    dbFileName,
+    homeAdapter,
+  } = deps;
 
   // Inbound-scan boundary config (T1), threaded from the operator's
   // `security.inbound_scan` YAML through StartupConfig — so a channel the
@@ -1340,7 +1369,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     // Bootstrap-owned web/Home/Music slots are always composed, even while
     // empty. Later foundations replace only their independently-owned slot.
-    for (const [name, runner] of composeProductToolProviders()) nativeTools.set(name, runner);
+    for (const [name, runner] of composeProductToolProviders(undefined, {
+      home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
+    }))
+      nativeTools.set(name, runner);
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(
