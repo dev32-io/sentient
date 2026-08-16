@@ -98,6 +98,18 @@ describe("GET /api/v1/mcp-catalog — product groups", () => {
     expect(view.groups.memory?.tools.find((tool) => tool.name === "memory_read")?.permission).toBe("allow");
   });
 
+  it("describes native Home management and exposes confirmation-tier removals", async () => {
+    const view = await viewFor();
+    expect(view.groups.home?.description).toContain("scenes, automations, scripts, todo items, and calendar events");
+    expect(view.groups.home?.tools.find((tool) => tool.name === "home_create_scene")?.permission).toBe("ask");
+    expect(view.groups.home?.tools.find((tool) => tool.name === "home_remove_scene")).toMatchObject({
+      tier: "confirm",
+      permission: "ask",
+      dispatch: { kind: "native" },
+    });
+    expect(view.groups.home?.tools.some((tool) => /yaml|python|admin|file/i.test(tool.name))).toBe(false);
+  });
+
   it("applies group wildcard then explicit tool override", async () => {
     const view = await viewFor("adult", { web: { "*": "off", fetch: "deny" } });
     expect(view.groups.web?.wildcardPermission).toBe("off");

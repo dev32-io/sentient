@@ -2,6 +2,20 @@ import { z } from "zod";
 import type { NativeToolRunner } from "../tool-broker.js";
 import type { ToolResult } from "../tool-types.js";
 import type { HomeAdapter, HomeEntity, HomeOutcome } from "./home-adapter.js";
+import {
+  type HomeConfig,
+  type HomeConfigKind,
+  calendarCreateSchema,
+  calendarReadSchema,
+  calendarRemoveSchema,
+  calendarUpdateSchema,
+  configReferences,
+  resourceId,
+  schemaForConfigKind,
+  todoAddSchema,
+  todoRemoveSchema,
+  todoUpdateSchema,
+} from "./home-config-contracts.js";
 import { resolveHomeEntity } from "./home-resolver.js";
 
 const targetSchema = z
@@ -67,7 +81,7 @@ function definition(
   name: string,
   description: string,
   parameters: Record<string, unknown>,
-  tier: "read" | "write",
+  tier: "read" | "write" | "confirm",
 ): NativeToolRunner["definition"] {
   return {
     name,
@@ -80,12 +94,296 @@ function definition(
   };
 }
 
+const configTargetSchema = z.object({ target: z.string().min(1).max(256) }).strict();
+const configCreateSchema = z.object({ id: resourceId.optional(), config: z.record(z.unknown()) }).strict();
+const configUpdateSchema = z
+  .object({
+    target: z.string().min(1).max(256),
+    expected_version: z.string().regex(/^[a-f0-9]{64}$/),
+    config: z.record(z.unknown()),
+  })
+  .strict();
+const configRemoveSchema = z
+  .object({ target: z.string().min(1).max(256), expected_version: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
+const listTargetSchema = z.object({ list: z.string().min(1).max(256) }).strict();
+
 const targetParameters = {
   type: "object",
   properties: { target: { type: "string", description: "Entity id or natural name" }, area_id: { type: "string" } },
   required: ["target"],
   additionalProperties: false,
 };
+const configParameters = {
+  type: "object",
+  properties: {
+    target: { type: "string" },
+    expected_version: { type: "string", description: "Version returned by home_get_*" },
+    config: { type: "object" },
+  },
+  additionalProperties: false,
+};
+
+function slug(value: string): string {
+  return value
+    .normalize("NFKD")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 128);
+}
+async function resolveKind(adapter: HomeAdapter, kind: HomeConfigKind, target: string, signal: AbortSignal) {
+  const found = await resolve(adapter, target, undefined, [kind], signal);
+  if (found.outcome === "succeeded")
+    return { outcome: "succeeded" as const, id: found.entity.entityId.slice(kind.length + 1) };
+  if (found.outcome === "not_found" && resourceId.safeParse(target).success)
+    return { outcome: "succeeded" as const, id: target };
+  return found;
+}
+async function referencesValid(adapter: HomeAdapter, body: HomeConfig, signal: AbortSignal): Promise<boolean> {
+  const refs = configReferences(body);
+  const entities = refs.entities.size
+    ? await adapter.entities(signal)
+    : { outcome: "succeeded" as const, entities: [] };
+  const locations = refs.areas.size
+    ? await adapter.locations(signal)
+    : { outcome: "succeeded" as const, locations: [] };
+  if (entities.outcome !== "succeeded" || locations.outcome !== "succeeded") return false;
+  const entityIds = new Set(entities.entities.map((entity) => entity.entityId));
+  const areaIds = new Set(
+    locations.locations.filter((location) => location.kind === "area").map((location) => location.id),
+  );
+  return [...refs.entities].every((id) => entityIds.has(id)) && [...refs.areas].every((id) => areaIds.has(id));
+}
+function writeError(outcome: string): boolean {
+  return outcome === "rejected" || outcome === "failed" || outcome === "conflict";
+}
+
+function buildListAndCalendarTools(
+  adapter: HomeAdapter,
+  safeRun: (run: NativeToolRunner["run"]) => NativeToolRunner["run"],
+): NativeToolRunner[] {
+  const resolveCollection = async (target: string, domainName: "todo" | "calendar", signal: AbortSignal) =>
+    resolve(adapter, target, undefined, [domainName], signal);
+  return [
+    {
+      definition: definition(
+        "home_get_todos",
+        "Read items from a permitted household todo list.",
+        { type: "object", properties: { list: { type: "string" } }, required: ["list"], additionalProperties: false },
+        "read",
+      ),
+      validate: validate(listTargetSchema),
+      run: safeRun(async (args, { signal }) => {
+        const parsed = listTargetSchema.parse(args);
+        const found = await resolveCollection(parsed.list, "todo", signal);
+        if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
+        const response = await adapter.todos(found.entity.entityId, signal);
+        return result(
+          { ...response, list_id: found.entity.entityId },
+          response.outcome === "unavailable" || response.outcome === "rejected",
+        );
+      }),
+    },
+    ...(["add", "update", "remove"] as const).map((operation): NativeToolRunner => {
+      const schema = operation === "add" ? todoAddSchema : operation === "update" ? todoUpdateSchema : todoRemoveSchema;
+      return {
+        definition: definition(
+          `home_${operation}_todo`,
+          `${operation === "remove" ? "Deliberately remove" : operation === "add" ? "Add" : "Update"} a household todo item.`,
+          {
+            type: "object",
+            properties: {
+              list: { type: "string" },
+              uid: { type: "string" },
+              summary: { type: "string" },
+              description: { type: "string" },
+              due: { type: ["string", "null"] },
+              status: { enum: ["needs_action", "completed"] },
+            },
+            required: operation === "add" ? ["list", "summary"] : ["list", "uid"],
+            additionalProperties: false,
+          },
+          operation === "remove" ? "confirm" : "write",
+        ),
+        validate: validate(schema),
+        run: safeRun(async (args, { signal }) => {
+          const parsed = schema.parse(args);
+          const found = await resolveCollection(parsed.list, "todo", signal);
+          if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
+          const { list: _list, ...item } = parsed;
+          const response = await adapter.mutateTodo(found.entity.entityId, operation, item, signal);
+          return result(response, writeError(response.outcome));
+        }),
+      };
+    }),
+    {
+      definition: definition(
+        "home_get_calendar_events",
+        "Read bounded events from a permitted household calendar.",
+        {
+          type: "object",
+          properties: {
+            calendar: { type: "string" },
+            start: { type: "string", format: "date-time" },
+            end: { type: "string", format: "date-time" },
+          },
+          required: ["calendar", "start", "end"],
+          additionalProperties: false,
+        },
+        "read",
+      ),
+      validate: validate(calendarReadSchema),
+      run: safeRun(async (args, { signal }) => {
+        const parsed = calendarReadSchema.parse(args);
+        const found = await resolveCollection(parsed.calendar, "calendar", signal);
+        if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
+        const response = await adapter.calendarEvents(found.entity.entityId, parsed.start, parsed.end, signal);
+        return result(
+          { ...response, calendar_id: found.entity.entityId },
+          response.outcome === "unavailable" || response.outcome === "rejected",
+        );
+      }),
+    },
+    ...(["create", "update", "remove"] as const).map((operation): NativeToolRunner => {
+      const schema =
+        operation === "create"
+          ? calendarCreateSchema
+          : operation === "update"
+            ? calendarUpdateSchema
+            : calendarRemoveSchema;
+      return {
+        definition: definition(
+          `home_${operation}_calendar_event`,
+          `${operation === "remove" ? "Deliberately remove" : operation === "create" ? "Create" : "Update"} a household calendar event.`,
+          {
+            type: "object",
+            properties: {
+              calendar: { type: "string" },
+              uid: { type: "string" },
+              summary: { type: "string" },
+              description: { type: "string" },
+              location: { type: "string" },
+              start: { type: "string", format: "date-time" },
+              end: { type: "string", format: "date-time" },
+              recurrence_id: { type: "string" },
+            },
+            required:
+              operation === "create"
+                ? ["calendar", "summary", "start", "end"]
+                : operation === "update"
+                  ? ["calendar", "uid", "summary", "start", "end"]
+                  : ["calendar", "uid"],
+            additionalProperties: false,
+          },
+          operation === "remove" ? "confirm" : "write",
+        ),
+        validate: validate(schema),
+        run: safeRun(async (args, { signal }) => {
+          const parsed = schema.parse(args);
+          const found = await resolveCollection(parsed.calendar, "calendar", signal);
+          if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
+          const { calendar: _calendar, ...event } = parsed;
+          const response = await adapter.mutateCalendar(found.entity.entityId, operation, event, signal);
+          return result(response, writeError(response.outcome));
+        }),
+      };
+    }),
+  ];
+}
+
+function buildConfigurationTools(
+  adapter: HomeAdapter,
+  safeRun: (run: NativeToolRunner["run"]) => NativeToolRunner["run"],
+): NativeToolRunner[] {
+  const tools: NativeToolRunner[] = [];
+  for (const kind of ["scene", "automation", "script"] as const) {
+    const bodySchema = schemaForConfigKind(kind);
+    tools.push({
+      definition: definition(
+        `home_get_${kind}`,
+        `Inspect one ${kind}, including the optimistic version required for changes.`,
+        targetParameters,
+        "read",
+      ),
+      validate: validate(configTargetSchema),
+      run: safeRun(async (args, { signal }) => {
+        const parsed = configTargetSchema.parse(args);
+        const resolved = await resolveKind(adapter, kind, parsed.target, signal);
+        if (resolved.outcome !== "succeeded") return result(resolved, resolved.outcome === "unavailable");
+        const response = await adapter.getConfig(kind, resolved.id, signal);
+        return result(response, response.outcome === "unavailable" || response.outcome === "rejected");
+      }),
+    });
+    tools.push({
+      definition: definition(
+        `home_create_${kind}`,
+        `Create a validated native Home Assistant ${kind}.`,
+        {
+          ...configParameters,
+          properties: { id: { type: "string" }, config: { type: "object" } },
+          required: ["config"],
+        },
+        "write",
+      ),
+      validate(args) {
+        const outer = configCreateSchema.safeParse(args);
+        return outer.success && bodySchema.safeParse(outer.data.config).success ? null : invalid();
+      },
+      run: safeRun(async (args, { signal }) => {
+        const outer = configCreateSchema.parse(args);
+        const body = bodySchema.parse(outer.config) as HomeConfig;
+        const fallbackName = "name" in body ? body.name : body.alias;
+        const id = outer.id ?? slug(fallbackName);
+        if (!id || !(await referencesValid(adapter, body, signal))) return invalid();
+        const response = await adapter.createConfig(kind, id, body, signal);
+        return result(response, writeError(response.outcome));
+      }),
+    });
+    tools.push({
+      definition: definition(
+        `home_update_${kind}`,
+        `Replace a ${kind} only if its previously read version is still current.`,
+        { ...configParameters, required: ["target", "expected_version", "config"] },
+        "write",
+      ),
+      validate(args) {
+        const outer = configUpdateSchema.safeParse(args);
+        return outer.success && bodySchema.safeParse(outer.data.config).success ? null : invalid();
+      },
+      run: safeRun(async (args, { signal }) => {
+        const outer = configUpdateSchema.parse(args);
+        const body = bodySchema.parse(outer.config) as HomeConfig;
+        const resolved = await resolveKind(adapter, kind, outer.target, signal);
+        if (resolved.outcome !== "succeeded") return result(resolved, resolved.outcome === "unavailable");
+        if (!(await referencesValid(adapter, body, signal))) return invalid();
+        const response = await adapter.updateConfig(kind, resolved.id, outer.expected_version, body, signal);
+        return result(response, writeError(response.outcome));
+      }),
+    });
+    tools.push({
+      definition: definition(
+        `home_remove_${kind}`,
+        `Deliberately remove a ${kind}; confirmation and a current version are required.`,
+        {
+          ...configParameters,
+          properties: { target: { type: "string" }, expected_version: { type: "string" } },
+          required: ["target", "expected_version"],
+        },
+        "confirm",
+      ),
+      validate: validate(configRemoveSchema),
+      run: safeRun(async (args, { signal }) => {
+        const parsed = configRemoveSchema.parse(args);
+        const resolved = await resolveKind(adapter, kind, parsed.target, signal);
+        if (resolved.outcome !== "succeeded") return result(resolved, resolved.outcome === "unavailable");
+        const response = await adapter.removeConfig(kind, resolved.id, parsed.expected_version, signal);
+        return result(response, writeError(response.outcome));
+      }),
+    });
+  }
+  return tools;
+}
 
 export function buildHomeTools(adapter: HomeAdapter): readonly NativeToolRunner[] {
   const safeRun =
@@ -296,5 +594,7 @@ export function buildHomeTools(adapter: HomeAdapter): readonly NativeToolRunner[
         }),
       }),
     ),
+    ...buildConfigurationTools(adapter, safeRun),
+    ...buildListAndCalendarTools(adapter, safeRun),
   ];
 }

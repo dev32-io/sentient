@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { type HomeConfig, type HomeConfigKind, schemaForConfigKind } from "./home-config-contracts.js";
 
 export type HomeOutcome =
   | "succeeded"
+  | "deleted"
+  | "conflict"
   | "not_found"
   | "ambiguous"
   | "unavailable"
@@ -39,6 +42,37 @@ export interface HomeOperationStatus extends HomeOperationResult {
   targetId: string;
 }
 
+export type HomeWriteOutcome =
+  | "succeeded"
+  | "deleted"
+  | "not_found"
+  | "conflict"
+  | "rejected"
+  | "failed"
+  | "accepted_unverified";
+export interface HomeConfigResource {
+  kind: HomeConfigKind;
+  id: string;
+  entityId: string;
+  version: string;
+  config: HomeConfig;
+}
+export interface HomeTodoItem {
+  uid: string;
+  summary: string;
+  status: "needs_action" | "completed";
+  description?: string | undefined;
+  due?: string | undefined;
+}
+export interface HomeCalendarEvent {
+  uid: string;
+  summary: string;
+  start: string;
+  end: string;
+  description?: string | undefined;
+  location?: string | undefined;
+}
+
 export interface HomeAdapter {
   overview(signal: AbortSignal): Promise<{ outcome: "succeeded"; entities: HomeEntity[] } | { outcome: "unavailable" }>;
   entities(signal: AbortSignal): Promise<{ outcome: "succeeded"; entities: HomeEntity[] } | { outcome: "unavailable" }>;
@@ -67,6 +101,56 @@ export interface HomeAdapter {
     signal: AbortSignal,
   ): Promise<HomeOperationResult>;
   operation(operationId: string): HomeOperationStatus | { outcome: "not_found" };
+  getConfig(
+    kind: HomeConfigKind,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<
+    { outcome: "succeeded"; resource: HomeConfigResource } | { outcome: "not_found" | "unavailable" | "rejected" }
+  >;
+  createConfig(
+    kind: HomeConfigKind,
+    id: string,
+    config: HomeConfig,
+    signal: AbortSignal,
+  ): Promise<{ outcome: HomeWriteOutcome; id: string; entityId: string; version?: string }>;
+  updateConfig(
+    kind: HomeConfigKind,
+    id: string,
+    expectedVersion: string,
+    config: HomeConfig,
+    signal: AbortSignal,
+  ): Promise<{ outcome: HomeWriteOutcome; id: string; entityId: string; version?: string }>;
+  removeConfig(
+    kind: HomeConfigKind,
+    id: string,
+    expectedVersion: string,
+    signal: AbortSignal,
+  ): Promise<{ outcome: HomeWriteOutcome; id: string; entityId: string }>;
+  todos(
+    listEntityId: string,
+    signal: AbortSignal,
+  ): Promise<{ outcome: "succeeded"; items: HomeTodoItem[] } | { outcome: "not_found" | "unavailable" | "rejected" }>;
+  mutateTodo(
+    listEntityId: string,
+    operation: "add" | "update" | "remove",
+    item: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<{ outcome: HomeWriteOutcome; listId: string }>;
+  calendarEvents(
+    calendarEntityId: string,
+    start: string,
+    end: string,
+    signal: AbortSignal,
+  ): Promise<
+    { outcome: "succeeded"; events: HomeCalendarEvent[] } | { outcome: "not_found" | "unavailable" | "rejected" }
+  >;
+  mutateCalendar(
+    calendarEntityId: string,
+    operation: "create" | "update" | "remove",
+    event: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<{ outcome: HomeWriteOutcome; calendarId: string; eventId?: string }>;
 }
 
 const stateSchema = z.object({
@@ -92,6 +176,42 @@ const entityRegistryItemSchema = z.object({
   area_id: z.string().min(1).max(128).nullable().optional(),
   aliases: z.array(z.string().max(256)).max(20).optional(),
 });
+const todoItemSchema = z.object({
+  uid: z.string().min(1).max(256),
+  summary: z.string().min(1).max(256),
+  status: z.enum(["needs_action", "completed"]),
+  description: z.string().max(2048).optional(),
+  due: z.string().max(64).optional(),
+});
+const todoResultSchema = z.union([z.array(todoItemSchema), z.object({ items: z.array(todoItemSchema) })]);
+const calendarEventSchema = z.object({
+  uid: z.string().min(1).max(512),
+  summary: z.string().min(1).max(256),
+  start: z.union([z.string(), z.object({ dateTime: z.string() }), z.object({ date: z.string() })]),
+  end: z.union([z.string(), z.object({ dateTime: z.string() }), z.object({ date: z.string() })]),
+  description: z.string().max(4096).optional(),
+  location: z.string().max(512).optional(),
+});
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, child]) => `${JSON.stringify(key)}:${stableJson(child)}`)
+      .join(",")}}`;
+  return JSON.stringify(value);
+}
+async function versionOf(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(stableJson(value)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+function configPath(kind: HomeConfigKind, id: string): string {
+  return `/api/config/${kind}/config/${encodeURIComponent(id)}`;
+}
+function eventTime(value: string | { dateTime?: string; date?: string }): string {
+  return typeof value === "string" ? value : (value.dateTime ?? value.date ?? "");
+}
 
 export type HomeFetch = (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>;
 
@@ -111,7 +231,7 @@ export interface HomeAdapterConfig {
 
 class AdapterFailure extends Error {
   constructor(
-    readonly kind: "unavailable" | "not_found" | "rejected" | "failed",
+    readonly kind: "unavailable" | "not_found" | "conflict" | "rejected" | "failed",
     readonly possiblyDispatched = false,
   ) {
     super(kind);
@@ -207,6 +327,7 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
       });
       if (response.status >= 300 && response.status < 400) throw new AdapterFailure("rejected");
       if (response.status === 404) throw new AdapterFailure("not_found");
+      if (response.status === 409 || response.status === 412) throw new AdapterFailure("conflict");
       if (response.status === 401 || response.status === 403 || response.status === 400)
         throw new AdapterFailure("rejected");
       if (!response.ok) throw new AdapterFailure("failed");
@@ -270,7 +391,11 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
     }
   }
 
-  async function websocketCommand(type: string, signal: AbortSignal): Promise<unknown> {
+  async function websocketCommand(
+    type: string,
+    signal: AbortSignal,
+    payload: Readonly<Record<string, unknown>> = {},
+  ): Promise<unknown> {
     let last: unknown;
     for (let attempt = 0; attempt < websocketAttempts; attempt += 1) {
       try {
@@ -307,7 +432,7 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
               return finish(() => reject(new AdapterFailure("rejected")));
             if (z.object({ type: z.literal("auth_ok") }).safeParse(msg).success) {
               authenticated = true;
-              ws.send(JSON.stringify({ id: 1, type }));
+              ws.send(JSON.stringify({ id: 1, type, ...payload }));
               return;
             }
             if (authenticated) {
@@ -356,6 +481,91 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
     }
     operations.set(operationId, { operationId, outcome, targetId });
     return { operationId, outcome };
+  }
+
+  async function readConfig(
+    kind: HomeConfigKind,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<
+    { outcome: "succeeded"; resource: HomeConfigResource } | { outcome: "not_found" | "unavailable" | "rejected" }
+  > {
+    try {
+      const pending = await request(configPath(kind, id), { method: "GET" }, config.readToken, signal);
+      try {
+        const raw: unknown = await pending.response.json();
+        const bodyInput =
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? Object.fromEntries(Object.entries(raw).filter(([key]) => key !== "id"))
+            : raw;
+        const parsed = schemaForConfigKind(kind).safeParse(bodyInput);
+        if (!parsed.success) return { outcome: "rejected" };
+        const body = parsed.data as HomeConfig;
+        return {
+          outcome: "succeeded",
+          resource: { kind, id, entityId: `${kind}.${id}`, config: body, version: await versionOf(body) },
+        };
+      } finally {
+        pending.dispose();
+      }
+    } catch (error) {
+      if (error instanceof AdapterFailure && error.kind === "not_found") return { outcome: "not_found" };
+      if (error instanceof AdapterFailure && error.kind === "rejected") return { outcome: "rejected" };
+      return { outcome: "unavailable" };
+    }
+  }
+
+  async function writeConfig(kind: HomeConfigKind, id: string, body: HomeConfig, signal: AbortSignal) {
+    const entityId = `${kind}.${id}`;
+    try {
+      if (!config.writeToken) throw new AdapterFailure("rejected");
+      const pending = await request(
+        configPath(kind, id),
+        { method: "POST", body: JSON.stringify(body) },
+        config.writeToken,
+        signal,
+        true,
+      );
+      pending.dispose();
+      const verified = await readConfig(kind, id, signal);
+      if (verified.outcome === "succeeded" && stableJson(verified.resource.config) === stableJson(body))
+        return { outcome: "succeeded" as const, id, entityId, version: verified.resource.version };
+      return { outcome: "accepted_unverified" as const, id, entityId };
+    } catch (error) {
+      if (error instanceof AdapterFailure && error.kind === "rejected")
+        return { outcome: "rejected" as const, id, entityId };
+      if (error instanceof AdapterFailure && error.kind === "conflict")
+        return { outcome: "conflict" as const, id, entityId };
+      if (error instanceof AdapterFailure && error.possiblyDispatched)
+        return { outcome: "accepted_unverified" as const, id, entityId };
+      return { outcome: "failed" as const, id, entityId };
+    }
+  }
+
+  async function serviceWrite(
+    domain: string,
+    service: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<HomeWriteOutcome> {
+    try {
+      if (!config.writeToken) throw new AdapterFailure("rejected");
+      const pending = await request(
+        `/api/services/${domain}/${service}`,
+        { method: "POST", body: JSON.stringify(body) },
+        config.writeToken,
+        signal,
+        true,
+      );
+      pending.dispose();
+      return "accepted_unverified";
+    } catch (error) {
+      if (error instanceof AdapterFailure && error.kind === "not_found") return "not_found";
+      if (error instanceof AdapterFailure && error.kind === "conflict") return "conflict";
+      if (error instanceof AdapterFailure && error.kind === "rejected") return "rejected";
+      if (error instanceof AdapterFailure && error.possiblyDispatched) return "accepted_unverified";
+      return "failed";
+    }
   }
 
   return {
@@ -469,6 +679,143 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
     },
     operation(operationId) {
       return operations.get(operationId) ?? { outcome: "not_found" };
+    },
+    getConfig: readConfig,
+    async createConfig(kind, id, body, signal) {
+      const existing = await readConfig(kind, id, signal);
+      if (existing.outcome === "succeeded") return { outcome: "conflict", id, entityId: `${kind}.${id}` };
+      if (existing.outcome !== "not_found")
+        return { outcome: existing.outcome === "rejected" ? "rejected" : "failed", id, entityId: `${kind}.${id}` };
+      return writeConfig(kind, id, body, signal);
+    },
+    async updateConfig(kind, id, expectedVersion, body, signal) {
+      const current = await readConfig(kind, id, signal);
+      if (current.outcome === "not_found") return { outcome: "not_found", id, entityId: `${kind}.${id}` };
+      if (current.outcome !== "succeeded")
+        return { outcome: current.outcome === "rejected" ? "rejected" : "failed", id, entityId: `${kind}.${id}` };
+      if (current.resource.version !== expectedVersion)
+        return { outcome: "conflict", id, entityId: current.resource.entityId, version: current.resource.version };
+      return writeConfig(kind, id, body, signal);
+    },
+    async removeConfig(kind, id, expectedVersion, signal) {
+      const entityId = `${kind}.${id}`;
+      const current = await readConfig(kind, id, signal);
+      if (current.outcome === "not_found") return { outcome: "not_found", id, entityId };
+      if (current.outcome !== "succeeded")
+        return { outcome: current.outcome === "rejected" ? "rejected" : "failed", id, entityId };
+      if (current.resource.version !== expectedVersion) return { outcome: "conflict", id, entityId };
+      try {
+        if (!config.writeToken) throw new AdapterFailure("rejected");
+        const pending = await request(configPath(kind, id), { method: "DELETE" }, config.writeToken, signal, true);
+        pending.dispose();
+        return { outcome: "deleted", id, entityId };
+      } catch (error) {
+        if (error instanceof AdapterFailure && error.kind === "not_found")
+          return { outcome: "not_found", id, entityId };
+        if (error instanceof AdapterFailure && error.kind === "rejected") return { outcome: "rejected", id, entityId };
+        if (error instanceof AdapterFailure && error.kind === "conflict") return { outcome: "conflict", id, entityId };
+        if (error instanceof AdapterFailure && error.possiblyDispatched)
+          return { outcome: "accepted_unverified", id, entityId };
+        return { outcome: "failed", id, entityId };
+      }
+    },
+    async todos(listEntityId, signal) {
+      try {
+        const raw = todoResultSchema.parse(
+          await websocketCommand("todo/item/list", signal, { entity_id: listEntityId }),
+        );
+        return { outcome: "succeeded", items: Array.isArray(raw) ? raw : raw.items };
+      } catch (error) {
+        return { outcome: error instanceof AdapterFailure && error.kind === "rejected" ? "rejected" : "unavailable" };
+      }
+    },
+    async mutateTodo(listEntityId, operation, item, signal) {
+      const services = { add: "add_item", update: "update_item", remove: "remove_item" } as const;
+      const due = item.due;
+      const dueFields =
+        typeof due === "string"
+          ? due.includes("T")
+            ? { due_datetime: due }
+            : { due_date: due }
+          : due === null
+            ? { due_date: null }
+            : {};
+      const serviceItem =
+        operation === "add"
+          ? { item: item.summary, description: item.description, ...dueFields }
+          : operation === "update"
+            ? { item: item.uid, rename: item.summary, description: item.description, status: item.status, ...dueFields }
+            : { item: item.uid };
+      const outcome = await serviceWrite(
+        "todo",
+        services[operation],
+        { entity_id: listEntityId, ...serviceItem },
+        signal,
+      );
+      return { outcome, listId: listEntityId };
+    },
+    async calendarEvents(calendarEntityId, start, end, signal) {
+      try {
+        const pending = await request(
+          `/api/calendars/${encodeURIComponent(calendarEntityId)}?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+          { method: "GET" },
+          config.readToken,
+          signal,
+        );
+        try {
+          const events = z
+            .array(calendarEventSchema)
+            .parse(await pending.response.json())
+            .map((event) => ({ ...event, start: eventTime(event.start), end: eventTime(event.end) }));
+          return { outcome: "succeeded", events };
+        } finally {
+          pending.dispose();
+        }
+      } catch (error) {
+        if (error instanceof AdapterFailure && error.kind === "not_found") return { outcome: "not_found" };
+        if (error instanceof AdapterFailure && error.kind === "rejected") return { outcome: "rejected" };
+        return { outcome: "unavailable" };
+      }
+    },
+    async mutateCalendar(calendarEntityId, operation, event, signal) {
+      const uid = typeof event.uid === "string" ? event.uid : undefined;
+      const suffix = operation === "create" ? "" : `/${encodeURIComponent(uid ?? "")}`;
+      try {
+        if (!config.writeToken) throw new AdapterFailure("rejected");
+        const pending = await request(
+          `/api/calendars/${encodeURIComponent(calendarEntityId)}/events${suffix}`,
+          {
+            method: operation === "create" ? "POST" : operation === "update" ? "PATCH" : "DELETE",
+            body: JSON.stringify(event),
+          },
+          config.writeToken,
+          signal,
+          true,
+        );
+        let eventId = uid;
+        try {
+          const raw: unknown = await pending.response.json().catch(() => null);
+          const parsed = z.object({ uid: z.string().min(1).max(512) }).safeParse(raw);
+          if (parsed.success) eventId = parsed.data.uid;
+        } finally {
+          pending.dispose();
+        }
+        return {
+          outcome: operation === "remove" ? "deleted" : eventId ? "succeeded" : "accepted_unverified",
+          calendarId: calendarEntityId,
+          ...(eventId ? { eventId } : {}),
+        };
+      } catch (error) {
+        if (error instanceof AdapterFailure && error.kind === "not_found")
+          return { outcome: "not_found", calendarId: calendarEntityId };
+        if (error instanceof AdapterFailure && error.kind === "conflict")
+          return { outcome: "conflict", calendarId: calendarEntityId };
+        if (error instanceof AdapterFailure && error.kind === "rejected")
+          return { outcome: "rejected", calendarId: calendarEntityId };
+        if (error instanceof AdapterFailure && error.possiblyDispatched)
+          return { outcome: "accepted_unverified", calendarId: calendarEntityId };
+        return { outcome: "failed", calendarId: calendarEntityId };
+      }
     },
   };
 }
