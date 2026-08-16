@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: gradle-jdk21-environment
 title: Make repository Gradle checks discover Homebrew JDK 21
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []
