@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-music-primitives
 title: Expose standard Music Assistant discovery and playback primitives
-status: running
+status: contribution_complete
 dependsOn:
   - product-tool-catalog
 execution:
@@ -35,3 +35,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/first-class-family-tools/native-music-primitives
   baseCommit: 231c5e8dae2a8920f5deede6f5c52ac0881fafb8
   lastRunId: 1f1e3f26-b46f-4fce-bb61-afdfe4deed04
+  completedCommit: 8711c92c96c88aba9c3b28d937df4480a128d9e9
