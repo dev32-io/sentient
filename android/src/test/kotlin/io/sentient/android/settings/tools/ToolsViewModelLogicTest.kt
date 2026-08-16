@@ -6,7 +6,7 @@
 // previously shipped with zero test coverage (the ViewModel hand-rolled
 // ToolPermission.ALLOW inline instead of calling the shared
 // withServerMasterPermission helper) — this test exercises the exact
-// ViewModel-level wiring (isServerOn / serverToggleWrite) that decides which
+// ViewModel-level wiring (isGroupOn / groupToggleWrite) that decides which
 // direction the master Switch writes and which catalog-derived tool names +
 // wildcard key it writes them for, independent of the ViewModel/SettingsComponent
 // (which isn't unit-testable without a real HttpClient — see android-testing.md
@@ -26,8 +26,8 @@
 // path the dropdown must never take.
 //
 // It ALSO pins the master control's READBACK, which the original suite did not: it
-// asserted which values serverToggleWrite produces but never that isServerOn reads
-// them back. A wildcard-blind isServerOn therefore passed every test here while
+// asserted which values groupToggleWrite produces but never that isGroupOn reads
+// them back. A wildcard-blind isGroupOn therefore passed every test here while
 // leaving an all-off server's Switch permanently unchecked — a state the user could
 // not get out of, because every tap recomputed the same "turn on" direction. Write
 // and readback are pinned together for that reason; either alone is satisfied by a
@@ -36,48 +36,60 @@
 package io.sentient.android.settings.tools
 
 import io.sentient.mobilesdk.settings.ImpactTier
-import io.sentient.mobilesdk.settings.McpCatalogEntry
+import io.sentient.mobilesdk.settings.ProductToolGroupView
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.McpToolView
+import io.sentient.mobilesdk.settings.ToolDispatchKind
+import io.sentient.mobilesdk.settings.ToolDispatchView
 import io.sentient.mobilesdk.settings.ToolPermission
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
-private fun tool(name: String, permission: ToolPermission): McpToolView =
-    McpToolView(name = name, description = "", tier = ImpactTier.READ, permission = permission, settable = true)
+private fun tool(
+    name: String,
+    permission: ToolPermission,
+    dispatch: ToolDispatchKind = ToolDispatchKind.NATIVE,
+): McpToolView = McpToolView(
+    name = name,
+    description = "",
+    tier = ImpactTier.READ,
+    permission = permission,
+    settable = true,
+    dispatch = ToolDispatchView(dispatch),
+)
 
 private fun catalog(
     vararg tools: McpToolView,
     wildcardKey: String = "*",
     wildcard: ToolPermission? = null,
 ): McpCatalogView = McpCatalogView(
-    servers = mapOf("household" to McpCatalogEntry(tools = tools.toList(), wildcardPermission = wildcard)),
+    groups = mapOf("household" to ProductToolGroupView(tools = tools.toList(), wildcardPermission = wildcard)),
     wildcardPermissionKey = wildcardKey,
 )
 
 class ToolsViewModelLogicTest {
 
-    // ── isServerOn — reads the WILDCARD, which is what the master control writes ──
+    // ── isGroupOn — reads the WILDCARD, which is what the master control writes ──
 
     @Test
-    fun `isServerOn is false when the stored wildcard is off`() {
+    fun `isGroupOn is false when the stored wildcard is off`() {
         val cat = catalog(tool("look_up", ToolPermission.OFF), wildcard = ToolPermission.OFF)
-        assertFalse(isServerOn(emptyMap(), cat, "household"))
+        assertFalse(isGroupOn(emptyMap(), cat, "household"))
     }
 
     @Test
-    fun `isServerOn is true when no wildcard has ever been stored`() {
+    fun `isGroupOn is true when no wildcard has ever been stored`() {
         val cat = catalog(tool("look_up", ToolPermission.ASK), wildcard = null)
-        assertEquals(true, isServerOn(emptyMap(), cat, "household"))
+        assertEquals(true, isGroupOn(emptyMap(), cat, "household"))
     }
 
     @Test
-    fun `isServerOn reads a pending wildcard edit over the catalog snapshot`() {
+    fun `isGroupOn reads a pending wildcard edit over the catalog snapshot`() {
         val cat = catalog(tool("look_up", ToolPermission.ALLOW), wildcard = null)
         val pending = mapOf("household" to mapOf("*" to ToolPermission.OFF))
-        assertFalse(isServerOn(pending, cat, "household"))
+        assertFalse(isGroupOn(pending, cat, "household"))
     }
 
     // ── The readback the master Switch actually renders ──
@@ -95,8 +107,8 @@ class ToolsViewModelLogicTest {
             tool("unlock_door", ToolPermission.OFF),
             wildcard = ToolPermission.OFF,
         )
-        val afterTurnOn = serverToggleWrite(emptyMap(), cat, "household")
-        assertEquals(true, isServerOn(afterTurnOn, cat, "household"), "the Switch must show the state it just wrote")
+        val afterTurnOn = groupToggleWrite(emptyMap(), cat, "household")
+        assertEquals(true, isGroupOn(afterTurnOn, cat, "household"), "the Switch must show the state it just wrote")
     }
 
     @Test
@@ -106,11 +118,11 @@ class ToolsViewModelLogicTest {
             tool("unlock_door", ToolPermission.OFF),
             wildcard = ToolPermission.OFF,
         )
-        val afterTurnOn = serverToggleWrite(emptyMap(), cat, "household")
-        val afterSecondTap = serverToggleWrite(afterTurnOn, cat, "household")
+        val afterTurnOn = groupToggleWrite(emptyMap(), cat, "household")
+        val afterSecondTap = groupToggleWrite(afterTurnOn, cat, "household")
         assertEquals(ToolPermission.OFF, afterSecondTap["household"]?.get("*"))
         assertEquals(ToolPermission.OFF, afterSecondTap["household"]?.get("look_up"))
-        assertFalse(isServerOn(afterSecondTap, cat, "household"))
+        assertFalse(isGroupOn(afterSecondTap, cat, "household"))
     }
 
     // ── activeToolCount — the header's "n/total tools", a per-tool tally ──
@@ -122,19 +134,29 @@ class ToolsViewModelLogicTest {
             tool("unlock_door", ToolPermission.ASK),
             tool("wipe", ToolPermission.OFF),
         )
-        val entry = cat.servers.getValue("household")
+        val entry = cat.groups.getValue("household")
         assertEquals(2, activeToolCount(emptyMap(), "household", entry))
+    }
+
+    @Test
+    fun `activeToolCount uses one group projection for mixed dispatch kinds`() {
+        val cat = catalog(
+            tool("native_lookup", ToolPermission.ALLOW, ToolDispatchKind.NATIVE),
+            tool("mcp_lookup", ToolPermission.ASK, ToolDispatchKind.MCP),
+            wildcard = null,
+        )
+        assertEquals(2, activeToolCount(emptyMap(), "household", cat.groups.getValue("household")))
     }
 
     @Test
     fun `activeToolCount reads a pending per-tool edit over the catalog snapshot`() {
         val cat = catalog(tool("look_up", ToolPermission.ALLOW), tool("unlock_door", ToolPermission.ALLOW))
-        val entry = cat.servers.getValue("household")
+        val entry = cat.groups.getValue("household")
         val pending = mapOf("household" to mapOf("look_up" to ToolPermission.OFF))
         assertEquals(1, activeToolCount(pending, "household", entry))
     }
 
-    // ── serverToggleWrite: the security-critical direction ──
+    // ── groupToggleWrite: the security-critical direction ──
 
     @Test
     fun `server toggle off-to-on clears every tool and the wildcard never a concrete allow`() {
@@ -143,7 +165,7 @@ class ToolsViewModelLogicTest {
             tool("unlock_door", ToolPermission.OFF),
             wildcard = ToolPermission.OFF,
         )
-        val write = serverToggleWrite(emptyMap(), cat, "household")
+        val write = groupToggleWrite(emptyMap(), cat, "household")
         val server = write["household"]
         assertNull(server?.get("look_up"))
         assertNull(server?.get("unlock_door"))
@@ -154,7 +176,7 @@ class ToolsViewModelLogicTest {
     @Test
     fun `server toggle on-to-off writes an explicit OFF everywhere`() {
         val cat = catalog(tool("look_up", ToolPermission.ASK), tool("unlock_door", ToolPermission.OFF))
-        val write = serverToggleWrite(emptyMap(), cat, "household")
+        val write = groupToggleWrite(emptyMap(), cat, "household")
         val server = write["household"]
         assertEquals(ToolPermission.OFF, server?.get("look_up"))
         assertEquals(ToolPermission.OFF, server?.get("unlock_door"))
@@ -164,7 +186,7 @@ class ToolsViewModelLogicTest {
     @Test
     fun `server toggle uses the catalog's own wildcard key never a hardcoded literal`() {
         val cat = catalog(tool("look_up", ToolPermission.OFF), wildcardKey = "ALL")
-        val write = serverToggleWrite(emptyMap(), cat, "household")
+        val write = groupToggleWrite(emptyMap(), cat, "household")
         assertEquals(setOf("look_up", "ALL"), write["household"]?.keys)
     }
 }

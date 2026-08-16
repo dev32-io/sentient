@@ -3,7 +3,7 @@
 // description + a RowSelect (Allow/Ask/Deny/Off). Shared by ToolsServerCard's
 // expanded per-tool list and the Tools screen's "Gateway tools" (native tools)
 // card — identical rendering regardless of which catalog array
-// (McpCatalogEntry.tools or McpCatalogView.nativeTools) a tool came from.
+// (ProductToolGroupView.tools) a tool came from.
 // `settable` is what this view branches on to render read-only (a genuinely
 // disabled, non-interactive RowSelect) — never the tool's name (`delegateTask`
 // is unsettable today only because the catalog says so).
