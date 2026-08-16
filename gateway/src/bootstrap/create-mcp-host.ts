@@ -6,6 +6,7 @@ import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import { createDelegatedBrokerFactory } from "../mcp-host/delegated-broker.js";
+import { type HostedToolSurface, createHostedToolSurface } from "../mcp-host/hosted-tool-surface.js";
 import type { McpServerDeps, ToolHandler, ToolRegistry } from "../mcp-host/mcp-server.js";
 import { type NativeToolSurface, createNativeToolSurface } from "../mcp-host/native-tool-surface.js";
 import { type ProxiedToolSurface, createProxiedToolSurface } from "../mcp-host/proxied-tool-surface.js";
@@ -48,6 +49,8 @@ export interface McpHostOptions {
    *  (through the `gateway:` entry's `tools.include`), and it is the catalog
    *  each delegated broker builds its delegator's permission floor from. */
   catalog: McpCatalog;
+  /** Current per-user product permissions for gateway-hosted delegation tools. */
+  profileStore: ProfileStore;
   /** The proxy tier's two dependencies. Absent when `orchestrator:` is not
    *  configured — the host then serves only its own hosted tools, which is the
    *  pre-9g behaviour rather than a failure. */
@@ -107,7 +110,7 @@ function isTiered(tool: HostedToolWithTier): tool is HostedToolWithTier & { tier
  * guarantees the PDP decision and the executed code can never disagree even if
  * that filter is one day changed.
  */
-type DynamicSurface = ProxiedToolSurface | NativeToolSurface;
+type DynamicSurface = HostedToolSurface | ProxiedToolSurface | NativeToolSurface;
 
 function buildRegistry(hosted: ToolHandler[], surfaces: readonly DynamicSurface[]): ToolRegistry {
   const hostedByName = new Map(hosted.map((h) => [h.def.name, h]));
@@ -132,7 +135,7 @@ function buildRegistry(hosted: ToolHandler[], surfaces: readonly DynamicSurface[
 }
 
 export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
-  const { config, router, userStore, audio, userSettings, catalog, proxy } = options;
+  const { config, router, userStore, audio, userSettings, catalog, profileStore, proxy } = options;
   const basePath = config.mcp_host.socket_path;
 
   // These sockets serve exactly ONE consumer: the delegated Hermes one-shot.
@@ -152,10 +155,12 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
     createResumeAudioTool({ audio, router }),
     createUpdateUserSettingsTool({ controls: userSettings, router }),
   ];
-  const hosted = selectDelegatedTools(hostedTools.map(withCatalogTier(catalog)).filter(isTiered)).map(
+  const eligibleHosted = selectDelegatedTools(hostedTools.map(withCatalogTier(catalog)).filter(isTiered)).map(
     (tool) => tool.handler,
   );
-  const delegatedToolNames = hosted.map((tool) => tool.def.name);
+  // This list is a provisioning sentinel: the per-user socket has potential
+  // hosted capability. Actual advertisement is permission-filtered below.
+  const delegatedToolNames = eligibleHosted.map((tool) => tool.def.name);
 
   // The PROXIED tier (task 9g). Every call through it is dispatched by a
   // per-user `ToolBroker`, so the gateway's PDP sees it — that mediation is the
@@ -188,13 +193,20 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
 
   function buildListener(userId: string): UnixSocketListener {
     const socketPath = resolveMcpSocketPath(userId, basePath);
+    const hostedSurface = createHostedToolSurface({
+      userId,
+      handlers: eligibleHosted,
+      catalog,
+      profileStore,
+      userStore,
+    });
     const nativeSurface = brokerFor ? createNativeToolSurface(userId, brokerFor, hostedNames) : null;
-    // Native product definitions win a same-name collision: core capability
-    // must never silently route back through a third-party MCP after cutover.
-    const surfaces: DynamicSurface[] = [nativeSurface, proxiedSurface].filter(
+    // Gateway-hosted and native product definitions win a same-name collision:
+    // core capability must never silently route through a third-party MCP.
+    const surfaces: DynamicSurface[] = [hostedSurface, nativeSurface, proxiedSurface].filter(
       (surface): surface is DynamicSurface => surface !== null,
     );
-    const registry = buildRegistry(hosted, surfaces);
+    const registry = buildRegistry([], surfaces);
     const deps: McpServerDeps = {
       registry,
       contextFor: () => ({ sessionId: null, userId, sessionChannel: "voice" }),
@@ -226,7 +238,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
 
   log.info("mcp-host-created", {
     users: initialUserIds,
-    hostedToolCount: hosted.length,
+    hostedToolCount: eligibleHosted.length,
     delegatedToolNames,
     proxyTier: proxiedSurface !== null,
   });

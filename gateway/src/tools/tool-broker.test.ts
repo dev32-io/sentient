@@ -1020,6 +1020,17 @@ describe("ToolBroker — per-tool permissions", () => {
     expect(broker.definitions().map((d) => d.name)).toEqual(["search_web"]);
   });
 
+  it("can project only prompt-free allow definitions for delegated callers", async () => {
+    for (const permission of ["ask", "deny", "off"] as const) {
+      const { broker } = brokerWithPermission(permission);
+      await broker.ready();
+      expect(broker.definitions({ permissions: ["allow"] }).map((d) => d.name)).not.toContain("get_weather");
+    }
+    const { broker } = brokerWithPermission("allow");
+    await broker.ready();
+    expect(broker.definitions({ permissions: ["allow"] }).map((d) => d.name)).toContain("get_weather");
+  });
+
   it("dispatches an allow tool with no confirm prompt", async () => {
     const { broker, mcp, confirmCalls } = brokerWithPermission("allow");
 

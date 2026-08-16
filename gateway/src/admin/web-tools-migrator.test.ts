@@ -44,8 +44,28 @@ describe("legacy product-tool permission migration", () => {
     });
   });
 
+  it("preserves omitted retired servers as off in every partial legacy map", () => {
+    const once = migrateLegacyToolPermissions({
+      fetch: { fetch: "allow" },
+      gateway: { identify_user: "deny" },
+    });
+    expect(once.permissions).toEqual({
+      web: { "*": "off", fetch_content: "allow" },
+      home: { "*": "off" },
+      music: { "*": "off" },
+      gateway: { identify_user: "deny" },
+    });
+    expect(migrateLegacyToolPermissions(once.permissions)).toEqual({
+      permissions: once.permissions,
+      changed: false,
+      unmappable: 0,
+    });
+  });
+
   it("does not carry an old read-tier allow onto a native Music write", () => {
     expect(migrateLegacyToolPermissions({ music_assistant: { ma_volume: "allow" } }).permissions).toEqual({
+      web: { "*": "off" },
+      home: { "*": "off" },
       music: { music_volume: "ask" },
     });
   });
@@ -58,6 +78,8 @@ describe("legacy product-tool permission migration", () => {
       }).permissions,
     ).toEqual({
       web: { "*": "off" },
+      home: { "*": "off" },
+      music: { "*": "off" },
       legacy_unmapped: { "fetch.*": "allow", "searxng.*": "off" },
     });
   });
@@ -73,6 +95,9 @@ describe("legacy product-tool permission migration", () => {
         },
       }).permissions,
     ).toEqual({
+      web: { "*": "off" },
+      home: { "*": "off" },
+      music: { "*": "off" },
       skills: { "*": "deny", skill_use: "off" },
       memory: { "*": "deny", memory_read: "ask" },
       delegation: { "*": "deny", delegateTask: "off" },
@@ -85,15 +110,23 @@ describe("legacy product-tool permission migration", () => {
     });
     expect(result.unmappable).toBe(1);
     expect(result.permissions).toEqual({
+      web: { "*": "off" },
+      home: { "*": "off" },
+      music: { "*": "off" },
       legacy_unmapped: { "native.unknown_tool": "off" },
     });
   });
 
-  it("is idempotent after product keys have replaced legacy keys", () => {
+  it("is idempotent after a partial legacy map has been made restrictive", () => {
     const once = migrateLegacyToolPermissions({ fetch: { fetch: "deny" } });
+    expect(once.permissions).toEqual({
+      web: { "*": "off", fetch_content: "deny" },
+      home: { "*": "off" },
+      music: { "*": "off" },
+    });
     const twice = migrateLegacyToolPermissions(once.permissions);
     expect(twice).toEqual({
-      permissions: { web: { fetch_content: "deny" } },
+      permissions: once.permissions,
       changed: false,
       unmappable: 0,
     });
@@ -134,5 +167,9 @@ it("boot migration preserves unrelated profile fields", async () => {
   await migrateWebToolsEnabled({ userStore, profileStore });
   const saved = profileStore.save.mock.calls[0]?.[0];
   expect(saved?.persona).toEqual(current.persona);
-  expect(saved?.tools.permissions).toEqual({ web: { fetch_content: "off" } });
+  expect(saved?.tools.permissions).toEqual({
+    web: { "*": "off", fetch_content: "off" },
+    home: { "*": "off" },
+    music: { "*": "off" },
+  });
 });

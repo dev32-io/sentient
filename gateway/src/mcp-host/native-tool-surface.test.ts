@@ -13,11 +13,14 @@ const def = (name: string, productGroup: string, tier: ToolDefinition["tier"]): 
   defaultExposure: "standard",
 });
 
-function broker(definitions: ToolDefinition[]): ToolBroker {
+function broker(definitions: Array<ToolDefinition & { permission?: "allow" | "ask" | "deny" | "off" }>): ToolBroker {
   return {
     ownerUserId: "u_test",
     ready: vi.fn(async () => {}),
-    definitions: () => definitions,
+    definitions: (options) =>
+      definitions.filter((definition) =>
+        options?.permissions ? options.permissions.includes(definition.permission ?? "allow") : true,
+      ),
     dispatch: vi.fn(async () => ({ content: "ok", isError: false })),
     foregroundInFlight: 0,
     background: {} as never,
@@ -29,19 +32,18 @@ describe("delegated native product projection", () => {
   it("derives prompt-free product reads from broker metadata and excludes side effects", async () => {
     const delegated = broker([
       def("web_search", "web", "read"),
-      def("home_state", "home", "read"),
-      def("music_status", "music", "read"),
+      { ...def("home_state", "home", "read"), permission: "ask" },
+      { ...def("music_status", "music", "read"), permission: "deny" },
+      def("music_queue", "music", "read"),
       def("music_play", "music", "write"),
       def("home_remove_scene", "home", "confirm"),
       def("memory_read", "memory", "read"),
     ]);
     const surface = createNativeToolSurface("u_test", async () => delegated, new Set());
     await surface.refresh();
-    expect(surface.definitions().map((definition) => definition.name)).toEqual([
-      "web_search",
-      "home_state",
-      "music_status",
-    ]);
+    expect(surface.definitions().map((definition) => definition.name)).toEqual(["web_search", "music_queue"]);
+    expect(surface.handler("home_state")).toBeNull();
+    expect(surface.handler("music_status")).toBeNull();
     expect(surface.handler("music_play")).toBeNull();
     expect(surface.handler("home_remove_scene")).toBeNull();
   });

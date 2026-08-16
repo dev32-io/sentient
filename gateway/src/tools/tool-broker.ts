@@ -309,7 +309,7 @@ export interface ToolBroker {
    *  `resolveDecision` for a tool that reaches it by any other route).
    *  Synchronous, so it reports whatever is resolved NOW: see `ready()` before
    *  handing the result to a provider. */
-  definitions(): ToolDefinition[];
+  definitions(options?: { readonly permissions?: readonly ToolPermission[] }): ToolDefinition[];
   /** foreground → awaits the result; background → returns `{ taskId }`
    *  immediately without blocking on the runner. Every call passes the L3
    *  PDP check first, unconditionally. */
@@ -995,7 +995,7 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
    *  answer different questions — "this role may never reach it" is not "this
    *  person switched it off", and only one of them is something the person can
    *  change in Settings. */
-  function definitions(): ToolDefinition[] {
+  function definitions(options?: { readonly permissions?: readonly ToolPermission[] }): ToolDefinition[] {
     void ensureMcpWarm(); // idempotent kick-off; definitions() itself stays synchronous
     const backgroundDefs = [...backgroundTools.values()].map((runner) => runner.definition);
     const nativeDefs = [...nativeTools.values()].map((runner) => runner.definition);
@@ -1009,6 +1009,10 @@ export function createToolBroker(deps: ToolBrokerDeps): ToolBroker {
         continue;
       }
       const { permission, source } = resolvePermission(def);
+      if (options?.permissions && !options.permissions.includes(permission)) {
+        permissionWithheld.push(`${def.name}:${permission}/${source}`);
+        continue;
+      }
       if (!isVisibleToModel(permission)) {
         permissionWithheld.push(`${def.name}:${permission}/${source}`);
         continue;

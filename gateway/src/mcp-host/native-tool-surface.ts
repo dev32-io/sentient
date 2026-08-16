@@ -7,8 +7,10 @@ import { createProxiedNativeTool } from "./tools/proxied-catalog-tool.js";
 const DELEGATED_PRODUCT_GROUPS = new Set(["web", "home", "music"]);
 
 /** Per-user projection of authoritative native product metadata. The broker's
- * definitions already apply role and profile visibility; this final selector
- * admits only prompt-free reads from the three first-class product groups. */
+ * definitions apply the role ceiling and current product resolution; this
+ * final selector admits only explicitly allowed reads from the three
+ * first-class product groups. Ask/deny/off are unanswerable in delegation and
+ * therefore absent rather than merely failing after advertisement. */
 export interface NativeToolSurface {
   refresh(): Promise<void>;
   definitions(): ToolDefinition[];
@@ -34,7 +36,7 @@ export function createNativeToolSurface(
       await broker.ready();
       const eligible = selectDelegatedTools(
         broker
-          .definitions()
+          .definitions({ permissions: ["allow"] })
           .filter(
             (definition) =>
               definition.category === "foreground" &&

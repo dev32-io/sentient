@@ -229,6 +229,7 @@ if (config.hermes) {
     audio: stubAudio,
     userSettings: userSettingsControls,
     catalog: config.mcpCatalog,
+    profileStore: services.profileStore,
     // The proxied tier (task 9g): the delegated agent reaches the operator's
     // `mcp_catalog` through the gateway's own socket, so every one of those
     // calls passes the PDP. Same shared McpClient the gateway's own loop uses —

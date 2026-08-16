@@ -131,7 +131,8 @@ function projectGroups(
   const projected: ProjectedTool[] = [];
   for (const meta of catalogTools(catalog)) {
     const entry = catalog[meta.server];
-    if (!entry || entry.transport === "stdio" || !canExecute(role, meta.tier)) continue;
+    const gatewayHosted = meta.server === "gateway" && entry?.transport === "stdio";
+    if (!entry || (entry.transport === "stdio" && !gatewayHosted) || !canExecute(role, meta.tier)) continue;
     const permission = resolveToolPermission({
       toolName: meta.name,
       tier: meta.tier,
@@ -150,7 +151,7 @@ function projectGroups(
         tier: meta.tier,
         permission,
         settable: true,
-        dispatch: { kind: "mcp", serverName: meta.server },
+        dispatch: gatewayHosted ? { kind: "native" } : { kind: "mcp", serverName: meta.server },
       },
     });
   }

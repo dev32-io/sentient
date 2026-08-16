@@ -40,6 +40,15 @@ const CATALOG: McpCatalog = mcpCatalogSchema.parse({
       ],
     },
   },
+  gateway: {
+    product_group: "gateway",
+    default_exposure: "advanced",
+    transport: "stdio",
+    command: "nc",
+    tools: {
+      include: [{ name: "identify_user", tier: "read", description: "Identifies the current user" }],
+    },
+  },
 });
 
 function profile(permissions?: ProfileV1["tools"]["permissions"]): ProfileV1 {
@@ -164,6 +173,17 @@ describe("GET /api/v1/mcp-catalog — product groups", () => {
       web: {},
     });
     expect(enabled.groups.research?.tools[0]?.permission).toBe("allow");
+  });
+
+  it("projects advanced gateway-hosted tools as settable native products", async () => {
+    const fresh = await viewFor();
+    expect(fresh.groups.gateway).toMatchObject({
+      defaultExposure: "advanced",
+      wildcardPermission: null,
+      tools: [{ name: "identify_user", permission: "off", settable: true, dispatch: { kind: "native" } }],
+    });
+    const enabled = await viewFor("adult", { gateway: { identify_user: "allow" }, web: {} });
+    expect(enabled.groups.gateway?.tools[0]?.permission).toBe("allow");
   });
 
   it("role reach remains an independent upper bound", async () => {

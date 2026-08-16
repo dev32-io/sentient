@@ -12,6 +12,17 @@ export interface WebToolsMigrationDeps {
 }
 
 const LEGACY_GROUPS: Readonly<Record<string, string>> = { duckduckgo: "web" };
+const RETIRED_CORE_GROUPS: Readonly<Record<string, "web" | "home" | "music">> = {
+  fetch: "web",
+  searxng: "web",
+  home_assistant: "home",
+  music_assistant: "music",
+};
+const RETIRED_PERMISSION_GROUPS = new Set([
+  ...Object.keys(RETIRED_CORE_GROUPS),
+  ...Object.keys(LEGACY_GROUPS),
+  "native",
+]);
 
 interface LegacyToolTarget {
   readonly group: "web" | "home" | "music";
@@ -127,6 +138,27 @@ export function migrateLegacyToolPermissions(permissions: ToolPermissionMap | un
     target[tool] = conservativeMerge(target[tool], value);
     next[group] = target;
   };
+
+  // A non-empty legacy table treated an omitted MCP server as explicitly off.
+  // Product groups intentionally inherit when omitted, so carry each omitted
+  // retired core server forward as a restrictive destination wildcard. When
+  // two retired servers share a product group, explicit migrated tool values
+  // still outrank this wildcard. Presence of the destination groups makes the
+  // result self-identifying and keeps repeated boot migration idempotent.
+  const keys = Object.keys(permissions);
+  const hasRetiredShape = keys.some((group) => RETIRED_PERMISSION_GROUPS.has(group));
+  // `gateway` kept its product name, so it is ambiguous by itself. Treat it as
+  // a legacy-only partial map only until destination product groups exist.
+  const gatewayOnlyLegacyShape =
+    permissions.gateway !== undefined && ["web", "home", "music"].every((group) => permissions[group] === undefined);
+  if (hasRetiredShape || gatewayOnlyLegacyShape) {
+    for (const [legacyGroup, productGroup] of Object.entries(RETIRED_CORE_GROUPS)) {
+      if (permissions[legacyGroup] === undefined) {
+        write(productGroup, "*", "off");
+        changed = true;
+      }
+    }
+  }
 
   for (const [legacyGroup, tools] of Object.entries(permissions)) {
     const coreTools = LEGACY_CORE_TOOLS[legacyGroup];
