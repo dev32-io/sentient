@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
@@ -231,6 +232,29 @@ class SentientSdk(
      *  delta stream. The corner-mic affordance / future UI renders off this. */
     val talkMode: StateFlow<TalkMode> = talkModeController.mode
 
+    // VoiceAudio is the shared capture authority. A transient mic=false projection during
+    // interrupt/reconfigure is intentionally ignored; only a typed Error or terminal Idle
+    // teardown can revoke an optimistic Hold/Continuous mode. The controller reset is
+    // idempotent and emits no duplicate stop/release intent.
+    init {
+        scope.launch {
+            var previousPhase: VoiceAudioState.Phase? = null
+            voice.audioState.collect { state ->
+                // Do not interpret the initial Idle snapshot as a teardown. Idle is
+                // authoritative only after the engine has previously been active.
+                val genuineLoss = state.phase == VoiceAudioState.Phase.Error ||
+                    (state.phase == VoiceAudioState.Phase.Idle && previousPhase != null && previousPhase != VoiceAudioState.Phase.Idle)
+                previousPhase = state.phase
+                if (genuineLoss) {
+                    talkModeController.captureLost(
+                        if (state.phase == VoiceAudioState.Phase.Error) "audio-error" else "audio-teardown",
+                    )
+                    syncVoiceMode()
+                }
+            }
+        }
+    }
+
     private val connectors = SdkConnectors(
         deriver = deriver,
         emit = ::emit,
@@ -399,6 +423,10 @@ class SentientSdk(
     fun disconnect(clearSession: Boolean = true) {
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
+        // Teardown is a genuine capture loss. Reset shared TalkMode before disposing the
+        // engine so native presentation adapters converge without sending a second stop.
+        talkModeController.captureLost("disconnect")
+        syncVoiceMode()
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect

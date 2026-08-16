@@ -101,6 +101,25 @@ class TalkModeControllerTest {
         assertEquals(listOf("endCapture"), f.effects)
     }
 
+    @Test
+    fun capture_failure_forces_idle_without_duplicate_stop_and_is_idempotent() {
+        val f = Fakes()
+        f.driveTo(TalkMode.Hold)
+        f.controller.captureLost("audio-error")
+        f.controller.captureLost("audio-teardown")
+        assertEquals(TalkMode.Idle, f.controller.mode.value)
+        assertTrue(f.effects.isEmpty(), "failure reset must not emit a duplicate release/stop")
+    }
+
+    @Test
+    fun transient_inactive_projection_does_not_change_hold_without_capture_loss() {
+        val f = Fakes()
+        f.driveTo(TalkMode.Hold)
+        // The controller has no micActive input by design: only captureLost is authoritative.
+        assertEquals(TalkMode.Hold, f.controller.mode.value)
+        assertTrue(f.effects.isEmpty())
+    }
+
     // ── Illegal intents from every state: WARN + no-op (state unchanged, zero effects) ──
 
     @Test
