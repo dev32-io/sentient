@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: fresh-chat-boundary
 title: Make cold launch and New Chat establish a fresh conversation boundary
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -32,3 +32,4 @@ runtime:
   baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
   lastRunId: afc55c77-f147-494c-9e80-d302bae67b98
   completedCommit: 5b2778a9490c87e0a18aed76b5961868b2b03fd7
+  mergedCommit: cd0c231c3255578a77e6aa890ef943e1f4e06d65
