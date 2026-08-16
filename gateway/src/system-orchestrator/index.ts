@@ -6,6 +6,7 @@ import { reconcileOnBoot } from "./boot-reconciler.js";
 import { type DockerodeLike, createDockerDriver } from "./docker-driver.js";
 import { createHealthWatch } from "./health-watch.js";
 import { type HealthIO, probeOnce } from "./health.js";
+import { recordManagedServiceHealth } from "./managed-service-health-status.js";
 import { createNativeDriver } from "./native-driver.js";
 import { createNativeIO } from "./native-io.js";
 import { createSystemOrchestrator } from "./orchestrator.js";
@@ -267,17 +268,24 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
         "noop" in ms.config.healthcheck
           ? await isUnitRunning(ms)
           : await probeOnce(ms.config.healthcheck, deps.healthIO);
-      if (!live) return false;
+      if (!live) {
+        lastStatus = recordManagedServiceHealth(lastStatus, name, false);
+        return false;
+      }
       // Same contract the apply path gates on: liveness AND identity. Without
       // this the watchdog would keep declaring a service healthy for as long as
       // ANY process held its port, so a foreign listener would suppress
       // recovery forever instead of triggering it.
       const identity = await drivers[ms.config.launch].verifyIdentity(ms);
-      if (identity.ok) return true;
+      if (identity.ok) {
+        lastStatus = recordManagedServiceHealth(lastStatus, name, true);
+        return true;
+      }
       log.warn("health-watch.identity-failed", {
         service: name,
         reason: identity.error.reason,
       });
+      lastStatus = recordManagedServiceHealth(lastStatus, name, false, identity.error.reason);
       return false;
     },
     reapply: async (name) => {

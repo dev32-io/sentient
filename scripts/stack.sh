@@ -52,6 +52,8 @@ VITE_PORT=5173            # webui dev server / HMR
 CANONICAL_URL="https://localhost/"                  # the one URL a person opens
 VITE_URL="http://localhost:${VITE_PORT}"            # hot reload, what you develop against
 DIRECT_URL="https://localhost:${GATEWAY_PORT}"      # gateway, bypassing the door — diagnostics only
+DIRECT_READY_URL="$DIRECT_URL/api/v1/ready"
+DOOR_READY_URL="${CANONICAL_URL}api/v1/ready"
 
 # docker-driver.ts#LABEL_MANAGED — every addon container the orchestrator creates.
 SENTIENT_MANAGED_FILTER="label=sentient.managed=true"
@@ -306,8 +308,8 @@ wait_ready() {
   local deadline=$(( $(date +%s) * 1000 + READY_TIMEOUT_MS ))
   local gw=1 edge=1
   while [ "$(( $(date +%s) * 1000 ))" -lt "$deadline" ]; do
-    probe "$DIRECT_URL/api/v1/health" && gw=0
-    [ "$gw" -eq 0 ] && probe "$CANONICAL_URL" && edge=0
+    probe "$DIRECT_READY_URL" && gw=0
+    [ "$gw" -eq 0 ] && probe "$DOOR_READY_URL" && edge=0
     [ "$gw" -eq 0 ] && [ "$edge" -eq 0 ] && return 0
     sleep "$(awk "BEGIN{print $READY_POLL_MS/1000}")"
   done
@@ -417,13 +419,13 @@ cmd_status() {
     step "docker      DOWN"
   fi
 
-  if probe "$DIRECT_URL/api/v1/health"; then
+  if probe "$DIRECT_READY_URL"; then
     step "gateway     ready   $DIRECT_URL"
   else
     step "gateway     DOWN"
   fi
 
-  if probe "$CANONICAL_URL"; then
+  if probe "$DOOR_READY_URL"; then
     step "door        ready   $CANONICAL_URL"
   else
     step "door        DOWN"

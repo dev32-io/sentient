@@ -79,7 +79,10 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
   // on the Bun server instance (not stable until Bun.serve returns) and is
   // built per-request below.
   const handleHealth = createHealthHandler();
-  const handleReady = createReadyHandler({ getActiveConnections: () => activeConnections });
+  const handleReady = createReadyHandler({
+    getActiveConnections: () => activeConnections,
+    getOrchestratorStatus: () => services.systemOrchestrator?.getStatus() ?? null,
+  });
   const handleInstallState = createInstallStateHandler({
     installState: services.installState,
     currentVersion: services.gatewayVersion,

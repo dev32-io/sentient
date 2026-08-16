@@ -1,6 +1,7 @@
 // gateway/webui/src/components/settings/sidebar/sidebar-status.tsx
 import type { JSX } from "preact";
 import { useServiceVersions } from "../../../hooks/use-service-versions.ts";
+import { useSystemReadiness } from "../../../hooks/use-system-readiness.ts";
 
 export interface SidebarStatusProps {
   token: string | null;
@@ -13,10 +14,12 @@ function fmt(raw: string): string {
 
 export function SidebarStatus({ token }: SidebarStatusProps): JSX.Element {
   const v = useServiceVersions(token);
+  const ready = useSystemReadiness(token !== null);
+  const statusLabel = ready === null ? "Checking services…" : ready ? "All required services online" : "Required services unavailable";
   return (
     <div class="s-side-foot">
       <div class="s-status">
-        <span class="ok-dot" /> All services online
+        <span class={ready ? "ok-dot" : "status-dot-unavailable"} /> {statusLabel}
       </div>
       <ul class="s-side-meta">
         <li><span>Sentient</span> <code>{v ? fmt(v.gateway) : "…"}</code></li>

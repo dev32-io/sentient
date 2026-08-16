@@ -6,6 +6,7 @@ import { MANAGED_NETWORK_TOPOLOGY, type ServiceTemplate, ServiceTemplateSchema }
 
 const GATEWAY_ROOT = join(import.meta.dir, "..", "..");
 const TEMPLATE_DIR = join(GATEWAY_ROOT, "templates", "services");
+const OUTBOUND_WORKER_DIR = join(GATEWAY_ROOT, "addons", "outbound-worker");
 const INTERNAL_NET = "sentient-internal";
 const EXTERNAL_NET = "sentient-external";
 
@@ -18,6 +19,19 @@ test("SECURITY: outbound-worker has network-enforced egress confinement", () => 
   expect(worker.networks).toEqual([INTERNAL_NET]);
   expect(worker.ports).toEqual([]);
   expect(MANAGED_NETWORK_TOPOLOGY[INTERNAL_NET]?.internal).toBe(true);
+});
+
+test("CONTRACT: outbound-worker template uses the bundled policy path shipped by its image", () => {
+  const worker = loadTemplate("outbound-worker");
+  const dockerfile = readFileSync(join(OUTBOUND_WORKER_DIR, "Dockerfile"), "utf-8");
+  const imagePath = dockerfile.match(/^ENV DANGEROUS_DOMAINS_BUNDLED=(\S+)$/m)?.[1];
+
+  expect(imagePath).toBe("/app/src/dangerous-domains.txt");
+  expect(worker.env.DANGEROUS_DOMAINS_BUNDLED).toBe(imagePath);
+  expect(
+    readFileSync(join(OUTBOUND_WORKER_DIR, "src", "dangerous-domains.txt"), "utf-8").trim().length,
+  ).toBeGreaterThan(0);
+  expect(dockerfile).toContain("COPY src ./src");
 });
 
 test("SECURITY: ingress publishes only the native worker API on loopback", () => {
