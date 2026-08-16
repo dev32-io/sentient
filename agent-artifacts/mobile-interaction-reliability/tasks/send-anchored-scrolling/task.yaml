@@ -16,7 +16,8 @@ verification:
   timing: task
   methods: []
   taskChecks:
-    - ./gradlew :android:testDebugUnitTest
+    - PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH" ./gradlew
+      :android:testDebugUnitTest
     - ./scripts/ios-setup.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
       Simulator,name=iPhone 16'
