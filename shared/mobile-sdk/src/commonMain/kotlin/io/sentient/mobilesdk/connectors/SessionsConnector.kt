@@ -81,8 +81,10 @@ class SessionsConnector(
 
     private val log = createLogger("connector", "sessions")
 
-    // Connection-scoped: cleared on session.created (mint done) and on reset().
+    // Connection-scoped debounce. An explicit preparation is retained across a
+    // transport edge so a pre-READY request can be retried exactly once.
     private var lastMintAtMs: Long? = null
+    private var pendingMintIntent: String? = null
 
     // Broadcast-correlated waiters (switchTo / newChat).
     private val createdWaiters = mutableListOf<CompletableDeferred<String>>()
@@ -120,6 +122,7 @@ class SessionsConnector(
 
     private fun onCreated(msg: ServerMessage.SessionCreated) {
         lastMintAtMs = null
+        pendingMintIntent = null
         val waiters = createdWaiters.toList()
         createdWaiters.clear()
         for (w in waiters) w.complete(msg.sessionId)
@@ -134,6 +137,7 @@ class SessionsConnector(
      */
     private fun onDraft(msg: ServerMessage.SessionDraft) {
         lastMintAtMs = null
+        pendingMintIntent = null
         val waiters = createdWaiters.toList()
         createdWaiters.clear()
         for (w in waiters) w.complete(msg.draftKey)
@@ -235,21 +239,14 @@ class SessionsConnector(
 
     // ── fire-and-forget ops (A2) ──────────────────────────────────────────────
 
-    /**
-     * Fire-and-forget new chat. Debounced: rapid taps collapse to one mint.
-     *
-     * DELIBERATELY IMPLICIT. This is the only live path on mobile and it serves
-     * BOTH meanings: the app fires it from `ChatViewModel.init` on every launch
-     * (route sessionId is null → `SwitchConversationUseCase(null)`), and a "+"
-     * tap reaches it through the exact same call after the host flips
-     * `activeSessionId` to null. Nothing at this layer can tell them apart, and
-     * declaring "explicit" would abandon the bound conversation on every app
-     * open. Sending "implicit" keeps today's behaviour exactly: a bound
-     * connection reattaches, an unbound one is told it is a draft. Closing the
-     * "+"-really-means-new gap needs the app to carry the distinction into the
-     * route — see docs/native-todo.md § 2.
-     */
-    fun sendNew() {
+    /** Legacy compatibility operation. Its omitted intent preserves gateway
+     * reattachment semantics for non-mobile callers. */
+    fun sendNew() = sendNewWithIntent(null)
+
+    /** Prepare an intentionally fresh boundary without blocking the composer. */
+    fun startFreshChat() = sendNewWithIntent(INTENT_EXPLICIT)
+
+    private fun sendNewWithIntent(intent: String?) {
         val now = clock.nowMs()
         val inFlight = lastMintAtMs
         if (inFlight != null && now - inFlight < mintDebounceMs) {
@@ -257,9 +254,10 @@ class SessionsConnector(
             return
         }
         lastMintAtMs = now
+        pendingMintIntent = intent
         val id = newId()
-        log.info("sendNew", mapOf("requestId" to id))
-        send(ClientMessage.SessionNew(requestId = id))
+        log.info("sendNew", mapOf("requestId" to id, "explicit" to (intent == INTENT_EXPLICIT)))
+        send(ClientMessage.SessionNew(requestId = id, intent = intent))
     }
 
     /**
@@ -277,8 +275,9 @@ class SessionsConnector(
      * SDK-internal — not part of the public connector surface.
      */
     internal fun retryPendingMint() {
+        val intent = pendingMintIntent
         lastMintAtMs = null
-        sendNew()
+        sendNewWithIntent(intent)
     }
 
     /** Fire-and-forget switch via conversation.activate. Always sends — no debounce. */
@@ -303,7 +302,12 @@ class SessionsConnector(
      */
     fun reset() {
         log.info("reset", mapOf("switched" to switchedWaiters.size, "created" to createdWaiters.size))
-        lastMintAtMs = null
+        // Keep an explicit preparation armed across a transport edge. Implicit
+        // compatibility mints remain connection-scoped and are dropped as before.
+        if (pendingMintIntent != INTENT_EXPLICIT) {
+            lastMintAtMs = null
+            pendingMintIntent = null
+        }
         val err = SessionsTimeoutException("connector reset")
         for (d in createdWaiters) d.completeExceptionally(err)
         createdWaiters.clear()

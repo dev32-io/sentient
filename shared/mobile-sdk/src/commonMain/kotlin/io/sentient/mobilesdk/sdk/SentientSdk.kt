@@ -615,12 +615,11 @@ class SentientSdk(
     }
 
     /**
-     * Fire-and-forget new chat (A2). Sends session.new and returns immediately —
-     * the gateway emits session.switched + empty snapshot now, then session.created
-     * after the slow ACP mint. NEVER awaits, NEVER throws. The UI must not block on
-     * a session round-trip. Debounced in the connector so rapid taps mint once.
+     * Eagerly establish an explicit fresh-chat boundary. The old conversation is
+     * cleared synchronously; the gateway preparation and first-message mint remain
+     * asynchronous so typing is never blocked.
      */
-    fun sendNewChat() {
+    fun startFreshChat() {
         markInteraction()
         connectors.turnError.reset()
         clearConversationScopedState("new-chat-fire")
@@ -629,9 +628,12 @@ class SentientSdk(
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
         connectors.history.clearForNewChat()
         dropAnchorForNewChat()
-        connectors.sessions.sendNew()
+        connectors.sessions.startFreshChat()
         clearActiveToIdle()
     }
+
+    /** Compatibility alias for older platform callers. */
+    fun sendNewChat() = startFreshChat()
 
     /**
      * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —

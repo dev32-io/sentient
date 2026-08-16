@@ -85,13 +85,14 @@ final class ChatViewModel: ObservableObject {
         self.component = component
         log.info("init sessionId=\(sessionId ?? "<new>")")
 
-        // Make the route's conversation active (null = new chat). Fire-and-forget:
-        // the usecase fires the session command and returns Unit (non-suspend,
-        // non-throwing) — the gateway buffers the next user.message behind the
-        // pending mint, so the UI never blocks on a session round-trip. The flush
-        // gate + observeChat collect below pick up whatever conversation this
-        // resolves to.
-        component.switchConversation.invoke(sessionId: sessionId)
+        // A null route entry is a cold/new-chat boundary, not an implicit reattach.
+        // Explicit preparation is fire-and-forget, so the composer is usable while
+        // the gateway prepares the draft/attachment for the first queued message.
+        if let sessionId {
+            component.switchConversation.invoke(sessionId: sessionId)
+        } else {
+            component.switchConversation.startFreshChat()
+        }
 
         startChatCollecting()
         startConnectionCollecting()
