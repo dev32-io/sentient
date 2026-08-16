@@ -7,10 +7,59 @@ import {
   validateFetchUrl,
 } from "../../../addons/outbound-worker/src/domain-policy.js";
 import { fetchReadableContent } from "../../../addons/outbound-worker/src/fetch-content.js";
+import { searchSearxng } from "../../../addons/outbound-worker/src/search-searxng.js";
 
 const limits = { timeoutMs: 1000, maxCompressedBytes: 1000, maxDecompressedBytes: 5000, maxRedirects: 3 };
 const rules = canonicalDenyRules(["example.test", "xn--bcher-kva.test"]);
 const resolve = async () => [{}];
+
+describe("outbound worker SearXNG boundary", () => {
+  test("maps recency/domains/count and rejects malformed or excluded results", async () => {
+    let requested: URL | undefined;
+    const result = await searchSearxng(
+      {
+        query: "current news",
+        count: 2,
+        recency: "week",
+        includeDomains: ["Example.COM"],
+        excludeDomains: ["bad.example.com"],
+      },
+      new AbortController().signal,
+      {
+        baseUrl: "http://searxng:8080",
+        fetchImpl: async (input) => {
+          requested = new URL(input.toString());
+          return Response.json({
+            results: [
+              { title: "Good", url: "https://example.com/a", content: "snippet", publishedDate: "today" },
+              { title: "Excluded", url: "https://bad.example.com/b", content: "bad" },
+              { title: 42, url: "https://example.com/c", content: "invalid" },
+              { title: "Second", url: "https://www.example.com/d", content: "second" },
+              { title: "Capped", url: "https://example.com/e", content: "third" },
+            ],
+          });
+        },
+      },
+    );
+    expect(result).toMatchObject({ ok: true, results: [{ title: "Good" }, { title: "Second" }] });
+    expect(requested?.searchParams.get("time_range")).toBe("week");
+    expect(requested?.searchParams.get("q")).toContain("site:example.com -site:bad.example.com");
+  });
+
+  test("maps invalid SearXNG responses and cancellation to bounded failures", async () => {
+    const bad = await searchSearxng(
+      { query: "q", count: 1, includeDomains: [], excludeDomains: [] },
+      new AbortController().signal,
+      { fetchImpl: async () => Response.json({ unexpected: true }) },
+    );
+    expect(bad).toMatchObject({ ok: false, error: { code: "search_unavailable" } });
+    const ctl = new AbortController();
+    ctl.abort();
+    expect(
+      await searchSearxng({ query: "q", count: 1, includeDomains: [], excludeDomains: [] }, ctl.signal),
+    ).toMatchObject({ ok: false, error: { code: "cancelled" } });
+  });
+});
 
 describe("outbound worker URL and domain boundary", () => {
   test("canonicalizes case, trailing dots, and IDNA and applies suffix denial", () => {

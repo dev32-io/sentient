@@ -70,6 +70,18 @@ export const orchestratorConfigSchema = z.object({
       read_max_chars: z.number().int().min(200).max(50_000).default(12_000),
       match_max_passages: z.number().int().min(1).max(20).default(5),
       match_context_chars: z.number().int().min(50).max(2000).default(500),
+      search_max_results: z.number().int().min(1).max(20).default(10),
+      grounded_source_count: z.number().int().min(1).max(10).default(5),
+      passage_budget_chars: z.number().int().min(500).max(50_000).default(12_000),
+      summary: z
+        .object({
+          model: z.string().min(1).default("deepseek-v4-flash:cloud"),
+          deadline_ms: z.number().int().min(1000).max(120_000).default(30_000),
+          max_input_chars: z.number().int().min(1000).max(100_000).default(20_000),
+          max_output_tokens: z.number().int().min(64).max(4000).default(800),
+          max_answer_chars: z.number().int().min(200).max(20_000).default(6000),
+        })
+        .default({}),
     })
     .optional(),
   tools: z.object({

@@ -174,6 +174,8 @@ export function loadAuxiliaryTemplate(
  *  `system_prompts/auxiliary/`. Read at module init: a missing baked template is
  *  a build error and must fail loudly at boot, not the first time a dream runs
  *  at 3am when nobody is watching the log. */
+export const DEFAULT_WEB_SUMMARY_PROMPT = readFileSync(assetPath("system_prompts", "web-summary.md"), "utf8").trim();
+
 const DEFAULT_DREAMER_TEMPLATES: Record<"map" | "reduce", string> = {
   map: readFileSync(assetPath("system_prompts", "dreamer", "map.md"), "utf8").trim(),
   reduce: readFileSync(assetPath("system_prompts", "dreamer", "reduce.md"), "utf8").trim(),

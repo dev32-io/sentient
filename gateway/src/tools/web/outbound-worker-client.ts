@@ -12,6 +12,17 @@ export type OutboundFetchErrorCode =
   | "worker_unavailable"
   | "cancelled";
 
+export type SearchRecency = "day" | "week" | "month" | "year";
+export interface OutboundSearchItem {
+  title: string;
+  url: string;
+  snippet: string;
+  publishedAt: string | null;
+}
+export type OutboundSearchResult =
+  | { ok: true; value: OutboundSearchItem[] }
+  | { ok: false; error: { code: "search_unavailable" | "cancelled"; message: string } };
+
 export type OutboundFetchResult =
   | {
       ok: true;
@@ -46,6 +57,23 @@ const errorCodeSchema = z.enum([
   "http_error",
   "cancelled",
 ]);
+const searchSuccessSchema = z.object({
+  ok: z.literal(true),
+  results: z
+    .array(
+      z.object({
+        title: z.string().max(1000),
+        url: z.string().url().max(4096),
+        snippet: z.string().max(10_000),
+        publishedAt: z.string().max(100).nullable(),
+      }),
+    )
+    .max(20),
+});
+const searchErrorSchema = z.object({
+  ok: z.literal(false),
+  error: z.object({ code: z.enum(["search_unavailable", "cancelled"]), message: z.string().max(240) }),
+});
 const errorSchema = z.object({
   ok: z.literal(false),
   error: z.object({
@@ -79,6 +107,44 @@ export class OutboundWorkerClient {
       init,
     ) => fetch(input, init),
   ) {}
+
+  async search(
+    input: {
+      query: string;
+      count: number;
+      recency?: SearchRecency;
+      includeDomains: string[];
+      excludeDomains: string[];
+    },
+    signal: AbortSignal,
+  ): Promise<OutboundSearchResult> {
+    if (signal.aborted) return { ok: false, error: { code: "cancelled", message: "Search was cancelled." } };
+    const timeout = AbortSignal.timeout(this.config.timeoutMs);
+    try {
+      const response = await this.fetchImpl(new URL("/v1/search", this.config.baseUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+        signal: AbortSignal.any([signal, timeout]),
+      });
+      const text = await response.text();
+      if (text.length > this.config.maxResponseChars) throw new Error("oversize");
+      const parsed = z.union([searchSuccessSchema, searchErrorSchema]).safeParse(JSON.parse(text));
+      if (!parsed.success) throw new Error("schema");
+      if (!parsed.data.ok) return { ok: false, error: parsed.data.error };
+      if (!response.ok || parsed.data.results.length > input.count) throw new Error("invalid cap");
+      return { ok: true, value: parsed.data.results };
+    } catch {
+      if (signal.aborted) return { ok: false, error: { code: "cancelled", message: "Search was cancelled." } };
+      return {
+        ok: false,
+        error: {
+          code: "search_unavailable",
+          message: timeout.aborted ? "Web search timed out." : "Web search is unavailable.",
+        },
+      };
+    }
+  }
 
   async fetchContent(url: string, signal: AbortSignal): Promise<OutboundFetchResult> {
     if (signal.aborted) return { ok: false, error: { code: "cancelled", message: "Fetch was cancelled." } };

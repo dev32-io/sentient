@@ -26,6 +26,7 @@ import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/me
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
 import {
+  DEFAULT_WEB_SUMMARY_PROMPT,
   loadDreamerTemplate,
   loadMemoryPreamble,
   loadSkillIndexPreamble,
@@ -1396,6 +1397,16 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       read_max_chars: 12_000,
       match_max_passages: 5,
       match_context_chars: 500,
+      search_max_results: 10,
+      grounded_source_count: 5,
+      passage_budget_chars: 12_000,
+      summary: {
+        model: "deepseek-v4-flash:cloud",
+        deadline_ms: 30_000,
+        max_input_chars: 20_000,
+        max_output_tokens: 800,
+        max_answer_chars: 6000,
+      },
     };
     for (const [name, runner] of composeProductToolProviders(undefined, {
       web: {
@@ -1418,7 +1429,25 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
             passageContextChars: webCfg.match_context_chars,
           },
           initialExtractChars: webCfg.initial_extract_chars,
+          search: {
+            maxResults: webCfg.search_max_results,
+            sourceCount: webCfg.grounded_source_count,
+            passageBudgetChars: webCfg.passage_budget_chars,
+            summary: {
+              fallbackModel: webCfg.summary.model,
+              deadlineMs: webCfg.summary.deadline_ms,
+              maxInputChars: webCfg.summary.max_input_chars,
+              maxOutputTokens: webCfg.summary.max_output_tokens,
+              maxAnswerChars: webCfg.summary.max_answer_chars,
+            },
+          },
         },
+        ...(provider
+          ? { provider: provider.forUser(principal.userId), summaryPrompt: DEFAULT_WEB_SUMMARY_PROMPT }
+          : {}),
+        screen: (text: string) =>
+          inboundGate.screen(text, { channel: "tool_result", source: "web_search" }, { sessionId: conversationId })
+            .text,
       },
       home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
       music: { adapter: musicAdapter },
