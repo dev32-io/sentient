@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-home-runtime
 title: Observe and operate the home through native tools
-status: contribution_complete
+status: merged
 dependsOn:
   - product-tool-catalog
 execution:
@@ -36,3 +36,4 @@ runtime:
   baseCommit: 231c5e8dae2a8920f5deede6f5c52ac0881fafb8
   lastRunId: 324f8374-4c7f-4d2f-94ea-072e34aeca72
   completedCommit: d5b64df2c23c6ff807d34c2b3aacc2637733f007
+  mergedCommit: 1ed73af2fab1cd2b4a5d5c399d29e758ae271a78
