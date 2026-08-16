@@ -302,6 +302,15 @@ orchestrator:
     read_max_chars: 12000
     match_max_passages: 5
     match_context_chars: 500
+    search_max_results: 10                 # SearXNG results accepted per search (1-20)
+    grounded_source_count: 5               # sources fetched concurrently for synthesis (1-10)
+    passage_budget_chars: 12000            # aggregate fetched passage budget sent to utility model
+    summary:
+      model: deepseek-v4-flash:cloud       # one fallback after the user's selected model
+      deadline_ms: 30000                   # shared deadline across selected + fallback attempts
+      max_input_chars: 20000               # complete utility prompt ceiling
+      max_output_tokens: 800
+      max_answer_chars: 6000               # final answer cap before entering main context
   tools:
     foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
     max_concurrent_background_tasks: 50      # per session (1-500)
