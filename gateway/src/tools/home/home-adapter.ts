@@ -328,9 +328,8 @@ export function createHomeAdapter(config: HomeAdapterConfig): HomeAdapter {
       if (response.status >= 300 && response.status < 400) throw new AdapterFailure("rejected");
       if (response.status === 404) throw new AdapterFailure("not_found");
       if (response.status === 409 || response.status === 412) throw new AdapterFailure("conflict");
-      if (response.status === 401 || response.status === 403 || response.status === 400)
-        throw new AdapterFailure("rejected");
-      if (!response.ok) throw new AdapterFailure("failed");
+      if (response.status >= 400 && response.status < 500) throw new AdapterFailure("rejected");
+      if (!response.ok) throw new AdapterFailure("failed", write && dispatched);
       handedOff = true;
       return { response, dispose: bounded.dispose };
     } catch (error) {

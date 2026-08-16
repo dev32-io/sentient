@@ -116,6 +116,66 @@ describe("HomeAdapter REST boundary", () => {
     expect(calls).toBe(1);
   });
 
+  it("treats ambiguous POST/PATCH/DELETE server responses as possibly dispatched without retry", async () => {
+    const cases = [
+      { operation: "create", method: "POST", status: 500 },
+      { operation: "update", method: "PATCH", status: 502 },
+      { operation: "remove", method: "DELETE", status: 503 },
+    ] as const;
+
+    for (const testCase of cases) {
+      const methods: string[] = [];
+      const adapter = createHomeAdapter({
+        baseUrl: "http://ha.local:8123",
+        readToken: "read",
+        writeToken: "write",
+        fetch: async (_input, init) => {
+          methods.push(init?.method ?? "GET");
+          return jsonResponse({ error: "server_error" }, testCase.status);
+        },
+      });
+
+      const response = await adapter.mutateCalendar(
+        "calendar.shared",
+        testCase.operation,
+        { uid: "event-1" },
+        new AbortController().signal,
+      );
+      expect(response.outcome).toBe("accepted_unverified");
+      expect(methods).toEqual([testCase.method]);
+    }
+  });
+
+  it("keeps explicit POST/PATCH/DELETE 4xx outcomes definite without retry", async () => {
+    const cases = [
+      { operation: "create", method: "POST", status: 400, outcome: "rejected" },
+      { operation: "update", method: "PATCH", status: 404, outcome: "not_found" },
+      { operation: "remove", method: "DELETE", status: 409, outcome: "conflict" },
+    ] as const;
+
+    for (const testCase of cases) {
+      const methods: string[] = [];
+      const adapter = createHomeAdapter({
+        baseUrl: "http://ha.local:8123",
+        readToken: "read",
+        writeToken: "write",
+        fetch: async (_input, init) => {
+          methods.push(init?.method ?? "GET");
+          return jsonResponse({ error: "definite_rejection" }, testCase.status);
+        },
+      });
+
+      const response = await adapter.mutateCalendar(
+        "calendar.shared",
+        testCase.operation,
+        { uid: "event-1" },
+        new AbortController().signal,
+      );
+      expect(response.outcome).toBe(testCase.outcome);
+      expect(methods).toEqual([testCase.method]);
+    }
+  });
+
   it("authenticates validated WebSocket registry calls and bounds reconnect attempts", async () => {
     const urls: string[] = [];
     let opens = 0;

@@ -1,9 +1,0 @@
-Playwright MCP fresh run against https://localhost/ (2026-08-16):
-- Authenticated local user Ada was already active; opened My Account -> Tools.
-- Real UI showed product groups: home 31/31, music 11/11, web 3/3; Hermes built-in tools 0/0.
-- Expanded web showed native tools web_search, fetch_content, read_web_content with Allow auto.
-- Returned to Conversation and sent: "Search the web for current news about the weather in Seattle."
-- Assistant returned: "Hmm, web search isn't cooperating right now — it's coming back unavailable. Let me try a different approach and fetch a forec..."
-- Composer exposed web_search and fetch_content attempted tool chips; no bounded cited answer/artifact result observed.
-- Browser console errors: WebSocket wss://localhost/api/v1/ws failed with HTTP 502 (twice).
-- Playwright network list included successful /api/v1/auth/me, /api/v1/profile/me, /api/v1/services/versions, /api/v1/mcp-catalog.

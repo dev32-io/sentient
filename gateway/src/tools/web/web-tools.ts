@@ -193,7 +193,7 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
             summarySources.push({
               id: i + 1,
               title: screen(source.title),
-              url: source.url,
+              url: screen(source.url),
               passage: screen(got.value.content.slice(0, end)),
               artifactId,
               totalChars: got.value.content.length,
@@ -210,7 +210,7 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
             summarySources.push({
               id: i + 1,
               title: screen(source.title),
-              url: source.url,
+              url: screen(source.url),
               passage: screen(source.snippet.slice(0, perSource)),
             });
           }
@@ -226,7 +226,7 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
           summarySources.push({
             id: i + 1,
             title: screen(source.title),
-            url: source.url,
+            url: screen(source.url),
             passage: screen(source.snippet),
           });
         }

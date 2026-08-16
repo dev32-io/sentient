@@ -14,8 +14,8 @@ For now, blast radius is acceptable: `sentient-internal` has
 `internal: true`, so the task container has no default route to the LAN
 or internet. Raw-TCP attempts to external hosts simply fail with
 "Network is unreachable." But raw-TCP to **other containers on
-`sentient-internal`** (gateway, sentient-hermes, ha-mcp, ma-mcp,
-ddg-mcp, the egress-proxy itself) **does** work — that's a lateral
+`sentient-internal`** (gateway, sentient-hermes, the egress-proxy,
+and any other active neighboring containers) **does** work — that's a lateral
 attack surface inside the trust boundary.
 
 Hardening work to do later:
