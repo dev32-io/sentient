@@ -31,6 +31,10 @@ enum ChatRow: Identifiable {
     // gateway entryId. turnId is a fallback only for a gateway that does not
     // stamp replyId. Index is the last resort.
     private static func messageRowId(_ m: ChatMessage, index: Int) -> String {
+        // Optimistic and committed user echoes share the pendingId identity.
+        if m.role == "user", let pendingId = m.pendingId, !pendingId.isEmpty {
+            return "send-\(pendingId)"
+        }
         if let replyId = m.replyId, !replyId.isEmpty { return "reply-\(replyId)" }
         if !m.entryId.isEmpty { return "ent-\(m.entryId)" }
         if let turnId = m.turnId, !turnId.isEmpty { return "turn-\(turnId)" }

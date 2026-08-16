@@ -4,9 +4,7 @@
 // (gateway/webui/src/components/chat/message-list.tsx, chat-view.tsx).
 //
 // A ScrollView of MessageBubbles with gapMsg (32pt) between messages.
-// Pin-to-bottom autoscroll: while pinned (default, at bottom), the list follows
-// new tokens/messages; scrolling up unpins and holds position; re-entering the
-// snap zone re-pins. Powered by FollowLatestState + followLatestOnScroll.
+// A newly observed outbound row is anchored at its beginning exactly once.
 //
 // Pending rows: optimistic outbox entries appended AFTER committed history.
 // Each pending message shows a status chip (QUEUED / SENT / FAILED); FAILED
@@ -24,12 +22,6 @@ import MobileData
 /// The scroll dimensions the pin FSM consumes. Projecting the iOS 18
 /// `onScrollGeometryChange` to this (rather than the full ScrollGeometry) lets
 /// SwiftUI skip frames where none of the three changed.
-private struct ScrollProbe: Equatable {
-    let top: Double
-    let height: Double
-    let clientHeight: Double
-}
-
 struct MessageList: View {
     let messages: [ChatMessage]
     /// Animation mode for the live (streaming) assistant bubble's avatar.
@@ -48,8 +40,9 @@ struct MessageList: View {
     /// a LazyVStack otherwise races `scrollTo` and sometimes lands short.
     var historyLoading: Bool = false
 
-    /// Pin-to-bottom FSM state. iOS 18+ only; ignored on iOS 17 (always-follow).
-    @State private var follow = FollowLatestState()
+    /// One-shot send identities already observed by this list.
+    @State private var sendAnchorState = SendAnchorState()
+    @State private var positionedHistory = false
 
     private static let placeholder = "Start a conversation\u{2026}"
     private static let bottomAnchor = "chat-bottom-anchor"
@@ -100,11 +93,14 @@ struct MessageList: View {
             scrollContent(proxy: proxy)
                 .scrollDismissesKeyboard(.interactively)
                 .accessibilityIdentifier("chat-message-list")
-                .onAppear { scrollToBottom(proxy, animated: false) }
+                // Initial/session history is the only non-send bottom positioning path.
+                .onAppear { positionInitialHistory(proxy) }
                 // Snapshot just landed (switch / reconnect-resume) → land at the tail.
-                // Deferred a runloop tick so the LazyVStack measures the new rows first.
                 .onChange(of: historyLoading) { _, loading in
-                    if !loading { DispatchQueue.main.async { scrollToBottom(proxy, animated: false) } }
+                    if !loading { DispatchQueue.main.async { positionInitialHistory(proxy) } }
+                }
+                .onChange(of: sendAnchorIdentities) { _, identities in
+                    anchorNewSend(proxy, identities: identities)
                 }
         }
     }
@@ -118,46 +114,14 @@ struct MessageList: View {
         }
     }
 
-    /// iOS 18+: geometry-driven pin FSM. Scrolling up unpins; re-entering the
-    /// snap zone re-pins. Auto-scroll fires only while pinned.
-    @available(iOS 18, *)
+    /// Both supported iOS versions use the same content; scrolling is driven only
+    /// by the send identity reducer below (not assistant growth or scroll position).
     private func ios18ScrollView(proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            messageRows()
-        }
-        // Project to just the dimensions the pin FSM reads, so SwiftUI dedupes
-        // frames where these three are unchanged (a bare `{ $0 }` fires the action
-        // on every scroll geometry change, churning @State every frame).
-        .onScrollGeometryChange(for: ScrollProbe.self, of: { geo in
-            ScrollProbe(
-                top: geo.contentOffset.y + geo.contentInsets.top,
-                height: geo.contentSize.height,
-                clientHeight: geo.containerSize.height
-            )
-        }) { _, probe in
-            follow = followLatestOnScroll(
-                follow, top: probe.top, height: probe.height, clientHeight: probe.clientHeight
-            )
-        }
-        .onChange(of: messages.count) { _, _ in
-            if follow.pinned { scrollToBottom(proxy) }
-        }
-        .onChange(of: messages.last?.content) { _, _ in
-            if follow.pinned { scrollToBottom(proxy) }
-        }
-        .onChange(of: pending.count) { _, _ in
-            if follow.pinned { scrollToBottom(proxy) }
-        }
+        ScrollView { messageRows() }
     }
 
-    /// iOS 17 fallback: always-follow (original behavior, no geometry API).
     private func ios17ScrollView(proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            messageRows()
-        }
-        .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
-        .onChange(of: messages.last?.content) { _, _ in scrollToBottom(proxy) }
-        .onChange(of: pending.count) { _, _ in scrollToBottom(proxy) }
+        ScrollView { messageRows() }
     }
 
     private func messageRows() -> some View {
@@ -177,6 +141,7 @@ struct MessageList: View {
                 case let .divider(label, _): DayDivider(label: label)
                 case let .message(m, i):
                     MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m, at: i, lastAssistant: lastAssistant), userName: userName)
+                        .accessibilityIdentifier(m.role == "user" ? m.pendingId.map { "chat-user-row-\($0)" } ?? "chat-user-row-\(m.entryId)" : "")
                 }
             }
             // Pending outbox entries: appended AFTER committed history, no day-dividers
@@ -184,6 +149,8 @@ struct MessageList: View {
             // SwiftUI doesn't reset local @State on recomposition. Mirrors Android.
             ForEach(pending, id: \.id) { msg in
                 PendingBubble(msg: msg, userName: userName, onRetry: { onRetry(msg.id) })
+                    .accessibilityIdentifier("chat-user-row-\(msg.id)")
+                    .id(sendAnchorIdentity(msg.id))
             }
             Color.clear
                 .frame(height: 1)
@@ -207,16 +174,30 @@ struct MessageList: View {
         return .idle
     }
 
-    /// Follow-latest: pin the bottom anchor into view on growth or streaming
-    /// token changes. Non-animated on first appear so a restored history lands
-    /// at the tail without a scroll animation.
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool = true) {
-        if animated {
-            withAnimation(.easeOut(duration: Motion.normal)) {
-                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-            }
-        } else {
-            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+    private var sendAnchorIdentities: Set<String> {
+        Set(pending.map { sendAnchorIdentity($0.id) } + messages.compactMap { message in
+            guard message.role == "user", let id = message.pendingId, !id.isEmpty else { return nil }
+            return sendAnchorIdentity(id)
+        })
+    }
+
+    /// Initial/session history may land at the tail, but this path never runs for
+    /// later row growth or assistant streaming.
+    private func positionInitialHistory(_ proxy: ScrollViewProxy) {
+        guard !positionedHistory, (!messages.isEmpty || !pending.isEmpty) else { return }
+        positionedHistory = true
+        // Rows present in the initial/session snapshot are not live sends.
+        sendAnchorState = SendAnchorState(observed: sendAnchorIdentities)
+        DispatchQueue.main.async { proxy.scrollTo(Self.bottomAnchor, anchor: .bottom) }
+    }
+
+    private func anchorNewSend(_ proxy: ScrollViewProxy, identities: Set<String>) {
+        let (next, newlySent) = reduceSendAnchor(sendAnchorState, identities: identities)
+        sendAnchorState = next
+        guard let newlySent else { return }
+        // The row id is the pendingId, so reconciliation keeps this same anchor.
+        withAnimation(.easeOut(duration: Motion.normal)) {
+            proxy.scrollTo(newlySent, anchor: .top)
         }
     }
 
