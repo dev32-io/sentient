@@ -1,0 +1,9 @@
+schemaVersion: 1
+evaluation: voice-authority-and-privacy-regression
+recordedAt: 2026-08-16T18:07:55.923Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :shared:mobile-data:allTests :android:testDebugUnitTest
+  - result: PASS
+    command: git diff --check

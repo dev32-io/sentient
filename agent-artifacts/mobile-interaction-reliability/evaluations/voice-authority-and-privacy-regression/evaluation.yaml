@@ -3,9 +3,9 @@ id: voice-authority-and-privacy-regression
 type: regression
 scope:
   workItem: mobile-interaction-reliability
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - "Context: The voice changes cross a sensitive audio boundary: TalkMode must
     remain shared authority, and waveform metering must reuse the existing
@@ -35,8 +35,38 @@ methods:
   - "Run: git diff --check"
 checkpoint: planned
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 2
+  state: awaiting_manager
   reviewerAgentId: 11e7f3f8-0e0d-4ff1-9ab1-0a67d2682a2e
   reviewedCommit: 936a2a47b18a6aca01934758cc1603e0cb743964
+findings:
+  - id: voice-envelope-ios-native-array-surface
+    severity: medium
+    status: open
+    criterion: Envelope-only native visualization surface
+    location: ios/App/Chat/ChatViewModel.swift:37,286-287;
+      ios/App/Chat/composer/Composer.swift:58,138
+    summary: iOS converts MicLevelEnvelope into and propagates [Float] through the
+      native visualization surface.
+    blocking: false
+  - id: voice-meter-before-uplink-delivery
+    severity: medium
+    status: open
+    criterion: Metering cannot delay or alter uplink delivery
+    location: VoiceAudioRecord.android.kt:143-145; MicCaptureEngine.ios.kt:205-207;
+      DuplexEngine.ios.kt:322-324
+    summary: meter.accept runs synchronously before trySend/deliver on every capture
+      path.
+    blocking: false
+  - id: voice-native-waveform-test-coverage
+    severity: low
+    status: open
+    criterion: Native rendering tests with injected envelopes
+    location: android/.../PttWave.kt; ios/.../PttBigWave.swift
+    summary: No native waveform rendering tests were found.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/voice-authority-and-privacy-regression/manifest.yaml
