@@ -38,11 +38,27 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  iteration: 0
+  state: fixing
+  iteration: 1
   maxIterations: 2
-  state: awaiting_manager
   reviewerAgentId: 239fb583-c172-4cb7-93d4-5f01857844ef
   reviewedCommit: 028a137ce98e40d29acf52ea162c963025be856a
+  managerPrompt: "Repair all three blocking Music Assistant safety findings
+    without any live household mutation. FIS-001: preserve and propagate
+    dispatched=true for cancellation/timeout/errors occurring after a WebSocket
+    command may have been sent, so mutating standard tools return
+    accepted_unverified and cannot be treated as safely retryable; add pre-send
+    versus post-send cancellation tests. FIS-002: preserve typed rejected,
+    failed, unavailable, and accepted_unverified semantic outcomes through
+    standard music tool results instead of collapsing them to outcome=error; add
+    tool-level contract tests. FIS-003: validate browse/listPlayers and other
+    collection responses as unknown external payloads and return a
+    protocol/unavailable failure for malformed shapes rather than legitimate
+    empty collections; add malformed correlated-response tests. Preserve
+    reconnect/correlation behavior and no automatic replay. Run focused Music
+    adapter/tool/state-machine tests, gateway tool/bootstrap tests, typecheck,
+    lint, and git diff --check. Use only fakes/fixtures; do not issue live
+    playback, volume, queue, transfer, grouping, or any HA mutation."
 findings:
   - id: FIS-001
     severity: high
