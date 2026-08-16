@@ -15,7 +15,9 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - Releasing hold-to-talk finalizes the new manual speech turn normally.
 - Sending a user message always anchors the beginning of its stable optimistic/committed row at the viewport top, even after prior user scrolling; assistant creation, token streaming, TTS changes, tool updates, and row growth never initiate programmatic scrolling.
 - Initial history/session loading may position at the latest message. A user message taller than the viewport anchors at its beginning and is not subsequently repositioned.
-- While capture is active, the existing mobile waveform responds to the capture-level stream; silence retains a subtle baseline and capture end removes the waveform.
+- The SDK capture layer computes one aggregate energy value from each existing capture frame, applies shared bounds and attack/release smoothing, and maintains a rolling 32-value mic level envelope. Capture stop resets the envelope.
+- Native ViewModels/UI consume only the mic level envelope. They never receive, copy, retain, or process raw PCM for visualization.
+- While capture is active, the existing 32-bar mobile waveform maps each bar to the corresponding envelope value; silence retains a subtle baseline and capture end removes the waveform.
 - Waveform rendering preserves the existing full-composer placement, 32-bar structure, sine contour, spacing, colors, and motion character. Reduced-motion remains consistent with current accessibility behavior.
 - Fish browsing on mobile mirrors web title, language, gender, age, vibe/tag, sort, active-filter, and reset semantics, using case-normalized web-equivalent facet taxonomy.
 - Returning from a Fish clone editor restores the same filtered Fish result page, including query, facets, sort, loaded results, and scroll position.
@@ -27,10 +29,11 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - **AC-002:** Restarting the app does not create an extra empty conversation, while repeated New Chat taps create at most one draft.
 - **AC-003:** Deterministic talk-mode, command-lane, and native gesture tests prove interrupt-before-manual-capture ordering, survival of transient inactive state, and safe reset on genuine failure.
 - **AC-004:** A newly sent user row begins at the viewport top and remains anchored while a multi-screen assistant response streams below it.
-- **AC-005:** The mobile waveform tracks injected deterministic silence, quiet, and louder capture levels through bounded aggregate UI state without changing the established visual design.
-- **AC-006:** Equivalent mobile and web Fish filter selections produce equivalent visible catalog subsets and ordering from the same loaded entries.
-- **AC-007:** The sequence Fish results → clone editor → Back restores the same filtered results; subsequent Back returns to Voice, then Settings, then Chat.
-- **AC-008:** All E2E acceptance is fully agentic. Real microphone routing, acoustic response, spoken-turn recognition, and device timing are not workflow completion gates and remain residual risk for later owner build testing.
+- **AC-005:** SDK tests prove the mic level envelope has exactly 32 bounded values, applies shared normalization/smoothing, advances from existing capture frames, resets on capture end, and exposes no PCM through ChatComponent or native UI state.
+- **AC-006:** The existing mobile waveform tracks injected deterministic silence, quiet, and louder 32-value envelopes without changing its established visual design.
+- **AC-007:** Equivalent mobile and web Fish filter selections produce equivalent visible catalog subsets and ordering from the same loaded entries.
+- **AC-008:** The sequence Fish results → clone editor → Back restores the same filtered results; subsequent Back returns to Voice, then Settings, then Chat.
+- **AC-009:** All E2E acceptance is fully agentic. Real microphone routing, acoustic response, spoken-turn recognition, and device timing are not workflow completion gates and remain residual risk for later owner build testing.
 
 ## Domain Language
 
@@ -38,7 +41,7 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - A draft is the fresh conversation target established by Explicit New Chat before its first durable message.
 - Send anchor means positioning the beginning of the newly sent user row at the top of the current viewport exactly when the user sends.
 - Barge-in press is one gesture that interrupts the active assistant turn and opens manual capture for the next user turn.
-- Capture level is a bounded, normalized, smoothed aggregate derived from microphone PCM; it contains no audio payload.
+- Mic level envelope is an SDK-owned rolling sequence of exactly 32 normalized, smoothed aggregate energy values derived from existing capture PCM. It contains no PCM samples or audio payload and is the only microphone visualization signal exposed to native ViewModels/UI.
 - Previous page means the immediately preceding visible entry in navigation history, including transient editors within a settings journey.
 
 ## Actors
@@ -53,7 +56,7 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - Deterministic voice seams exercise an active assistant state, one mic press, transient inactive projection, manual capture start, and release without physical microphone input.
 - The user sends short and viewport-taller messages from a long conversation and observes assistant streaming without viewport movement.
 - The user applies combined Fish facets, sorting, and search, opens a result, then backs through the exact page history.
-- Injected silence, quiet, and louder capture levels drive the existing waveform design in automated rendering checks.
+- SDK tests feed deterministic PCM frames representing silence, quiet input, and louder input into the meter; native rendering tests consume the resulting or injected 32-value envelopes.
 
 ## Edge Cases
 
@@ -62,6 +65,7 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - The optimistic pending message reconciles to its committed echo without changing its scroll identity.
 - Assistant output begins before or after the send-anchor movement completes.
 - Capture permission is denied or capture startup genuinely fails after an interrupt.
+- Capture starts or stops before the 32-value envelope has filled; missing history uses the established silence baseline.
 - A Fish facet has no options in the loaded catalog or combined filters produce no matches.
 - Back is invoked through platform gesture rather than the custom top bar.
 
@@ -71,5 +75,6 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - Replacing Fish browsing or changing Fish import/audio bundling for local TTS
 - Assistant-playback-reactive visualization
 - Settings information-architecture redesign
+- Passing raw PCM or platform audio-engine objects into native ViewModels/UI
 - Physical microphone, acoustic waveform, spoken-turn, or other user-assisted workflow verification
 - Production mutation or smoke testing
