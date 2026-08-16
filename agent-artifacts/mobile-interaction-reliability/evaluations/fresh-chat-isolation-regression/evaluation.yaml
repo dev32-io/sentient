@@ -3,9 +3,9 @@ id: fresh-chat-isolation-regression
 type: regression
 scope:
   workItem: mobile-interaction-reliability
-status: planned
+status: passed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - "Context: New Chat is a critical conversation/data boundary: a locally clear
     timeline is insufficient if queued messages or model context still target
@@ -32,8 +32,13 @@ methods:
   - "Run: git diff --check"
 checkpoint: planned
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 2
+  state: passed
   reviewerAgentId: fbaacd9b-f21d-4fbb-82c1-416dac130f98
   reviewedCommit: fc641a0c15ade53eba5b57ff274555a75c715f6e
+findings: []
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/fresh-chat-isolation-regression/manifest.yaml

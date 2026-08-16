@@ -1,0 +1,11 @@
+schemaVersion: 1
+evaluation: fresh-chat-isolation-regression
+recordedAt: 2026-08-16T18:07:43.785Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :shared:mobile-data:allTests :android:testDebugUnitTest
+  - result: 39 pass, 0 fail
+    command: bun test gateway/src/session-handlers/ws-handlers-routing.test.ts
+  - result: clean
+    command: git diff --check
