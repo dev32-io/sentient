@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: gradle-jdk21-environment
 title: Make repository Gradle checks discover Homebrew JDK 21
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -21,3 +21,9 @@ verification:
       != "" && ./gradlew --version | grep -E "Launcher JVM:.*21"'
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/gradle-jdk21-environment
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/gradle-jdk21-environment
+  baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
+  lastRunId: 2523e3bd-8826-4b05-80e0-ae7ca6c96d4f
