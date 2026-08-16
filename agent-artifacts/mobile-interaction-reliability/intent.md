@@ -16,17 +16,17 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 - Privacy-safe real-input waveform behavior built on the existing visual design
 - Mobile Fish catalog filter and sort parity with web
 - Natural stack-based Back behavior across nested settings pages
-- Deterministic automated boundary verification plus user-owned final physical-microphone testing
+- Fully agentic E2E for driveable journeys and deterministic automated verification at voice/audio boundaries
 
 ## Success Signals
 
 - A user-triggered New Chat produces an isolated durable conversation while restart does not create a phantom session
-- A single hold press during TTS both stops the assistant and begins the new manual speech turn
+- Deterministic tests prove one hold press orders interrupt before manual capture and survives transient inactive state
 - A sent user message anchors at the viewport top and assistant output never programmatically moves it
-- The existing waveform visibly follows real mic energy without changing its established design language
+- Injected capture levels drive the existing waveform design through bounded, normalized UI state
 - Mobile Fish results support the same search, facets, sorting, and reset semantics as web
 - Back always returns to the immediately previous visible settings page with route-scoped state preserved
-- All approved driveable E2E cases pass locally and manual device voice verification is completed by the user
+- All approved fully agentic E2E cases pass locally; physical-device voice behavior remains an explicit residual risk for later owner build testing outside the workflow
 
 ## Scope — Excluded
 
@@ -34,7 +34,7 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 - Replacing Fish browsing or changing the Fish import and local-TTS bundling pipeline
 - Audio-reactive assistant playback visualization
 - Redesigning settings information architecture or the existing mobile visual language
-- Agent-driven physical microphone or acoustic E2E testing
+- Physical microphone, acoustic, spoken-turn, or other user-assisted workflow verification
 - Production testing or production mutation
 
 ## Constraints
@@ -43,4 +43,5 @@ Both mobile clients preserve conversation boundaries, make voice barge-in reliab
 - All UI work reuses current components, typography, spacing, colors, motion, accessibility conventions, and navigation patterns
 - Raw audio and high-frequency level history must not enter UI state, logs, or retained evidence
 - App launch/resume and explicit user-requested New Chat must remain distinct operations
+- Every planned E2E case must be executable to completion by an agent without user intervention
 - Production remains observational-only
