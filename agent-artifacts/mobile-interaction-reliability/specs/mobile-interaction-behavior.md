@@ -2,7 +2,7 @@
 
 ## Context
 
-Defines observable iOS and Android behavior for conversation identity, voice barge-in, chat scrolling, microphone visualization, Fish catalog filtering, and settings navigation.
+Defines observable iOS and Android behavior for conversation identity, voice barge-in, chat scrolling, microphone visualization, Fish catalog filtering, and settings navigation. Physical-device voice behavior remains desired product behavior but is not a user-assisted workflow verification gate.
 
 ## Required Behaviors
 
@@ -25,11 +25,12 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 
 - **AC-001:** A marker sent immediately after Explicit New Chat appears only in a distinct new conversation; the prior conversation does not receive that message or context.
 - **AC-002:** Restarting the app does not create an extra empty conversation, while repeated New Chat taps create at most one draft.
-- **AC-003:** During assistant TTS, one hold press stops playback and remains in capture until release; release submits the newly spoken turn.
+- **AC-003:** Deterministic talk-mode, command-lane, and native gesture tests prove interrupt-before-manual-capture ordering, survival of transient inactive state, and safe reset on genuine failure.
 - **AC-004:** A newly sent user row begins at the viewport top and remains anchored while a multi-screen assistant response streams below it.
-- **AC-005:** The mobile waveform visibly tracks injected deterministic capture levels in automated rendering checks and real microphone energy in the user's final manual device test without changing the established visual design.
+- **AC-005:** The mobile waveform tracks injected deterministic silence, quiet, and louder capture levels through bounded aggregate UI state without changing the established visual design.
 - **AC-006:** Equivalent mobile and web Fish filter selections produce equivalent visible catalog subsets and ordering from the same loaded entries.
 - **AC-007:** The sequence Fish results → clone editor → Back restores the same filtered results; subsequent Back returns to Voice, then Settings, then Chat.
+- **AC-008:** All E2E acceptance is fully agentic. Real microphone routing, acoustic response, spoken-turn recognition, and device timing are not workflow completion gates and remain residual risk for later owner build testing.
 
 ## Domain Language
 
@@ -49,10 +50,10 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 
 - Existing conversation A receives marker A; the user explicitly starts a new chat and immediately sends marker B; history shows distinct conversations and each contains only its own marker.
 - The app restarts while attached to an existing conversation and resumes without minting a phantom draft.
-- Assistant TTS is playing when the user presses and holds the mic, speaks a follow-up, and releases.
+- Deterministic voice seams exercise an active assistant state, one mic press, transient inactive projection, manual capture start, and release without physical microphone input.
 - The user sends short and viewport-taller messages from a long conversation and observes assistant streaming without viewport movement.
 - The user applies combined Fish facets, sorting, and search, opens a result, then backs through the exact page history.
-- Injected silence, quiet, and louder capture levels drive the existing waveform design; a user repeats this on a physical device at final acceptance.
+- Injected silence, quiet, and louder capture levels drive the existing waveform design in automated rendering checks.
 
 ## Edge Cases
 
@@ -70,5 +71,5 @@ Defines observable iOS and Android behavior for conversation identity, voice bar
 - Replacing Fish browsing or changing Fish import/audio bundling for local TTS
 - Assistant-playback-reactive visualization
 - Settings information-architecture redesign
-- Agent-driven physical-microphone or acoustic E2E testing
+- Physical microphone, acoustic waveform, spoken-turn, or other user-assisted workflow verification
 - Production mutation or smoke testing
