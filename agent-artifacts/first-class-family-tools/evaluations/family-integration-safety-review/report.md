@@ -10,38 +10,38 @@ No qualified criteria declared.
 
 ## Observations
 
-Checked HEAD 8ac582dc402dcb4fe6cfa673c649676b8fccb687 read-only.
+# Family integration safety re-review
 
-Requirement conclusions:
-- PASS: Required automated suite, typecheck, and diff check all pass.
-- PASS: Home adapter validation/bounded waits, deterministic Home/player resolution, Home accepted_unverified/no-retry behavior, composed music_play single broker boundary/minimal sequence, standard music primitive availability, standard scene/automation/script discovery/activation/inspection/create/update contracts, and fake-only mutation coverage are supported by tests and code evidence.
-- PASS: No live HA/MA calls or mutations were performed. Generated evidence contains no local-development PIN.
-- FAIL: Music mutation cancellation after dispatch does not preserve dispatch ambiguity (FIS-001).
-- FAIL: Standard music primitive failures do not distinguish rejected and failed semantic outcomes (FIS-002).
-- FAIL: Music collection payloads are not fail-closed on wrong upstream result shape (FIS-003).
+## Verdict
+PASS at commit `9d727cba8f1ed924d4c678185d1af9f9ef919000` on a clean feature branch. Tests and fakes only; no live Home Assistant or Music Assistant access or mutation.
 
-The explicit integration-safety contract is therefore not met despite the green suite.
+## Findings
+FIS-001, FIS-002, FIS-003, and follow-up FIS-RR-001 are resolved. Dispatch evidence is preserved across cancellation and timeout; post-send ambiguity returns `accepted_unverified` without replay; pre-mutation/player-resolution cancellation remains outside the mutation window; standard primitives preserve typed semantic outcomes; malformed collection payloads fail closed; composed `music_play` retains one broker authorization and one mutation followed by bounded verification.
+
+## Verification
+Focused Music/broker tests passed 114/114. Canonical gateway tools/bootstrap tests passed 432 with 2 live tests intentionally skipped. Typecheck, lint, and `git diff --check` passed. Final worktree was clean.
 
 ## Evidence
 
-- **EV-001:** source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap — 419 pass, 2 skip, 0 fail
-- **EV-002:** source scripts/env.sh && bun run typecheck — All workspace typechecks exited 0
-- **EV-003:** source scripts/env.sh && git diff --check — Exit 0; no output
-- **EV-004:** Controlled fake-socket mutation cancellation reproduction — One mutation was sent; surfaced error was cancelled with dispatched=false
-- **EV-005:** Controlled standard-primitive rejection reproduction — Typed upstream rejection surfaced as outcome=error, not rejected
-- **EV-006:** Controlled malformed MA payload reproduction — Wrong-shaped players/all result surfaced as []
+- **EV-001:** source scripts/env.sh && bun test gateway/src/tools/music gateway/src/tools/tool-broker.test.ts — 114 passed, 0 failed
+- **EV-002:** source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap — 432 passed, 2 live tests skipped, 0 failed
+- **EV-003:** source scripts/env.sh && bun run typecheck — All workspaces passed
+- **EV-004:** source scripts/env.sh && bun run lint — 4,678 files checked; no errors
+- **EV-005:** source scripts/env.sh && git diff --check — Passed; worktree clean
 
 ## Findings
 
-- **FIS-001** (high, open): A post-send abort creates a cancelled error with dispatched=false, so standard music mutations report cancellation rather than accepted_unverified and may be retried by the caller.
-- **FIS-002** (medium, open): Standard music primitives collapse typed rejection and failure categories into outcome=error rather than the required semantic outcomes.
-- **FIS-003** (medium, open): browse/listPlayers silently convert wrong-shaped correlated payloads into empty collections, misreporting malformed upstream data as a legitimate no-result state.
+- **FIS-001** (high, resolved): Dispatch state is preserved across cancellation, timeout, disconnect, and protocol ambiguity.
+- **FIS-002** (medium, resolved): Standard music mutations preserve typed semantic outcomes.
+- **FIS-003** (medium, resolved): Malformed collection payloads fail closed rather than becoming empty results.
+- **FIS-RR-001** (medium, resolved): Player-resolution and proven-undispatched cancellation remain outside the mutation ambiguity window.
 
 ## Verdict
 
-fail
+pass
 
 ## Residual Risk
 
-- No optional live observational E2E was run, so compatibility with the locally configured HA/MA versions remains unverified.
-- Multi-player grouping is a sequential multi-mutation operation; partial completion semantics under cancellation or a later member failure were not directly covered by the reviewed tests.
+- Compatibility with locally configured HA/MA versions was not exercised because live access was intentionally avoided.
+- Multi-player grouping remains sequential, so a later member failure can leave partial completion.
+- Transport behavior beyond fake WebSocket coverage depends on Bun/runtime WebSocket semantics.

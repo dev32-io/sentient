@@ -1,28 +1,15 @@
 schemaVersion: 1
 evaluation: family-integration-safety-review
-recordedAt: 2026-08-16T01:04:53.851Z
+recordedAt: 2026-08-16T02:49:49.420Z
 entries:
-  - result: 419 pass, 2 skip, 0 fail
+  - result: 114 passed, 0 failed
+    command: source scripts/env.sh && bun test gateway/src/tools/music
+      gateway/src/tools/tool-broker.test.ts
+  - result: 432 passed, 2 live tests skipped, 0 failed
     command: source scripts/env.sh && bun test gateway/src/tools gateway/src/bootstrap
-    path: files/1-family-integration-safety-review-tests.log
-    checksum: sha256:7336429f4385926664bbc1b33fadd35220d4ba47d4e5e8aba9517168b89c900f
-  - result: All workspace typechecks exited 0
+  - result: All workspaces passed
     command: source scripts/env.sh && bun run typecheck
-    path: files/2-family-integration-safety-review-typecheck.log
-    checksum: sha256:7b04fd59923a17aa51136f349a76fc1e5b4ac9f0a331db200ab8f260e8a71d73
-  - result: Exit 0; no output
+  - result: 4,678 files checked; no errors
+    command: source scripts/env.sh && bun run lint
+  - result: Passed; worktree clean
     command: source scripts/env.sh && git diff --check
-    path: files/3-family-integration-safety-review-diff-check.log
-    checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-  - result: One mutation was sent; surfaced error was cancelled with dispatched=false
-    description: Controlled fake-socket mutation cancellation reproduction
-    path: files/4-family-integration-safety-review-music-cancel-repro.log
-    checksum: sha256:a4e11059db5955fb2378505dcfa1495d9c2c64af65cc4cd0085116aab1a7c854
-  - result: Typed upstream rejection surfaced as outcome=error, not rejected
-    description: Controlled standard-primitive rejection reproduction
-    path: files/5-family-integration-safety-review-music-rejection-repro.log
-    checksum: sha256:837cb0bb83b5c5225b48e2f38a5cb106047791fd5359896edafd44546df1f13d
-  - result: Wrong-shaped players/all result surfaced as []
-    description: Controlled malformed MA payload reproduction
-    path: files/6-family-integration-safety-review-music-malformed-repro.log
-    checksum: sha256:49ff7aea8cd2a0f6c907f08e4fe614f354a9d2ffb12564addf7079e6a24ec80e

@@ -3,9 +3,9 @@ id: family-integration-safety-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: failed
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - "Context: Run after Home and Music native tools and cutover are integrated."
   - "Context: The evaluator may use the real local Sentient stack and PIN 1234,
@@ -38,9 +38,9 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: fixing
   iteration: 1
   maxIterations: 2
+  state: passed
   reviewerAgentId: 239fb583-c172-4cb7-93d4-5f01857844ef
   reviewedCommit: 028a137ce98e40d29acf52ea162c963025be856a
   managerPrompt: "Repair all three blocking Music Assistant safety findings
@@ -62,33 +62,38 @@ loop:
 findings:
   - id: FIS-001
     severity: high
-    status: open
+    status: resolved
     criterion: Possible-dispatch side effects return accepted_unverified and are not
       retried
-    location: gateway/src/tools/music/music-adapter.ts:519-555;
-      gateway/src/tools/music/music-tools.ts:78-95
-    summary: A post-send abort creates a cancelled error with dispatched=false, so
-      standard music mutations report cancellation rather than
-      accepted_unverified and may be retried by the caller.
+    location: gateway/src/tools/music/music-adapter.ts:505-577
+    summary: Dispatch state is preserved across cancellation, timeout, disconnect,
+      and protocol ambiguity.
     blocking: true
   - id: FIS-002
     severity: medium
-    status: open
-    criterion: Side-effecting calls distinguish rejected, failed, and accepted_unverified
-    location: gateway/src/tools/music/music-tools.ts:78-97
-    summary: Standard music primitives collapse typed rejection and failure
-      categories into outcome=error rather than the required semantic outcomes.
+    status: resolved
+    criterion: Side-effecting calls distinguish rejected, failed, unavailable, and
+      accepted_unverified
+    location: gateway/src/tools/music/music-tools.ts:78-114
+    summary: Standard music mutations preserve typed semantic outcomes.
     blocking: true
   - id: FIS-003
     severity: medium
-    status: open
+    status: resolved
     criterion: Music adapter validates unknown upstream payloads and degrades honestly
-    location: gateway/src/tools/music/music-adapter.ts:595-608
-    summary: browse/listPlayers silently convert wrong-shaped correlated payloads
-      into empty collections, misreporting malformed upstream data as a
-      legitimate no-result state.
+    location: gateway/src/tools/music/music-adapter.ts:595-670
+    summary: Malformed collection payloads fail closed rather than becoming empty
+      results.
+    blocking: true
+  - id: FIS-RR-001
+    severity: medium
+    status: resolved
+    criterion: Pre-mutation failures must not be mislabeled accepted_unverified
+    location: gateway/src/tools/music/music-play-state-machine.ts:231-269
+    summary: Player-resolution and proven-undispatched cancellation remain outside
+      the mutation ambiguity window.
     blocking: true
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/family-integration-safety-review/manifest.yaml
