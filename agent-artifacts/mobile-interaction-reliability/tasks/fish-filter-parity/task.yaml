@@ -20,7 +20,7 @@ verification:
       :shared:mobile-data:allTests :android:testDebugUnitTest
     - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
       -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
-      'platform=iOS Simulator,name=iPhone 16'
+      'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
 runtime:
