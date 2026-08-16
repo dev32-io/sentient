@@ -3,7 +3,7 @@ id: tool-governance-migration-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -45,7 +45,7 @@ methods:
   - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
 checkpoint: planned
 loop:
-  state: fixing
+  state: rereviewing
   iteration: 1
   maxIterations: 2
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
@@ -65,6 +65,7 @@ loop:
     gateway/web/KMP checks plus delegation tests, typecheck, and git diff
     --check. Do not modify unrelated behavior or use production/household
     mutations."
+  fixerAgentId: 90645254-c592-4d24-bdf2-cc91bee9f5e1
 findings:
   - id: TGMR-001
     severity: high
