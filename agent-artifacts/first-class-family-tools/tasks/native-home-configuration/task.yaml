@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-home-configuration
 title: Manage household scenes, automations, scripts, todos, and calendars
-status: blocked
+status: ready
 dependsOn:
   - native-home-runtime
 execution:
