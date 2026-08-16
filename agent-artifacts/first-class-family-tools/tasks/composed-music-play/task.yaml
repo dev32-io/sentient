@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: composed-music-play
 title: Play natural-language music in a room with one tool call
-status: running
+status: contribution_complete
 dependsOn:
   - native-music-primitives
 execution:
@@ -36,3 +36,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/first-class-family-tools/composed-music-play
   baseCommit: 605f7968723740310ee8a2cc9e95417931cc5002
   lastRunId: 85f34932-03f2-44c6-b9a7-ded4d1270dbe
+  completedCommit: 0f164bb15599f1ea799a7ee11c15d293687e23d9
