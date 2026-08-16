@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: shared-talkmode-barge-in
 title: Make shared TalkMode authoritative for hold-to-talk barge-in
-status: contribution_complete
+status: merged
 dependsOn:
   - fresh-chat-boundary
 execution:
@@ -31,3 +31,4 @@ runtime:
   baseCommit: 457f15156b88b7d858e5a3f82794a00e4bf87a7f
   lastRunId: 4b474d71-3f9a-4190-9ba5-f5ca5762cb8c
   completedCommit: 3b58003f0e506fc667dde4fe258947e8bfadb933
+  mergedCommit: abe1c9c86cdbeef27238e15da6e49e9a313ace04
