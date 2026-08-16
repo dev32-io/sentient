@@ -288,7 +288,7 @@ struct ChatView: View {
                 tasks: tasks,
                 canSend: true,
                 ttsEnabled: connection.prefs.ttsEnabled,
-                micActive: voiceActive,
+                talkMode: vm.talkMode,
                 canInterrupt: canInterrupt,
                 onSend: { vm.send($0) },
                 onMicPress: { vm.pressMic() },

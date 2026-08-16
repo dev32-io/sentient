@@ -28,14 +28,14 @@
 // ---------------------------------------------------------------------------
 import SwiftUI
 import UIKit
+import MobileData
 
 struct MicCorner: View {
     /// Mirrors voiceMode == .active — external sync input, never written here.
-    let micActive: Bool
+    let talkMode: TalkMode
     /// Permission gate for a press from idle: true → enter hold + start.
     let beginPress: () -> Bool
     /// Composer takeover (waveform, hidden buttons) follows the reported mode.
-    let onModeChange: (MicCornerMode) -> Void
     /// idle→hold (press): enter push-to-talk.
     let onPress: () -> Void
     /// hold→idle (release below the lock threshold): end the manual turn.
@@ -45,7 +45,13 @@ struct MicCorner: View {
     /// locked→idle (unlock release / tap-to-stop): leave continuous.
     let onStopContinuous: () -> Void
 
-    @State private var mode: MicCornerMode = .idle
+    private var mode: MicCornerMode {
+        switch talkMode {
+        case .idle: return .idle
+        case .hold: return .hold
+        case .continuous: return .locked
+        }
+    }
     /// Button offset toward the lock end, 0…travel. Raw while dragging;
     /// spring-animated on release/reset.
     @State private var drag: CGFloat = 0
@@ -89,13 +95,11 @@ struct MicCorner: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(width: MicCornerLayout.wrapWidth, height: MicCornerLayout.buttonSize)
-        .onChange(of: micActive) { was, now in
-            // External teardown (disconnect, cleanup, failed start) while
-            // held/locked → snap back to idle WITHOUT stopping again. Reacts to
-            // the true→false edge only, so it never races the optimistic hold
-            // that begins before micActive propagates.
-            if was, !now, mode != .idle, !dragging {
-                resetToIdle(trigger: "external-off")
+        .onChange(of: talkMode) { _, now in
+            // Shared Idle is authoritative after teardown/failure; only reset the
+            // presentation offset and never emit another stop intent.
+            if now == .idle, !dragging {
+                withAnimation(MicCornerMotion.settle) { drag = 0 }
             }
         }
         .task(id: breatheActive) {
@@ -205,8 +209,6 @@ struct MicCorner: View {
     private func setMode(_ next: MicCornerMode, trigger: String) {
         guard next != mode else { return }
         let prev = mode
-        mode = next
-        onModeChange(next)
         log.info("mode-change from=\(prev.rawValue) to=\(next.rawValue) trigger=\(trigger)")
         if next == .locked { snapBounce() }
         emitIntent(from: prev, to: next)
@@ -225,15 +227,6 @@ struct MicCorner: View {
         case (.idle, .locked): onPress(); onLock()
         default: break
         }
-    }
-
-    /// External reset — the mic is already torn down; must NOT emit an intent.
-    private func resetToIdle(trigger: String) {
-        let prev = mode
-        mode = .idle
-        onModeChange(.idle)
-        withAnimation(MicCornerMotion.settle) { drag = 0 }
-        log.info("mode-change from=\(prev.rawValue) to=idle trigger=\(trigger)")
     }
 
     /// VoiceOver can't drag — activate toggles the hands-free lock directly
@@ -276,9 +269,8 @@ struct MicCorner: View {
 
 #Preview("Corner mic — idle (interactive)") {
     MicCorner(
-        micActive: false,
+        talkMode: .idle,
         beginPress: { true },
-        onModeChange: { _ in },
         onPress: {},
         onRelease: {},
         onLock: {},

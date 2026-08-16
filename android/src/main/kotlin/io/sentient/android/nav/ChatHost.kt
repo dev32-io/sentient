@@ -145,6 +145,7 @@ internal fun ChatHost(
         ChatContent(
             uiState = chatUi,
             connection = connection,
+            talkMode = talkMode,
             userName = userName,
             onSend = chatVm::send,
             onRetry = chatVm::retry,

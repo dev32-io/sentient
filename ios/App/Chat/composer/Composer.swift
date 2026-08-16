@@ -54,7 +54,7 @@ struct Composer: View {
     let ttsEnabled: Bool
     /// True while voiceMode == .active — drives the listening glow and the
     /// MicCorner external sync (a true→false teardown resets the control).
-    let micActive: Bool
+    let talkMode: TalkMode
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
     let onSend: (String) -> Void
@@ -75,7 +75,6 @@ struct Composer: View {
     @State var draft = ""
     @State var micDenied = false
     /// Corner-mic mode as reported by MicCorner — drives the recording takeover.
-    @State private var micMode: MicCornerMode = .idle
     @FocusState private var inputFocused: Bool
 
     let log = AppLog("composer")
@@ -86,7 +85,7 @@ struct Composer: View {
     }
 
     /// True while the corner mic holds the composer (hold or locked).
-    private var isRecording: Bool { micMode != .idle }
+    private var isRecording: Bool { talkMode != .idle }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -145,7 +144,7 @@ struct Composer: View {
             // Soft amber halo — mirrors the webui composer glow; intensifies while
             // the mic is active (listening state). Color from DuskColors.amber token.
             color: DuskColors.amber.opacity(
-                micActive ? ComposerLayout.glowListeningOpacity : ComposerLayout.glowOpacity
+                talkMode != .idle ? ComposerLayout.glowListeningOpacity : ComposerLayout.glowOpacity
             ),
             radius: ComposerLayout.glowRadius
         )
@@ -153,7 +152,7 @@ struct Composer: View {
             // Listening glow: the whole composer card borders accent while the mic
             // is active (mirrors webui .composer--listening).
             RoundedRectangle(cornerRadius: ComposerLayout.radius)
-                .stroke(micActive ? DuskColors.accent : DuskColors.line, lineWidth: 1)
+                .stroke(talkMode != .idle ? DuskColors.accent : DuskColors.line, lineWidth: 1)
         )
     }
 
@@ -164,11 +163,8 @@ struct Composer: View {
 
     private var micCorner: some View {
         MicCorner(
-            micActive: micActive,
+            talkMode: talkMode,
             beginPress: onMicPressGate,
-            onModeChange: { mode in
-                withAnimation(.easeOut(duration: 0.25)) { micMode = mode }
-            },
             onPress: onMicPress,
             onRelease: onMicRelease,
             onLock: onMicLock,
