@@ -33,11 +33,24 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  iteration: 0
+  state: fixing
+  iteration: 1
   maxIterations: 2
-  state: awaiting_manager
   reviewerAgentId: 52864b4e-613b-406b-8d4f-d2ff7ce99e7b
   reviewedCommit: 24df86294301bbbe285499b0487aeced83783605
+  managerPrompt: "Repair both blocking outbound containment findings. OCCR-001:
+    enforce the contract that fetch_content and grounded web_search never place
+    a complete fetched page into either the ReAct tool result or utility-model
+    prompt, even when the page is shorter than configured budgets. Return/store
+    an artifact and only a deliberately partial bounded extract/passage with
+    metadata and continuation guidance; add short-page regressions proving
+    full-page absence. OCCR-002: replace unbounded response.text() buffering for
+    SearXNG and gateway outbound-worker responses with streaming byte-bounded
+    reads that abort/cancel as soon as the configured limit is exceeded,
+    including malformed or missing-length responses; preserve cancellation and
+    typed bounded failures. Add focused streaming/oversize tests. Run the
+    evaluation test suite, typecheck, lint, and git diff --check. Do not weaken
+    network confinement, ownership checks, inbound scanning, or logging safety."
 findings:
   - id: OCCR-001
     severity: high
