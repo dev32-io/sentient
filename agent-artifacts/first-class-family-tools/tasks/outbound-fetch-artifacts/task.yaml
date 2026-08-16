@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: outbound-fetch-artifacts
 title: Fetch web content through the confined outbound worker
-status: blocked
+status: ready
 dependsOn:
   - product-tool-catalog
 execution:
