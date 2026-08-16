@@ -14,7 +14,7 @@ execution:
     rationale: This contribution owns a persistent external protocol, credentials,
       concurrent correlation, and ambiguous side-effect handling.
 assembly:
-  stageId: 02-foundations
+  stageId: 02-parallel-foundations
   intermediateState: complete
 verification:
   timing: task

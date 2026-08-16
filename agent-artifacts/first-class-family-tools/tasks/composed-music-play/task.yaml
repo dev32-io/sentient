@@ -16,7 +16,7 @@ execution:
       authorization, ranking, verification, cancellation, and ambiguous
       side-effect handling.
 assembly:
-  stageId: 03-capabilities
+  stageId: 03-parallel-capabilities
   intermediateState: complete
 verification:
   timing: task

@@ -15,7 +15,7 @@ execution:
     rationale: This contribution creates the security-sensitive network confinement
       and untrusted-content storage boundary.
 assembly:
-  stageId: 02-foundations
+  stageId: 02-parallel-foundations
   intermediateState: complete
 verification:
   timing: task

@@ -15,7 +15,7 @@ execution:
     rationale: This contribution combines validation, optimistic concurrency,
       authorization, and high-impact household configuration write semantics.
 assembly:
-  stageId: 03-capabilities
+  stageId: 03-parallel-capabilities
   intermediateState: complete
 verification:
   timing: task

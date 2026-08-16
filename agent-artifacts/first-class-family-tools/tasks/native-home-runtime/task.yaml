@@ -14,7 +14,7 @@ execution:
     rationale: This contribution crosses credential handling, external protocol
       validation, authorization, and non-retry side-effect semantics.
 assembly:
-  stageId: 02-foundations
+  stageId: 02-parallel-foundations
   intermediateState: complete
 verification:
   timing: task

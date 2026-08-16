@@ -15,7 +15,7 @@ execution:
     rationale: This contribution integrates bounded concurrent research, model
       fallback, cancellation, and untrusted-content synthesis.
 assembly:
-  stageId: 03-capabilities
+  stageId: 03-parallel-capabilities
   intermediateState: complete
 verification:
   timing: task

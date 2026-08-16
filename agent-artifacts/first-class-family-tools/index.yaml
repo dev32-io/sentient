@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: execution
 state: active
 planning:
-  revision: 29
+  revision: 30
 artifacts:
   - id: intent
     type: intent
@@ -57,20 +57,20 @@ evaluations:
   - id: final-branch-review
     path: evaluations/final-branch-review/evaluation.yaml
 executionStages:
-  - id: 02-foundations
+  - id: 01-governance
+    tasks:
+      - product-tool-catalog
+  - id: 02-parallel-foundations
     tasks:
       - outbound-fetch-artifacts
       - native-home-runtime
       - native-music-primitives
-  - id: 03-capabilities
+  - id: 03-parallel-capabilities
     tasks:
       - grounded-web-search
       - native-home-configuration
       - composed-music-play
-  - id: 01-governance
-    tasks:
-      - product-tool-catalog
-  - id: 04-cutover
+  - id: 04-final-cutover
     tasks:
       - core-tool-cutover
 delivery:
