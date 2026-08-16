@@ -40,6 +40,8 @@ sealed interface ChatRow {
  * Index is the last resort. Mirrors iOS ChatRow.
  */
 internal fun messageRowKey(m: ChatMessage, index: Int): String = when {
+    // The optimistic row and its live committed echo deliberately share identity.
+    m.role == "user" && !m.pendingId.isNullOrEmpty() -> "send-${m.pendingId}"
     !m.replyId.isNullOrEmpty() -> "reply-${m.replyId}"
     m.entryId.isNotEmpty() -> "ent-${m.entryId}"
     !m.turnId.isNullOrEmpty() -> "turn-${m.turnId}"
