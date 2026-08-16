@@ -1,15 +1,16 @@
 schemaVersion: 1
 evaluation: final-e2e
-recordedAt: 2026-08-16T02:29:43.251Z
+recordedAt: 2026-08-16T03:54:17.727Z
 entries:
-  - result: Gateway, door, and vite ready; sentient-outbound-worker Restarting (1);
-      repeated bundled domain policy unavailable error; worktree status
-      preserved.
-    description: Fresh stack status and outbound-worker runtime/log evidence.
-    path: files/1-runtime.txt
-    checksum: sha256:26e29292dcc6331a8b492abbb912a3bec01cb35ac4f2f727c08329d94642006c
-  - result: Native web tools visible; real search request returned web unavailable;
-      no cited answer/artifact; WebSocket HTTP 502 observed.
-    description: Fresh Playwright journey observations.
-    path: files/2-browser-observations.txt
-    checksum: sha256:2b064ab6ad8ee95c0e6ac97462129f3ec6ff386477023420e2bfcd43628d7290
+  - result: PASS; opaque artifact with bounded ranges 0-438 and 438-877; no implicit
+      full-page output
+    command: local browser web_search -> fetch_content -> read_web_content
+  - result: Readiness changed 200 -> 503 and recovered to 200 after supervisor
+      replacement
+    command: pause required outbound-worker and poll readiness
+  - result: 203 passed, 1 optional live generic-MCP test skipped
+    command: focused gateway E2E suites
+  - result: 19 passed, 0 failed
+    command: gateway/webui settings tests
+  - result: All nine workspaces passed; branch clean
+    command: source scripts/env.sh && bun run typecheck && git diff --check

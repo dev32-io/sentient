@@ -4,16 +4,16 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: first-class-family-tools
-status: blocked
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - Exercise the complete meaningful user journey; record not_applicable only
     when no runnable E2E surface exists.
 loop:
   iteration: 1
   maxIterations: 3
-  state: awaiting_manager
+  state: passed
   managerPrompt: Retry the complete local E2E only after queued governance,
     outbound-containment, and family-integration repairs and their re-reviews
     have settled on a clean feature branch. Keep all HA/MA behavior
@@ -36,6 +36,6 @@ findings:
       restarting.
     blocking: false
 result:
-  verdict: blocked
+  verdict: pass
   report: report.md
   evidence: ../../evidence/final-e2e/manifest.yaml

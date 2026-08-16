@@ -10,24 +10,35 @@ No qualified criteria declared.
 
 ## Observations
 
-Fresh local E2E re-review remains blocked. Against commit abeb24dad6a2af6a1ec20b70eca388d1086ce40d, Playwright authenticated local Ada, verified native web definitions in Tools (web_search, fetch_content, read_web_content), then sent a real web-search request. The assistant reported web search unavailable; no bounded cited result or artifact retrieval was produced. The required sentient-outbound-worker was repeatedly restarting with `bundled domain policy unavailable` at `/app/src/domain-policy.ts:77`. Stack readiness still reported gateway/door/vite ready despite that dependency failing, and the browser observed two WebSocket HTTP 502 errors. No HA/MA mutation was attempted. Evidence is outside the repository at `/tmp/first-class-family-tools-final-e2e-iteration1-20260815T192419/`. The worktree had pre-existing dirty files; this review did not modify evaluated product code.
+# Final clean-branch E2E
+
+## Verdict
+PASS at commit `f9942486bf93c4928ab89d79ae6cf2b65b90b02c` using the local stack only. No production access, PIN disclosure, or HA/MA mutation.
+
+## Journey
+The outbound worker remained internal-only and public HTTP used egress-proxy with no direct fallback. Domain, DNS, redirect, cancellation, and proxy-outage behavior were exercised. A real browser journey completed web_search, fetch_content, and two bounded read_web_content ranges over an opaque artifact without returning full page text implicitly. Pausing the required worker changed readiness to 503 and supervisor recovery restored 200. Product-group settings showed web/Home/Music surfaces; setting web Off hid all three tools on a fresh turn and restoration returned them. Retired core MCP entries/templates/containers were absent while general MCP code paths remained covered. Live HA/MA use was observation-only through home_overview and music_players.
+
+## Verification
+Focused gateway suites passed 203 with one optional live generic-MCP skip. Web settings passed 19 tests. All nine workspace typechecks passed. Diff and final repository status were clean. Stack was restored healthy.
 
 ## Evidence
 
-- **EV-001:** Fresh stack status and outbound-worker runtime/log evidence. — Gateway, door, and vite ready; sentient-outbound-worker Restarting (1); repeated bundled domain policy unavailable error; worktree status preserved.
-- **EV-002:** Fresh Playwright journey observations. — Native web tools visible; real search request returned web unavailable; no cited answer/artifact; WebSocket HTTP 502 observed.
+- **EV-001:** local browser web_search -> fetch_content -> read_web_content — PASS; opaque artifact with bounded ranges 0-438 and 438-877; no implicit full-page output
+- **EV-002:** pause required outbound-worker and poll readiness — Readiness changed 200 -> 503 and recovered to 200 after supervisor replacement
+- **EV-003:** focused gateway E2E suites — 203 passed, 1 optional live generic-MCP test skipped
+- **EV-004:** gateway/webui settings tests — 19 passed, 0 failed
+- **EV-005:** source scripts/env.sh && bun run typecheck && git diff --check — All nine workspaces passed; branch clean
 
 ## Findings
 
-- **E2E-001** (critical, open): Outbound worker restart loop prevents real web search/fetch/artifact E2E.
-- **E2E-002** (medium, open): Readiness reports the stack ready while required outbound-worker is restarting.
+None recorded.
 
 ## Verdict
 
-blocked
+pass
 
 ## Residual Risk
 
-- AC-005 grounded search/fetch and artifact follow-up remain unverified until outbound-worker packaging/runtime is repaired.
-- AC-006 redirect/dangerous-domain behavior was not exercisable through the real journey while the worker is down.
-- Readiness may permit cutover while a required outbound dependency is unhealthy.
+- No third-party MCP server was configured locally, so general MCP retention is proven by deterministic transport/surface tests rather than a live third-party call.
+- Public search/provider behavior remains externally variable; this run exercised one benign source and one live redirect service.
+- Local test chats and the TTL-bounded web artifact were created; permissions, containers, stack health, and repository state were restored.
