@@ -1,0 +1,16 @@
+schemaVersion: 1
+id: final-e2e
+type: e2e
+checkpoint: final-e2e
+scope:
+  workItem: mobile-interaction-reliability
+status: planned
+required: true
+attempt: 0
+methods:
+  - Exercise the complete meaningful user journey; record not_applicable only
+    when no runnable E2E surface exists.
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
