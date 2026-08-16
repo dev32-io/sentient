@@ -2,8 +2,7 @@ schemaVersion: 1
 id: product-group-mobile-client-compatibility
 title: Restore mobile settings compatibility with the product-group catalog
 status: draft
-dependsOn:
-  - gradle-jdk21-environment
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
