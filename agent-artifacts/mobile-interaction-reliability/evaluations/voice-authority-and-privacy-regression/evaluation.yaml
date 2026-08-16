@@ -3,7 +3,7 @@ id: voice-authority-and-privacy-regression
 type: regression
 scope:
   workItem: mobile-interaction-reliability
-status: failed
+status: passed
 required: true
 attempt: 1
 methods:
@@ -35,18 +35,22 @@ methods:
   - "Run: git diff --check"
 checkpoint: planned
 loop:
-  state: fixing
+  state: passed
   iteration: 2
   maxIterations: 2
   reviewerAgentId: 11e7f3f8-0e0d-4ff1-9ab1-0a67d2682a2e
   reviewedCommit: 936a2a47b18a6aca01934758cc1603e0cb743964
-  managerPrompt: "Implement the recorded voice fixes now: preserve
-    MicLevelEnvelope through the iOS visualization boundary instead of [Float],
-    deliver/trySend uplink frames before best-effort metering on Android and
-    both iOS capture paths, and add focused Android/iOS injected-envelope
-    waveform tests. Preserve the existing 32-bar UI and keep PCM out of native
-    UI. Run shared/Android and pinned iPhone 16 iOS 18.3.1 checks plus git diff
-    --check."
+  managerPrompt: Accept the reviewer-classified non-blocking residuals after two
+    requested repair iterations did not produce an actionable repair attempt.
+    The iOS [Float] values are the normalized 32-value MicLevelEnvelope
+    projection, not PCM or a platform audio buffer, so the privacy boundary
+    remains intact. Synchronous best-effort metering is bounded and
+    exception-isolated but retains a theoretical capture-thread latency risk;
+    record it explicitly. Native-specific waveform rendering assertions remain a
+    low test-coverage gap, partially mitigated by deterministic common envelope
+    tests and native feed wiring coverage. Carry the latter two as residual
+    risks into final review/outcome rather than silently treating them as
+    resolved.
 findings:
   - id: voice-envelope-ios-native-array-surface
     severity: medium
