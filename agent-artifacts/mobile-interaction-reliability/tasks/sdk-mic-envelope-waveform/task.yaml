@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: sdk-mic-envelope-waveform
 title: Drive the existing mobile waveform from the SDK mic envelope
-status: running
+status: contribution_complete
 dependsOn:
   - shared-talkmode-barge-in
 execution:
@@ -30,3 +30,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: 7dbb931fec6b4203892a40b56226cf11cfeb5e9a
   lastRunId: 058cbb6d-5bcd-4253-b933-db5fdc0fb533
+  completedCommit: 444a87db48b7998ed818ab82e84963781bf9c507
