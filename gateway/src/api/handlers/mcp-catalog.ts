@@ -9,6 +9,7 @@ import {
   catalogTools,
 } from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
+import { homeProductToolProvider } from "../../bootstrap/product-tools/home-provider.js";
 import { getLog } from "../../logging/logger.js";
 import type { ProfileStore } from "../../profile-store/profile-store.js";
 import { delegateTaskDefinition } from "../../tools/delegate-task.js";
@@ -29,6 +30,8 @@ const HTTP_INTERNAL = 500;
 const PATH = "/api/v1/mcp-catalog";
 const DELEGATE_TASK_SETTINGS_DESCRIPTION =
   "Hand a task to a background worker agent (Hermes) with its own tools and workspace.";
+const HOME_SETTINGS_DESCRIPTION =
+  "Read and control household devices, and manage scenes, automations, scripts, todo items, and calendar events. Removals require confirmation; raw code, files, and administration are not included.";
 
 export interface ProductToolView {
   readonly name: string;
@@ -156,6 +159,7 @@ function projectGroups(
     tier: ImpactTier,
     productGroup: ProductToolGroup,
     defaultExposure: ToolDefaultExposure,
+    groupDescription?: string,
   ) => {
     if (!canExecute(role, tier)) return;
     const permission = resolveToolPermission({
@@ -169,12 +173,22 @@ function projectGroups(
     projected.push({
       productGroup,
       defaultExposure,
+      ...(groupDescription ? { description: groupDescription } : {}),
       tool: { name, description, tier, permission, settable: true, dispatch: { kind: "native" } },
     });
   };
   for (const meta of SKILL_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "skills", "standard");
   for (const meta of MEMORY_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "memory", "standard");
   for (const meta of MUSIC_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "music", "standard");
+  for (const runner of homeProductToolProvider.create({}))
+    addNative(
+      runner.definition.name,
+      runner.definition.description,
+      runner.definition.tier,
+      "home",
+      "standard",
+      HOME_SETTINGS_DESCRIPTION,
+    );
   addNative(
     delegateTaskDefinition.name,
     DELEGATE_TASK_SETTINGS_DESCRIPTION,

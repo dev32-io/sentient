@@ -18,6 +18,14 @@ const unavailableAdapter: HomeAdapter = {
   control: async () => ({ outcome: "failed", operationId: crypto.randomUUID() }),
   activate: async () => ({ outcome: "failed", operationId: crypto.randomUUID() }),
   operation: () => ({ outcome: "not_found" }),
+  getConfig: async () => ({ outcome: "unavailable" }),
+  createConfig: async (kind, id) => ({ outcome: "failed", id, entityId: `${kind}.${id}` }),
+  updateConfig: async (kind, id) => ({ outcome: "failed", id, entityId: `${kind}.${id}` }),
+  removeConfig: async (kind, id) => ({ outcome: "failed", id, entityId: `${kind}.${id}` }),
+  todos: async () => ({ outcome: "unavailable" }),
+  mutateTodo: async (listId) => ({ outcome: "failed", listId }),
+  calendarEvents: async () => ({ outcome: "unavailable" }),
+  mutateCalendar: async (calendarId) => ({ outcome: "failed", calendarId }),
 };
 
 export const homeProductToolProvider: ProductToolProvider<"home"> = {
