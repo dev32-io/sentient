@@ -61,6 +61,17 @@ function continuation(id: string, end: number, total: number): string | null {
   return end < total ? `Call read_web_content with artifact_id "${id}", offset ${end}, and a bounded limit.` : null;
 }
 
+/** Initial extracts are previews, never an implicit complete artifact, even when
+ * the configured budget could hold the whole page. */
+function partialPrefixEnd(content: string, budget: number): number {
+  let end = Math.min(Math.max(0, budget), Math.floor(content.length / 2));
+  const lastIncluded = content.charCodeAt(end - 1);
+  const firstExcluded = content.charCodeAt(end);
+  if (end > 0 && lastIncluded >= 0xd800 && lastIncluded <= 0xdbff && firstExcluded >= 0xdc00 && firstExcluded <= 0xdfff)
+    end--;
+  return end;
+}
+
 export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] {
   if (deps.capability.resource !== "web-artifact") throw new Error("web artifact capability required");
   const client = deps.client ?? new OutboundWorkerClient(deps.config.worker);
@@ -148,6 +159,9 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         url: string;
         status: string;
         artifact_id?: string;
+        total_chars?: number;
+        returned_range?: { start: number; end: number };
+        continuation?: string | null;
       }> = [];
       const summarySources: SummarySource[] = [];
       if (mode === "grounded") {
@@ -164,18 +178,27 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
               contentType: got.value.contentType,
               content: got.value.content,
             });
+            const end = partialPrefixEnd(got.value.content, perSource);
+            const next = continuation(artifactId, end, got.value.content.length);
             statuses.push({
               id: i + 1,
               title: source.title,
               url: source.url,
               status: "fetched",
               artifact_id: artifactId,
+              total_chars: got.value.content.length,
+              returned_range: { start: 0, end },
+              continuation: next,
             });
             summarySources.push({
               id: i + 1,
               title: screen(source.title),
               url: source.url,
-              passage: screen(got.value.content.slice(0, perSource)),
+              passage: screen(got.value.content.slice(0, end)),
+              artifactId,
+              totalChars: got.value.content.length,
+              returnedRange: { start: 0, end },
+              ...(next ? { continuation: next } : {}),
             });
           } else {
             statuses.push({
@@ -288,7 +311,7 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         contentType: fetched.value.contentType,
         content: fetched.value.content,
       });
-      const end = Math.min(deps.config.initialExtractChars, fetched.value.content.length);
+      const end = partialPrefixEnd(fetched.value.content, deps.config.initialExtractChars);
       return result({
         artifact_id: artifactId,
         source: {

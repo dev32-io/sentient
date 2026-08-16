@@ -6,6 +6,10 @@ export interface SummarySource {
   title: string;
   url: string;
   passage: string;
+  artifactId?: string;
+  totalChars?: number;
+  returnedRange?: { start: number; end: number };
+  continuation?: string;
 }
 export interface WebSummaryConfig {
   fallbackModel: string;
@@ -51,7 +55,13 @@ export class WebSummaryRunner {
     const deadline = AbortSignal.timeout(this.deps.config.deadlineMs);
     const combined = AbortSignal.any([signal, deadline]);
     const sourceBlock = sources
-      .map((s) => `SOURCE [${s.id}]\nTitle: ${s.title}\nURL: ${s.url}\nPassage: ${s.passage}`)
+      .map((s) => {
+        const metadata =
+          s.artifactId && s.totalChars !== undefined && s.returnedRange
+            ? `\nArtifact: ${s.artifactId}\nReturned range: ${s.returnedRange.start}-${s.returnedRange.end} of ${s.totalChars}\nContinuation: ${s.continuation ?? "none"}`
+            : "";
+        return `SOURCE [${s.id}]\nTitle: ${s.title}\nURL: ${s.url}${metadata}\nPartial passage: ${s.passage}`;
+      })
       .join("\n\n");
     const input = `${this.deps.prompt}\n\nQuestion: ${query}\n\n${sourceBlock}`.slice(
       0,

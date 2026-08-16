@@ -95,8 +95,44 @@ describe("native web tools", () => {
     });
   });
 
+  test("short fetches still return only a partial extract with continuation guidance", async () => {
+    const full = "short page";
+    const tools = createWebTools({
+      capability: await capability(),
+      config,
+      client: {
+        search: async () => ({ ok: true as const, value: [] }),
+        fetchContent: async () => ({
+          ok: true,
+          value: {
+            sourceUrl: "https://short.test/",
+            finalUrl: "https://short.test/",
+            title: "Short",
+            byline: null,
+            contentType: "text/plain",
+            content: full,
+          },
+        }),
+      },
+    });
+    const fetchTool = tools[1];
+    if (!fetchTool) throw new Error("fetch tool missing");
+    const response = await fetchTool.run({ url: "https://short.test/" }, { signal: new AbortController().signal });
+    const payload = JSON.parse(response.content) as {
+      artifact_id: string;
+      content: string;
+      returned_range: { start: number; end: number };
+      continuation: string;
+    };
+    expect(response.content).not.toContain(full);
+    expect(payload.content.length).toBeLessThan(full.length);
+    expect(payload.returned_range.end).toBe(payload.content.length);
+    expect(payload.continuation).toContain("read_web_content");
+  });
+
   test("grounded search preserves partial fetches, scans passages, and returns artifact references", async () => {
     const seenPrompts: string[] = [];
+    const fullPage = "UNTRUSTED grounded body that must not be returned complete";
     const tools = createWebTools({
       capability: await capability(),
       config,
@@ -127,7 +163,7 @@ describe("native web tools", () => {
                   title: "One",
                   byline: null,
                   contentType: "text/plain",
-                  content: "UNTRUSTED grounded body that must not be returned complete",
+                  content: fullPage,
                 },
               }
             : { ok: false, error: { code: "timeout", message: "The web fetch timed out." } },
@@ -141,16 +177,28 @@ describe("native web tools", () => {
     );
     const payload = JSON.parse(response.content) as {
       answer: string;
-      sources: Array<{ status: string; artifact_id?: string }>;
+      sources: Array<{
+        status: string;
+        artifact_id?: string;
+        total_chars?: number;
+        returned_range?: { start: number; end: number };
+        continuation?: string;
+      }>;
       research_id: string;
     };
     expect(payload.answer).toBe("Useful [1] and snippet [2]");
     expect(payload.sources).toMatchObject([{ status: "fetched" }, { status: "timeout" }]);
     expect(payload.sources[0]?.artifact_id).toMatch(/^wa_/);
+    expect(payload.sources[0]?.total_chars).toBe(fullPage.length);
+    expect(payload.sources[0]?.returned_range?.end).toBeLessThan(fullPage.length);
+    expect(payload.sources[0]?.continuation).toContain("read_web_content");
     expect(payload.research_id).toMatch(/^wr_/);
-    expect(response.content).not.toContain("grounded body that must not be returned complete");
+    expect(response.content).not.toContain(fullPage);
     expect(seenPrompts[0]).toContain("[screened] grounded body");
     expect(seenPrompts[0]).toContain("[screened] fallback");
+    expect(seenPrompts[0]).not.toContain("[screened] grounded body that must not be returned complete");
+    expect(seenPrompts[0]).toContain("Returned range: 0-");
+    expect(seenPrompts[0]).toContain("Continuation: Call read_web_content");
   });
 
   test("returns sanitized typed worker failures and validates bounded reads", async () => {

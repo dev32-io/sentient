@@ -46,6 +46,30 @@ describe("outbound worker SearXNG boundary", () => {
     expect(requested?.searchParams.get("q")).toContain("site:example.com -site:bad.example.com");
   });
 
+  test("cancels a missing or malformed-length SearXNG stream at the byte cap", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        controller.enqueue(new Uint8Array(600_000));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const result = await searchSearxng(
+      { query: "q", count: 1, includeDomains: [], excludeDomains: [] },
+      new AbortController().signal,
+      {
+        fetchImpl: async () => new Response(body, { headers: { "content-length": "malformed" } }),
+      },
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "search_unavailable" } });
+    expect(cancelled).toBe(true);
+    expect(pulls).toBeLessThanOrEqual(3);
+  });
+
   test("maps invalid SearXNG responses and cancellation to bounded failures", async () => {
     const bad = await searchSearxng(
       { query: "q", count: 1, includeDomains: [], excludeDomains: [] },

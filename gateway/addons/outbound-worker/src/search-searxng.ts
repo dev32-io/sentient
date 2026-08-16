@@ -1,4 +1,5 @@
 import { domainToASCII } from "node:url";
+import { readBoundedResponseText } from "./bounded-response.js";
 
 export type SearchRecency = "day" | "week" | "month" | "year";
 export interface SearxSearchRequest {
@@ -19,7 +20,7 @@ export type SearxSearchResponse =
   | { ok: false; error: { code: "search_unavailable" | "cancelled"; message: string } };
 
 const MAX_SEARX_RESULTS = 20;
-const MAX_RESPONSE_CHARS = 1_000_000;
+const MAX_RESPONSE_BYTES = 1_000_000;
 
 function canonicalDomain(raw: string): string | null {
   const value = domainToASCII(raw.trim().replace(/^\.+|\.+$/g, "")).toLowerCase();
@@ -57,8 +58,7 @@ export async function searchSearxng(
   try {
     response = await (deps.fetchImpl ?? fetch)(url, { signal, headers: { accept: "application/json" } });
     if (!response.ok) throw new Error("bad status");
-    const text = await response.text();
-    if (text.length > MAX_RESPONSE_CHARS) throw new Error("oversize");
+    const text = await readBoundedResponseText(response, MAX_RESPONSE_BYTES, signal);
     const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as { results?: unknown }).results))
       throw new Error("schema");

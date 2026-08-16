@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResponseTooLargeError, readBoundedResponseText } from "./bounded-response.js";
 
 export type OutboundFetchErrorCode =
   | "invalid_url"
@@ -127,8 +128,11 @@ export class OutboundWorkerClient {
         body: JSON.stringify(input),
         signal: AbortSignal.any([signal, timeout]),
       });
-      const text = await response.text();
-      if (text.length > this.config.maxResponseChars) throw new Error("oversize");
+      const text = await readBoundedResponseText(
+        response,
+        this.config.maxResponseChars,
+        AbortSignal.any([signal, timeout]),
+      );
       const parsed = z.union([searchSuccessSchema, searchErrorSchema]).safeParse(JSON.parse(text));
       if (!parsed.success) throw new Error("schema");
       if (!parsed.data.ok) return { ok: false, error: parsed.data.error };
@@ -172,11 +176,12 @@ export class OutboundWorkerClient {
 
     let raw: unknown;
     try {
-      const text = await response.text();
-      if (text.length > this.config.maxResponseChars)
-        return unavailable("The web fetch service returned too much data.");
+      const text = await readBoundedResponseText(response, this.config.maxResponseChars, combined);
       raw = JSON.parse(text);
-    } catch {
+    } catch (error) {
+      if (signal.aborted) return { ok: false, error: { code: "cancelled", message: "Fetch was cancelled." } };
+      if (timeout.aborted) return { ok: false, error: { code: "timeout", message: "The web fetch timed out." } };
+      if (error instanceof ResponseTooLargeError) return unavailable("The web fetch service returned too much data.");
       return unavailable("The web fetch service returned an invalid response.");
     }
     const parsed = z.union([successSchema, errorSchema]).safeParse(raw);
