@@ -5,7 +5,7 @@ title: Reliable mobile conversations, voice interaction, and settings navigation
 phase: execution
 state: active
 planning:
-  revision: 44
+  revision: 45
 artifacts:
   - id: intent
     type: intent
