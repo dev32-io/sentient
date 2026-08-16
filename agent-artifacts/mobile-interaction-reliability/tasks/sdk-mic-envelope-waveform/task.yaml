@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: sdk-mic-envelope-waveform
 title: Drive the existing mobile waveform from the SDK mic envelope
-status: ready
+status: running
 dependsOn:
   - shared-talkmode-barge-in
 execution:
@@ -24,3 +24,9 @@ verification:
       'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/mobile-interaction-reliability
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: 7dbb931fec6b4203892a40b56226cf11cfeb5e9a
+  lastRunId: 058cbb6d-5bcd-4253-b933-db5fdc0fb533
