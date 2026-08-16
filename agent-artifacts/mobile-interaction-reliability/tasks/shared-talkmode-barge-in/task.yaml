@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: shared-talkmode-barge-in
 title: Make shared TalkMode authoritative for hold-to-talk barge-in
-status: ready
+status: running
 dependsOn:
   - fresh-chat-boundary
 execution:
@@ -24,3 +24,9 @@ verification:
       'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/shared-talkmode-barge-in
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/shared-talkmode-barge-in
+  baseCommit: 457f15156b88b7d858e5a3f82794a00e4bf87a7f
+  lastRunId: 4b474d71-3f9a-4190-9ba5-f5ca5762cb8c
