@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: product-group-mobile-client-compatibility
 title: Restore mobile settings compatibility with the product-group catalog
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -30,3 +30,4 @@ runtime:
   baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
   lastRunId: cf90daab-6085-4c87-ab2d-16a9f33497e7
   completedCommit: b445a145803118a3f754287dd509fb980e1975d2
+  mergedCommit: cd0c231c3255578a77e6aa890ef943e1f4e06d65
