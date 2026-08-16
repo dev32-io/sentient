@@ -39,6 +39,9 @@ import io.sentient.android.theme.LocalTokens
 import io.sentient.android.theme.SentientTheme
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.settings.FishVoiceEntry
+import io.sentient.mobilesdk.settings.FishSort
+import io.sentient.android.settings.components.RowSelect
+import io.sentient.android.settings.components.SelectOption
 
 private const val TITLE = "Clone from Fish"
 
@@ -64,6 +67,12 @@ fun FishCloneScreen(
         inForm = inForm,
         onBack = { if (inForm) vm.backToList() else onBack() },
         onQuery = vm::setQuery,
+        onLanguageFilter = vm::setLanguage,
+        onToggleGender = vm::toggleGender,
+        onToggleAge = vm::toggleAge,
+        onToggleVibe = vm::toggleVibe,
+        onSort = vm::setSort,
+        onClearFilters = vm::clearFilters,
         onRetry = vm::retry,
         onLoadMore = vm::loadMore,
         onTogglePlay = vm::togglePlay,
@@ -72,7 +81,7 @@ fun FishCloneScreen(
         onDescription = vm::setDescription,
         onAddTag = vm::addTag,
         onRemoveTag = vm::removeTag,
-        onLanguage = vm::setLanguage,
+        onLanguage = vm::setCloneLanguage,
         onClone = vm::clone,
         modifier = modifier,
     )
@@ -85,6 +94,12 @@ private fun FishCloneContent(
     inForm: Boolean,
     onBack: () -> Unit,
     onQuery: (String) -> Unit,
+    onLanguageFilter: (String) -> Unit,
+    onToggleGender: (String) -> Unit,
+    onToggleAge: (String) -> Unit,
+    onToggleVibe: (String) -> Unit,
+    onSort: (FishSort) -> Unit,
+    onClearFilters: () -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onTogglePlay: (FishVoiceEntry) -> Unit,
@@ -118,6 +133,12 @@ private fun FishCloneContent(
                 else -> BrowseView(
                     state = state,
                     onQuery = onQuery,
+                    onLanguageFilter = onLanguageFilter,
+                    onToggleGender = onToggleGender,
+                    onToggleAge = onToggleAge,
+                    onToggleVibe = onToggleVibe,
+                    onSort = onSort,
+                    onClearFilters = onClearFilters,
                     onRetry = onRetry,
                     onLoadMore = onLoadMore,
                     onTogglePlay = onTogglePlay,
@@ -132,6 +153,12 @@ private fun FishCloneContent(
 private fun BrowseView(
     state: FishCloneUiState,
     onQuery: (String) -> Unit,
+    onLanguageFilter: (String) -> Unit,
+    onToggleGender: (String) -> Unit,
+    onToggleAge: (String) -> Unit,
+    onToggleVibe: (String) -> Unit,
+    onSort: (FishSort) -> Unit,
+    onClearFilters: () -> Unit,
     onRetry: () -> Unit,
     onLoadMore: () -> Unit,
     onTogglePlay: (FishVoiceEntry) -> Unit,
@@ -146,6 +173,12 @@ private fun BrowseView(
             modifier = Modifier.padding(horizontal = tokens.space.lg, vertical = tokens.space.md),
             testTag = "fish-search",
         )
+        RowSelect("Language", listOf(SelectOption("", "All languages")) + state.options.languages.map { SelectOption(it, voiceLanguageLabel(it)) }, state.language, onLanguageFilter, testTag = "fish-language-filter")
+        RowSelect("Sort", listOf(SelectOption("popular", "Popular"), SelectOption("recent", "Recent"), SelectOption("az", "A–Z")), state.sort.name.lowercase(), { onSort(FishSort.valueOf(it.uppercase())) }, testTag = "fish-sort-filter")
+        FishFacetChips("Gender", state.options.genders, state.genders, onToggleGender, "fish-gender")
+        FishFacetChips("Age", state.options.ages, state.ages, onToggleAge, "fish-age")
+        FishFacetChips("Vibe", state.options.vibes, state.vibes, onToggleVibe, "fish-vibe")
+        if (state.filterActive) OutlinedButton(onClick = onClearFilters, modifier = Modifier.padding(horizontal = tokens.space.lg).testTag("fish-clear-filters")) { Text("Clear filters") }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when {
                 state.loading -> CenteredProgress()
@@ -153,6 +186,18 @@ private fun BrowseView(
                 state.voices.isEmpty() -> Empty("No voices found.")
                 else -> FishList(state = state, onLoadMore = onLoadMore, onTogglePlay = onTogglePlay, onPickForClone = onPickForClone)
             }
+        }
+    }
+}
+
+@Composable
+private fun FishFacetChips(label: String, options: List<String>, selected: List<String>, onToggle: (String) -> Unit, tag: String) {
+    if (options.isEmpty()) return
+    val tokens = LocalTokens.current
+    Column(Modifier.fillMaxWidth().testTag(tag)) {
+        Text(label, color = Color(Colors.ink2), fontSize = tokens.type.sm, modifier = Modifier.padding(horizontal = tokens.space.lg))
+        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(tokens.space.xs), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = tokens.space.lg)) {
+            items(options) { value -> VoiceChip(value, active = value in selected, onClick = { onToggle(value) }, testTag = "$tag-$value") }
         }
     }
 }
@@ -302,6 +347,7 @@ private fun FishCloneScreenBrowsePreview() {
             inForm = false,
             onBack = {},
             onQuery = {},
+            onLanguageFilter = {}, onToggleGender = {}, onToggleAge = {}, onToggleVibe = {}, onSort = {}, onClearFilters = {},
             onRetry = {},
             onLoadMore = {},
             onTogglePlay = noopFishCallbacks,
@@ -325,6 +371,7 @@ private fun FishCloneScreenFormPreview() {
             inForm = true,
             onBack = {},
             onQuery = {},
+            onLanguageFilter = {}, onToggleGender = {}, onToggleAge = {}, onToggleVibe = {}, onSort = {}, onClearFilters = {},
             onRetry = {},
             onLoadMore = {},
             onTogglePlay = noopFishCallbacks,
