@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: sdk-mic-envelope-waveform
+title: Drive the existing mobile waveform from the SDK mic envelope
+status: draft
+dependsOn:
+  - shared-talkmode-barge-in
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: live-waveform
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      :android:testDebugUnitTest
+    - ./scripts/ios-setup.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.

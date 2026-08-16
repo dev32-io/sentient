@@ -5,7 +5,7 @@ title: Reliable mobile conversations, voice interaction, and settings navigation
 phase: planning
 state: active
 planning:
-  revision: 21
+  revision: 22
 artifacts:
   - id: intent
     type: intent
@@ -38,6 +38,8 @@ tasks:
     path: tasks/shared-talkmode-barge-in/task.yaml
   - id: natural-settings-navigation
     path: tasks/natural-settings-navigation/task.yaml
+  - id: sdk-mic-envelope-waveform
+    path: tasks/sdk-mic-envelope-waveform/task.yaml
 integrationUnits: []
 evaluations: []
 delivery:
@@ -55,3 +57,6 @@ executionStages:
     tasks:
       - shared-talkmode-barge-in
       - natural-settings-navigation
+  - id: live-waveform
+    tasks:
+      - sdk-mic-envelope-waveform
