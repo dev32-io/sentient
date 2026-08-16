@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: natural-settings-navigation
 title: Make settings Back follow the actual page stack
-status: blocked
+status: ready
 dependsOn:
   - fresh-chat-boundary
   - fish-filter-parity
