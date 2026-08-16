@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: grounded-web-search
 title: Answer web searches with bounded grounded synthesis
-status: contribution_complete
+status: merged
 dependsOn:
   - outbound-fetch-artifacts
 execution:
@@ -34,3 +34,4 @@ runtime:
   baseCommit: 605f7968723740310ee8a2cc9e95417931cc5002
   lastRunId: 3bed5879-1dfa-4529-a0ba-14ba92bfd009
   completedCommit: f7002ab50d1088caf4483fee9419c893303dc9b5
+  mergedCommit: db5de1071e4f9f76e70c9a6f58b86a4111af8d77
