@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: native-home-configuration
 title: Manage household scenes, automations, scripts, todos, and calendars
-status: running
+status: contribution_complete
 dependsOn:
   - native-home-runtime
 execution:
@@ -36,3 +36,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/first-class-family-tools/native-home-configuration
   baseCommit: 605f7968723740310ee8a2cc9e95417931cc5002
   lastRunId: f33dd740-da39-466f-af43-c0e88758f854
+  completedCommit: 9479d006022b42edb3e0e1fe406b15cca16a7981
