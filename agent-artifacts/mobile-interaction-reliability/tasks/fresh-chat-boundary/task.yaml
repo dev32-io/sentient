@@ -16,7 +16,8 @@ verification:
   timing: task
   methods: []
   taskChecks:
-    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    - PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH" ./gradlew
+      :shared:mobile-sdk:allTests :shared:mobile-data:allTests
       :android:testDebugUnitTest
     - bun test gateway/src/session-handlers/ws-handlers-routing.test.ts
     - ./scripts/ios-setup.sh && xcodebuild test -project
