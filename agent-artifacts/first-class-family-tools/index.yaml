@@ -5,7 +5,7 @@ title: First-class web, home, and music tools
 phase: execution
 state: active
 planning:
-  revision: 28
+  revision: 29
 artifacts:
   - id: intent
     type: intent
@@ -59,14 +59,14 @@ evaluations:
 executionStages:
   - id: 02-foundations
     tasks:
+      - outbound-fetch-artifacts
       - native-home-runtime
       - native-music-primitives
-      - outbound-fetch-artifacts
   - id: 03-capabilities
     tasks:
+      - grounded-web-search
       - native-home-configuration
       - composed-music-play
-      - grounded-web-search
   - id: 01-governance
     tasks:
       - product-tool-catalog
