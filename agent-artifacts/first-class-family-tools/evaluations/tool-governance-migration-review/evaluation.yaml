@@ -45,11 +45,26 @@ methods:
   - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
 checkpoint: planned
 loop:
-  iteration: 0
+  state: fixing
+  iteration: 1
   maxIterations: 2
-  state: awaiting_manager
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
   reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
+  managerPrompt: "Repair both blocking governance findings on the current feature
+    branch. TGMR-001: preserve absent-server=off semantics when migrating every
+    partial legacy permission map; an omitted retired core group must not
+    receive permissive native defaults. Add focused fixtures reproducing partial
+    maps and repeated/idempotent migration without widening. TGMR-002: make the
+    delegated gateway-hosted native read projection consult the authenticated
+    user's current product permission resolution and expose only allow; ensure
+    ask/deny/off and role-denied tools are neither advertised nor dispatchable,
+    while keeping side-effecting native tools excluded. Make the advanced
+    gateway product group visible/settable in the grouped settings contract with
+    its default-off behavior, without restoring retired MCP transport identity.
+    Preserve general third-party MCP behavior. Run the evaluation's focused
+    gateway/web/KMP checks plus delegation tests, typecheck, and git diff
+    --check. Do not modify unrelated behavior or use production/household
+    mutations."
 findings:
   - id: TGMR-001
     severity: high
