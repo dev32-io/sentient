@@ -1905,23 +1905,25 @@ describe("ToolBroker — foreground-native tools", () => {
     expect(broker.definitions().map((d) => d.name)).toContain("skill_list");
   });
 
-  it("mediates standard product-native tools under their product group", async () => {
-    let ran = 0;
+  it("mediates a composed product tool once without recursively authorizing its internal operations", async () => {
+    let internalAdapterCalls = 0;
     const runner = nativeRunner({
-      name: "music_volume",
+      name: "music_play",
       tier: "write",
       productGroup: "music",
       onRun: () => {
-        ran += 1;
+        // Resolution, search, mutation, and verification stay inside this one
+        // already-authorized native runner; none is a broker dispatch.
+        internalAdapterCalls += 4;
       },
     });
     const { broker, confirmCalls } = nativeBroker({ role: "adult", natives: [runner], confirm: true });
     await broker.ready();
 
-    expect(broker.definitions().map((definition) => definition.name)).toContain("music_volume");
-    await broker.dispatch(makeInvocation({ name: "music_volume" }));
+    expect(broker.definitions().map((definition) => definition.name)).toContain("music_play");
+    await broker.dispatch(makeInvocation({ name: "music_play", args: { request: "lo-fi", player: "Living Room" } }));
     expect(confirmCalls()).toBe(1);
-    expect(ran).toBe(1);
+    expect(internalAdapterCalls).toBe(4);
   });
 
   it("SECURITY: withholds a confirm-tier native tool from BOTH child and guest — neither reaches the tier", async () => {

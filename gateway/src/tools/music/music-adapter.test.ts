@@ -151,7 +151,7 @@ describe("NativeMusicAdapter protocol", () => {
     expect(await later).toEqual([expect.objectContaining({ id: "new" })]);
   });
 
-  it("marks an acknowledged mutation unverified when player state was not observed", async () => {
+  it("reports mutation acknowledgement without claiming observed completion", async () => {
     const sockets: FakeSocket[] = [];
     const adapter = adapterWith(sockets);
     const call = adapter.setVolume("p1", 40, new AbortController().signal);
@@ -160,7 +160,7 @@ describe("NativeMusicAdapter protocol", () => {
     await tick();
     const request = (sockets[0] as FakeSocket).sent.find((message) => message.command === "players/cmd/volume_set");
     (sockets[0] as FakeSocket).respond({ message_id: request?.message_id, result: null });
-    expect(await call).toEqual({ outcome: "accepted_unverified" });
+    expect(await call).toEqual({ outcome: "accepted" });
   });
 
   it("never replays an ambiguous mutation after disconnect", async () => {
@@ -194,12 +194,16 @@ describe("NativeMusicAdapter protocol", () => {
   it("returns accepted_unverified on a mutating response timeout", async () => {
     const sockets: FakeSocket[] = [];
     const adapter = adapterWith(sockets, { requestTimeoutMs: 5 });
-    const call = adapter.play("p1", "library://track/1", new AbortController().signal);
+    const call = adapter.play("p1", "library://track/1", "replace", new AbortController().signal);
     await tick();
     authenticate(sockets[0] as FakeSocket);
     expect(await call).toEqual({ outcome: "accepted_unverified" });
-    expect(
-      (sockets[0] as FakeSocket).sent.filter((message) => message.command === "player_queues/play_media"),
-    ).toHaveLength(1);
+    const writes = (sockets[0] as FakeSocket).sent.filter((message) => message.command === "player_queues/play_media");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.args).toEqual({
+      queue_id: "p1",
+      media: ["library://track/1"],
+      option: "replace",
+    });
   });
 });

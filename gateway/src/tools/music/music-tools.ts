@@ -7,8 +7,10 @@ import {
   type MusicCommandResult,
   type MusicMediaType,
   type MusicPlayer,
+  type MusicQueueMode,
   type MusicTransportAction,
 } from "./music-adapter.js";
+import { runMusicPlay } from "./music-play-state-machine.js";
 import { resolveMusicPlayer } from "./music-resolver.js";
 
 const MAX_QUERY = 200;
@@ -25,6 +27,7 @@ const MEDIA_TYPES: readonly MusicMediaType[] = [
   "audiobook",
 ];
 const TRANSPORT_ACTIONS: readonly MusicTransportAction[] = ["play", "pause", "stop", "next", "previous", "seek"];
+const QUEUE_MODES: readonly MusicQueueMode[] = ["replace", "add", "play_next"];
 
 export const MUSIC_TOOL_SETTINGS = [
   { name: "music_search", description: "Search Music Assistant's library and providers.", tier: READ },
@@ -32,7 +35,13 @@ export const MUSIC_TOOL_SETTINGS = [
   { name: "music_players", description: "List household music players and rooms.", tier: READ },
   { name: "music_status", description: "Inspect a music player and what is playing.", tier: READ },
   { name: "music_queue", description: "Inspect a music player's queue.", tier: READ },
-  { name: "music_play", description: "Play selected media on a music player.", tier: WRITE },
+  {
+    name: "music_play",
+    description:
+      "Find and play a natural-language music request in a room. By default this replaces the room's active queue and starts playback now.",
+    tier: WRITE,
+  },
+  { name: "music_play_media", description: "Play selected media on a music player.", tier: WRITE },
   { name: "music_transport", description: "Control music playback transport.", tier: WRITE },
   { name: "music_volume", description: "Set a music player's volume.", tier: WRITE },
   { name: "music_transfer", description: "Transfer a music queue between players.", tier: WRITE },
@@ -281,7 +290,40 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
     ),
     runner(
       "music_play",
-      "Directly play a stable media ID returned by music_search or music_browse on a selected player.",
+      "Find and play a natural-language request in a selected room/player with one call. queue_mode defaults to replace, which replaces the active queue and starts playback now; add appends and play_next inserts after the current item.",
+      WRITE,
+      {
+        type: "object",
+        additionalProperties: false,
+        required: ["request", "player"],
+        properties: {
+          request: { type: "string", maxLength: MAX_QUERY },
+          player: { type: "string" },
+          queue_mode: { enum: QUEUE_MODES, default: "replace" },
+        },
+      },
+      (args) => {
+        const request = stringArg(args, "request");
+        if (!request || request.length > MAX_QUERY)
+          return argumentFailure(`music_play requires a non-empty request of at most ${MAX_QUERY} characters.`);
+        if (!stringArg(args, "player")) return argumentFailure("music_play requires a player name or ID.");
+        if (args.queue_mode !== undefined && !QUEUE_MODES.includes(args.queue_mode as MusicQueueMode))
+          return argumentFailure("queue_mode must be replace, add, or play_next.");
+        return null;
+      },
+      async (args, { signal }) => {
+        const request = stringArg(args, "request");
+        const player = stringArg(args, "player");
+        const queueMode = (args.queue_mode ?? "replace") as MusicQueueMode;
+        if (!request || !player || !QUEUE_MODES.includes(queueMode))
+          return argumentFailure("Invalid music_play arguments.");
+        const result = await runMusicPlay(adapter, { request, player, queueMode }, signal);
+        return ok(result);
+      },
+    ),
+    runner(
+      "music_play_media",
+      "Directly play a stable media ID returned by music_search or music_browse on a selected player. Replaces the queue and starts now.",
       WRITE,
       {
         type: "object",
@@ -291,16 +333,16 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
       },
       (args) =>
         !stringArg(args, "player") || !stringArg(args, "media_id")
-          ? argumentFailure("music_play requires player and media_id strings.")
+          ? argumentFailure("music_play_media requires player and media_id strings.")
           : null,
       async (args, { signal }) => {
         try {
           const query = stringArg(args, "player");
           const mediaId = stringArg(args, "media_id");
-          if (!query || !mediaId) return argumentFailure("Invalid play arguments.");
+          if (!query || !mediaId) return argumentFailure("Invalid direct play arguments.");
           const selected = await resolvedPlayer(adapter, query, signal);
           if (isResult(selected)) return selected;
-          return commandResult(await adapter.play(selected.player.id, mediaId, signal), {
+          return commandResult(await adapter.play(selected.player.id, mediaId, "replace", signal), {
             player: { id: selected.player.id, name: selected.player.name },
             media_id: mediaId,
           });

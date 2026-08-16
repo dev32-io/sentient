@@ -20,11 +20,21 @@ export function resolveMusicPlayer(players: readonly MusicPlayer[], query: strin
   const byId = players.find((player) => player.id === query);
   if (byId) return { kind: "resolved", player: byId };
 
-  const exact = players.filter((player) => normalize(player.name) === normalizedQuery);
+  const exact = players.filter(
+    (player) =>
+      normalize(player.name) === normalizedQuery ||
+      (player.aliases ?? []).slice(0, 10).some((alias) => normalize(alias) === normalizedQuery),
+  );
   if (exact.length === 1) return { kind: "resolved", player: exact[0] as MusicPlayer };
   if (exact.length > 1) return ambiguous(query, exact);
 
-  const partial = normalizedQuery ? players.filter((player) => normalize(player.name).includes(normalizedQuery)) : [];
+  const partial = normalizedQuery
+    ? players.filter((player) =>
+        [player.name, ...(player.aliases ?? []).slice(0, 10)].some((identity) =>
+          normalize(identity).includes(normalizedQuery),
+        ),
+      )
+    : [];
   if (partial.length === 1) return { kind: "resolved", player: partial[0] as MusicPlayer };
   if (partial.length > 1) return ambiguous(query, partial);
   return { kind: "not_found", query };
