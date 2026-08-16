@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: grounded-web-search
 title: Answer web searches with bounded grounded synthesis
-status: running
+status: contribution_complete
 dependsOn:
   - outbound-fetch-artifacts
 execution:
@@ -33,3 +33,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/first-class-family-tools/grounded-web-search
   baseCommit: 605f7968723740310ee8a2cc9e95417931cc5002
   lastRunId: 3bed5879-1dfa-4529-a0ba-14ba92bfd009
+  completedCommit: f7002ab50d1088caf4483fee9419c893303dc9b5
