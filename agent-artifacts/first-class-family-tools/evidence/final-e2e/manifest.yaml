@@ -1,21 +1,15 @@
 schemaVersion: 1
 evaluation: final-e2e
-recordedAt: 2026-08-16T01:10:56.375Z
+recordedAt: 2026-08-16T02:29:43.251Z
 entries:
-  - result: gateway ready, door ready, vite ready; sentient-outbound-worker
-      Restarting (1)
-    command: source scripts/env.sh && bun run stack:status
-    description: Fresh local stack status.
-    path: files/1-first-class-family-tools-e2e-stack-status.txt
-    checksum: sha256:9a377e107882db55929e4fe5ee54dcc98763354e0b595b1150e3202896cb5503
-  - result: "error: bundled domain policy unavailable at /app/src/domain-policy.ts:77"
-    command: docker logs --tail 120 sentient-outbound-worker
-    description: Exact runtime blocker captured during startup.
-    path: files/2-first-class-family-tools-e2e-stack.log
-    checksum: sha256:ef5d66cb8c9dc7ea5007f7ea4f5d3b2a6119e9ffa46d06cdf0638bb6dce91ac5
-  - result: Authenticated local user; Tools page showed web 3/3, home 31/31, music
-      11/11; 390x844 rendered the same contract.
-    command: Playwright browser journey at https://localhost/
-    description: Structured browser observations and journey steps.
-    path: files/3-first-class-family-tools-e2e-evidence.json
-    checksum: sha256:aae3e841462c4e2d825e6172ac2678ee755bb0bcaead730f89049e8a7ade0408
+  - result: Gateway, door, and vite ready; sentient-outbound-worker Restarting (1);
+      repeated bundled domain policy unavailable error; worktree status
+      preserved.
+    description: Fresh stack status and outbound-worker runtime/log evidence.
+    path: files/1-runtime.txt
+    checksum: sha256:26e29292dcc6331a8b492abbb912a3bec01cb35ac4f2f727c08329d94642006c
+  - result: Native web tools visible; real search request returned web unavailable;
+      no cited answer/artifact; WebSocket HTTP 502 observed.
+    description: Fresh Playwright journey observations.
+    path: files/2-browser-observations.txt
+    checksum: sha256:2b064ab6ad8ee95c0e6ac97462129f3ec6ff386477023420e2bfcd43628d7290

@@ -10,17 +10,16 @@ No qualified criteria declared.
 
 ## Observations
 
-Fresh local E2E reached the real https://localhost/ stack, authenticated Ada with local PIN 1234, and verified the Tools journey at desktop and 390x844. The UI/API exposed native web (web_search, fetch_content, read_web_content), home (31 tools), and music (11 tools) product groups; metadata showed native dispatch and standard web exposure. The complete web journey could not run because sentient-outbound-worker repeatedly restarts: its configured bundled policy path /app-dangerous-domains.txt is absent, producing 'bundled domain policy unavailable' at /app/src/domain-policy.ts:77. This blocks required grounded search/fetch/artifact E2E evidence.
+Fresh local E2E re-review remains blocked. Against commit abeb24dad6a2af6a1ec20b70eca388d1086ce40d, Playwright authenticated local Ada, verified native web definitions in Tools (web_search, fetch_content, read_web_content), then sent a real web-search request. The assistant reported web search unavailable; no bounded cited result or artifact retrieval was produced. The required sentient-outbound-worker was repeatedly restarting with `bundled domain policy unavailable` at `/app/src/domain-policy.ts:77`. Stack readiness still reported gateway/door/vite ready despite that dependency failing, and the browser observed two WebSocket HTTP 502 errors. No HA/MA mutation was attempted. Evidence is outside the repository at `/tmp/first-class-family-tools-final-e2e-iteration1-20260815T192419/`. The worktree had pre-existing dirty files; this review did not modify evaluated product code.
 
 ## Evidence
 
-- **EV-001:** Fresh local stack status. — gateway ready, door ready, vite ready; sentient-outbound-worker Restarting (1)
-- **EV-002:** Exact runtime blocker captured during startup. — error: bundled domain policy unavailable at /app/src/domain-policy.ts:77
-- **EV-003:** Structured browser observations and journey steps. — Authenticated local user; Tools page showed web 3/3, home 31/31, music 11/11; 390x844 rendered the same contract.
+- **EV-001:** Fresh stack status and outbound-worker runtime/log evidence. — Gateway, door, and vite ready; sentient-outbound-worker Restarting (1); repeated bundled domain policy unavailable error; worktree status preserved.
+- **EV-002:** Fresh Playwright journey observations. — Native web tools visible; real search request returned web unavailable; no cited answer/artifact; WebSocket HTTP 502 observed.
 
 ## Findings
 
-- **E2E-001** (critical, open): Outbound worker restart loop caused by missing bundled dangerous-domain policy path prevents web_search/fetch/artifact E2E.
+- **E2E-001** (critical, open): Outbound worker restart loop prevents real web search/fetch/artifact E2E.
 - **E2E-002** (medium, open): Readiness reports the stack ready while required outbound-worker is restarting.
 
 ## Verdict
@@ -29,6 +28,6 @@ blocked
 
 ## Residual Risk
 
-- Web search, fetch, redirect policy, artifact retrieval, and cited bounded output remain unverified at runtime.
-- Home and Music native tools were catalogued but no live household reads or writes were attempted; write paths remain unverified through controlled doubles in this E2E boundary.
-- stack:status reported gateway/door/vite ready despite outbound-worker restarting.
+- AC-005 grounded search/fetch and artifact follow-up remain unverified until outbound-worker packaging/runtime is repaired.
+- AC-006 redirect/dangerous-domain behavior was not exercisable through the real journey while the worker is down.
+- Readiness may permit cutover while a required outbound dependency is unhealthy.

@@ -6,14 +6,14 @@ scope:
   workItem: first-class-family-tools
 status: blocked
 required: true
-attempt: 1
+attempt: 2
 methods:
   - Exercise the complete meaningful user journey; record not_applicable only
     when no runnable E2E surface exists.
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   managerPrompt: Retry the complete local E2E only after queued governance,
     outbound-containment, and family-integration repairs and their re-reviews
     have settled on a clean feature branch. Keep all HA/MA behavior
@@ -23,10 +23,9 @@ findings:
     severity: critical
     status: open
     criterion: AC-005 / grounded web search and fetch journey
-    location: sentient-outbound-worker runtime configuration;
-      /app/src/domain-policy.ts:77
-    summary: Outbound worker restart loop caused by missing bundled dangerous-domain
-      policy path prevents web_search/fetch/artifact E2E.
+    location: sentient-outbound-worker runtime;
+      gateway/addons/outbound-worker/src/domain-policy.ts:77
+    summary: Outbound worker restart loop prevents real web search/fetch/artifact E2E.
     blocking: true
   - id: E2E-002
     severity: medium
