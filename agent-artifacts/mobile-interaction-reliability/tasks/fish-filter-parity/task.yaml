@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: fish-filter-parity
+title: Bring web-equivalent Fish catalog filters to mobile
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      :android:testDebugUnitTest
+    - ./scripts/ios-setup.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
