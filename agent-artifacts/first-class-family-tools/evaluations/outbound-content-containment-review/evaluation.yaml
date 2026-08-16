@@ -3,9 +3,9 @@ id: outbound-content-containment-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - "Context: Run after native web search/fetch and cutover are integrated."
   - "Context: The review must establish both network/request policy and the
@@ -33,9 +33,9 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 2
+  state: passed
   reviewerAgentId: 52864b4e-613b-406b-8d4f-d2ff7ce99e7b
   reviewedCommit: 24df86294301bbbe285499b0487aeced83783605
   managerPrompt: "Repair both blocking outbound containment findings. OCCR-001:
@@ -55,23 +55,33 @@ loop:
 findings:
   - id: OCCR-001
     severity: high
-    status: open
-    criterion: Complete pages must remain absent from ReAct results and utility
-      prompts unless explicitly sliced through read_web_content.
-    location: gateway/src/tools/web/web-tools.ts:146-163, 287-303
-    summary: Short fetched pages enter both fetch_content results and grounded
-      utility prompts in full.
+    status: resolved
+    criterion: Complete pages remain outside ReAct and utility prompts unless
+      explicitly sliced
+    location: gateway/src/tools/web/web-tools.ts:64-327
+    summary: Short and long pages now expose only deliberately partial passages with
+      artifact continuation.
     blocking: true
   - id: OCCR-002
     severity: medium
-    status: open
-    criterion: Malformed external responses must not bypass response byte bounds.
-    location: gateway/addons/outbound-worker/src/search-searxng.ts:68-70;
-      gateway/src/tools/web/outbound-worker-client.ts:128-130, 176-179
-    summary: Response size checks occur only after response.text() has buffered the
-      entire SearXNG or worker response.
+    status: resolved
+    criterion: Malformed and cancelled external responses cannot bypass byte and
+      cancellation bounds
+    location: gateway/src/tools/web/bounded-response.ts;
+      gateway/addons/outbound-worker/src/bounded-response.ts
+    summary: Both boundaries stream under byte caps and reject cancellation even
+      after a valid JSON prefix.
+    blocking: true
+  - id: OCCR-003
+    severity: high
+    status: resolved
+    criterion: All normal and delegated web content crosses the configured inbound scanner
+    location: gateway/src/mcp-host/delegated-broker.ts:180-193;
+      gateway/src/tools/tool-broker.ts:801-878
+    summary: Delegated web passages and results now share the configured per-user
+      inbound gate and fail closed on scanner failure.
     blocking: true
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/outbound-content-containment-review/manifest.yaml

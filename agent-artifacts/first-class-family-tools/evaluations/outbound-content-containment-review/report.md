@@ -10,37 +10,36 @@ No qualified criteria declared.
 
 ## Observations
 
-Evaluated commit 8ac582dc402dcb4fe6cfa673c649676b8fccb687 read-only.
+# Outbound content containment final review
 
-Requirement conclusions:
-- PASS — Network confinement: outbound-worker is internal-only and unpublished; its managed dependency includes egress-proxy, and loopback ingress exposes only the narrow worker API. Static search found the model URL dereference only in the web worker client path.
-- PASS — URL policy: HTTP/HTTPS, credential rejection, ports, DNS failure, case/trailing-dot/IDNA normalization, suffix denial, and redirect-by-redirect checks are implemented and covered.
-- FAIL — Resource/malformed-response bounds: page fetch streaming, redirects, compression/decompression, extraction, cancellation, and source concurrency are bounded, but SearXNG and gateway worker responses are fully buffered before their size limits are checked (OCCR-002).
-- PASS — Artifacts: IDs are opaque, capability-rooted and owner-checked; malformed, foreign, expired, and evicted reads return no content; slices/passages, modes, TTL, and capacity are covered.
-- FAIL — Context containment: short pages are returned whole by fetch_content and sent whole to the utility model by grounded web_search, without explicit read_web_content slicing (OCCR-001).
-- PASS — Scanning/logging: utility passages and summaries cross the inbound gate, all native tool results cross the broker gate before capping, and reviewed web paths log no query/body/summary content.
-- PASS — Summary fallbacks: selected user model resolves at request time, then one configured fallback, then deterministic formatting; every model attempt sends tools:[] and uses shared input/output/deadline bounds.
-- PASS — Required checks: 707 pass, 2 skipped, 0 fail; typecheck passed; git diff --check passed.
+## Verdict
+PASS at commit `e4b5093160ee0d706bedc874c176aee3a28568c4` on a clean feature branch. No production or live public pages accessed.
 
-Overall: FAIL because the central complete-page containment promise is reproducibly violated and malformed upstream responses can bypass intended memory bounds.
+## Findings
+OCCR-001, OCCR-002, and OCCR-003 are resolved. Initial extracts and grounded passages remain deliberately partial even for short pages; gateway and worker response streams enforce byte bounds and typed cancellation before accepting buffered JSON; normal and delegated web paths apply the configured inbound gate before utility prompts and before Hermes receives results. Artifact ownership, URL/redirect policy, content-safe logging, result caps, selected-model fallback order, and tools:[] isolation remain intact.
+
+## Verification
+Focused containment/delegation tests passed 44/44. Canonical gateway tool/security/orchestrator/provider suite passed 721 with 2 live tests skipped. Typecheck, lint, and git diff checks passed. Worktree remained clean.
 
 ## Evidence
 
-- **EV-001:** Required regression suite. — 707 pass, 2 skip, 0 fail
-- **EV-002:** source scripts/env.sh && bun run typecheck — All workspace typechecks exited 0.
-- **EV-003:** source scripts/env.sh && git diff --check — Exit 0.
-- **EV-004:** Read-only mocked runtime reproduction; script and output are outside the repository. — fullBodyInFetchToolResult=true and fullBodyInUtilityPrompt=true for a 22-character fetched page.
+- **EV-001:** source scripts/env.sh && bun test gateway/src/tools gateway/src/security gateway/src/system-orchestrator gateway/src/provider — 721 passed, 2 live tests skipped, 0 failed
+- **EV-002:** focused containment and delegation suite — 44 passed, 0 failed
+- **EV-003:** source scripts/env.sh && bun run typecheck — All workspaces passed
+- **EV-004:** source scripts/env.sh && bun run lint — 4,678 files checked; passed
+- **EV-005:** source scripts/env.sh && git diff --check — Passed; worktree clean
 
 ## Findings
 
-- **OCCR-001** (high, open): Short fetched pages enter both fetch_content results and grounded utility prompts in full.
-- **OCCR-002** (medium, open): Response size checks occur only after response.text() has buffered the entire SearXNG or worker response.
+- **OCCR-001** (high, resolved): Short and long pages now expose only deliberately partial passages with artifact continuation.
+- **OCCR-002** (medium, resolved): Both boundaries stream under byte caps and reject cancellation even after a valid JSON prefix.
+- **OCCR-003** (high, resolved): Delegated web passages and results now share the configured per-user inbound gate and fail closed on scanner failure.
 
 ## Verdict
 
-fail
+pass
 
 ## Residual Risk
 
-- Network confinement was established from topology/config tests and code inspection, not a live egress-proxy outage test.
-- No live benign public-page E2E was run; the review remained local and non-mutating.
+- No live-page or full-stack Hermes E2E was run; confinement and delegated delivery were established through code inspection and local boundary tests.
+- The inbound scanner remains an annotate/sanitize-and-risk boundary with documented corpus misses rather than a general content-blocking classifier.
