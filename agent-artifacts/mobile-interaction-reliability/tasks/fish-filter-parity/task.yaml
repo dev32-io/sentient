@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: fish-filter-parity
 title: Bring web-equivalent Fish catalog filters to mobile
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/fish-filter-parity
   baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
   lastRunId: 3e75db71-87d3-4d54-85cf-6a1f0a742f2e
+  completedCommit: bde0121ddba23441a2cde61f8dd7435eb870a158
