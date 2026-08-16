@@ -4,7 +4,7 @@
 //
 // Four-state per-tool permission model (2026-08-07-tool-permissions task 9,
 // replacing task 7's interim two-state Switch): every MCP-server tool AND every
-// gateway-native tool (McpCatalogView.nativeTools, e.g. delegateTask) carries its
+// gateway-native tool (product-group catalog, e.g. delegateTask) carries its
 // own ALLOW/ASK/DENY/OFF permission, rendered by ToolsScreen as a RowSelect
 // dropdown (see ToolPermissionOptions.kt). The server header row keeps a two-state
 // master Switch — a bulk convenience over every tool on that server, unchanged
@@ -16,7 +16,7 @@
 // NEVER a concrete ALLOW — a blanket ALLOW would silently escalate a confirm-tier
 // tool's role-template ASK to auto-approved (the exact shipped-and-caught-on-web
 // bug, then shipped-and-caught again in this ViewModel's own task-7 interim,
-// withServerMasterPermission exists to prevent; see ToolPermissionPatch.kt). A
+// withProductGroupMasterPermission exists to prevent; see ToolPermissionPatch.kt). A
 // single tool's own dropdown is different: it ALWAYS writes one of the four
 // concrete values it displays — there is no "clear" option in a per-tool control,
 // only the bulk master write ever clears. Pending edits live in
@@ -50,7 +50,7 @@ import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobiledata.usecase.settings.ApplyState
 import io.sentient.mobiledata.usecase.settings.ProfileMutation
 import io.sentient.mobilesdk.log.createLogger
-import io.sentient.mobilesdk.settings.McpCatalogEntry
+import io.sentient.mobilesdk.settings.ProductToolGroupView
 import io.sentient.mobilesdk.settings.McpCatalogView
 import io.sentient.mobilesdk.settings.ProfileToolsPatch
 import io.sentient.mobilesdk.settings.ProfileV1
@@ -60,7 +60,7 @@ import io.sentient.mobilesdk.settings.effectiveToolPermission
 import io.sentient.mobilesdk.settings.effectiveWildcardPermission
 import io.sentient.mobilesdk.settings.mergeToolPermissionPatch
 import io.sentient.mobilesdk.settings.toPutBody
-import io.sentient.mobilesdk.settings.withServerMasterPermission
+import io.sentient.mobilesdk.settings.withProductGroupMasterPermission
 import io.sentient.mobilesdk.settings.withToolPermission
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -110,7 +110,7 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
 
     /** Re-reads BOTH server-truth inputs — the profile AND the catalog — and drops this
      *  session's pending edits. Every row on this screen renders from
-     *  `catalog.servers[*].tools[*].permission` and `catalog.servers[*].wildcardPermission`,
+     *  `catalog.groups[*].tools[*].permission` and `catalog.groups[*].wildcardPermission`,
      *  which are the RESOLVED values the gateway computed at fetch time; reloading only the
      *  profile would leave the whole screen showing pre-save permissions after a successful
      *  save, and the master Switch reading a stale wildcard while the server is genuinely
@@ -145,11 +145,11 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
 
     /** Flips every role-governable tool on this server between "on" (CLEARED to each
      *  tool's own role-template answer) and an explicit OFF. NEVER a blanket ALLOW —
-     *  see the file header and [serverToggleWrite]. */
-    fun toggleServer(id: String) = editPermissions { pending, catalog ->
-        val turnedOn = !isServerOn(pending, catalog, id)
-        log.info("toggle-server", mapOf("id" to id, "on" to turnedOn))
-        serverToggleWrite(pending, catalog, id)
+     *  see the file header and [groupToggleWrite]. */
+    fun toggleGroup(id: String) = editPermissions { pending, catalog ->
+        val turnedOn = !isGroupOn(pending, catalog, id)
+        log.info("toggle-group", mapOf("id" to id, "on" to turnedOn))
+        groupToggleWrite(pending, catalog, id)
     }
 
     /** One tool's own permission dropdown: writes [permission] verbatim — always one
@@ -225,11 +225,11 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
 /**
  * Pure, directly-testable (no ViewModel / SettingsComponent needed): whether [id]'s server
  * master control currently reads "on", given [pending] edits layered over the catalog's
- * snapshot. This is BOTH what the Switch renders and what [serverToggleWrite] inverts, so
+ * snapshot. This is BOTH what the Switch renders and what [groupToggleWrite] inverts, so
  * the two can never disagree about which direction a tap is going.
  *
  * Reads the WILDCARD via [effectiveWildcardPermission], exactly as web's tools-pane and
- * iOS's `isServerMasterOn` do — NOT "does any tool read as on" over
+ * iOS's `isGroupOn` do — NOT "does any tool read as on" over
  * [effectiveToolPermission]. The difference is the whole bug: `effectiveToolPermission`
  * falls back with `?:`, which cannot tell a pending `null` CLEAR apart from "no edit here"
  * and so resurrects the catalog snapshot. On a server whose tools all resolve OFF at load,
@@ -238,8 +238,8 @@ class ToolsViewModel(private val component: SettingsComponent) : ViewModel() {
  * tap. The state could not be left. [effectiveWildcardPermission] exists precisely to make
  * that distinction, via `containsKey`.
  */
-internal fun isServerOn(pending: ToolPermissionPatchMap, catalog: McpCatalogView, id: String): Boolean {
-    val entry = catalog.servers[id] ?: return false
+internal fun isGroupOn(pending: ToolPermissionPatchMap, catalog: McpCatalogView, id: String): Boolean {
+    val entry = catalog.groups[id] ?: return false
     return effectiveWildcardPermission(
         pending,
         id,
@@ -250,30 +250,30 @@ internal fun isServerOn(pending: ToolPermissionPatchMap, catalog: McpCatalogView
 
 /**
  * How many of [id]'s tools currently read as anything other than OFF, for the header's
- * "n/total tools" label. Distinct from [isServerOn] on purpose: the master control's state
+ * "n/total tools" label. Distinct from [isGroupOn] on purpose: the master control's state
  * is the wildcard, while the count is a per-tool tally, and web renders exactly this pair.
  *
  * A pending master "on" clear does NOT move this number until the save round-trips —
  * `effectiveToolPermission` deliberately does not re-simulate the resolver's cascade
  * client-side, so a cleared tool's role-template answer is not knowable here.
  */
-internal fun activeToolCount(pending: ToolPermissionPatchMap, id: String, entry: McpCatalogEntry): Int =
+internal fun activeToolCount(pending: ToolPermissionPatchMap, id: String, entry: ProductToolGroupView): Int =
     entry.tools.count { effectiveToolPermission(pending, id, it) != ToolPermission.OFF }
 
 /**
  * Pure, directly-testable: the master-control write for [id] given its CURRENT effective
- * state — off → on clears every named tool + the wildcard (`withServerMasterPermission`,
+ * state — off → on clears every named tool + the wildcard (`withProductGroupMasterPermission`,
  * `turnOn = true`), on → off writes an explicit OFF everywhere. SECURITY-CRITICAL: the "on"
  * direction must NEVER be a concrete [ToolPermission.ALLOW] — see the file header.
  */
-internal fun serverToggleWrite(
+internal fun groupToggleWrite(
     pending: ToolPermissionPatchMap,
     catalog: McpCatalogView,
     id: String,
 ): ToolPermissionPatchMap {
-    val entry = catalog.servers[id] ?: return pending
+    val entry = catalog.groups[id] ?: return pending
     val toolNames = entry.tools.map { it.name }
-    return withServerMasterPermission(pending, id, toolNames, catalog.wildcardPermissionKey, turnOn = !isServerOn(pending, catalog, id))
+    return withProductGroupMasterPermission(pending, id, toolNames, catalog.wildcardPermissionKey, turnOn = !isGroupOn(pending, catalog, id))
 }
 
 /** Fold one FSM transition into flat progress fields. */

@@ -15,16 +15,6 @@ import SwiftUI
 import MobileData
 
 struct ToolsScreen: View {
-    /// Reserved MCP-server key the gateway resolves the "Gateway tools" card's
-    /// SETTABLE rows (skill tools) under — mirrors
-    /// `io.sentient.mobilesdk.settings.NATIVE_TOOL_SERVER_KEY` (shared/mobile-sdk)
-    /// EXACTLY, which mirrors gateway/shared/config's `NATIVE_TOOL_SERVER_KEY`
-    /// ("native") in turn. Kept as a local literal rather than importing the
-    /// Kotlin `const val` because SKIE only re-exports it after a fresh
-    /// `ios-setup.sh` framework build; if the gateway's sentinel ever changes,
-    /// this must change with it.
-    private static let nativeToolServerKey = "native"
-
     let settings: SettingsComponent
     let onBack: () -> Void
 
@@ -48,8 +38,7 @@ struct ToolsScreen: View {
                 SoulInlineError(message: message)
             case .ready:
                 saveBanner
-                serversSection
-                nativeToolsCard
+                groupsSection
                 hermesCard
             }
         }
@@ -88,21 +77,21 @@ struct ToolsScreen: View {
     }
 
     @ViewBuilder
-    private var serversSection: some View {
-        if vm.serverIds.isEmpty {
+    private var groupsSection: some View {
+        if vm.groupIds.isEmpty {
             Text("No tools configured. An admin can add them in gateway/config.yaml#mcp_catalog.")
                 .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink3)
         } else {
-            ForEach(vm.serverIds, id: \.self) { id in
-                if let entry = vm.catalog?.servers[id] {
-                    serverCard(id, entry)
+            ForEach(vm.groupIds, id: \.self) { id in
+                if let entry = vm.catalog?.groups[id] {
+                    groupCard(id, entry)
                 }
             }
         }
     }
 
-    private func serverCard(_ id: String, _ entry: McpCatalogEntry) -> some View {
+    private func groupCard(_ id: String, _ entry: ProductToolGroupView) -> some View {
         let rows = entry.tools.map { tool in
             ToolPermissionRowModel(
                 id: tool.name,
@@ -115,61 +104,17 @@ struct ToolsScreen: View {
         let activeCount = rows.filter { $0.permission != .off }.count
         return ToolsServerCard(
             id: id,
-            serverDescription: entry.description,
-            masterOn: vm.isServerMasterOn(id, entry),
+            serverDescription: entry.description_.map { "\($0) · Default exposure: \(entry.defaultExposure == .advanced ? "advanced" : "standard")" }
+                ?? "Default exposure: \(entry.defaultExposure == .advanced ? "advanced" : "standard")",
+            masterOn: vm.isGroupMasterOn(id, entry),
             isOpen: openServers.contains(id),
             activeCount: activeCount,
             totalCount: entry.tools.count,
             toolRows: rows,
             onToggleOpen: { toggleOpen(id) },
-            onToggleServer: { turnOn in vm.setServerMaster(id, entry.tools.map { $0.name }, turnOn) },
+            onToggleServer: { turnOn in vm.setGroupMaster(id, entry.tools.map { $0.name }, turnOn) },
             onToolChange: { toolName, permission in vm.setToolPermission(id, toolName, permission) }
         )
-    }
-
-    @ViewBuilder
-    private var nativeToolsCard: some View {
-        let nativeTools = vm.catalog?.nativeTools ?? []
-        if !nativeTools.isEmpty {
-            SettingsCard(
-                title: "Gateway tools",
-                sub: "Built into the gateway itself, not an MCP server. Most rows (skill tools) are governed per-person like any other tool; delegateTask is governed by role only — no stored key can address it yet."
-            ) {
-                ForEach(nativeTools, id: \.name) { tool in
-                    ToolPermissionRow(
-                        row: ToolPermissionRowModel(
-                            id: tool.name,
-                            name: tool.name,
-                            description: tool.description,
-                            // Most native rows (skill tools) resolve their stored
-                            // override under `nativeToolServerKey` — read pending
-                            // edits through `vm.toolPermission` exactly like an MCP
-                            // server's own tool, never `tool.permission` directly.
-                            // That was the bug: reading the catalog snapshot
-                            // unconditionally was safe only while every native tool
-                            // was `settable: false`, and silently ignored this
-                            // session's edits once skill_* tools became settable.
-                            // delegateTask (`settable: false`) has no stored address
-                            // at all, so it always falls back to its catalog-resolved
-                            // snapshot regardless.
-                            permission: vm.toolPermission(Self.nativeToolServerKey, tool),
-                            settable: tool.settable
-                        ),
-                        accessibilityId: "settings-tools-native-\(tool.name)",
-                        onChange: { permission in
-                            // ToolPermissionRow already renders delegateTask fully
-                            // non-interactive (isEnabled: row.settable), but this
-                            // guard stays explicit: a serverless native tool
-                            // (serverName: nil) has no resolver branch that would
-                            // ever read a write back, so writing one anyway would be
-                            // silently discarded, not merely redundant.
-                            guard tool.settable else { return }
-                            vm.setToolPermission(Self.nativeToolServerKey, tool.name, permission)
-                        }
-                    )
-                }
-            }
-        }
     }
 
     @ViewBuilder

@@ -72,7 +72,7 @@ final class ToolsViewModel {
     var isApplying: Bool { save == .saving || save == .restarting }
 
     /// MCP server ids in a stable sorted order.
-    var serverIds: [String] { (catalog?.servers.keys).map { $0.sorted() } ?? [] }
+    var groupIds: [String] { (catalog?.groups.keys).map { $0.sorted() } ?? [] }
 
     // ── Read helpers (delegate to the shared resolvers, never re-simulate) ──
 
@@ -86,10 +86,10 @@ final class ToolsViewModel {
     /// Whether the server's master toggle should show "on". A wildcard that
     /// was never touched (`nil`) reads as on, matching `wildcard !== "off"`
     /// on the webui.
-    func isServerMasterOn(_ serverId: String, _ entry: McpCatalogEntry) -> Bool {
+    func isGroupMasterOn(_ groupId: String, _ entry: ProductToolGroupView) -> Bool {
         guard let key = catalog?.wildcardPermissionKey else { return entry.wildcardPermission != .off }
         let wildcard = effectiveWildcardPermission(
-            permissions: draftPermissions, serverId: serverId, wildcardKey: key, catalogWildcard: entry.wildcardPermission
+            permissions: draftPermissions, serverId: groupId, wildcardKey: key, catalogWildcard: entry.wildcardPermission
         )
         return wildcard != .off
     }
@@ -110,12 +110,12 @@ final class ToolsViewModel {
     /// govern PLUS the wildcard — `off` explicitly (turnOn=false) or a `null`
     /// clear back to the role template (turnOn=true), NEVER a bulk concrete
     /// `allow`. See `withServerMasterPermission`'s doc comment.
-    func setServerMaster(_ serverId: String, _ toolNames: [String], _ turnOn: Bool) {
+    func setGroupMaster(_ groupId: String, _ toolNames: [String], _ turnOn: Bool) {
         guard let wildcardKey = catalog?.wildcardPermissionKey else { return }
         draftPermissions = withServerMasterPermission(
-            permissions: draftPermissions, serverId: serverId, toolNames: toolNames, wildcardKey: wildcardKey, turnOn: turnOn
+            permissions: draftPermissions, serverId: groupId, toolNames: toolNames, wildcardKey: wildcardKey, turnOn: turnOn
         )
-        log.info("tools.server-master.change server=\(serverId) toolCount=\(toolNames.count) turnOn=\(turnOn)")
+        log.info("tools.server-master.change group=\(groupId) toolCount=\(toolNames.count) turnOn=\(turnOn)")
     }
 
     func toggleToolset(_ toolset: String) {
@@ -151,7 +151,7 @@ final class ToolsViewModel {
             }
             await loadCatalog()
             phase = .ready
-            log.info("load.ready servers=\(serverIds.count)")
+            log.info("load.ready groups=\(groupIds.count)")
         } catch is CancellationError {
         } catch {
             phase = .failed("Couldn't load tools.")
