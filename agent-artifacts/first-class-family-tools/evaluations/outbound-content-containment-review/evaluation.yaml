@@ -33,6 +33,8 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 2
+  reviewerAgentId: 52864b4e-613b-406b-8d4f-d2ff7ce99e7b
+  reviewedCommit: 24df86294301bbbe285499b0487aeced83783605
