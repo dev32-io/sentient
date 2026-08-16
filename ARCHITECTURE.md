@@ -52,11 +52,12 @@ so the browser/cube/mobile clients never see ACP directly.
 
 ## Gateway as system orchestrator
 
-`sentient-gateway` is not just a WS terminator — it owns the docker
-lifecycle of every sibling container: `sentient-hermes`, `stt-service`,
-`egress-proxy`, `ha-mcp`, `ma-mcp`, `searxng`, `searxng-mcp`,
-`fetch-mcp`. Implementation in
-`gateway/src/system-orchestrator/`.
+The native `sentient-gateway` owns the lifecycle of its supervised dependencies.
+Docker infrastructure is `inbound-proxy`, `ingress-proxy`, `outbound-worker`,
+`searxng`, and `egress-proxy`; GPU-dependent STT/TTS and deep memory are native
+addons. Web, Home Assistant, and Music Assistant tools execute in-process through
+the ToolBroker and native adapters rather than MCP sidecars. Implementation is in
+`gateway/src/system-orchestrator/` and `gateway/src/tools/`.
 
 How it works:
 

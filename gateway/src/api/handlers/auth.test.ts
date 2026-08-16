@@ -49,7 +49,10 @@ function makeInvalidTokens() {
 function makeDeps(
   tokensOverride?: ReturnType<typeof makeValidTokens>,
   userOverride?: UserRecord,
-): { auth: Pick<AuthService, "tokens" | "users" | "updateDisplayName" | "changePin">; mcpCatalog: McpCatalog } {
+): {
+  auth: Pick<AuthService, "tokens" | "users" | "updateDisplayName" | "changePin">;
+  mcpCatalog: McpCatalog;
+} {
   const user = userOverride ?? sampleUser();
   const tokens = tokensOverride ?? makeValidTokens();
   return {
@@ -63,9 +66,17 @@ function makeDeps(
         remove: vi.fn(async () => ({ ok: true as const, value: undefined })),
       },
       updateDisplayName: vi.fn(
-        async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({ ok: true, value: user }),
+        async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({
+          ok: true,
+          value: user,
+        }),
       ),
-      changePin: vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: true, value: undefined })),
+      changePin: vi.fn(
+        async (): Promise<Result<void, ChangePinError>> => ({
+          ok: true,
+          value: undefined,
+        }),
+      ),
     },
     mcpCatalog: shippedCatalog,
   };
@@ -94,7 +105,10 @@ function makePutPinRequest(body: unknown, bearerToken?: string): Request {
 function makeGetMeRequest(bearerToken?: string): Request {
   const headers = new Headers();
   if (bearerToken !== undefined) headers.set("authorization", `Bearer ${bearerToken}`);
-  return new Request("http://localhost/api/v1/auth/me", { method: "GET", headers });
+  return new Request("http://localhost/api/v1/auth/me", {
+    method: "GET",
+    headers,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +152,10 @@ describe("GET /api/v1/auth/me", () => {
   });
 
   it("reports a promotion on the next visit, with no re-login", async () => {
-    const deps = makeDeps(makeValidTokens("alice"), { ...sampleUser(), role: "admin" as const });
+    const deps = makeDeps(makeValidTokens("alice"), {
+      ...sampleUser(),
+      role: "admin" as const,
+    });
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const body = await (await handler(makeGetMeRequest("her-token"))).json();
@@ -168,7 +185,10 @@ describe("PUT /api/v1/auth/me", () => {
   it("updates displayName on 200 and persists via authService", async () => {
     const updatedUser = { ...sampleUser(), displayName: "Alicia" };
     const deps = makeDeps(makeValidTokens(), sampleUser());
-    deps.auth.updateDisplayName = vi.fn(async () => ({ ok: true as const, value: updatedUser }));
+    deps.auth.updateDisplayName = vi.fn(async () => ({
+      ok: true as const,
+      value: updatedUser,
+    }));
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutMeRequest({ displayName: "Alicia" }, "valid-token"));
@@ -231,7 +251,10 @@ describe("PUT /api/v1/auth/me", () => {
   it("returns 500 when authService.updateDisplayName fails with io-error", async () => {
     const deps = makeDeps(makeValidTokens());
     deps.auth.updateDisplayName = vi.fn(
-      async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({ ok: false, error: "io-error" }),
+      async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({
+        ok: false,
+        error: "io-error",
+      }),
     );
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
@@ -243,7 +266,10 @@ describe("PUT /api/v1/auth/me", () => {
   it("returns 404 when authService.updateDisplayName returns not-found (user deleted)", async () => {
     const deps = makeDeps(makeValidTokens());
     deps.auth.updateDisplayName = vi.fn(
-      async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({ ok: false, error: "not-found" }),
+      async (): Promise<Result<UserRecord, UpdateDisplayNameError>> => ({
+        ok: false,
+        error: "not-found",
+      }),
     );
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
@@ -270,7 +296,12 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 401 when currentPin is wrong", async () => {
     const deps = makeDeps(makeValidTokens());
-    deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "wrong-pin" }));
+    deps.auth.changePin = vi.fn(
+      async (): Promise<Result<void, ChangePinError>> => ({
+        ok: false,
+        error: "wrong-pin",
+      }),
+    );
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "9999", newPin: "5678" }, "valid-token"));
@@ -339,7 +370,12 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 500 when authService.changePin fails with io-error", async () => {
     const deps = makeDeps(makeValidTokens());
-    deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "io-error" }));
+    deps.auth.changePin = vi.fn(
+      async (): Promise<Result<void, ChangePinError>> => ({
+        ok: false,
+        error: "io-error",
+      }),
+    );
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "valid-token"));
@@ -349,7 +385,12 @@ describe("PUT /api/v1/auth/me/pin", () => {
 
   it("returns 404 when authService.changePin returns not-found (user deleted)", async () => {
     const deps = makeDeps(makeValidTokens());
-    deps.auth.changePin = vi.fn(async (): Promise<Result<void, ChangePinError>> => ({ ok: false, error: "not-found" }));
+    deps.auth.changePin = vi.fn(
+      async (): Promise<Result<void, ChangePinError>> => ({
+        ok: false,
+        error: "not-found",
+      }),
+    );
     const handler = createAuthHandler(deps as unknown as AuthHandlerDeps);
 
     const response = await handler(makePutPinRequest({ currentPin: "1234", newPin: "5678" }, "valid-token"));
@@ -453,7 +494,11 @@ function makeSetupRequest(): Request {
         persona: { template: "default", overrides: "" },
         tools: { enabled: {}, toolsets: [] },
         compression: { threshold: 0.5 },
-        advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+        advanced: {
+          extraSystemPrompt: "",
+          maxTokens: 1024,
+          reasoningEffort: "minimal",
+        },
       },
     }),
   });
@@ -486,16 +531,9 @@ describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
     await handler(makeSetupRequest());
 
     const permissions = seededPermissions(userProvisioner);
-    expect(permissions?.gateway).toEqual({
-      identify_user: "allow",
-      pause_audio: "allow",
-      resume_audio: "allow",
-      update_user_settings: "allow",
-    });
-    // The first admin is the household's operator: the confirm tier is theirs,
-    // and it arrives as a prompt rather than as silence in either direction.
-    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
-    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
+    expect(permissions?.web?.web_search).toBe("allow");
+    // The first admin is the household's operator: writes arrive as prompts.
+    expect(permissions?.home?.home_control).toBe("ask");
   });
 
   it("seeds them for a setup submitted with no profile at all", async () => {
@@ -518,8 +556,7 @@ describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
     );
 
     const permissions = seededPermissions(userProvisioner);
-    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
-    expect(permissions?.gateway?.identify_user).toBe("allow");
+    expect(permissions?.web?.fetch_content).toBe("allow");
   });
 
   it("seeds the ADMIN role's table — every curated tool, none withheld", async () => {
@@ -535,14 +572,25 @@ describe("POST /api/v1/auth/setup — the first admin gets tools", () => {
     // The operator reaches every tier, so their table is the whole catalog —
     // seeding this account as anything less privileged would show up here as a
     // missing tool rather than as a mystery months later.
-    expect(seededPermissions(userProvisioner)).toEqual(defaultPermissionsFor("admin", shippedCatalog));
-    expect(seededPermissions(userProvisioner)).not.toEqual(defaultPermissionsFor("guest", shippedCatalog));
+    expect(seededPermissions(userProvisioner)).toEqual(
+      defaultPermissionsFor("admin", shippedCatalog, {
+        includeFoundationTools: true,
+      }),
+    );
+    expect(seededPermissions(userProvisioner)).not.toEqual(
+      defaultPermissionsFor("guest", shippedCatalog, {
+        includeFoundationTools: true,
+      }),
+    );
   });
 });
 
 describe("POST /api/v1/auth/setup — install-state cursor", () => {
   it("advances install-state cursor admin → finish on success", async () => {
-    const installState = makeMockInstallState({ wizard_cursor: "admin", unlock_verified: true });
+    const installState = makeMockInstallState({
+      wizard_cursor: "admin",
+      unlock_verified: true,
+    });
     const handler = createAuthHandler({
       auth: makeSetupAuthService(),
       userProvisioner: makeSetupProvisioner(),
@@ -558,7 +606,10 @@ describe("POST /api/v1/auth/setup — install-state cursor", () => {
   });
 
   it("leaves cursor untouched when cursor !== admin", async () => {
-    const installState = makeMockInstallState({ wizard_cursor: "voice", unlock_verified: true });
+    const installState = makeMockInstallState({
+      wizard_cursor: "voice",
+      unlock_verified: true,
+    });
     const handler = createAuthHandler({
       auth: makeSetupAuthService(),
       userProvisioner: makeSetupProvisioner(),

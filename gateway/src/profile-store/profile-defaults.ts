@@ -55,7 +55,11 @@ export function applyProfileDefaults(p: ProfileV1, ctx: ProfileDefaultsContext):
   return {
     ...p,
     tools: {
-      permissions: permissionsIsUnset ? defaultPermissionsFor(ctx.role, ctx.mcpCatalog) : p.tools.permissions,
+      permissions: permissionsIsUnset
+        ? defaultPermissionsFor(ctx.role, ctx.mcpCatalog, {
+            includeFoundationTools: true,
+          })
+        : p.tools.permissions,
       toolsets: toolsetsIsEmpty ? [...DEFAULT_TOOLSETS] : p.tools.toolsets,
     },
     audio: p.audio ?? AUDIO_PREFS_DEFAULT,

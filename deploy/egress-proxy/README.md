@@ -7,10 +7,9 @@ agent container and the outside world. Read this before changing
 
 ## What this proxy is for
 
-Hermes agents browse the web. The `sentient-searxng-mcp` container exposes
-`search_web` (query SearXNG) and the `sentient-fetch-mcp` container exposes
-`fetch` (open any URL and return parsed text). A browsing agent by nature
-reaches out to unpredictable sites, so the proxy is deliberately
+The confined `sentient-outbound-worker` performs first-class web search and
+content fetches, using SearXNG for metasearch. Browsing reaches unpredictable
+sites, so the proxy is deliberately
 **open-by-default** for HTTPS with a **denylist** for known-bad hosts.
 
 The proxy exists to provide:

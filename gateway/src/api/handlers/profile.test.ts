@@ -294,7 +294,9 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
 
     // The confirm-tier tool is absent and the two tiers a child does reach are
     // present — an adult's template would carry all three.
-    expect(savedProfile(profileStore).tools.permissions).toEqual(defaultPermissionsFor("child", CATALOG));
+    expect(savedProfile(profileStore).tools.permissions).toEqual(
+      defaultPermissionsFor("child", CATALOG, { includeFoundationTools: true }),
+    );
     expect(savedProfile(profileStore).tools.permissions?.household?.unlock_door).toBeUndefined();
     expect(savedProfile(profileStore).tools.permissions?.household?.look_up).toBe("allow");
   });
@@ -317,10 +319,15 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
     expect(saved?.household?.look_up).toBe("off");
     // …and every OTHER tool an adult reaches, which merge-then-seed dropped.
     expect(saved).toEqual({
-      ...defaultPermissionsFor("adult", CATALOG),
-      household: { ...defaultPermissionsFor("adult", CATALOG).household, look_up: "off" },
+      ...defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true }),
+      household: {
+        ...defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true }).household,
+        look_up: "off",
+      },
     });
-    expect(Object.keys(saved ?? {})).toEqual(Object.keys(defaultPermissionsFor("adult", CATALOG)));
+    expect(Object.keys(saved ?? {})).toEqual(
+      Object.keys(defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true })),
+    );
   });
 
   // Seeding fills PERMISSIONS and nothing else. `applyProfileDefaults` also
@@ -336,7 +343,9 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
     await handler(makePutRequest({ ...body, tools: { toolsets: [] } }, "t"));
 
     expect(savedProfile(profileStore).tools.toolsets).toEqual([]);
-    expect(savedProfile(profileStore).tools.permissions).toEqual(defaultPermissionsFor("adult", CATALOG));
+    expect(savedProfile(profileStore).tools.permissions).toEqual(
+      defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true }),
+    );
   });
 
   it("refuses the save when the stored profile cannot be read, rather than merging onto nothing", async () => {
@@ -369,7 +378,9 @@ describe("PUT /api/v1/profile/me — partial permission tables", () => {
     const response = await handler(makePutRequest({ ...body, tools: { toolsets: ["memory"] } }, "t"));
 
     expect(response.status).toBe(200);
-    expect(savedProfile(profileStore).tools.permissions).toEqual(defaultPermissionsFor("adult", CATALOG));
+    expect(savedProfile(profileStore).tools.permissions).toEqual(
+      defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true }),
+    );
   });
 
   it("saves the profile unchanged when the account's role cannot be read", async () => {

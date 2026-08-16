@@ -1,19 +1,8 @@
 image: sentient/ingress-proxy:local
 container_name: sentient-ingress-proxy
-# The ONE service that spans both networks, so no MCP has to. sentient-external
-# is what makes the publishes below take effect at all (docker drops publishing
-# when every attached network is internal); sentient-internal is the hop to the
-# confined addons. Losing either membership breaks ingress silently — see
-# gateway/mcp/ingress-proxy/nginx.conf.
+# The only bridge from the native host to internal-only outbound-worker.
 networks: [sentient-internal, sentient-external]
-# Host publishing. LOOPBACK ONLY: the gateway is a native host process, and a
-# bare "8088:8088" would bind 0.0.0.0 and put the addons on the LAN. These are
-# the ports fetch-mcp and searxng-mcp used to publish themselves; the gateway
-# still dials http://127.0.0.1:8088/mcp and http://127.0.0.1:8087/mcp and is
-# unaware anything moved.
 ports:
-  - "127.0.0.1:8088:8088"
-  - "127.0.0.1:8087:8087"
   - "127.0.0.1:8090:8090"
-mem_limit_bytes: 67108864     # 64 MiB — nginx, three server blocks, no caching or TLS
+mem_limit_bytes: 67108864
 cpus: 0.25

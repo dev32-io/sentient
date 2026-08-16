@@ -2,10 +2,12 @@ import { type HermesConfig, type McpCatalog, type OrchestratorConfig, tierOf } f
 import type { ImpactTier } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import { selectDelegatedTools } from "../external-tools/delegated-tool-tier.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ActiveSessionLookup } from "../mcp-host/active-session-lookup.js";
 import { createDelegatedBrokerFactory } from "../mcp-host/delegated-broker.js";
 import type { McpServerDeps, ToolHandler, ToolRegistry } from "../mcp-host/mcp-server.js";
+import { type NativeToolSurface, createNativeToolSurface } from "../mcp-host/native-tool-surface.js";
 import { type ProxiedToolSurface, createProxiedToolSurface } from "../mcp-host/proxied-tool-surface.js";
 import { resolveMcpSocketPath } from "../mcp-host/socket-path.js";
 import type { AudioControls } from "../mcp-host/tools/audio-tools.js";
@@ -15,6 +17,7 @@ import { type UserSettingsControls, createUpdateUserSettingsTool } from "../mcp-
 import { type UnixSocketListener, createUnixSocketListener } from "../mcp-host/unix-socket-listener.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { McpClient } from "../tools/mcp-client.js";
+import type { NativeToolRunner } from "../tools/tool-broker.js";
 import type { UserStore } from "../user-auth/user-store.js";
 
 const log = getLog(["sentient", "bootstrap", "mcp-host"]);
@@ -57,6 +60,7 @@ export interface McpHostOptions {
      *  proxied call is bound by the delegating user's own Deny/Off settings —
      *  see mcp-host/delegated-broker.ts's header. */
     profileStore: ProfileStore;
+    nativeToolsFor?: (principal: UserPrincipal) => Map<string, NativeToolRunner>;
   };
 }
 
@@ -72,7 +76,11 @@ interface HostedToolWithTier {
 }
 
 function withCatalogTier(catalog: McpCatalog): (handler: ToolHandler) => HostedToolWithTier {
-  return (handler) => ({ name: handler.def.name, tier: tierOf(catalog, handler.def.name), handler });
+  return (handler) => ({
+    name: handler.def.name,
+    tier: tierOf(catalog, handler.def.name),
+    handler,
+  });
 }
 
 /** Narrows away the untiered ones, and says so — an operator who dropped a
@@ -99,14 +107,26 @@ function isTiered(tool: HostedToolWithTier): tool is HostedToolWithTier & { tier
  * guarantees the PDP decision and the executed code can never disagree even if
  * that filter is one day changed.
  */
-function buildRegistry(hosted: ToolHandler[], surface: ProxiedToolSurface | null): ToolRegistry {
+type DynamicSurface = ProxiedToolSurface | NativeToolSurface;
+
+function buildRegistry(hosted: ToolHandler[], surfaces: readonly DynamicSurface[]): ToolRegistry {
   const hostedByName = new Map(hosted.map((h) => [h.def.name, h]));
   return {
-    list() {
-      return [...hosted.map((h) => h.def), ...(surface?.definitions() ?? [])];
+    list: () => {
+      const seen = new Set(hosted.map((handler) => handler.def.name));
+      return [
+        ...hosted.map((handler) => handler.def),
+        ...surfaces.flatMap((surface) =>
+          surface.definitions().filter((definition) => {
+            if (seen.has(definition.name)) return false;
+            seen.add(definition.name);
+            return true;
+          }),
+        ),
+      ];
     },
     get(name) {
-      return hostedByName.get(name) ?? surface?.handler(name) ?? null;
+      return hostedByName.get(name) ?? surfaces.map((surface) => surface.handler(name)).find(Boolean) ?? null;
     },
   };
 }
@@ -140,39 +160,54 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
   // The PROXIED tier (task 9g). Every call through it is dispatched by a
   // per-user `ToolBroker`, so the gateway's PDP sees it — that mediation is the
   // entire reason the tier is allowed to exist.
-  const proxiedSurface = proxy
-    ? createProxiedToolSurface({
-        listCatalogTools: () => proxy.mcpClient.listTools(),
-        brokerFor: createDelegatedBrokerFactory({
-          mcp: proxy.mcpClient,
-          catalog,
-          toolsConfig: proxy.toolsConfig,
-          accessManager: proxy.accessManager,
-          profileStore: proxy.profileStore,
-          // The delegator's role comes off the SAME store the auth gate reads,
-          // so a delegation can never hold authority its delegator does not.
-          userStore,
-        }),
-        hostedNames: new Set(hostedTools.map((tool) => tool.def.name)),
+  const hostedNames = new Set(hostedTools.map((tool) => tool.def.name));
+  const brokerFor = proxy
+    ? createDelegatedBrokerFactory({
+        mcp: proxy.mcpClient,
+        catalog,
+        toolsConfig: proxy.toolsConfig,
+        accessManager: proxy.accessManager,
+        profileStore: proxy.profileStore,
+        userStore,
+        ...(proxy.nativeToolsFor ? { nativeToolsFor: proxy.nativeToolsFor } : {}),
       })
     : null;
+  const proxiedSurface =
+    proxy && brokerFor
+      ? createProxiedToolSurface({
+          listCatalogTools: () => proxy.mcpClient.listTools(),
+          brokerFor,
+          hostedNames,
+        })
+      : null;
   if (!proxiedSurface) {
     log.warn("mcp-host.no-proxy-tier", {
       reason: "no orchestrator config, so a delegated agent gets the gateway's hosted tools only",
     });
   }
 
-  const registry = buildRegistry(hosted, proxiedSurface);
-
   function buildListener(userId: string): UnixSocketListener {
     const socketPath = resolveMcpSocketPath(userId, basePath);
+    const nativeSurface = brokerFor ? createNativeToolSurface(userId, brokerFor, hostedNames) : null;
+    // Native product definitions win a same-name collision: core capability
+    // must never silently route back through a third-party MCP after cutover.
+    const surfaces: DynamicSurface[] = [nativeSurface, proxiedSurface].filter(
+      (surface): surface is DynamicSurface => surface !== null,
+    );
+    const registry = buildRegistry(hosted, surfaces);
     const deps: McpServerDeps = {
       registry,
       contextFor: () => ({ sessionId: null, userId, sessionChannel: "voice" }),
       // Re-derive the proxied tier at the moment of use, symmetric with
       // `delegateTask`'s dispatch-time provisioning: no cached surface, no
       // drift. Bounded by each catalog entry's own `connect_timeout`.
-      ...(proxiedSurface ? { refreshTools: () => proxiedSurface.refresh() } : {}),
+      ...(surfaces.length > 0
+        ? {
+            refreshTools: async () => {
+              await Promise.all(surfaces.map((surface) => surface.refresh()));
+            },
+          }
+        : {}),
     };
     return createUnixSocketListener(socketPath, userId, deps);
   }
@@ -220,7 +255,10 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
       listenersByUser.set(userId, listener);
       if (started) {
         await listener.start();
-        log.info("addUser.listener-started", { userId, socketPath: resolveMcpSocketPath(userId, basePath) });
+        log.info("addUser.listener-started", {
+          userId,
+          socketPath: resolveMcpSocketPath(userId, basePath),
+        });
       }
     },
     async removeUser(userId: string) {

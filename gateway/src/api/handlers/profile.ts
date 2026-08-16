@@ -90,7 +90,10 @@ async function handleApply(deps: ProfileHandlerDeps, request: Request): Promise<
   if (inflightApply.has(userId)) {
     log.warn("apply.rejected-concurrent", { userId });
     return Response.json(
-      { error: "apply-in-progress", reason: "another apply is already running for this user" },
+      {
+        error: "apply-in-progress",
+        reason: "another apply is already running for this user",
+      },
       { status: HTTP_TOO_MANY },
     );
   }
@@ -190,7 +193,10 @@ async function parseProfileBody(request: Request, userId: string): Promise<Profi
   }
 
   if (parsed.data.userId !== userId) {
-    log.warn("me.put-userid-mismatch", { bearer: userId, body: parsed.data.userId });
+    log.warn("me.put-userid-mismatch", {
+      bearer: userId,
+      body: parsed.data.userId,
+    });
     return jsonError(HTTP_UNPROCESSABLE, "userId-mismatch");
   }
   return parsed.data;
@@ -268,7 +274,9 @@ async function resolveRoleTemplate(deps: ProfileHandlerDeps, userId: string): Pr
     });
     return undefined;
   }
-  return defaultPermissionsFor(record.value.role, deps.mcpCatalog);
+  return defaultPermissionsFor(record.value.role, deps.mcpCatalog, {
+    includeFoundationTools: true,
+  });
 }
 
 function mapApplyError(userId: string, error: ApplyError): Response {

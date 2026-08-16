@@ -21,6 +21,24 @@ export interface WebToolsConfig {
   };
 }
 
+export const WEB_TOOL_SETTINGS = [
+  {
+    name: "web_search",
+    description: "Search the current web with quick snippets or a grounded, cited synthesis.",
+    tier: "read",
+  },
+  {
+    name: "fetch_content",
+    description: "Fetch a URL into a bounded user-owned web artifact.",
+    tier: "read",
+  },
+  {
+    name: "read_web_content",
+    description: "Read a bounded slice or matching passages from a web artifact.",
+    tier: "read",
+  },
+] as const;
+
 export interface WebToolsDeps {
   capability: Capability;
   config: WebToolsConfig;
@@ -61,10 +79,22 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         properties: {
           query: { type: "string", minLength: 1, maxLength: 500 },
           mode: { type: "string", enum: ["quick", "grounded"] },
-          result_count: { type: "integer", minimum: 1, maximum: deps.config.search.maxResults },
+          result_count: {
+            type: "integer",
+            minimum: 1,
+            maximum: deps.config.search.maxResults,
+          },
           recency: { type: "string", enum: ["day", "week", "month", "year"] },
-          include_domains: { type: "array", maxItems: 10, items: { type: "string" } },
-          exclude_domains: { type: "array", maxItems: 10, items: { type: "string" } },
+          include_domains: {
+            type: "array",
+            maxItems: 10,
+            items: { type: "string" },
+          },
+          exclude_domains: {
+            type: "array",
+            maxItems: 10,
+            items: { type: "string" },
+          },
         },
       },
       category: "foreground",
@@ -112,7 +142,13 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
       );
       if (!searched.ok) return result({ error: searched.error.code, message: searched.error.message }, true);
       const selected = searched.value.slice(0, deps.config.search.sourceCount);
-      const statuses: Array<{ id: number; title: string; url: string; status: string; artifact_id?: string }> = [];
+      const statuses: Array<{
+        id: number;
+        title: string;
+        url: string;
+        status: string;
+        artifact_id?: string;
+      }> = [];
       const summarySources: SummarySource[] = [];
       if (mode === "grounded") {
         const fetched = await Promise.all(selected.map((source) => client.fetchContent(source.url, signal)));
@@ -142,7 +178,12 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
               passage: screen(got.value.content.slice(0, perSource)),
             });
           } else {
-            statuses.push({ id: i + 1, title: source.title, url: source.url, status: got.error.code });
+            statuses.push({
+              id: i + 1,
+              title: source.title,
+              url: source.url,
+              status: got.error.code,
+            });
             summarySources.push({
               id: i + 1,
               title: screen(source.title),
@@ -153,7 +194,12 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         }
       } else {
         for (const [i, source] of selected.entries()) {
-          statuses.push({ id: i + 1, title: source.title, url: source.url, status: "snippet" });
+          statuses.push({
+            id: i + 1,
+            title: source.title,
+            url: source.url,
+            status: "snippet",
+          });
           summarySources.push({
             id: i + 1,
             title: screen(source.title),
@@ -207,7 +253,12 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         type: "object",
         additionalProperties: false,
         required: ["url"],
-        properties: { url: { type: "string", description: "HTTP or HTTPS URL to retrieve." } },
+        properties: {
+          url: {
+            type: "string",
+            description: "HTTP or HTTPS URL to retrieve.",
+          },
+        },
       },
       category: "foreground",
       tier: "read",
@@ -223,7 +274,11 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
       const fetched = await client.fetchContent(args.url as string, signal);
       if (!fetched.ok)
         return result(
-          { error: fetched.error.code, message: fetched.error.message, hostname: fetched.error.hostname },
+          {
+            error: fetched.error.code,
+            message: fetched.error.message,
+            hostname: fetched.error.hostname,
+          },
           true,
         );
       const artifactId = await store.put(deps.capability, {
@@ -262,9 +317,17 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
         properties: {
           artifact_id: { type: "string" },
           offset: { type: "integer", minimum: 0 },
-          limit: { type: "integer", minimum: 1, maximum: deps.config.artifacts.maxSliceChars },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: deps.config.artifacts.maxSliceChars,
+          },
           passage: { type: "string", minLength: 2, maxLength: 200 },
-          max_passages: { type: "integer", minimum: 1, maximum: deps.config.artifacts.maxPassages },
+          max_passages: {
+            type: "integer",
+            minimum: 1,
+            maximum: deps.config.artifacts.maxPassages,
+          },
         },
       },
       category: "foreground",
@@ -324,7 +387,10 @@ export function createWebTools(deps: WebToolsDeps): readonly NativeToolRunner[] 
           content_type: read.value.contentType,
         },
         total_chars: read.value.totalChars,
-        returned_range: { start: read.value.returnedStart, end: read.value.returnedEnd },
+        returned_range: {
+          start: read.value.returnedStart,
+          end: read.value.returnedEnd,
+        },
         ...(read.value.matches === undefined ? {} : { matches: read.value.matches }),
         content: read.value.content,
         continuation: continuation(read.value.id, read.value.returnedEnd, read.value.totalChars),

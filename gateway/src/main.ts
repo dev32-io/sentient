@@ -240,6 +240,7 @@ if (config.hermes) {
             toolsConfig: config.orchestrator.tools,
             accessManager: services.accessManager,
             profileStore: services.profileStore,
+            ...(services.delegatedNativeTools ? { nativeToolsFor: services.delegatedNativeTools } : {}),
           },
         }
       : {}),
@@ -303,7 +304,11 @@ services.delegatedExternalTool.sealEmpty(
 // window itself unreachable, which also keeps that read's wait zero-length in
 // production.
 // ---------------------------------------------------------------------------
-const server = createGatewayServer({ port: config.port, host: config.host, services });
+const server = createGatewayServer({
+  port: config.port,
+  host: config.host,
+  services,
+});
 
 log.info("gateway-started", { host: server.hostname, port: server.port });
 

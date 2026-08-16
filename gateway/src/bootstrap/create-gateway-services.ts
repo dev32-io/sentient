@@ -21,6 +21,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import type { ExternalToolSlot } from "../external-tools/external-tool-slot.js";
+import type { UserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.ts";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import type { ProfileStore } from "../profile-store/profile-store.ts";
@@ -35,6 +36,7 @@ import type { GatewayTlsMaterial } from "../session-handlers/ws-handlers.ts";
 import type { SystemOrchestratorService } from "../system-orchestrator/index.js";
 import type { OrchestratorStatus } from "../system-orchestrator/types.js";
 import type { McpClient } from "../tools/mcp-client.js";
+import type { NativeToolRunner } from "../tools/tool-broker.js";
 import type { TextStreamSynthesizer } from "../tts/text-stream-synthesizer.ts";
 import { type AuthService, createAuthService } from "../user-auth/auth-service.ts";
 import { getHermesProfileDir } from "../user-auth/paths.js";
@@ -65,9 +67,16 @@ export async function testProviderImpl(
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const body = (await res.json()) as { data?: Array<{ id: string }> };
     const models = body.data ?? [];
-    return { ok: true, modelCount: models.length, sampleModels: models.slice(0, 3).map((m) => m.id) };
+    return {
+      ok: true,
+      modelCount: models.length,
+      sampleModels: models.slice(0, 3).map((m) => m.id),
+    };
   } catch (err: unknown) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -173,6 +182,7 @@ export interface GatewayServices {
    *  and BEFORE the server accepts a connection. Resolved per dispatch by
    *  `delegateTask`'s setup phase. */
   readonly delegatedExternalTool: ExternalToolSlot;
+  readonly delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
 }
 
 /** Slack over `hermes_timeout_ms` for the runner's own kill-and-settle tail. */
@@ -286,7 +296,10 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     language: cfg.language === "auto" ? "en" : cfg.language,
     tls: services.tls,
     webDistDir: cfg.webDistDir,
-    downloads: { artifactsDir: cfg.downloads.artifacts_dir, publicBaseUrl: cfg.downloads.public_base_url },
+    downloads: {
+      artifactsDir: cfg.downloads.artifacts_dir,
+      publicBaseUrl: cfg.downloads.public_base_url,
+    },
     hermes: cfg.hermes ?? null,
     session: cfg.session,
     replayRegistry: createReplayRegistry({
@@ -325,5 +338,6 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
     provider: services.provider,
     createSessionRuntime: services.createSessionRuntime,
     delegatedExternalTool: services.delegatedExternalTool,
+    delegatedNativeTools: services.delegatedNativeTools,
   };
 }

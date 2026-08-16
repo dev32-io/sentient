@@ -57,10 +57,10 @@ DIRECT_URL="https://localhost:${GATEWAY_PORT}"      # gateway, bypassing the doo
 SENTIENT_MANAGED_FILTER="label=sentient.managed=true"
 
 # Build-only image tags deploy/mac-prod/docker-compose.yml bakes locally. Every
-# other managed_services entry in config.yaml (searxng, ha-mcp, egress-proxy)
+# other managed_services entry in config.yaml (searxng, egress-proxy)
 # pulls a public tag instead, and the orchestrator's own prepare() step pulls
 # those itself — nothing for preflight to bake.
-BUILD_ONLY_IMAGES=(inbound-proxy ingress-proxy fetch-mcp searxng-mcp ma-mcp)
+BUILD_ONLY_IMAGES=(inbound-proxy ingress-proxy outbound-worker)
 
 GATEWAY_STOP_POLL_S=0.25       # graceful-shutdown poll interval before SIGKILL
 GATEWAY_STOP_MAX_ATTEMPTS=20   # ~5s grace period (poll * attempts)

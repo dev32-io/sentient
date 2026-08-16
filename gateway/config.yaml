@@ -4,7 +4,7 @@
 # ---------------------------------------------------------------------------
 # Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
 # ---------------------------------------------------------------------------
-schema_version: "0.1.5"
+schema_version: "0.1.6"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -767,51 +767,6 @@ companions:
 # adult. Both are worse than refusing to start.
 # ---------------------------------------------------------------------------
 mcp_catalog:
-  home_assistant:
-    product_group: home
-    default_exposure: standard
-    transport: http
-    url: http://127.0.0.1:8086/mcp
-    timeout: 30
-    connect_timeout: 5
-    description: Home Assistant smart-home control via ha-mcp sidecar.
-    # Curated tool surface — essentials + calendar. ha-mcp ships ~84
-    # tools by default; loading all of them adds ~12k tokens of definitions
-    # to every cycle's prompt prefix and pushes the total tool count past
-    # the 128-tool cap that OpenAI/Anthropic enforce on tools[]. This list
-    # is the daily voice-assistant essentials. Add a second tier
-    # (automations/scripts/helpers/blueprints) when voice-driven authoring
-    # becomes a real workflow; admin tools (restart, backup, hacs, addon
-    # mgmt) stay off until needed.
-    tools:
-      include:
-        # query / state
-        - { name: ha_get_overview, tier: read }
-        - { name: ha_get_state, tier: read }
-        - { name: ha_search, tier: read }
-        - { name: ha_get_history, tier: read }
-        - { name: ha_eval_template, tier: read }
-        - { name: ha_get_operation_status, tier: read }
-        # spatial
-        - { name: ha_list_floors_areas, tier: read }
-        - { name: ha_get_zone, tier: read }
-        - { name: ha_get_camera_image, tier: read }
-        # action. Both are GENERIC dispatchers whose blast radius includes
-        # locks and alarms — a security-relevant device class, hence confirm
-        # rather than write, and hence out of a child's reach.
-        - { name: ha_call_service, tier: confirm }
-        - { name: ha_bulk_control, tier: confirm }
-        # todos / shopping list. A list line is a string anyone in the house
-        # re-adds in a second, so both halves are routine writes.
-        - { name: ha_get_todo, tier: read }
-        - { name: ha_set_todo_item, tier: write }
-        - { name: ha_remove_todo_item, tier: write }
-        # calendar. Creating/editing is reversible; DELETING destroys a
-        # household commitment whose details nothing else holds.
-        - { name: ha_config_get_calendar_events, tier: read }
-        - { name: ha_config_set_calendar_event, tier: write }
-        - { name: ha_config_remove_calendar_event, tier: confirm }
-
   # Gateway-hosted MCP — the SECOND TIER of MCP a delegated agent gets, on top
   # of whatever the user configured for themselves. One Unix socket per user;
   # `nc -U` bridges the delegated Hermes's stdio MCP transport onto it.
@@ -865,97 +820,6 @@ mcp_catalog:
         - { name: resume_audio, tier: read }
         - { name: update_user_settings, tier: read }
 
-  # Music Assistant — dockerized HTTP MCP at gateway/mcp/ma-mcp/.
-  # Built from the davidpadbury/music-assistant-mcp fork (the upstream
-  # devjourney 0.3.0 wraps MA's WS in a one-shot lifespan with no
-  # reconnect; the fork adds a `with_reconnect` retry decorator + lazy
-  # client reconnect on every tool call). Connects to the MA server at
-  # MA_SERVER_URL (LAN host); container joins sentient-external because
-  # the upstream uses raw WS that tinyproxy CONNECT cannot proxy.
-  music_assistant:
-    product_group: music
-    default_exposure: standard
-    transport: http
-    url: http://127.0.0.1:8668/mcp
-    timeout: 30
-    connect_timeout: 5
-    description: Music Assistant playback control.
-    # Curated tool surface — the full set the pinned fork registers
-    # (players/playback/queue/music, gateway/mcp/ma-mcp/Dockerfile pins the
-    # commit). Enumerated rather than left open so the surface cannot grow
-    # silently on a fork bump, and tiered here so nothing reaches the model
-    # untiered.
-    #
-    # Playback transport is `read` and that is deliberate: it changes only
-    # what is audible right now, stops mattering when the music does, and the
-    # next voice command undoes it. Prompting on "play some jazz" / "turn it
-    # down" would make voice music control unusable. Queue and grouping
-    # OUTLIVE the current track — someone else's queue, another room's
-    # speakers — so they are writes.
-    tools:
-      include:
-        # library reads
-        - { name: ma_search, tier: read }
-        - { name: ma_browse, tier: read }
-        # players
-        - { name: ma_list_players, tier: read }
-        - { name: ma_volume, tier: read }
-        - { name: ma_group, tier: write }
-        # playback
-        - { name: ma_playback, tier: read }
-        - { name: ma_play_media, tier: read }
-        # queue. `ma_queue` is a mixed read/write tool upstream — the same
-        # call that reports the queue can clear it or flip shuffle/repeat —
-        # so it is tiered by its worst case.
-        - { name: ma_queue, tier: write }
-        - { name: ma_queue_item, tier: write }
-        - { name: ma_transfer_queue, tier: write }
-
-  # fetch-mcp — dockerized HTTP MCP at gateway/mcp/fetch-mcp/.
-  # Outbound HTTP fetches route through egress-proxy.
-  fetch:
-    product_group: web
-    default_exposure: standard
-    transport: http
-    url: http://127.0.0.1:8088/mcp
-    timeout: 30
-    connect_timeout: 5
-    description: Fetch URL contents as markdown.
-    # mcp-server-fetch registers exactly one tool (gateway/mcp/fetch-mcp/
-    # run_http.py). Named explicitly for the same reason as above.
-    tools:
-      # Read-only: what it returns is untrusted content. It is genuinely
-      # handled now (docs/native-todo.md's HIGH-PRIORITY SECURITY item,
-      # CLOSED 2026-08-08) — every result crosses the inbound gate
-      # (gateway/src/security/inbound-gate.ts), which runs the injection
-      # scanner (injection-scanner.ts) and raises PDP risk on findings; that
-      # is the control, not this tier.
-      include:
-        - { name: fetch, tier: read }
-
-  # SearXNG metasearch — dockerized HTTP MCP at gateway/mcp/searxng-mcp/.
-  # Adapter forwards queries to the sibling searxng container which
-  # fans out across configured upstream engines via egress-proxy.
-  searxng:
-    product_group: web
-    default_exposure: standard
-    transport: http
-    url: http://127.0.0.1:8087/mcp
-    timeout: 30
-    connect_timeout: 5
-    description: SearXNG metasearch web search.
-    # Curated tool surface — searxng-mcp-server ships 5 tools
-    # (search_web, search_images, search_videos, search_news, fetch_url).
-    # Only search_web matches our single-web-search-tool design.
-    # fetch_url is suppressed because our dedicated fetch-mcp container
-    # owns URL fetching (cleaner separation, smaller per-tool prompt).
-    tools:
-      # Read-only: same rationale and same control as fetch above — results
-      # are untrusted content, screened by the inbound gate
-      # (gateway/src/security/inbound-gate.ts + injection-scanner.ts), not by
-      # this tier. Lost when mcp-policy.yaml's rules retired; restored here.
-      include:
-        - { name: search_web, tier: read }
 
 # ─────────────────────────────────────────────────────────────────────────
 # system_orchestrator
@@ -1034,30 +898,22 @@ managed_services:
     healthcheck:
       url: http://127.0.0.1:8090/health
       timeout_ms: 30000
-    depends_on: [egress-proxy, ingress-proxy]
+    # Search needs SearXNG; all public fetches from both components leave only
+    # through egress-proxy. ingress-proxy is the host reachability boundary.
+    depends_on: [egress-proxy, searxng, ingress-proxy]
     optional: false
 
   ingress-proxy:
     template: ingress-proxy.yaml
     allowed_images: ["sentient/ingress-proxy:local"]
-    # The inverse of egress-proxy, and the ONE service that spans both networks
-    # so that no MCP has to. Docker silently drops port publishing when every
-    # attached network is `internal: true` (verified on docker 29.2.1:
-    # NetworkSettings.Ports reads back EMPTY and the host port answers nothing),
-    # which made loopback reachability and network-enforced egress confinement
-    # mutually exclusive FOR ONE CONTAINER. This is that one container: it holds
-    # the publishes, forwards inward over sentient-internal, and lets fetch-mcp
-    # and searxng-mcp go back to internal-only.
+    # The one service spanning both networks. Internal-only outbound-worker
+    # cannot publish a host port, so this proxy exposes only its narrow HTTP API.
     networks: ["sentient-internal", "sentient-external"]
-    # Probes the ingress path the gateway itself uses. One nginx process serves
-    # both listeners, so :8088 answering means :8087 does too.
     healthcheck:
-      tcp: "127.0.0.1:8088"
+      tcp: "127.0.0.1:8090"
       timeout_ms: 30000
-    # Deliberately EMPTY. nginx resolves its upstreams at request time (see
-    # nginx.conf's resolver), so it does not need the services it fronts to
-    # exist yet — and depending on them would let one broken addon block the
-    # shared ingress and take the other addon's reachability with it.
+    # nginx resolves outbound-worker per request, avoiding a dependency cycle:
+    # worker startup itself depends on this host-reachability boundary.
     depends_on: []
     optional: false
 
@@ -1093,79 +949,11 @@ managed_services:
   #   stt-service — the containerised SenseVoice STT is retired; `whisper-stt`
   #     below supersedes it as a native addon (Metal/MLX needs host GPU access
   #     no container can reach).
-  ha-mcp:
-    template: ha-mcp.yaml
-    allowed_images: ["ghcr.io/homeassistant-ai/ha-mcp:stable"]
-    # sentient-external joins so the operator's HA URL (LAN hostname or
-    # LAN IP) is reachable; internal-only blocks the bridge to host/LAN.
-    # Mirrors ma-mcp's two-network shape.
-    networks: ["sentient-internal", "sentient-external"]
-    secrets:
-      HOMEASSISTANT_URL: home_assistant.url
-      HOMEASSISTANT_TOKEN: home_assistant.mcp_server_token
-      # HA_LOCAL_HOST is derived from home_assistant.url via the `:host`
-      # suffix — gateway parses the hostname out of the URL the operator
-      # entered. Together with HA_LOCAL_IP they render the container's
-      # extra_hosts line, so home.lan (or whatever hostname the operator
-      # chose) resolves inside the docker network.
-      HA_LOCAL_HOST: home_assistant.url:host
-      HA_LOCAL_IP: home_assistant.local_ip
-    healthcheck:
-      tcp: "127.0.0.1:8086"
-      timeout_ms: 30000
-    depends_on: ["egress-proxy"]
-    optional: true
-
-  ma-mcp:
-    template: ma-mcp.yaml
-    allowed_images: ["sentient/ma-mcp:local"]
-    networks: ["sentient-internal", "sentient-external"]
-    secrets:
-      MUSIC_ASSISTANT_URL: music_assistant.url
-      MUSIC_ASSISTANT_TOKEN: music_assistant.token
-      # MASS_LOCAL_HOST is derived from music_assistant.url via the `:host`
-      # suffix — gateway parses the hostname out of the URL the operator
-      # entered. Together with MASS_LOCAL_IP they render the container's
-      # extra_hosts line, so mass.local (or whatever hostname the operator
-      # chose) resolves inside the docker network.
-      MASS_LOCAL_HOST: music_assistant.url:host
-      MASS_LOCAL_IP: music_assistant.local_ip
-    healthcheck:
-      tcp: "127.0.0.1:8668"
-      timeout_ms: 30000
-    depends_on: []
-    optional: true
-
-  fetch-mcp:
-    template: fetch-mcp.yaml
-    allowed_images: ["sentient/fetch-mcp:local"]
-    # INTERNAL ONLY. This is the addon that dereferences attacker-chosen URLs,
-    # so it gets the HARD backstop: with no non-internal network it has no route
-    # off the bridge, and egress-proxy is not a policy it could ignore but the
-    # only way out. It publishes nothing — ingress-proxy holds its host port and
-    # forwards inward, which is what buys back this membership.
-    networks: ["sentient-internal"]
-    # `noop`, for the same reason as searxng below: nothing on the host can reach
-    # this container directly any more. Probing 127.0.0.1:8088 would probe
-    # ingress-proxy, which listens whether or not this MCP is alive — a green
-    # light for a dead service. A dead fetch-mcp surfaces as a failed `fetch`
-    # tool call (nginx 502), not as a boot failure.
-    healthcheck:
-      noop: true
-    # ingress-proxy is a dependency for REACHABILITY: without it this MCP is up
-    # but undialable, and blocked-by-dep names that cause instead of showing a
-    # green service the gateway cannot talk to.
-    depends_on: ["egress-proxy", "ingress-proxy"]
-    optional: false
-
   searxng:
     template: searxng.yaml
     allowed_images: ["searxng/searxng:latest"]
-    # Internal-only, and publishes NO host port (searxng.yaml declares no
-    # `ports:`) — and unlike the two MCPs it needs no ingress-proxy entry either,
-    # because nothing on the host dials searxng at all: its only consumer is the
-    # sibling searxng-mcp over sentient-internal.
-    # Upstream engine traffic goes through egress-proxy,
+    # Internal-only and unpublished. Its only consumer is outbound-worker over
+    # sentient-internal. Upstream engine traffic goes through egress-proxy,
     # declared in searxng/settings.yml#outgoing.proxies (searxng's httpx ignores
     # HTTP_PROXY env, so the env vars alone would not route it).
     networks: ["sentient-internal"]
@@ -1174,26 +962,11 @@ managed_services:
     # No host-reachable port to probe (see above), hence `noop` — the same
     # trade-off, for the same reason, as egress-proxy above: recreate-success
     # implies ready and docker's restart policy detects crashes. A searxng that
-    # is up but not yet serving surfaces as a failed search_web tool call, not
+    # is up but not yet serving surfaces as a failed web_search tool call, not
     # as a boot failure.
     healthcheck:
       noop: true
     depends_on: ["egress-proxy"]
-    optional: false
-
-  searxng-mcp:
-    template: searxng-mcp.yaml
-    allowed_images: ["sentient/searxng-mcp:local"]
-    # INTERNAL ONLY. Its one upstream is sentient-searxng over
-    # sentient-internal, so it never needed egress — it only ever carried
-    # sentient-external to make its own publish take effect, and ingress-proxy
-    # owns that publish now.
-    networks: ["sentient-internal"]
-    # `noop` — see fetch-mcp above. 127.0.0.1:8087 is ingress-proxy's listener,
-    # so probing it would report on the proxy, not on this adapter.
-    healthcheck:
-      noop: true
-    depends_on: ["searxng", "ingress-proxy"]
     optional: false
 
   # Native (non-container) services. `launch: native` swaps the docker backend
@@ -1279,8 +1052,8 @@ managed_services:
     # Optional: the memory system (orchestrator.memory) degrades non-fatally
     # when this addon is absent or unhealthy — memory_recall/memory tools
     # simply go unavailable rather than blocking boot or voice traffic (spec
-    # §11 degradation model). Mirrors ha-mcp/ma-mcp's optional:true, not
-    # whisper-stt/local-tts's optional:false (those are voice-path critical).
+    # §11 degradation model). It is optional, unlike voice-path-critical
+    # whisper-stt and local-tts.
     healthcheck: { url: "http://127.0.0.1:8772/health", timeout_ms: 30000 }
     depends_on: []
     optional: true

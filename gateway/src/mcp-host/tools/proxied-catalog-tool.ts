@@ -21,6 +21,7 @@
 import { getLog } from "../../logging/logger.js";
 import type { McpToolRef } from "../../tools/mcp-client.js";
 import type { ToolBroker } from "../../tools/tool-broker.js";
+import type { ToolDefinition as BrokerToolDefinition } from "../../tools/tool-types.js";
 import type { ToolCallResult, ToolDefinition } from "../mcp-protocol.js";
 import type { ToolContext, ToolHandler } from "../mcp-server.js";
 
@@ -69,6 +70,21 @@ function errorResult(text: string): ToolCallResult {
   return { content: [{ type: "text", text }], isError: true };
 }
 
+export function createProxiedNativeTool(definition: BrokerToolDefinition, deps: ProxiedCatalogToolDeps): ToolHandler {
+  return createProxiedCatalogTool(
+    {
+      serverName: "native",
+      name: definition.name,
+      description: definition.description,
+      inputSchema: definition.parameters,
+      tier: definition.tier,
+      ...(definition.productGroup ? { productGroup: definition.productGroup } : {}),
+      ...(definition.defaultExposure ? { defaultExposure: definition.defaultExposure } : {}),
+    },
+    deps,
+  );
+}
+
 export function createProxiedCatalogTool(ref: McpToolRef, deps: ProxiedCatalogToolDeps): ToolHandler {
   const def: ToolDefinition = {
     name: ref.name,
@@ -78,7 +94,11 @@ export function createProxiedCatalogTool(ref: McpToolRef, deps: ProxiedCatalogTo
 
   async function run(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolCallResult> {
     if (!ctx.userId) {
-      log.warn("proxied-tool.no-user", { tool: ref.name, server: ref.serverName, reason: NO_USER_MESSAGE });
+      log.warn("proxied-tool.no-user", {
+        tool: ref.name,
+        server: ref.serverName,
+        reason: NO_USER_MESSAGE,
+      });
       return errorResult(NO_USER_MESSAGE);
     }
     const broker = await deps.brokerFor(ctx.userId);
@@ -133,7 +153,10 @@ export function createProxiedCatalogTool(ref: McpToolRef, deps: ProxiedCatalogTo
       contentLength: outcome.content.length,
       elapsedMs: Date.now() - startedAt,
     });
-    return { content: [{ type: "text", text: outcome.content }], isError: outcome.isError };
+    return {
+      content: [{ type: "text", text: outcome.content }],
+      isError: outcome.isError,
+    };
   }
 
   return { def, run };

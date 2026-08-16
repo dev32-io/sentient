@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { catalogTools, loadConfig, mcpCatalogSchema, tierOf } from "@sentient/config";
 import { IMPACT_TIERS, type ImpactTier, USER_ROLES, canExecute } from "@sentient/protocol";
 import { z } from "zod";
+import { composeProductToolProviders } from "../bootstrap/product-tool-providers.js";
 import { delegateTaskDefinition } from "./delegate-task.js";
 
 // ---------------------------------------------------------------------------
@@ -39,8 +40,11 @@ const catalog = loadConfig(
  *  them scoped to the caller's own session. */
 const GATEWAY_HOSTED_SERVER = "gateway";
 
+const nativeProductDefinitions = [...composeProductToolProviders().values()].map((runner) => runner.definition);
+
 function tier(toolName: string): ImpactTier {
-  const found = tierOf(catalog, toolName);
+  const found =
+    nativeProductDefinitions.find((definition) => definition.name === toolName)?.tier ?? tierOf(catalog, toolName);
   if (found === undefined) throw new Error(`config.yaml#mcp_catalog no longer curates "${toolName}"`);
   return found;
 }
@@ -48,20 +52,31 @@ function tier(toolName: string): ImpactTier {
 /** Every shipped tool that is not `read`, with the reason it is not, in one
  *  place. `read` is the ordinary case and is asserted by exclusion. */
 const RESTRICTED_TIERS: Readonly<Record<string, ImpactTier>> = {
-  // Generic HA dispatchers — one call reaches any service on any entity,
-  // locks and alarms included.
-  ha_call_service: "confirm",
-  ha_bulk_control: "confirm",
-  // Destroys a household commitment whose details nothing else holds.
-  ha_config_remove_calendar_event: "confirm",
-  // Shared household state, routine and reversible.
-  ha_set_todo_item: "write",
-  ha_remove_todo_item: "write",
-  ha_config_set_calendar_event: "write",
-  ma_group: "write",
-  ma_queue: "write",
-  ma_queue_item: "write",
-  ma_transfer_queue: "write",
+  home_control: "write",
+  home_activate_scene: "write",
+  home_activate_script: "write",
+  home_activate_automation: "write",
+  home_create_scene: "write",
+  home_update_scene: "write",
+  home_remove_scene: "confirm",
+  home_create_automation: "write",
+  home_update_automation: "write",
+  home_remove_automation: "confirm",
+  home_create_script: "write",
+  home_update_script: "write",
+  home_remove_script: "confirm",
+  home_add_todo: "write",
+  home_update_todo: "write",
+  home_remove_todo: "confirm",
+  home_create_calendar_event: "write",
+  home_update_calendar_event: "write",
+  home_remove_calendar_event: "confirm",
+  music_play: "write",
+  music_play_media: "write",
+  music_transport: "write",
+  music_volume: "write",
+  music_transfer: "write",
+  music_group: "write",
 };
 
 describe("every shipped tool keeps the tier it was reviewed with", () => {
@@ -75,7 +90,7 @@ describe("every shipped tool keeps the tier it was reviewed with", () => {
   // promoting an existing `read` one — passes silently, and the list above
   // stops being the whole truth about who can do what.
   it("leaves every other tool at read, so the list above is exhaustive", () => {
-    const restricted = catalogTools(catalog)
+    const restricted = [...catalogTools(catalog), ...nativeProductDefinitions]
       .filter((tool) => tool.tier !== "read")
       .map((tool) => [tool.name, tool.tier] as const)
       .sort(([a], [b]) => a.localeCompare(b));

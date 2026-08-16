@@ -48,13 +48,6 @@ services:
   # compose services. `profiles: build-only` keeps them out of `up` while
   # `docker compose --profile build-only build` produces them.
   # ---------------------------------------------------------------------------
-  ma-mcp:
-    build:
-      context: ../../gateway/mcp/ma-mcp
-    image: sentient/ma-mcp:local
-    pull_policy: never
-    profiles: ["build-only"]
-
   outbound-worker:
     build:
       context: ../../gateway/addons/outbound-worker
@@ -62,24 +55,7 @@ services:
     pull_policy: never
     profiles: ["build-only"]
 
-  fetch-mcp:
-    build:
-      context: ../../gateway/mcp/fetch-mcp
-    image: sentient/fetch-mcp:local
-    pull_policy: never
-    profiles: ["build-only"]
-
-  searxng-mcp:
-    build:
-      context: ../../gateway/mcp/searxng-mcp
-    image: sentient/searxng-mcp:local
-    pull_policy: never
-    profiles: ["build-only"]
-
-  # Not an MCP: the loopback ingress that lets the two MCPs above stay
-  # internal-only (docker drops port publishing when every attached network is
-  # internal). Required, not optional — without this image on the daemon nothing
-  # on the host can reach fetch-mcp or searxng-mcp at all.
+  # Loopback ingress from the native host to internal-only outbound-worker.
   ingress-proxy:
     build:
       context: ../../gateway/mcp/ingress-proxy

@@ -16,7 +16,10 @@ import { type AdminDeps, createAdminHandler } from "./admin.js";
 
 // --- Log capture for security redaction tests ---------------------------------
 
-const logCalls: Array<{ message: string; properties?: Record<string, unknown> }> = [];
+const logCalls: Array<{
+  message: string;
+  properties?: Record<string, unknown>;
+}> = [];
 
 function pushLog(message: string, properties?: Record<string, unknown>) {
   logCalls.push(properties ? { message, properties } : { message });
@@ -129,7 +132,11 @@ const SAMPLE_PROFILE = {
     toolsets: ["memory"],
   },
   compression: { threshold: 0.5 },
-  advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+  advanced: {
+    extraSystemPrompt: "",
+    maxTokens: 1024,
+    reasoningEffort: "minimal",
+  },
 };
 
 // --- Tests -------------------------------------------------------------------
@@ -157,7 +164,10 @@ describe("GET /api/v1/admin/users", () => {
 
   it("returns 500 when userStore.list fails", async () => {
     const userStore = makeUserStore();
-    (userStore.list as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, error: "io-error" });
+    (userStore.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      error: "io-error",
+    });
     const deps = makeDeps({ userStore });
     const handler = createAdminHandler(deps);
 
@@ -191,7 +201,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -210,7 +225,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -239,10 +259,8 @@ describe("POST /api/v1/admin/users", () => {
     // Named tools, not just "not empty": a table that came out with the right
     // SHAPE and the wrong contents is the failure mode this whole plan is
     // about.
-    expect(permissions?.gateway?.identify_user).toBe("allow");
-    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
-    expect(permissions?.home_assistant?.ha_call_service).toBe("ask");
-    expect(permissions?.searxng?.search_web).toBe("allow");
+    expect(permissions?.web?.web_search).toBe("allow");
+    expect(permissions?.music?.music_play).toBe("ask");
   });
 
   // A create call that says nothing about authority confers none: the record
@@ -258,7 +276,11 @@ describe("POST /api/v1/admin/users", () => {
       profile: { ...SAMPLE_PROFILE, tools: { enabled: {}, toolsets: [] } },
     });
 
-    expect(seededPermissions(provisioner)).toEqual(defaultPermissionsFor("adult", shippedCatalog));
+    expect(seededPermissions(provisioner)).toEqual(
+      defaultPermissionsFor("adult", shippedCatalog, {
+        includeFoundationTools: true,
+      }),
+    );
   });
 
   it("seeds a CHILD account the child's narrower table, not the default one", async () => {
@@ -272,12 +294,14 @@ describe("POST /api/v1/admin/users", () => {
     });
 
     const permissions = seededPermissions(provisioner);
-    // The generic HA dispatcher (confirm tier — locks and alarms are inside
-    // its blast radius) is withheld, and the reads below it are not.
-    expect(permissions?.home_assistant?.ha_call_service).toBeUndefined();
-    expect(permissions?.home_assistant?.ha_get_state).toBe("allow");
-    expect(permissions).toEqual(defaultPermissionsFor("child", shippedCatalog));
-    expect(permissions).not.toEqual(defaultPermissionsFor("adult", shippedCatalog));
+    // Confirm-tier removals are withheld, while native reads remain seeded.
+    expect(permissions?.home?.home_remove_scene).toBeUndefined();
+    expect(permissions?.home?.home_state).toBe("allow");
+    expect(permissions).toEqual(
+      defaultPermissionsFor("child", shippedCatalog, {
+        includeFoundationTools: true,
+      }),
+    );
   });
 
   it("REGRESSION: an EXPLICIT empty permissions map is preserved, not re-seeded", async () => {
@@ -303,7 +327,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -319,7 +348,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "abc", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "abc",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -335,7 +369,11 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+        }),
       }),
     );
 
@@ -346,13 +384,21 @@ describe("POST /api/v1/admin/users", () => {
 
   it("returns 422 'schema' when profile has an invalid model provider", async () => {
     const handler = createAdminHandler(makeDeps());
-    const badProfile = { ...SAMPLE_PROFILE, model: { provider: "unknown-provider", id: "some-model" } };
+    const badProfile = {
+      ...SAMPLE_PROFILE,
+      model: { provider: "unknown-provider", id: "some-model" },
+    };
 
     const res = await handler(
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: badProfile }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: badProfile,
+        }),
       }),
     );
 
@@ -368,7 +414,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader("wrong-token"),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -382,7 +433,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 
@@ -402,7 +458,12 @@ describe("POST /api/v1/admin/users", () => {
       new Request(adminUrl("/api/v1/admin/users"), {
         method: "POST",
         headers: authHeader(),
-        body: JSON.stringify({ displayName: "Bob", pin: "5678", isAdmin: false, profile: SAMPLE_PROFILE }),
+        body: JSON.stringify({
+          displayName: "Bob",
+          pin: "5678",
+          isAdmin: false,
+          profile: SAMPLE_PROFILE,
+        }),
       }),
     );
 

@@ -19,19 +19,16 @@ export const KeysYamlSchema = z.object({
   }),
   home_assistant: z.object({
     url: z.string().nullable().default(null),
-    /** LAN IP for `homeassistant.local` (or the hostname inside `url`) —
-     *  reserved for a future ha-mcp template that needs static /etc/hosts
-     *  mapping. Nullable today; wizard collects it for forward-compat. */
+    /** Legacy sidecar compatibility value. Preserved across upgrades but the
+     * native adapter resolves `url` on the host and does not consume it. */
     local_ip: z.string().nullable().default(null),
     observe_token: z.string().nullable(),
     mcp_server_token: z.string().nullable(),
   }),
   music_assistant: z.object({
     url: z.string().nullable().default(null),
-    /** LAN IP for `mass.local` (or whatever hostname `url` uses) — wired
-     *  into the ma-mcp container's /etc/hosts so docker can reach the MA
-     *  instance without mDNS. Optional; if null the orchestrator skips
-     *  ma-mcp at apply time (ma-mcp is an optional managed service). */
+    /** Legacy sidecar compatibility value. Preserved, but unused by the native
+     * Music Assistant adapter. */
     local_ip: z.string().nullable().default(null),
     token: z.string().nullable(),
   }),

@@ -525,7 +525,7 @@ def build_images(backend: Optional[str]) -> bool:
     # docker-sensevoice it is profile-gated in the mac-prod compose (stt-docker);
     # for legacy targets with no deploy.conf (backend is None) it stays under the
     # build-only profile, so build it there too.
-    services = ["gateway", "hermes", "ma-mcp", "searxng-mcp", "fetch-mcp"]
+    services = ["gateway", "hermes", "outbound-worker", "ingress-proxy", "inbound-proxy"]
     profiles = ["build-only"]
     if backend != NATIVE_BACKEND:
         services.insert(1, "stt-service")

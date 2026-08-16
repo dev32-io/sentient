@@ -7,7 +7,10 @@ export type ServiceName = z.infer<typeof ServiceNameSchema>;
 export const HealthCheckSchema = z.union([
   z.object({ url: z.string().url(), timeout_ms: z.number().int().positive() }),
   z.object({ tcp: z.string(), timeout_ms: z.number().int().positive() }),
-  z.object({ exec: z.array(z.string()).nonempty(), timeout_ms: z.number().int().positive() }),
+  z.object({
+    exec: z.array(z.string()).nonempty(),
+    timeout_ms: z.number().int().positive(),
+  }),
   // `noop` — orchestrator marks service ready immediately after recreate
   // succeeds, no liveness probe. Use only for services that intentionally
   // bind no port (e.g. supervisord-only) and rely on docker's restart
@@ -42,8 +45,8 @@ export const MANAGED_NETWORK_TOPOLOGY: ManagedNetworks = Object.freeze({
   "sentient-external": { internal: false },
   // The PUBLIC edge, and deliberately its own segment. inbound-proxy's only
   // upstream is host loopback — it needs zero container reachability. Putting it
-  // on sentient-external instead would share an L2 segment with ha-mcp, ma-mcp,
-  // searxng-mcp and egress-proxy, handing the one internet-facing container
+  // on sentient-external instead would share an L2 segment with ingress-proxy
+  // and egress-proxy, handing the one internet-facing container
   // lateral reach it has no use for. Non-internal because docker silently drops
   // port publishing when every attached network is internal.
   "sentient-edge": { internal: false },

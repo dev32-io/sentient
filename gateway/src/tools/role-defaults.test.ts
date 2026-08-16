@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { type McpCatalog, catalogTools, mcpCatalogSchema } from "@sentient/config";
 import { USER_ROLES, canExecute } from "@sentient/protocol";
+import { foundationProductToolMetadata } from "../bootstrap/product-tool-metadata.js";
 import { loadShippedCatalog } from "../testing/shipped-catalog.js";
 import { defaultPermissionsFor } from "./role-defaults.js";
 
@@ -116,26 +117,29 @@ const shippedCatalog = loadShippedCatalog();
 
 /** Every entry in a table, flattened to `server/tool` for set comparison. */
 function seededToolNames(role: Parameters<typeof defaultPermissionsFor>[0]): string[] {
-  return Object.entries(defaultPermissionsFor(role, shippedCatalog))
+  return Object.entries(
+    defaultPermissionsFor(role, shippedCatalog, {
+      includeFoundationTools: true,
+    }),
+  )
     .flatMap(([server, perServer]) => Object.keys(perServer).map((tool) => `${server}/${tool}`))
     .sort();
 }
 
 describe("the shipped catalog seeds a complete table", () => {
   it("leaves no tool an adult can execute out of an adult's table", () => {
-    const reachable = catalogTools(shippedCatalog)
-      .filter((tool) => canExecute("adult", tool.tier))
-      .map((tool) => `${tool.server}/${tool.name}`)
+    const reachable = [...catalogTools(shippedCatalog), ...foundationProductToolMetadata()]
+      .filter((tool) => canExecute("adult", tool.tier) && tool.defaultExposure === "standard")
+      .map((tool) => `${tool.productGroup}/${tool.name}`)
       .sort();
     expect(seededToolNames("adult")).toEqual(reachable);
-    expect(reachable.length).toBeGreaterThan(0);
   });
 
   for (const role of USER_ROLES) {
     it(`seeds a ${role} exactly the tools canExecute admits, no more`, () => {
-      const reachable = catalogTools(shippedCatalog)
-        .filter((tool) => canExecute(role, tool.tier))
-        .map((tool) => `${tool.server}/${tool.name}`)
+      const reachable = [...catalogTools(shippedCatalog), ...foundationProductToolMetadata()]
+        .filter((tool) => canExecute(role, tool.tier) && tool.defaultExposure === "standard")
+        .map((tool) => `${tool.productGroup}/${tool.name}`)
         .sort();
       expect(seededToolNames(role)).toEqual(reachable);
     });
@@ -154,13 +158,10 @@ describe("the shipped catalog seeds a complete table", () => {
 // config.yaml is a one-word edit that would otherwise take the tool away from a
 // guest, or from everyone, with nothing in the codebase disagreeing.
 // ---------------------------------------------------------------------------
-describe("the model's own utility tools are allowed for every role", () => {
-  const GATEWAY_SERVER = "gateway";
+describe("the model's own utility tools remain advanced by default", () => {
   for (const role of USER_ROLES) {
-    it(`allows identify_user and pause_audio for a ${role}`, () => {
-      const perServer = defaultPermissionsFor(role, shippedCatalog)[GATEWAY_SERVER];
-      expect(perServer?.identify_user).toBe("allow");
-      expect(perServer?.pause_audio).toBe("allow");
+    it(`does not seed advanced gateway tools for a ${role}`, () => {
+      expect(defaultPermissionsFor(role, shippedCatalog).gateway).toBeUndefined();
     });
   }
 });

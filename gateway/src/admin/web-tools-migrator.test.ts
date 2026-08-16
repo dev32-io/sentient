@@ -5,8 +5,16 @@ import { migrateLegacyToolPermissions, migrateWebToolsEnabled } from "./web-tool
 
 describe("legacy product-tool permission migration", () => {
   it("preserves absent versus explicitly empty maps", () => {
-    expect(migrateLegacyToolPermissions(undefined)).toEqual({ permissions: undefined, changed: false, unmappable: 0 });
-    expect(migrateLegacyToolPermissions({})).toEqual({ permissions: {}, changed: false, unmappable: 0 });
+    expect(migrateLegacyToolPermissions(undefined)).toEqual({
+      permissions: undefined,
+      changed: false,
+      unmappable: 0,
+    });
+    expect(migrateLegacyToolPermissions({})).toEqual({
+      permissions: {},
+      changed: false,
+      unmappable: 0,
+    });
   });
 
   it("maps every legacy MCP group to its stable product group", () => {
@@ -18,23 +26,51 @@ describe("legacy product-tool permission migration", () => {
       gateway: { identify_user: "off" },
     });
     expect(result.permissions).toEqual({
-      web: { fetch: "off", search_web: "deny" },
-      home: { ha_get_state: "allow" },
-      music: { ma_play: "ask" },
+      web: { fetch_content: "off", web_search: "deny" },
+      home: { home_state: "allow" },
+      music: { "*": "ask" },
+      legacy_unmapped: { "music_assistant.ma_play": "ask" },
       gateway: { identify_user: "off" },
     });
   });
 
+  it("keeps unmappable restrictive intent active through the native group wildcard", () => {
+    const result = migrateLegacyToolPermissions({
+      home_assistant: { ha_eval_template: "off" },
+    });
+    expect(result).toMatchObject({
+      unmappable: 1,
+      permissions: { home: { "*": "off" } },
+    });
+  });
+
+  it("does not carry an old read-tier allow onto a native Music write", () => {
+    expect(migrateLegacyToolPermissions({ music_assistant: { ma_volume: "allow" } }).permissions).toEqual({
+      music: { music_volume: "ask" },
+    });
+  });
+
   it("uses the more restrictive value when legacy groups collide", () => {
-    expect(migrateLegacyToolPermissions({ fetch: { "*": "allow" }, searxng: { "*": "off" } }).permissions).toEqual({
+    expect(
+      migrateLegacyToolPermissions({
+        fetch: { "*": "allow" },
+        searxng: { "*": "off" },
+      }).permissions,
+    ).toEqual({
       web: { "*": "off" },
+      legacy_unmapped: { "fetch.*": "allow", "searxng.*": "off" },
     });
   });
 
   it("splits native tools and copies a native wildcard conservatively", () => {
     expect(
       migrateLegacyToolPermissions({
-        native: { "*": "deny", skill_use: "off", memory_read: "ask", delegateTask: "off" },
+        native: {
+          "*": "deny",
+          skill_use: "off",
+          memory_read: "ask",
+          delegateTask: "off",
+        },
       }).permissions,
     ).toEqual({
       skills: { "*": "deny", skill_use: "off" },
@@ -44,15 +80,23 @@ describe("legacy product-tool permission migration", () => {
   });
 
   it("quarantines unmappable native values instead of dropping restrictive intent", () => {
-    const result = migrateLegacyToolPermissions({ native: { unknown_tool: "off" } });
+    const result = migrateLegacyToolPermissions({
+      native: { unknown_tool: "off" },
+    });
     expect(result.unmappable).toBe(1);
-    expect(result.permissions).toEqual({ legacy_unmapped: { "native.unknown_tool": "off" } });
+    expect(result.permissions).toEqual({
+      legacy_unmapped: { "native.unknown_tool": "off" },
+    });
   });
 
   it("is idempotent after product keys have replaced legacy keys", () => {
     const once = migrateLegacyToolPermissions({ fetch: { fetch: "deny" } });
     const twice = migrateLegacyToolPermissions(once.permissions);
-    expect(twice).toEqual({ permissions: { web: { fetch: "deny" } }, changed: false, unmappable: 0 });
+    expect(twice).toEqual({
+      permissions: { web: { fetch_content: "deny" } },
+      changed: false,
+      unmappable: 0,
+    });
   });
 });
 
@@ -67,7 +111,11 @@ function profile(): ProfileV1 {
     persona: { template: "default", overrides: "" },
     tools: { permissions: { fetch: { fetch: "off" } }, toolsets: [] },
     compression: { threshold: 0.5 },
-    advanced: { extraSystemPrompt: "", maxTokens: 1024, reasoningEffort: "minimal" },
+    advanced: {
+      extraSystemPrompt: "",
+      maxTokens: 1024,
+      reasoningEffort: "minimal",
+    },
   };
 }
 
@@ -75,14 +123,16 @@ it("boot migration preserves unrelated profile fields", async () => {
   const current = profile();
   const profileStore = {
     get: vi.fn(async () => ({ ok: true as const, value: current })),
-    save: vi.fn(async (_profile: ProfileV1) => ({ ok: true as const, value: undefined })),
+    save: vi.fn(async (_profile: ProfileV1) => ({
+      ok: true as const,
+      value: undefined,
+    })),
   };
-  const userStore = { list: vi.fn(async () => ({ ok: true as const, value: [{ userId: "u1" }] })) } as unknown as Pick<
-    UserStore,
-    "list"
-  >;
+  const userStore = {
+    list: vi.fn(async () => ({ ok: true as const, value: [{ userId: "u1" }] })),
+  } as unknown as Pick<UserStore, "list">;
   await migrateWebToolsEnabled({ userStore, profileStore });
   const saved = profileStore.save.mock.calls[0]?.[0];
   expect(saved?.persona).toEqual(current.persona);
-  expect(saved?.tools.permissions).toEqual({ web: { fetch: "off" } });
+  expect(saved?.tools.permissions).toEqual({ web: { fetch_content: "off" } });
 });

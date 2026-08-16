@@ -1,69 +1,30 @@
 # Sentient
 
-A real-time streaming voice assistant for the home. Built around streaming
-STT, streaming TTS, mid-response barge-in, and a **per-user agent runtime
-sandboxed inside a Sentient-managed container jail** so a compromised
-agent cannot reach the host or other family members. Runs on an
-Apple-silicon Mac mini in production (or a single dev box for local
-development), with a web client today and an ESP32-S3 hardware "cube" +
-mobile clients in progress.
+A real-time family voice assistant. The native Bun/TypeScript gateway owns
+the LLM loop, sessions, authorization, first-class tools, and supervised
+dependencies. Production runs on an Apple-silicon Mac mini.
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Host (Pi 5 / Mac)                                                      │
-│                                                                         │
-│  ┌──────────────────────────────────────────────────┐                   │
-│  │  sentient-external (bridge — has host route)     │                   │
-│  │                                                  │                   │
-│  │  ┌───────────────────────────────┐   :8888 ◄── clients (web / cube) │
-│  │  │  sentient-gateway (Bun/TS)    │                                   │
-│  │  │  ─ terminates WS              │                                   │
-│  │  │  ─ STT pipeline               │                                   │
-│  │  │  ─ TTS pipeline               │                                   │
-│  │  │  ─ system-orchestrator ───────┼──► /var/run/docker.sock           │
-│  │  │     (dockerode, group_add     │     (no host-root, no privileged) │
-│  │  │      HOST_DOCKER_GID only)    │                                   │
-│  │  └───────────────┬───────────────┘                                   │
-│  └──────────────────┼──────────────────────────────────────────────────┘│
-│                     │ spawns / supervises sibling containers            │
-│                     ▼                                                   │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │  sentient-internal (bridge — `internal: true`, NO host route,      │ │
-│  │                     NO published ports)                            │ │
-│  │                                                                    │ │
-│  │  ┌──────────────────────────────────────┐    ┌──────────────────┐  │ │
-│  │  │  sentient-hermes (containment wrap)  │    │  stt-service     │  │ │
-│  │  │  ┌────────────────────────────────┐  │    │  (VAD + ASR)     │  │ │
-│  │  │  │  supervisord (PID 1)           │  │    └──────────────────┘  │ │
-│  │  │  │  ├─ hermes -p alice (acp)      │  │    ┌──────┐ ┌──────────┐ │ │
-│  │  │  │  ├─ hermes -p alice (dash)     │  │    │ ha-  │ │ ma-mcp   │ │ │
-│  │  │  │  ├─ hermes -p bob   (acp)      │  │    │ mcp  │ └──────────┘ │ │
-│  │  │  │  ├─ hermes -p bob   (dash)     │  │    └──────┘ ┌──────────┐ │ │
-│  │  │  │  └─ ...                        │  │    ┌──────┐ │ fetch-mcp│ │ │
-│  │  │  └────────────────────────────────┘  │    │searx │ └──────────┘ │ │
-│  │  │              │ docker.sock           │    │ng-mcp│              │ │
-│  │  │              │ (per-task sandbox)    │    └──────┘              │ │
-│  │  │              ▼                       │                          │ │
-│  │  │  ┌────────────────────────────────┐  │                          │ │
-│  │  │  │  ephemeral sandbox containers  │  │                          │ │
-│  │  │  │  (one per tool call —          │  │                          │ │
-│  │  │  │   workspace bind = HERMES_HOME │  │                          │ │
-│  │  │  │   /profiles/<userId>/...)      │  │                          │ │
-│  │  │  └────────────────────────────────┘  │                          │ │
-│  │  └────────────┬─────────────────────────┘                          │ │
-│  │               │ HTTP(S)_PROXY                                      │ │
-│  │               ▼                                                    │ │
-│  │  ┌─────────────────────────┐                                       │ │
-│  │  │  egress-proxy           │──► internet (tinyproxy denylist)      │ │
-│  │  │  (tinyproxy)            │                                       │ │
-│  │  └─────────────────────────┘                                       │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────────┘
+```text
+clients ──TLS/WS──> inbound-proxy ──loopback──> native gateway
+                                                    │
+                     ┌──────────────────────────────┼──────────────────┐
+                     │ native STT/TTS/deep-memory  │ native HA/MA APIs │
+                     └──────────────────────────────┼──────────────────┘
+                                                    │ HTTP :8090
+                                             ingress-proxy
+                                                    │
+                                             outbound-worker ──> SearXNG
+                                                    │              │
+                                                    └─ egress-proxy┘ ──> internet
+
+Delegated Hermes is a one-shot subprocess. Eligible native read tools and
+third-party MCP reads reach back through a per-user gateway MCP socket and the
+same role/per-tool policy decision point. Native Home/Music side effects are
+never projected onto that unprompted delegated path.
 ```
 
-**Status:** gateway runs in production at one household. ESP32 cube
-firmware is in active development (Phase 5.5). Android and iOS clients
-are planned but not yet started — see `ROADMAP.md`.
+**Status:** gateway and web client run in production at one household; cube and
+mobile clients are under active development.
 
 ## What it does
 

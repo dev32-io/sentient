@@ -340,7 +340,9 @@ export function buildSessionMemory(
   if (!orchestratorCfg.memory.enabled) return null;
 
   const memoryCap = accessManager.grant(principal, "memory-private");
-  const store = openMemoryStore(memoryCap, orchestratorCfg.memory, { scan: scanContent });
+  const store = openMemoryStore(memoryCap, orchestratorCfg.memory, {
+    scan: scanContent,
+  });
   const reingest = reingestWithWarn(store, "private", principal, ids);
 
   // Household (shared family) scope — rooted at the shared, householdId-keyed dir
@@ -348,7 +350,9 @@ export function buildSessionMemory(
   // opens the SAME physical store. Opened for every session (adults and children)
   // — the read side is universal; only the write is adult-gated (memory-tools).
   const householdCap = accessManager.grant(principal, "memory-household");
-  const householdStore = openMemoryStore(householdCap, orchestratorCfg.memory, { scan: scanContent });
+  const householdStore = openMemoryStore(householdCap, orchestratorCfg.memory, {
+    scan: scanContent,
+  });
   const householdReingest = reingestWithWarn(householdStore, "family", principal, ids);
 
   // Deep memory (spark + recall + index sync), only when the app is wired. Each
@@ -361,7 +365,10 @@ export function buildSessionMemory(
   let readSession: ((sessionId: string) => SessionEntry[]) | undefined;
 
   if (wiring) {
-    const logCtx = { userId: principal.userId, conversationId: ids.conversationId };
+    const logCtx = {
+      userId: principal.userId,
+      conversationId: ids.conversationId,
+    };
     const privateId = privateScopeId(principal.userId);
     const familyId = householdScopeId(principal.householdId);
 
@@ -376,7 +383,11 @@ export function buildSessionMemory(
     // Family tool writes carry the writing member's id (spec §9 attribution).
     const wiredHousehold = wireScopeIndex(
       wiring.app,
-      { scopeId: familyId, rootPath: householdCap.rootPath, store: householdStore },
+      {
+        scopeId: familyId,
+        rootPath: householdCap.rootPath,
+        store: householdStore,
+      },
       householdReingest,
       logCtx,
       principal.userId,
@@ -387,7 +398,10 @@ export function buildSessionMemory(
     // household scope is registered eagerly here (before any turn's first search)
     // and its id is memoized process-wide by `ensureScope`, so a combined search
     // finds both scopes registered. (Per-call gating on BOTH is a later refinement.)
-    deepMemory = { client: wiredPrivate.scope.client, scopeIds: { private: privateId, family: familyId } };
+    deepMemory = {
+      client: wiredPrivate.scope.client,
+      scopeIds: { private: privateId, family: familyId },
+    };
     // `memory_read({sessionId})` drill-down — this user's own past sessions,
     // capability-scoped; a short-lived handle per read (the continuity precedent).
     readSession = (sessionId) => {
@@ -462,7 +476,10 @@ function storeSelector(
  *  be a false "the gate is doing something" signal at boot. */
 const GATE_CHANNELS = ["tool_result", "background_completion", "skill_body", "memory_body"] as const;
 
-export function describeInboundGateMode(cfg: InboundScanConfig): { mode: "real" | "passthrough"; channels: string } {
+export function describeInboundGateMode(cfg: InboundScanConfig): {
+  mode: "real" | "passthrough";
+  channels: string;
+} {
   const enabledChannels = Object.entries(cfg.channels)
     .filter(([, on]) => on)
     .map(([name]) => name);
@@ -521,6 +538,8 @@ export interface PhaseServicesOutput {
    *  in `main.ts` once the MCP host exists, before the server accepts its
    *  first connection (task 9g). */
   readonly delegatedExternalTool: ExternalToolSlot;
+  /** Authoritative first-class product runners for a delegated user's broker. */
+  readonly delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
   /** Binds the live SessionRegistry into the dreamer's yield gate and arms the
    *  nightly scheduler (memory-system spec §8). Null when the dreamer is not
    *  wired. Called by create-gateway-services.ts once the registry exists. */
@@ -535,7 +554,11 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   const stt = cfg.stt ? createSttService(cfg) : null;
   const tts = createTtsService({ cfg });
   const tls = cfg.tls.enabled
-    ? ensureTlsMaterial({ hostnames: cfg.tls.hostnames, certsDir: cfg.tls.certsDir, logTag: "gateway" })
+    ? ensureTlsMaterial({
+        hostnames: cfg.tls.hostnames,
+        certsDir: cfg.tls.certsDir,
+        logTag: "gateway",
+      })
     : undefined;
 
   const createSynthesizerFor = (getVoiceId: () => Promise<string | null>): TextStreamSynthesizer | null => {
@@ -554,6 +577,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     provider,
     createSessionRuntime,
     delegatedExternalTool,
+    delegatedNativeTools,
     startDreamScheduler,
     stopDreamScheduler,
   } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth);
@@ -568,8 +592,12 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   // Two flavors:
   //   - …Config   → config.yaml only; safe for apply + boot-migration.
   //   - …Initial  → config.yaml + SOUL.md; used once at user creation.
-  const renderInnerProfileFor = buildRenderInnerProfile(applyDeps, { writeSoul: false });
-  const renderInitialInnerProfileFor = buildRenderInnerProfile(applyDeps, { writeSoul: true });
+  const renderInnerProfileFor = buildRenderInnerProfile(applyDeps, {
+    writeSoul: false,
+  });
+  const renderInitialInnerProfileFor = buildRenderInnerProfile(applyDeps, {
+    writeSoul: true,
+  });
   const userLifecycle = createUserLifecycle();
 
   // Registers each new user with the Hermes CLI's own profile store. Separate
@@ -605,7 +633,10 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
       createHermesProfile: hermesProfiles
         ? (userId) => hermesProfiles.create(userId)
         : async (userId) => {
-            log.warn("hermes-profile.skipped", { userId, reason: "orchestrator-not-configured" });
+            log.warn("hermes-profile.skipped", {
+              userId,
+              reason: "orchestrator-not-configured",
+            });
             return { ok: false, error: "cli-error" as const };
           },
       userLifecycle,
@@ -661,6 +692,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     provider,
     createSessionRuntime,
     delegatedExternalTool,
+    delegatedNativeTools,
     startDreamScheduler,
     stopDreamScheduler,
   };
@@ -711,6 +743,7 @@ export interface OrchestratorServices {
    *  late-bound. Resolved per dispatch by `delegateTask`'s setup phase, never
    *  snapshotted at session creation. */
   delegatedExternalTool: ExternalToolSlot;
+  delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
   /** Binds the live SessionRegistry into the dreamer's yield gate and starts the
    *  nightly scheduler + boot catch-up. Null when the dreamer is not wired
    *  (memory or dreamer disabled, or provider / deep-memory app unavailable).
@@ -786,13 +819,16 @@ export async function buildOrchestratorServices(
   await warmMcpClient(mcpClient);
 
   if (!cfg.orchestrator) {
-    log.info("orchestrator.disabled", { reason: "no orchestrator: block in config.yaml" });
+    log.info("orchestrator.disabled", {
+      reason: "no orchestrator: block in config.yaml",
+    });
     return {
       accessManager,
       mcpClient,
       provider: null,
       createSessionRuntime: null,
       delegatedExternalTool,
+      delegatedNativeTools: null,
       startDreamScheduler: null,
       stopDreamScheduler: null,
     };
@@ -813,19 +849,95 @@ export async function buildOrchestratorServices(
       });
     }
   } catch {
-    log.warn("home.adapter.unavailable", { reason: "invalid or unreadable Home Assistant configuration" });
+    log.warn("home.adapter.unavailable", {
+      reason: "invalid or unreadable Home Assistant configuration",
+    });
   }
 
   // App-lifetime deep-memory wiring (spec §5/§6) — one client + one per-scope
   // outbox ledger for the whole process. Null when memory is off OR its two env
   // tokens are unset (memory tools + spark degrade to unavailable; file memory
   // still works). See buildDeepMemoryApp.
+  const delegatedNativeTools = (principal: UserPrincipal): Map<string, NativeToolRunner> => {
+    const webCfg = orchestratorCfg.web ?? {
+      worker_url: "http://127.0.0.1:8090",
+      request_timeout_ms: 20_000,
+      max_compressed_bytes: 2_000_000,
+      max_decompressed_bytes: 5_000_000,
+      max_redirects: 5,
+      initial_extract_chars: 6000,
+      artifact_ttl_ms: 86_400_000,
+      artifact_max_entries: 100,
+      artifact_max_bytes: 50_000_000,
+      read_max_chars: 12_000,
+      match_max_passages: 5,
+      match_context_chars: 500,
+      search_max_results: 10,
+      grounded_source_count: 5,
+      passage_budget_chars: 12_000,
+      summary: {
+        model: "deepseek-v4-flash:cloud",
+        deadline_ms: 30_000,
+        max_input_chars: 20_000,
+        max_output_tokens: 800,
+        max_answer_chars: 6000,
+      },
+    };
+    return composeProductToolProviders(undefined, {
+      web: {
+        capability: accessManager.grant(principal, "web-artifact"),
+        tools: {
+          worker: {
+            baseUrl: webCfg.worker_url,
+            timeoutMs: webCfg.request_timeout_ms,
+            maxResponseChars: webCfg.max_decompressed_bytes + 16_384,
+            maxCompressedBytes: webCfg.max_compressed_bytes,
+            maxDecompressedBytes: webCfg.max_decompressed_bytes,
+            maxRedirects: webCfg.max_redirects,
+          },
+          artifacts: {
+            ttlMs: webCfg.artifact_ttl_ms,
+            maxEntries: webCfg.artifact_max_entries,
+            maxBytes: webCfg.artifact_max_bytes,
+            maxSliceChars: webCfg.read_max_chars,
+            maxPassages: webCfg.match_max_passages,
+            passageContextChars: webCfg.match_context_chars,
+          },
+          initialExtractChars: webCfg.initial_extract_chars,
+          search: {
+            maxResults: webCfg.search_max_results,
+            sourceCount: webCfg.grounded_source_count,
+            passageBudgetChars: webCfg.passage_budget_chars,
+            summary: {
+              fallbackModel: webCfg.summary.model,
+              deadlineMs: webCfg.summary.deadline_ms,
+              maxInputChars: webCfg.summary.max_input_chars,
+              maxOutputTokens: webCfg.summary.max_output_tokens,
+              maxAnswerChars: webCfg.summary.max_answer_chars,
+            },
+          },
+        },
+        ...(provider
+          ? {
+              provider: provider.forUser(principal.userId),
+              summaryPrompt: DEFAULT_WEB_SUMMARY_PROMPT,
+            }
+          : {}),
+      },
+      home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
+      music: { adapter: musicAdapter },
+    });
+  };
+
   const deepMemoryApp = buildDeepMemoryApp(orchestratorCfg.memory);
 
   const frontmatterDir = resolveDelegationFrontmatterDir(orchestratorCfg.delegation.frontmatter_dir);
   const delegationFrontmatter = loadDelegationFrontmatterDir(frontmatterDir);
   const promptClassifier = createPromptClassifier();
-  const delegationGuard = createDelegationGuard({ frontmatter: delegationFrontmatter, classifier: promptClassifier });
+  const delegationGuard = createDelegationGuard({
+    frontmatter: delegationFrontmatter,
+    classifier: promptClassifier,
+  });
   const hermesRunner = createHermesRunner({
     profile: orchestratorCfg.delegation.hermes_delegation_profile,
     resolveProfileDir: getHermesProfileDir,
@@ -872,6 +984,7 @@ export async function buildOrchestratorServices(
     provider,
     createSessionRuntime,
     delegatedExternalTool,
+    delegatedNativeTools,
     startDreamScheduler: dreamWiring?.start ?? null,
     stopDreamScheduler: dreamWiring?.stop ?? null,
   };
@@ -925,12 +1038,16 @@ export function resolveDreamerModel(
  * itself so the composition root binds the live SessionRegistry (built later)
  * into the yield gate at the moment it arms the timer.
  */
-function buildDreamScheduler(
-  deps: DreamSchedulerDepsInput,
-): { start: (registry: Pick<SessionRegistry, "hasActiveTurnForUser">) => void; stop: () => void } | null {
+function buildDreamScheduler(deps: DreamSchedulerDepsInput): {
+  start: (registry: Pick<SessionRegistry, "hasActiveTurnForUser">) => void;
+  stop: () => void;
+} | null {
   const memoryCfg = deps.orchestratorCfg.memory;
   if (!memoryCfg.enabled || !memoryCfg.dreamer.enabled) {
-    log.info("dreamer.disabled", { memoryEnabled: memoryCfg.enabled, dreamerEnabled: memoryCfg.dreamer.enabled });
+    log.info("dreamer.disabled", {
+      memoryEnabled: memoryCfg.enabled,
+      dreamerEnabled: memoryCfg.dreamer.enabled,
+    });
     return null;
   }
   const { provider, deepMemoryApp } = deps;
@@ -971,7 +1088,9 @@ function buildDreamScheduler(
     const runner = createDreamRunner({
       provider: provider.forUser(userId),
       loadTemplate: (name) => loadDreamerTemplate(name),
-      turnStateFor: (uid) => ({ hasActiveTurn: () => registryView?.hasActiveTurnForUser(uid) ?? false }),
+      turnStateFor: (uid) => ({
+        hasActiveTurn: () => registryView?.hasActiveTurnForUser(uid) ?? false,
+      }),
       cfg: memoryCfg,
       model: resolveDreamerModel(memoryCfg, deps.orchestratorCfg.provider),
     });
@@ -1074,7 +1193,9 @@ function buildDeepMemoryApp(memoryCfg: OrchestratorConfig["memory"]): DeepMemory
     requestTimeoutMs: memoryCfg.service.request_timeout_ms,
     cfg: memoryCfg,
   });
-  log.info("deep-memory.app.ready", { baseUrlHost: safeUrlHost(memoryCfg.service.url) });
+  log.info("deep-memory.app.ready", {
+    baseUrlHost: safeUrlHost(memoryCfg.service.url),
+  });
   return app;
 }
 
@@ -1087,7 +1208,9 @@ async function warmMcpClient(mcpClient: McpClient): Promise<void> {
     const tools = await mcpClient.listTools();
     log.info("mcp-client.warmup.ok", { toolCount: tools.length });
   } catch (err) {
-    log.warn("mcp-client.warmup.failed", { reason: err instanceof Error ? err.message : String(err) });
+    log.warn("mcp-client.warmup.failed", {
+      reason: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -1128,7 +1251,9 @@ async function buildOrchestratorProvider(
 
   const activeLlm = await secretsStore.getActiveLlm();
   if (!activeLlm.ok) {
-    log.warn("orchestrator.provider.secrets-read-failed", { reason: activeLlm.error.kind });
+    log.warn("orchestrator.provider.secrets-read-failed", {
+      reason: activeLlm.error.kind,
+    });
     return null;
   }
 
@@ -1333,8 +1458,15 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       delegateTaskDefinition.name,
     ]);
     const maxBodyChars = orchestratorCfg.skills.max_body_chars;
-    const skillStore = createSkillStore(skillsRoot, { maxBodyChars, knownTools });
-    const skillTools = createSkillTools(skillStore, { scan: scanContent, knownTools, maxBodyChars });
+    const skillStore = createSkillStore(skillsRoot, {
+      maxBodyChars,
+      knownTools,
+    });
+    const skillTools = createSkillTools(skillStore, {
+      scan: scanContent,
+      knownTools,
+      maxBodyChars,
+    });
 
     // One inbound gate + risk accumulator PER SESSION (T9/T10). The gate screens
     // every untrusted string on its way into model context — foreground tool
@@ -1443,7 +1575,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
           },
         },
         ...(provider
-          ? { provider: provider.forUser(principal.userId), summaryPrompt: DEFAULT_WEB_SUMMARY_PROMPT }
+          ? {
+              provider: provider.forUser(principal.userId),
+              summaryPrompt: DEFAULT_WEB_SUMMARY_PROMPT,
+            }
           : {}),
         screen: (text: string) =>
           inboundGate.screen(text, { channel: "tool_result", source: "web_search" }, { sessionId: conversationId })
@@ -1558,7 +1693,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // next turn without reopening the WS — the same reason
       // user-model-provider.ts resolves the model per request. Bound to the
       // CAPABILITY's owner, never the ambient principal (spec §3.2).
-      toolPermissions: createToolPermissionsReader({ profileStore, userId: capability.ownerUserId }),
+      toolPermissions: createToolPermissionsReader({
+        profileStore,
+        userId: capability.ownerUserId,
+      }),
       // BOTH sides, always — the projector's row lifetime (runtime/task-list.ts)
       // and the wire frame (turn-emitter.ts's `delegationProgress`) are two
       // independent consumers of the same event, neither a replacement for the
@@ -1575,7 +1713,11 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // the ReAct loop awaits it again at every turn boundary.
     void broker.ready();
 
-    log.info("session-runtime.factory.build", { userId: principal.userId, conversationId, connectionId });
+    log.info("session-runtime.factory.build", {
+      userId: principal.userId,
+      conversationId,
+      connectionId,
+    });
 
     // Per-session system prompt = process-wide base + THIS user's skill index,
     // composed ONCE here (Invariant A: byte-stable within a session). `list()`
@@ -1656,7 +1798,9 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         sessionId: conversationId,
       }),
       situationBlock: createSituationBlockRenderer({
-        speech: { spoken: async () => (audioPolicy ? audioPolicy.shouldSpeak() : false) },
+        speech: {
+          spoken: async () => (audioPolicy ? audioPolicy.shouldSpeak() : false),
+        },
         surfaces: { count: attachedWindows },
         work: { backgroundTaskCount: () => broker.background.count() },
         sessionId: conversationId,

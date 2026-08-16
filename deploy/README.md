@@ -87,12 +87,10 @@ cd ~/sentient
 docker compose -f deploy/mac-prod/docker-compose.yml --profile build-only build
 ```
 
-Produces the `:local` image tags for `ma-mcp`, `fetch-mcp`, `searxng-mcp` and
-`ingress-proxy` — the gateway's orchestrator creates
-containers from these at startup; `up`/`down` are never used here. `ha-mcp`
-is a third-party image (`ghcr.io/homeassistant-ai/ha-mcp:stable`), pulled by
-the orchestrator directly, not built. **Re-run the build any time after
-`git pull`** to refresh.
+Produces the `:local` image tags for `outbound-worker`, `ingress-proxy`, and
+`inbound-proxy`; the gateway orchestrator creates containers from these at
+startup, so `up`/`down` are never used here. **Re-run the build after `git pull`**
+to refresh them.
 
 ### 3. Build and install the gateway binary
 
@@ -487,15 +485,10 @@ any more: Ollama's historical `127.0.0.1`-only-bind gotcha no longer applies
 to the gateway's own LLM provider dial, and no `OLLAMA_HOST=0.0.0.0` override
 or LAN-IP workaround is needed for it.
 
-The docker addons that reach out to genuinely separate LAN devices — `ha-mcp`
-→ Home Assistant, `ma-mcp` → Music Assistant — are still containers, so
-**their** targets need real LAN reachability:
-
-- **The wizard's HA/MA URL fields take the device's LAN IP or hostname
-  directly** — these are other boxes on the network, not the gateway host.
-- Docker has no mDNS resolver, so a `.local` hostname (`homeassistant.local`)
-  needs a static `extra_hosts:` map — see
-  `.claude/rules/gateway/mcp-deployment.md`.
+Home Assistant and Music Assistant are reached directly by native gateway
+adapters. The wizard's HA/MA URL fields therefore take the device's LAN IP or
+hostname exactly as a normal host application would; credentials remain in the
+operator secrets store and are never rendered into profiles.
 
 Find the mini's own LAN IP if a LAN device needs to reach back to it:
 

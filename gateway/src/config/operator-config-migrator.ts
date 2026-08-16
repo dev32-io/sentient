@@ -319,7 +319,10 @@ function applySchema012Migration(doc: Document): Schema012MigrationResult | null
   // pass (that step sets schema_version to TARGET_VERSION = "0.1.1" first).
   if (currentVersion !== TARGET_VERSION) return null;
 
-  const result: Schema012MigrationResult = { languagePrev: null, languageSetToAuto: false };
+  const result: Schema012MigrationResult = {
+    languagePrev: null,
+    languageSetToAuto: false,
+  };
 
   const sttNode = root.get("stt", true);
   if (isMap(sttNode)) {
@@ -735,7 +738,10 @@ function tierScalarItem(doc: Document, scalar: Scalar, server: string, result: T
 
   const name = scalar.value;
   const tier = shippedTier(server, name);
-  const node = doc.createNode({ [TOOL_NAME_KEY]: name, [TOOL_TIER_KEY]: tier ?? UNKNOWN_TOOL_TIER }) as YAMLMap;
+  const node = doc.createNode({
+    [TOOL_NAME_KEY]: name,
+    [TOOL_TIER_KEY]: tier ?? UNKNOWN_TOOL_TIER,
+  }) as YAMLMap;
   node.flow = true;
   carryTrivia(scalar, node, tier === undefined ? withUnknownMarker(scalar.comment) : scalar.comment);
 
@@ -821,6 +827,63 @@ export function applySchema015Migration(doc: Document): Schema015MigrationResult
 }
 
 // ---------------------------------------------------------------------------
+// 0.1.5 → 0.1.6: first-class Web/Home/Music cutover
+// ---------------------------------------------------------------------------
+
+const SCHEMA_016_VERSION = "0.1.6";
+const RETIRED_CORE_SERVERS = ["fetch", "searxng", "home_assistant", "music_assistant"] as const;
+const RETIRED_CORE_SERVICES = ["fetch-mcp", "searxng-mcp", "ha-mcp", "ma-mcp"] as const;
+
+interface Schema016MigrationResult {
+  removedCatalog: string[];
+  removedServices: string[];
+}
+
+/** Retire only the four product-owned sidecars. Third-party catalog entries and
+ * operator workloads are untouched; running harness-owned containers are
+ * removed later by boot reconciliation after these names leave the registry. */
+export function applySchema016Migration(doc: Document): Schema016MigrationResult | null {
+  const root = doc.contents;
+  if (!isMap(root)) return null;
+  const versionNode = root.get("schema_version", true);
+  const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
+  if (currentVersion === SCHEMA_016_VERSION) return null;
+  if (currentVersion !== SCHEMA_015_VERSION) return null;
+
+  const result: Schema016MigrationResult = {
+    removedCatalog: [],
+    removedServices: [],
+  };
+  const catalog = root.get(MCP_CATALOG_KEY, true);
+  if (isMap(catalog)) {
+    for (const name of RETIRED_CORE_SERVERS) {
+      if (catalog.has(name)) {
+        catalog.delete(name);
+        result.removedCatalog.push(name);
+      }
+    }
+  }
+  const services = root.get(MANAGED_SERVICES_KEY, true);
+  if (isMap(services)) {
+    for (const name of RETIRED_CORE_SERVICES) {
+      if (services.has(name)) {
+        services.delete(name);
+        result.removedServices.push(name);
+      }
+    }
+    const ingress = services.get("ingress-proxy", true);
+    if (isMap(ingress)) {
+      ingress.set("healthcheck", doc.createNode({ tcp: "127.0.0.1:8090", timeout_ms: 30000 }));
+      ingress.set("depends_on", doc.createNode([]));
+    }
+    const outbound = services.get("outbound-worker", true);
+    if (isMap(outbound)) outbound.set("depends_on", doc.createNode(["egress-proxy", "searxng", "ingress-proxy"]));
+  }
+  root.set("schema_version", SCHEMA_016_VERSION);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Public API — sync (used by loadStartupConfig) + async (tests, future use)
 // ---------------------------------------------------------------------------
 
@@ -831,6 +894,7 @@ function applyAllMigrations(doc: Document): boolean {
   const schema013Result = applySchema013Migration(doc);
   const schema014Result = applySchema014Migration(doc);
   const schema015Result = applySchema015Migration(doc);
+  const schema016Result = applySchema016Migration(doc);
 
   if (webToolsResult !== null) {
     noteInfo("migration:web-tools", {
@@ -893,6 +957,14 @@ function applyAllMigrations(doc: Document): boolean {
     });
   }
 
+  if (schema016Result !== null) {
+    noteInfo("migration:0.1.6:core-tool-cutover", {
+      removedCatalog: schema016Result.removedCatalog.join(", "),
+      removedServices: schema016Result.removedServices.join(", "),
+      reason: "Web, Home, and Music are first-class tools; harness-owned obsolete containers will be reaped safely",
+    });
+  }
+
   if (schema015Result !== null) {
     noteInfo("migration:0.1.5", {
       tieredCount: schema015Result.tieredTools.length,
@@ -937,7 +1009,8 @@ function applyAllMigrations(doc: Document): boolean {
     schema012Result !== null ||
     schema013Result !== null ||
     schema014Result !== null ||
-    schema015Result !== null
+    schema015Result !== null ||
+    schema016Result !== null
   );
 }
 
@@ -961,7 +1034,10 @@ export function migrateOperatorConfigYamlSync(configPath: string): void {
   try {
     doc = parseDocument(raw);
   } catch (e: unknown) {
-    noteWarn("parse-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("parse-failed", {
+      path: configPath,
+      reason: (e as Error).message,
+    });
     return;
   }
 
@@ -972,7 +1048,10 @@ export function migrateOperatorConfigYamlSync(configPath: string): void {
   try {
     writeFileSync(configPath, updated, { encoding: "utf-8" });
   } catch (e: unknown) {
-    noteWarn("write-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("write-failed", {
+      path: configPath,
+      reason: (e as Error).message,
+    });
     return;
   }
 
@@ -996,7 +1075,10 @@ export async function migrateOperatorConfigYaml(configPath: string): Promise<voi
   try {
     doc = parseDocument(raw);
   } catch (e: unknown) {
-    noteWarn("parse-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("parse-failed", {
+      path: configPath,
+      reason: (e as Error).message,
+    });
     return;
   }
 
@@ -1007,7 +1089,10 @@ export async function migrateOperatorConfigYaml(configPath: string): Promise<voi
   try {
     await writeFileAtomic(configPath, updated);
   } catch (e: unknown) {
-    noteWarn("write-failed", { path: configPath, reason: (e as Error).message });
+    noteWarn("write-failed", {
+      path: configPath,
+      reason: (e as Error).message,
+    });
     return;
   }
 

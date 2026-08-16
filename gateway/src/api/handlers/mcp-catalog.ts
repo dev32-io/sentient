@@ -9,12 +9,11 @@ import {
   catalogTools,
 } from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
-import { homeProductToolProvider } from "../../bootstrap/product-tools/home-provider.js";
+import { foundationProductToolMetadata } from "../../bootstrap/product-tool-metadata.js";
 import { getLog } from "../../logging/logger.js";
 import type { ProfileStore } from "../../profile-store/profile-store.js";
 import { delegateTaskDefinition } from "../../tools/delegate-task.js";
 import { MEMORY_TOOL_SETTINGS } from "../../tools/memory-tools.js";
-import { MUSIC_TOOL_SETTINGS } from "../../tools/music/music-tools.js";
 import { resolveToolPermission } from "../../tools/resolve-tool-permission.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import { SKILL_TOOL_SETTINGS } from "../../tools/skill-tools.js";
@@ -79,7 +78,10 @@ export function createMcpCatalogHandler(deps: McpCatalogHandlerDeps): (request: 
   function readerFor(userId: string): () => Promise<ToolPermissionMap | undefined> {
     const existing = permissionReaders.get(userId);
     if (existing) return existing;
-    const reader = createToolPermissionsReader({ profileStore: deps.profileStore, userId });
+    const reader = createToolPermissionsReader({
+      profileStore: deps.profileStore,
+      userId,
+    });
     permissionReaders.set(userId, reader);
     return reader;
   }
@@ -174,21 +176,27 @@ function projectGroups(
       productGroup,
       defaultExposure,
       ...(groupDescription ? { description: groupDescription } : {}),
-      tool: { name, description, tier, permission, settable: true, dispatch: { kind: "native" } },
+      tool: {
+        name,
+        description,
+        tier,
+        permission,
+        settable: true,
+        dispatch: { kind: "native" },
+      },
     });
   };
+  for (const meta of foundationProductToolMetadata())
+    addNative(
+      meta.name,
+      meta.description,
+      meta.tier,
+      meta.productGroup,
+      meta.defaultExposure,
+      meta.productGroup === "home" ? HOME_SETTINGS_DESCRIPTION : undefined,
+    );
   for (const meta of SKILL_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "skills", "standard");
   for (const meta of MEMORY_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "memory", "standard");
-  for (const meta of MUSIC_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "music", "standard");
-  for (const runner of homeProductToolProvider.create({}))
-    addNative(
-      runner.definition.name,
-      runner.definition.description,
-      runner.definition.tier,
-      "home",
-      "standard",
-      HOME_SETTINGS_DESCRIPTION,
-    );
   addNative(
     delegateTaskDefinition.name,
     DELEGATE_TASK_SETTINGS_DESCRIPTION,
@@ -203,7 +211,10 @@ function projectGroups(
     if (existing && existing.defaultExposure !== item.defaultExposure) {
       // Configuration ambiguity must fail closed instead of allowing transport
       // ordering to choose whether a group is standard or advanced.
-      log.warn("mcp-catalog.group-exposure-collision", { productGroup: item.productGroup, outcome: "off" });
+      log.warn("mcp-catalog.group-exposure-collision", {
+        productGroup: item.productGroup,
+        outcome: "off",
+      });
       continue;
     }
     const tools = existing ? [...existing.tools, item.tool] : [item.tool];
@@ -228,10 +239,17 @@ interface AuthFail {
 
 async function authorize(deps: McpCatalogHandlerDeps, request: Request): Promise<AuthOk | AuthFail> {
   const token = readBearer(request);
-  if (!token) return { ok: false, response: Response.json({ error: "missing-token" }, { status: HTTP_UNAUTHORIZED }) };
+  if (!token)
+    return {
+      ok: false,
+      response: Response.json({ error: "missing-token" }, { status: HTTP_UNAUTHORIZED }),
+    };
   const valid = await deps.tokens.validate(token);
   if (!valid.ok) {
-    return { ok: false, response: Response.json({ error: valid.error }, { status: HTTP_UNAUTHORIZED }) };
+    return {
+      ok: false,
+      response: Response.json({ error: valid.error }, { status: HTTP_UNAUTHORIZED }),
+    };
   }
   return { ok: true, userId: valid.value.userId };
 }
@@ -258,7 +276,10 @@ async function resolveRole(deps: McpCatalogHandlerDeps, userId: string): Promise
       outcome: "refused",
       detail: "the account's role gates every tool below it; a projection built without it would be a guess",
     });
-    return { ok: false, response: Response.json({ error: "role-unavailable" }, { status: HTTP_INTERNAL }) };
+    return {
+      ok: false,
+      response: Response.json({ error: "role-unavailable" }, { status: HTTP_INTERNAL }),
+    };
   }
   return { ok: true, role: record.value.role };
 }

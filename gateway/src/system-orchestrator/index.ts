@@ -224,8 +224,8 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
    * Backend-level liveness for a service that declares no probe of its own.
    *
    * `healthcheck: noop` means "recreate-success implies ready" — there is no
-   * host-reachable port to dial (egress-proxy, searxng, fetch-mcp,
-   * searxng-mcp all sit behind a proxy). Those four used to be filtered OUT of
+   * host-reachable port to dial (egress-proxy and searxng are internal-only).
+   * Noop-probed services used to be filtered OUT of
    * the watch list on the grounds that docker's `unless-stopped` policy
    * restarts them. That is true of a container that CRASHED and false of one
    * that was never CREATED — which is exactly what a boot whose apply failed
@@ -237,7 +237,11 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
   async function isUnitRunning(ms: ManagedService): Promise<boolean> {
     const units = await drivers[ms.config.launch].listManaged();
     const running = units.some((u) => u.service === ms.name && u.state === RUNNING_UNIT_STATE);
-    log.debug("health-watch.unit-probe", { service: ms.name, launch: ms.config.launch, running });
+    log.debug("health-watch.unit-probe", {
+      service: ms.name,
+      launch: ms.config.launch,
+      running,
+    });
     return running;
   }
 
@@ -253,7 +257,10 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
     probe: async (name) => {
       const ms = currentRegistry.get(name);
       if (!ms) {
-        log.debug("health-watch.probe-skipped", { service: name, reason: "not-in-registry" });
+        log.debug("health-watch.probe-skipped", {
+          service: name,
+          reason: "not-in-registry",
+        });
         return true;
       }
       const live =
@@ -267,7 +274,10 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
       // recovery forever instead of triggering it.
       const identity = await drivers[ms.config.launch].verifyIdentity(ms);
       if (identity.ok) return true;
-      log.warn("health-watch.identity-failed", { service: name, reason: identity.error.reason });
+      log.warn("health-watch.identity-failed", {
+        service: name,
+        reason: identity.error.reason,
+      });
       return false;
     },
     reapply: async (name) => {
@@ -374,10 +384,14 @@ export async function createSystemOrchestratorService(deps: FactoryDeps): Promis
               .map((ms) => ms.name),
           );
           if (infraNames.size === 0) {
-            log.info("boot-reconcile.infra-only.empty", { reason: "no infra services in the registry" });
+            log.info("boot-reconcile.infra-only.empty", {
+              reason: "no infra services in the registry",
+            });
             return lastStatus;
           }
-          log.info("boot-reconcile.infra-only", { services: Array.from(infraNames) });
+          log.info("boot-reconcile.infra-only", {
+            services: Array.from(infraNames),
+          });
           const result = await build.orch.applySubset(infraNames);
           lastStatus = mergeStatus(lastStatus, build.orch.getStatus(), infraNames);
           return result;
@@ -399,7 +413,10 @@ async function readHermesVersion(hermesVersionPath: string): Promise<string> {
     return version;
   } catch (err: unknown) {
     const reason = err instanceof Error ? err.message : String(err);
-    log.warn("versions.hermes-read-failed", { reason, path: hermesVersionPath });
+    log.warn("versions.hermes-read-failed", {
+      reason,
+      path: hermesVersionPath,
+    });
     return "unknown";
   }
 }
@@ -417,7 +434,10 @@ async function resolveHealthVersion(healthUrl: string, label: string): Promise<s
   try {
     const res = await fetch(healthUrl, { signal: ctl.signal });
     if (!res.ok) {
-      log.warn(`versions.${label}-health-non-ok`, { url: healthUrl, status: res.status });
+      log.warn(`versions.${label}-health-non-ok`, {
+        url: healthUrl,
+        status: res.status,
+      });
       return "unknown";
     }
     const body = (await res.json()) as { version?: string };
@@ -447,6 +467,11 @@ async function resolveVersions(
     resolveHealthVersion(sttHealthUrl, "stt"),
     resolveHealthVersion(ttsHealthUrl, "tts"),
   ]);
-  log.debug("versions.resolved", { gateway: gatewayVersion, hermes, stt_service, tts_service });
+  log.debug("versions.resolved", {
+    gateway: gatewayVersion,
+    hermes,
+    stt_service,
+    tts_service,
+  });
   return { gateway: gatewayVersion, hermes, stt_service, tts_service };
 }

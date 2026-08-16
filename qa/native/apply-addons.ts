@@ -8,7 +8,7 @@
  *  container set):
  *
  *      HOST_CONFIG_DIR=~/.sentient/gateway/config \
- *        bun qa/native/apply-addons.ts egress-proxy ingress-proxy searxng searxng-mcp fetch-mcp
+ *        bun qa/native/apply-addons.ts egress-proxy searxng ingress-proxy outbound-worker
  *
  *  Named services are applied as a subset in dependency order. With no
  *  arguments it applies everything in `managed_services`, native services
@@ -21,7 +21,10 @@ import { join } from "node:path";
 import { createInternalSecretsStore } from "../../gateway/src/admin/internal-secrets-store.js";
 import { makeSecretAccessor } from "../../gateway/src/bootstrap/secret-accessor.js";
 import { loadGatewayConfig } from "../../gateway/src/config/gateway-config.js";
-import { createGatewayLogger, getLog } from "../../gateway/src/logging/logger.js";
+import {
+  createGatewayLogger,
+  getLog,
+} from "../../gateway/src/logging/logger.js";
 import { defaultHealthIO } from "../../gateway/src/system-orchestrator/health-io.js";
 import { createSystemOrchestratorService } from "../../gateway/src/system-orchestrator/index.js";
 
@@ -46,15 +49,21 @@ async function main(): Promise<number> {
     // Fail loudly: templates bind-mount ${HOST_CONFIG_DIR}/<svc>/<file>, and an
     // empty value resolves to an absolute path outside the operator's tree that
     // docker would happily auto-create as an empty directory.
-    log.error("apply.missing-host-config-dir", { reason: "HOST_CONFIG_DIR is required" });
+    log.error("apply.missing-host-config-dir", {
+      reason: "HOST_CONFIG_DIR is required",
+    });
     return 1;
   }
 
   // The gateway's own loader, so this also proves config.yaml still validates
   // under the shipped schema rather than merely parsing as YAML.
-  const managedServicesConfig = loadGatewayConfig(join(REPO_ROOT, "gateway", "config.yaml")).managed_services;
+  const managedServicesConfig = loadGatewayConfig(
+    join(REPO_ROOT, "gateway", "config.yaml"),
+  ).managed_services;
   if (!managedServicesConfig) {
-    log.error("apply.no-managed-services", { reason: "config.yaml has no managed_services block" });
+    log.error("apply.no-managed-services", {
+      reason: "config.yaml has no managed_services block",
+    });
     return 1;
   }
 
@@ -86,14 +95,29 @@ async function main(): Promise<number> {
 
   const targets = process.argv.slice(2);
   log.info("apply.begin", { targets: targets.length > 0 ? targets : "ALL" });
-  const status = targets.length > 0 ? await orchestrator.applySubset(new Set(targets)) : await orchestrator.applyAll();
+  const status =
+    targets.length > 0
+      ? await orchestrator.applySubset(new Set(targets))
+      : await orchestrator.applyAll();
 
-  const applied = targets.length > 0 ? status.services.filter((s) => targets.includes(s.name)) : status.services;
+  const applied =
+    targets.length > 0
+      ? status.services.filter((s) => targets.includes(s.name))
+      : status.services;
   for (const s of applied) {
-    log.info("apply.result", { service: s.name, state: s.state, optional: s.optional, lastError: s.lastError });
+    log.info("apply.result", {
+      service: s.name,
+      state: s.state,
+      optional: s.optional,
+      lastError: s.lastError,
+    });
   }
   const failed = applied.filter((s) => s.state !== "ready" && !s.optional);
-  log.info("apply.done", { state: status.state, applied: applied.length, failedRequired: failed.length });
+  log.info("apply.done", {
+    state: status.state,
+    applied: applied.length,
+    failedRequired: failed.length,
+  });
   return failed.length > 0 ? 1 : 0;
 }
 

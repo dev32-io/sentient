@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { type McpCatalog, mcpCatalogSchema } from "@sentient/config";
+import { defaultPermissionsFor } from "../tools/role-defaults.js";
 import { applyProfileDefaults } from "./profile-defaults.js";
 import { profileV1Schema } from "./profile-types.js";
 
@@ -40,9 +41,7 @@ test("applyProfileDefaults seeds tools.permissions and tools.toolsets when calle
 
   const out = applyProfileDefaults(partial, ADULT);
 
-  expect(out.tools.permissions).toEqual({
-    household: { look_up: "allow", add_to_list: "ask", unlock_door: "ask" },
-  });
+  expect(out.tools.permissions).toEqual(defaultPermissionsFor("adult", CATALOG, { includeFoundationTools: true }));
   expect(out.tools.toolsets).toEqual(["memory", "todo", "session_search", "skills"]);
 });
 
@@ -62,9 +61,9 @@ test("applyProfileDefaults seeds the ACCOUNT'S OWN role, not one default table f
 
   // The confirm-tier tool is gone AND the two below it are still there: a
   // child's table is narrower, not empty.
-  expect(applyProfileDefaults(partial, { role: "child", mcpCatalog: CATALOG }).tools.permissions).toEqual({
-    household: { look_up: "allow", add_to_list: "ask" },
-  });
+  expect(applyProfileDefaults(partial, { role: "child", mcpCatalog: CATALOG }).tools.permissions).toEqual(
+    defaultPermissionsFor("child", CATALOG, { includeFoundationTools: true }),
+  );
 });
 
 test("applyProfileDefaults preserves caller-provided tools.permissions overrides", () => {

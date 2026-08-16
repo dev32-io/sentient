@@ -14,9 +14,9 @@
 // per-tool filter (tool selection lives behind a curses checklist, and
 // `hermes config set` cannot write a list — it coerces only bool/int/float).
 // The catalog's `tools.include` is a GATEWAY-side filter and never reaches
-// hermes, so registering `home_assistant` would hand the delegated agent
-// ha-mcp's whole upstream surface — far past the `allow` tier the owner
-// scoped. The gateway hosts its own per-user MCP socket and therefore knows
+// Hermes, so registering an operator MCP directly could hand the delegated
+// agent its whole upstream surface. The gateway hosts its own per-user MCP
+// socket and therefore knows
 // and controls that surface exactly, so it is the one server that can be
 // registered within the tier. Everything else a delegated agent may reach
 // arrives THROUGH that socket, proxied and mediated by the gateway's own PDP —
@@ -183,7 +183,12 @@ export function createHermesExternalTool(deps: HermesExternalToolDeps): External
     const servers = await readServers(userId, startedAt);
     const verdict = verifyGatewayEntry(servers, socketPath);
     if (verdict === "ok") {
-      log.debug("hermes.register.already", { userId, profile: deps.profile, server: GATEWAY_SERVER_NAME, socketPath });
+      log.debug("hermes.register.already", {
+        userId,
+        profile: deps.profile,
+        server: GATEWAY_SERVER_NAME,
+        socketPath,
+      });
       return { ok: true, value: undefined };
     }
     // One shared profile, one `gateway` entry, N household members. Repointing
@@ -231,7 +236,12 @@ export function createHermesExternalTool(deps: HermesExternalToolDeps): External
       userId,
     });
     if (!added.ok) {
-      log.warn("hermes.register.cli-failed", { userId, server: GATEWAY_SERVER_NAME, verdict, reason: added.error });
+      log.warn("hermes.register.cli-failed", {
+        userId,
+        server: GATEWAY_SERVER_NAME,
+        verdict,
+        reason: added.error,
+      });
       return { ok: false, error: "cli-error" };
     }
 

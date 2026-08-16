@@ -1,7 +1,7 @@
 # SearXNG (built-in metasearch backend)
 
-Self-hosted SearXNG instance. Backs the `searxng-mcp` adapter (sibling
-directory) which exposes a `web_search` MCP tool to Hermes.
+Self-hosted SearXNG instance consumed by the confined `outbound-worker` for
+the gateway's first-class `web_search` tool.
 
 - Image: `searxng/searxng:latest` (upstream — no Dockerfile here).
 - Network: `sentient-internal` only. Outbound to upstream engines via `egress-proxy`.

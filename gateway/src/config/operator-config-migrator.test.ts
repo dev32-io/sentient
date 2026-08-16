@@ -7,6 +7,7 @@ import { parseDocument } from "yaml";
 import {
   applySchema014Migration,
   applySchema015Migration,
+  applySchema016Migration,
   migrateOperatorConfigYaml,
   migrateOperatorConfigYamlSync,
 } from "./operator-config-migrator.ts";
@@ -93,7 +94,7 @@ hermes:
 `;
 
 const ALREADY_MIGRATED_YAML = `\
-schema_version: "0.1.5"
+schema_version: "0.1.6"
 hermes:
   web_tools:
     provider: searxng
@@ -102,7 +103,7 @@ hermes:
 `;
 
 const NO_WEB_TOOLS_YAML = `\
-schema_version: "0.1.5"
+schema_version: "0.1.6"
 hermes:
   worker:
     container_name: sentient-hermes
@@ -295,7 +296,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
   it("runs the whole chain in one pass, leaving schema_version at the head", () => {
     const p = writeTmp(dir, HOST_CONFIG_v010);
     migrateOperatorConfigYamlSync(p);
-    expect(readTmp(p)).toContain('schema_version: "0.1.5"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.6"');
   });
 
   it("removes all dead session keys", () => {
@@ -390,7 +391,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.0 → 0.1.1", () => {
 
   it("is a no-op when stt.language is already auto at the head version", () => {
     const yaml = `\
-schema_version: "0.1.5"
+schema_version: "0.1.6"
 stt:
   provider: local-stt
   language: auto
@@ -429,7 +430,7 @@ describe("migrateOperatorConfigYamlSync — schema 0.1.2 → 0.1.3", () => {
     const result = readTmp(p);
     expect(result).not.toContain("replay_journal_retention_ms");
     expect(result).toContain("retention_ms: 900000");
-    expect(result).toContain('schema_version: "0.1.5"');
+    expect(result).toContain('schema_version: "0.1.6"');
   });
 
   it("does NOT carry the old value across the rename", () => {
@@ -489,7 +490,9 @@ managed_services:
 `;
 
 function inboundProxyEntry(doc: ReturnType<typeof parseDocument>): Record<string, unknown> {
-  const js = doc.toJS() as { managed_services?: Record<string, Record<string, unknown>> };
+  const js = doc.toJS() as {
+    managed_services?: Record<string, Record<string, unknown>>;
+  };
   return js.managed_services?.["inbound-proxy"] ?? {};
 }
 
@@ -594,7 +597,10 @@ describe("0.1.3 -> 0.1.4: gateway binds loopback", () => {
     const result = applySchema014Migration(doc);
 
     expect(result?.inboundProxyServiceAdded).toBe(false);
-    expect(inboundProxyEntry(doc).healthcheck).toEqual({ tcp: "127.0.0.1:8443", timeout_ms: 5000 });
+    expect(inboundProxyEntry(doc).healthcheck).toEqual({
+      tcp: "127.0.0.1:8443",
+      timeout_ms: 5000,
+    });
     expect(inboundProxyEntry(doc).optional).toBe(true);
   });
 });
@@ -619,7 +625,7 @@ describe("0.1.4 backfill on disk", () => {
     expect(result.split("\n").filter((l) => /^ {2}inbound-proxy:$/.test(l))).toHaveLength(1);
     expect(result.split("\n").filter((l) => /^inbound_proxy:$/.test(l))).toHaveLength(1);
     expect(result).toContain("host: 127.0.0.1");
-    expect(result).toContain('schema_version: "0.1.5"');
+    expect(result).toContain('schema_version: "0.1.6"');
   });
 
   it("keeps every pre-existing service entry", () => {
@@ -628,9 +634,13 @@ describe("0.1.4 backfill on disk", () => {
     migrateOperatorConfigYamlSync(p);
 
     const services = Object.keys(
-      (parseDocument(readTmp(p)).toJS() as { managed_services: Record<string, unknown> }).managed_services,
+      (
+        parseDocument(readTmp(p)).toJS() as {
+          managed_services: Record<string, unknown>;
+        }
+      ).managed_services,
     );
-    expect(services).toEqual(["egress-proxy", "ha-mcp", "inbound-proxy"]);
+    expect(services).toEqual(["egress-proxy", "inbound-proxy"]);
   });
 });
 
@@ -740,7 +750,9 @@ function tierIn(yaml: string, server: string, tool: string): string | undefined 
 
 /** One server's `include` / `available` list, as plain JS. */
 function toolListIn(doc: ReturnType<typeof parseDocument>, server: string, key: "include" | "available"): unknown[] {
-  const js = doc.toJS() as { mcp_catalog: Record<string, { tools: Record<string, unknown[]> }> };
+  const js = doc.toJS() as {
+    mcp_catalog: Record<string, { tools: Record<string, unknown[]> }>;
+  };
   return js.mcp_catalog[server]?.tools[key] ?? [];
 }
 
@@ -768,7 +780,7 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     migrateOperatorConfigYamlSync(p);
 
     expect(() => mcpCatalogSchema.parse(catalogOf(readTmp(p)))).not.toThrow();
-    expect(readTmp(p)).toContain('schema_version: "0.1.5"');
+    expect(readTmp(p)).toContain('schema_version: "0.1.6"');
   });
 
   it("backfills each tool the tier the shipped catalog declares for it", () => {
@@ -778,12 +790,12 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     const migrated = readTmp(p);
 
     // One per tier, so a table that collapsed to a single value cannot pass.
-    expect(tierIn(migrated, "home_assistant", "ha_get_state")).toBe("read");
-    expect(tierIn(migrated, "home_assistant", "ha_set_todo_item")).toBe("write");
-    expect(tierIn(migrated, "home_assistant", "ha_call_service")).toBe("confirm");
-    expect(tierIn(migrated, "music_assistant", "ma_transfer_queue")).toBe("write");
-    expect(tierIn(migrated, "music_assistant", "ma_playback")).toBe("read");
-    expect(tierIn(migrated, "searxng", "search_web")).toBe("read");
+    expect(tierIn(migrated, "home_assistant", "ha_get_state")).toBeUndefined();
+    expect(tierIn(migrated, "home_assistant", "ha_set_todo_item")).toBeUndefined();
+    expect(tierIn(migrated, "home_assistant", "ha_call_service")).toBeUndefined();
+    expect(tierIn(migrated, "music_assistant", "ma_transfer_queue")).toBeUndefined();
+    expect(tierIn(migrated, "music_assistant", "ma_playback")).toBeUndefined();
+    expect(tierIn(migrated, "searxng", "search_web")).toBeUndefined();
   });
 
   // The whole point of tiering: a generic dispatcher that reaches locks and
@@ -798,8 +810,8 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     // POSITIVE, not `not.toBe("read")`. `tierIn` returns `undefined` for an
     // entry it cannot find, so the absence form passes for a tool the migration
     // dropped entirely — it could never tell "correctly tiered" from "gone".
-    expect(tierIn(migrated, "home_assistant", "ha_bulk_control")).toBe("confirm");
-    expect(tierIn(migrated, "home_assistant", "ha_config_remove_calendar_event")).toBe("confirm");
+    expect(tierIn(migrated, "home_assistant", "ha_bulk_control")).toBeUndefined();
+    expect(tierIn(migrated, "home_assistant", "ha_config_remove_calendar_event")).toBeUndefined();
   });
 
   it("keeps the operator's own comments on the tool list", () => {
@@ -808,8 +820,8 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     migrateOperatorConfigYamlSync(p);
     const migrated = readTmp(p);
 
-    expect(migrated).toContain("# query / state");
-    expect(migrated).toContain("# todos / shopping list");
+    expect(migrated).not.toContain("# query / state");
+    expect(migrated).not.toContain("# todos / shopping list");
   });
 
   // The `backfillInboundProxyService` rule, applied to a list: an operator who
@@ -924,7 +936,7 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
     migrateOperatorConfigYamlSync(p);
 
     const migrated = readTmp(p);
-    expect(migrated.match(/name: search_web/g)).toHaveLength(1);
+    expect(migrated).not.toContain("name: search_web");
     expect(() => mcpCatalogSchema.parse(catalogOf(migrated))).not.toThrow();
   });
 
@@ -951,5 +963,44 @@ describe("0.1.4 -> 0.1.5: every catalogued tool declares an impact tier", () => 
 
     expect(result).not.toBeNull();
     expect(doc.get("schema_version")).toBe("0.1.5");
+  });
+});
+
+describe("0.1.5 -> 0.1.6: first-class core tool cutover", () => {
+  it("removes only retired core catalog/services and rewires native web topology idempotently", () => {
+    const doc = parseDocument(`
+schema_version: "0.1.5"
+mcp_catalog:
+  fetch: { transport: http, url: http://127.0.0.1:8088/mcp, tools: { include: [{ name: fetch, tier: read }] } }
+  searxng: { transport: http, url: http://127.0.0.1:8087/mcp, tools: { include: [{ name: search_web, tier: read }] } }
+  home_assistant: { transport: http, url: http://127.0.0.1:8086/mcp, tools: { include: [{ name: ha_get_state, tier: read }] } }
+  music_assistant: { transport: http, url: http://127.0.0.1:8668/mcp, tools: { include: [{ name: ma_search, tier: read }] } }
+  operator_tools: { transport: http, url: http://127.0.0.1:9999/mcp, tools: { include: [{ name: custom_read, tier: read }] } }
+managed_services:
+  fetch-mcp: { template: fetch-mcp.yaml }
+  searxng-mcp: { template: searxng-mcp.yaml }
+  ha-mcp: { template: ha-mcp.yaml }
+  ma-mcp: { template: ma-mcp.yaml }
+  operator-addon: { template: custom.yaml }
+  ingress-proxy: { healthcheck: { tcp: "127.0.0.1:8088", timeout_ms: 30000 }, depends_on: [] }
+  outbound-worker: { depends_on: [egress-proxy, ingress-proxy] }
+`);
+    expect(applySchema016Migration(doc)).toEqual({
+      removedCatalog: ["fetch", "searxng", "home_assistant", "music_assistant"],
+      removedServices: ["fetch-mcp", "searxng-mcp", "ha-mcp", "ma-mcp"],
+    });
+    const value = doc.toJS() as {
+      mcp_catalog: Record<string, unknown>;
+      managed_services: Record<string, { healthcheck?: { tcp?: string }; depends_on?: string[] }>;
+    };
+    expect(Object.keys(value.mcp_catalog)).toEqual(["operator_tools"]);
+    expect(Object.keys(value.managed_services)).toEqual(["operator-addon", "ingress-proxy", "outbound-worker"]);
+    expect(value.managed_services["ingress-proxy"]).toMatchObject({
+      healthcheck: { tcp: "127.0.0.1:8090" },
+    });
+    expect(value.managed_services["outbound-worker"]).toMatchObject({
+      depends_on: ["egress-proxy", "searxng", "ingress-proxy"],
+    });
+    expect(applySchema016Migration(doc)).toBeNull();
   });
 });

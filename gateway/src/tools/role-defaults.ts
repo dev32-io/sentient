@@ -37,6 +37,7 @@
 
 import { type McpCatalog, type ToolPermission, type ToolPermissionMap, catalogTools } from "@sentient/config";
 import { type ImpactTier, type UserRole, canExecute } from "@sentient/protocol";
+import { foundationProductToolMetadata } from "../bootstrap/product-tool-metadata.js";
 import { getLog } from "../logging/logger.js";
 
 const log = getLog(["sentient", "tools", "role-defaults"]);
@@ -97,11 +98,18 @@ export function defaultPermissionForTier(tier: ImpactTier): ToolPermission {
  * through here, so there is one place where "what does a new child get" is
  * answered.
  */
-export function defaultPermissionsFor(role: UserRole, catalog: McpCatalog): ToolPermissionMap {
+export function defaultPermissionsFor(
+  role: UserRole,
+  catalog: McpCatalog,
+  options: { includeFoundationTools?: boolean } = {},
+): ToolPermissionMap {
   const table: ToolPermissionMap = {};
   let withheld = 0;
 
-  for (const tool of catalogTools(catalog)) {
+  const tools = options.includeFoundationTools
+    ? [...catalogTools(catalog), ...foundationProductToolMetadata()]
+    : catalogTools(catalog);
+  for (const tool of tools) {
     if (!canExecute(role, tool.tier)) {
       withheld += 1;
       continue;

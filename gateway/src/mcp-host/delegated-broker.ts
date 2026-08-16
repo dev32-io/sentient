@@ -44,12 +44,12 @@
 import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { UserRole } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
-import { createUserPrincipal } from "../identity/user-principal.js";
+import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient } from "../tools/mcp-client.js";
-import { type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
+import { type NativeToolRunner, type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
 import { ConfirmUnavailableError } from "../tools/tool-types.js";
 import { createToolPermissionsReader } from "../tools/user-tool-permissions.js";
 import type { UserStore } from "../user-auth/user-store.js";
@@ -87,6 +87,8 @@ export interface DelegatedBrokerFactoryDeps {
    *  when that user opens a session of their own. This is the entire bound on
    *  a delegation's authority: no other value can reach the capability. */
   userStore: Pick<UserStore, "get">;
+  /** First-class runners bound to this delegator's attenuated principal. */
+  nativeToolsFor?: (principal: UserPrincipal) => Map<string, NativeToolRunner>;
 }
 
 /**
@@ -173,6 +175,7 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
         // every line from this broker is a delegated call, not a socket's.
         sessionId: `delegated:${userId}`,
         backgroundTools: new Map(),
+        ...(deps.nativeToolsFor ? { nativeTools: deps.nativeToolsFor(principal) } : {}),
         config: deps.toolsConfig,
         requestConfirm: () => Promise.reject(new ConfirmUnavailableError(NO_CONFIRMER)),
         toolPermissions: createToolPermissionsReader({

@@ -55,16 +55,6 @@ platforms:
     enabled: false   # we observe HA ourselves via gateway
 
 mcp_servers:
-  home_assistant:
-    # ha-mcp standalone server (homeassistant-ai/ha-mcp). Runs as a
-    # sibling container on sentient-internal — no host port, only
-    # reachable via docker DNS from other Sentient services. No bearer
-    # needed; network isolation is the access control. ha-mcp talks to
-    # the real HA via egress-proxy.
-    url: http://ha-mcp:8086/mcp
-    timeout: 30
-    connect_timeout: 5
-
   duckduckgo:
     command: duckduckgo-mcp-server
     timeout: 30
