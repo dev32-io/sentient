@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: core-tool-cutover
 title: Cut over core capabilities and retire their MCP sidecars
-status: running
+status: contribution_complete
 dependsOn:
   - grounded-web-search
   - native-home-configuration
@@ -36,3 +36,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: 5fa6b2d2a77ecea2379d7843a5c9bd1d0a9ae219
   lastRunId: 3903f508-46e3-45e7-a18d-6b21992ab87b
+  completedCommit: c0d9f2906fba18b1dcad073b585dba37601116fa
