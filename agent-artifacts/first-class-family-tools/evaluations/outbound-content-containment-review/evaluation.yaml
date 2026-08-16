@@ -3,9 +3,9 @@ id: outbound-content-containment-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - "Context: Run after native web search/fetch and cutover are integrated."
   - "Context: The review must establish both network/request policy and the
@@ -33,8 +33,31 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 2
+  state: awaiting_manager
   reviewerAgentId: 52864b4e-613b-406b-8d4f-d2ff7ce99e7b
   reviewedCommit: 24df86294301bbbe285499b0487aeced83783605
+findings:
+  - id: OCCR-001
+    severity: high
+    status: open
+    criterion: Complete pages must remain absent from ReAct results and utility
+      prompts unless explicitly sliced through read_web_content.
+    location: gateway/src/tools/web/web-tools.ts:146-163, 287-303
+    summary: Short fetched pages enter both fetch_content results and grounded
+      utility prompts in full.
+    blocking: true
+  - id: OCCR-002
+    severity: medium
+    status: open
+    criterion: Malformed external responses must not bypass response byte bounds.
+    location: gateway/addons/outbound-worker/src/search-searxng.ts:68-70;
+      gateway/src/tools/web/outbound-worker-client.ts:128-130, 176-179
+    summary: Response size checks occur only after response.text() has buffered the
+      entire SearXNG or worker response.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/outbound-content-containment-review/manifest.yaml

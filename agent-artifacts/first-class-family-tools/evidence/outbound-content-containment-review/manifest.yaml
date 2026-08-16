@@ -1,0 +1,25 @@
+schemaVersion: 1
+evaluation: outbound-content-containment-review
+recordedAt: 2026-08-16T01:05:05.306Z
+entries:
+  - result: 707 pass, 2 skip, 0 fail
+    command: source scripts/env.sh && bun test gateway/src/tools
+      gateway/src/security gateway/src/system-orchestrator gateway/src/provider
+    description: Required regression suite.
+    path: files/1-outbound-content-containment-tests.log
+    checksum: sha256:ead06b09d3625e9d4f5758bfe01d3e9ff65313fe4f2539bfd329c88d41f03f27
+  - result: All workspace typechecks exited 0.
+    command: source scripts/env.sh && bun run typecheck
+    path: files/2-outbound-content-containment-typecheck.log
+    checksum: sha256:7b04fd59923a17aa51136f349a76fc1e5b4ac9f0a331db200ab8f260e8a71d73
+  - result: Exit 0.
+    command: source scripts/env.sh && git diff --check
+    path: files/3-outbound-content-containment-diff-check.log
+    checksum: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  - result: fullBodyInFetchToolResult=true and fullBodyInUtilityPrompt=true for a
+      22-character fetched page.
+    command: source scripts/env.sh && bun /tmp/repro-outbound-complete-page.ts
+    description: Read-only mocked runtime reproduction; script and output are
+      outside the repository.
+    path: files/4-outbound-content-containment-complete-page-repro.log
+    checksum: sha256:6e5da0cf4b95d3209824e5ce015025583d6277991f92b4b48805fdc3a38e33ec
