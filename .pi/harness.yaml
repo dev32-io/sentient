@@ -12,7 +12,7 @@ modelTiers:
     - ollama-cloud/glm-5.2#high
     - ollama-cloud/deepseek-v4-pro#high
   low:
-    - openai-codex/gpt-5.6-luna#high
+    - openai-codex/gpt-5.6-luna#low
     - ollama-cloud/deepseek-v4-flash#high
 
 orchestrator:

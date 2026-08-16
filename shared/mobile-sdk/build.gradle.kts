@@ -30,7 +30,9 @@ plugins {
 // Bumped to 0.4.0: 2.0 memory-branch protocol touches — AuthUser gains `role`
 // (tool-permission role gate readable by clients); dead 1.x decoders flagged for
 // removal (see native-todo "Mobile protocol cleanup").
-version = "0.4.0"
+// Bumped to 0.5.0: mobile interaction reliability — fresh-chat isolation,
+// mic envelope metering, and shared talk-mode barge-in behavior.
+version = "0.5.0"
 
 kotlin {
     androidTarget {

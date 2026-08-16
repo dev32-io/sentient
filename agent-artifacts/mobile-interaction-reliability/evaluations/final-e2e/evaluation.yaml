@@ -1,0 +1,36 @@
+schemaVersion: 1
+id: final-e2e
+type: e2e
+checkpoint: final-e2e
+scope:
+  workItem: mobile-interaction-reliability
+status: planned
+required: true
+attempt: 0
+methods:
+  - Exercise the complete meaningful user journey; record not_applicable only
+    when no runnable E2E surface exists.
+loop:
+  state: rereviewing
+  iteration: 3
+  maxIterations: 3
+  reviewerAgentId: 4e78c030-0aa7-4474-80e1-d6ee730b4bad
+  reviewedCommit: 7ef58117de333e7bbf7447a1365468632768de4d
+  managerPrompt: Retry the final E2E agentically after repairing test setup, not
+    product scope. Store every evidence file under the repository-local
+    agent-artifacts/mobile-interaction-reliability/evidence/final-e2e/
+    directory; do not cite /tmp because /tmp resolves through /private/tmp and
+    the evidence validator rejects it. Boot the installed Pixel_3a_API_34 AVD as
+    emulator-5554, wait for sys.boot_completed, build/install the integrated
+    debug app, and run the approved non-physical Android journeys.
+    Rebuild/install the integrated iOS app on the booted iPhone 16 iOS 18.3.1
+    simulator and restart only the LOCAL dev gateway with --fresh-gateway to
+    clear session-cap/stale-state effects. Diagnose the post-PIN failure using
+    the visible accessibility hierarchy and sanitized local gateway/app
+    diagnostics; distinguish invalid fixture PIN/auth state, host/profile fetch
+    failure, and an actual app regression. Repair disposable local QA
+    fixture/harness setup if needed without touching production or requiring
+    user input. Then run the approved E2E matrix paths for fresh-chat isolation,
+    send anchoring, Fish filters/state restoration, and settings history.
+    Physical mic/acoustic behavior remains excluded. Record bounded repo-local
+    logs/screenshots and an exact pass/fail/blocked verdict.

@@ -33,6 +33,7 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import io.sentient.mobilesdk.voice.talk.TalkModeController
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
@@ -211,6 +213,9 @@ class SentientSdk(
      *  for the UI spinner + the SDK reconfig decision. */
     val audioState: StateFlow<VoiceAudioState> = voice.audioState
 
+    /** Read-only aggregate microphone envelope for native waveform consumers. */
+    val micLevels: StateFlow<MicLevelEnvelope> = voice.micLevels
+
     // Talk-mode brain (design spec §3), constructed at the SDK composition site over its
     // 6 documented seams — all existing surfaces (S3 recipe B). Capture start/stop ride
     // SdkVoice's serialized command lane (carrying TurnMode on the mic-rising edge); the
@@ -230,6 +235,29 @@ class SentientSdk(
      *  the split observable-surface rule (conflation fine — latest wins); NOT folded into a
      *  delta stream. The corner-mic affordance / future UI renders off this. */
     val talkMode: StateFlow<TalkMode> = talkModeController.mode
+
+    // VoiceAudio is the shared capture authority. A transient mic=false projection during
+    // interrupt/reconfigure is intentionally ignored; only a typed Error or terminal Idle
+    // teardown can revoke an optimistic Hold/Continuous mode. The controller reset is
+    // idempotent and emits no duplicate stop/release intent.
+    init {
+        scope.launch {
+            var previousPhase: VoiceAudioState.Phase? = null
+            voice.audioState.collect { state ->
+                // Do not interpret the initial Idle snapshot as a teardown. Idle is
+                // authoritative only after the engine has previously been active.
+                val genuineLoss = state.phase == VoiceAudioState.Phase.Error ||
+                    (state.phase == VoiceAudioState.Phase.Idle && previousPhase != null && previousPhase != VoiceAudioState.Phase.Idle)
+                previousPhase = state.phase
+                if (genuineLoss) {
+                    talkModeController.captureLost(
+                        if (state.phase == VoiceAudioState.Phase.Error) "audio-error" else "audio-teardown",
+                    )
+                    syncVoiceMode()
+                }
+            }
+        }
+    }
 
     private val connectors = SdkConnectors(
         deriver = deriver,
@@ -399,6 +427,10 @@ class SentientSdk(
     fun disconnect(clearSession: Boolean = true) {
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
+        // Teardown is a genuine capture loss. Reset shared TalkMode before disposing the
+        // engine so native presentation adapters converge without sending a second stop.
+        talkModeController.captureLost("disconnect")
+        syncVoiceMode()
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
@@ -615,12 +647,11 @@ class SentientSdk(
     }
 
     /**
-     * Fire-and-forget new chat (A2). Sends session.new and returns immediately —
-     * the gateway emits session.switched + empty snapshot now, then session.created
-     * after the slow ACP mint. NEVER awaits, NEVER throws. The UI must not block on
-     * a session round-trip. Debounced in the connector so rapid taps mint once.
+     * Eagerly establish an explicit fresh-chat boundary. The old conversation is
+     * cleared synchronously; the gateway preparation and first-message mint remain
+     * asynchronous so typing is never blocked.
      */
-    fun sendNewChat() {
+    fun startFreshChat() {
         markInteraction()
         connectors.turnError.reset()
         clearConversationScopedState("new-chat-fire")
@@ -629,9 +660,12 @@ class SentientSdk(
         // instant "+" is tapped (safe pure-state clear — never gates the mint).
         connectors.history.clearForNewChat()
         dropAnchorForNewChat()
-        connectors.sessions.sendNew()
+        connectors.sessions.startFreshChat()
         clearActiveToIdle()
     }
+
+    /** Compatibility alias for older platform callers. */
+    fun sendNewChat() = startFreshChat()
 
     /**
      * Fire-and-forget switch (A2). Sends conversation.activate and returns immediately —

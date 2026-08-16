@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: shared-talkmode-barge-in
+title: Make shared TalkMode authoritative for hold-to-talk barge-in
+status: merged
+dependsOn:
+  - fresh-chat-boundary
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: state-and-navigation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :shared:mobile-data:allTests :android:testDebugUnitTest
+    - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/shared-talkmode-barge-in
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/shared-talkmode-barge-in
+  baseCommit: 457f15156b88b7d858e5a3f82794a00e4bf87a7f
+  lastRunId: 4b474d71-3f9a-4190-9ba5-f5ca5762cb8c
+  completedCommit: 3b58003f0e506fc667dde4fe258947e8bfadb933
+  mergedCommit: abe1c9c86cdbeef27238e15da6e49e9a313ace04

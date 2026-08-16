@@ -14,26 +14,34 @@ import MobileData
 struct VoiceFishScreen: View {
     let settings: SettingsComponent
     let onBack: () -> Void
+    let onOpenEditor: ((FishVoiceEntry) -> Void)?
+    let editorEntry: FishVoiceEntry?
 
     @State private var vm: VoiceFishViewModel
 
-    init(settings: SettingsComponent, onBack: @escaping () -> Void) {
+    init(settings: SettingsComponent, onBack: @escaping () -> Void, onOpenEditor: ((FishVoiceEntry) -> Void)? = nil, editorEntry: FishVoiceEntry? = nil) {
         self.settings = settings
         self.onBack = onBack
+        self.onOpenEditor = onOpenEditor
+        self.editorEntry = editorEntry
         _vm = State(initialValue: VoiceFishViewModel(settings: settings))
     }
 
     var body: some View {
         SettingsPageScaffold(title: "Clone from Fish", screenId: "settings-voice-fish") {
             noticeBanner
-            if vm.selected != nil {
+            if vm.selected != nil || editorEntry != nil {
                 cloneEditor
             } else {
                 searchField
+                filterControls
                 content
             }
         }
-        .task { await vm.load() }
+        .task {
+            if let editorEntry { vm.select(editorEntry) }
+            else { await vm.load() }
+        }
         .onChange(of: vm.done) { _, done in if done { onBack() } }
         .onDisappear { vm.teardown() }
     }
@@ -49,7 +57,7 @@ struct VoiceFishScreen: View {
         case .failed:
             failureState
         case .loaded:
-            if vm.entries.isEmpty {
+            if vm.filteredEntries.isEmpty {
                 inlineMessage("No voices match your search.", id: "settings-voice-fish-empty")
             } else {
                 entryList
@@ -59,7 +67,7 @@ struct VoiceFishScreen: View {
 
     private var entryList: some View {
         LazyVStack(spacing: Space.sm) {
-            ForEach(vm.entries, id: \.id) { entry in
+            ForEach(vm.filteredEntries, id: \.id) { entry in
                 VoiceRowView(
                     name: entry.title,
                     lang: entry.languages.first ?? "",
@@ -70,7 +78,10 @@ struct VoiceFishScreen: View {
                     playDisabled: entry.previewAudioUrl == nil,
                     accessory: .none,
                     accessibilityId: "settings-voice-fish-row-\(entry.id)",
-                    onSelect: { vm.select(entry) },
+                    onSelect: {
+                        vm.select(entry)
+                        onOpenEditor?(entry)
+                    },
                     onPlay: { vm.toggleSample(entry) }
                 )
             }
@@ -87,6 +98,25 @@ struct VoiceFishScreen: View {
                 .accessibilityIdentifier("settings-voice-fish-loadmore")
             }
         }
+    }
+
+    private var filterControls: some View {
+        VStack(alignment: .leading, spacing: Space.sm) {
+            RowSelect(label: "Language", options: [SelectOption(id: "", label: "All languages")] + vm.filterLanguages.map { SelectOption(id: $0, label: VoiceLanguages.label(for: $0)) }, selectedId: vm.languageFilter, accessibilityId: "settings-voice-fish-language", onSelect: { vm.languageFilter = $0 })
+            RowSelect(label: "Sort", options: [SelectOption(id: "popular", label: "Popular"), SelectOption(id: "recent", label: "Recent"), SelectOption(id: "az", label: "A–Z")], selectedId: vm.sort.rawValue, accessibilityId: "settings-voice-fish-sort", onSelect: { vm.sort = VoiceFishViewModel.Sort(rawValue: $0) ?? .popular })
+            facetRow("Gender", vm.filterGenders, vm.selectedGenders) { vm.toggleGender($0) }
+            facetRow("Age", vm.filterAges, vm.selectedAges) { vm.toggleAge($0) }
+            facetRow("Vibe", vm.filterVibes, vm.selectedVibes) { vm.toggleVibe($0) }
+            if vm.filterActive { Button("Clear filters", action: vm.resetFilters).accessibilityIdentifier("settings-voice-fish-clear-filters") }
+        }
+    }
+
+    private func facetRow(_ label: String, _ options: [String], _ selected: [String], _ action: @escaping (String) -> Void) -> some View {
+        if options.isEmpty { return AnyView(EmptyView()) }
+        return AnyView(VStack(alignment: .leading, spacing: Space.xs) {
+            Text(label).font(Typo.ui(TypeScale.xs, .medium)).foregroundStyle(DuskColors.ink2)
+            ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: Space.xs) { ForEach(options, id: \.self) { value in Button(value) { action(value) }.buttonStyle(.borderedProminent).tint(selected.contains(value) ? DuskColors.accent : DuskColors.bgElev).accessibilityIdentifier("settings-voice-fish-\(label.lowercased())-\(value)") } } }
+        })
     }
 
     private var cloneEditor: some View {
@@ -112,7 +142,7 @@ struct VoiceFishScreen: View {
                 onSelect: { vm.cloneLanguage = $0 }
             )
             HStack(spacing: Space.sm) {
-                Button("Cancel") { vm.cancelSelect() }
+                Button("Cancel") { editorEntry == nil ? vm.cancelSelect() : onBack() }
                     .font(Typo.ui(TypeScale.sm, .semibold))
                     .foregroundStyle(DuskColors.ink2)
                     .accessibilityIdentifier("settings-voice-fish-clone-cancel")

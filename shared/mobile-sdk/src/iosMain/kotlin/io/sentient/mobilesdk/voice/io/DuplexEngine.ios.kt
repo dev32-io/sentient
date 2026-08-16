@@ -95,6 +95,7 @@ private const val PLAYBACK_MAKEUP_GAIN = 5.0f
 internal class DuplexEngine(
     private val state: MutableStateFlow<VoiceAudioState>,
     private val micCh: Channel<ShortArray>,
+    private val meter: MicLevelMeter,
 ) {
     private val log = createLogger("voice", "engine", "ios")
 
@@ -172,6 +173,7 @@ internal class DuplexEngine(
         runCatching { if (current.player) { player.stop(); engine.detachNode(player) } }
         deactivateSession()
         converter = null
+        meter.reset()
         playerFormat = null
         outstanding.value = 0
         playbackEpoch.incrementAndGet()
@@ -308,6 +310,7 @@ internal class DuplexEngine(
         runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
             .onFailure { log.warn("remove-tap-failed", mapOf("cause" to (it.message ?: "unknown"))) }
         converter = null
+        meter.reset()
     }
 
     /** Convert one tap buffer to 16k PCM16 ShortArray and deliver (audio-thread safe). */
@@ -317,6 +320,7 @@ internal class DuplexEngine(
         val bytes = conv.convert(buffer) ?: return
         val shorts = pcm16LeToShorts(bytes)
         meterAndGain(shorts)
+        runCatching { meter.accept(shorts) }
         deliver(shorts)
     }
 

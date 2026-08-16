@@ -43,6 +43,9 @@ struct UserSessionHost: View {
     /// rebuild → a clean nil-route VM, even when already on a new chat.
     @State private var newChatEpoch = 0
     @State private var path: [Route] = []
+    /// Identity/data passed to the child editor; the Fish results route remains
+    /// the owner of catalog/filter/paging state underneath it.
+    @State private var fishEditorEntry: FishVoiceEntry?
 
     /// Root ChatView identity: the conversation id when one is selected (history),
     /// else a per-new-chat nonce so each "+" rebuilds a fresh nil-route VM.
@@ -157,7 +160,20 @@ struct UserSessionHost: View {
         case .settingsVoiceAdd:
             VoiceAddScreen(settings: settings, onBack: popRoute)
         case .settingsVoiceFish:
-            VoiceFishScreen(settings: settings, onBack: popRoute)
+            VoiceFishScreen(
+                settings: settings,
+                onBack: popRoute,
+                onOpenEditor: { entry in
+                    fishEditorEntry = entry
+                    path.append(.settingsVoiceFishEditor(entry.id))
+                }
+            )
+        case .settingsVoiceFishEditor:
+            if let entry = fishEditorEntry {
+                VoiceFishScreen(settings: settings, onBack: popRoute, editorEntry: entry)
+            } else {
+                EmptyView()
+            }
         case .settingsAudio:
             AudioScreen(settings: settings, onBack: popRoute)
         case .settingsModel:

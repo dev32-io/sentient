@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: gradle-jdk21-environment
+title: Make repository Gradle checks discover Homebrew JDK 21
+status: merged
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: low
+    rationale: Default low routing for a bounded contribution.
+assembly:
+  stageId: foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash -c 'cd
+      "$PWD" && source scripts/env.sh && test "$(java -version 2>&1 | head -1)"
+      != "" && ./gradlew --version | grep -E "Launcher JVM:.*21"'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/gradle-jdk21-environment
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/gradle-jdk21-environment
+  baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
+  lastRunId: 2523e3bd-8826-4b05-80e0-ae7ca6c96d4f
+  completedCommit: e8e2f41ee64c1a9f15b61c7b3af3c7bcf369f3a3
+  mergedCommit: cd0c231c3255578a77e6aa890ef943e1f4e06d65

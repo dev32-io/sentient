@@ -1,0 +1,35 @@
+schemaVersion: 1
+id: fresh-chat-boundary
+title: Make cold launch and New Chat establish a fresh conversation boundary
+status: merged
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :shared:mobile-data:allTests :android:testDebugUnitTest
+    - source scripts/env.sh && bun test
+      gateway/src/session-handlers/ws-handlers-routing.test.ts
+    - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/fresh-chat-boundary
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/fresh-chat-boundary
+  baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
+  lastRunId: afc55c77-f147-494c-9e80-d302bae67b98
+  completedCommit: 5b2778a9490c87e0a18aed76b5961868b2b03fd7
+  mergedCommit: cd0c231c3255578a77e6aa890ef943e1f4e06d65

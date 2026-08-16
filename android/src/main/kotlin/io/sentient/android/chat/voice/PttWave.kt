@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import io.sentient.mobilesdk.design.Colors
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -54,13 +55,10 @@ private val BAR_GAP = 3.dp
 private val BAR_RADIUS = 2.dp
 
 @Composable
-internal fun PttWave(modifier: Modifier = Modifier) {
-    val phase by rememberInfiniteTransition(label = "ptt-wave").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(PULSE_PERIOD_MS, easing = LinearEasing)),
-        label = "phase",
-    )
+internal fun PttWave(
+    levels: MicLevelEnvelope = MicLevelEnvelope.silence(),
+    modifier: Modifier = Modifier,
+) {
     val barColor = lerp(Color(Colors.ink), Color(Colors.accent), BAR_ACCENT_MIX)
     Row(
         modifier = modifier.fillMaxWidth().height(WAVE_HEIGHT),
@@ -69,18 +67,11 @@ internal fun PttWave(modifier: Modifier = Modifier) {
     ) {
         repeat(BAR_COUNT) { i ->
             val contour = BAR_HEIGHT_BASE + BAR_HEIGHT_SPAN * abs(sin(i * BAR_PHASE_STEP))
-            val delay = (i % BAR_DELAY_CYCLE) * BAR_DELAY_STEP
+            val level = levels.values.getOrElse(i) { 0f }.coerceIn(0f, 1f)
             Box(
                 Modifier
                     .weight(1f)
-                    .height(WAVE_HEIGHT * contour)
-                    .graphicsLayer {
-                        // Delayed local phase → sinusoidal pulse ≈ CSS ease-in-out keyframes.
-                        val local = (phase - delay + 1f) % 1f
-                        val pulse = 0.5f - 0.5f * cos(local * 2f * PI.toFloat())
-                        scaleY = PULSE_MIN_SCALE + PULSE_SCALE_RANGE * pulse
-                        alpha = PULSE_MIN_ALPHA + PULSE_ALPHA_RANGE * pulse
-                    }
+                    .height(WAVE_HEIGHT * (contour * (0.35f + 0.65f * level)))
                     .clip(RoundedCornerShape(BAR_RADIUS))
                     .background(barColor),
             )

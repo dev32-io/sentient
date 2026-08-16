@@ -61,6 +61,9 @@ class AndroidVoiceAudio(
     // Bounded SUSPEND channel; drop-newest via trySend (mirrors the prior Android mic adapter).
     private val micCh = Channel<ShortArray>(capacity = FRAME_CHANNEL_CAPACITY)
     override val micFrames: Flow<ShortArray> = micCh.receiveAsFlow()
+    private val _micLevels = MutableStateFlow(MicLevelEnvelope.silence())
+    override val micLevels: StateFlow<MicLevelEnvelope> = _micLevels
+    private val meter = MicLevelMeter { _micLevels.value = it }
 
     // The currently-applied graph; configure diffs against this.
     private var current: VoiceAudioGraph = voiceAudioGraph(mic = false, playback = false)
@@ -84,6 +87,7 @@ class AndroidVoiceAudio(
             context = context,
             trySend = { frame -> micCh.trySend(frame).isSuccess },
             onFatalRead = ::onMicFatalRead,
+            meter = meter,
         )
 
     /** Legacy 3-arg entry point — delegates with [VoiceAudioPath.Duplex] (unchanged behavior). */
@@ -233,6 +237,7 @@ class AndroidVoiceAudio(
         micCh.close()
         current = voiceAudioGraph(mic = false, playback = false)
         currentPath = VoiceAudioPath.Duplex
+        meter.reset()
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
     }
 }

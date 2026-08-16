@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: natural-settings-navigation
+title: Make settings Back follow the actual page stack
+status: merged
+dependsOn:
+  - fresh-chat-boundary
+  - fish-filter-parity
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: state-and-navigation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16,OS=18.3.1'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/natural-settings-navigation
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/natural-settings-navigation
+  baseCommit: 457f15156b88b7d858e5a3f82794a00e4bf87a7f
+  lastRunId: 0880d3cc-3d7f-4ccd-bfb0-65e61614f200
+  completedCommit: f4404d17f9e9b1669cd21e0acf1e80ea71618d60
+  mergedCommit: abe1c9c86cdbeef27238e15da6e49e9a313ace04

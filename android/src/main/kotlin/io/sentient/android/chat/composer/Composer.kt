@@ -84,6 +84,8 @@ import io.sentient.android.theme.SentientTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.TaskListItem
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
+import io.sentient.mobilesdk.voice.talk.TalkMode
 
 private val COMPOSER_RADIUS = 24.dp
 private val SWIPE_DISMISS_DP = 24.dp
@@ -120,7 +122,8 @@ private val composerLog = createLogger("android", "composer")
 fun Composer(
     canSend: Boolean,
     ttsEnabled: Boolean,
-    micActive: Boolean,
+    talkMode: TalkMode,
+    micLevels: MicLevelEnvelope = MicLevelEnvelope.silence(),
     canInterrupt: Boolean,
     tasks: List<TaskListItem>,
     onSend: (String) -> Unit,
@@ -137,8 +140,7 @@ fun Composer(
     val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
     var micDenied by remember { mutableStateOf(false) }
-    var micMode by remember { mutableStateOf(MicCornerMode.IDLE) }
-    val micLive = micMode != MicCornerMode.IDLE
+    val micLive = talkMode != TalkMode.Idle
     val sendEnabled = draft.trim().isNotEmpty()
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
@@ -181,8 +183,8 @@ fun Composer(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = MIC_OVERHANG)
-                .composerGlow(listening = micActive, tokens = tokens)
-                .clipCard(listening = micActive)
+                .composerGlow(listening = micLive, tokens = tokens)
+                .clipCard(listening = micLive)
                 // Custom loop, not `detectVerticalDragGestures` — that built-in claims
                 // (consumes) the instant its OWN ~8dp vertical touch-slop crosses,
                 // racing the task strip's nested `horizontalScroll` on raw per-axis
@@ -226,7 +228,7 @@ fun Composer(
                 Box(
                     Modifier.fillMaxSize().padding(horizontal = tokens.space.md),
                     contentAlignment = Alignment.Center,
-                ) { PttWave() }
+                ) { PttWave(levels = micLevels) }
             }
             Column(
                 modifier = Modifier
@@ -277,8 +279,7 @@ fun Composer(
             }
         }
         MicCorner(
-            micActive = micActive,
-            onModeChange = { micMode = it },
+            talkMode = talkMode,
             ensureMicPermission = { ensureMicPermission() },
             onPress = onMicPress,
             onRelease = onMicRelease,

@@ -1,0 +1,76 @@
+schemaVersion: 1
+id: mobile-interaction-reliability
+kind: story
+title: Reliable mobile conversations, voice interaction, and settings navigation
+phase: evaluation
+state: active
+planning:
+  revision: 46
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: mobile-interaction-behavior
+    type: spec
+    path: specs/mobile-interaction-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: mobile-interaction-design
+    type: design
+    path: design/mobile-interaction-design.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: mobile-interaction-e2e
+    type: e2e-matrix
+    path: e2e-matrix/mobile-interaction-e2e.md
+    status: approved
+    narrativeSchemaVersion: 2
+tasks:
+  - id: fresh-chat-boundary
+    path: tasks/fresh-chat-boundary/task.yaml
+  - id: send-anchored-scrolling
+    path: tasks/send-anchored-scrolling/task.yaml
+  - id: fish-filter-parity
+    path: tasks/fish-filter-parity/task.yaml
+  - id: shared-talkmode-barge-in
+    path: tasks/shared-talkmode-barge-in/task.yaml
+  - id: natural-settings-navigation
+    path: tasks/natural-settings-navigation/task.yaml
+  - id: sdk-mic-envelope-waveform
+    path: tasks/sdk-mic-envelope-waveform/task.yaml
+  - id: gradle-jdk21-environment
+    path: tasks/gradle-jdk21-environment/task.yaml
+  - id: product-group-mobile-client-compatibility
+    path: tasks/product-group-mobile-client-compatibility/task.yaml
+integrationUnits: []
+evaluations:
+  - id: fresh-chat-isolation-regression
+    path: evaluations/fresh-chat-isolation-regression/evaluation.yaml
+  - id: voice-authority-and-privacy-regression
+    path: evaluations/voice-authority-and-privacy-regression/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
+delivery:
+  branchType: feature
+  branchMode: continue
+  baseBranch: develop
+  featureBranch: feature/mobile-interaction-reliability
+executionStages:
+  - id: foundation
+    tasks:
+      - fresh-chat-boundary
+      - send-anchored-scrolling
+      - fish-filter-parity
+      - gradle-jdk21-environment
+      - product-group-mobile-client-compatibility
+  - id: state-and-navigation
+    tasks:
+      - shared-talkmode-barge-in
+      - natural-settings-navigation
+  - id: live-waveform
+    tasks:
+      - sdk-mic-envelope-waveform

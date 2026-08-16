@@ -89,6 +89,7 @@ internal fun ChatHost(
     // Keep-screen-on (S8): the VM owns the pure boolean; this screen is the ONLY place
     // that touches the platform flag, so every clear path lives in one auditable spot.
     val talkMode by chatVm.talkMode.collectAsStateWithLifecycle()
+    val micLevels by chatVm.micLevels.collectAsStateWithLifecycle()
     val keepScreenOn by chatVm.keepScreenOn.collectAsStateWithLifecycle()
     val activity by rememberUpdatedState(LocalActivity.current)
     // Carries the last reason a true→false condition was seen so the OFF log line still
@@ -145,6 +146,8 @@ internal fun ChatHost(
         ChatContent(
             uiState = chatUi,
             connection = connection,
+            talkMode = talkMode,
+            micLevels = micLevels,
             userName = userName,
             onSend = chatVm::send,
             onRetry = chatVm::retry,

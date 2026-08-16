@@ -67,6 +67,7 @@ private const val METER_LOG_EVERY = 50
 internal class MicCaptureEngine(
     private val state: MutableStateFlow<VoiceAudioState>,
     private val micCh: Channel<ShortArray>,
+    private val meter: MicLevelMeter,
 ) {
     private val log = createLogger("voice", "engine", "ios", "capture")
 
@@ -113,6 +114,7 @@ internal class MicCaptureEngine(
         runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
         deactivateSession()
         converter = null
+        meter.reset()
         armed = false
         log.info("teardown", mapOf("captured" to capturedCount, "dropped" to droppedCount))
     }
@@ -201,6 +203,7 @@ internal class MicCaptureEngine(
         val bytes = conv.convert(buffer) ?: return
         val shorts = pcm16LeToShorts(bytes)
         meterAndGain(shorts)
+        runCatching { meter.accept(shorts) }
         deliver(shorts)
     }
 

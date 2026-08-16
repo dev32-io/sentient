@@ -28,6 +28,9 @@ class FakeVoiceAudio(
 
     private val micCh = Channel<ShortArray>(capacity = micChannelCapacity)
     override val micFrames = micCh.receiveAsFlow()
+    private val _micLevels = MutableStateFlow(MicLevelEnvelope.silence())
+    override val micLevels: StateFlow<MicLevelEnvelope> = _micLevels
+    private val meter = MicLevelMeter { _micLevels.value = it }
 
     val configureCalls = mutableListOf<Triple<Boolean, Boolean, Int>>()
 
@@ -44,7 +47,10 @@ class FakeVoiceAudio(
         private set
 
     /** Push a mic frame; returns false if dropped (channel full) — drop-newest. */
-    fun emit(pcm: ShortArray): Boolean = micCh.trySend(pcm).isSuccess
+    fun emit(pcm: ShortArray): Boolean {
+        runCatching { meter.accept(pcm) }
+        return micCh.trySend(pcm).isSuccess
+    }
 
     /** Test hook to advance the downlink drain-watch (real adapter self-drains). */
     fun setPlaybackIdle(idle: Boolean) { playbackIdle = idle }
@@ -81,6 +87,7 @@ class FakeVoiceAudio(
     override val isPlaybackIdle: Boolean get() = playbackIdle
 
     override suspend fun shutdown() {
+        meter.reset()
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
         micCh.close()
     }

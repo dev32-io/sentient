@@ -26,7 +26,9 @@ object Routes {
     const val SETTINGS_PERSONALITIES = "settings/personalities"
     const val SETTINGS_VOICE = "settings/voice"
     const val SETTINGS_VOICE_ADD = "settings/voice/add"
+    /** Fish results remain below the editor as an independent stack entry. */
     const val SETTINGS_VOICE_FISH = "settings/voice/fish"
+    const val SETTINGS_VOICE_FISH_EDITOR = "settings/voice/fish/editor"
     const val SETTINGS_AUDIO = "settings/audio"
     const val SETTINGS_MODEL = "settings/model"
     const val SETTINGS_TOOLS = "settings/tools"
