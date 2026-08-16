@@ -1,0 +1,35 @@
+{
+  "boundary": "final-e2e",
+  "workItem": "first-class-family-tools",
+  "commit": "8ac582dc402dcb4fe6cfa673c649676b8fccb687",
+  "environment": "local stack via https://localhost/",
+  "journey": [
+    "Started local stack with source scripts/env.sh && bun run dev.",
+    "Rebuilt local outbound-worker, ingress-proxy, and inbound-proxy images from checked-out sources without editing repository files.",
+    "Authenticated browser as local user Ada with PIN 1234.",
+    "Opened My Account -> Tools at desktop, then resized to 390x844 and re-observed.",
+    "Observed product groups and native tool metadata through the real UI/API."
+  ],
+  "observed": {
+    "stack_at_initial_browser_run": "gateway, door, and vite ready",
+    "product_groups": {"web":"3/3", "home":"31/31", "music":"11/11", "memory":"4/4", "skills":"5/5"},
+    "web_tools": ["web_search", "fetch_content", "read_web_content"],
+    "home_tools_include": ["home_overview", "home_search", "home_state", "home_get_scene", "home_create_scene", "home_update_scene", "home_remove_scene"],
+    "music_tools_include": ["music_search", "music_browse", "music_players", "music_status", "music_queue", "music_play"],
+    "web_dispatch": "native",
+    "home_dispatch": "native",
+    "music_dispatch": "native",
+    "web_default_exposure": "standard",
+    "advanced_hermes_tools": "0/0",
+    "mobile_viewport": "390x844 rendered Tools page with same group/tool contract"
+  },
+  "blocker": {
+    "service": "sentient-outbound-worker",
+    "state": "Restarting (1)",
+    "log": "error: bundled domain policy unavailable at /app/src/domain-policy.ts:77",
+    "configured_path": "/app-dangerous-domains.txt",
+    "impact": "Could not execute the required real web_search/fetch journey or prove bounded cited output/artifact retrieval."
+  },
+  "console": ["initial /api/v1/auth/me 401 followed by successful login; hydrate-token-invalid expired warning"],
+  "evidence_files": ["/tmp/first-class-family-tools-e2e-stack-status.txt", "/tmp/first-class-family-tools-e2e-stack.log", "/tmp/first-class-family-tools-e2e-evidence.json"]
+}

@@ -4,13 +4,35 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: first-class-family-tools
-status: planned
+status: blocked
 required: true
-attempt: 0
+attempt: 1
 methods:
   - Exercise the complete meaningful user journey; record not_applicable only
     when no runnable E2E surface exists.
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+findings:
+  - id: E2E-001
+    severity: critical
+    status: open
+    criterion: AC-005 / grounded web search and fetch journey
+    location: sentient-outbound-worker runtime configuration;
+      /app/src/domain-policy.ts:77
+    summary: Outbound worker restart loop caused by missing bundled dangerous-domain
+      policy path prevents web_search/fetch/artifact E2E.
+    blocking: true
+  - id: E2E-002
+    severity: medium
+    status: open
+    criterion: Final cutover startup health
+    location: local stack readiness
+    summary: Readiness reports the stack ready while required outbound-worker is
+      restarting.
+    blocking: false
+result:
+  verdict: blocked
+  report: report.md
+  evidence: ../../evidence/final-e2e/manifest.yaml
