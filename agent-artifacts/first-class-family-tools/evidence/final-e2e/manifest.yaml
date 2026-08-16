@@ -1,0 +1,18 @@
+schemaVersion: 1
+evaluation: final-e2e
+recordedAt: 2026-08-16T04:03:58.034Z
+entries:
+  - result: "PASS: web_search, fetch_content, and bounded artifact reads completed
+      without implicit full-page output"
+    command: local browser first-class web journey
+  - result: "PASS: readiness changed 200 to 503 and recovered to 200"
+    command: required outbound-worker fault/recovery exercise
+  - result: 203 passed, 1 optional live generic-MCP test skipped
+    command: focused gateway E2E suites
+  - result: 19 passed, 0 failed
+    command: gateway/webui settings tests
+  - result: PASS after final repair; gateway unit suite 2400 passed with 4 live
+      tests skipped
+    command: source scripts/env.sh && bun run ci
+  - result: PASS; worktree clean
+    command: source scripts/env.sh && git diff --check

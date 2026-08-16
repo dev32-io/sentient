@@ -6,7 +6,7 @@ scope:
   workItem: first-class-family-tools
 status: passed
 required: true
-attempt: 3
+attempt: 4
 methods:
   - Exercise the complete meaningful user journey; record not_applicable only
     when no runnable E2E surface exists.
@@ -21,20 +21,28 @@ loop:
 findings:
   - id: E2E-001
     severity: critical
-    status: open
-    criterion: AC-005 / grounded web search and fetch journey
-    location: sentient-outbound-worker runtime;
-      gateway/addons/outbound-worker/src/domain-policy.ts:77
-    summary: Outbound worker restart loop prevents real web search/fetch/artifact E2E.
+    status: resolved
+    criterion: Grounded web search and fetch journey
+    location: gateway/templates/services/outbound-worker.yaml;
+      gateway/addons/outbound-worker/src/domain-policy.ts
+    summary: Canonical bundled domain policy path fixed; outbound worker starts healthy.
     blocking: true
   - id: E2E-002
     severity: medium
-    status: open
+    status: resolved
     criterion: Final cutover startup health
-    location: local stack readiness
-    summary: Readiness reports the stack ready while required outbound-worker is
-      restarting.
+    location: gateway readiness and Web UI system status
+    summary: Required outbound-worker failure now propagates to readiness/status and
+      recovers through supervision.
     blocking: false
+  - id: E2E-003
+    severity: high
+    status: resolved
+    criterion: Public fetch through confined proxy topology
+    location: gateway/addons/outbound-worker/src/fetch-content.ts
+    summary: Proxy mode delegates public DNS to egress-proxy without direct
+      fallback; real fetch and artifact journey passed.
+    blocking: true
 result:
   verdict: pass
   report: report.md
