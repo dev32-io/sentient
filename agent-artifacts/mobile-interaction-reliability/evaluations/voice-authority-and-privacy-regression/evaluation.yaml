@@ -1,0 +1,40 @@
+schemaVersion: 1
+id: voice-authority-and-privacy-regression
+type: regression
+scope:
+  workItem: mobile-interaction-reliability
+status: planned
+required: true
+attempt: 0
+methods:
+  - "Context: The voice changes cross a sensitive audio boundary: TalkMode must
+    remain shared authority, and waveform metering must reuse the existing
+    uplink without exposing PCM or creating another capture path."
+  - "Context: Review the integrated talk-mode and envelope contributions
+    independently using deterministic seams only. Physical microphone/acoustic
+    behavior is explicitly outside workflow verification."
+  - "Verify: TalkModeController is the only Idle/Hold/Continuous authority;
+    native controls retain presentation-local gesture state only"
+  - "Verify: Interrupt-driven transient micActive=false cannot cancel Hold,
+    while genuine permission/capture/disconnect/teardown failures drive one
+    shared Idle transition"
+  - "Verify: MicLevelMeter frames 16 kHz input into fixed 800-sample windows,
+    maintains exactly 32 bounded levels, and resets safely"
+  - "Verify: Android VoiceAudioRecord and iOS MicCaptureEngine/DuplexEngine feed
+    the meter from the existing post-conversion/post-gain uplink signal without
+    a second tap or engine"
+  - "Verify: VoiceAudio, SentientSdk, ChatComponent, native ViewModels, and UI
+    expose only MicLevelEnvelope on the visualization surface; no PCM/platform
+    audio type crosses that boundary"
+  - "Verify: PttWave and PttBigWave preserve the current visual design and
+    consume injected/real envelope values rather than autonomous fake pulsing"
+  - "Verify: Metering cannot delay, fail, log, or otherwise alter uplink
+    delivery"
+  - "Run: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    :android:testDebugUnitTest"
+  - "Run: git diff --check"
+checkpoint: planned
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 2
