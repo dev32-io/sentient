@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: grounded-web-search
 title: Answer web searches with bounded grounded synthesis
-status: blocked
+status: ready
 dependsOn:
   - outbound-fetch-artifacts
 execution:
