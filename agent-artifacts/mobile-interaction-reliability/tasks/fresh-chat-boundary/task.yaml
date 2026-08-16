@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: fresh-chat-boundary
 title: Make cold launch and New Chat establish a fresh conversation boundary
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -24,3 +24,9 @@ verification:
       Simulator,name=iPhone 16'
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/mobile-interaction-reliability/fresh-chat-boundary
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/mobile-interaction-reliability/fresh-chat-boundary
+  baseCommit: eefe9df4c7c228ae2a6d8262161222a47ee65680
+  lastRunId: afc55c77-f147-494c-9e80-d302bae67b98
