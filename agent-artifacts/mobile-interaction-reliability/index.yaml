@@ -5,7 +5,7 @@ title: Reliable mobile conversations, voice interaction, and settings navigation
 phase: planning
 state: active
 planning:
-  revision: 19
+  revision: 20
 artifacts:
   - id: intent
     type: intent
@@ -34,6 +34,8 @@ tasks:
     path: tasks/send-anchored-scrolling/task.yaml
   - id: fish-filter-parity
     path: tasks/fish-filter-parity/task.yaml
+  - id: shared-talkmode-barge-in
+    path: tasks/shared-talkmode-barge-in/task.yaml
 integrationUnits: []
 evaluations: []
 delivery:
@@ -47,3 +49,6 @@ executionStages:
       - fresh-chat-boundary
       - send-anchored-scrolling
       - fish-filter-parity
+  - id: state-and-navigation
+    tasks:
+      - shared-talkmode-barge-in
