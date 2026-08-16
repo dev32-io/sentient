@@ -55,17 +55,26 @@ fun FishCloneScreen(
     vm: FishCloneViewModel,
     onBack: () -> Unit,
     onDone: () -> Unit,
+    /** When true this is the child editor entry, not the results page. */
+    editorOnly: Boolean = false,
+    onOpenEditor: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.done) { if (state.done) onDone() }
-    val inForm = state.selected != null
-    BackHandler(enabled = inForm) { vm.backToList() }
+    val inForm = editorOnly || state.selected != null
+    // The results entry handles Back as cancel. The editor entry leaves system
+    // Back to Navigation Compose so it pops exactly one route entry.
+    BackHandler(enabled = inForm && !editorOnly) { vm.backToList() }
+    val pick: (FishVoiceEntry) -> Unit = { entry ->
+        vm.pickForClone(entry)
+        if (!editorOnly) onOpenEditor?.invoke()
+    }
 
     FishCloneContent(
         state = state,
         inForm = inForm,
-        onBack = { if (inForm) vm.backToList() else onBack() },
+        onBack = { if (inForm && !editorOnly) vm.backToList() else onBack() },
         onQuery = vm::setQuery,
         onLanguageFilter = vm::setLanguage,
         onToggleGender = vm::toggleGender,
@@ -76,7 +85,7 @@ fun FishCloneScreen(
         onRetry = vm::retry,
         onLoadMore = vm::loadMore,
         onTogglePlay = vm::togglePlay,
-        onPickForClone = vm::pickForClone,
+        onPickForClone = pick,
         onName = vm::setName,
         onDescription = vm::setDescription,
         onAddTag = vm::addTag,
