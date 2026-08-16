@@ -56,6 +56,22 @@ export const orchestratorConfigSchema = z.object({
     // are edited in place and predate this key — a missing block must never
     // brick boot for a gateway that was working yesterday.
     .default({}),
+  web: z
+    .object({
+      worker_url: z.string().url().default("http://127.0.0.1:8090"),
+      request_timeout_ms: z.number().int().min(500).max(120000).default(20000),
+      max_compressed_bytes: z.number().int().min(1024).max(20_000_000).default(2_000_000),
+      max_decompressed_bytes: z.number().int().min(1024).max(50_000_000).default(5_000_000),
+      max_redirects: z.number().int().min(0).max(10).default(5),
+      initial_extract_chars: z.number().int().min(200).max(20_000).default(6000),
+      artifact_ttl_ms: z.number().int().min(60_000).max(604_800_000).default(86_400_000),
+      artifact_max_entries: z.number().int().min(1).max(1000).default(100),
+      artifact_max_bytes: z.number().int().min(1024).max(500_000_000).default(50_000_000),
+      read_max_chars: z.number().int().min(200).max(50_000).default(12_000),
+      match_max_passages: z.number().int().min(1).max(20).default(5),
+      match_context_chars: z.number().int().min(50).max(2000).default(500),
+    })
+    .optional(),
   tools: z.object({
     // Per-tool-call deadline for a foreground MCP call (ms).
     foreground_timeout_ms: z.number().int().min(1000).max(120000).default(30000),

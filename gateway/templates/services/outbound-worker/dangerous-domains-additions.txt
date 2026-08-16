@@ -1,0 +1,2 @@
+# Persistent operator deny rules, one hostname suffix per line.
+# Example: example.test also blocks a.example.test.

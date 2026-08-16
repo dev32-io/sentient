@@ -57,6 +57,7 @@ export interface PhaseOrchestratorOutput {
  *  never overwrite. */
 const SEED_FILES: ReadonlyArray<{ service: string; files: ReadonlyArray<string> }> = [
   { service: "egress-proxy", files: ["tinyproxy.conf", "filter.txt"] },
+  { service: "outbound-worker", files: ["dangerous-domains-additions.txt"] },
   { service: "searxng", files: ["settings.yml"] },
 ];
 

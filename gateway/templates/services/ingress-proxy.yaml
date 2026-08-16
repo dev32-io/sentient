@@ -14,5 +14,6 @@ networks: [sentient-internal, sentient-external]
 ports:
   - "127.0.0.1:8088:8088"
   - "127.0.0.1:8087:8087"
-mem_limit_bytes: 67108864     # 64 MiB — nginx, two server blocks, no caching or TLS
+  - "127.0.0.1:8090:8090"
+mem_limit_bytes: 67108864     # 64 MiB — nginx, three server blocks, no caching or TLS
 cpus: 0.25

@@ -55,6 +55,13 @@ services:
     pull_policy: never
     profiles: ["build-only"]
 
+  outbound-worker:
+    build:
+      context: ../../gateway/addons/outbound-worker
+    image: sentient/outbound-worker:local
+    pull_policy: never
+    profiles: ["build-only"]
+
   fetch-mcp:
     build:
       context: ../../gateway/mcp/fetch-mcp

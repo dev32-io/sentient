@@ -286,6 +286,22 @@ orchestrator:
     max_iterations: 10                       # ReAct iteration cap (1-50)
   permission:
     request_timeout_ms: 120000               # confirm-prompt deadline before auto-deny (5000-600000)
+  # Native web fetches always go through the confined outbound-worker. These
+  # are operator ceilings; model arguments can select only a URL or bounded
+  # artifact read, never credentials, timeouts, or response limits.
+  web:
+    worker_url: http://127.0.0.1:8090
+    request_timeout_ms: 20000
+    max_compressed_bytes: 2000000
+    max_decompressed_bytes: 5000000
+    max_redirects: 5
+    initial_extract_chars: 6000
+    artifact_ttl_ms: 86400000
+    artifact_max_entries: 100
+    artifact_max_bytes: 50000000
+    read_max_chars: 12000
+    match_max_passages: 5
+    match_context_chars: 500
   tools:
     foreground_timeout_ms: 30000             # per foreground tool call (1000-120000)
     max_concurrent_background_tasks: 50      # per session (1-500)
@@ -1000,6 +1016,16 @@ managed_services:
     healthcheck:
       noop: true
     depends_on: []
+    optional: false
+
+  outbound-worker:
+    template: outbound-worker.yaml
+    allowed_images: ["sentient/outbound-worker:local"]
+    networks: ["sentient-internal"]
+    healthcheck:
+      url: http://127.0.0.1:8090/health
+      timeout_ms: 30000
+    depends_on: [egress-proxy, ingress-proxy]
     optional: false
 
   ingress-proxy:

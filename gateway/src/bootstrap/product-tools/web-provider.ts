@@ -1,10 +1,24 @@
+import type { Capability } from "../../access/capability.js";
+import { createWebTools } from "../../tools/web/web-tools.js";
+import type { WebToolsConfig } from "../../tools/web/web-tools.js";
 import type { ProductToolProvider } from "../product-tool-providers.js";
 
-/** Web-owned configuration seam. The native web foundation extends this type
- * and factory in this module only. */
-export interface WebProductToolConfig extends Readonly<Record<string, unknown>> {}
+/** Session-scoped internal configuration assembled by the bootstrap seam. It is
+ * never populated from model arguments: the capability is minted from the
+ * authenticated principal and the limits come from operator configuration. */
+export interface WebProductToolConfig extends Readonly<Record<string, unknown>> {
+  capability: Capability;
+  tools: WebToolsConfig;
+}
+
+function isConfig(value: Readonly<Record<string, unknown>>): value is WebProductToolConfig {
+  return "capability" in value && "tools" in value;
+}
 
 export const webProductToolProvider: ProductToolProvider<"web"> = {
   group: "web",
-  create: (_config) => [],
+  create(config) {
+    if (!isConfig(config)) return [];
+    return createWebTools({ capability: config.capability, config: config.tools });
+  },
 };
