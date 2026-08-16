@@ -32,6 +32,8 @@ methods:
   - "Run: git diff --check"
 checkpoint: planned
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 2
+  reviewerAgentId: fbaacd9b-f21d-4fbb-82c1-416dac130f98
+  reviewedCommit: fc641a0c15ade53eba5b57ff274555a75c715f6e
