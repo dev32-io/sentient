@@ -33,6 +33,7 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import io.sentient.mobilesdk.voice.talk.TalkModeController
@@ -211,6 +212,9 @@ class SentientSdk(
      *  surface exposed by [SdkVoice.audioState] — the single source of truth
      *  for the UI spinner + the SDK reconfig decision. */
     val audioState: StateFlow<VoiceAudioState> = voice.audioState
+
+    /** Read-only aggregate microphone envelope for native waveform consumers. */
+    val micLevels: StateFlow<MicLevelEnvelope> = voice.micLevels
 
     // Talk-mode brain (design spec §3), constructed at the SDK composition site over its
     // 6 documented seams — all existing surfaces (S3 recipe B). Capture start/stop ride

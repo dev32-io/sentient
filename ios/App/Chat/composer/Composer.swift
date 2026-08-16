@@ -55,6 +55,7 @@ struct Composer: View {
     /// True while voiceMode == .active — drives the listening glow and the
     /// MicCorner external sync (a true→false teardown resets the control).
     let talkMode: TalkMode
+    let micLevels: [Float]
     /// True when a cycle is in flight or audio is playing.
     let canInterrupt: Bool
     let onSend: (String) -> Void
@@ -134,7 +135,7 @@ struct Composer: View {
             // behind the content, so interrupt stays visible + tappable on top.
             // Background layers stack back-to-front: paper (below) → wave → content.
             if isRecording {
-                PttBigWave()
+                PttBigWave(levels: micLevels)
                     .padding(.horizontal, Space.md)
                     .transition(.opacity.combined(with: .offset(y: 5)))
             }

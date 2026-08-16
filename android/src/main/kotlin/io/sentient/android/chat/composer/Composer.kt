@@ -84,6 +84,7 @@ import io.sentient.android.theme.SentientTokens
 import io.sentient.mobilesdk.design.Colors
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.TaskListItem
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 
 private val COMPOSER_RADIUS = 24.dp
@@ -122,6 +123,7 @@ fun Composer(
     canSend: Boolean,
     ttsEnabled: Boolean,
     talkMode: TalkMode,
+    micLevels: MicLevelEnvelope = MicLevelEnvelope.silence(),
     canInterrupt: Boolean,
     tasks: List<TaskListItem>,
     onSend: (String) -> Unit,
@@ -226,7 +228,7 @@ fun Composer(
                 Box(
                     Modifier.fillMaxSize().padding(horizontal = tokens.space.md),
                     contentAlignment = Alignment.Center,
-                ) { PttWave() }
+                ) { PttWave(levels = micLevels) }
             }
             Column(
                 modifier = Modifier

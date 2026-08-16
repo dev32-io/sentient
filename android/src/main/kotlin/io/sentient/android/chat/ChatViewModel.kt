@@ -21,6 +21,7 @@ import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -57,6 +58,9 @@ class ChatViewModel(
      *  for the keep-screen-on derivation below (and its reason logging in ChatHost). */
     val talkMode: StateFlow<TalkMode> = component.talkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), TalkMode.Idle)
+
+    val micLevels: StateFlow<MicLevelEnvelope> = component.micLevels
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), MicLevelEnvelope.silence())
 
     /**
      * Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is

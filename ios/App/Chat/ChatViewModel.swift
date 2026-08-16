@@ -34,6 +34,7 @@ final class ChatViewModel: ObservableObject {
     /// Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Exposed
     /// for the keep-screen-on derivation below (and its reason logging in ChatView).
     @Published private(set) var talkMode: TalkMode = .idle
+    @Published private(set) var micLevels: [Float] = Array(repeating: 0, count: 32)
 
     /// Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
     /// audibly speaking`. Reuses the EXACT `connection.isSpeaking` signal that drives the
@@ -63,6 +64,7 @@ final class ChatViewModel: ObservableObject {
     private var chatTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var talkModeTask: Task<Void, Never>?
+    private var micLevelsTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
     private var reopenFailedTask: Task<Void, Never>?
@@ -97,6 +99,7 @@ final class ChatViewModel: ObservableObject {
         startChatCollecting()
         startConnectionCollecting()
         startTalkModeCollecting()
+        startMicLevelsCollecting()
         startColdReplaceCollecting()
         startPeriodicSweep()
         startReopenFailedCollecting()
@@ -277,6 +280,15 @@ final class ChatViewModel: ObservableObject {
 
     // ── Talk-mode stream collection (S8 keep-screen-on) ───────────────────────
 
+    private func startMicLevelsCollecting() {
+        micLevelsTask = Task { [weak self] in
+            guard let self else { return }
+            for await envelope in self.component.micLevels {
+                self.micLevels = envelope.values.map(\.floatValue)
+            }
+        }
+    }
+
     private func startTalkModeCollecting() {
         talkModeTask = Task { [weak self] in
             guard let self else { return }
@@ -419,6 +431,7 @@ final class ChatViewModel: ObservableObject {
         chatTask?.cancel()
         connectionTask?.cancel()
         talkModeTask?.cancel()
+        micLevelsTask?.cancel()
         coldReplaceTask?.cancel()
         sweepTask?.cancel()
         reopenFailedTask?.cancel()

@@ -65,11 +65,14 @@ class IosVoiceAudio : VoiceAudio {
     // engines — both Duplex and MicCapture feed it.
     private val micCh = Channel<ShortArray>(capacity = FRAME_CHANNEL_CAPACITY)
     override val micFrames: Flow<ShortArray> = micCh.receiveAsFlow()
+    private val _micLevels = MutableStateFlow(MicLevelEnvelope.silence())
+    override val micLevels: StateFlow<MicLevelEnvelope> = _micLevels
+    private val meter = MicLevelMeter { _micLevels.value = it }
 
     // The three path-split engines. Each feeds the shared _state / micCh.
-    private val duplex = DuplexEngine(_state, micCh)
+    private val duplex = DuplexEngine(_state, micCh, meter)
     private val media = MediaPlaybackEngine(_state)
-    private val capture = MicCaptureEngine(_state, micCh)
+    private val capture = MicCaptureEngine(_state, micCh, meter)
 
     // Which engine currently holds the live session. Advanced only inside configure().
     private var active = EngineKind.Idle
@@ -193,6 +196,7 @@ class IosVoiceAudio : VoiceAudio {
         capture.teardown()
         active = EngineKind.Idle
         micCh.close()
+        meter.reset()
         _state.value = VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false)
     }
 }
