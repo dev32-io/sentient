@@ -77,24 +77,41 @@ function stringArrayArg(args: Record<string, unknown>, key: string): readonly st
 }
 function adapterFailure(error: unknown, mutating: boolean): ToolResult {
   if (error instanceof MusicAdapterError) {
-    if (mutating && error.dispatched && (error.kind === "timeout" || error.kind === "unavailable")) {
+    if (
+      mutating &&
+      error.dispatched &&
+      (error.kind === "timeout" ||
+        error.kind === "cancelled" ||
+        error.kind === "unavailable" ||
+        error.kind === "protocol")
+    ) {
       return ok({
         outcome: "accepted_unverified",
         reason: "The command may have been accepted, but completion could not be verified.",
       });
     }
-    const messages: Record<MusicAdapterError["kind"], string> = {
-      unavailable: "Music Assistant is unavailable.",
-      authentication: "Music Assistant authentication failed.",
-      timeout: "Music Assistant did not respond in time.",
-      cancelled: "The music request was cancelled.",
-      protocol: "Music Assistant returned an invalid response.",
-      upstream: "Music Assistant rejected the request.",
-      not_found: error.message,
-    };
-    return fail(messages[error.kind]);
+    if (error.kind === "unavailable" || error.kind === "authentication") {
+      return ok({ outcome: "unavailable", reason: "Music Assistant is unavailable." });
+    }
+    if (error.kind === "upstream" || error.kind === "cancelled") {
+      return ok({
+        outcome: "rejected",
+        reason:
+          error.kind === "cancelled"
+            ? "The music request was cancelled before dispatch."
+            : "Music Assistant rejected the request.",
+      });
+    }
+    if (error.kind === "not_found") return ok({ outcome: "not_found", reason: error.message });
+    return ok({
+      outcome: "failed",
+      reason:
+        error.kind === "timeout"
+          ? "Music Assistant did not respond in time."
+          : "Music Assistant returned an invalid response.",
+    });
   }
-  return fail("The music operation failed.");
+  return ok({ outcome: "failed", reason: "The music operation failed." });
 }
 
 async function resolvedPlayer(

@@ -103,6 +103,39 @@ describe("NativeMusicAdapter protocol", () => {
     await expect(call).rejects.toMatchObject({ kind: "protocol", dispatched: true });
   });
 
+  it("rejects pre-send cancellation as undispatched", async () => {
+    const sockets: FakeSocket[] = [];
+    const adapter = adapterWith(sockets);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(adapter.play("p1", "library://track/1", "replace", controller.signal)).rejects.toMatchObject({
+      kind: "cancelled",
+      dispatched: false,
+    });
+    expect(sockets).toHaveLength(0);
+  });
+
+  it("returns accepted_unverified for post-send mutation cancellation without replay", async () => {
+    const sockets: FakeSocket[] = [];
+    const adapter = adapterWith(sockets);
+    const controller = new AbortController();
+    const call = adapter.play("p1", "library://track/1", "replace", controller.signal);
+    await tick();
+    authenticate(sockets[0] as FakeSocket);
+    await tick();
+
+    const writes = (sockets[0] as FakeSocket).sent.filter((message) => message.command === "player_queues/play_media");
+    expect(writes).toHaveLength(1);
+    controller.abort();
+
+    expect(await call).toEqual({ outcome: "accepted_unverified" });
+    expect(sockets).toHaveLength(1);
+    expect(
+      (sockets[0] as FakeSocket).sent.filter((message) => message.command === "player_queues/play_media"),
+    ).toHaveLength(1);
+  });
+
   it("detaches a cancelled request without corrupting the shared connection", async () => {
     const sockets: FakeSocket[] = [];
     const adapter = adapterWith(sockets);
@@ -113,7 +146,7 @@ describe("NativeMusicAdapter protocol", () => {
     await tick();
     const cancelledRequest = (sockets[0] as FakeSocket).sent.find((message) => message.command === "players/all");
     controller.abort();
-    await expect(cancelled).rejects.toMatchObject({ kind: "cancelled" });
+    await expect(cancelled).rejects.toMatchObject({ kind: "cancelled", dispatched: true });
     (sockets[0] as FakeSocket).respond({ message_id: cancelledRequest?.message_id, result: [] });
 
     const next = adapter.browse(null, 10, new AbortController().signal);
@@ -122,6 +155,53 @@ describe("NativeMusicAdapter protocol", () => {
     (sockets[0] as FakeSocket).respond({ message_id: nextRequest?.message_id, result: [] });
     expect(await next).toEqual([]);
     expect(sockets).toHaveLength(1);
+  });
+
+  it("rejects malformed collection payloads instead of reporting empty results", async () => {
+    const cases = [
+      {
+        command: "players/all",
+        result: {},
+        call: (adapter: NativeMusicAdapter) => adapter.listPlayers(new AbortController().signal),
+      },
+      {
+        command: "music/browse",
+        result: { items: [] },
+        call: (adapter: NativeMusicAdapter) => adapter.browse(null, 10, new AbortController().signal),
+      },
+      {
+        command: "music/search",
+        result: { unexpected: [] },
+        call: (adapter: NativeMusicAdapter) => adapter.search("song", { limit: 10 }, new AbortController().signal),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const sockets: FakeSocket[] = [];
+      const adapter = adapterWith(sockets);
+      const call = testCase.call(adapter);
+      await tick();
+      authenticate(sockets[0] as FakeSocket);
+      await tick();
+      const request = (sockets[0] as FakeSocket).sent.find((message) => message.command === testCase.command);
+      (sockets[0] as FakeSocket).respond({ message_id: request?.message_id, result: testCase.result });
+      await expect(call).rejects.toMatchObject({ kind: "protocol", dispatched: true });
+    }
+
+    const sockets: FakeSocket[] = [];
+    const adapter = adapterWith(sockets);
+    const queue = adapter.queue("p1", 10, new AbortController().signal);
+    await tick();
+    authenticate(sockets[0] as FakeSocket);
+    await tick();
+    const active = (sockets[0] as FakeSocket).sent.find(
+      (message) => message.command === "player_queues/get_active_queue",
+    );
+    (sockets[0] as FakeSocket).respond({ message_id: active?.message_id, result: { queue_id: "p1" } });
+    await tick();
+    const items = (sockets[0] as FakeSocket).sent.find((message) => message.command === "player_queues/items");
+    (sockets[0] as FakeSocket).respond({ message_id: items?.message_id, result: { items: [] } });
+    await expect(queue).rejects.toMatchObject({ kind: "protocol", dispatched: true });
   });
 
   it("reconnects for later operations and ignores late responses from the evicted connection", async () => {

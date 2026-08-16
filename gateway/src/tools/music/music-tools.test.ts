@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { NativeToolRunner } from "../tool-broker.js";
+import { MusicAdapterError } from "./music-adapter.js";
 import type {
   MusicAdapter,
   MusicCommandResult,
@@ -50,6 +51,7 @@ class FakeAdapter implements MusicAdapter {
   players = [kitchen, living, livingSpeaker];
   readonly mutations: Array<{ method: string; args: unknown[] }> = [];
   commandOutcome: MusicCommandResult = { outcome: "completed" };
+  commandError: MusicAdapterError | null = null;
   async search(): Promise<readonly MusicMedia[]> {
     return [track];
   }
@@ -106,6 +108,7 @@ class FakeAdapter implements MusicAdapter {
   }
   private record(method: string, ...args: unknown[]): MusicCommandResult {
     this.mutations.push({ method, args });
+    if (this.commandError) throw this.commandError;
     return this.commandOutcome;
   }
 }
@@ -225,5 +228,26 @@ describe("native music tools", () => {
     const result = await run(byName(createMusicTools(adapter), "music_volume"), { player: "Kitchen", volume: 25 });
     expect(result.isError).toBe(false);
     expect(parsed(result)).toMatchObject({ outcome: "accepted_unverified" });
+  });
+
+  it("preserves typed mutation failures as semantic tool outcomes", async () => {
+    const cases = [
+      { error: new MusicAdapterError("upstream", "denied", true), outcome: "rejected" },
+      { error: new MusicAdapterError("protocol", "bad response", false), outcome: "failed" },
+      { error: new MusicAdapterError("unavailable", "down", false), outcome: "unavailable" },
+      { error: new MusicAdapterError("cancelled", "cancelled", true), outcome: "accepted_unverified" },
+    ] as const;
+
+    for (const testCase of cases) {
+      const adapter = new FakeAdapter();
+      adapter.commandError = testCase.error;
+      const result = await run(byName(createMusicTools(adapter), "music_volume"), {
+        player: "Kitchen",
+        volume: 25,
+      });
+      expect(result.isError).toBe(false);
+      expect(parsed(result)).toMatchObject({ outcome: testCase.outcome });
+      expect(adapter.mutations).toHaveLength(1);
+    }
   });
 });

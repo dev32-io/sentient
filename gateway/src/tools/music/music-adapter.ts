@@ -166,7 +166,7 @@ const responseSchema = z.union([
 
 interface PendingRequest {
   readonly generation: number;
-  readonly dispatched: boolean;
+  dispatched: boolean;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: MusicAdapterError) => void;
   readonly timer: ReturnType<typeof setTimeout>;
@@ -288,29 +288,39 @@ function normalizeQueueItem(value: unknown, fallbackIndex: number): MusicQueueIt
   };
 }
 
-function flattenSearch(value: unknown): unknown[] {
+const SEARCH_COLLECTION_KEYS = [
+  "tracks",
+  "albums",
+  "artists",
+  "playlists",
+  "radio",
+  "podcasts",
+  "podcast_episodes",
+  "audiobooks",
+] as const;
+
+function searchCollection(value: unknown): unknown[] | null {
   if (Array.isArray(value)) return value;
   const raw = object(value);
-  if (!raw) return [];
-  const out: unknown[] = [];
-  for (const key of [
-    "tracks",
-    "albums",
-    "artists",
-    "playlists",
-    "radio",
-    "podcasts",
-    "podcast_episodes",
-    "audiobooks",
-  ]) {
-    const values = raw[key];
-    if (Array.isArray(values)) out.push(...values);
-  }
-  return out;
+  if (!raw) return null;
+  const present = SEARCH_COLLECTION_KEYS.filter((key) => Object.hasOwn(raw, key));
+  if (present.length === 0 || present.some((key) => !Array.isArray(raw[key]))) return null;
+  return present.flatMap((key) => raw[key] as unknown[]);
 }
 
-function abortError(): MusicAdapterError {
-  return new MusicAdapterError("cancelled", "music request cancelled");
+function normalizeCollection<T>(
+  value: unknown,
+  normalize: (item: unknown, index: number) => T | null,
+  message: string,
+): T[] {
+  if (!Array.isArray(value)) throw new MusicAdapterError("protocol", message, true);
+  const normalized = value.map(normalize);
+  if (normalized.some((item) => item === null)) throw new MusicAdapterError("protocol", message, true);
+  return normalized as T[];
+}
+
+function abortError(dispatched = false): MusicAdapterError {
+  return new MusicAdapterError("cancelled", "music request cancelled", dispatched);
 }
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) return Promise.reject(abortError());
@@ -493,6 +503,7 @@ export class NativeMusicAdapter implements MusicAdapter {
   ): Promise<unknown | MusicCommandResult> {
     if (!this.url || !this.token) throw new MusicAdapterError("unavailable", "Music Assistant is not configured");
     for (let attempt = 0; attempt <= this.reconnectAttempts; attempt++) {
+      if (signal.aborted) throw abortError();
       let socket: MusicWebSocket;
       try {
         socket = await raceAbort(this.connect(), signal);
@@ -516,15 +527,9 @@ export class NativeMusicAdapter implements MusicAdapter {
             this.pending.delete(id);
             reject(new MusicAdapterError("timeout", "Music Assistant request timed out", true));
           }, this.requestTimeoutMs);
-          const abort = () => {
-            clearTimeout(timer);
-            this.pending.delete(id);
-            reject(abortError());
-          };
-          signal.addEventListener("abort", abort, { once: true });
-          this.pending.set(id, {
+          const pending: PendingRequest = {
             generation,
-            dispatched: true,
+            dispatched: false,
             timer,
             resolve: (value) => {
               signal.removeEventListener("abort", abort);
@@ -534,8 +539,18 @@ export class NativeMusicAdapter implements MusicAdapter {
               signal.removeEventListener("abort", abort);
               reject(error);
             },
-          });
+          };
+          const abort = () => {
+            clearTimeout(timer);
+            this.pending.delete(id);
+            reject(abortError(pending.dispatched));
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          this.pending.set(id, pending);
           try {
+            // Mark possible dispatch before calling send so synchronous cancellation
+            // from the transport cannot make an enqueued command look retry-safe.
+            pending.dispatched = true;
             socket.send(JSON.stringify({ message_id: id, command, args }));
           } catch {
             signal.removeEventListener("abort", abort);
@@ -549,7 +564,14 @@ export class NativeMusicAdapter implements MusicAdapter {
           error instanceof MusicAdapterError
             ? error
             : new MusicAdapterError("unavailable", "Music Assistant request failed");
-        if (mutating && typed.dispatched && (typed.kind === "timeout" || typed.kind === "unavailable"))
+        if (
+          mutating &&
+          typed.dispatched &&
+          (typed.kind === "timeout" ||
+            typed.kind === "cancelled" ||
+            typed.kind === "unavailable" ||
+            typed.kind === "protocol")
+        )
           return { outcome: "accepted_unverified" };
         if (!typed.dispatched && typed.kind !== "cancelled" && attempt < this.reconnectAttempts) continue;
         throw typed;
@@ -587,25 +609,27 @@ export class NativeMusicAdapter implements MusicAdapter {
       signal,
       false,
     );
-    return flattenSearch(result)
-      .map(normalizeMedia)
-      .filter((item): item is MusicMedia => item !== null)
-      .slice(0, limit);
+    const items = searchCollection(result);
+    if (!items) throw new MusicAdapterError("protocol", "Music Assistant returned malformed search results", true);
+    return normalizeCollection(items, normalizeMedia, "Music Assistant returned malformed search results").slice(
+      0,
+      limit,
+    );
   }
   async browse(path: string | null, limit: number, signal: AbortSignal): Promise<readonly MusicMedia[]> {
     const bounded = boundedInt(limit, 10);
     const result = await this.request("music/browse", path ? { path } : {}, signal, false);
-    return (Array.isArray(result) ? result : [])
-      .map(normalizeMedia)
-      .filter((item): item is MusicMedia => item !== null)
-      .slice(0, bounded);
+    return normalizeCollection(result, normalizeMedia, "Music Assistant returned malformed browse results").slice(
+      0,
+      bounded,
+    );
   }
   async listPlayers(signal: AbortSignal): Promise<readonly MusicPlayer[]> {
     const result = await this.request("players/all", { return_unavailable: true }, signal, false);
-    return (Array.isArray(result) ? result : [])
-      .map(normalizePlayer)
-      .filter((item): item is MusicPlayer => item !== null)
-      .slice(0, MAX_RESULTS);
+    return normalizeCollection(result, normalizePlayer, "Music Assistant returned malformed player results").slice(
+      0,
+      MAX_RESULTS,
+    );
   }
   async playerStatus(playerId: string, signal: AbortSignal): Promise<MusicPlayerStatus> {
     const [playerRaw, queueRaw] = await Promise.all([
@@ -639,9 +663,11 @@ export class NativeMusicAdapter implements MusicAdapter {
       signal,
       false,
     );
-    const allItems = (Array.isArray(itemsRaw) ? itemsRaw : [])
-      .map(normalizeQueueItem)
-      .filter((item): item is MusicQueueItem => item !== null);
+    const allItems = normalizeCollection(
+      itemsRaw,
+      normalizeQueueItem,
+      "Music Assistant returned malformed queue items",
+    );
     return {
       id,
       name: text(queue.display_name ?? queue.name, "Queue"),
