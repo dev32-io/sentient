@@ -11,8 +11,8 @@ methods:
   - Exercise the complete meaningful user journey; record not_applicable only
     when no runnable E2E surface exists.
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 3
   reviewerAgentId: 4e78c030-0aa7-4474-80e1-d6ee730b4bad
   reviewedCommit: 7ef58117de333e7bbf7447a1365468632768de4d
