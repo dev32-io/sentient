@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: core-tool-cutover
 title: Cut over core capabilities and retire their MCP sidecars
-status: ready
+status: running
 dependsOn:
   - grounded-web-search
   - native-home-configuration
@@ -30,3 +30,9 @@ verification:
     - source scripts/env.sh && bun run ci
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/first-class-family-tools
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: 5fa6b2d2a77ecea2379d7843a5c9bd1d0a9ae219
+  lastRunId: 3903f508-46e3-45e7-a18d-6b21992ab87b
