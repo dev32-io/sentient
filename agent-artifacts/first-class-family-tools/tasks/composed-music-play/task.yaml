@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: composed-music-play
 title: Play natural-language music in a room with one tool call
-status: blocked
+status: ready
 dependsOn:
   - native-music-primitives
 execution:
