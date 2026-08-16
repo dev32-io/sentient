@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: gradle-jdk21-environment
+title: Make repository Gradle checks discover Homebrew JDK 21
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: low
+    rationale: Default low routing for a bounded contribution.
+assembly:
+  stageId: foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" /bin/bash -c 'cd
+      "$PWD" && source scripts/env.sh && test "$(java -version 2>&1 | head -1)"
+      != "" && ./gradlew --version | grep -E "Launcher JVM:.*21"'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
