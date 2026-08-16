@@ -272,12 +272,12 @@
 
 ## Scope
 
-- Driveable local iOS and Android conversation-boundary, scrolling, Fish filtering, and settings-navigation journeys
-- Physical microphone input, acoustic waveform quality, real-device capture startup timing, spoken-turn recognition, and production testing are excluded from agent-driven E2E
-- The user will manually verify on physical devices that hold-to-talk during TTS stops playback and captures the same press, release submits the newly spoken turn, the waveform responds naturally to silence, quiet speech, and louder speech, and continuous or duplex capture remains usable
+- Fully agentic local iOS and Android conversation-boundary, scrolling, Fish filtering, and settings-navigation journeys that can run to completion without user intervention
+- Physical microphone input, acoustic waveform quality, real-device capture startup timing, spoken-turn recognition, user-assisted verification, and production testing are excluded
 
 ## Safety
 
+- Every listed case must be executable end-to-end by an agent without user intervention
 - All E2E cases run only against the real local stack
 - Never retain credentials, raw audio, private transcripts, or production user content
-- Automated checks cannot prove real microphone routing, acoustic response, or device-specific timing; that residual risk is explicitly accepted for user-owned final manual testing
+- Do not create workflow checkpoints that wait for physical-device microphone or acoustic validation
