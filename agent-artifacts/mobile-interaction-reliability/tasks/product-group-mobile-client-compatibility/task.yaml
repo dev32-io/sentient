@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: product-group-mobile-client-compatibility
+title: Restore mobile settings compatibility with the product-group catalog
+status: draft
+dependsOn:
+  - gradle-jdk21-environment
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :android:testDebugUnitTest
+    - source scripts/env.sh && ./scripts/ios-setup.sh && xcodebuild test
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16'
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
