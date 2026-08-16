@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: outbound-fetch-artifacts
 title: Fetch web content through the confined outbound worker
-status: contribution_complete
+status: merged
 dependsOn:
   - product-tool-catalog
 execution:
@@ -34,3 +34,4 @@ runtime:
   baseCommit: 231c5e8dae2a8920f5deede6f5c52ac0881fafb8
   lastRunId: 8362f1e6-a048-47cd-977a-190e79b735a8
   completedCommit: c43bc512a20066a076ccfbb2976ecd2ed2a40063
+  mergedCommit: 1ed73af2fab1cd2b4a5d5c399d29e758ae271a78
