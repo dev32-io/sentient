@@ -45,6 +45,8 @@ methods:
   - "Run: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests"
 checkpoint: planned
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 2
+  reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
+  reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
