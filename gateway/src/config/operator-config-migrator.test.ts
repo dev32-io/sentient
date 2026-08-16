@@ -640,7 +640,7 @@ describe("0.1.4 backfill on disk", () => {
         }
       ).managed_services,
     );
-    expect(services).toEqual(["egress-proxy", "inbound-proxy"]);
+    expect(services).toEqual(["egress-proxy", "inbound-proxy", "outbound-worker"]);
   });
 });
 
@@ -1002,5 +1002,60 @@ managed_services:
       depends_on: ["egress-proxy", "searxng", "ingress-proxy"],
     });
     expect(applySchema016Migration(doc)).toBeNull();
+  });
+
+  it("creates outbound-worker when upgrading a host that only had retired web MCP services", () => {
+    const doc = parseDocument(`
+schema_version: "0.1.5"
+managed_services:
+  egress-proxy: { template: egress-proxy.yaml }
+  ingress-proxy: { healthcheck: { tcp: "127.0.0.1:8088", timeout_ms: 30000 }, depends_on: [fetch-mcp] }
+  searxng: { template: searxng.yaml }
+  fetch-mcp: { template: fetch-mcp.yaml }
+  searxng-mcp: { template: searxng-mcp.yaml }
+`);
+
+    applySchema016Migration(doc);
+
+    const value = doc.toJS() as {
+      managed_services: Record<
+        string,
+        { template?: string; allowed_images?: string[]; healthcheck?: { url?: string }; depends_on?: string[] }
+      >;
+    };
+    expect(value.managed_services["fetch-mcp"]).toBeUndefined();
+    expect(value.managed_services["searxng-mcp"]).toBeUndefined();
+    expect(value.managed_services["outbound-worker"]).toMatchObject({
+      template: "outbound-worker.yaml",
+      allowed_images: ["sentient/outbound-worker:local"],
+      healthcheck: { url: "http://127.0.0.1:8090/health" },
+      depends_on: ["egress-proxy", "searxng", "ingress-proxy"],
+    });
+  });
+
+  it("repairs already-bumped 0.1.6 configs that lost outbound-worker during cutover", () => {
+    const doc = parseDocument(`
+schema_version: "0.1.6"
+managed_services:
+  egress-proxy: { template: egress-proxy.yaml }
+  ingress-proxy: { healthcheck: { tcp: "127.0.0.1:8090", timeout_ms: 30000 }, depends_on: [] }
+  searxng: { template: searxng.yaml }
+`);
+
+    expect(applySchema016Migration(doc)).toEqual({ removedCatalog: [], removedServices: [] });
+    expect(applySchema016Migration(doc)).toBeNull();
+
+    const value = doc.toJS() as {
+      managed_services: Record<
+        string,
+        { template?: string; networks?: string[]; healthcheck?: { url?: string }; optional?: boolean }
+      >;
+    };
+    expect(value.managed_services["outbound-worker"]).toMatchObject({
+      template: "outbound-worker.yaml",
+      networks: ["sentient-internal"],
+      healthcheck: { url: "http://127.0.0.1:8090/health" },
+      optional: false,
+    });
   });
 });

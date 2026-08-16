@@ -839,6 +839,17 @@ interface Schema016MigrationResult {
   removedServices: string[];
 }
 
+function createOutboundWorkerService(doc: Document) {
+  return doc.createNode({
+    template: "outbound-worker.yaml",
+    allowed_images: ["sentient/outbound-worker:local"],
+    networks: ["sentient-internal"],
+    healthcheck: { url: "http://127.0.0.1:8090/health", timeout_ms: 30000 },
+    depends_on: ["egress-proxy", "searxng", "ingress-proxy"],
+    optional: false,
+  });
+}
+
 /** Retire only the four product-owned sidecars. Third-party catalog entries and
  * operator workloads are untouched; running harness-owned containers are
  * removed later by boot reconciliation after these names leave the registry. */
@@ -847,13 +858,18 @@ export function applySchema016Migration(doc: Document): Schema016MigrationResult
   if (!isMap(root)) return null;
   const versionNode = root.get("schema_version", true);
   const currentVersion = isScalar(versionNode) ? String(versionNode.value) : null;
-  if (currentVersion === SCHEMA_016_VERSION) return null;
-  if (currentVersion !== SCHEMA_015_VERSION) return null;
-
   const result: Schema016MigrationResult = {
     removedCatalog: [],
     removedServices: [],
   };
+  if (currentVersion === SCHEMA_016_VERSION) {
+    const services = root.get(MANAGED_SERVICES_KEY, true);
+    if (!isMap(services) || services.has("outbound-worker")) return null;
+    services.set("outbound-worker", createOutboundWorkerService(doc));
+    return result;
+  }
+  if (currentVersion !== SCHEMA_015_VERSION) return null;
+
   const catalog = root.get(MCP_CATALOG_KEY, true);
   if (isMap(catalog)) {
     for (const name of RETIRED_CORE_SERVERS) {
@@ -878,6 +894,7 @@ export function applySchema016Migration(doc: Document): Schema016MigrationResult
     }
     const outbound = services.get("outbound-worker", true);
     if (isMap(outbound)) outbound.set("depends_on", doc.createNode(["egress-proxy", "searxng", "ingress-proxy"]));
+    else services.set("outbound-worker", createOutboundWorkerService(doc));
   }
   root.set("schema_version", SCHEMA_016_VERSION);
   return result;
