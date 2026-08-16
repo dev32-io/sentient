@@ -1845,6 +1845,7 @@ function nativeRunner(opts: {
   result?: ToolResult;
   validate?: (args: Record<string, unknown>) => ToolResult | null;
   onRun?: (args: Record<string, unknown>) => void;
+  productGroup?: string;
 }): NativeToolRunner {
   const name = opts.name ?? "skill_list";
   return {
@@ -1854,6 +1855,7 @@ function nativeRunner(opts: {
       parameters: {},
       category: "foreground",
       tier: opts.tier ?? "read",
+      ...(opts.productGroup ? { productGroup: opts.productGroup, defaultExposure: "standard" as const } : {}),
     },
     ...(opts.validate ? { validate: opts.validate } : {}),
     run: async (args) => {
@@ -1901,6 +1903,25 @@ describe("ToolBroker — foreground-native tools", () => {
     await broker.ready();
 
     expect(broker.definitions().map((d) => d.name)).toContain("skill_list");
+  });
+
+  it("mediates standard product-native tools under their product group", async () => {
+    let ran = 0;
+    const runner = nativeRunner({
+      name: "music_volume",
+      tier: "write",
+      productGroup: "music",
+      onRun: () => {
+        ran += 1;
+      },
+    });
+    const { broker, confirmCalls } = nativeBroker({ role: "adult", natives: [runner], confirm: true });
+    await broker.ready();
+
+    expect(broker.definitions().map((definition) => definition.name)).toContain("music_volume");
+    await broker.dispatch(makeInvocation({ name: "music_volume" }));
+    expect(confirmCalls()).toBe(1);
+    expect(ran).toBe(1);
   });
 
   it("SECURITY: withholds a confirm-tier native tool from BOTH child and guest — neither reaches the tier", async () => {

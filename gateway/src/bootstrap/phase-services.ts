@@ -81,6 +81,8 @@ import { createMcpClient } from "../tools/mcp-client.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { MEMORY_TOOL_NAMES, buildMemoryTools } from "../tools/memory-tools.js";
 import type { DeepMemoryDeps } from "../tools/memory-tools.js";
+import { NativeMusicAdapter, UnavailableMusicAdapter } from "../tools/music/music-adapter.js";
+import type { MusicAdapter } from "../tools/music/music-adapter.js";
 import { createPromptClassifier } from "../tools/prompt-classifier.js";
 import { SKILL_TOOL_NAMES, createSkillTools } from "../tools/skill-tools.js";
 import { createToolBroker } from "../tools/tool-broker.js";
@@ -755,6 +757,13 @@ export async function buildOrchestratorServices(
     ...(cfg.access.shared_data_root !== undefined ? { sharedDataRoot: cfg.access.shared_data_root } : {}),
   });
   const mcpClient = createMcpClient(cfg.mcpCatalog, {});
+  const musicSecrets = secretsStore?.loadSync().music_assistant;
+  // One persistent native MA connection owner for the app lifetime. Session
+  // tools share this adapter; credentials never enter a tool definition/input.
+  const musicAdapter: MusicAdapter =
+    musicSecrets?.url && musicSecrets.token
+      ? new NativeMusicAdapter(musicSecrets.url, musicSecrets.token)
+      : new UnavailableMusicAdapter();
   const delegatedExternalTool = createExternalToolSlot();
 
   // MCP-warm-before-first-call (Task 4 residual — see tool-broker.ts's
@@ -837,6 +846,7 @@ export async function buildOrchestratorServices(
     deepMemoryApp,
     dbFileName: cfg.store.db_filename,
     homeAdapter,
+    musicAdapter,
   });
 
   // Nightly dreamer (memory-system spec §8, S3a). Wired only when memory + the
@@ -1194,6 +1204,8 @@ interface CreateSessionRuntimeFactoryDeps {
   /** Credential-owning app adapter; null still contributes definitions whose
    * calls degrade locally without disturbing the session. */
   homeAdapter: HomeAdapter | null;
+  /** App-lifetime native Music Assistant connection owner. */
+  musicAdapter: MusicAdapter;
 }
 
 /** The per-session factory itself. Synchronous (matches the locked
@@ -1214,6 +1226,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     deepMemoryApp,
     dbFileName,
     homeAdapter,
+    musicAdapter,
   } = deps;
 
   // Inbound-scan boundary config (T1), threaded from the operator's
@@ -1369,7 +1382,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     // Product providers are composed once per authenticated session. Web
     // receives a dedicated user capability and operator-owned limits; Home
-    // receives only its app-owned credential-bearing adapter.
+    // and Music receive only their app-owned credential-bearing adapters.
     const webCfg = orchestratorCfg.web ?? {
       worker_url: "http://127.0.0.1:8090",
       request_timeout_ms: 20_000,
@@ -1408,6 +1421,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
         },
       },
       home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
+      music: { adapter: musicAdapter },
     }))
       nativeTools.set(name, runner);
 

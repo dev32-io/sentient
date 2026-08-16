@@ -33,6 +33,21 @@ describe("product tool provider composition", () => {
     expect([...composeProductToolProviders().keys()]).toContain("home_activate_scene");
   });
 
+  it("composes the native Music standard surface from its pre-wired slot", () => {
+    expect([...composeProductToolProviders().keys()].filter((name) => name.startsWith("music_"))).toEqual([
+      "music_search",
+      "music_browse",
+      "music_players",
+      "music_status",
+      "music_queue",
+      "music_play",
+      "music_transport",
+      "music_volume",
+      "music_transfer",
+      "music_group",
+    ]);
+  });
+
   it("lets web, Home, and Music be independently replaced while producing one registry", () => {
     const slots: ProductToolProviderSlots = {
       ...EMPTY_PRODUCT_TOOL_PROVIDERS,

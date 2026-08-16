@@ -13,6 +13,7 @@ import { getLog } from "../../logging/logger.js";
 import type { ProfileStore } from "../../profile-store/profile-store.js";
 import { delegateTaskDefinition } from "../../tools/delegate-task.js";
 import { MEMORY_TOOL_SETTINGS } from "../../tools/memory-tools.js";
+import { MUSIC_TOOL_SETTINGS } from "../../tools/music/music-tools.js";
 import { resolveToolPermission } from "../../tools/resolve-tool-permission.js";
 import { defaultPermissionsFor } from "../../tools/role-defaults.js";
 import { SKILL_TOOL_SETTINGS } from "../../tools/skill-tools.js";
@@ -173,6 +174,7 @@ function projectGroups(
   };
   for (const meta of SKILL_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "skills", "standard");
   for (const meta of MEMORY_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "memory", "standard");
+  for (const meta of MUSIC_TOOL_SETTINGS) addNative(meta.name, meta.description, meta.tier, "music", "standard");
   addNative(
     delegateTaskDefinition.name,
     DELEGATE_TASK_SETTINGS_DESCRIPTION,
