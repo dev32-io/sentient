@@ -353,18 +353,20 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           ? argumentFailure("music_play_media requires player and media_id strings.")
           : null,
       async (args, { signal }) => {
+        let atMutationBoundary = false;
         try {
           const query = stringArg(args, "player");
           const mediaId = stringArg(args, "media_id");
           if (!query || !mediaId) return argumentFailure("Invalid direct play arguments.");
           const selected = await resolvedPlayer(adapter, query, signal);
           if (isResult(selected)) return selected;
+          atMutationBoundary = true;
           return commandResult(await adapter.play(selected.player.id, mediaId, "replace", signal), {
             player: { id: selected.player.id, name: selected.player.name },
             media_id: mediaId,
           });
         } catch (error) {
-          return adapterFailure(error, true);
+          return adapterFailure(error, atMutationBoundary);
         }
       },
     ),
@@ -395,6 +397,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
         return null;
       },
       async (args, { signal }) => {
+        let atMutationBoundary = false;
         try {
           const query = stringArg(args, "player");
           const action = args.action as MusicTransportAction;
@@ -403,12 +406,13 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           if (isResult(selected)) return selected;
           const position =
             action === "seek" && typeof args.position_seconds === "number" ? args.position_seconds : null;
+          atMutationBoundary = true;
           return commandResult(await adapter.transport(selected.player.id, action, position, signal), {
             player: { id: selected.player.id, name: selected.player.name },
             action,
           });
         } catch (error) {
-          return adapterFailure(error, true);
+          return adapterFailure(error, atMutationBoundary);
         }
       },
     ),
@@ -431,17 +435,19 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           ? argumentFailure("music_volume requires a player and integer volume from 0 to 100.")
           : null,
       async (args, { signal }) => {
+        let atMutationBoundary = false;
         try {
           const query = stringArg(args, "player");
           if (!query || typeof args.volume !== "number") return argumentFailure("Invalid volume arguments.");
           const selected = await resolvedPlayer(adapter, query, signal);
           if (isResult(selected)) return selected;
+          atMutationBoundary = true;
           return commandResult(await adapter.setVolume(selected.player.id, args.volume, signal), {
             player: { id: selected.player.id, name: selected.player.name },
             volume: args.volume,
           });
         } catch (error) {
-          return adapterFailure(error, true);
+          return adapterFailure(error, atMutationBoundary);
         }
       },
     ),
@@ -468,6 +474,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
             )
           : null,
       async (args, { signal }) => {
+        let atMutationBoundary = false;
         try {
           const source = stringArg(args, "source_player");
           const target = stringArg(args, "target_player");
@@ -476,12 +483,13 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           if (isResult(selected)) return selected;
           if (selected.players.length !== 2) return argumentFailure("Source and target players must be different.");
           const [from, to] = selected.players as [MusicPlayer, MusicPlayer];
+          atMutationBoundary = true;
           return commandResult(await adapter.transfer(from.id, to.id, args.auto_play !== false, signal), {
             source: { id: from.id, name: from.name },
             target: { id: to.id, name: to.name },
           });
         } catch (error) {
-          return adapterFailure(error, true);
+          return adapterFailure(error, atMutationBoundary);
         }
       },
     ),
@@ -509,6 +517,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
         return null;
       },
       async (args, { signal }) => {
+        let atMutationBoundary = false;
         try {
           const players = stringArrayArg(args, "players");
           if (!players || (args.action !== "join" && args.action !== "leave"))
@@ -516,6 +525,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           if (args.action === "leave") {
             const selected = await resolveMany(adapter, players, signal);
             if (isResult(selected)) return selected;
+            atMutationBoundary = true;
             return commandResult(
               await adapter.ungroup(
                 selected.players.map((player) => player.id),
@@ -531,6 +541,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
           const [leader, ...members] = selected.players;
           if (!leader || members.length === 0)
             return argumentFailure("Group members must differ from the target player.");
+          atMutationBoundary = true;
           return commandResult(
             await adapter.group(
               leader.id,
@@ -544,7 +555,7 @@ export function createMusicTools(adapter: MusicAdapter): readonly NativeToolRunn
             },
           );
         } catch (error) {
-          return adapterFailure(error, true);
+          return adapterFailure(error, atMutationBoundary);
         }
       },
     ),

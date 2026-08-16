@@ -31,6 +31,7 @@ export async function readBoundedResponseText(
     while (true) {
       if (signal.aborted) throw signal.reason;
       const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {

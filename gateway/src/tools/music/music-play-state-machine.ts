@@ -1,6 +1,7 @@
 import {
   type MusicAdapter,
   MusicAdapterError,
+  type MusicCommandResult,
   type MusicMedia,
   type MusicPlayer,
   type MusicQueue,
@@ -193,11 +194,11 @@ function failure(
   error: unknown,
   queueMode: MusicQueueMode,
   selection: Selection = {},
-  mutationAttempted = false,
+  atMutationBoundary = false,
 ): MusicPlayResult {
   if (error instanceof MusicAdapterError) {
     if (
-      mutationAttempted &&
+      atMutationBoundary &&
       error.dispatched &&
       ["timeout", "cancelled", "unavailable", "protocol"].includes(error.kind)
     ) {
@@ -207,11 +208,9 @@ function failure(
       return { outcome: "unavailable", queueMode, ...selection };
     if (error.kind === "upstream") return { outcome: "rejected", queueMode, ...selection };
     if (error.kind === "not_found") return { outcome: "not_found", queueMode, ...selection };
-    if (error.kind === "cancelled")
-      return { outcome: mutationAttempted ? "accepted_unverified" : "rejected", queueMode, ...selection };
+    if (error.kind === "cancelled") return { outcome: "rejected", queueMode, ...selection };
     return { outcome: "failed", queueMode, ...selection };
   }
-  if (mutationAttempted) return { outcome: "accepted_unverified", queueMode, ...selection };
   return { outcome: "failed", queueMode, ...selection };
 }
 
@@ -230,7 +229,6 @@ export async function runMusicPlay(
     verificationWindowMs: configured.verificationWindowMs ?? 2_500,
   };
   let choice: Selection = {};
-  let mutationAttempted = false;
   try {
     if (signal.aborted) return { outcome: "rejected", queueMode: input.queueMode };
     const resolution = resolveMusicPlayer(await adapter.listPlayers(signal), input.player);
@@ -264,8 +262,12 @@ export async function runMusicPlay(
     choice = selected(player, media);
     if (signal.aborted) return { outcome: "rejected", queueMode: input.queueMode, ...choice };
 
-    mutationAttempted = true;
-    const acknowledgement = await adapter.play(player.id, media.uri, input.queueMode, signal);
+    let acknowledgement: MusicCommandResult;
+    try {
+      acknowledgement = await adapter.play(player.id, media.uri, input.queueMode, signal);
+    } catch (error) {
+      return failure(error, input.queueMode, choice, true);
+    }
     if (acknowledgement.outcome === "accepted_unverified") {
       return { outcome: "accepted_unverified", queueMode: input.queueMode, ...choice };
     }
@@ -276,6 +278,6 @@ export async function runMusicPlay(
       return { outcome: "accepted_unverified", queueMode: input.queueMode, ...choice };
     }
   } catch (error) {
-    return failure(error, input.queueMode, choice, mutationAttempted);
+    return failure(error, input.queueMode, choice);
   }
 }

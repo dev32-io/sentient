@@ -41,10 +41,13 @@ class FakeMusicAdapter implements MusicAdapter {
   calls: string[] = [];
   acknowledgement: MusicCommandResult = { outcome: "accepted" };
   verified = true;
+  listError: unknown = null;
   playError: unknown = null;
 
-  async listPlayers(): Promise<readonly MusicPlayer[]> {
+  async listPlayers(signal: AbortSignal): Promise<readonly MusicPlayer[]> {
     this.calls.push("players");
+    if (signal.aborted) throw new MusicAdapterError("cancelled", "cancelled", false);
+    if (this.listError) throw this.listError;
     return this.players;
   }
   async search(): Promise<readonly MusicMedia[]> {
@@ -164,7 +167,7 @@ describe("composed music play state machine", () => {
     expect(await play(unavailableService)).toMatchObject({ outcome: "unavailable" });
   });
 
-  it("maps typed rejection and protocol failures to stable semantic outcomes", async () => {
+  it("maps typed rejection and proven-undispatched failures to stable semantic outcomes", async () => {
     const rejected = new FakeMusicAdapter();
     rejected.playError = new MusicAdapterError("upstream", "no", false);
     expect(await play(rejected)).toMatchObject({ outcome: "rejected" });
@@ -172,6 +175,11 @@ describe("composed music play state machine", () => {
     const failed = new FakeMusicAdapter();
     failed.playError = new MusicAdapterError("protocol", "bad", false);
     expect(await play(failed)).toMatchObject({ outcome: "failed" });
+
+    const cancelled = new FakeMusicAdapter();
+    cancelled.playError = new MusicAdapterError("cancelled", "cancelled before send", false);
+    expect(await play(cancelled)).toMatchObject({ outcome: "rejected" });
+    expect(cancelled.calls.filter((call) => call.startsWith("play:"))).toHaveLength(1);
   });
 
   it("never retries acknowledged but unverifiable or ambiguously dispatched playback", async () => {
@@ -180,10 +188,19 @@ describe("composed music play state machine", () => {
     expect(await play(unverified)).toMatchObject({ outcome: "accepted_unverified" });
     expect(unverified.calls.filter((call) => call.startsWith("play:"))).toHaveLength(1);
 
-    const timedOut = new FakeMusicAdapter();
-    timedOut.playError = new MusicAdapterError("timeout", "timeout", true);
-    expect(await play(timedOut)).toMatchObject({ outcome: "accepted_unverified" });
-    expect(timedOut.calls.filter((call) => call.startsWith("play:"))).toHaveLength(1);
+    for (const kind of ["cancelled", "timeout"] as const) {
+      const ambiguous = new FakeMusicAdapter();
+      ambiguous.playError = new MusicAdapterError(kind, `${kind} after send`, true);
+      expect(await play(ambiguous)).toMatchObject({ outcome: "accepted_unverified" });
+      expect(ambiguous.calls.filter((call) => call.startsWith("play:"))).toHaveLength(1);
+    }
+  });
+
+  it("does not treat cancellation during player resolution as a mutation", async () => {
+    const adapter = new FakeMusicAdapter();
+    adapter.listError = new MusicAdapterError("cancelled", "cancelled read", true);
+    expect(await play(adapter)).toMatchObject({ outcome: "rejected" });
+    expect(adapter.calls).toEqual(["players"]);
   });
 
   it("does nothing when cancelled before dispatch", async () => {

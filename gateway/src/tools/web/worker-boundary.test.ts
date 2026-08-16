@@ -13,6 +13,29 @@ const limits = { timeoutMs: 1000, maxCompressedBytes: 1000, maxDecompressedBytes
 const rules = canonicalDenyRules(["example.test", "xn--bcher-kva.test"]);
 const resolve = async () => [{}];
 
+function openJsonStream(value: unknown): { response: Response; waiting: Promise<void> } {
+  let markWaiting: () => void = () => undefined;
+  const waiting = new Promise<void>((resolveWaiting) => {
+    markWaiting = resolveWaiting;
+  });
+  let finishPull: () => void = () => undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+    },
+    pull() {
+      markWaiting();
+      return new Promise<void>((resolvePull) => {
+        finishPull = resolvePull;
+      });
+    },
+    cancel() {
+      finishPull();
+    },
+  });
+  return { response: new Response(body), waiting };
+}
+
 describe("outbound worker SearXNG boundary", () => {
   test("maps recency/domains/count and rejects malformed or excluded results", async () => {
     let requested: URL | undefined;
@@ -68,6 +91,19 @@ describe("outbound worker SearXNG boundary", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "search_unavailable" } });
     expect(cancelled).toBe(true);
     expect(pulls).toBeLessThanOrEqual(3);
+  });
+
+  test("returns cancellation when a complete SearXNG JSON prefix stays open until abort", async () => {
+    const controller = new AbortController();
+    const streamed = openJsonStream({
+      results: [{ title: "Complete", url: "https://example.com/a", content: "valid" }],
+    });
+    const pending = searchSearxng({ query: "q", count: 1, includeDomains: [], excludeDomains: [] }, controller.signal, {
+      fetchImpl: async () => streamed.response,
+    });
+    await streamed.waiting;
+    controller.abort();
+    expect(await pending).toMatchObject({ ok: false, error: { code: "cancelled" } });
   });
 
   test("maps invalid SearXNG responses and cancellation to bounded failures", async () => {

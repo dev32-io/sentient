@@ -10,6 +10,29 @@ const config = {
   maxRedirects: 2,
 };
 
+function openJsonStream(value: unknown): { response: Response; waiting: Promise<void> } {
+  let markWaiting: () => void = () => undefined;
+  const waiting = new Promise<void>((resolve) => {
+    markWaiting = resolve;
+  });
+  let finishPull: () => void = () => undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(JSON.stringify(value)));
+    },
+    pull() {
+      markWaiting();
+      return new Promise<void>((resolve) => {
+        finishPull = resolve;
+      });
+    },
+    cancel() {
+      finishPull();
+    },
+  });
+  return { response: new Response(body), waiting };
+}
+
 function oversizedStream(contentLength?: string): { response: Response; cancelled: Promise<void> } {
   let markCancelled: () => void = () => undefined;
   const cancelled = new Promise<void>((resolve) => {
@@ -88,6 +111,33 @@ describe("OutboundWorkerClient boundary", () => {
     ).toMatchObject({ ok: false, error: { code: "search_unavailable" } });
     await searchBody.cancelled;
   });
+
+  test.each(["caller", "timeout"] as const)(
+    "does not accept complete buffered JSON after %s aborts an open response stream",
+    async (abortKind) => {
+      const controller = new AbortController();
+      const streamed = openJsonStream({
+        ok: true,
+        sourceUrl: "https://a.test/",
+        finalUrl: "https://a.test/final",
+        title: null,
+        byline: null,
+        contentType: "text/plain",
+        content: "complete",
+      });
+      const client = new OutboundWorkerClient(
+        { ...config, timeoutMs: abortKind === "caller" ? 1_000 : 10 },
+        async () => streamed.response,
+      );
+      const pending = client.fetchContent("https://a.test", controller.signal);
+      await streamed.waiting;
+      if (abortKind === "caller") controller.abort();
+      expect(await pending).toMatchObject({
+        ok: false,
+        error: { code: abortKind === "caller" ? "cancelled" : "timeout" },
+      });
+    },
+  );
 
   test("distinguishes caller cancellation from bounded timeout", async () => {
     const controller = new AbortController();

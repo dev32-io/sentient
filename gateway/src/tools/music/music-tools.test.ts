@@ -52,13 +52,16 @@ class FakeAdapter implements MusicAdapter {
   readonly mutations: Array<{ method: string; args: unknown[] }> = [];
   commandOutcome: MusicCommandResult = { outcome: "completed" };
   commandError: MusicAdapterError | null = null;
+  listError: MusicAdapterError | null = null;
   async search(): Promise<readonly MusicMedia[]> {
     return [track];
   }
   async browse(): Promise<readonly MusicMedia[]> {
     return [{ ...track, type: "folder", browsable: true }];
   }
-  async listPlayers(): Promise<readonly MusicPlayer[]> {
+  async listPlayers(signal: AbortSignal): Promise<readonly MusicPlayer[]> {
+    if (signal.aborted) throw new MusicAdapterError("cancelled", "cancelled", false);
+    if (this.listError) throw this.listError;
     return this.players;
   }
   async playerStatus(playerId: string): Promise<MusicPlayerStatus> {
@@ -118,8 +121,8 @@ function byName(tools: readonly NativeToolRunner[], name: string): NativeToolRun
   if (!tool) throw new Error(`missing ${name}`);
   return tool;
 }
-async function run(tool: NativeToolRunner, args: Record<string, unknown>) {
-  return tool.run(args, { signal: new AbortController().signal });
+async function run(tool: NativeToolRunner, args: Record<string, unknown>, signal?: AbortSignal) {
+  return tool.run(args, { signal: signal ?? new AbortController().signal });
 }
 function parsed(result: { content: string }): Record<string, unknown> {
   return JSON.parse(result.content) as Record<string, unknown>;
@@ -230,12 +233,26 @@ describe("native music tools", () => {
     expect(parsed(result)).toMatchObject({ outcome: "accepted_unverified" });
   });
 
-  it("preserves typed mutation failures as semantic tool outcomes", async () => {
+  it("keeps pre-operation and player-resolution cancellation outside the mutation window", async () => {
+    const adapter = new FakeAdapter();
+    const volume = byName(createMusicTools(adapter), "music_volume");
+    expect(parsed(await run(volume, { player: "Kitchen", volume: 25 }, AbortSignal.abort()))).toMatchObject({
+      outcome: "rejected",
+    });
+
+    adapter.listError = new MusicAdapterError("cancelled", "cancelled read", true);
+    expect(parsed(await run(volume, { player: "Kitchen", volume: 25 }))).toMatchObject({ outcome: "rejected" });
+    expect(adapter.mutations).toEqual([]);
+  });
+
+  it("preserves exact dispatch evidence for typed mutation failures", async () => {
     const cases = [
       { error: new MusicAdapterError("upstream", "denied", true), outcome: "rejected" },
       { error: new MusicAdapterError("protocol", "bad response", false), outcome: "failed" },
       { error: new MusicAdapterError("unavailable", "down", false), outcome: "unavailable" },
-      { error: new MusicAdapterError("cancelled", "cancelled", true), outcome: "accepted_unverified" },
+      { error: new MusicAdapterError("cancelled", "cancelled before send", false), outcome: "rejected" },
+      { error: new MusicAdapterError("cancelled", "cancelled after send", true), outcome: "accepted_unverified" },
+      { error: new MusicAdapterError("timeout", "timed out after send", true), outcome: "accepted_unverified" },
     ] as const;
 
     for (const testCase of cases) {
