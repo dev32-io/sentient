@@ -1,0 +1,6 @@
+# Release-bundled dangerous destinations. Rules are suffix-aware.
+metadata.google.internal
+metadata.aws.internal
+instance-data.ec2.internal
+metadata.azure.internal
+metadata.packet.net

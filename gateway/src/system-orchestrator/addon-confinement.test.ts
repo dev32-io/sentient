@@ -20,7 +20,7 @@ const TEMPLATE_DIR = join(GATEWAY_ROOT, "templates", "services");
 
 /** Every MCP that dereferences untrusted content. These MUST be reachable only
  *  through ingress-proxy, never by publishing a port themselves. */
-const CONFINED_MCPS = ["fetch-mcp", "searxng-mcp"] as const;
+const CONFINED_ADDONS = ["fetch-mcp", "searxng-mcp", "outbound-worker"] as const;
 const INTERNAL_NET = "sentient-internal";
 const EXTERNAL_NET = "sentient-external";
 /** `127.0.0.1:<host>:<container>` — host port is what a caller can reach. */
@@ -39,7 +39,7 @@ function hostPortsOf(t: ServiceTemplate): number[] {
   return t.ports.map((p) => Number(HOST_PORT_RE.exec(p)?.[1] ?? Number.NaN));
 }
 
-for (const name of CONFINED_MCPS) {
+for (const name of CONFINED_ADDONS) {
   test(`SECURITY: ${name} is confined to the no-egress network and publishes no host port`, () => {
     const t = loadTemplate(name);
     // Membership of a non-internal network is what makes egress physically
@@ -56,11 +56,11 @@ for (const name of CONFINED_MCPS) {
 // publish the MCPs gave up, so if it ever loses either membership the addons are
 // unreachable (no external ⇒ publish dropped) or unfrontable (no internal ⇒ no
 // route to the MCPs).
-test("SECURITY: ingress-proxy spans both networks and is the only publisher for the confined MCPs", () => {
+test("SECURITY: ingress-proxy spans both networks and is the only publisher for confined addons", () => {
   const proxy = loadTemplate("ingress-proxy");
   expect(proxy.networks).toEqual([INTERNAL_NET, EXTERNAL_NET]);
   expect(MANAGED_NETWORK_TOPOLOGY[EXTERNAL_NET]?.internal).toBe(false);
-  expect(hostPortsOf(proxy).length).toBe(CONFINED_MCPS.length);
+  expect(hostPortsOf(proxy).length).toBe(CONFINED_ADDONS.length);
 });
 
 // WIRE CONTRACT (gateway → addon, across the loopback boundary). The gateway

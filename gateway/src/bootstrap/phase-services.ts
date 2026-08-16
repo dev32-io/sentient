@@ -1338,9 +1338,48 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // `buildSessionMemory` hands back an ARRAY of runners.
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
-    // Bootstrap-owned web/Home/Music slots are always composed, even while
-    // empty. Later foundations replace only their independently-owned slot.
-    for (const [name, runner] of composeProductToolProviders()) nativeTools.set(name, runner);
+    // Product providers are composed per authenticated session. Web receives a
+    // dedicated user capability plus operator-owned limits; no caller-supplied
+    // user id participates in artifact ownership.
+    const webCfg = orchestratorCfg.web ?? {
+      worker_url: "http://127.0.0.1:8090",
+      request_timeout_ms: 20_000,
+      max_compressed_bytes: 2_000_000,
+      max_decompressed_bytes: 5_000_000,
+      max_redirects: 5,
+      initial_extract_chars: 6000,
+      artifact_ttl_ms: 86_400_000,
+      artifact_max_entries: 100,
+      artifact_max_bytes: 50_000_000,
+      read_max_chars: 12_000,
+      match_max_passages: 5,
+      match_context_chars: 500,
+    };
+    for (const [name, runner] of composeProductToolProviders(undefined, {
+      web: {
+        capability: accessManager.grant(principal, "web-artifact"),
+        tools: {
+          worker: {
+            baseUrl: webCfg.worker_url,
+            timeoutMs: webCfg.request_timeout_ms,
+            maxResponseChars: webCfg.max_decompressed_bytes + 16_384,
+            maxCompressedBytes: webCfg.max_compressed_bytes,
+            maxDecompressedBytes: webCfg.max_decompressed_bytes,
+            maxRedirects: webCfg.max_redirects,
+          },
+          artifacts: {
+            ttlMs: webCfg.artifact_ttl_ms,
+            maxEntries: webCfg.artifact_max_entries,
+            maxBytes: webCfg.artifact_max_bytes,
+            maxSliceChars: webCfg.read_max_chars,
+            maxPassages: webCfg.match_max_passages,
+            passageContextChars: webCfg.match_context_chars,
+          },
+          initialExtractChars: webCfg.initial_extract_chars,
+        },
+      },
+    }))
+      nativeTools.set(name, runner);
 
     const backgroundTools = new Map<string, BackgroundToolRunner>();
     backgroundTools.set(

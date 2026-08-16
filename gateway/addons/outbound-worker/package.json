@@ -1,0 +1,20 @@
+{
+  "name": "@sentient/outbound-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts"
+  },
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "jsdom": "26.1.0",
+    "turndown": "7.2.4",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/jsdom": "21.1.7",
+    "@types/turndown": "5.0.6",
+    "bun-types": "1.3.14"
+  }
+}

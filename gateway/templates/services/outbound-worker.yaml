@@ -1,0 +1,15 @@
+image: sentient/outbound-worker:local
+container_name: sentient-outbound-worker
+# URL dereferencing is physically confined: this service has no non-internal
+# network membership. Public traffic succeeds only through egress-proxy.
+networks: [sentient-internal]
+env:
+  HTTP_PROXY: http://sentient-egress-proxy:3128
+  HTTPS_PROXY: http://sentient-egress-proxy:3128
+  NO_PROXY: localhost,127.0.0.1
+  DANGEROUS_DOMAINS_BUNDLED: /app-dangerous-domains.txt
+  DANGEROUS_DOMAINS_ADDITIONS: /etc/sentient/dangerous-domains-additions.txt
+volumes:
+  - ${HOST_CONFIG_DIR}/outbound-worker/dangerous-domains-additions.txt:/etc/sentient/dangerous-domains-additions.txt:ro
+mem_limit_bytes: 402653184
+cpus: 0.75
