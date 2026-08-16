@@ -136,4 +136,12 @@ class SessionsConnectorFireAndForgetTest {
         c.sendNew()
         assertTrue(sent.single() is ClientMessage.SessionNew, "first sendNew must emit session.new")
     }
+
+    @Test
+    fun startFreshChat_marks_session_new_explicit() {
+        val sent = mutableListOf<ClientMessage>()
+        val c = connector(sent, FixedClock(0L))
+        c.startFreshChat()
+        assertEquals("explicit", (sent.single() as ClientMessage.SessionNew).intent)
+    }
 }

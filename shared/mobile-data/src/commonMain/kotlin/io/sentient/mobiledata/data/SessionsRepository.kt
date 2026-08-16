@@ -11,8 +11,11 @@ data class SessionSummary(
 interface SessionsRepository {
     suspend fun list(limit: Int, offset: Int): List<SessionSummary>
 
-    /** Fire-and-forget new chat — sends session.new, never awaits the mint. */
+    /** Legacy compatibility path; intent may be implicit. */
     fun newChatFireAndForget()
+
+    /** Explicitly unbind the old conversation without awaiting the mint. */
+    fun startFreshChatFireAndForget() = newChatFireAndForget()
 
     /** Fire-and-forget switch — sends session.switch, never awaits the snapshot. */
     fun switchToFireAndForget(sessionId: String)
