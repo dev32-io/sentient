@@ -1,4 +1,10 @@
-import { type HermesConfig, type McpCatalog, type OrchestratorConfig, tierOf } from "@sentient/config";
+import {
+  type HermesConfig,
+  type InboundScanConfig,
+  type McpCatalog,
+  type OrchestratorConfig,
+  tierOf,
+} from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import { selectDelegatedTools } from "../external-tools/delegated-tool-tier.js";
@@ -17,6 +23,7 @@ import { createIdentifyUserTool } from "../mcp-host/tools/identify-user.js";
 import { type UserSettingsControls, createUpdateUserSettingsTool } from "../mcp-host/tools/update-user-settings.js";
 import { type UnixSocketListener, createUnixSocketListener } from "../mcp-host/unix-socket-listener.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
+import type { InboundGate } from "../security/inbound-gate.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
 import type { UserStore } from "../user-auth/user-store.js";
@@ -63,7 +70,8 @@ export interface McpHostOptions {
      *  proxied call is bound by the delegating user's own Deny/Off settings —
      *  see mcp-host/delegated-broker.ts's header. */
     profileStore: ProfileStore;
-    nativeToolsFor?: (principal: UserPrincipal) => Map<string, NativeToolRunner>;
+    inboundScan: InboundScanConfig;
+    nativeToolsFor?: (principal: UserPrincipal, inboundGate: InboundGate) => Map<string, NativeToolRunner>;
   };
 }
 
@@ -174,6 +182,7 @@ export async function createMcpHost(options: McpHostOptions): Promise<McpHost> {
         accessManager: proxy.accessManager,
         profileStore: proxy.profileStore,
         userStore,
+        inboundScan: proxy.inboundScan,
         ...(proxy.nativeToolsFor ? { nativeToolsFor: proxy.nativeToolsFor } : {}),
       })
     : null;

@@ -28,6 +28,7 @@ import type { ProfileStore } from "../profile-store/profile-store.ts";
 import type { TemplateLoader } from "../profile-store/template-loader.ts";
 import type { CreateSessionRuntime } from "../runtime/session-handles.js";
 import { createSessionRetentionPolicy } from "../runtime/session-retention-policy.js";
+import type { InboundGate } from "../security/inbound-gate.js";
 import { type AuthenticatedSockets, createAuthenticatedSockets } from "../session-handlers/authenticated-sockets.js";
 import { type ReplayRegistry, createReplayRegistry } from "../session-handlers/replay-registry.js";
 import type { SessionControlsRegistry } from "../session-handlers/session-controls-registry.js";
@@ -182,7 +183,9 @@ export interface GatewayServices {
    *  and BEFORE the server accepts a connection. Resolved per dispatch by
    *  `delegateTask`'s setup phase. */
   readonly delegatedExternalTool: ExternalToolSlot;
-  readonly delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
+  readonly delegatedNativeTools:
+    | ((principal: UserPrincipal, inboundGate: InboundGate) => Map<string, NativeToolRunner>)
+    | null;
 }
 
 /** Slack over `hermes_timeout_ms` for the runner's own kill-and-settle tail. */

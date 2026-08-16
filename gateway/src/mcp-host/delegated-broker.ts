@@ -41,12 +41,16 @@
 // and rebuilding on a change costs one users.json read, which is what every
 // login already pays.
 
-import type { McpCatalog, OrchestratorConfig } from "@sentient/config";
+import { riskConfigSchema } from "@sentient/config";
+import type { InboundScanConfig, McpCatalog, OrchestratorConfig } from "@sentient/config";
 import type { UserRole } from "@sentient/protocol";
 import type { AccessManager } from "../access/access-manager.js";
 import { type UserPrincipal, createUserPrincipal } from "../identity/user-principal.js";
 import { getLog } from "../logging/logger.js";
 import type { ProfileStore } from "../profile-store/profile-store.js";
+import { createInboundGate } from "../security/inbound-gate.js";
+import type { InboundGate } from "../security/inbound-gate.js";
+import { createRiskAccumulator } from "../security/risk-accumulator.js";
 import type { SessionStore } from "../store/session-store.js";
 import type { McpClient } from "../tools/mcp-client.js";
 import { type NativeToolRunner, type ToolBroker, createToolBroker } from "../tools/tool-broker.js";
@@ -87,8 +91,14 @@ export interface DelegatedBrokerFactoryDeps {
    *  when that user opens a session of their own. This is the entire bound on
    *  a delegation's authority: no other value can reach the capability. */
   userStore: Pick<UserStore, "get">;
-  /** First-class runners bound to this delegator's attenuated principal. */
-  nativeToolsFor?: (principal: UserPrincipal) => Map<string, NativeToolRunner>;
+  /** The same operator-configured scanner policy used by session brokers. */
+  inboundScan: InboundScanConfig;
+  /** First-class runners bound to this delegator's attenuated principal and
+   *  the same inbound gate that screens their broker results. */
+  nativeToolsFor?: (principal: UserPrincipal, inboundGate: InboundGate) => Map<string, NativeToolRunner>;
+  /** Test seam for scanner rejection/error behavior. Production composes the
+   *  configured gate above. */
+  inboundGateFor?: (userId: string) => InboundGate;
 }
 
 /**
@@ -131,6 +141,7 @@ interface CachedBroker {
 
 export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): DelegatedBrokerFactory {
   const brokers = new Map<string, CachedBroker>();
+  const riskCfg = riskConfigSchema.parse({});
 
   async function resolveRole(userId: string): Promise<UserRole | null> {
     const stored = await deps.userStore.get(userId);
@@ -166,6 +177,8 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
     try {
       const principal = createUserPrincipal(userId, role, DELEGATED_HOUSEHOLD_ID);
       const capability = deps.accessManager.grant(principal, "tool-broker");
+      const inboundGate =
+        deps.inboundGateFor?.(userId) ?? createInboundGate(deps.inboundScan, createRiskAccumulator(riskCfg));
       broker = createToolBroker({
         mcp: deps.mcp,
         store: unusedStore(),
@@ -175,7 +188,8 @@ export function createDelegatedBrokerFactory(deps: DelegatedBrokerFactoryDeps): 
         // every line from this broker is a delegated call, not a socket's.
         sessionId: `delegated:${userId}`,
         backgroundTools: new Map(),
-        ...(deps.nativeToolsFor ? { nativeTools: deps.nativeToolsFor(principal) } : {}),
+        ...(deps.nativeToolsFor ? { nativeTools: deps.nativeToolsFor(principal, inboundGate) } : {}),
+        inboundGate,
         config: deps.toolsConfig,
         requestConfirm: () => Promise.reject(new ConfirmUnavailableError(NO_CONFIRMER)),
         toolPermissions: createToolPermissionsReader({

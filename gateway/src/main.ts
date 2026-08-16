@@ -241,6 +241,7 @@ if (config.hermes) {
             toolsConfig: config.orchestrator.tools,
             accessManager: services.accessManager,
             profileStore: services.profileStore,
+            inboundScan: config.inboundScan,
             ...(services.delegatedNativeTools ? { nativeToolsFor: services.delegatedNativeTools } : {}),
           },
         }

@@ -201,6 +201,52 @@ describe("native web tools", () => {
     expect(seenPrompts[0]).toContain("Continuation: Call read_web_content");
   });
 
+  test("fails closed before the utility runner when passage screening fails", async () => {
+    let utilityCalls = 0;
+    const tools = createWebTools({
+      capability: await capability(),
+      config,
+      screen: (text) => {
+        if (text.includes("MALICIOUS")) throw new Error("scanner unavailable");
+        return text;
+      },
+      summaryPrompt: "Summarize sources as JSON.",
+      provider: {
+        async *stream() {
+          utilityCalls++;
+          yield { type: "done" as const, finishReason: "stop" };
+        },
+      },
+      client: {
+        search: async () => ({
+          ok: true,
+          value: [{ title: "One", url: "https://one.test/", snippet: "fallback", publishedAt: null }],
+        }),
+        fetchContent: async (url) => ({
+          ok: true,
+          value: {
+            sourceUrl: url,
+            finalUrl: url,
+            title: "One",
+            byline: null,
+            contentType: "text/plain",
+            content: "MALICIOUS fetched instructions",
+          },
+        }),
+      },
+    });
+    const search = tools[0];
+    if (!search) throw new Error("web search tool missing");
+
+    await expect(
+      search.run(
+        { query: "current fact", mode: "grounded", result_count: 1 },
+        { signal: new AbortController().signal },
+      ),
+    ).rejects.toThrow("scanner unavailable");
+    expect(utilityCalls).toBe(0);
+  });
+
   test("returns sanitized typed worker failures and validates bounded reads", async () => {
     const tools = createWebTools({
       capability: await capability(),

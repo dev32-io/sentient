@@ -539,7 +539,9 @@ export interface PhaseServicesOutput {
    *  first connection (task 9g). */
   readonly delegatedExternalTool: ExternalToolSlot;
   /** Authoritative first-class product runners for a delegated user's broker. */
-  readonly delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
+  readonly delegatedNativeTools:
+    | ((principal: UserPrincipal, inboundGate: InboundGate) => Map<string, NativeToolRunner>)
+    | null;
   /** Binds the live SessionRegistry into the dreamer's yield gate and arms the
    *  nightly scheduler (memory-system spec §8). Null when the dreamer is not
    *  wired. Called by create-gateway-services.ts once the registry exists. */
@@ -743,7 +745,7 @@ export interface OrchestratorServices {
    *  late-bound. Resolved per dispatch by `delegateTask`'s setup phase, never
    *  snapshotted at session creation. */
   delegatedExternalTool: ExternalToolSlot;
-  delegatedNativeTools: ((principal: UserPrincipal) => Map<string, NativeToolRunner>) | null;
+  delegatedNativeTools: ((principal: UserPrincipal, inboundGate: InboundGate) => Map<string, NativeToolRunner>) | null;
   /** Binds the live SessionRegistry into the dreamer's yield gate and starts the
    *  nightly scheduler + boot catch-up. Null when the dreamer is not wired
    *  (memory or dreamer disabled, or provider / deep-memory app unavailable).
@@ -858,7 +860,7 @@ export async function buildOrchestratorServices(
   // outbox ledger for the whole process. Null when memory is off OR its two env
   // tokens are unset (memory tools + spark degrade to unavailable; file memory
   // still works). See buildDeepMemoryApp.
-  const delegatedNativeTools = (principal: UserPrincipal): Map<string, NativeToolRunner> => {
+  const delegatedNativeTools = (principal: UserPrincipal, inboundGate: InboundGate): Map<string, NativeToolRunner> => {
     const webCfg = orchestratorCfg.web ?? {
       worker_url: "http://127.0.0.1:8090",
       request_timeout_ms: 20_000,
@@ -923,6 +925,12 @@ export async function buildOrchestratorServices(
               summaryPrompt: DEFAULT_WEB_SUMMARY_PROMPT,
             }
           : {}),
+        screen: (text: string) =>
+          inboundGate.screen(
+            text,
+            { channel: "tool_result", source: "web_search" },
+            { sessionId: `delegated:${principal.userId}` },
+          ).text,
       },
       home: { ...(homeAdapter ? { adapter: homeAdapter } : {}) },
       music: { adapter: musicAdapter },
