@@ -28,8 +28,19 @@ function provider<G extends FoundationProductGroup>(group: G, toolName: string):
 }
 
 describe("product tool provider composition", () => {
-  it("composes the three empty pre-wired slots", () => {
-    expect([...composeProductToolProviders()]).toEqual([]);
+  it("composes the native Music standard surface from its pre-wired slot", () => {
+    expect([...composeProductToolProviders().keys()]).toEqual([
+      "music_search",
+      "music_browse",
+      "music_players",
+      "music_status",
+      "music_queue",
+      "music_play",
+      "music_transport",
+      "music_volume",
+      "music_transfer",
+      "music_group",
+    ]);
   });
 
   it("lets web, Home, and Music be independently replaced while producing one registry", () => {
