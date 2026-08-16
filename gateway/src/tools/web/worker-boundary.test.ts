@@ -159,31 +159,88 @@ describe("outbound worker URL and domain boundary", () => {
     expect(calls).toBe(0);
   });
 
-  test("passes public traffic through the configured egress proxy", async () => {
-    let observedProxy: string | URL | object | undefined;
-    const result = await fetchReadableContent("https://allowed.test", rules, limits, new AbortController().signal, {
-      resolve,
-      proxyUrl: "http://sentient-egress-proxy:3128",
-      fetchImpl: async (_url, init) => {
-        observedProxy = init?.proxy;
-        return new Response("ok", { headers: { "content-type": "text/plain" } });
+  test("lets the configured proxy resolve a public hostname when local DNS cannot", async () => {
+    let proxyCalls = 0;
+    const proxy = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        proxyCalls++;
+        return new Response("proxied", { headers: { "content-type": "text/plain" } });
       },
     });
-    expect(result).toMatchObject({ ok: true });
-    expect(observedProxy).toBe("http://sentient-egress-proxy:3128");
+    try {
+      const result = await fetchReadableContent(
+        "http://public-host.invalid",
+        rules,
+        limits,
+        new AbortController().signal,
+        {
+          resolve: async () => {
+            throw Object.assign(new Error("local DNS is confined"), { code: "ESERVFAIL" });
+          },
+          proxyUrl: `http://127.0.0.1:${proxy.port}`,
+        },
+      );
+      expect(result).toMatchObject({ ok: true, content: "proxied" });
+      expect(proxyCalls).toBe(1);
+    } finally {
+      await proxy.stop();
+    }
   });
 
-  test("checks every redirect before following it", async () => {
+  test("maps proxy-owned DNS failure without attempting local resolution", async () => {
+    let localLookups = 0;
+    const result = await fetchReadableContent("https://missing.invalid", rules, limits, new AbortController().signal, {
+      resolve: async () => {
+        localLookups++;
+        return [];
+      },
+      proxyUrl: "http://sentient-egress-proxy:3128",
+      fetchImpl: async () => new Response(null, { status: 500, statusText: "Unable to connect" }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: "dns_failure", hostname: "missing.invalid" } });
+    expect(localLookups).toBe(0);
+  });
+
+  test("rejects dangerous initial and redirect domains before proxy dispatch", async () => {
     let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return new Response(null, { status: 302, headers: { location: "https://Sub.Example.Test./secret" } });
+    };
+    const initial = await fetchReadableContent(
+      "https://example.test/secret",
+      rules,
+      limits,
+      new AbortController().signal,
+      { proxyUrl: "http://sentient-egress-proxy:3128", fetchImpl },
+    );
+    expect(initial).toMatchObject({ ok: false, error: { code: "blocked_domain", hostname: "example.test" } });
+    expect(calls).toBe(0);
+
+    const redirected = await fetchReadableContent("https://allowed.test", rules, limits, new AbortController().signal, {
+      proxyUrl: "http://sentient-egress-proxy:3128",
+      fetchImpl,
+    });
+    expect(redirected).toMatchObject({ ok: false, error: { code: "blocked_domain", hostname: "sub.example.test" } });
+    expect(calls).toBe(1);
+  });
+
+  test("does not fall back to direct transport when the proxy is unavailable", async () => {
+    const attempts: unknown[] = [];
     const result = await fetchReadableContent("https://allowed.test", rules, limits, new AbortController().signal, {
-      resolve,
-      fetchImpl: async () => {
-        calls++;
-        return new Response(null, { status: 302, headers: { location: "https://Sub.Example.Test./secret" } });
+      resolve: async () => {
+        throw new Error("direct resolution must not run");
+      },
+      proxyUrl: "http://unavailable-proxy.test:3128",
+      fetchImpl: async (_url, init) => {
+        attempts.push(init?.proxy);
+        throw new Error("proxy unavailable");
       },
     });
-    expect(result).toMatchObject({ ok: false, error: { code: "blocked_domain", hostname: "sub.example.test" } });
-    expect(calls).toBe(1);
+    expect(result).toMatchObject({ ok: false, error: { code: "http_error" } });
+    expect(attempts).toEqual(["http://unavailable-proxy.test:3128"]);
   });
 
   test("extracts readable HTML as Markdown and handles JSON", async () => {
@@ -219,12 +276,14 @@ describe("outbound worker URL and domain boundary", () => {
     expect(compressed.byteLength).toBeLessThan(1000);
     const declared = await fetchReadableContent("https://allowed.test", rules, limits, new AbortController().signal, {
       resolve,
+      proxyUrl: "http://sentient-egress-proxy:3128",
       fetchImpl: async () =>
         new Response("small", { headers: { "content-type": "text/plain", "content-length": "1001" } }),
     });
     expect(declared).toMatchObject({ ok: false, error: { code: "oversize" } });
     const expanded = await fetchReadableContent("https://allowed.test", rules, limits, new AbortController().signal, {
       resolve,
+      proxyUrl: "http://sentient-egress-proxy:3128",
       fetchImpl: async () =>
         new Response(compressed, { headers: { "content-type": "text/plain", "content-encoding": "gzip" } }),
     });
@@ -248,6 +307,7 @@ describe("outbound worker URL and domain boundary", () => {
     cancelled.abort();
     const cancelResult = await fetchReadableContent("https://allowed.test", rules, limits, cancelled.signal, {
       resolve,
+      proxyUrl: "http://sentient-egress-proxy:3128",
       fetchImpl: async () => {
         await Bun.sleep(20);
         return new Response();
@@ -262,6 +322,7 @@ describe("outbound worker URL and domain boundary", () => {
       new AbortController().signal,
       {
         resolve,
+        proxyUrl: "http://sentient-egress-proxy:3128",
         fetchImpl: async () => {
           await Bun.sleep(20);
           return new Response();

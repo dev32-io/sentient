@@ -45,10 +45,32 @@ export type WorkerFetchResult =
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const SUPPORTED_TEXT = new Set(["text/plain", "text/markdown", "application/json", "text/json"]);
+const DNS_ERROR_CODES = new Set(["EAI_AGAIN", "ENODATA", "ENOTFOUND", "ESERVFAIL"]);
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 
 function failure(code: WorkerErrorCode, message: string, hostname?: string): WorkerFetchResult {
   return { ok: false, error: { code, message, ...(hostname ? { hostname } : {}) } };
+}
+
+function hasDnsError(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const candidate = pending.pop();
+    if (!candidate || typeof candidate !== "object" || seen.has(candidate)) continue;
+    seen.add(candidate);
+    const value = candidate as { cause?: unknown; code?: unknown; errors?: unknown };
+    if (typeof value.code === "string" && DNS_ERROR_CODES.has(value.code.toLocaleUpperCase())) return true;
+    if (value.cause) pending.push(value.cause);
+    if (Array.isArray(value.errors)) pending.push(...value.errors);
+  }
+  return false;
+}
+
+function isProxyResolutionFailure(response: Response): boolean {
+  // Tinyproxy owns DNS in the confined deployment and reports resolution/connect
+  // setup failures before an origin response as this synthetic status.
+  return response.status === 500 && response.statusText.toLocaleLowerCase() === "unable to connect";
 }
 
 async function boundedBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<Uint8Array | null> {
@@ -165,8 +187,9 @@ function extract(contentType: string, body: Uint8Array, finalUrl: string): Worke
   return { ok: true, sourceUrl: "", finalUrl, title: null, byline: null, contentType: mediaType, content: text.trim() };
 }
 
-/** Fetches one URL with manual redirects. Each hop is normalized, policy
- * checked, and DNS-resolved before any request is emitted. */
+/** Fetches one URL with manual redirects. Each hop is normalized and policy
+ * checked before dispatch. The mandatory proxy owns public DNS resolution;
+ * explicit non-proxied test transports retain a local preflight lookup. */
 export async function fetchReadableContent(
   rawUrl: string,
   rules: ReadonlySet<string>,
@@ -190,10 +213,12 @@ export async function fetchReadableContent(
     const checked = validateFetchUrl(current.toString(), rules);
     if (!checked.ok) return { ok: false, error: checked.error };
     current = checked.url;
-    try {
-      await resolve(current.hostname);
-    } catch {
-      return failure("dns_failure", "The hostname could not be resolved.", current.hostname);
+    if (!proxyUrl) {
+      try {
+        await resolve(current.hostname);
+      } catch {
+        return failure("dns_failure", "The hostname could not be resolved.", current.hostname);
+      }
     }
     let response: Response;
     try {
@@ -208,13 +233,18 @@ export async function fetchReadableContent(
         ...(proxyUrl ? { proxy: proxyUrl } : {}),
         decompress: false,
       });
-    } catch {
+    } catch (error) {
       if (signal.aborted) return failure("cancelled", "Fetch was cancelled.");
       if (deadline.aborted) return failure("timeout", "The web fetch timed out.");
+      if (hasDnsError(error)) return failure("dns_failure", "The hostname could not be resolved.", current.hostname);
       return failure("http_error", "The remote server could not be reached.");
     }
     if (signal.aborted) return failure("cancelled", "Fetch was cancelled.");
     if (deadline.aborted) return failure("timeout", "The web fetch timed out.");
+    if (proxyUrl && isProxyResolutionFailure(response)) {
+      await response.body?.cancel();
+      return failure("dns_failure", "The hostname could not be resolved.", current.hostname);
+    }
     if (REDIRECTS.has(response.status)) {
       if (redirects >= limits.maxRedirects) return failure("http_error", "The response redirected too many times.");
       const location = response.headers.get("location");
