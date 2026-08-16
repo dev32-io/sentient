@@ -46,25 +46,15 @@ methods:
 checkpoint: planned
 loop:
   state: rereviewing
-  iteration: 1
+  iteration: 2
   maxIterations: 2
   reviewerAgentId: 5394016a-d71e-4379-86fe-e11fb88dbb3c
   reviewedCommit: 8ac582dc402dcb4fe6cfa673c649676b8fccb687
-  managerPrompt: "Repair both blocking governance findings on the current feature
-    branch. TGMR-001: preserve absent-server=off semantics when migrating every
-    partial legacy permission map; an omitted retired core group must not
-    receive permissive native defaults. Add focused fixtures reproducing partial
-    maps and repeated/idempotent migration without widening. TGMR-002: make the
-    delegated gateway-hosted native read projection consult the authenticated
-    user's current product permission resolution and expose only allow; ensure
-    ask/deny/off and role-denied tools are neither advertised nor dispatchable,
-    while keeping side-effecting native tools excluded. Make the advanced
-    gateway product group visible/settable in the grouped settings contract with
-    its default-off behavior, without restoring retired MCP transport identity.
-    Preserve general third-party MCP behavior. Run the evaluation's focused
-    gateway/web/KMP checks plus delegation tests, typecheck, and git diff
-    --check. Do not modify unrelated behavior or use production/household
-    mutations."
+  managerPrompt: Re-review the governance repair at commit 5715e0c9 against
+    TGMR-001 and TGMR-002, rerunning the focused migration, delegated
+    permission, settings, web, KMP, typecheck, and diff checks. Confirm no
+    permission widening and no delegated advertisement or dispatch for
+    ask/deny/off or role-denied native tools.
   fixerAgentId: 90645254-c592-4d24-bdf2-cc91bee9f5e1
 findings:
   - id: TGMR-001
