@@ -17,7 +17,8 @@ verification:
   timing: task
   methods: []
   taskChecks:
-    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    - PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH" ./gradlew
+      :shared:mobile-sdk:allTests :shared:mobile-data:allTests
       :android:testDebugUnitTest
     - ./scripts/ios-setup.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
