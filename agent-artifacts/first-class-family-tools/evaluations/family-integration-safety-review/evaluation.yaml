@@ -3,9 +3,9 @@ id: family-integration-safety-review
 type: regression
 scope:
   workItem: first-class-family-tools
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - "Context: Run after Home and Music native tools and cutover are integrated."
   - "Context: The evaluator may use the real local Sentient stack and PIN 1234,
@@ -38,8 +38,41 @@ methods:
   - "Run: source scripts/env.sh && git diff --check"
 checkpoint: planned
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 2
+  state: awaiting_manager
   reviewerAgentId: 239fb583-c172-4cb7-93d4-5f01857844ef
   reviewedCommit: 028a137ce98e40d29acf52ea162c963025be856a
+findings:
+  - id: FIS-001
+    severity: high
+    status: open
+    criterion: Possible-dispatch side effects return accepted_unverified and are not
+      retried
+    location: gateway/src/tools/music/music-adapter.ts:519-555;
+      gateway/src/tools/music/music-tools.ts:78-95
+    summary: A post-send abort creates a cancelled error with dispatched=false, so
+      standard music mutations report cancellation rather than
+      accepted_unverified and may be retried by the caller.
+    blocking: true
+  - id: FIS-002
+    severity: medium
+    status: open
+    criterion: Side-effecting calls distinguish rejected, failed, and accepted_unverified
+    location: gateway/src/tools/music/music-tools.ts:78-97
+    summary: Standard music primitives collapse typed rejection and failure
+      categories into outcome=error rather than the required semantic outcomes.
+    blocking: true
+  - id: FIS-003
+    severity: medium
+    status: open
+    criterion: Music adapter validates unknown upstream payloads and degrades honestly
+    location: gateway/src/tools/music/music-adapter.ts:595-608
+    summary: browse/listPlayers silently convert wrong-shaped correlated payloads
+      into empty collections, misreporting malformed upstream data as a
+      legitimate no-result state.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/family-integration-safety-review/manifest.yaml
