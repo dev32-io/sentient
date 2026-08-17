@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 65
+  revision: 66
 artifacts:
   - id: intent
     type: intent
@@ -36,8 +36,6 @@ tasks:
     path: tasks/s1-store-schema-factory/task.yaml
   - id: s4-rest-api
     path: tasks/s4-rest-api/task.yaml
-  - id: s5-phase-bootstrap
-    path: tasks/s5-phase-bootstrap/task.yaml
   - id: s7-mobile-data
     path: tasks/s7-mobile-data/task.yaml
   - id: s6-mobile-sdk
@@ -75,22 +73,6 @@ executionStages:
         - Wire schema, isAdult predicate, UTC timestamp representation, and
           golden fixtures
         - E2E scaffolding failure-safe cleanup and disposable-user isolation
-  - id: stage-5-bootstrap-nudge
-    tasks:
-      - s5-phase-bootstrap
-    checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
-    mode: sequential
-    review:
-      tier: medium
-      focus:
-        - orchestratorCfg.calendar config schema, config.yaml defaults, and
-          old-config compatibility
-        - Capability minting, store open and close on session disposal, and
-          prompt-cache stability preserved across an in-session write
-        - Nudge cap, deterministic drop order, empty-calendar omission,
-          serving-tz rendering, and child/guest visibility
   - id: stage-2-recurrence-deprecation
     tasks:
       - s1-store-schema-factory
