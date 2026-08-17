@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: s4-rest-api
+title: Calendar REST API over the shared CalendarStore
+status: draft
+dependsOn:
+  - s3-store-reads
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s4-rest-api
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/api/handlers/calendar
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
