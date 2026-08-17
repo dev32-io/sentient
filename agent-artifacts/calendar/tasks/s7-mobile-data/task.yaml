@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: s7-mobile-data
+title: Mobile-data calendar repository, use cases, and DI
+status: draft
+dependsOn:
+  - s6-mobile-sdk
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s7-mobile-data
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+    - ./gradlew :shared:mobile-data:compileDebugKotlin
+  rationale: Verify the contribution at its declared task boundary.

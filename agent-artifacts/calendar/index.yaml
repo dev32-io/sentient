@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 90
+  revision: 91
 artifacts:
   - id: intent
     type: intent
@@ -56,6 +56,8 @@ tasks:
     path: tasks/s6-mobile-sdk/task.yaml
   - id: s6-web-ui
     path: tasks/s6-web-ui/task.yaml
+  - id: s7-mobile-data
+    path: tasks/s7-mobile-data/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -167,3 +169,6 @@ executionStages:
           golden fixtures
         - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and
           serving-tz representation
+  - id: s7-mobile-data
+    tasks:
+      - s7-mobile-data
