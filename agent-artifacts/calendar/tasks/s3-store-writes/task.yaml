@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s3-store-writes
 title: CalendarStore create/update/delete with household adult-gate and event-tz
   storage
-status: draft
+status: blocked
 dependsOn:
   - s1-store-schema-factory
 execution:

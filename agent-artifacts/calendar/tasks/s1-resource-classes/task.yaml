@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-resource-classes
 title: Add calendar resource classes and capability roots
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

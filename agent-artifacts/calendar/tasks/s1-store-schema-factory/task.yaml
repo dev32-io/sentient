@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-store-schema-factory
 title: CalendarStore schema, migration ladder, factory skeleton, and close() lifecycle
-status: draft
+status: blocked
 dependsOn:
   - s1-resource-classes
   - s1-domain-contracts

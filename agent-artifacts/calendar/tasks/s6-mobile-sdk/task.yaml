@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-mobile-sdk
 title: Mobile SDK CalendarHttpClient and models
-status: draft
+status: blocked
 dependsOn:
   - s4-rest-api
 execution:
