@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 13
+  revision: 14
 artifacts:
   - id: intent
     type: intent
@@ -44,6 +44,8 @@ tasks:
     path: tasks/s3-store-update/task.yaml
   - id: s3-store-read-visibility
     path: tasks/s3-store-read-visibility/task.yaml
+  - id: s3-store-delete
+    path: tasks/s3-store-delete/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -74,3 +76,6 @@ executionStages:
   - id: s3-store-read-visibility
     tasks:
       - s3-store-read-visibility
+  - id: s3-store-delete
+    tasks:
+      - s3-store-delete
