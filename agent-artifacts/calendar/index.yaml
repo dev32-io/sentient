@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 31
+  revision: 32
 artifacts:
   - id: intent
     type: intent
@@ -72,12 +72,6 @@ delivery:
   createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
 evaluations: []
 executionStages:
-  - id: s6-mobile-sdk
-    tasks:
-      - s6-mobile-sdk
-  - id: s6-web-ui
-    tasks:
-      - s6-web-ui
   - id: stage-1-foundation
     tasks:
       - s1-resource-classes
@@ -189,3 +183,18 @@ executionStages:
       focus:
         - Route-scoped ViewModels with state folding and stateless repositories
         - Accessibility identifiers consistent with mobile E2E contracts
+  - id: stage-6-clients
+    tasks:
+      - s6-web-ui
+      - s6-mobile-sdk
+    checks:
+      - cd gateway/webui && bun run test:unit && bun run typecheck
+      - cd shared/mobile-sdk && ./gradlew testDebugUnitTest --tests '*Calendar*'
+        && ./gradlew compileDebugKotlin
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Web calendar REST client and view over /api/v1/calendar
+        - Mobile SDK CalendarHttpClient wire shape and model fidelity to the
+          gateway domain
