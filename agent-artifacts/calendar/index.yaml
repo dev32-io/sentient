@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 50
+  revision: 51
 artifacts:
   - id: intent
     type: intent
@@ -38,8 +38,6 @@ tasks:
     path: tasks/s2-ha-deprecation/task.yaml
   - id: s2-expand-recurrence
     path: tasks/s2-expand-recurrence/task.yaml
-  - id: s3-store-update
-    path: tasks/s3-store-update/task.yaml
   - id: s4-rest-api
     path: tasks/s4-rest-api/task.yaml
   - id: s5-nudge
@@ -87,21 +85,6 @@ executionStages:
         - Wire schema, isAdult predicate, UTC timestamp representation, and
           golden fixtures
         - E2E scaffolding failure-safe cleanup and disposable-user isolation
-  - id: stage-3-store-crud
-    tasks:
-      - s3-store-update
-    checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/calendar/calendar-store
-    mode: sequential
-    review:
-      tier: medium
-      focus:
-        - Household write adult-gate fail-fast with no prompt
-        - Role-based visibility filtering at the query layer (children omit
-          adults)
-        - Recurrence expansion through the store path with EXDATE/exception
-          application
   - id: stage-5-bootstrap-nudge
     tasks:
       - s5-phase-bootstrap
