@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s3-store-reads
 title: CalendarStore get/list/filter with visibility and event-tz recurrence expansion
-status: draft
+status: blocked
 dependsOn:
   - s3-store-writes
   - s2-expand-recurrence

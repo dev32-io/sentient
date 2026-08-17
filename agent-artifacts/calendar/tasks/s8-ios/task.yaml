@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s8-ios
 title: iOS calendar SwiftUI screen, route, and ViewModel
-status: draft
+status: blocked
 dependsOn:
   - s7-mobile-data
 execution:

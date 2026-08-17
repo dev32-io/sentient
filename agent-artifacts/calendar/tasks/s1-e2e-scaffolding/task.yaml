@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s1-e2e-scaffolding
 title: "Calendar E2E scaffolding: disposable users, calendar cleanup, evidence
   capture"
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s2-expand-recurrence
 title: expandRecurrence pure module (bounded subset, EXDATE, exceptions,
   all-day, event-tz DST)
-status: draft
+status: blocked
 dependsOn:
   - s1-domain-contracts
 execution:

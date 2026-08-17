@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-web-ui
 title: Web calendar route, REST client, and view
-status: draft
+status: blocked
 dependsOn:
   - s4-rest-api
 execution:

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s2-ha-deprecation
 title: Deprecate and hide the four HA calendar tools
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-rest-api
 title: Calendar REST API over the shared CalendarStore
-status: draft
+status: blocked
 dependsOn:
   - s3-store-reads
 execution:
