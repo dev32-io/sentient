@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: stage-stage-5-bootstrap-nudge-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-5-bootstrap-nudge
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+criteria:
+  - orchestratorCfg.calendar config schema, config.yaml defaults, and old-config
+    compatibility
+  - Capability minting, store open and close on session disposal, and
+    prompt-cache stability preserved across an in-session write
+  - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
+    rendering, and child/guest visibility
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
