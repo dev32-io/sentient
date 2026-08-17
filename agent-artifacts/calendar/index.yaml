@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 28
+  revision: 29
 artifacts:
   - id: intent
     type: intent
@@ -72,12 +72,6 @@ delivery:
   createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
 evaluations: []
 executionStages:
-  - id: s4-rest-api
-    tasks:
-      - s4-rest-api
-  - id: s4-tool-provider
-    tasks:
-      - s4-tool-provider
   - id: s7-mobile-data
     tasks:
       - s7-mobile-data
@@ -159,3 +153,20 @@ executionStages:
           correctness
         - HA calendar tool removal across provider output, catalog, and role
           defaults
+  - id: stage-4-rest-and-provider
+    tasks:
+      - s4-rest-api
+      - s4-tool-provider
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/api/handlers/calendar
+        src/bootstrap/product-tools src/bootstrap/product-tool-metadata
+        src/tools/tool-broker
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - REST authority from authenticated principal, ignoring caller-supplied
+          identity
+        - Calendar tool tiers (read=allow, write=ask, delete=confirm) and broker
+          role reachability
