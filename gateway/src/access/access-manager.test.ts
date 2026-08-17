@@ -79,4 +79,17 @@ describe("AccessManager — memory resource classes", () => {
     expect(capabilityCoversPath(cap, join(dirname(userDataRoot), "shared", "home", "note.md"))).toBe(true);
     expect(capabilityCoversPath(cap, join(dirname(userDataRoot), "shared", "other", "note.md"))).toBe(false);
   });
+
+  it("calendar-private roots in the existing user home dir and preserves the role", () => {
+    const cap = manager.grant(p({ userId: "kevin", role: "guest" }), "calendar-private");
+    expect(cap.resource).toBe("calendar-private");
+    expect(cap.rootPath).toBe(join(userDataRoot, "kevin"));
+    expect(cap.role).toBe("guest");
+  });
+
+  it("calendar-household roots in the shared directory keyed by householdId", () => {
+    const cap = manager.grant(p({ userId: "kevin", householdId: "home" }), "calendar-household");
+    expect(cap.resource).toBe("calendar-household");
+    expect(cap.rootPath).toBe(join(dirname(userDataRoot), "shared", "home"));
+  });
 });
