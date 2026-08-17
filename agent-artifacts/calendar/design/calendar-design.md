@@ -47,6 +47,18 @@ Keep calendar storage, recurrence, visibility, tool surface, nudge, and UI behin
 - Nudge over-budget drops overflow summaries, then non-important weekly items, keeping today plus important or pinned
 - Tool ask timeout, cancel, or closed session denies fail-closed
 
+## Security and Privacy
+
+- calendar-private and calendar-household added to ResourceClass; rootPathFor gains a household branch; capabilities frozen at mint and path-confined; no ambient authority (handles read only cap.ownerUserId, cap.role, cap.rootPath)
+- Role-based visibility filtered at the store query layer via a structured visibility field, not an @adults suffix
+- Household writes adult-gated at the store (fail-fast, no prompt)
+- Tool tiers drive defaults via the existing defaultPermissionForTier (contract-tested read to allow, write to ask, confirm to ask); role reachability via canExecute; ask triggers permission.request with fail-closed deny on timeout or cancel
+- Calendar tool activity surfaces as tasklist.state frames in the composer strip, not as conversation bubble pills (inherited from the existing tool-broker path)
+
+## Compatibility and Migration
+
+New resource classes are additive. HA calendar tool removal leaves orphaned profile.tools.permissions entries (harmless; optional migrator cleanup). The notification column is forward-compatible for future push. The raw rrule column lets the supported subset grow without schema change.
+
 ## Alternatives Considered
 
 - Markdown or text storage (rejected): calendar retrieval and recurrence logic warrants a real query engine
