@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 10
+  revision: 11
 artifacts:
   - id: intent
     type: intent
@@ -38,6 +38,8 @@ tasks:
     path: tasks/s2-ha-deprecation/task.yaml
   - id: s2-expand-recurrence
     path: tasks/s2-expand-recurrence/task.yaml
+  - id: s3-store-create
+    path: tasks/s3-store-create/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -59,3 +61,6 @@ executionStages:
   - id: s2-expand-recurrence
     tasks:
       - s2-expand-recurrence
+  - id: s3-store-create
+    tasks:
+      - s3-store-create
