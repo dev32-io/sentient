@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 92
+  revision: 93
 artifacts:
   - id: intent
     type: intent
@@ -58,6 +58,8 @@ tasks:
     path: tasks/s6-web-ui/task.yaml
   - id: s7-mobile-data
     path: tasks/s7-mobile-data/task.yaml
+  - id: s8-android
+    path: tasks/s8-android/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -183,3 +185,6 @@ executionStages:
           interfaces for platform ViewModels
         - DI wiring exposes calendar to platform screens without
           restart-mutation assumptions
+  - id: s8-android
+    tasks:
+      - s8-android
