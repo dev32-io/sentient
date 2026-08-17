@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 43
+  revision: 44
 artifacts:
   - id: intent
     type: intent
@@ -82,17 +82,19 @@ executionStages:
     tasks:
       - s1-resource-classes
       - s1-domain-contracts
+      - s1-e2e-scaffolding
     checks:
       - cd gateway && bun run typecheck
       - cd gateway && bun test src/access src/calendar/types
-        src/calendar/calendar-store
-    mode: sequential
+        src/calendar/e2e-helpers
+    mode: concurrent
     review:
       tier: medium
       focus:
         - Resource-class isolation and household path derivation
-        - CalendarStore capability gate, path isolation, and forward-only
-          migration ladder
+        - Wire schema, isAdult predicate, UTC timestamp representation, and
+          golden fixtures
+        - E2E scaffolding failure-safe cleanup and disposable-user isolation
   - id: stage-3-store-crud
     tasks:
       - s3-store-create
@@ -214,9 +216,6 @@ executionStages:
   - id: s3-store-writes
     tasks:
       - s3-store-writes
-  - id: s1-e2e-scaffolding
-    tasks:
-      - s1-e2e-scaffolding
   - id: s3-store-reads
     tasks:
       - s3-store-reads
