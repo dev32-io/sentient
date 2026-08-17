@@ -1,9 +1,0 @@
-appId: io.dev32.sentient.debug
----
-- launchApp
-- tapOn: { id: "history-open" }
-- extendedWaitUntil: { visible: { id: "history-new-chat" }, timeout: 5000 }
-- takeScreenshot: "ios-history"
-- tapOn: { id: "settings-open" }
-- extendedWaitUntil: { visible: { id: "settings-screen" }, timeout: 5000 }
-- takeScreenshot: "ios-settings-root"
