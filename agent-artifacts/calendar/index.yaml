@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 73
+  revision: 74
 artifacts:
   - id: intent
     type: intent
@@ -32,8 +32,6 @@ tasks:
     path: tasks/s1-resource-classes/task.yaml
   - id: s1-domain-contracts
     path: tasks/s1-domain-contracts/task.yaml
-  - id: s1-store-schema-factory
-    path: tasks/s1-store-schema-factory/task.yaml
   - id: s1-e2e-scaffolding
     path: tasks/s1-e2e-scaffolding/task.yaml
 integrationUnits: []
@@ -59,21 +57,3 @@ executionStages:
         - Wire schema, isAdult predicate, UTC timestamp representation, and
           golden fixtures
         - E2E scaffolding failure-safe cleanup and disposable-user isolation
-  - id: stage-2-recurrence-deprecation
-    tasks:
-      - s1-store-schema-factory
-    checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/calendar/calendar-store
-        src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
-        src/api/handlers/mcp-catalog
-    mode: concurrent
-    review:
-      tier: medium
-      focus:
-        - CalendarStore capability gate, path isolation, close() lifecycle, and
-          ahead-of-binary policy
-        - expandRecurrence bounded subset, EXDATE/exception, all-day, and
-          serving-timezone DST correctness
-        - HA calendar tool removal across provider output, catalog, and role
-          defaults (no profile migrator)
