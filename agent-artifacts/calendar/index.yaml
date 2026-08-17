@@ -1,0 +1,20 @@
+schemaVersion: 1
+id: calendar
+kind: story
+title: Gateway-owned family calendar
+phase: planning
+state: active
+planning:
+  revision: 1
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+tasks: []
+integrationUnits: []
+delivery:
+  workingBranch: feature/calendar
+  createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
+evaluations: []
