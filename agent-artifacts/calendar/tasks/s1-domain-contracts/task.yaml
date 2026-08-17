@@ -10,7 +10,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s1-domain-contracts
+  stageId: stage-1-foundation
   intermediateState: complete
 verification:
   timing: task

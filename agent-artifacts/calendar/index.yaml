@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 24
+  revision: 25
 artifacts:
   - id: intent
     type: intent
@@ -72,15 +72,6 @@ delivery:
   createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
 evaluations: []
 executionStages:
-  - id: s1-resource-classes
-    tasks:
-      - s1-resource-classes
-  - id: s1-domain-contracts
-    tasks:
-      - s1-domain-contracts
-  - id: s1-store-schema-factory
-    tasks:
-      - s1-store-schema-factory
   - id: s2-ha-deprecation
     tasks:
       - s2-ha-deprecation
@@ -129,3 +120,19 @@ executionStages:
   - id: s8-ios
     tasks:
       - s8-ios
+  - id: stage-1-foundation
+    tasks:
+      - s1-resource-classes
+      - s1-domain-contracts
+      - s1-store-schema-factory
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/access src/calendar/types
+        src/calendar/calendar-store
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Resource-class isolation and household path derivation
+        - CalendarStore capability gate, path isolation, and forward-only
+          migration ladder
