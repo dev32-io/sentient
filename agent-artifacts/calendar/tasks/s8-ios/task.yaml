@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: s8-ios
+title: iOS calendar SwiftUI screen, route, and ViewModel
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s8-ios
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd ios && xcodebuild -scheme App -destination 'platform=iOS
+      Simulator,name=iPhone 16' build 2>&1 | tail -5
+    - cd ios && xcodebuild -scheme App -destination 'platform=iOS
+      Simulator,name=iPhone 16' test 2>&1 | tail -20
+  rationale: Verify the contribution at its declared task boundary.
