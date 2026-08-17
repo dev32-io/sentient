@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: stage-stage-7-mobile-data-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-7-mobile-data
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
+    ./gradlew :shared:mobile-data:compileDebugKotlin
+criteria:
+  - Stateless repository passthrough and explicit exported use-case interfaces
+    for platform ViewModels
+  - DI wiring exposes calendar to platform screens without restart-mutation
+    assumptions
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
