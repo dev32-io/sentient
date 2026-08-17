@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 94
+  revision: 95
 artifacts:
   - id: intent
     type: intent
@@ -187,9 +187,22 @@ executionStages:
           interfaces for platform ViewModels
         - DI wiring exposes calendar to platform screens without
           restart-mutation assumptions
-  - id: s8-android
+  - id: stage-8-mobile-platform
     tasks:
       - s8-android
-  - id: s8-ios
-    tasks:
       - s8-ios
+    checks:
+      - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' &&
+        ./gradlew :android:app:compileDebugKotlin
+      - ./gradlew :shared:mobile-data:assembleXCFramework && xcodebuild -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16' build && xcodebuild -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16' test
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Route-scoped ViewModels consume shared use cases (not raw
+          repositories) with state folding
+        - Accessibility identifiers consistent with mobile E2E contracts
