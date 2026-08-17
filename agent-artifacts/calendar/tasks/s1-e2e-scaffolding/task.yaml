@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s1-e2e-scaffolding
 title: "Calendar E2E scaffolding: disposable users, calendar cleanup, evidence
   capture"
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -19,3 +19,9 @@ verification:
   taskChecks:
     - cd gateway && bun test src/calendar/e2e-helpers
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s1-e2e-scaffolding
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-e2e-scaffolding
+  baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
+  lastRunId: 06dc890c-cc0c-4517-bce7-74d77259105d
