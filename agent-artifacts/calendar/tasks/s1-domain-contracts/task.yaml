@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-domain-contracts
 title: Define calendar domain types, RRULE subset, wire schema, and store contracts
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -25,3 +25,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-domain-contracts
   baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
   lastRunId: d042acd3-8a0e-46db-9500-12a172413f74
+  completedCommit: 5c82a5208b5928dc8e83b27f8a03056b25232fbd
