@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: stage-stage-1-foundation-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-1-foundation
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers
+criteria:
+  - Resource-class isolation and household path derivation
+  - Wire schema, isAdult predicate, UTC timestamp representation, and golden
+    fixtures
+  - E2E scaffolding failure-safe cleanup and disposable-user isolation
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3

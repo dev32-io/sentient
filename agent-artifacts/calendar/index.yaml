@@ -67,7 +67,9 @@ delivery:
   workingBranch: feature/calendar
   createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
   executionStartCommit: 8d440fc99e7601b6d5b9769d3a5462b8edfd16ee
-evaluations: []
+evaluations:
+  - id: stage-stage-1-foundation-review
+    path: evaluations/stage-stage-1-foundation-review/evaluation.yaml
 executionStages:
   - id: stage-1-foundation
     tasks:
