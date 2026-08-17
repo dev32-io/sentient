@@ -12,7 +12,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s5-phase-bootstrap
+  stageId: stage-5-bootstrap-nudge
   intermediateState: complete
 verification:
   timing: task

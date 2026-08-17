@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 86
+  revision: 87
 artifacts:
   - id: intent
     type: intent
@@ -130,9 +130,20 @@ executionStages:
           convergence
         - Pre-PDP household-write rejection (no permission.request, zero confirm
           calls, zero store calls) and tool tier/role reachability
-  - id: s5-phase-bootstrap
+  - id: stage-5-bootstrap-nudge
     tasks:
       - s5-phase-bootstrap
-  - id: s5-nudge
-    tasks:
       - s5-nudge
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - orchestratorCfg.calendar config schema, config.yaml defaults, and
+          old-config compatibility
+        - Capability minting, store open and close on session disposal, and
+          prompt-cache stability preserved across an in-session write
+        - Nudge cap, deterministic drop order, empty-calendar omission,
+          serving-tz rendering, and child/guest visibility
