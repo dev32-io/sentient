@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 45
+  revision: 46
 artifacts:
   - id: intent
     type: intent
@@ -188,15 +188,19 @@ executionStages:
       - s8-android
       - s8-ios
     checks:
-      - cd android && ./gradlew :app:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :app:compileDebugKotlin
-      - cd ios && xcodebuild -scheme App -destination 'platform=iOS
-        Simulator,name=iPhone 16' build 2>&1 | tail -5
+      - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' &&
+        ./gradlew :android:app:compileDebugKotlin
+      - ./gradlew :shared:mobile-data:assembleXCFramework && xcodebuild -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16' build && xcodebuild -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16' test
     mode: concurrent
     review:
       tier: medium
       focus:
-        - Route-scoped ViewModels with state folding and stateless repositories
+        - Route-scoped ViewModels consume shared use cases (not raw
+          repositories) with state folding
         - Accessibility identifiers consistent with mobile E2E contracts
   - id: stage-6-clients
     tasks:
