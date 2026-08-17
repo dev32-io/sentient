@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 18
+  revision: 19
 artifacts:
   - id: intent
     type: intent
@@ -54,6 +54,8 @@ tasks:
     path: tasks/s5-nudge/task.yaml
   - id: s4-tool-provider
     path: tasks/s4-tool-provider/task.yaml
+  - id: s5-phase-bootstrap
+    path: tasks/s5-phase-bootstrap/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -99,3 +101,6 @@ executionStages:
   - id: s4-tool-provider
     tasks:
       - s4-tool-provider
+  - id: s5-phase-bootstrap
+    tasks:
+      - s5-phase-bootstrap
