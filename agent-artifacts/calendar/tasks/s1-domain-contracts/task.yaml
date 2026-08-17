@@ -1,6 +1,6 @@
 schemaVersion: 1
 id: s1-domain-contracts
-title: Define calendar domain types, RRULE subset, and store contracts
+title: Define calendar domain types, RRULE subset, wire schema, and store contracts
 status: draft
 dependsOn: []
 execution:
