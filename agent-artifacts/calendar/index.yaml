@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 63
+  revision: 64
 artifacts:
   - id: intent
     type: intent
@@ -38,8 +38,6 @@ tasks:
     path: tasks/s2-expand-recurrence/task.yaml
   - id: s4-rest-api
     path: tasks/s4-rest-api/task.yaml
-  - id: s5-nudge
-    path: tasks/s5-nudge/task.yaml
   - id: s5-phase-bootstrap
     path: tasks/s5-phase-bootstrap/task.yaml
   - id: s7-mobile-data
@@ -82,7 +80,6 @@ executionStages:
   - id: stage-5-bootstrap-nudge
     tasks:
       - s5-phase-bootstrap
-      - s5-nudge
     checks:
       - cd gateway && bun run typecheck
       - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
