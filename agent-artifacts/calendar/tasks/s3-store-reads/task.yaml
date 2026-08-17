@@ -1,7 +1,6 @@
 schemaVersion: 1
 id: s3-store-reads
-title: CalendarStore get/list/filter with visibility and serving-timezone
-  recurrence expansion
+title: CalendarStore get/list/filter with visibility and event-tz recurrence expansion
 status: draft
 dependsOn:
   - s3-store-writes
