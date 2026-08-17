@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 6
+  revision: 7
 artifacts:
   - id: intent
     type: intent
@@ -30,6 +30,8 @@ artifacts:
 tasks:
   - id: s1-resource-classes
     path: tasks/s1-resource-classes/task.yaml
+  - id: s1-domain-contracts
+    path: tasks/s1-domain-contracts/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -39,3 +41,6 @@ executionStages:
   - id: s1-resource-classes
     tasks:
       - s1-resource-classes
+  - id: s1-domain-contracts
+    tasks:
+      - s1-domain-contracts
