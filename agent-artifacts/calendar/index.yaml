@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 26
+  revision: 27
 artifacts:
   - id: intent
     type: intent
@@ -81,15 +81,9 @@ executionStages:
   - id: s4-rest-api
     tasks:
       - s4-rest-api
-  - id: s5-nudge
-    tasks:
-      - s5-nudge
   - id: s4-tool-provider
     tasks:
       - s4-tool-provider
-  - id: s5-phase-bootstrap
-    tasks:
-      - s5-phase-bootstrap
   - id: s7-mobile-data
     tasks:
       - s7-mobile-data
@@ -140,3 +134,18 @@ executionStages:
           adults)
         - Recurrence expansion through the store path with EXDATE/exception
           application
+  - id: stage-5-bootstrap-nudge
+    tasks:
+      - s5-phase-bootstrap
+      - s5-nudge
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Capability minting and store open per session with prompt-cache
+          stability preserved
+        - Nudge cap, deterministic drop order, empty-calendar omission, and
+          child visibility
