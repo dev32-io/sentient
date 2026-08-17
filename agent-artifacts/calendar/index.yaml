@@ -74,6 +74,8 @@ evaluations:
     path: evaluations/stage-stage-2-recurrence-deprecation-review/evaluation.yaml
   - id: stage-stage-3-store-crud-review
     path: evaluations/stage-stage-3-store-crud-review/evaluation.yaml
+  - id: stage-stage-4-rest-and-provider-review
+    path: evaluations/stage-stage-4-rest-and-provider-review/evaluation.yaml
 executionStages:
   - id: stage-1-foundation
     tasks:

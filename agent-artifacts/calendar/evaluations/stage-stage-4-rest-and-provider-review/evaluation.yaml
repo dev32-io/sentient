@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: stage-stage-4-rest-and-provider-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-4-rest-and-provider
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/api/handlers/calendar src/bootstrap/product-tools
+    src/bootstrap/product-tool-metadata src/tools/tool-broker
+criteria:
+  - REST authority from authenticated principal (configured household),
+    serving-tz rendering, request-scoped close, and golden-fixture wire
+    convergence
+  - Pre-PDP household-write rejection (no permission.request, zero confirm
+    calls, zero store calls) and tool tier/role reachability
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
