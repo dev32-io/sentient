@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-resource-classes
 title: Add calendar resource classes and capability roots
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -26,3 +26,4 @@ runtime:
   baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
   lastRunId: 8be8ec7d-b9f6-4ff0-b1ab-0ba78d46df6e
   completedCommit: 50554a95511417e77c5d03cad36a90f454582d10
+  mergedCommit: f639a39869e2f19e144767a10ba18e019f6fc0a2
