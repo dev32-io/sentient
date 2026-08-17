@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 64
+  revision: 65
 artifacts:
   - id: intent
     type: intent
@@ -34,8 +34,6 @@ tasks:
     path: tasks/s1-domain-contracts/task.yaml
   - id: s1-store-schema-factory
     path: tasks/s1-store-schema-factory/task.yaml
-  - id: s2-expand-recurrence
-    path: tasks/s2-expand-recurrence/task.yaml
   - id: s4-rest-api
     path: tasks/s4-rest-api/task.yaml
   - id: s5-phase-bootstrap
@@ -96,7 +94,6 @@ executionStages:
   - id: stage-2-recurrence-deprecation
     tasks:
       - s1-store-schema-factory
-      - s2-expand-recurrence
     checks:
       - cd gateway && bun run typecheck
       - cd gateway && bun test src/calendar/calendar-store
