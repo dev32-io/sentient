@@ -10,7 +10,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s7-mobile-data
+  stageId: stage-7-mobile-data
   intermediateState: complete
 verification:
   timing: task
