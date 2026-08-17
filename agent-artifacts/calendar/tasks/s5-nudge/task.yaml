@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: s5-nudge
+title: Calendar session-start nudge composer with prompt-cache stability proof
+status: draft
+dependsOn:
+  - s5-phase-bootstrap
+  - s3-store-reads
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s5-nudge
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/nudge
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
