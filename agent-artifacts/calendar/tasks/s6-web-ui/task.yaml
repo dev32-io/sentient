@@ -11,7 +11,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s6-web-ui
+  stageId: stage-6-clients
   intermediateState: complete
 verification:
   timing: task

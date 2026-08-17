@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 89
+  revision: 90
 artifacts:
   - id: intent
     type: intent
@@ -151,9 +151,19 @@ executionStages:
           prompt-cache stability preserved across an in-session write
         - Nudge cap, deterministic drop order, empty-calendar omission,
           serving-tz rendering, and child/guest visibility
-  - id: s6-mobile-sdk
-    tasks:
-      - s6-mobile-sdk
-  - id: s6-web-ui
+  - id: stage-6-clients
     tasks:
       - s6-web-ui
+      - s6-mobile-sdk
+    checks:
+      - cd gateway/webui && bun run test:unit && bun run typecheck
+      - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+        ./gradlew :shared:mobile-sdk:compileDebugKotlin
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Web calendar REST client and view over /api/v1/calendar matching
+          golden fixtures
+        - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and
+          serving-tz representation
