@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 41
+  revision: 42
 artifacts:
   - id: intent
     type: intent
@@ -162,10 +162,11 @@ executionStages:
     review:
       tier: medium
       focus:
-        - REST authority from authenticated principal, ignoring caller-supplied
-          identity
-        - Calendar tool tiers (read=allow, write=ask, delete=confirm) and broker
-          role reachability
+        - REST authority from authenticated principal (configured household),
+          serving-tz rendering, request-scoped close, and golden-fixture wire
+          convergence
+        - Pre-PDP household-write rejection (no permission.request, zero confirm
+          calls, zero store calls) and tool tier/role reachability
   - id: stage-7-mobile-data
     tasks:
       - s7-mobile-data
