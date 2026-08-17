@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-resource-classes
 title: Add calendar resource classes and capability roots
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -19,3 +19,9 @@ verification:
     - cd gateway && bun test src/access
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s1-resource-classes
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-resource-classes
+  baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
+  lastRunId: 8be8ec7d-b9f6-4ff0-b1ab-0ba78d46df6e
