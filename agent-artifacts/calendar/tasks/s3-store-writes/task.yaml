@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: s3-store-writes
+title: CalendarStore create/update/delete with household adult-gate and UTC storage
+status: draft
+dependsOn:
+  - s1-store-schema-factory
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s3-store-writes
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/calendar-store
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.

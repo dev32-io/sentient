@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 32
+  revision: 33
 artifacts:
   - id: intent
     type: intent
@@ -66,6 +66,8 @@ tasks:
     path: tasks/s8-android/task.yaml
   - id: s8-ios
     path: tasks/s8-ios/task.yaml
+  - id: s3-store-writes
+    path: tasks/s3-store-writes/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -198,3 +200,6 @@ executionStages:
         - Web calendar REST client and view over /api/v1/calendar
         - Mobile SDK CalendarHttpClient wire shape and model fidelity to the
           gateway domain
+  - id: s3-store-writes
+    tasks:
+      - s3-store-writes
