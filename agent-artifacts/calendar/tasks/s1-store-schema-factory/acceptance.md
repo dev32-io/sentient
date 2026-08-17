@@ -2,7 +2,7 @@
 
 ## Deliverables
 
-- Deliver a capability-gated, WAL-backed bun:sqlite CalendarStore factory with frozen baseline DDL and a forward-only user_version migration ladder (including the forward-compatible notification column), a close() lifecycle, and an explicit ahead-of-binary policy, with empty query methods returning typed not-implemented results.
+- Deliver a capability-gated, WAL-backed bun:sqlite CalendarStore factory with frozen baseline DDL (UTC-instant + event-tz-id + all-day-date columns) and a forward-only user_version migration ladder (including the forward-compatible notification column), a close() lifecycle, and an explicit ahead-of-binary policy, with empty query methods returning typed not-implemented results.
 
 ## Acceptance
 

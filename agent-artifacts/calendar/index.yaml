@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 105
+  revision: 106
 artifacts:
   - id: intent
     type: intent
