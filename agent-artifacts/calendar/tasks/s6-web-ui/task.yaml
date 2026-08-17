@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: s6-web-ui
+title: Web calendar route, REST client, and view
+status: draft
+dependsOn:
+  - s4-rest-api
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s6-web-ui
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway/webui && bun run test:unit
+    - cd gateway/webui && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
