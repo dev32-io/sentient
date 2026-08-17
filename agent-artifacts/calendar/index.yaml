@@ -2,7 +2,7 @@ schemaVersion: 1
 id: calendar
 kind: story
 title: Gateway-owned family calendar
-phase: planning
+phase: execution
 state: active
 planning:
   revision: 108
@@ -66,6 +66,7 @@ integrationUnits: []
 delivery:
   workingBranch: feature/calendar
   createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
+  executionStartCommit: 8d440fc99e7601b6d5b9769d3a5462b8edfd16ee
 evaluations: []
 executionStages:
   - id: stage-1-foundation
