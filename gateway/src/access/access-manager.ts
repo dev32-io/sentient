@@ -55,12 +55,14 @@ export function createAccessManager(config: AccessManagerConfig): AccessManager 
   // Sibling of userDataRoot when the operator has not set `access.shared_data_root`.
   const sharedDataRoot = config.sharedDataRoot ?? path.join(path.dirname(config.userDataRoot), "shared");
 
-  // Where a given resource class confines its grant. All classes except
-  // household memory root at the principal's own home dir; household memory
-  // roots at the shared, householdId-keyed dir so members of one household
-  // share a scope no other household can reach.
+  // Where a given resource class confines its grant. Private resources root at
+  // the principal's own home dir; household resources root at the shared,
+  // householdId-keyed dir so members of one household share a scope no other
+  // household can reach.
   const rootPathFor = (principal: UserPrincipal, resource: ResourceClass): string =>
-    resource === "memory-household" ? path.join(sharedDataRoot, principal.householdId) : userHomeDir(principal);
+    resource === "memory-household" || resource === "calendar-household"
+      ? path.join(sharedDataRoot, principal.householdId)
+      : userHomeDir(principal);
 
   return {
     userHomeDir,

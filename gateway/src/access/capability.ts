@@ -15,6 +15,8 @@ export type ResourceClass =
   | "tool-broker"
   | "memory-private"
   | "memory-household"
+  | "calendar-private"
+  | "calendar-household"
   | "web-artifact";
 
 export interface Capability {
