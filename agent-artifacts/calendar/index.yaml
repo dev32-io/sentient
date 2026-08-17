@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 71
+  revision: 72
 artifacts:
   - id: intent
     type: intent
@@ -34,8 +34,6 @@ tasks:
     path: tasks/s1-domain-contracts/task.yaml
   - id: s1-store-schema-factory
     path: tasks/s1-store-schema-factory/task.yaml
-  - id: s8-android
-    path: tasks/s8-android/task.yaml
   - id: s3-store-writes
     path: tasks/s3-store-writes/task.yaml
   - id: s1-e2e-scaffolding
@@ -81,24 +79,6 @@ executionStages:
           serving-timezone DST correctness
         - HA calendar tool removal across provider output, catalog, and role
           defaults (no profile migrator)
-  - id: stage-8-mobile-platform
-    tasks:
-      - s8-android
-    checks:
-      - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :android:app:compileDebugKotlin
-      - ./gradlew :shared:mobile-data:assembleXCFramework && xcodebuild -project
-        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-        Simulator,name=iPhone 16' build && xcodebuild -project
-        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-        Simulator,name=iPhone 16' test
-    mode: concurrent
-    review:
-      tier: medium
-      focus:
-        - Route-scoped ViewModels consume shared use cases (not raw
-          repositories) with state folding
-        - Accessibility identifiers consistent with mobile E2E contracts
   - id: stage-3-store-crud
     tasks:
       - s3-store-writes
