@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 51
+  revision: 52
 artifacts:
   - id: intent
     type: intent
@@ -189,9 +189,20 @@ executionStages:
           golden fixtures
         - Mobile SDK CalendarHttpClient wire shape, golden-fixture fidelity, and
           serving-tz representation
-  - id: s3-store-writes
+  - id: stage-3-store-crud
     tasks:
       - s3-store-writes
-  - id: s3-store-reads
-    tasks:
       - s3-store-reads
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/calendar/calendar-store
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Household write adult-gate (adult|admin; no bypass) fail-fast with no
+          prompt at the store (defense-in-depth)
+        - Role-based visibility filtering at the query layer (child/guest omit
+          adults)
+        - UTC storage and serving-timezone recurrence expansion through the
+          store path with EXDATE/exception application

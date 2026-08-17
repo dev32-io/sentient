@@ -11,7 +11,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s3-store-writes
+  stageId: stage-3-store-crud
   intermediateState: complete
 verification:
   timing: task
