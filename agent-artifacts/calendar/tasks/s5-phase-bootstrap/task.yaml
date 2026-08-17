@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: s5-phase-bootstrap
+title: Mint calendar capabilities, wire the tool group, and own calendar config
+status: draft
+dependsOn:
+  - s4-tool-provider
+  - s1-store-schema-factory
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s5-phase-bootstrap
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/bootstrap/phase-services
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.

@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 84
+  revision: 85
 artifacts:
   - id: intent
     type: intent
@@ -48,6 +48,8 @@ tasks:
     path: tasks/s4-rest-api/task.yaml
   - id: s4-tool-provider
     path: tasks/s4-tool-provider/task.yaml
+  - id: s5-phase-bootstrap
+    path: tasks/s5-phase-bootstrap/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -126,3 +128,6 @@ executionStages:
           convergence
         - Pre-PDP household-write rejection (no permission.request, zero confirm
           calls, zero store calls) and tool tier/role reachability
+  - id: s5-phase-bootstrap
+    tasks:
+      - s5-phase-bootstrap
