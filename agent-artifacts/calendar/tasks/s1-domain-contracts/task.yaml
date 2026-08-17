@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-domain-contracts
 title: Define calendar domain types, RRULE subset, wire schema, and store contracts
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -19,3 +19,9 @@ verification:
     - cd gateway && bun test src/calendar/types
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s1-domain-contracts
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-domain-contracts
+  baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
+  lastRunId: d042acd3-8a0e-46db-9500-12a172413f74
