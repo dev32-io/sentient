@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 3
+  revision: 4
 artifacts:
   - id: intent
     type: intent
@@ -21,6 +21,11 @@ artifacts:
     type: design
     path: design/calendar-design.md
     status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-e2e
+    type: e2e-matrix
+    path: e2e-matrix/calendar-e2e.md
+    status: approved
     narrativeSchemaVersion: 2
 tasks: []
 integrationUnits: []
