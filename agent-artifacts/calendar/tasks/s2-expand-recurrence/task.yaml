@@ -1,0 +1,21 @@
+schemaVersion: 1
+id: s2-expand-recurrence
+title: expandRecurrence pure module (bounded subset, EXDATE, exceptions, all-day, DST)
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s2-expand-recurrence
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/expand-recurrence
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
