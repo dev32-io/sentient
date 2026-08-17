@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 74
+  revision: 75
 artifacts:
   - id: intent
     type: intent
@@ -34,6 +34,8 @@ tasks:
     path: tasks/s1-domain-contracts/task.yaml
   - id: s1-e2e-scaffolding
     path: tasks/s1-e2e-scaffolding/task.yaml
+  - id: s1-store-schema-factory
+    path: tasks/s1-store-schema-factory/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -57,3 +59,6 @@ executionStages:
         - Wire schema, isAdult predicate, UTC timestamp representation, and
           golden fixtures
         - E2E scaffolding failure-safe cleanup and disposable-user isolation
+  - id: s1-store-schema-factory
+    tasks:
+      - s1-store-schema-factory
