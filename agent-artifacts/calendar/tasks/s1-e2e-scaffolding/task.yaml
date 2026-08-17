@@ -1,0 +1,21 @@
+schemaVersion: 1
+id: s1-e2e-scaffolding
+title: "Calendar E2E scaffolding: disposable users, calendar cleanup, evidence
+  capture"
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s1-e2e-scaffolding
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/e2e-helpers
+  rationale: Verify the contribution at its declared task boundary.
