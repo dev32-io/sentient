@@ -1,6 +1,7 @@
 schemaVersion: 1
 id: s5-nudge
-title: Calendar session-start nudge composer with prompt-cache stability proof
+title: Calendar session-start nudge composer (household-tz today) with
+  prompt-cache stability proof
 status: draft
 dependsOn:
   - s5-phase-bootstrap
