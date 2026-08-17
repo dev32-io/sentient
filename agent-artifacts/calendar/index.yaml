@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 83
+  revision: 84
 artifacts:
   - id: intent
     type: intent
@@ -108,9 +108,21 @@ executionStages:
           adults)
         - UTC storage and serving-timezone recurrence expansion through the
           store path with EXDATE/exception application
-  - id: s4-rest-api
+  - id: stage-4-rest-and-provider
     tasks:
       - s4-rest-api
-  - id: s4-tool-provider
-    tasks:
       - s4-tool-provider
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/api/handlers/calendar
+        src/bootstrap/product-tools src/bootstrap/product-tool-metadata
+        src/tools/tool-broker
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - REST authority from authenticated principal (configured household),
+          serving-tz rendering, request-scoped close, and golden-fixture wire
+          convergence
+        - Pre-PDP household-write rejection (no permission.request, zero confirm
+          calls, zero store calls) and tool tier/role reachability
