@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: stage-stage-2-recurrence-deprecation-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-2-recurrence-deprecation
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/calendar/calendar-store
+    src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+    src/api/handlers/mcp-catalog
+criteria:
+  - CalendarStore capability gate, path isolation, close() lifecycle, and
+    ahead-of-binary policy
+  - expandRecurrence bounded subset, EXDATE/exception, all-day, and
+    serving-timezone DST correctness
+  - HA calendar tool removal across provider output, catalog, and role defaults
+    (no profile migrator)
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
