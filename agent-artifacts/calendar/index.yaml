@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 40
+  revision: 41
 artifacts:
   - id: intent
     type: intent
@@ -123,10 +123,12 @@ executionStages:
     review:
       tier: medium
       focus:
-        - Capability minting and store open per session with prompt-cache
-          stability preserved
-        - Nudge cap, deterministic drop order, empty-calendar omission, and
-          child visibility
+        - orchestratorCfg.calendar config schema, config.yaml defaults, and
+          old-config compatibility
+        - Capability minting, store open and close on session disposal, and
+          prompt-cache stability preserved across an in-session write
+        - Nudge cap, deterministic drop order, empty-calendar omission,
+          serving-tz rendering, and child/guest visibility
   - id: stage-2-recurrence-deprecation
     tasks:
       - s1-store-schema-factory
