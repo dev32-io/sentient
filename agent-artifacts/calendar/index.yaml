@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 42
+  revision: 43
 artifacts:
   - id: intent
     type: intent
@@ -201,15 +201,16 @@ executionStages:
       - s6-mobile-sdk
     checks:
       - cd gateway/webui && bun run test:unit && bun run typecheck
-      - cd shared/mobile-sdk && ./gradlew testDebugUnitTest --tests '*Calendar*'
-        && ./gradlew compileDebugKotlin
+      - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+        ./gradlew :shared:mobile-sdk:compileDebugKotlin
     mode: concurrent
     review:
       tier: medium
       focus:
-        - Web calendar REST client and view over /api/v1/calendar
-        - Mobile SDK CalendarHttpClient wire shape and model fidelity to the
-          gateway domain
+        - Web calendar REST client and view over /api/v1/calendar matching
+          golden fixtures
+        - Mobile SDK CalendarHttpClient wire shape, golden-fixture fidelity, and
+          serving-tz representation
   - id: s3-store-writes
     tasks:
       - s3-store-writes
