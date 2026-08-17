@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 69
+  revision: 70
 artifacts:
   - id: intent
     type: intent
@@ -34,8 +34,6 @@ tasks:
     path: tasks/s1-domain-contracts/task.yaml
   - id: s1-store-schema-factory
     path: tasks/s1-store-schema-factory/task.yaml
-  - id: s7-mobile-data
-    path: tasks/s7-mobile-data/task.yaml
   - id: s8-android
     path: tasks/s8-android/task.yaml
   - id: s8-ios
@@ -85,20 +83,6 @@ executionStages:
           serving-timezone DST correctness
         - HA calendar tool removal across provider output, catalog, and role
           defaults (no profile migrator)
-  - id: stage-7-mobile-data
-    tasks:
-      - s7-mobile-data
-    checks:
-      - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :shared:mobile-data:compileDebugKotlin
-    mode: sequential
-    review:
-      tier: medium
-      focus:
-        - Stateless repository passthrough and explicit exported use-case
-          interfaces for platform ViewModels
-        - DI wiring exposes calendar to platform screens without
-          restart-mutation assumptions
   - id: stage-8-mobile-platform
     tasks:
       - s8-android
