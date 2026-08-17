@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: stage-stage-8-mobile-platform-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-8-mobile-platform
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' && ./gradlew
+    :android:app:compileDebugKotlin
+  - ./gradlew :shared:mobile-data:assembleXCFramework && xcodebuild -project
+    ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+    Simulator,name=iPhone 16' build && xcodebuild -project
+    ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+    Simulator,name=iPhone 16' test
+criteria:
+  - Route-scoped ViewModels consume shared use cases (not raw repositories) with
+    state folding
+  - Accessibility identifiers consistent with mobile E2E contracts
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
