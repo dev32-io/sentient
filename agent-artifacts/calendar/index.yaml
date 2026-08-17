@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 25
+  revision: 26
 artifacts:
   - id: intent
     type: intent
@@ -78,21 +78,6 @@ executionStages:
   - id: s2-expand-recurrence
     tasks:
       - s2-expand-recurrence
-  - id: s3-store-create
-    tasks:
-      - s3-store-create
-  - id: s3-store-update
-    tasks:
-      - s3-store-update
-  - id: s3-store-read-visibility
-    tasks:
-      - s3-store-read-visibility
-  - id: s3-store-delete
-    tasks:
-      - s3-store-delete
-  - id: s3-store-list-filter
-    tasks:
-      - s3-store-list-filter
   - id: s4-rest-api
     tasks:
       - s4-rest-api
@@ -136,3 +121,22 @@ executionStages:
         - Resource-class isolation and household path derivation
         - CalendarStore capability gate, path isolation, and forward-only
           migration ladder
+  - id: stage-3-store-crud
+    tasks:
+      - s3-store-create
+      - s3-store-update
+      - s3-store-delete
+      - s3-store-read-visibility
+      - s3-store-list-filter
+    checks:
+      - cd gateway && bun run typecheck
+      - cd gateway && bun test src/calendar/calendar-store
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Household write adult-gate fail-fast with no prompt
+        - Role-based visibility filtering at the query layer (children omit
+          adults)
+        - Recurrence expansion through the store path with EXDATE/exception
+          application
