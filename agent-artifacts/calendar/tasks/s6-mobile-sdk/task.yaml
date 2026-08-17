@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: s6-mobile-sdk
+title: Mobile SDK CalendarHttpClient and models
+status: draft
+dependsOn:
+  - s4-rest-api
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: s6-mobile-sdk
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*'
+    - ./gradlew :shared:mobile-sdk:compileDebugKotlin
+  rationale: Verify the contribution at its declared task boundary.
