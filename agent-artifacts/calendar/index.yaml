@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 21
+  revision: 22
 artifacts:
   - id: intent
     type: intent
@@ -60,6 +60,8 @@ tasks:
     path: tasks/s7-mobile-data/task.yaml
   - id: s6-mobile-sdk
     path: tasks/s6-mobile-sdk/task.yaml
+  - id: s6-web-ui
+    path: tasks/s6-web-ui/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -114,3 +116,6 @@ executionStages:
   - id: s6-mobile-sdk
     tasks:
       - s6-mobile-sdk
+  - id: s6-web-ui
+    tasks:
+      - s6-web-ui
