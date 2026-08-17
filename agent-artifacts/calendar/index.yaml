@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 70
+  revision: 71
 artifacts:
   - id: intent
     type: intent
@@ -36,8 +36,6 @@ tasks:
     path: tasks/s1-store-schema-factory/task.yaml
   - id: s8-android
     path: tasks/s8-android/task.yaml
-  - id: s8-ios
-    path: tasks/s8-ios/task.yaml
   - id: s3-store-writes
     path: tasks/s3-store-writes/task.yaml
   - id: s1-e2e-scaffolding
@@ -86,7 +84,6 @@ executionStages:
   - id: stage-8-mobile-platform
     tasks:
       - s8-android
-      - s8-ios
     checks:
       - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' &&
         ./gradlew :android:app:compileDebugKotlin
