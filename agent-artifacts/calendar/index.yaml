@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 30
+  revision: 31
 artifacts:
   - id: intent
     type: intent
@@ -78,12 +78,6 @@ executionStages:
   - id: s6-web-ui
     tasks:
       - s6-web-ui
-  - id: s8-android
-    tasks:
-      - s8-android
-  - id: s8-ios
-    tasks:
-      - s8-ios
   - id: stage-1-foundation
     tasks:
       - s1-resource-classes
@@ -180,3 +174,18 @@ executionStages:
         - Stateless repository passthrough and state folding in use cases
         - DI wiring exposes calendar to platform screens without
           restart-mutation assumptions
+  - id: stage-8-mobile-platform
+    tasks:
+      - s8-android
+      - s8-ios
+    checks:
+      - cd android && ./gradlew :app:testDebugUnitTest --tests '*Calendar*' &&
+        ./gradlew :app:compileDebugKotlin
+      - cd ios && xcodebuild -scheme App -destination 'platform=iOS
+        Simulator,name=iPhone 16' build 2>&1 | tail -5
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Route-scoped ViewModels with state folding and stateless repositories
+        - Accessibility identifiers consistent with mobile E2E contracts

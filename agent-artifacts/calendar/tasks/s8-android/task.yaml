@@ -10,7 +10,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: s8-android
+  stageId: stage-8-mobile-platform
   intermediateState: complete
 verification:
   timing: task
