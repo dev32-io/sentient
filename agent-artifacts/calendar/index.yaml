@@ -78,6 +78,8 @@ evaluations:
     path: evaluations/stage-stage-4-rest-and-provider-review/evaluation.yaml
   - id: stage-stage-5-bootstrap-nudge-review
     path: evaluations/stage-stage-5-bootstrap-nudge-review/evaluation.yaml
+  - id: stage-stage-6-clients-review
+    path: evaluations/stage-stage-6-clients-review/evaluation.yaml
 executionStages:
   - id: stage-1-foundation
     tasks:

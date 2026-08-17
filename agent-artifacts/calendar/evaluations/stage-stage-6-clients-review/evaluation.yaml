@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: stage-stage-6-clients-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-6-clients
+scope:
+  workItem: calendar
+status: planned
+required: true
+attempt: 0
+methods:
+  - cd gateway/webui && bun run test:unit && bun run typecheck
+  - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+    ./gradlew :shared:mobile-sdk:compileDebugKotlin
+criteria:
+  - Web calendar REST client and view over /api/v1/calendar matching golden
+    fixtures
+  - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
+    representation
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
