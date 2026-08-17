@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s1-e2e-scaffolding
 title: "Calendar E2E scaffolding: disposable users, calendar cleanup, evidence
   capture"
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -25,3 +25,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-e2e-scaffolding
   baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
   lastRunId: 06dc890c-cc0c-4517-bce7-74d77259105d
+  completedCommit: 4b313fecd496cc0c3b197a7b6f16fd60dd8b963d
