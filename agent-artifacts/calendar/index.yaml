@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: planning
 state: active
 planning:
-  revision: 72
+  revision: 73
 artifacts:
   - id: intent
     type: intent
@@ -34,8 +34,6 @@ tasks:
     path: tasks/s1-domain-contracts/task.yaml
   - id: s1-store-schema-factory
     path: tasks/s1-store-schema-factory/task.yaml
-  - id: s3-store-writes
-    path: tasks/s3-store-writes/task.yaml
   - id: s1-e2e-scaffolding
     path: tasks/s1-e2e-scaffolding/task.yaml
 integrationUnits: []
@@ -79,19 +77,3 @@ executionStages:
           serving-timezone DST correctness
         - HA calendar tool removal across provider output, catalog, and role
           defaults (no profile migrator)
-  - id: stage-3-store-crud
-    tasks:
-      - s3-store-writes
-    checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/calendar/calendar-store
-    mode: sequential
-    review:
-      tier: medium
-      focus:
-        - Household write adult-gate (adult|admin; no bypass) fail-fast with no
-          prompt at the store (defense-in-depth)
-        - Role-based visibility filtering at the query layer (child/guest omit
-          adults)
-        - UTC storage and serving-timezone recurrence expansion through the
-          store path with EXDATE/exception application
