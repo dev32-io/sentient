@@ -1,8 +1,10 @@
 schemaVersion: 1
 id: s2-expand-recurrence
-title: expandRecurrence pure module (bounded subset, EXDATE, exceptions, all-day, DST)
+title: expandRecurrence pure module (bounded subset, EXDATE, exceptions,
+  all-day, serving-timezone DST)
 status: draft
-dependsOn: []
+dependsOn:
+  - s1-domain-contracts
 execution:
   resourceClaims: []
   assignment:
