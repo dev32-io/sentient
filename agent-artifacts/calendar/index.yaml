@@ -3,7 +3,7 @@ id: calendar
 kind: story
 title: Gateway-owned family calendar
 phase: evaluation
-state: active
+state: paused
 planning:
   revision: 108
 artifacts:
