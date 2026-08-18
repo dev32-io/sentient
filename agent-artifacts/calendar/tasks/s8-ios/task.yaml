@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s8-ios
 title: iOS calendar SwiftUI screen, route, and ViewModel
-status: ready
+status: running
 dependsOn:
   - s7-mobile-data
 execution:
@@ -23,3 +23,9 @@ verification:
     - xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
       -destination 'platform=iOS Simulator,name=iPhone 16' test
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s8-ios
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s8-ios
+  baseCommit: d70ef21e45d1dffc606492ec07470cf6ed856cac
+  lastRunId: 31bc862e-dfde-4d61-a7cb-b126202e93c3
