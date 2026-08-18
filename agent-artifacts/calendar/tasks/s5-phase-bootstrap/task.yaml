@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s5-phase-bootstrap
 title: Mint calendar capabilities, wire the tool group, and own calendar config
-status: ready
+status: running
 dependsOn:
   - s4-tool-provider
   - s1-store-schema-factory
@@ -21,3 +21,9 @@ verification:
     - cd gateway && bun test src/bootstrap/phase-services
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: addf9bc06180eef45c5e452763a77b8bba4654fa
+  lastRunId: d7fcd5bb-b432-4a05-8b09-35c6985d886e
