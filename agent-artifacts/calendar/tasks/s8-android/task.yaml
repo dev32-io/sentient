@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s8-android
 title: Android calendar Compose screen, nav, and ViewModel
-status: contribution_complete
+status: merged
 dependsOn:
   - s7-mobile-data
 execution:
@@ -27,3 +27,4 @@ runtime:
   baseCommit: d70ef21e45d1dffc606492ec07470cf6ed856cac
   lastRunId: 40b6cc87-19ea-47a4-a32a-d7d42da07d9c
   completedCommit: 2841b2982c6b8444edb807acb1537e6ced94e31a
+  mergedCommit: 2c6a939aa363fdfebcd2e0e5a85f4402bd626629
