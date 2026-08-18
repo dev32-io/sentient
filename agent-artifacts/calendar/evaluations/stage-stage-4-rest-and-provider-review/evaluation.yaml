@@ -19,6 +19,8 @@ criteria:
   - Pre-PDP household-write rejection (no permission.request, zero confirm
     calls, zero store calls) and tool tier/role reachability
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
+  reviewedCommit: 1fbc3834aa487bdc64948aeaa3c3c96bae93dca1
