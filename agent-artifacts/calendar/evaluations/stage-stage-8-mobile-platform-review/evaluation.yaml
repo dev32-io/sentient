@@ -21,11 +21,29 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
   reviewedCommit: da8d3566a725bc366cf268be83380e55bb61b5c3
+  managerPrompt: |-
+    Address all seven stage-8 high/blocking findings. The s8-android and s8-ios contributions are incomplete/buggy in several places. Files: android/src/main/kotlin/io/sentient/android/settings/calendar/{CalendarScreen.kt,CalendarViewModel.kt}, android/src/test/.../calendar/CalendarViewModelTest.kt, the Android drawer (HistoryDrawer), ios/App/Settings/Calendar/{CalendarScreen.swift,CalendarViewModel.swift}, ios/App/Nav/{Route.swift,UserSessionHost.swift}, ios/App/Settings/{SettingsView.swift,SettingsIcon.swift}, and the shared mobile-data/calendar + mobile-sdk/calendar seams as needed.
+
+    CAL-MOBILE-001 (high) — All-day-only query fails when the calendar contains timed events. Both ViewModels query only an all-day window; the store rejects mixed time-kind calendars, so timed events make mobile listing fail. Fix: the ViewModels (and the list use-case path) must query BOTH a timed window AND an all-day window (two store.list calls, one per time kind) and merge the results — do NOT issue a single mixed-kind query. Alternatively, if the store supports a unified query, use it; but the evidence shows a single all-day window is used and timed events break it. Ensure listing works when the calendar contains timed events, all-day events, or both.
+
+    CAL-ANDROID-001 (high) — Android create sends schema-invalid timestamps (empty createdAt/updatedAt → schema rejection) and timed-event updates are rewritten to an invalid all-day start. Fix: (a) the Android create path must NOT send createdAt/updatedAt (they are server-assigned; strip them from the client create payload, or let the server set them — the wire schema rejects empty/missing required timestamps, so do not send empty values). (b) Update must preserve the event's start time-kind: a timed event's update must stay timed (instant + timeZoneId); do not convert a timed start to an all-day date (and not to an empty date). Verify create and update round-trip against the wire schema.
+
+    CAL-IOS-001 (high) — iOS CalendarScreen is read-only; required create/update/delete controls are absent. Fix: wire the iOS CalendarViewModel's create/update/delete methods to UI controls in CalendarScreen (e.g., an add/create affordance, edit/update on rows, delete/confirm on rows). The ViewModel CRUD methods must exist and be invoked; mirror the Android screen's CRUD surface. Do not leave the screen listing-only.
+
+    CAL-MOBILE-002 (high) — iOS displays raw UTC instants and Android renders no event date/time, violating device-timezone rendering. Fix: both platforms must render each event/occurrence start in the DEVICE timezone (via DateFormatter/Intl for iOS, java.time for Android) — for timed events show the local date+time in the device tz; for all-day events show the local date. Do not print the raw UTC instant (iOS) and do not omit the date/time entirely (Android). Use the platform's standard tz-aware formatting.
+
+    CAL-ANDROID-002 (high) — HistoryDrawer has no calendar affordance/identifier; only the settings-root row was added despite the drawer requirement. Fix: add a calendar entry (icon + label) to the Android navigation drawer (HistoryDrawer or equivalent) with a stable accessibility identifier consistent with the mobile E2E contract, navigating to the calendar route. The design requires a calendar icon next to settings in the drawer, not just a settings-root row.
+
+    CAL-MOBILE-003 (high) — iOS adds no calendar tests; Android tests cover only two list-fold helpers, not screen wiring or CRUD transitions. Fix: add an iOS calendar test file (CalendarViewModel/CalendarScreen tests covering list + CRUD state transitions and device-tz rendering), and extend Android tests to cover screen wiring (drawer→calendar navigation, CRUD transitions, the mixed time-kind listing from CAL-MOBILE-001, and the create/update fixes from CAL-ANDROID-001). Both platforms must have meaningful calendar test coverage beyond pure list folds.
+
+    CAL-MOBILE-004 (high) — Occurrence IDs are decoded as CalendarEvent.id while baseEventId is dropped, so Android CRUD addresses the wrong persisted ID for recurring rows. Fix: the list/occurrence wire shape must preserve baseEventId on each occurrence row (this was added at the REST boundary in stage-6; ensure the mobile SDK CalendarEventPage/CalendarEvent model and the Android/iOS decode preserve occurrenceId AND baseEventId). CRUD (update/delete) on a recurring-event occurrence row must target the persisted recurring-event id (baseEventId), not the occurrenceId. Do not decode occurrenceId as the event id.
+
+    Constraints: keep `./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew :android:compileDebugKotlin`, `./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' && ./gradlew :shared:mobile-data:compileDebugKotlin`, and the iOS check (`./gradlew :shared:mobile-data:assembleMobileDataXCFramework && xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.3.1' build && xcodebuild ... test`) green. JAVA_HOME is set; the iOS 18.3.1 runtime is the compatible target. Do not weaken existing tests or regress prior stages. Reuse the shared use cases (do not call raw repositories from ViewModels — keep the route-scoped ViewModel→use-case seam).
 findings:
   - id: CAL-MOBILE-001
     severity: high
