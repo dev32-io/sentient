@@ -4,15 +4,122 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 17bc090b-ccf9-4078-87e2-1031d1b94ee7
   reviewedCommit: 1aed83a5633a2ac8472202841e21537ff0353ae9
+findings:
+  - id: CAL-FINAL-001
+    severity: high
+    status: open
+    criterion: s1 CalendarConfig recurrence limits; s2 hard query-window bounds and
+      no partial expansion
+    location: gateway/src/calendar/expand-recurrence.ts:102-140;
+      gateway/src/calendar/calendar-store.ts:53-66
+    summary: Recurrence limits are ignored; large bounded rules can run excessively
+      and the cursor ceiling returns partial success.
+    blocking: true
+  - id: CAL-FINAL-002
+    severity: high
+    status: open
+    criterion: calendar_search filtering
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:376-380
+    summary: Default search misses timed events and importance is not forwarded.
+    blocking: true
+  - id: CAL-FINAL-003
+    severity: high
+    status: open
+    criterion: domain/wire validation
+    location: gateway/src/calendar/types.ts:149-168,302-334;
+      gateway/src/api/handlers/calendar.ts:289-301
+    summary: Impossible all-day dates and impossible raw UNTIL components are accepted.
+    blocking: true
+  - id: CAL-FINAL-004
+    severity: high
+    status: open
+    criterion: create request wire schema
+    location: gateway/src/calendar/types.ts:238-264
+    summary: Valid create envelopes without server timestamps are rejected.
+    blocking: true
+  - id: CAL-FINAL-005
+    severity: high
+    status: open
+    criterion: REST/web error wire compatibility
+    location: gateway/src/api/handlers/calendar.ts:315-331;
+      gateway/webui/src/services/_helpers.ts:29-40
+    summary: Calendar error envelopes become unknown-error in the web client and
+      handler error mapping is inconsistent.
+    blocking: true
+  - id: CAL-FINAL-006
+    severity: high
+    status: open
+    criterion: REST scope isolation
+    location: gateway/src/api/handlers/calendar.ts:166-189
+    summary: PATCH can mutate the opposite scope when the requested scope misses.
+    blocking: true
+  - id: CAL-FINAL-007
+    severity: high
+    status: open
+    criterion: tool abort propagation
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:389-399
+    summary: Aborted update/delete calls still reach the store.
+    blocking: true
+  - id: CAL-FINAL-008
+    severity: high
+    status: open
+    criterion: AC-007 nudge cap
+    location: gateway/src/bootstrap/phase-services.ts:349-355
+    summary: Two independently capped scope nudges can exceed the session cap.
+    blocking: true
+  - id: CAL-FINAL-009
+    severity: high
+    status: open
+    criterion: web device-time and event-timezone behavior
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:27-34,92-95
+    summary: Timed edit values are interpreted in the wrong zone and new timed
+      events use non-IANA `browser`.
+    blocking: true
+  - id: CAL-FINAL-010
+    severity: high
+    status: open
+    criterion: iOS CRUD over occurrence/base identities
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:187-196
+    summary: Successful update appends a base row instead of replacing the
+      occurrence row.
+    blocking: true
+  - id: CAL-FINAL-011
+    severity: low
+    status: open
+    criterion: iOS device-local all-day windows
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:87-105,217-220
+    summary: All-day query dates are formatted in GMT rather than device-local time.
+    blocking: false
+  - id: CAL-FINAL-012
+    severity: low
+    status: open
+    criterion: notification policy persistence
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:389-392;
+      gateway/src/calendar/calendar-store.ts:109-110
+    summary: Tool notificationPolicy updates are ignored by the store patch path.
+    blocking: false
+  - id: CAL-FINAL-013
+    severity: high
+    status: open
+    criterion: shared golden fixture consumption
+    location: gateway/src/calendar/fixtures/calendar-wire.json and cross-client
+      calendar tests
+    summary: The golden fixture is not consumed outside gateway; clients/tests
+      duplicate values.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/final-branch-review/manifest.yaml

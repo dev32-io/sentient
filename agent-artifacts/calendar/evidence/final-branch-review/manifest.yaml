@@ -1,0 +1,48 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-18T23:51:46.761Z
+entries:
+  - result: gateway 2445 passed, 4 skipped, 0 failed
+    command: bun run test:unit
+  - result: all workspace typechecks passed
+    command: bun run typecheck
+  - result: 118 passed, 0 failed
+    command: cd gateway && bun test src/calendar
+      src/bootstrap/product-tools/calendar-provider.test.ts
+      src/api/handlers/calendar.test.ts src/access src/tools/home
+      src/tools/role-defaults.test.ts src/api/handlers/mcp-catalog.test.ts
+  - result: 143 tests passed; typecheck passed
+    command: cd gateway/webui && bun run test:unit && bun run typecheck
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*'
+      :shared:mobile-sdk:compileDebugKotlin
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+      :shared:mobile-data:compileDebugKotlin
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :android:testDebugUnitTest --tests '*Calendar*'
+      :android:compileDebugKotlin
+  - result: sanitized contract probes reproduce invalid create envelope, invalid
+      date acceptance, search omissions, ignored recurrence cap, and aborted
+      update store call
+    command: cat /tmp/calendar-review-probes.json
+    path: files/8-calendar-review-probes.json
+    checksum: sha256:8d721e8f5d59cc0c10153c38541515b51d376a1b1f65cfca75db2b3cbbea1daa
+  - result: sanitized scope probe shows private PATCH updating household store
+    command: cat /tmp/calendar-rest-scope-probe.json
+    path: files/9-calendar-rest-scope-probe.json
+    checksum: sha256:8aaafb756a6755d9a0a33db67093fae84752f2b11f6af42b89210d3f2c13868f
+  - result: sanitized prompt probe shows 12 combined lines against a six-line
+      per-scope cap
+    command: cat /tmp/calendar-nudge-combined-probe.json
+    path: files/10-calendar-nudge-combined-probe.json
+    checksum: sha256:c427343461b3d45b48c4fab17d1c59cd54d9ea14e78c5596fea25436c99b31c1
+  - result: sanitized web client probe maps a calendar error envelope to unknown-error
+    command: cat /tmp/calendar-wire-error-probe.json
+    path: files/11-calendar-wire-error-probe.json
+    checksum: sha256:ddebf9d0136b42f4021c981d63130597dc6e2a0dbb6f9a2ec6deaf68c60037b9
+  - result: sanitized timezone probe shows local Auckland midnight formatted as the
+      prior GMT date
+    command: cat /tmp/calendar-review-iso.json
+    path: files/12-calendar-review-iso.json
+    checksum: sha256:f82db3c5f1e2e524203888cf9c22fe50c36c389f71b4fee2b2fb2bad5974828b
