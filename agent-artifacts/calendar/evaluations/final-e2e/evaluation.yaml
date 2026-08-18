@@ -14,7 +14,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 053547a1-6333-4d57-84d4-25c46911452a
-  reviewedCommit: ee13c5419433d1997c7231eff5a88164cb685e0c
+  reviewedCommit: 7f8be724f49e239a4c58c10f52213613a2853edd
   managerPrompt: >-
     Address the four real final-E2E defects. CAL-E2E-005 is a matrix-wording
     issue (the covering query correctly yields 10; the web week view correctly
