@@ -8,7 +8,7 @@ import type {
   CalendarStore,
   CalendarTime,
 } from "../../calendar/types.js";
-import { parseRRule, wireCalendarTimeSchema } from "../../calendar/types.js";
+import { parseRRule, wireCalendarTimeSchema, wireRRuleSchema } from "../../calendar/types.js";
 import { isAdult } from "../../calendar/types.js";
 import type { NativeToolRunner } from "../../tools/tool-broker.js";
 import type { ToolResult } from "../../tools/tool-types.js";
@@ -53,15 +53,35 @@ export interface CalendarProductToolConfig extends Readonly<Record<string, unkno
 
 const time = wireCalendarTimeSchema;
 const scope = z.enum(["private", "household"]);
+const recurrenceSchema = z
+  .object({ rrule: z.string().min(1), rule: wireRRuleSchema })
+  .strict()
+  .superRefine((recurrence, ctx) => {
+    const parsed = parseRRule(recurrence.rrule);
+    if (!parsed.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid recurrence rule" });
+      return;
+    }
+    const rule = parsed.value;
+    if (
+      recurrence.rule.freq !== rule.freq ||
+      recurrence.rule.interval !== rule.interval ||
+      recurrence.rule.count !== rule.count ||
+      (recurrence.rule.until === undefined) !== (rule.until === undefined) ||
+      (recurrence.rule.until !== undefined &&
+        rule.until !== undefined &&
+        new Date(recurrence.rule.until).getTime() !== new Date(rule.until).getTime()) ||
+      JSON.stringify(recurrence.rule.byDay) !== JSON.stringify(rule.byDay)
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "raw and parsed recurrence rules disagree" });
+    }
+  });
 const eventFields = {
   title: z.string().min(1),
   description: z.string().optional(),
   start: time,
   end: time.optional(),
-  recurrence: z
-    .object({ rrule: z.string().min(1), rule: z.unknown().optional() })
-    .strict()
-    .optional(),
+  recurrence: recurrenceSchema.optional(),
   visibility: z.enum(["everyone", "adults"]).default("everyone"),
   importance: z.enum(["normal", "important", "pinned"]).default("normal"),
   group: z.string().optional(),
@@ -113,8 +133,24 @@ function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | Tool
   return p.success ? p.data : failure("invalid-arguments", p.error.issues[0]?.message ?? "invalid arguments");
 }
 function wire(event: CalendarEvent, scope: CalendarScope): Record<string, unknown> {
-  const { notification, ...rest } = event;
-  return { ...rest, scope, tags: [...event.tags], ...(notification ? { notificationPolicy: notification } : {}) };
+  return {
+    id: event.id,
+    scope,
+    title: event.title,
+    ...(event.description !== undefined ? { description: event.description } : {}),
+    start: event.start,
+    ...(event.end !== undefined ? { end: event.end } : {}),
+    ...(event.recurrence !== undefined ? { recurrence: event.recurrence } : {}),
+    ...(event.exdates !== undefined ? { exdates: event.exdates } : {}),
+    ...(event.exceptions !== undefined ? { exceptions: event.exceptions } : {}),
+    visibility: event.visibility,
+    importance: event.importance,
+    ...(event.group !== undefined ? { group: event.group } : {}),
+    tags: [...event.tags],
+    ...(event.notification !== undefined ? { notificationPolicy: event.notification } : {}),
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
+  };
 }
 function storeFailure(error: string): ToolResult {
   return failure(error, `Calendar operation failed: ${error}.`);
@@ -244,6 +280,9 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           const r = store.list({
             from: calendarTime(p.from ?? { kind: "all-day", date: "0001-01-01" }),
             to: calendarTime(p.to ?? { kind: "all-day", date: "9999-12-31" }),
+            ...(p.group !== undefined ? { group: p.group } : {}),
+            ...(p.tags !== undefined ? { tags: p.tags } : {}),
+            ...(p.importance !== undefined ? { importance: p.importance } : {}),
           });
           if (!r.ok) return storeFailure(r.error);
           const q = p.query.toLowerCase();

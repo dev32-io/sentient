@@ -69,8 +69,9 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
   const open = deps.openStore ?? ((cap, cfg) => openCalendarStore(cap, cfg));
   const cfg = deps.calendarConfig ?? config;
   const privateStore = open(deps.accessManager.grant(principal, "calendar-private"), cfg);
-  const householdStore = open(deps.accessManager.grant(principal, "calendar-household"), cfg);
+  let householdStore: CalendarStore | undefined;
   try {
+    householdStore = open(deps.accessManager.grant(principal, "calendar-household"), cfg);
     if (request.method === "GET" && id === undefined) return listEvents(privateStore, householdStore, url, requestId);
     if (request.method === "GET" && id !== undefined)
       return getEvent(privateStore, householdStore, id as CalendarEventId, requestId);
@@ -83,7 +84,7 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
     return error(405, "method-not-allowed", "Method is not supported for this route");
   } finally {
     privateStore.close();
-    householdStore.close();
+    householdStore?.close();
   }
 }
 
@@ -94,11 +95,16 @@ function listEvents(privateStore: CalendarStore, householdStore: CalendarStore, 
   if (!from || !to || from.kind !== to.kind)
     return error(422, "invalid", "from and to are required and must have the same time kind");
   const group = url.searchParams.get("group");
+  const tags = (url.searchParams.get("tags") ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
   const importance = url.searchParams.get("importance");
   const window: CalendarListWindow = {
     from,
     to,
     ...(group ? { group } : {}),
+    ...(tags.length ? { tags } : {}),
     ...(importance && ["normal", "important", "pinned"].includes(importance)
       ? { importance: importance as Importance }
       : {}),
@@ -214,8 +220,24 @@ function parseEvent(value: unknown): { event: CalendarEvent; scope: Scope } | nu
 }
 
 function toWire(event: CalendarEvent, scope: Scope): WireCalendarEvent {
-  const { tags, notification, ...rest } = event;
-  return { ...rest, scope, tags: [...tags], ...(notification ? { notificationPolicy: notification } : {}) };
+  return {
+    id: event.id,
+    scope,
+    title: event.title,
+    ...(event.description !== undefined ? { description: event.description } : {}),
+    start: event.start,
+    ...(event.end !== undefined ? { end: event.end } : {}),
+    ...(event.recurrence !== undefined ? { recurrence: event.recurrence } : {}),
+    ...(event.exdates !== undefined ? { exdates: event.exdates } : {}),
+    ...(event.exceptions !== undefined ? { exceptions: event.exceptions } : {}),
+    visibility: event.visibility,
+    importance: event.importance,
+    ...(event.group !== undefined ? { group: event.group } : {}),
+    tags: [...event.tags],
+    ...(event.notification !== undefined ? { notificationPolicy: event.notification } : {}),
+    createdAt: event.createdAt,
+    updatedAt: event.updatedAt,
+  };
 }
 function wireResponse(event: WireCalendarEvent, requestId: string): Response {
   return Response.json({ version: 1, requestId, body: event });
