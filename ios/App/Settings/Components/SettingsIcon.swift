@@ -17,6 +17,7 @@ import Foundation
 
 enum SettingsIcon {
     case memory
+    case calendar
     case personalities
     case voice
     case audio
@@ -33,6 +34,7 @@ enum SettingsIcon {
     var symbolName: String {
         switch self {
         case .memory: return "brain"
+        case .calendar: return "calendar"
         case .personalities: return "theatermasks"
         case .voice: return "waveform"
         case .audio: return "speaker.wave.2"

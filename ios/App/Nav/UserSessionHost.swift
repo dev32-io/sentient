@@ -153,6 +153,8 @@ struct UserSessionHost: View {
             )
         case .settingsMemory:
             MemoryScreen(settings: settings, onBack: popRoute)
+        case .settingsCalendar:
+            CalendarScreen(settings: settings, onBack: popRoute)
         case .settingsPersonalities:
             PersonalitiesScreen(settings: settings, onBack: popRoute)
         case .settingsVoice:

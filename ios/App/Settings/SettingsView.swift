@@ -52,6 +52,7 @@ private struct CategoryItem: Identifiable {
 
 private let soulItems: [CategoryItem] = [
     .init(icon: .memory, title: "Memory", route: .settingsMemory, key: "memory"),
+    .init(icon: .calendar, title: "Calendar", route: .settingsCalendar, key: "calendar"),
     .init(icon: .personalities, title: "Personalities", route: .settingsPersonalities, key: "personalities"),
     .init(icon: .voice, title: "Voice", route: .settingsVoice, key: "voice"),
     .init(icon: .audio, title: "Audio", route: .settingsAudio, key: "audio"),
