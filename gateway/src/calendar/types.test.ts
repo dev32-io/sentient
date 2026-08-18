@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { goldenCalendarFixtures, isAdult, parseRRule, wireCalendarTimeSchema } from "./types.js";
+import {
+  calendarRequestSchema,
+  calendarResponseSchema,
+  goldenCalendarFixtures,
+  isAdult,
+  parseRRule,
+  wireCalendarTimeSchema,
+} from "./types.js";
 
 describe("calendar domain contracts", () => {
   test("accepts only the bounded RRULE subset", () => {
@@ -8,6 +15,7 @@ describe("calendar domain contracts", () => {
     expect(parseRRule("FREQ=WEEKLY").ok).toBe(false);
     expect(parseRRule("FREQ=DAILY;COUNT=2;UNTIL=20260805T120000Z").ok).toBe(false);
     expect(parseRRule("FREQ=HOURLY").ok).toBe(false);
+    expect(parseRRule("FREQ=WEEKLY;BYDAY=MO;BYMONTH=1")).toEqual({ ok: false, error: "invalid" });
   });
 
   test("keeps timed values UTC plus event zone and all-day values date-only", () => {
@@ -27,6 +35,31 @@ describe("calendar domain contracts", () => {
     expect(isAdult("admin")).toBe(true);
     expect(isAdult("child")).toBe(false);
     expect(isAdult("guest")).toBe(false);
+  });
+
+  test("wire envelopes reject arbitrary bodies and accept a golden-shaped event", () => {
+    expect(
+      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "get", body: {} }).success,
+    ).toBe(false);
+    expect(
+      calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: { arbitrary: true } }).success,
+    ).toBe(false);
+
+    const event = {
+      id: "event-1",
+      scope: "private",
+      title: "Dentist",
+      start: goldenCalendarFixtures.timed,
+      visibility: "everyone",
+      importance: "normal",
+      tags: ["health"],
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+    expect(
+      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: event }).success,
+    ).toBe(true);
+    expect(calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: event }).success).toBe(true);
   });
 
   test("golden wire fixtures remain stable", () => {
