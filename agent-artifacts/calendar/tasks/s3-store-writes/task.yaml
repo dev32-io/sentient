@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s3-store-writes
 title: CalendarStore create/update/delete with household adult-gate and event-tz
   storage
-status: ready
+status: running
 dependsOn:
   - s1-store-schema-factory
 execution:
@@ -21,3 +21,9 @@ verification:
     - cd gateway && bun test src/calendar/calendar-store
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: 979da6222567c7cbf876a60d1bd4bf3f08d0a89b
+  lastRunId: 027c7a44-37d2-47e3-946f-ee6c75eb3823
