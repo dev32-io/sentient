@@ -18,11 +18,78 @@ criteria:
   - UTC storage and serving-timezone recurrence expansion through the store path
     with EXDATE/exception application
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 4e66e174-b786-453f-be70-7c7db18e7946
   reviewedCommit: 44c2da3efeadc3bf34e703f75204e0c9caf1ab10
+  managerPrompt: >-
+    Address S3-STORE-TEST-PROOF-001 (high, blocking) in
+    gateway/src/calendar/calendar-store.test.ts (test-add; the store
+    implementation already passes typecheck and the read path includes role
+    filtering, recurrence expansion, and tz-preserving storage per the review
+    report — add the missing boundary-proof tests asserting that existing
+    behavior).
+
+
+    The file currently has 5 tests; add the following required store contract
+    tests, reusing the existing `cap`, `root`, `event`, `cfg` helpers (note
+    `cap(rootPath, resource?)` defaults role to "adult"; pass role via `{
+    ...cap(base, "calendar-household"), role: "child" }` etc.):
+
+
+    1. CRUD atomic replacement + cascade: create an event with tags (Set), an
+    exception, an exdate, and a recurrence; update it and assert the update
+    atomically replaces the mutable fields
+    (title/visibility/importance/group/tags/recurrence/etc.) and that unchanged
+    fields (id, createdAt) are preserved; delete it; assert a subsequent get
+    returns { ok:false, error:"not-found" } and that the exceptions/exdates/tags
+    child rows were cascaded (e.g. direct PRAGMA queries on a fresh Database
+    show zero rows for that event_id, or list returns empty).
+
+
+    2. all-day and timed round-trip: create one all-day event (start {
+    kind:"all-day", date }) and one timed event (start { kind:"timed", instant,
+    timeZoneId }); get each by id and list over a covering window; assert the
+    start round-trips exactly — all-day preserves `date`, timed preserves
+    `instant` and `timeZoneId`.
+
+
+    3. child/guest household write rejection (defense-in-depth store gate): for
+    role "child" and role "guest" over a calendar-household store,
+    create/update/delete a household event returns a fail-fast typed failure ({
+    ok:false, error: ... }) with no prompt at the store layer. Use the same base
+    path with a calendar-household capability and override role.
+
+
+    4. admin allowance: for role "admin" over a calendar-household store,
+    create/update/delete a household event succeeds (admin is adult-equivalent:
+    isAdult(role) = adult | admin, no bypass).
+
+
+    5. write not-found: update and delete a non-existent event id each return {
+    ok:false, error:"not-found" }.
+
+
+    6. adult/admin visibility positive + guest omission: a visibility:"adults"
+    event is returned by get and included in list for role "adult" and role
+    "admin"; for role "guest" it is omitted (get -> { ok:false,
+    error:"not-found" }, list -> empty). The existing child-omission test
+    already covers child reads; extend coverage to guest and add the adult/admin
+    positive assertions.
+
+
+    If any asserted behavior is not yet implemented in calendar-store.ts,
+    implement the minimal store behavior to satisfy the contract (the household
+    write adult-gate belongs to s3-store-writes scope); but per the review
+    report the read-side filtering and storage are already implemented, so this
+    is expected to be test-add only.
+
+
+    Constraints: stay within stage-3 scope (calendar-store.test.ts, and
+    calendar-store.ts only if a gate must be implemented). Keep `cd gateway &&
+    bun run typecheck` and `cd gateway && bun test src/calendar/calendar-store`
+    green. Do not weaken existing tests.
 findings:
   - id: S3-STORE-TEST-PROOF-001
     severity: high
