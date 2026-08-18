@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-mobile-sdk
 title: Mobile SDK CalendarHttpClient and models
-status: contribution_complete
+status: merged
 dependsOn:
   - s4-rest-api
 execution:
@@ -27,3 +27,4 @@ runtime:
   baseCommit: b44179da5772970081870ed62d961bbc936fb9e0
   lastRunId: ccc2104c-cbd5-47b0-a156-38f52133691e
   completedCommit: 2509ac2c2a7480be796be5a90ab0c89548bf077c
+  mergedCommit: d4ac1100a634dfd469a4bb26c4026949044c1778
