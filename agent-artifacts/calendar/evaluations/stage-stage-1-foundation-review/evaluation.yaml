@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-1-foundation
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 3
 methods:
@@ -17,7 +17,7 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: fixing
+  state: rereviewing
   iteration: 2
   maxIterations: 3
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
