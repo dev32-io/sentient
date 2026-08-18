@@ -22,7 +22,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
-  reviewedCommit: ea300d5170b03f7574fec5b1637eafa2fde44aeb
+  reviewedCommit: 396813f8d26078ace0a3579af9b5ce5b4f717782
   managerPrompt: >-
     Address both stage-6 findings (CAL-001 wire fidelity for recurring
     occurrences; CAL-002 missing web view/device-tz/CRUD tests).
