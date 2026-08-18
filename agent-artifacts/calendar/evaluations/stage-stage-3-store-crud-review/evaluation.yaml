@@ -22,7 +22,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 4e66e174-b786-453f-be70-7c7db18e7946
-  reviewedCommit: 44c2da3efeadc3bf34e703f75204e0c9caf1ab10
+  reviewedCommit: 77db1ce1df5ea6274d14d4c4ba3fca100d858e88
   managerPrompt: >-
     Address S3-STORE-TEST-PROOF-001 (high, blocking) in
     gateway/src/calendar/calendar-store.test.ts (test-add; the store
