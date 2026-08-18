@@ -24,6 +24,7 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountScreen
 import io.sentient.android.settings.advanced.AdvancedScreen
 import io.sentient.android.settings.audio.AudioScreen
+import io.sentient.android.settings.calendar.CalendarScreen
 import io.sentient.android.settings.diagnostics.DiagnosticsScreen
 import io.sentient.android.settings.members.MembersScreen
 import io.sentient.android.settings.memory.MemoryScreen
@@ -44,6 +45,7 @@ import org.koin.compose.koinInject
 fun NavGraphBuilder.settingsDestinations(nav: NavHostController) {
     settingsRootDestination(nav)
     memoryDestination(nav)
+    calendarDestination(nav)
     personalitiesDestination(nav)
     voiceDestination(nav)
     voiceAddDestination(nav)
@@ -88,6 +90,12 @@ private fun NavGraphBuilder.settingsRootDestination(nav: NavHostController) {
 private fun NavGraphBuilder.memoryDestination(nav: NavHostController) {
     composable(Routes.SETTINGS_MEMORY) {
         MemoryScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
+    }
+}
+
+private fun NavGraphBuilder.calendarDestination(nav: NavHostController) {
+    composable(Routes.SETTINGS_CALENDAR) {
+        CalendarScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
     }
 }
 

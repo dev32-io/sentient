@@ -12,6 +12,7 @@ package io.sentient.android.settings
 import androidx.compose.ui.graphics.vector.ImageVector
 import io.sentient.android.nav.Routes
 import io.sentient.android.settings.icons.BookOpen
+import io.sentient.android.settings.icons.Calendar
 import io.sentient.android.settings.icons.Brain
 import io.sentient.android.settings.icons.Cpu
 import io.sentient.android.settings.icons.Diagnostics
@@ -50,6 +51,7 @@ object SettingsGroups {
         title = SOUL,
         categories = listOf(
             SettingsCategory("memory", "Memory", SettingsIcons.Brain, Routes.SETTINGS_MEMORY),
+            SettingsCategory("calendar", "Calendar", SettingsIcons.Calendar, Routes.SETTINGS_CALENDAR),
             SettingsCategory("personalities", "Personalities", SettingsIcons.Drama, Routes.SETTINGS_PERSONALITIES),
             SettingsCategory("voice", "Voice", SettingsIcons.Waveform, Routes.SETTINGS_VOICE),
             SettingsCategory("audio", "Audio", SettingsIcons.Volume2, Routes.SETTINGS_AUDIO),
