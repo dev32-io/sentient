@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  calendarEventSchema,
   calendarRequestSchema,
   calendarResponseSchema,
   goldenCalendarFixtures,
@@ -12,6 +13,10 @@ describe("calendar domain contracts", () => {
   test("accepts only the bounded RRULE subset", () => {
     expect(parseRRule("FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6").ok).toBe(true);
     expect(parseRRule("FREQ=DAILY;INTERVAL=2;UNTIL=20260805T120000Z").ok).toBe(true);
+    expect(parseRRule("FREQ=DAILY;UNTIL=20261231T235959Z")).toMatchObject({
+      ok: true,
+      value: { freq: "DAILY", until: "2026-12-31T23:59:59.000Z" },
+    });
     expect(parseRRule("FREQ=WEEKLY").ok).toBe(false);
     expect(parseRRule("FREQ=DAILY;COUNT=2;UNTIL=20260805T120000Z").ok).toBe(false);
     expect(parseRRule("FREQ=HOURLY").ok).toBe(false);
@@ -71,6 +76,18 @@ describe("calendar domain contracts", () => {
       request({ ...event, recurrence: { ...event.recurrence, rule: { ...event.recurrence.rule, count: 5 } } }),
     ).toBe(false);
     expect(calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: event }).success).toBe(true);
+
+    for (const until of ["2026-12-31T23:59:59.000Z", "2026-12-31T23:59:59Z", "2026-12-31T23:59:59+00:00"]) {
+      const untilEvent = {
+        ...event,
+        recurrence: {
+          rrule: "FREQ=DAILY;UNTIL=20261231T235959Z",
+          rule: { freq: "DAILY", until },
+        },
+      };
+      expect(calendarEventSchema.safeParse(untilEvent).success).toBe(true);
+      expect(request(untilEvent)).toBe(true);
+    }
   });
 
   test("golden wire fixtures remain stable", () => {

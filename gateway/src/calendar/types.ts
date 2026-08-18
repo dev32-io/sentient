@@ -170,7 +170,7 @@ const calendarStoreErrorSchema = z.enum([
 ]);
 
 const calendarEventId = z.string().min(1).brand<"CalendarEventId">();
-const calendarEventSchema = z
+export const calendarEventSchema = z
   .object({
     id: calendarEventId,
     scope: z.enum(["private", "household"]),
@@ -192,7 +192,10 @@ const calendarEventSchema = z
           recurrence.rule.freq !== rule.freq ||
           recurrence.rule.interval !== rule.interval ||
           recurrence.rule.count !== rule.count ||
-          recurrence.rule.until !== rule.until ||
+          (recurrence.rule.until === undefined) !== (rule.until === undefined) ||
+          (recurrence.rule.until !== undefined &&
+            rule.until !== undefined &&
+            new Date(recurrence.rule.until).getTime() !== new Date(rule.until).getTime()) ||
           JSON.stringify(recurrence.rule.byDay) !== JSON.stringify(rule.byDay)
         ) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, message: "raw and parsed recurrence rules disagree" });
@@ -274,6 +277,10 @@ export const calendarResponseSchema = z.object({
   body: calendarResponseBodySchema,
 });
 
+function rfcUntilToIso(until: string): UtcInstant {
+  return `${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6, 8)}T${until.slice(9, 11)}:${until.slice(11, 13)}:${until.slice(13, 15)}.000Z` as UtcInstant;
+}
+
 export function parseRRule(raw: string): CalendarResult<RRule> {
   const parts = raw.split(";");
   if (parts.length === 0 || parts.some((part) => !/^[A-Z]+=[^;]+$/.test(part))) return { ok: false, error: "invalid" };
@@ -303,7 +310,7 @@ export function parseRRule(raw: string): CalendarResult<RRule> {
       freq: freq as RRuleFrequency,
       ...(interval ? { interval: Number(interval) } : {}),
       ...(count ? { count: Number(count) } : {}),
-      ...(until ? { until: until as unknown as UtcInstant } : {}),
+      ...(until ? { until: rfcUntilToIso(until) } : {}),
       ...(days ? { byDay: days as Weekday[] } : {}),
     },
   };
