@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s5-nudge
 title: Calendar session-start nudge composer (household-tz today) with
   prompt-cache stability proof
-status: contribution_complete
+status: merged
 dependsOn:
   - s5-phase-bootstrap
   - s3-store-reads
@@ -29,3 +29,4 @@ runtime:
   baseCommit: fd6a78cb8599c5c60039c6fdee8643d8ec93be39
   lastRunId: d5d5efe4-21ea-4cad-9570-0002cfb91ef0
   completedCommit: b2a6faed3104cf713202c9b7369e843e783974c7
+  mergedCommit: fe81644888b7dad76c8f879717c8373e36c84ec3
