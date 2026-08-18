@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-6-clients
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - cd gateway/webui && bun run test:unit && bun run typecheck
   - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
@@ -18,9 +18,9 @@ criteria:
   - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
     representation
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
   reviewedCommit: 396813f8d26078ace0a3579af9b5ce5b4f717782
   managerPrompt: >-
@@ -110,23 +110,20 @@ loop:
 findings:
   - id: CAL-001
     severity: high
-    status: open
-    criterion: Web calendar route lists recurring events with week/day expansion
-      rendering; shared REST wire fidelity
-    location: gateway/src/calendar/calendar-store.ts:121-151;
-      gateway/src/api/handlers/calendar.ts:228-242
-    summary: Expanded occurrence starts are discarded at the REST boundary, so
-      recurring instances render at the base event start.
-    blocking: true
+    status: resolved
+    criterion: Recurring occurrence wire fidelity
+    location: gateway/src/api/handlers/calendar.ts:120-127,244-254;
+      gateway/webui/src/components/calendar/calendar-view.tsx:64,109-111
+    summary: Expanded occurrence identity and times are now preserved through REST
+      and rendered as distinct rows.
+    blocking: false
   - id: CAL-002
     severity: high
     status: open
-    criterion: Boundary proof covers device-tz rendering and view
-      list/create/update/delete behavior
-    location: gateway/webui/src/services/calendar-api.test.ts;
-      gateway/webui/src/components/calendar/calendar-view.tsx
-    summary: No calendar view, device-timezone, or view CRUD tests were added; only
-      two REST-client tests exist.
+    criterion: REST handler boundary proof for recurring occurrences and base GET shape
+    location: gateway/src/api/handlers/calendar.test.ts:51-72
+    summary: The REST test asserts one stub occurrence, not N recurring response
+      entries with distinct IDs and expanded starts as explicitly required.
     blocking: true
 result:
   verdict: fail
