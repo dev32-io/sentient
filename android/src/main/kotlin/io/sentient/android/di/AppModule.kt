@@ -26,6 +26,7 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountViewModel
 import io.sentient.android.settings.advanced.AdvancedViewModel
 import io.sentient.android.settings.audio.AudioViewModel
+import io.sentient.android.settings.calendar.CalendarViewModel
 import io.sentient.android.settings.members.MembersViewModel
 import io.sentient.android.settings.memory.MemoryViewModel
 import io.sentient.android.settings.model.ModelViewModel
@@ -81,6 +82,10 @@ val appModule = module {
     // Per-category page VMs — scaffold placeholders (P3a). A page agent gives each a
     // real constructor (usecases off get<SettingsComponent>()) when it fills the page.
     viewModel { MemoryViewModel(get<SettingsComponent>()) }
+    viewModel {
+        val settings = get<SettingsComponent>()
+        CalendarViewModel(settings.listCalendar, settings.createCalendar, settings.updateCalendar, settings.deleteCalendar)
+    }
     viewModel { PersonalitiesViewModel(get<SettingsComponent>()) }
     viewModel {
         val settings = get<SettingsComponent>()

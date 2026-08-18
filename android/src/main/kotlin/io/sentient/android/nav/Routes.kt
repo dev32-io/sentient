@@ -23,6 +23,7 @@ object Routes {
 
     // ── Settings category pages (flat routes; one composable() each in AppNavHost) ──
     const val SETTINGS_MEMORY = "settings/memory"
+    const val SETTINGS_CALENDAR = "settings/calendar"
     const val SETTINGS_PERSONALITIES = "settings/personalities"
     const val SETTINGS_VOICE = "settings/voice"
     const val SETTINGS_VOICE_ADD = "settings/voice/add"
