@@ -1,0 +1,22 @@
+schemaVersion: 1
+evaluation: stage-stage-6-clients-review
+recordedAt: 2026-08-18T05:46:42.313Z
+entries:
+  - result: "Passed: 18 files, 139 tests; TypeScript check passed."
+    command: cd gateway/webui && bun run test:unit && bun run typecheck
+    description: Declared web stage checks.
+    path: files/1-calendar-api.test.ts
+    checksum: sha256:5ce13618d87fe629522312f6cf67390485bd1d817af65c877511083f550243a9
+  - result: BUILD SUCCESSFUL for both declared mobile stage checks.
+    command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+      ./gradlew :shared:mobile-sdk:compileDebugKotlin
+    description: Declared mobile stage checks.
+    path: files/2-CalendarHttpClientTest.kt
+    checksum: sha256:2ffeaae4e1b4f5ae43e4286879b4deae5e845714ccc756e2b6bc5fbeb2a423e2
+  - result: Store list returns Occurrence[]; handler toWire maps event.start and
+      does not serialize occurrenceStart/occurrenceId.
+    command: sed -n '115,155p' gateway/src/calendar/calendar-store.ts && sed -n
+      '220,245p' gateway/src/api/handlers/calendar.ts
+    description: Recurrence wire-fidelity evidence.
+    path: files/3-calendar.ts
+    checksum: sha256:079d3642662de90cf8da2609e7146605ca1c12b47e9a430bc3aea1db4eba743a
