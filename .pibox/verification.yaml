@@ -19,6 +19,6 @@ profiles:
       - JAVA_HOME
   ios:
     shell: /bin/bash
-    bootstrap: source scripts/env.sh
+    bootstrap: source scripts/env.sh && ./scripts/ios-setup.sh
     requiredEnvironment:
       - JAVA_HOME
