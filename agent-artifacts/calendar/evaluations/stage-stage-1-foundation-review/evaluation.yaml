@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-1-foundation
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers
@@ -17,8 +17,29 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: 164cb0e84a3625afdd69f09995f2378f9d22b99c
+findings:
+  - id: CAL-S1-001
+    severity: medium
+    status: open
+    criterion: Bounded RRULE subset must reject unsupported syntax and malformed RRULEs
+    location: gateway/src/calendar/types.ts:183-211
+    summary: parseRRule accepts unknown RRULE keys and silently discards them.
+    blocking: true
+  - id: CAL-S1-002
+    severity: medium
+    status: open
+    criterion: Concrete JSON wire schema with request/response/error envelopes and
+      shared typed values
+    location: gateway/src/calendar/types.ts:170-181
+    summary: Request/response body schemas are z.unknown(), so arbitrary payloads
+      validate; no concrete event/list/request wire contract is enforced.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-1-foundation-review/manifest.yaml

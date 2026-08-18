@@ -1,0 +1,16 @@
+schemaVersion: 1
+evaluation: stage-stage-1-foundation-review
+recordedAt: 2026-08-18T00:08:33.103Z
+entries:
+  - result: pass
+    command: cd gateway && bun run typecheck
+  - result: "pass: 32 tests, 0 failures"
+    command: cd gateway && bun test src/access src/calendar/types
+      src/calendar/e2e-helpers
+  - result: Unsupported RRULE returned ok:true; arbitrary response body returned true
+    command: cd gateway && bun -e 'import {parseRRule,calendarResponseSchema} from
+      "./src/calendar/types.ts"; console.log(parseRRule("FREQ=DAILY;BOGUS=1"));
+      console.log(calendarResponseSchema.safeParse({version:1,requestId:"r",body:{notAResponse:true}}).success)'
+    description: Sanitized targeted contract probes
+    path: files/3-types.ts
+    checksum: sha256:a21e36467ea852844c5d36100b82c03965535de5c40fcbcbee28882629c586ce
