@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s8-android
 title: Android calendar Compose screen, nav, and ViewModel
-status: running
+status: contribution_complete
 dependsOn:
   - s7-mobile-data
 execution:
@@ -26,3 +26,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s8-android
   baseCommit: d70ef21e45d1dffc606492ec07470cf6ed856cac
   lastRunId: 40b6cc87-19ea-47a4-a32a-d7d42da07d9c
+  completedCommit: 2841b2982c6b8444edb807acb1537e6ced94e31a
