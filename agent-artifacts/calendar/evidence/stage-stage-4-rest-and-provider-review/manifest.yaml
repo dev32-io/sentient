@@ -1,0 +1,11 @@
+schemaVersion: 1
+evaluation: stage-stage-4-rest-and-provider-review
+recordedAt: 2026-08-18T04:03:58.288Z
+entries:
+  - result: pass
+    command: cd gateway && bun run typecheck
+  - result: "pass: 84 tests, 0 failures"
+    command: cd gateway && bun test src/api/handlers/calendar
+      src/bootstrap/product-tools src/bootstrap/product-tool-metadata
+      src/tools/tool-broker
+    description: Declared stage checks; sanitized summary only.

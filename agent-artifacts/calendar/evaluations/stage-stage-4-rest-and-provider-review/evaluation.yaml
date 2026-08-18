@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-4-rest-and-provider
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/api/handlers/calendar src/bootstrap/product-tools
@@ -19,8 +19,52 @@ criteria:
   - Pre-PDP household-write rejection (no permission.request, zero confirm
     calls, zero store calls) and tool tier/role reachability
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
   reviewedCommit: 1fbc3834aa487bdc64948aeaa3c3c96bae93dca1
+findings:
+  - id: CAL-REST-001
+    severity: high
+    status: open
+    criterion: REST wire shape matches shared calendar schema/golden fixtures
+    location: gateway/src/api/handlers/calendar.ts:117-125,216-218
+    summary: GET list serializes Occurrence-only fields, violating the strict shared
+      calendar response shape.
+    blocking: true
+  - id: CAL-REST-002
+    severity: high
+    status: open
+    criterion: REST list/filter
+    location: gateway/src/api/handlers/calendar.ts:89-115
+    summary: REST list has no tags filter parsing or propagation.
+    blocking: true
+  - id: CAL-REST-003
+    severity: high
+    status: open
+    criterion: Request-scoped handles close in try/finally
+    location: gateway/src/api/handlers/calendar.ts:62-67
+    summary: If the second store open throws, the first opened store is leaked
+      because both opens precede finally.
+    blocking: true
+  - id: CAL-TOOL-001
+    severity: high
+    status: open
+    criterion: Typed malformed-RRULE validation
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:72-78,146-151,241-261
+    summary: Nested update recurrence bypasses validation, and create/update accept
+      incomplete raw/parsed recurrence objects.
+    blocking: true
+  - id: CAL-TOOL-002
+    severity: high
+    status: open
+    criterion: Search/filter behavior
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:211-229
+    summary: calendar_search silently ignores group, tags, and importance despite
+      accepting those arguments.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-4-rest-and-provider-review/manifest.yaml
