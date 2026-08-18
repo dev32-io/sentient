@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s8-ios
 title: iOS calendar SwiftUI screen, route, and ViewModel
-status: running
+status: contribution_complete
 dependsOn:
   - s7-mobile-data
 execution:
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s8-ios
   baseCommit: d70ef21e45d1dffc606492ec07470cf6ed856cac
   lastRunId: 31bc862e-dfde-4d61-a7cb-b126202e93c3
+  completedCommit: db8febae27adb14fe6304cefabd0e3c6176ce0e4
