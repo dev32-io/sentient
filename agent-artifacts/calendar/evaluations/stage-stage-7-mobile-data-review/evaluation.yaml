@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-7-mobile-data
 scope:
   workItem: calendar
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
     ./gradlew :shared:mobile-data:compileDebugKotlin
@@ -17,9 +17,9 @@ criteria:
   - DI wiring exposes calendar to platform screens without restart-mutation
     assumptions
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: 514b4f53-0de0-4eda-98b3-fd971329245e
   reviewedCommit: 8eec2d1fa3bbaf4951e87418e5b692b789a6c774
   managerPrompt: |-
@@ -40,15 +40,14 @@ loop:
 findings:
   - id: S7-MD-001
     severity: high
-    status: open
+    status: resolved
     criterion: Calendar CRUD is not a profile/restart mutation; do not inherit
       long-timeout restart assumptions.
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/SettingsComponent.kt:67-90,105;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:29-61
-    summary: Calendar uses the shared restart-timeout HttpClient without a
-      calendar-specific bounded timeout.
-    blocking: true
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt
+    summary: Calendar CRUD is now bounded by a calendar-specific timeout and no
+      longer inherits the shared restart timeout.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-7-mobile-data-review/manifest.yaml
