@@ -11,6 +11,8 @@ methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: 17bc090b-ccf9-4078-87e2-1031d1b94ee7
+  reviewedCommit: 1aed83a5633a2ac8472202841e21537ff0353ae9
