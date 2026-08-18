@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s2-ha-deprecation
 title: Deprecate and hide the four HA calendar tools
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -26,3 +26,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s2-ha-deprecation
   baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
   lastRunId: 3ead42d8-b99a-4147-ab5c-146e2bb1a29d
+  completedCommit: 4a0480c0392daea4e04b1097a05f1b96544a0e95
