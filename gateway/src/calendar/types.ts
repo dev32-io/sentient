@@ -103,7 +103,8 @@ export type CalendarStoreError =
   | "conflict"
   | "recurrence-limit"
   | "io-error"
-  | "closed";
+  | "closed"
+  | "not-implemented";
 export type CalendarResult<T> = Result<T, CalendarStoreError>;
 export interface CalendarStore {
   get(id: CalendarEventId): CalendarResult<CalendarEvent>;
@@ -167,6 +168,7 @@ const calendarStoreErrorSchema = z.enum([
   "recurrence-limit",
   "io-error",
   "closed",
+  "not-implemented",
 ]);
 
 const calendarEventId = z.string().min(1).brand<"CalendarEventId">();
