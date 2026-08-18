@@ -209,6 +209,7 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
                 nav.navigate(Routes.chat(null)) { popUpTo("chat") { inclusive = true } }
             },
             onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+            onOpenCalendar = { nav.navigate(Routes.SETTINGS_CALENDAR) },
             onAuthExpired = { logoutTo(nav, userSession) },
         )
     }

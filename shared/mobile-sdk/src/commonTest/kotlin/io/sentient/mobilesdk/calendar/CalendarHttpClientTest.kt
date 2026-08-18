@@ -7,6 +7,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import io.ktor.http.content.OutgoingContent
 import io.ktor.serialization.kotlinx.json.json
 import io.sentient.mobilesdk.auth.AuthResult
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.system.measureTimeMillis
@@ -25,6 +27,14 @@ private const val EVENT = """{
   "id":"event-1","scope":"household","title":"Dinner",
   "start":{"kind":"timed","instant":"2026-08-05T13:00:00.000Z","timeZoneId":"America/Toronto"},
   "visibility":"everyone","importance":"important","tags":["family"],
+  "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
+}"""
+
+private const val OCCURRENCE_EVENT = """{
+  "id":"occurrence-1","baseEventId":"event-1","occurrenceId":"occurrence-1",
+  "scope":"household","title":"Dinner",
+  "start":{"kind":"timed","instant":"2026-08-12T13:00:00.000Z","timeZoneId":"America/Toronto"},
+  "visibility":"everyone","importance":"important","tags":[],
   "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
 }"""
 
@@ -71,6 +81,55 @@ class CalendarHttpClientTest {
 
         assertIs<AuthResult.Failure>(result)
         assertTrue(elapsedMillis < 1_000L, "request took ${elapsedMillis}ms")
+    }
+
+    @Test
+    fun occurrence_rows_preserve_both_id_fields_and_use_base_id_for_mutation() = runTest {
+        var path = ""
+        var body = ""
+        val engine = MockEngine { request ->
+            path = request.url.encodedPath
+            if (request.method.value == "PATCH") {
+                body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            }
+            val body = if (request.method.value == "GET")
+                "{\"events\":[$OCCURRENCE_EVENT],\"more\":0}"
+            else OCCURRENCE_EVENT
+            respond("{\"version\":1,\"requestId\":\"r3\",\"body\":$body}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val pageResult = withContext(Dispatchers.Default) {
+            client(engine).list(CalendarTime.AllDay("2026-08-01"), CalendarTime.AllDay("2026-08-31"))
+        }
+        val occurrence = assertIs<AuthResult.Success<CalendarEventPage>>(pageResult).value.events.single()
+        assertEquals("event-1", occurrence.id)
+        assertEquals("occurrence-1", occurrence.occurrenceId)
+        assertEquals("event-1", occurrence.baseEventId)
+        assertEquals("event-1", occurrence.persistedId)
+        withContext(Dispatchers.Default) { client(engine).update(occurrence) }
+        assertEquals("/api/v1/calendar/events/event-1", path)
+        assertFalse(body.contains("occurrenceId"), body)
+        assertFalse(body.contains("baseEventId"), body)
+    }
+
+    @Test
+    fun create_omits_server_owned_timestamps_and_occurrence_metadata() = runTest {
+        var body = ""
+        val engine = MockEngine { request ->
+            body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            respond("{\"version\":1,\"requestId\":\"r4\",\"body\":$EVENT}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val draft = CalendarEvent(
+            id = "draft", scope = CalendarScope.HOUSEHOLD, title = "Draft",
+            start = CalendarTime.AllDay("2026-08-05"), visibility = Visibility.EVERYONE,
+            importance = Importance.NORMAL, createdAt = "", updatedAt = "",
+            occurrenceId = "occurrence-ignored", baseEventId = "event-ignored",
+        )
+        val createResult = withContext(Dispatchers.Default) { client(engine).create(draft) }
+        assertIs<AuthResult.Success<CalendarEvent>>(createResult)
+        assertFalse(body.contains("createdAt"), body)
+        assertFalse(body.contains("updatedAt"), body)
+        assertFalse(body.contains("occurrenceId"), body)
+        assertFalse(body.contains("baseEventId"), body)
     }
 
     @Test

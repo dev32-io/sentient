@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,11 +24,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.sentient.android.settings.icons.Calendar
+import io.sentient.android.settings.icons.SettingsIcons
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobilesdk.design.Colors
 
 @Composable
-fun HistoryAccountHeader(name: String, household: String, onSettings: () -> Unit) {
+fun HistoryAccountHeader(
+    name: String,
+    household: String,
+    onSettings: () -> Unit,
+    onCalendar: () -> Unit = {},
+) {
     val tokens = LocalTokens.current
     Row(
         modifier = Modifier
@@ -64,13 +72,33 @@ fun HistoryAccountHeader(name: String, household: String, onSettings: () -> Unit
                 )
             }
         }
-        Text(
-            text = "⚙",
-            color = Color(Colors.ink2),
-            fontSize = tokens.type.lg,
-            modifier = Modifier
-                .clickable(onClick = onSettings)
-                .testTag("settings-open"),
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(tokens.space.sm),
+        ) {
+            Row(
+                modifier = Modifier
+                    .clickable(onClick = onCalendar)
+                    .testTag(CALENDAR_DRAWER_TEST_TAG),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = SettingsIcons.Calendar,
+                    contentDescription = "Calendar",
+                    tint = Color(Colors.ink2),
+                    modifier = Modifier.size(20.dp),
+                )
+                Text("Calendar", color = Color(Colors.ink2), fontSize = tokens.type.sm)
+            }
+            Text(
+                text = "⚙",
+                color = Color(Colors.ink2),
+                fontSize = tokens.type.lg,
+                modifier = Modifier
+                    .clickable(onClick = onSettings)
+                    .testTag("settings-open"),
+            )
+        }
     }
 }

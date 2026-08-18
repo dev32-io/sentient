@@ -235,6 +235,9 @@ export const calendarEventSchema = z
   })
   .strict();
 
+/** Create requests omit server-owned timestamps; the REST handler assigns them. */
+export const calendarCreateEventSchema = calendarEventSchema.omit({ createdAt: true, updatedAt: true });
+
 const calendarListFilters = z
   .object({
     from: wireCalendarTimeSchema,

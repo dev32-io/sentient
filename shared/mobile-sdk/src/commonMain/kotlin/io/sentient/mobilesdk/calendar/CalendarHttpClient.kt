@@ -21,6 +21,8 @@ import io.sentient.mobilesdk.settings.safeSettingsCall
 import io.sentient.mobilesdk.settings.settingsBodyJson
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.withTimeout
 
@@ -63,7 +65,22 @@ open class CalendarHttpClient(
             importance?.let { parameters.append("importance", importanceWire(it)) }
             }.buildString()
             val response = httpClient.get(url) { bearer() }
-            mapBody(response, CalendarEventPage.serializer())
+            when (val result = mapBody(response, CalendarEventPage.serializer())) {
+                is AuthResult.Success -> AuthResult.Success(
+                    result.value.copy(
+                        events = result.value.events.map { event ->
+                            // The REST occurrence wire shape uses `id` for the
+                            // occurrence identity. Normalize the mobile domain
+                            // model back to the persisted base id while retaining
+                            // both identities explicitly.
+                            if (event.occurrenceId != null && event.baseEventId != null) {
+                                event.copy(id = event.baseEventId)
+                            } else event
+                        },
+                    ),
+                )
+                is AuthResult.Failure -> result
+            }
         }
     }
 
@@ -78,7 +95,18 @@ open class CalendarHttpClient(
 
     open suspend fun create(event: CalendarEvent): AuthResult<CalendarEvent> = safeSettingsCall(log) {
         withTimeout(requestTimeoutMillis) {
-            val response = httpClient.post("$baseUrl$EVENTS_PATH") { bearer(); jsonBody(CalendarEvent.serializer(), event) }
+            // createdAt/updatedAt are server-owned. In particular, an Android
+            // draft carries empty placeholders; sending them makes the gateway
+            // schema reject an otherwise valid create. Occurrence metadata is
+            // also list-response-only and must not leak into a create payload.
+            val response = httpClient.post("$baseUrl$EVENTS_PATH") {
+                bearer()
+                jsonBodyWithout(
+                    CalendarEvent.serializer(),
+                    event,
+                    "createdAt", "updatedAt", "occurrenceId", "baseEventId",
+                )
+            }
             mapBody(response, CalendarEvent.serializer())
         }
     }
@@ -87,12 +115,17 @@ open class CalendarHttpClient(
 
     open suspend fun update(id: String, event: CalendarEvent): AuthResult<CalendarEvent> = safeSettingsCall(log) {
         withTimeout(requestTimeoutMillis) {
-            val response = httpClient.patch(eventUrl(id)) { bearer(); jsonBody(CalendarEvent.serializer(), event) }
+            // occurrenceId/baseEventId identify the list row, not fields accepted
+            // by the base-event PATCH schema. The caller supplies the persisted id.
+            val response = httpClient.patch(eventUrl(id)) {
+                bearer()
+                jsonBodyWithout(CalendarEvent.serializer(), event, "occurrenceId", "baseEventId")
+            }
             mapBody(response, CalendarEvent.serializer())
         }
     }
 
-    open suspend fun update(event: CalendarEvent): AuthResult<CalendarEvent> = update(event.id, event)
+    open suspend fun update(event: CalendarEvent): AuthResult<CalendarEvent> = update(event.persistedId, event)
 
     open suspend fun updateEvent(event: CalendarEvent): AuthResult<CalendarEvent> = update(event)
 
@@ -109,9 +142,11 @@ open class CalendarHttpClient(
 
     private fun HttpRequestBuilder.bearer() = header(HttpHeaders.Authorization, "Bearer ${token()}")
 
-    private fun <T> HttpRequestBuilder.jsonBody(serializer: KSerializer<T>, value: T) {
+    private fun <T> HttpRequestBuilder.jsonBodyWithout(serializer: KSerializer<T>, value: T, vararg fields: String) {
         contentType(ContentType.Application.Json)
-        setBody(settingsBodyJson.encodeToString(serializer, value))
+        val body = settingsBodyJson.encodeToJsonElement(serializer, value).jsonObject.toMutableMap()
+        fields.forEach(body::remove)
+        setBody(JsonObject(body).toString())
     }
 
     private suspend fun <T> mapBody(response: io.ktor.client.statement.HttpResponse, serializer: KSerializer<T>): AuthResult<T> =

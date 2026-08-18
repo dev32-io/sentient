@@ -90,7 +90,14 @@ data class CalendarEvent(
     @SerialName("notificationPolicy") val notification: JsonObject? = null,
     val createdAt: String,
     val updatedAt: String,
-)
+    /** The occurrence identity returned by list responses, when this is an occurrence row. */
+    val occurrenceId: String? = null,
+    /** The persisted base-event identity used for CRUD on occurrence rows. */
+    val baseEventId: String? = null,
+) {
+    /** The server resource addressed by update/delete, never an occurrence identity. */
+    val persistedId: String get() = baseEventId ?: id
+}
 
 /** Occurrence-only fields are used by local consumers when expanding a recurring event. */
 @Serializable

@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.android.settings.components.SettingsTopBar
 import io.sentient.mobilesdk.calendar.CalendarEvent
-import io.sentient.mobilesdk.calendar.CalendarTime
 
 @Composable
 fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier = Modifier) {
@@ -63,7 +62,7 @@ private fun CalendarBody(
             }
             state.events.isEmpty() -> Text("No calendar events", modifier = Modifier.testTag("settings-calendar-empty"))
             else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.events, key = { it.id }) { event ->
+                items(state.events, key = { it.rowId }) { event ->
                     CalendarEventRow(event, state.saving, onUpdate, onDelete)
                 }
             }
@@ -78,11 +77,29 @@ private fun CalendarEventRow(
     onUpdate: (CalendarEvent, String, String) -> Unit,
     onDelete: (CalendarEvent) -> Unit,
 ) {
-    var title by remember(event.id, event.updatedAt) { mutableStateOf(event.title) }
-    val date = (event.start as? CalendarTime.AllDay)?.date ?: ""
-    Row(Modifier.fillMaxWidth().testTag("settings-calendar-event-${event.id}"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(title, { title = it }, Modifier.weight(1f), singleLine = true)
-        Button(onClick = { onUpdate(event, title, date) }, enabled = !disabled, modifier = Modifier.testTag("settings-calendar-update-${event.id}")) { Text("Save") }
-        IconButton(onClick = { onDelete(event) }, enabled = !disabled, modifier = Modifier.testTag("settings-calendar-delete-${event.id}")) { Text("×") }
+    var title by remember(event.rowId, event.updatedAt) { mutableStateOf(event.title) }
+    var date by remember(event.rowId, event.updatedAt) { mutableStateOf(calendarEditorStart(event.start)) }
+    Column(
+        Modifier.fillMaxWidth().testTag("settings-calendar-event-${event.rowId}"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = formatCalendarStart(event.start),
+            modifier = Modifier.testTag("settings-calendar-start-${event.rowId}"),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(
+                    date,
+                    { date = it },
+                    Modifier.fillMaxWidth().testTag("settings-calendar-date-${event.rowId}"),
+                    label = { Text("Date / time") },
+                    singleLine = true,
+                )
+            }
+            Button(onClick = { onUpdate(event, title, date) }, enabled = !disabled, modifier = Modifier.testTag("settings-calendar-update-${event.rowId}")) { Text("Save") }
+            IconButton(onClick = { onDelete(event) }, enabled = !disabled, modifier = Modifier.testTag("settings-calendar-delete-${event.rowId}")) { Text("×") }
+        }
     }
 }

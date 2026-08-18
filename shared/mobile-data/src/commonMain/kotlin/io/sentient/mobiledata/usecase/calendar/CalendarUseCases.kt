@@ -28,6 +28,22 @@ interface ListCalendarUseCase {
         tags: List<String>? = null,
         importance: Importance? = null,
     ): SentientResult<CalendarEventPage>
+
+    /**
+     * Lists both time kinds without ever passing a mixed-kind window to the
+     * gateway. The REST/store contract requires one kind per request, so the
+     * platform screens use this operation for their combined calendar view.
+     */
+    suspend fun listBoth(
+        timedFrom: CalendarTime.Timed,
+        timedTo: CalendarTime.Timed,
+        allDayFrom: CalendarTime.AllDay,
+        allDayTo: CalendarTime.AllDay,
+        scope: CalendarScope? = null,
+        group: String? = null,
+        tags: List<String>? = null,
+        importance: Importance? = null,
+    ): SentientResult<CalendarEventPage>
 }
 
 interface CreateCalendarUseCase {
@@ -68,8 +84,49 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         group: String?,
         tags: List<String>?,
         importance: Importance?,
-    ): SentientResult<CalendarEventPage> = repository.list(from, to, scope, group, tags, importance).also {
-        _listState.value = it
+    ): SentientResult<CalendarEventPage> = listBoth(
+        timedFrom = from.asTimedBoundary(end = false),
+        timedTo = to.asTimedBoundary(end = true),
+        allDayFrom = from.asAllDayBoundary(),
+        allDayTo = to.asAllDayBoundary(),
+        scope = scope,
+        group = group,
+        tags = tags,
+        importance = importance,
+    )
+
+    override suspend fun listBoth(
+        timedFrom: CalendarTime.Timed,
+        timedTo: CalendarTime.Timed,
+        allDayFrom: CalendarTime.AllDay,
+        allDayTo: CalendarTime.AllDay,
+        scope: CalendarScope?,
+        group: String?,
+        tags: List<String>?,
+        importance: Importance?,
+    ): SentientResult<CalendarEventPage> {
+        _listState.value = SentientResult.Loading()
+
+        // Keep these as two independent repository calls. The gateway and store
+        // deliberately reject a window whose endpoints do not have one time kind,
+        // and a calendar can contain both kinds at once.
+        val timed = repository.list(timedFrom, timedTo, scope, group, tags, importance)
+        if (timed !is SentientResult.Success) {
+            _listState.value = timed
+            return timed
+        }
+        val allDay = repository.list(allDayFrom, allDayTo, scope, group, tags, importance)
+        if (allDay !is SentientResult.Success) {
+            _listState.value = allDay
+            return allDay
+        }
+
+        val events = (timed.data.events + allDay.data.events)
+            .distinctBy { it.occurrenceId ?: it.id }
+            .sortedWith(compareBy<CalendarEvent>({ it.start.sortKey() }, { it.occurrenceId ?: it.id }))
+        return SentientResult.Success(CalendarEventPage(events, timed.data.more + allDay.data.more)).also {
+            _listState.value = it
+        }
     }
 
     override suspend fun create(event: CalendarEvent): SentientResult<CalendarEvent> = repository.create(event)
@@ -78,6 +135,24 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         repository.update(id, event)
 
     override suspend fun delete(id: String): SentientResult<Unit> = repository.delete(id)
+}
+
+private fun CalendarTime.asTimedBoundary(end: Boolean): CalendarTime.Timed = when (this) {
+    is CalendarTime.Timed -> this
+    is CalendarTime.AllDay -> CalendarTime.Timed(
+        instant = "${date}T${if (end) "23:59:59.999Z" else "00:00:00.000Z"}",
+        timeZoneId = "UTC",
+    )
+}
+
+private fun CalendarTime.asAllDayBoundary(): CalendarTime.AllDay = when (this) {
+    is CalendarTime.AllDay -> this
+    is CalendarTime.Timed -> CalendarTime.AllDay(instant.take(10))
+}
+
+private fun CalendarTime.sortKey(): String = when (this) {
+    is CalendarTime.AllDay -> date
+    is CalendarTime.Timed -> instant.take(10)
 }
 
 /** Explicitly named aliases for platform DI consumers that prefer operation names. */

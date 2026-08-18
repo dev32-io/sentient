@@ -43,6 +43,35 @@ class CalendarDataTest {
         assertEquals(SentientResult.Success(page), useCases.listState.value)
     }
 
+    @Test
+    fun listBoth_uses_separate_time_kind_windows_and_merges_pages() = kotlinx.coroutines.test.runTest {
+        val timedEvent = event.copy(
+            id = "timed-event",
+            title = "Timed",
+            start = CalendarTime.Timed("2026-08-01T13:00:00.000Z", "UTC"),
+        )
+        val repository = RecordingRepository(
+            listOf(
+                SentientResult.Success(CalendarEventPage(listOf(timedEvent), 1)),
+                SentientResult.Success(CalendarEventPage(listOf(event), 2)),
+            ),
+        )
+        val useCases = CalendarUseCases(repository)
+        val result = useCases.listBoth(
+            timedFrom = CalendarTime.Timed("2026-08-01T00:00:00.000Z", "UTC"),
+            timedTo = CalendarTime.Timed("2026-08-02T00:00:00.000Z", "UTC"),
+            allDayFrom = CalendarTime.AllDay("2026-08-01"),
+            allDayTo = CalendarTime.AllDay("2026-08-02"),
+        )
+
+        val page = assertIs<SentientResult.Success<CalendarEventPage>>(result).data
+        assertEquals(listOf("event-1", "timed-event"), page.events.map { it.id })
+        assertEquals(3, page.more)
+        assertEquals(2, repository.windows.size)
+        assertIs<CalendarTime.Timed>(repository.windows[0].first)
+        assertIs<CalendarTime.AllDay>(repository.windows[1].first)
+    }
+
     private class FakeCalendarClient(private val result: AuthResult<CalendarEvent>) :
         CalendarHttpClient(HttpClient(MockEngine { respondOk() }), "ws://localhost", { "token" }) {
         override suspend fun get(id: String): AuthResult<CalendarEvent> = result
@@ -51,6 +80,22 @@ class CalendarDataTest {
     private class FakeRepository(private val page: SentientResult<CalendarEventPage>) : CalendarRepository {
         override suspend fun get(id: String) = error("unused")
         override suspend fun list(from: CalendarTime, to: CalendarTime, scope: CalendarScope?, group: String?, tags: List<String>?, importance: Importance?) = page
+        override suspend fun create(event: CalendarEvent) = error("unused")
+        override suspend fun update(id: String, event: CalendarEvent) = error("unused")
+        override suspend fun delete(id: String) = error("unused")
+    }
+
+    private class RecordingRepository(
+        private val results: List<SentientResult<CalendarEventPage>>,
+    ) : CalendarRepository {
+        val windows = mutableListOf<Pair<CalendarTime, CalendarTime>>()
+        private var index = 0
+
+        override suspend fun get(id: String) = error("unused")
+        override suspend fun list(from: CalendarTime, to: CalendarTime, scope: CalendarScope?, group: String?, tags: List<String>?, importance: Importance?): SentientResult<CalendarEventPage> {
+            windows += from to to
+            return results[index++]
+        }
         override suspend fun create(event: CalendarEvent) = error("unused")
         override suspend fun update(id: String, event: CalendarEvent) = error("unused")
         override suspend fun delete(id: String) = error("unused")

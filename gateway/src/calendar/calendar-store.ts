@@ -133,7 +133,10 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
       if (window.importance !== undefined && event.importance !== window.importance) continue;
       if (window.tags !== undefined && !window.tags.every((tag) => event.tags.has(tag))) continue;
 
-      if (event.start.kind !== window.from.kind) return { ok: false, error: "invalid" };
+      // A calendar may contain both time kinds. Each query is intentionally
+      // kind-specific, so rows of the other kind are skipped and the caller can
+      // issue the complementary query without the store rejecting the calendar.
+      if (event.start.kind !== window.from.kind) continue;
       // Recurrence is evaluated in the event's timezone. The instant remains UTC;
       // only the zone attached to the query boundary changes.
       const eventWindow = event.start.kind === "timed"

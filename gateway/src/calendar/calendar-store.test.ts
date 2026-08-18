@@ -250,9 +250,15 @@ describe("CalendarStore factory", () => {
     expect(allDayList.ok).toBe(true);
     if (allDayList.ok)
       expect(allDayList.value.find((item) => item.baseEventId === allDay.id)?.start).toEqual(allDay.start);
-    expect(store.delete(allDay.id).ok).toBe(true);
     expect(store.create(timed).ok).toBe(true);
     expect(store.get(timed.id)).toMatchObject({ ok: true, value: { start: timed.start } });
+    const mixedAllDayList = store.list({
+      from: { kind: "all-day", date: "2026-01-01" },
+      to: { kind: "all-day", date: "2026-03-01" },
+    });
+    expect(mixedAllDayList.ok).toBe(true);
+    if (mixedAllDayList.ok)
+      expect(mixedAllDayList.value.find((item) => item.baseEventId === allDay.id)?.start).toEqual(allDay.start);
     const timedList = store.list({
       from: { kind: "timed", instant: "2026-01-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
       to: { kind: "timed", instant: "2026-03-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },

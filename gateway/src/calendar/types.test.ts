@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  calendarCreateEventSchema,
   calendarEventSchema,
   calendarRequestSchema,
   calendarResponseSchema,
@@ -88,6 +89,20 @@ describe("calendar domain contracts", () => {
       expect(calendarEventSchema.safeParse(untilEvent).success).toBe(true);
       expect(request(untilEvent)).toBe(true);
     }
+  });
+
+  test("create payloads omit server-owned timestamps", () => {
+    const draft = {
+      id: "event-1",
+      scope: "private",
+      title: "Dentist",
+      start: goldenCalendarFixtures.timed,
+      visibility: "everyone",
+      importance: "normal",
+      tags: [],
+    };
+    expect(calendarCreateEventSchema.safeParse(draft).success).toBe(true);
+    expect(calendarEventSchema.safeParse(draft).success).toBe(false);
   });
 
   test("golden wire fixtures remain stable", () => {

@@ -12,6 +12,7 @@ import {
   type Importance,
   type WireCalendarEvent,
   type WireCalendarOccurrence,
+  calendarCreateEventSchema,
   calendarEventSchema,
 } from "../../calendar/types.js";
 import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
@@ -148,7 +149,7 @@ function createEvent(
   input: unknown,
   requestId: string,
 ): Response {
-  const parsed = parseEvent(input);
+  const parsed = parseEvent(input, true);
   if (!parsed) return errorFor("invalid", requestId);
   const scope = parsed.scope;
   const result = (scope === "household" ? householdStore : privateStore).create(parsed.event);
@@ -205,16 +206,37 @@ function deleteEvent(
   return errorFor("not-found", requestId);
 }
 
-function parseEvent(value: unknown): { event: CalendarEvent; scope: Scope } | null {
+function parseEvent(value: unknown, serverAssignTimestamps = false): { event: CalendarEvent; scope: Scope } | null {
   if (!value || typeof value !== "object") return null;
   const scope = parseScope((value as Record<string, unknown>).scope) ?? "private";
-  const { scope: _scope, userId: _userId, householdId: _householdId, ...candidate } = value as Record<string, unknown>;
-  const parsed = calendarEventSchema.safeParse({ ...candidate, scope });
+  const {
+    scope: _scope,
+    userId: _userId,
+    householdId: _householdId,
+    ...rawCandidate
+  } = value as Record<string, unknown>;
+  // Timestamps are response metadata, not client-owned create fields. Remove
+  // them before validation so old clients that included placeholders remain
+  // compatible while new clients can omit them entirely.
+  const candidate = serverAssignTimestamps
+    ? (() => {
+        const { createdAt: _createdAt, updatedAt: _updatedAt, ...withoutTimestamps } = rawCandidate;
+        return withoutTimestamps;
+      })()
+    : rawCandidate;
+  const parsed = (serverAssignTimestamps ? calendarCreateEventSchema : calendarEventSchema).safeParse({ ...candidate, scope });
   if (!parsed.success) return null;
   const wire = parsed.data;
   const { scope: _wireScope, notificationPolicy, ...rest } = wire;
+  const now = new Date().toISOString() as CalendarEvent["createdAt"];
   const event = {
     ...rest,
+    createdAt: serverAssignTimestamps
+      ? now
+      : (wire as unknown as { createdAt: CalendarEvent["createdAt"] }).createdAt,
+    updatedAt: serverAssignTimestamps
+      ? now
+      : (wire as unknown as { updatedAt: CalendarEvent["updatedAt"] }).updatedAt,
     ...(notificationPolicy ? { notification: notificationPolicy } : {}),
     tags: new Set(wire.tags),
   } as unknown as CalendarEvent;
