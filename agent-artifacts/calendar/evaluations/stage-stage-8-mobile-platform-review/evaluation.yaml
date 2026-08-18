@@ -21,7 +21,7 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: fixing
+  state: awaiting_manager
   iteration: 0
   maxIterations: 3
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
