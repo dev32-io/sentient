@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-5-bootstrap-nudge
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
@@ -19,8 +19,47 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
   reviewedCommit: d17670e01324e90f5add29a393ca5520cef8e57c
+findings:
+  - id: S5-BOOTSTRAP-001
+    severity: high
+    status: open
+    criterion: Calendar tools are wired into the product-tool-provider composition
+      and reachable in a session
+    location: gateway/src/bootstrap/phase-services.ts:360-367
+    summary: Only the private calendar store and calendar-private capability are
+      supplied to the calendar provider; household scope requests are rejected
+      and household-backed tools are unreachable.
+    blocking: true
+  - id: S5-NUDGE-001
+    severity: high
+    status: open
+    criterion: Nudge never exceeds its cap and follows deterministic drop order
+      while keeping today plus important/pinned items
+    location: gateway/src/calendar/nudge.ts:89-113
+    summary: The overflow marker is appended after line trimming, allowing maxLines
+      to be exceeded; trimming can remove today or important/pinned items
+      instead of dropping overflow/non-important weekly content first.
+    blocking: true
+  - id: S5-VERIFY-001
+    severity: medium
+    status: open
+    criterion: Boundary proof covers bootstrap lifecycle, compatibility, timezone
+      resolution, wiring, and prompt-cache stability
+    location: gateway/src/bootstrap/phase-services.test.ts;
+      gateway/src/calendar/nudge.test.ts;
+      shared/config/src/schemas/orchestrator-config.test.ts
+    summary: The required boundary tests for calendar bootstrap
+      capabilities/stores/close, household tool reachability, old-config
+      compatibility, timezone resolution, and prompt-cache stability are absent;
+      only two nudge tests and unrelated phase-service tests run in the assigned
+      check.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-5-bootstrap-nudge-review/manifest.yaml
