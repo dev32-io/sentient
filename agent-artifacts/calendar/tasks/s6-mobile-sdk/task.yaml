@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-mobile-sdk
 title: Mobile SDK CalendarHttpClient and models
-status: ready
+status: running
 dependsOn:
   - s4-rest-api
 execution:
@@ -20,3 +20,9 @@ verification:
     - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*'
     - ./gradlew :shared:mobile-sdk:compileDebugKotlin
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s6-mobile-sdk
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s6-mobile-sdk
+  baseCommit: b44179da5772970081870ed62d961bbc936fb9e0
+  lastRunId: ccc2104c-cbd5-47b0-a156-38f52133691e
