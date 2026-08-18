@@ -28,6 +28,8 @@
 package io.sentient.mobiledata.di
 
 import io.ktor.client.HttpClient
+import io.sentient.mobiledata.data.calendar.CalendarRepository
+import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
 import io.sentient.mobiledata.data.settings.AccountRepository
 import io.sentient.mobiledata.data.settings.AdminRepository
 import io.sentient.mobiledata.data.settings.ProfileRepository
@@ -36,12 +38,19 @@ import io.sentient.mobiledata.data.settings.SdkAdminRepository
 import io.sentient.mobiledata.data.settings.SdkProfileRepository
 import io.sentient.mobiledata.data.settings.SdkVoicesRepository
 import io.sentient.mobiledata.data.settings.VoicesRepository
+import io.sentient.mobiledata.usecase.calendar.CalendarUseCases
+import io.sentient.mobiledata.usecase.calendar.CreateCalendarUseCase
+import io.sentient.mobiledata.usecase.calendar.DeleteCalendarUseCase
+import io.sentient.mobiledata.usecase.calendar.GetCalendarUseCase
+import io.sentient.mobiledata.usecase.calendar.ListCalendarUseCase
+import io.sentient.mobiledata.usecase.calendar.UpdateCalendarUseCase
 import io.sentient.mobiledata.usecase.settings.AccountUseCases
 import io.sentient.mobiledata.usecase.settings.AdminUseCases
 import io.sentient.mobiledata.usecase.settings.ApplyProfileChangeUseCase
 import io.sentient.mobiledata.usecase.settings.ObserveSettingsAccessUseCase
 import io.sentient.mobiledata.usecase.settings.VoicesUseCases
 import io.sentient.mobilesdk.auth.AuthClient
+import io.sentient.mobilesdk.calendar.CalendarHttpClient
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.settings.AdminHttpClient
@@ -78,12 +87,14 @@ class SettingsComponent(
     private val servicesVersionsHttp = ServicesVersionsHttpClient(httpClient, gatewayWsUrl, token)
     private val adminHttp = AdminHttpClient(httpClient, gatewayWsUrl, token)
     private val authClient = AuthClient(gatewayWsUrl, httpClient)
+    private val calendarHttp = CalendarHttpClient(httpClient, gatewayWsUrl, token)
 
     // ── Stateless repos ──
     val profileRepository: ProfileRepository = SdkProfileRepository(profileHttp, profileEditHttp, providersHttp)
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
+    val calendarRepository: CalendarRepository = SdkCalendarRepository(calendarHttp)
 
     // ── Usecases (VM-facing) ──
     val applyProfileChange = ApplyProfileChangeUseCase(profileRepository, liveAudioPatch)
@@ -91,6 +102,12 @@ class SettingsComponent(
     val voices = VoicesUseCases(voicesRepository, profileRepository)
     val account = AccountUseCases(accountRepository, onTokenRefreshed, onLoggedOut)
     val admin = AdminUseCases(adminRepository, profileRepository)
+    val calendar = CalendarUseCases(calendarRepository)
+    val getCalendar: GetCalendarUseCase = calendar
+    val listCalendar: ListCalendarUseCase = calendar
+    val createCalendar: CreateCalendarUseCase = calendar
+    val updateCalendar: UpdateCalendarUseCase = calendar
+    val deleteCalendar: DeleteCalendarUseCase = calendar
 
     init {
         log.info("build")
