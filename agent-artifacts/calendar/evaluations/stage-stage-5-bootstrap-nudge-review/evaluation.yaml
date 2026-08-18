@@ -23,7 +23,7 @@ loop:
   iteration: 2
   maxIterations: 3
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
-  reviewedCommit: fd8eb357a3b00a209684972f68eb6280f1df7eba
+  reviewedCommit: 8e7d3ac07962cc0c83f9050709acb018bfaa99cc
   managerPrompt: >-
     Address S5-BOOTSTRAP-002 (high, blocking) in
     gateway/src/bootstrap/product-tools/calendar-provider.ts. S5-BOOTSTRAP-001
