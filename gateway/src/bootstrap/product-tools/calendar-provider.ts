@@ -7,6 +7,7 @@ import type {
   CalendarScope,
   CalendarStore,
   CalendarTime,
+  Occurrence,
 } from "../../calendar/types.js";
 import { parseRRule, wireCalendarTimeSchema, wireRRuleSchema } from "../../calendar/types.js";
 import { isAdult } from "../../calendar/types.js";
@@ -138,9 +139,11 @@ function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | Tool
   const p = schema.safeParse(args);
   return p.success ? p.data : failure("invalid-arguments", p.error.issues[0]?.message ?? "invalid arguments");
 }
-function wire(event: CalendarEvent, scope: CalendarScope): Record<string, unknown> {
+function wire(event: CalendarEvent | Occurrence, scope: CalendarScope): Record<string, unknown> {
+  const occurrence = "occurrenceId" in event ? event : undefined;
   return {
-    id: event.id,
+    id: occurrence?.occurrenceId ?? event.id,
+    ...(occurrence ? { baseEventId: occurrence.baseEventId, occurrenceId: occurrence.occurrenceId, occurrenceStart: occurrence.occurrenceStart, ...(occurrence.occurrenceEnd !== undefined ? { occurrenceEnd: occurrence.occurrenceEnd } : {}) } : {}),
     scope,
     title: event.title,
     ...(event.description !== undefined ? { description: event.description } : {}),

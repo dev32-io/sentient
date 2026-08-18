@@ -275,9 +275,15 @@ export const calendarErrorSchema = z.object({
   requestId: z.string(),
   error: z.object({ code: calendarStoreErrorSchema, message: z.string() }),
 });
+const calendarOccurrenceSchema = calendarEventSchema.extend({
+  occurrenceId: z.string().min(1),
+  baseEventId: calendarEventId,
+  occurrenceStart: wireCalendarTimeSchema,
+  occurrenceEnd: wireCalendarTimeSchema.optional(),
+}).strict();
 const calendarResponseBodySchema = z.union([
   calendarEventSchema,
-  z.object({ events: z.array(calendarEventSchema), more: z.number().int().nonnegative() }).strict(),
+  z.object({ events: z.array(calendarOccurrenceSchema), more: z.number().int().nonnegative() }).strict(),
   z.object({ ok: z.literal(true) }).strict(),
 ]);
 export const calendarResponseSchema = z.object({
@@ -333,6 +339,14 @@ export interface WireCalendarEvent extends Omit<CalendarEvent, "tags" | "start" 
   exdates?: readonly CalendarTime[];
   tags: readonly string[];
   notificationPolicy?: CalendarNotification;
+}
+
+/** LIST entries retain the identity and expanded times of recurring occurrences. */
+export interface WireCalendarOccurrence extends WireCalendarEvent {
+  occurrenceId: string;
+  baseEventId: CalendarEventId;
+  occurrenceStart: CalendarTime;
+  occurrenceEnd?: CalendarTime;
 }
 export const goldenCalendarFixtures = {
   timed: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },

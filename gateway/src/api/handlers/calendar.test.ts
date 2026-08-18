@@ -47,7 +47,7 @@ describe("calendar REST handler", () => {
     expect(await response.json()).toEqual({ error: "missing-token", message: "Bearer authentication is required" });
   });
 
-  it("keeps occurrence-only fields out of list wire responses and forwards tags", async () => {
+  it("preserves occurrence identity and expanded times in list wire responses", async () => {
     const windows: unknown[] = [];
     const store = stubStore((window) => {
       windows.push(window);
@@ -62,11 +62,26 @@ describe("calendar REST handler", () => {
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as { body: { events: Record<string, unknown>[] } };
-    expect(body.body.events[0]).not.toHaveProperty("occurrenceId");
-    expect(body.body.events[0]).not.toHaveProperty("baseEventId");
-    expect(body.body.events[0]).not.toHaveProperty("occurrenceStart");
-    expect(body.body.events[0]).not.toHaveProperty("occurrenceEnd");
+    expect(body.body.events[0]).toMatchObject({
+      id: "occurrence-1",
+      baseEventId: "event-1",
+      occurrenceId: "occurrence-1",
+      occurrenceStart: occurrence.occurrenceStart,
+      start: occurrence.start,
+    });
     expect(windows[0]).toMatchObject({ tags: ["holiday", "family"] });
+  });
+
+  it("returns the base event shape from GET, not occurrence fields", async () => {
+    const base = { ...occurrence, id: occurrence.baseEventId };
+    const store = { ...stubStore(() => ({ ok: true as const, value: [] })), get: () => ({ ok: true as const, value: base }) } as CalendarStore;
+    const api = createCalendarHandler(authenticatedDeps(() => store));
+    const response = await api(new Request("http://localhost/api/v1/calendar/events/event-1", { headers: { authorization: "Bearer token" } }));
+    const body = (await response.json()) as { body: Record<string, unknown> };
+    expect(body.body).toMatchObject({ id: "event-1", start: occurrence.start });
+    expect(body.body).not.toHaveProperty("occurrenceId");
+    expect(body.body).not.toHaveProperty("baseEventId");
+    expect(body.body).not.toHaveProperty("occurrenceStart");
   });
 
   it("closes the private store when opening the household store fails", async () => {

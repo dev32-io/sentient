@@ -8,5 +8,20 @@
     "kind": "all-day",
     "date": "2026-08-05"
   },
-  "recurrence": "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6"
+  "recurrence": "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6",
+  "listOccurrence": {
+    "id": "occurrence-1",
+    "baseEventId": "event-1",
+    "occurrenceId": "occurrence-1",
+    "occurrenceStart": {
+      "kind": "timed",
+      "instant": "2026-08-10T13:00:00.000Z",
+      "timeZoneId": "America/Toronto"
+    },
+    "start": {
+      "kind": "timed",
+      "instant": "2026-08-10T13:00:00.000Z",
+      "timeZoneId": "America/Toronto"
+    }
+  }
 }

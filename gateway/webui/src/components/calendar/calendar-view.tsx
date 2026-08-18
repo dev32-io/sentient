@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
 import { useAuth } from "../../hooks/use-auth.tsx";
-import { createCalendarApi, type CalendarApi, type CalendarEvent, type CalendarTime } from "../../services/calendar-api.ts";
+import { createCalendarApi, type CalendarApi, type CalendarEvent, type CalendarOccurrence, type CalendarTime } from "../../services/calendar-api.ts";
 import "./calendar-view.css";
 
 export function formatCalendarTime(value: CalendarTime): string {
@@ -39,7 +39,7 @@ export interface CalendarViewProps { api?: CalendarApi; token?: string }
 export function CalendarView({ api = createCalendarApi(), token: suppliedToken }: CalendarViewProps = {}): JSX.Element {
   const auth = useAuth();
   const token = suppliedToken ?? (auth.status === "authenticated" ? auth.token : "");
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [events, setEvents] = useState<CalendarOccurrence[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [editing, setEditing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +59,9 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
     ]);
     if (timedResult.ok && allDayResult.ok) {
       const merged = [...timedResult.value.events, ...allDayResult.value.events];
-      setEvents([...new Map(merged.map((event) => [event.id, event])).values()]); setError(null);
+      // An expanded recurring instance is a separate row. Only the occurrence
+      // identity is stable for this list; baseEventId is shared by design.
+      setEvents([...new Map(merged.map((event) => [event.occurrenceId, event])).values()]); setError(null);
     } else setError("Couldn't load calendar events.");
   }, [api, token, window]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -87,7 +89,7 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
     await refresh();
   };
   const beginEdit = (event: CalendarEvent) => {
-    setEditing(event.id);
+    setEditing((event as CalendarOccurrence).baseEventId ?? event.id);
     setDraft({ title: event.title, allDay: event.start.kind === "all-day", start: event.start.kind === "all-day" ? event.start.date : event.start.instant.slice(0, 16) });
   };
 
@@ -104,9 +106,9 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
       {error && <p role="alert" class="calendar-error">{error}</p>}
       <div class="calendar-days">
         {events.length === 0 ? <p class="calendar-empty">No events this week.</p> : events.map((event) => (
-          <article class="calendar-event" key={event.id}>
+          <article class="calendar-event" key={event.occurrenceId}>
             <div><strong>{event.title}</strong><time dateTime={event.start.kind === "timed" ? event.start.instant : event.start.date}>{formatCalendarTime(event.start)}</time>{event.end && <time>– {formatCalendarTime(event.end)}</time>}</div>
-            <div><button type="button" onClick={() => beginEdit(event)} disabled={busy}>Edit</button><button type="button" onClick={() => void remove(event.id)} disabled={busy}>Delete</button></div>
+            <div><button type="button" onClick={() => beginEdit(event)} disabled={busy}>Edit</button><button type="button" onClick={() => void remove(event.baseEventId)} disabled={busy}>Delete</button></div>
           </article>
         ))}
       </div>

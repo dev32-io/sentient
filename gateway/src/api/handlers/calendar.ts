@@ -8,8 +8,10 @@ import {
   type CalendarStore,
   type CalendarTime,
   type EventTimeZoneId,
+  type Occurrence,
   type Importance,
   type WireCalendarEvent,
+  type WireCalendarOccurrence,
   calendarEventSchema,
 } from "../../calendar/types.js";
 import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
@@ -118,11 +120,11 @@ function listEvents(privateStore: CalendarStore, householdStore: CalendarStore, 
             [privateStore, "private"],
             [householdStore, "household"],
           ];
-  const events: WireCalendarEvent[] = [];
+  const events: WireCalendarOccurrence[] = [];
   for (const [store, storeScope] of stores) {
     const result = store.list(window);
     if (!result.ok) return errorFor(result.error, requestId);
-    events.push(...result.value.map((event) => toWire(event, storeScope)));
+    events.push(...result.value.map((occurrence) => toWireOccurrence(occurrence, storeScope)));
   }
   return Response.json({ version: 1, requestId, body: { events, more: 0 } });
 }
@@ -237,6 +239,18 @@ function toWire(event: CalendarEvent, scope: Scope): WireCalendarEvent {
     ...(event.notification !== undefined ? { notificationPolicy: event.notification } : {}),
     createdAt: event.createdAt,
     updatedAt: event.updatedAt,
+  };
+}
+function toWireOccurrence(occurrence: Occurrence, scope: Scope): WireCalendarOccurrence {
+  return {
+    ...toWire(occurrence, scope),
+    id: occurrence.occurrenceId as CalendarEventId,
+    baseEventId: occurrence.baseEventId,
+    start: occurrence.start,
+    ...(occurrence.end !== undefined ? { end: occurrence.end } : {}),
+    occurrenceId: occurrence.occurrenceId,
+    occurrenceStart: occurrence.occurrenceStart,
+    ...(occurrence.occurrenceEnd !== undefined ? { occurrenceEnd: occurrence.occurrenceEnd } : {}),
   };
 }
 function wireResponse(event: WireCalendarEvent, requestId: string): Response {

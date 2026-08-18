@@ -21,6 +21,12 @@ export type CalendarEvent = {
   createdAt: string;
   updatedAt: string;
 };
+export type CalendarOccurrence = CalendarEvent & {
+  occurrenceId: string;
+  baseEventId: string;
+  occurrenceStart: CalendarTime;
+  occurrenceEnd?: CalendarTime;
+};
 
 export interface CalendarListOptions {
   from: CalendarTime;
@@ -31,7 +37,7 @@ export interface CalendarListOptions {
   importance?: CalendarEvent["importance"];
 }
 export interface CalendarList {
-  events: CalendarEvent[];
+  events: CalendarOccurrence[];
   more: number;
 }
 export type CalendarPatch = Partial<Omit<CalendarEvent, "id" | "createdAt" | "updatedAt">>;
