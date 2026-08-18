@@ -50,15 +50,26 @@ describe("calendar domain contracts", () => {
       scope: "private",
       title: "Dentist",
       start: goldenCalendarFixtures.timed,
+      recurrence: {
+        rrule: goldenCalendarFixtures.recurrence,
+        rule: { freq: "WEEKLY", byDay: ["MO", "WE"], count: 6 },
+      },
       visibility: "everyone",
       importance: "normal",
       tags: ["health"],
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-01T00:00:00.000Z",
     };
+    const request = (body: unknown) =>
+      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body }).success;
+    expect(request(event)).toBe(true);
+    expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "GIBBERISH" } })).toBe(false);
+    expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "FREQ=WEEKLY;BYDAY=MO;BYMONTH=1" } })).toBe(
+      false,
+    );
     expect(
-      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: event }).success,
-    ).toBe(true);
+      request({ ...event, recurrence: { ...event.recurrence, rule: { ...event.recurrence.rule, count: 5 } } }),
+    ).toBe(false);
     expect(calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: event }).success).toBe(true);
   });
 
