@@ -121,6 +121,10 @@ export interface CalendarStore {
 export interface CalendarListWindow {
   from: CalendarTime;
   to: CalendarTime;
+  /** Optional metadata filters are applied to the base event before expansion. */
+  group?: Group;
+  tags?: readonly string[];
+  importance?: Importance;
 }
 
 export interface CalendarRequest<T> {

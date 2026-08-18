@@ -12,6 +12,7 @@ import {
   type CalendarEventPatch,
   type CalendarListWindow,
   type CalendarResult,
+  type Occurrence,
   type CalendarStore,
   type CalendarTime,
   type EventTimeZoneId,
@@ -19,6 +20,7 @@ import {
   type UtcInstant,
 } from "./types.js";
 import { CALENDAR_DDL, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
+import { expandRecurrence } from "./expand-recurrence.js";
 
 export const ACCEPTED_CLASSES: ReadonlySet<ResourceClass> = new Set(["calendar-private", "calendar-household"]);
 
@@ -43,6 +45,9 @@ function normalizeTime(time: CalendarTime): CalendarTime {
   return time.kind === "timed" && !time.timeZoneId ? { ...time, timeZoneId: DEFAULT_EVENT_TIME_ZONE } : time;
 }
 function json(value: unknown): string { return JSON.stringify(value); }
+function timeSortKey(time: CalendarTime): number {
+  return time.kind === "all-day" ? Date.parse(`${time.date}T00:00:00Z`) : Date.parse(time.instant);
+}
 
 /** Opens the capability-rooted calendar database at <root>/calendar/calendar.db. */
 export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: CalendarStoreDeps = {}): CalendarStore {
@@ -71,6 +76,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   const read = (id: CalendarEventId): CalendarResult<CalendarEvent> => {
     const row = db.query<EventRow, [string]>("SELECT * FROM events WHERE id = ?").get(id);
     if (!row) return { ok: false, error: "not-found" };
+    if (row.visibility === "adults" && !isAdult(cap.role)) return { ok: false, error: "not-found" };
     const start = storedTime(row.start_instant, row.start_time_zone_id, row.start_all_day, row.start_date);
     if (!start) return { ok: false, error: "invalid" };
     let tags: string[] = [];
@@ -109,9 +115,42 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     return { ok: true, value: { ...event, start, ...(end ? { end } : {}) } };
   };
 
+  const list = (window: CalendarListWindow): CalendarResult<Occurrence[]> => {
+    if (window.from.kind !== window.to.kind) return { ok: false, error: "invalid" };
+    const rows = db.query<{ id: string }, []>("SELECT id FROM events ORDER BY start_instant, start_date, id").all();
+    const occurrences: Occurrence[] = [];
+    for (const row of rows) {
+      const result = read(row.id as CalendarEventId);
+      // Hidden events are intentionally indistinguishable from absent events on reads.
+      if (!result.ok) {
+        if (result.error === "not-found") continue;
+        return result;
+      }
+      const event = result.value;
+      if (window.group !== undefined && event.group !== window.group) continue;
+      if (window.importance !== undefined && event.importance !== window.importance) continue;
+      if (window.tags !== undefined && !window.tags.every((tag) => event.tags.has(tag))) continue;
+
+      if (event.start.kind !== window.from.kind) return { ok: false, error: "invalid" };
+      // Recurrence is evaluated in the event's timezone. The instant remains UTC;
+      // only the zone attached to the query boundary changes.
+      const eventWindow = event.start.kind === "timed"
+        ? {
+            from: { kind: "timed" as const, instant: window.from.kind === "timed" ? window.from.instant : "" as UtcInstant, timeZoneId: event.start.timeZoneId },
+            to: { kind: "timed" as const, instant: window.to.kind === "timed" ? window.to.instant : "" as UtcInstant, timeZoneId: event.start.timeZoneId },
+          }
+        : { from: window.from, to: window.to };
+      const expanded = expandRecurrence(event, eventWindow.from, eventWindow.to);
+      if (!expanded.ok) return { ok: false, error: expanded.error.code === "unbounded-rrule" ? "recurrence-limit" : "invalid" };
+      occurrences.push(...expanded.value);
+    }
+    occurrences.sort((a, b) => timeSortKey(a.start) - timeSortKey(b.start) || a.occurrenceId.localeCompare(b.occurrenceId));
+    return { ok: true, value: occurrences };
+  };
+
   return {
     get: (id) => usable(() => read(id)),
-    list: (_window: CalendarListWindow) => usable(() => ({ ok: false, error: "not-implemented" })),
+    list: (window) => usable(() => list(window)),
     create: (event) => usable(() => gate(() => write(event, "create"))),
     update: ((idOrEvent: CalendarEventId | CalendarEvent, patch?: CalendarEventPatch) => usable(() => gate(() => {
       const current = typeof idOrEvent === "string" ? read(idOrEvent) : read(idOrEvent.id);
