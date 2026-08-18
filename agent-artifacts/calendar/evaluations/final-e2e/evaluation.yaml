@@ -10,9 +10,11 @@ attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: reviewing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
+  reviewerAgentId: 053547a1-6333-4d57-84d4-25c46911452a
+  reviewedCommit: ee13c5419433d1997c7231eff5a88164cb685e0c
 findings:
   - id: CAL-E2E-001
     severity: critical
