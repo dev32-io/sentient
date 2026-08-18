@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s2-ha-deprecation
 title: Deprecate and hide the four HA calendar tools
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -20,3 +20,9 @@ verification:
       src/api/handlers/mcp-catalog
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s2-ha-deprecation
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s2-ha-deprecation
+  baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
+  lastRunId: 3ead42d8-b99a-4147-ab5c-146e2bb1a29d
