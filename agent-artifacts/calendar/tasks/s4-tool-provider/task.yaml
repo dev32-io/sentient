@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-tool-provider
 title: Calendar product tool group with pre-PDP household-write rejection
-status: running
+status: contribution_complete
 dependsOn:
   - s3-store-reads
 execution:
@@ -27,3 +27,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s4-tool-provider
   baseCommit: 6d816e9529a29699598c78a20f7a7c4ef4a64253
   lastRunId: 989379a5-a1cc-4e37-89be-4de48f330690
+  completedCommit: ce02a03a249b0f35449ec32a6d530bc3f640748b
