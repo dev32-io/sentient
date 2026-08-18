@@ -1,16 +1,17 @@
 schemaVersion: 1
 evaluation: stage-stage-1-foundation-review
-recordedAt: 2026-08-18T00:08:33.103Z
+recordedAt: 2026-08-18T00:13:11.908Z
 entries:
   - result: pass
     command: cd gateway && bun run typecheck
-  - result: "pass: 32 tests, 0 failures"
+  - result: "pass: 33 tests, 0 failures"
     command: cd gateway && bun test src/access src/calendar/types
       src/calendar/e2e-helpers
-  - result: Unsupported RRULE returned ok:true; arbitrary response body returned true
-    command: cd gateway && bun -e 'import {parseRRule,calendarResponseSchema} from
-      "./src/calendar/types.ts"; console.log(parseRRule("FREQ=DAILY;BOGUS=1"));
-      console.log(calendarResponseSchema.safeParse({version:1,requestId:"r",body:{notAResponse:true}}).success)'
-    description: Sanitized targeted contract probes
+  - result: "true: malformed raw RRULE accepted at wire boundary"
+    command: cd gateway && bun -e 'import {calendarRequestSchema} from
+      "./src/calendar/types.ts"; const
+      e={id:"e",scope:"private",title:"x",start:{kind:"timed",instant:"2026-08-05T13:00:00.000Z",timeZoneId:"UTC"},visibility:"everyone",importance:"normal",tags:[],createdAt:"2026-08-01T00:00:00.000Z",updatedAt:"2026-08-01T00:00:00.000Z"};
+      console.log(calendarRequestSchema.safeParse({version:1,requestId:"r",operation:"create",body:{...e,recurrence:{rrule:"FREQ=DAILY;BOGUS=1",rule:{freq:"DAILY"}}}}).success)'
+    description: Sanitized recurrence consistency probe
     path: files/3-types.ts
-    checksum: sha256:a21e36467ea852844c5d36100b82c03965535de5c40fcbcbee28882629c586ce
+    checksum: sha256:7465b4d43edc59f4904558937fc7fc762caf69065b1324332700db9b708f81de

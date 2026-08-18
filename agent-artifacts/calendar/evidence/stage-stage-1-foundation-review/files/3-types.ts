@@ -22,6 +22,7 @@ export type CalendarTime = TimedValue | AllDayValue;
 
 export type Visibility = "everyone" | "adults";
 export type Importance = "normal" | "important" | "pinned";
+export type CalendarScope = "private" | "household";
 export type Group = string;
 export type Tags = ReadonlySet<string>;
 
@@ -167,23 +168,101 @@ const calendarStoreErrorSchema = z.enum([
   "io-error",
   "closed",
 ]);
-export const calendarRequestSchema = z.object({
-  version: z.literal(1),
-  requestId: z.string().min(1),
-  operation: z.string().min(1),
-  body: z.unknown(),
-});
+
+const calendarEventId = z.string().min(1).brand<"CalendarEventId">();
+const calendarEventSchema = z
+  .object({
+    id: calendarEventId,
+    scope: z.enum(["private", "household"]),
+    title: z.string(),
+    description: z.string().optional(),
+    start: wireCalendarTimeSchema,
+    end: wireCalendarTimeSchema.optional(),
+    recurrence: z
+      .object({ rrule: z.string().min(1), rule: wireRRuleSchema })
+      .strict()
+      .optional(),
+    exdates: z.array(wireCalendarTimeSchema).optional(),
+    exceptions: z
+      .array(
+        z
+          .object({
+            occurrence: wireCalendarTimeSchema,
+            cancelled: z.boolean().optional(),
+            title: z.string().optional(),
+            start: wireCalendarTimeSchema.optional(),
+            end: wireCalendarTimeSchema.optional(),
+          })
+          .strict(),
+      )
+      .optional(),
+    visibility: z.enum(["everyone", "adults"]),
+    importance: z.enum(["normal", "important", "pinned"]),
+    group: z.string().optional(),
+    tags: z.array(z.string()),
+    notificationPolicy: z.object({ kind: z.string() }).catchall(z.unknown()).optional(),
+    createdAt: utcInstant,
+    updatedAt: utcInstant,
+  })
+  .strict();
+
+const calendarListFilters = z
+  .object({
+    from: wireCalendarTimeSchema,
+    to: wireCalendarTimeSchema,
+    scope: z.enum(["private", "household"]).optional(),
+    group: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    importance: z.enum(["normal", "important", "pinned"]).optional(),
+  })
+  .strict();
+const calendarGet = z.object({ id: calendarEventId }).strict();
+const calendarSearch = z
+  .object({
+    query: z.string().min(1),
+    scope: z.enum(["private", "household"]).optional(),
+    group: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    importance: z.enum(["normal", "important", "pinned"]).optional(),
+  })
+  .strict();
+
+const calendarRequestBodySchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("create"), body: calendarEventSchema }).strict(),
+  z.object({ operation: z.literal("update"), body: calendarEventSchema }).strict(),
+  z.object({ operation: z.literal("list"), body: calendarListFilters }).strict(),
+  z.object({ operation: z.literal("get"), body: calendarGet }).strict(),
+  z.object({ operation: z.literal("search"), body: calendarSearch }).strict(),
+  z.object({ operation: z.literal("delete"), body: calendarGet }).strict(),
+]);
+export const calendarRequestSchema = z
+  .object({ version: z.literal(1), requestId: z.string().min(1), operation: z.string(), body: z.unknown() })
+  .superRefine((request, ctx) => {
+    const parsed = calendarRequestBodySchema.safeParse({ operation: request.operation, body: request.body });
+    if (!parsed.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid calendar request body" });
+  });
 export const calendarErrorSchema = z.object({
   version: z.literal(1),
   requestId: z.string(),
   error: z.object({ code: calendarStoreErrorSchema, message: z.string() }),
 });
-export const calendarResponseSchema = z.object({ version: z.literal(1), requestId: z.string(), body: z.unknown() });
+const calendarResponseBodySchema = z.union([
+  calendarEventSchema,
+  z.object({ events: z.array(calendarEventSchema), more: z.number().int().nonnegative() }).strict(),
+  z.object({ ok: z.literal(true) }).strict(),
+]);
+export const calendarResponseSchema = z.object({
+  version: z.literal(1),
+  requestId: z.string(),
+  body: calendarResponseBodySchema,
+});
 
 export function parseRRule(raw: string): CalendarResult<RRule> {
   const parts = raw.split(";");
   if (parts.length === 0 || parts.some((part) => !/^[A-Z]+=[^;]+$/.test(part))) return { ok: false, error: "invalid" };
   const values = new Map(parts.map((part) => part.split("=", 2) as [string, string]));
+  const allowedKeys = new Set(["FREQ", "INTERVAL", "COUNT", "UNTIL", "BYDAY"]);
+  if ([...values.keys()].some((key) => !allowedKeys.has(key))) return { ok: false, error: "invalid" };
   const freq = values.get("FREQ");
   if (!freq || !["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq)) return { ok: false, error: "invalid" };
   const interval = values.get("INTERVAL");
@@ -214,11 +293,13 @@ export function parseRRule(raw: string): CalendarResult<RRule> {
 }
 
 /** JSON representation used by REST, tools, web, and SDK: sets become arrays. */
-export interface WireCalendarEvent extends Omit<CalendarEvent, "tags" | "start" | "end" | "exdates"> {
+export interface WireCalendarEvent extends Omit<CalendarEvent, "tags" | "start" | "end" | "exdates" | "notification"> {
+  scope: CalendarScope;
   start: CalendarTime;
   end?: CalendarTime;
   exdates?: readonly CalendarTime[];
   tags: readonly string[];
+  notificationPolicy?: CalendarNotification;
 }
 export const goldenCalendarFixtures = {
   timed: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },
