@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s3-store-reads
 title: CalendarStore get/list/filter with visibility and event-tz recurrence expansion
-status: contribution_complete
+status: merged
 dependsOn:
   - s3-store-writes
   - s2-expand-recurrence
@@ -28,3 +28,4 @@ runtime:
   baseCommit: 9a9d59ac9e3356346950a80c69291b0bfdd0c15b
   lastRunId: c695cc5a-88a4-4d79-8900-7cee60fd8881
   completedCommit: ddb64b09e17183aca124627b3903b42f7acf401d
+  mergedCommit: 820f28a87cc3a4d89ff649a7333e3bbe27416155
