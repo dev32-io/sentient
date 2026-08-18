@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-5-bootstrap-nudge
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -19,8 +19,8 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
   reviewedCommit: d17670e01324e90f5add29a393ca5520cef8e57c
@@ -116,6 +116,7 @@ loop:
     gateway && bun test src/bootstrap/phase-services src/calendar/nudge` green
     (and the calendar provider tests). Do not weaken existing tests. Reuse
     isAdult, parseRRule, and the existing store/wire types from types.ts.
+  fixerAgentId: 852ffed6-360a-4aaf-b69c-846261acbf29
 findings:
   - id: S5-BOOTSTRAP-001
     severity: high
