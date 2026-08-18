@@ -106,11 +106,13 @@ export type CalendarStoreError =
   | "closed"
   | "not-implemented";
 export type CalendarResult<T> = Result<T, CalendarStoreError>;
+export type CalendarEventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt">>;
 export interface CalendarStore {
   get(id: CalendarEventId): CalendarResult<CalendarEvent>;
   list(window: CalendarListWindow): CalendarResult<Occurrence[]>;
   create(event: CalendarEvent): CalendarResult<CalendarEvent>;
   update(event: CalendarEvent): CalendarResult<CalendarEvent>;
+  update(id: CalendarEventId, patch: CalendarEventPatch): CalendarResult<CalendarEvent>;
   delete(id: CalendarEventId): CalendarResult<void>;
   close(): void;
 }

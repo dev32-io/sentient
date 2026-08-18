@@ -3,14 +3,20 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Capability, ResourceClass } from "../access/capability.js";
 import { migrateDatabase, readUserVersion } from "../store/migrate-store.js";
-import type {
-  CalendarConfig,
-  CalendarEvent,
-  CalendarEventId,
-  CalendarListWindow,
-  CalendarResult,
-  CalendarStore,
-  Occurrence,
+import {
+  DEFAULT_EVENT_TIME_ZONE,
+  isAdult,
+  type CalendarConfig,
+  type CalendarEvent,
+  type CalendarEventId,
+  type CalendarEventPatch,
+  type CalendarListWindow,
+  type CalendarResult,
+  type CalendarStore,
+  type CalendarTime,
+  type EventTimeZoneId,
+  type LocalDate,
+  type UtcInstant,
 } from "./types.js";
 import { CALENDAR_DDL, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
 
@@ -21,28 +27,34 @@ export interface CalendarStoreDeps {
   migrate?: typeof migrateDatabase;
 }
 
-function notImplemented<T>(): CalendarResult<T> {
-  return { ok: false, error: "not-implemented" };
-}
+type EventRow = {
+  id: string; title: string; description: string | null;
+  start_instant: string | null; start_time_zone_id: string | null; start_all_day: number; start_date: string | null;
+  end_instant: string | null; end_time_zone_id: string | null; end_all_day: number; end_date: string | null;
+  recurrence: string | null; visibility: CalendarEvent["visibility"]; importance: CalendarEvent["importance"];
+  group: string | null; notification_policy: string | null; created_at: string; updated_at: string;
+};
 
-/** Opens the capability-rooted calendar database at <root>/calendar/calendar.db.
- * A database newer than this binary is intentionally left untouched; opening it
- * succeeds, but operations remain stubs until a compatible implementation is
- * installed. This is the same explicit, forward-only policy as SessionStore. */
+function storedTime(instant: string | null, zone: string | null, allDay: number, date: string | null): CalendarTime | undefined {
+  if (allDay) return date ? { kind: "all-day", date: date as LocalDate } : undefined;
+  return instant ? { kind: "timed", instant: instant as UtcInstant, timeZoneId: (zone ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId } : undefined;
+}
+function normalizeTime(time: CalendarTime): CalendarTime {
+  return time.kind === "timed" && !time.timeZoneId ? { ...time, timeZoneId: DEFAULT_EVENT_TIME_ZONE } : time;
+}
+function json(value: unknown): string { return JSON.stringify(value); }
+
+/** Opens the capability-rooted calendar database at <root>/calendar/calendar.db. */
 export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: CalendarStoreDeps = {}): CalendarStore {
-  // This must remain before join/mkdir: resource class is the authority check,
-  // not an incidental consequence of the path supplied by the capability.
   if (!ACCEPTED_CLASSES.has(cap.resource)) {
-    throw new Error(
-      `openCalendarStore: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`,
-    );
+    throw new Error(`openCalendarStore: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`);
   }
   void cfg;
-
   const calendarRoot = join(cap.rootPath, "calendar");
   const dbPath = join(calendarRoot, "calendar.db");
   mkdirSync(calendarRoot, { recursive: true });
   const db = new Database(dbPath, { create: true });
+  db.exec("PRAGMA foreign_keys = ON;");
   const recordedVersion = readUserVersion(db);
   if (recordedVersion <= CALENDAR_SCHEMA_VERSION) db.exec(CALENDAR_DDL);
   const migrate = deps.migrate ?? migrateDatabase;
@@ -51,19 +63,73 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   let closed = false;
   const usable = <T>(operation: () => CalendarResult<T>): CalendarResult<T> => {
     if (closed) return { ok: false, error: "closed" };
-    return operation();
+    try { return operation(); } catch { return { ok: false, error: "io-error" }; }
+  };
+  const gate = <T>(operation: () => CalendarResult<T>): CalendarResult<T> =>
+    cap.resource === "calendar-household" && !isAdult(cap.role) ? { ok: false, error: "forbidden" } : operation();
+
+  const read = (id: CalendarEventId): CalendarResult<CalendarEvent> => {
+    const row = db.query<EventRow, [string]>("SELECT * FROM events WHERE id = ?").get(id);
+    if (!row) return { ok: false, error: "not-found" };
+    const start = storedTime(row.start_instant, row.start_time_zone_id, row.start_all_day, row.start_date);
+    if (!start) return { ok: false, error: "invalid" };
+    let tags: string[] = [];
+    const tagRows = db.query<{ tag: string }, [string]>("SELECT tag FROM tags WHERE event_id = ? ORDER BY tag").all(id);
+    tags = tagRows.map((tag) => tag.tag);
+    const exdates = db.query<{ occurrence_key: string }, [string]>("SELECT occurrence_key FROM exdates WHERE event_id = ? ORDER BY occurrence_key").all(id)
+      .map((r) => JSON.parse(r.occurrence_key) as CalendarTime);
+    const exceptions = db.query<{ occurrence_key: string; cancelled: number; override_json: string | null }, [string]>("SELECT * FROM exceptions WHERE event_id = ? ORDER BY occurrence_key").all(id)
+      .map((r) => ({ ...(JSON.parse(r.occurrence_key) as { occurrence: CalendarTime }), cancelled: !!r.cancelled, ...(r.override_json ? JSON.parse(r.override_json) : {}) }));
+    const end = storedTime(row.end_instant, row.end_time_zone_id, row.end_all_day, row.end_date);
+    const value: CalendarEvent = {
+      id: row.id as CalendarEventId, title: row.title, ...(row.description === null ? {} : { description: row.description }), start,
+      ...(end ? { end } : {}), ...(row.recurrence ? { recurrence: JSON.parse(row.recurrence) } : {}), exdates, exceptions,
+      visibility: row.visibility, importance: row.importance, ...(row.group === null ? {} : { group: row.group }), tags: new Set(tags),
+      ...(row.notification_policy ? { notification: JSON.parse(row.notification_policy) } : {}), createdAt: row.created_at as UtcInstant, updatedAt: row.updated_at as UtcInstant,
+    };
+    return { ok: true, value };
+  };
+
+  const write = (event: CalendarEvent, mode: "create" | "update"): CalendarResult<CalendarEvent> => {
+    if (mode === "create" && db.query("SELECT 1 FROM events WHERE id=?").get(event.id)) return { ok: false, error: "already-exists" };
+    const start = normalizeTime(event.start);
+    const end = event.end ? normalizeTime(event.end) : undefined;
+    const timeColumns = (time: CalendarTime | undefined) => time?.kind === "timed"
+      ? [time.instant, time.timeZoneId, 0, null] : time ? [null, null, 1, time.date] : [null, null, 0, null];
+    const s = timeColumns(start), e = timeColumns(end);
+    const tx = db.transaction(() => {
+      if (mode === "create") db.query("INSERT INTO events (id,title,description,start_instant,start_time_zone_id,start_all_day,start_date,end_instant,end_time_zone_id,end_all_day,end_date,recurrence,visibility,importance,\"group\",notification_policy,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(event.id, event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.createdAt, event.updatedAt);
+      else db.query("UPDATE events SET title=?,description=?,start_instant=?,start_time_zone_id=?,start_all_day=?,start_date=?,end_instant=?,end_time_zone_id=?,end_all_day=?,end_date=?,recurrence=?,visibility=?,importance=?,\"group\"=?,notification_policy=?,updated_at=? WHERE id=?").run(event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.updatedAt, event.id);
+      db.query("DELETE FROM exdates WHERE event_id=?").run(event.id); db.query("DELETE FROM exceptions WHERE event_id=?").run(event.id); db.query("DELETE FROM tags WHERE event_id=?").run(event.id);
+      for (const value of event.exdates ?? []) db.query("INSERT INTO exdates (event_id,occurrence_key) VALUES (?,?)").run(event.id, json(normalizeTime(value)));
+      for (const exception of event.exceptions ?? []) { const { occurrence, cancelled, ...override } = exception; db.query("INSERT INTO exceptions (event_id,occurrence_key,cancelled,override_json) VALUES (?,?,?,?)").run(event.id, json({ occurrence: normalizeTime(occurrence) }), cancelled ? 1 : 0, Object.keys(override).length ? json(override) : null); }
+      for (const tag of event.tags) db.query("INSERT INTO tags (event_id,tag) VALUES (?,?)").run(event.id, tag);
+    });
+    tx();
+    return { ok: true, value: { ...event, start, ...(end ? { end } : {}) } };
   };
 
   return {
-    get: (_id: CalendarEventId) => usable(() => notImplemented<CalendarEvent>()),
-    list: (_window: CalendarListWindow) => usable(() => notImplemented<Occurrence[]>()),
-    create: (_event: CalendarEvent) => usable(() => notImplemented<CalendarEvent>()),
-    update: (_event: CalendarEvent) => usable(() => notImplemented<CalendarEvent>()),
-    delete: (_id: CalendarEventId) => usable(() => notImplemented<void>()),
-    close: () => {
-      if (closed) return;
-      closed = true;
-      db.close();
-    },
+    get: (id) => usable(() => read(id)),
+    list: (_window: CalendarListWindow) => usable(() => ({ ok: false, error: "not-implemented" })),
+    create: (event) => usable(() => gate(() => write(event, "create"))),
+    update: ((idOrEvent: CalendarEventId | CalendarEvent, patch?: CalendarEventPatch) => usable(() => gate(() => {
+      const current = typeof idOrEvent === "string" ? read(idOrEvent) : read(idOrEvent.id);
+      if (!current.ok) return current;
+      const event = typeof idOrEvent === "string" ? { ...current.value, ...patch, id: idOrEvent } as CalendarEvent : idOrEvent;
+      return write(event, "update");
+    }))) as CalendarStore["update"],
+    "delete": (id) => usable(() => gate(() => {
+      const found = read(id);
+      if (!found.ok) return found;
+      db.transaction(() => {
+        db.query("DELETE FROM exdates WHERE event_id=?").run(id);
+        db.query("DELETE FROM exceptions WHERE event_id=?").run(id);
+        db.query("DELETE FROM tags WHERE event_id=?").run(id);
+        db.query("DELETE FROM events WHERE id=?").run(id);
+      })();
+      return { ok: true, value: undefined };
+    })),
+    close: () => { if (closed) return; closed = true; db.close(); },
   };
 }
