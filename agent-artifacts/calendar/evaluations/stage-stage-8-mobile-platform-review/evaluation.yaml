@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-8-mobile-platform
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' && ./gradlew
     :android:app:compileDebugKotlin
@@ -21,8 +21,74 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
   reviewedCommit: da8d3566a725bc366cf268be83380e55bb61b5c3
+findings:
+  - id: CAL-MOBILE-001
+    severity: high
+    status: open
+    criterion: Mobile screens must list calendar events including timed events
+    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:47-51;
+      ios/App/Settings/Calendar/CalendarViewModel.swift:20-31;
+      gateway/src/calendar/calendar-store.ts:136
+    summary: All-day-only query fails when the calendar contains timed events.
+    blocking: true
+  - id: CAL-ANDROID-001
+    severity: high
+    status: open
+    criterion: Android screen must support create/update/delete
+    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:61-90;
+      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:81-86
+    summary: Create sends schema-invalid timestamps; timed updates are converted to
+      an empty all-day date.
+    blocking: true
+  - id: CAL-IOS-001
+    severity: high
+    status: open
+    criterion: iOS brief requires list/create/update/delete
+    location: ios/App/Settings/Calendar/CalendarScreen.swift:15-45
+    summary: The iOS screen exposes listing and refresh only; CRUD ViewModel methods
+      are not wired to controls.
+    blocking: true
+  - id: CAL-MOBILE-002
+    severity: high
+    status: open
+    criterion: Mobile design requires device-timezone rendering
+    location: ios/App/Settings/Calendar/CalendarScreen.swift:62-67;
+      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:74-86
+    summary: iOS displays raw UTC and Android omits event date/time rendering.
+    blocking: true
+  - id: CAL-ANDROID-002
+    severity: high
+    status: open
+    criterion: Android acceptance requires a drawer/settings-row calendar icon
+    location: android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:1-21,153-164;
+      android/src/main/kotlin/io/sentient/android/settings/SettingsCategories.kt:50-55
+    summary: Only a settings-root row exists; the drawer has no calendar action or ID.
+    blocking: true
+  - id: CAL-MOBILE-003
+    severity: high
+    status: open
+    criterion: Boundary proof requires ViewModel folding and screen-wiring tests
+    location: android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt:13-36;
+      ios/Tests
+    summary: Android coverage is limited to two pure list folds and iOS has no
+      calendar test file.
+    blocking: true
+  - id: CAL-MOBILE-004
+    severity: high
+    status: open
+    criterion: CRUD must work for recurring calendar events
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:106;
+      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:68-70
+    summary: Occurrence IDs are decoded as CalendarEvent.id while baseEventId is
+      dropped, so Android CRUD addresses the wrong persisted ID for recurring
+      rows.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-8-mobile-platform-review/manifest.yaml
