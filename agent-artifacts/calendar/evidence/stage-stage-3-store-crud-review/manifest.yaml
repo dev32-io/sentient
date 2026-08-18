@@ -1,13 +1,15 @@
 schemaVersion: 1
 evaluation: stage-stage-3-store-crud-review
-recordedAt: 2026-08-18T01:41:34.422Z
+recordedAt: 2026-08-18T03:57:04.901Z
 entries:
-  - result: 5 pass, 0 fail
+  - result: 10 pass, 0 fail, 62 expect() calls
     command: cd gateway && bun test src/calendar/calendar-store
-    description: Declared store test check passes, but the file contains only five
-      tests and omits required boundary-proof scenarios.
+    description: Store contract suite passes with the repaired boundary coverage.
     path: files/1-calendar-store.test.ts
-    checksum: sha256:028ee9879c2d3defc68f0b662bba39ba4fe7e5996eeccfe64446a5491114ec2a
+    checksum: sha256:2701074c2f3ce50cb3e7eb4a2143f335a3e925968aaf5524140eb8ef89de904e
   - result: passed
     command: cd gateway && bun run typecheck
-    description: Declared gateway typecheck passes.
+    description: Gateway typecheck passes.
+  - result: passed
+    command: git diff --check 44c2da3efeadc3bf34e703f75204e0c9caf1ab10..HEAD
+    description: Bounded repair diff has no whitespace errors.
