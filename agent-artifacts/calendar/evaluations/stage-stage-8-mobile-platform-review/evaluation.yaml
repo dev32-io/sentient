@@ -21,7 +21,7 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: awaiting_manager
+  state: fixing
   iteration: 0
   maxIterations: 3
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
@@ -44,6 +44,7 @@ loop:
     CAL-MOBILE-004 (high) — Occurrence IDs are decoded as CalendarEvent.id while baseEventId is dropped, so Android CRUD addresses the wrong persisted ID for recurring rows. Fix: the list/occurrence wire shape must preserve baseEventId on each occurrence row (this was added at the REST boundary in stage-6; ensure the mobile SDK CalendarEventPage/CalendarEvent model and the Android/iOS decode preserve occurrenceId AND baseEventId). CRUD (update/delete) on a recurring-event occurrence row must target the persisted recurring-event id (baseEventId), not the occurrenceId. Do not decode occurrenceId as the event id.
 
     Constraints: keep `./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew :android:compileDebugKotlin`, `./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' && ./gradlew :shared:mobile-data:compileDebugKotlin`, and the iOS check (`./gradlew :shared:mobile-data:assembleMobileDataXCFramework && xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.3.1' build && xcodebuild ... test`) green. JAVA_HOME is set; the iOS 18.3.1 runtime is the compatible target. Do not weaken existing tests or regress prior stages. Reuse the shared use cases (do not call raw repositories from ViewModels — keep the route-scoped ViewModel→use-case seam).
+  fixerAgentId: cfaccda9-6a6f-4407-944b-184ff470d780
 findings:
   - id: CAL-MOBILE-001
     severity: high
