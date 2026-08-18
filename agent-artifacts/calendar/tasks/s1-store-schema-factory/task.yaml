@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s1-store-schema-factory
 title: CalendarStore schema, migration ladder, factory skeleton, and close() lifecycle
-status: contribution_complete
+status: merged
 dependsOn:
   - s1-resource-classes
   - s1-domain-contracts
@@ -28,3 +28,4 @@ runtime:
   baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
   lastRunId: 7bec34a8-891f-410f-8be1-ab8c07794e02
   completedCommit: 144851568a0c2d19165c31299abe89830e1dbae7
+  mergedCommit: 8bb2e4244179250292c05a96b55a2ca664cf7148
