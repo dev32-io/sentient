@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s5-phase-bootstrap
 title: Mint calendar capabilities, wire the tool group, and own calendar config
-status: blocked
+status: ready
 dependsOn:
   - s4-tool-provider
   - s1-store-schema-factory
