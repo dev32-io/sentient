@@ -23,7 +23,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
-  reviewedCommit: 1fbc3834aa487bdc64948aeaa3c3c96bae93dca1
+  reviewedCommit: 22650ddaa7c809c30552d2fc0bf3a5c1c6310304
   managerPrompt: >-
     Address all five stage-4 findings (gateway/src/api/handlers/calendar.ts and
     gateway/src/bootstrap/product-tools/calendar-provider.ts, plus their tests):
