@@ -18,6 +18,8 @@ criteria:
   - UTC storage and serving-timezone recurrence expansion through the store path
     with EXDATE/exception application
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: 4e66e174-b786-453f-be70-7c7db18e7946
+  reviewedCommit: 44c2da3efeadc3bf34e703f75204e0c9caf1ab10
