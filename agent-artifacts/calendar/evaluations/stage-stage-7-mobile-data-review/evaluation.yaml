@@ -21,7 +21,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 514b4f53-0de0-4eda-98b3-fd971329245e
-  reviewedCommit: 96456967876f694f4ad1921d115c8c4bcc1746e6
+  reviewedCommit: 8eec2d1fa3bbaf4951e87418e5b692b789a6c774
   managerPrompt: |-
     Address S7-MD-001 (high, blocking) in shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt (plus its test). The residual non-blocking test-coverage gap (list/create/update/delete mapping) is deferred — leave it.
 
