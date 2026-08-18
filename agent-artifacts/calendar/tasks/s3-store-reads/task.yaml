@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s3-store-reads
 title: CalendarStore get/list/filter with visibility and event-tz recurrence expansion
-status: running
+status: contribution_complete
 dependsOn:
   - s3-store-writes
   - s2-expand-recurrence
@@ -27,3 +27,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: 9a9d59ac9e3356346950a80c69291b0bfdd0c15b
   lastRunId: c695cc5a-88a4-4d79-8900-7cee60fd8881
+  completedCommit: ddb64b09e17183aca124627b3903b42f7acf401d
