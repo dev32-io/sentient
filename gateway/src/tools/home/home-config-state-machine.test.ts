@@ -123,7 +123,6 @@ describe("Home configuration state machine", () => {
       "home_remove_automation",
       "home_remove_script",
       "home_remove_todo",
-      "home_remove_calendar_event",
     ]);
     expect(
       removals.every((definition) => definition.tier === "confirm" && definition.defaultExposure === "standard"),

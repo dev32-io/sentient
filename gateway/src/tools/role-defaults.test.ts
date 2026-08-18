@@ -127,6 +127,25 @@ function seededToolNames(role: Parameters<typeof defaultPermissionsFor>[0]): str
 }
 
 describe("the shipped catalog seeds a complete table", () => {
+  it("does not expose the retired Home Assistant calendar tools", () => {
+    const retired = new Set([
+      "home_get_calendar_events",
+      "home_create_calendar_event",
+      "home_update_calendar_event",
+      "home_remove_calendar_event",
+    ]);
+    expect(
+      foundationProductToolMetadata()
+        .map((tool) => tool.name)
+        .filter((name) => retired.has(name)),
+    ).toEqual([]);
+    expect(
+      Object.values(defaultPermissionsFor("adult", shippedCatalog, { includeFoundationTools: true }))
+        .flatMap((permissions) => Object.keys(permissions))
+        .filter((name) => retired.has(name)),
+    ).toEqual([]);
+  });
+
   it("leaves no tool an adult can execute out of an adult's table", () => {
     const reachable = [...catalogTools(shippedCatalog), ...foundationProductToolMetadata()]
       .filter((tool) => canExecute("adult", tool.tier) && tool.defaultExposure === "standard")
