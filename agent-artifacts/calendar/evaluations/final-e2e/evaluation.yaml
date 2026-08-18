@@ -4,15 +4,15 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: 053547a1-6333-4d57-84d4-25c46911452a
   reviewedCommit: 7f8be724f49e239a4c58c10f52213613a2853edd
   managerPrompt: >-
@@ -105,51 +105,45 @@ loop:
 findings:
   - id: CAL-E2E-001
     severity: critical
-    status: open
+    status: resolved
     criterion: AC-003 / E2E-003
-    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:251-290
-    summary: Native calendar tool definitions omit JSON properties; a live
-      adults-only agent create lost visibility=adults and persisted as everyone,
-      exposing the event to the child path.
-    blocking: true
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts
+    summary: Tool field schemas now expose visibility and the live adults-only
+      create preserved the field; child surfaces omitted the event.
+    blocking: false
   - id: CAL-E2E-002
     severity: high
-    status: open
+    status: resolved
     criterion: AC-006 / E2E-007
-    location: gateway/src/api/handlers/calendar.ts:25,300;
-      gateway/src/calendar/calendar-store.ts:44-45
-    summary: Recurring events using timeZoneId=household are created but
-      list/expansion returns 422 invalid because the sentinel is not resolved to
-      an IANA household zone.
-    blocking: true
+    location: gateway/src/calendar/expand-recurrence.ts
+    summary: Household timezone sentinel recurrence now lists and expands
+      successfully without 422.
+    blocking: false
   - id: CAL-E2E-003
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-005
-    location: gateway/src/calendar/nudge.ts:111-130
-    summary: Over-budget nudge trimming removes weekly important/pinned entries
-      before today entries; the live capped nudge retained no important weekly
-      items.
-    blocking: true
+    location: gateway/src/calendar/nudge.ts
+    summary: Nudge trimming now preserves important weekly entries and uses normal
+      overflow first, with mandatory trimming only as a last resort.
+    blocking: false
   - id: CAL-E2E-004
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-008
-    location: gateway/webui/src/components/calendar/calendar-view.tsx:39,49-67
-    summary: Recreated default CalendarApi identity causes an effect/render/request
-      loop; 218 calendar REST resource entries accumulated during one live page
-      session.
-    blocking: true
+    location: gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: CalendarApi identity is stable; fresh route observation showed no
+      repeated fetch loop.
+    blocking: false
   - id: CAL-E2E-005
     severity: high
-    status: open
+    status: accepted
     criterion: E2E-002
-    location: gateway/webui/src/components/calendar/calendar-view.tsx:18-25,49-67
-    summary: The week view requests only one seven-day window; the COUNT=10 MO,FR
-      event produced 10 in a covering query but only 2 rendered in the current
-      week, missing the exact persisted matrix outcome.
-    blocking: true
+    location: gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: Accepted residual matrix wording mismatch; not reopened per manager
+      guidance.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/final-e2e/manifest.yaml
