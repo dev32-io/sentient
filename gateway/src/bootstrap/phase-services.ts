@@ -52,6 +52,7 @@ import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import type { CalendarStore } from "../calendar/types.js";
 import { openCalendarStore } from "../calendar/calendar-store.js";
+import { composeCalendarNudge } from "../calendar/nudge.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore, memoryTogglesFor } from "../profile-store/profile-store.ts";
@@ -216,6 +217,9 @@ export interface SessionCalendar {
   readonly tools: NativeToolRunner[];
   readonly privateStore: CalendarStore;
   readonly householdStore: CalendarStore;
+  /** Composed once at session construction; calendar writes cannot mutate the
+   * cache-stable system prompt of an existing session. */
+  readonly nudge: string | null;
   close(): void;
 }
 
@@ -361,10 +365,19 @@ export function buildSessionCalendar(
       capability: accessManager.grant(principal, "calendar-private"),
     },
   });
+  const householdZone = resolveTimeZone().zone();
+  const nudgeBudget = {
+    maxChars: 4000,
+    maxLines: Math.max(1, orchestratorCfg.calendar.nudge.max_per_day + 4),
+  };
+  const privateNudge = composeCalendarNudge(privateStore, principal.role, householdZone, Date.now(), nudgeBudget);
+  const householdNudge = composeCalendarNudge(householdStore, principal.role, householdZone, Date.now(), nudgeBudget);
+  const nudge = [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n");
   return {
     privateStore,
     householdStore,
     tools: [...tools.values()],
+    nudge: nudge || null,
     close: () => { privateStore.close(); householdStore.close(); },
   };
 }
@@ -1788,7 +1801,10 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // session's build, never mutating this one's cache-stable prefix). A child
     // principal never sees `@adults`-tagged content. Private scope only in S1.
     // Null `sessionMemory` (master switch off) leaves the skill prompt as-is.
-    const sessionSystemPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
+    const memoryPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
+    const sessionSystemPrompt = sessionCalendar?.nudge
+      ? `${memoryPrompt}\n\n${sessionCalendar.nudge}`
+      : memoryPrompt;
 
     const runtime = buildSessionRuntime({
       principal,
