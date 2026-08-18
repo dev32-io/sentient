@@ -34,6 +34,7 @@ describe("CalendarStore factory", () => {
     expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(CALENDAR_SCHEMA_VERSION);
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
     expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeTruthy();
+    expect(db.query<{ name: string }, []>("PRAGMA table_info(events)").all().some((column) => column.name === "group")).toBe(true);
     store.close();
     store.close();
     expect(store.list({ from: { kind: "all-day", date: "2026-01-01" }, to: { kind: "all-day", date: "2026-01-02" } })).toEqual({ ok: false, error: "closed" });
@@ -45,10 +46,13 @@ describe("CalendarStore factory", () => {
     const dbPath = join(base, "calendar", "calendar.db");
     mkdirSync(join(base, "calendar"), { recursive: true });
     const db = new Database(dbPath);
+    db.exec("PRAGMA journal_mode = DELETE;");
     db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION + 10}`);
+    expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("delete");
     db.close();
     const store = openCalendarStore(cap(base), cfg);
     const check = new Database(dbPath);
+    expect(check.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("delete");
     expect(check.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(CALENDAR_SCHEMA_VERSION + 10);
     store.close();
     check.close();

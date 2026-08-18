@@ -28,6 +28,7 @@ export const CALENDAR_MIGRATIONS: readonly StoreMigration[] = [
         recurrence TEXT,
         visibility TEXT NOT NULL DEFAULT 'everyone',
         importance TEXT NOT NULL DEFAULT 'normal',
+        "group" TEXT,
         notification_policy TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL

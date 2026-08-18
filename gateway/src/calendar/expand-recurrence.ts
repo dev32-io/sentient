@@ -120,11 +120,11 @@ function expand(event: CalendarEvent, rule: RRule, from: CalendarTime, to: Calen
         ? { kind: "all-day", date: date.toISOString().slice(0, 10) as LocalDate }
         : (() => { const a = anchor as Parts; const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second }; const ms = instantForLocal(p, zone); return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId }; })();
       if (!local) continue;
-      ordinal++;
       const localMs = local.kind === "timed" ? Date.parse(local.instant) : Date.parse(`${local.date}T00:00:00Z`);
       // BYDAY may produce days before DTSTART in the first week.
       if (localMs < startMs) continue;
       if (localMs > until) return out;
+      ordinal++;
       if (exdates.has(keyOf(local))) continue;
       const baseEnd = shiftedEnd(event.end, event.start, local);
       const o = applyException(event, local, baseEnd);

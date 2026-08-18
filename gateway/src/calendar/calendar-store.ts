@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Capability, ResourceClass } from "../access/capability.js";
-import { migrateDatabase } from "../store/migrate-store.js";
+import { migrateDatabase, readUserVersion } from "../store/migrate-store.js";
 import type {
   CalendarConfig,
   CalendarEvent,
@@ -43,7 +43,8 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   const dbPath = join(calendarRoot, "calendar.db");
   mkdirSync(calendarRoot, { recursive: true });
   const db = new Database(dbPath, { create: true });
-  db.exec(CALENDAR_DDL);
+  const recordedVersion = readUserVersion(db);
+  if (recordedVersion <= CALENDAR_SCHEMA_VERSION) db.exec(CALENDAR_DDL);
   const migrate = deps.migrate ?? migrateDatabase;
   migrate(db, cap.ownerUserId, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION, "calendar");
 
