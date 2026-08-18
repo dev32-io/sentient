@@ -19,11 +19,88 @@ criteria:
   - Pre-PDP household-write rejection (no permission.request, zero confirm
     calls, zero store calls) and tool tier/role reachability
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
   reviewedCommit: 1fbc3834aa487bdc64948aeaa3c3c96bae93dca1
+  managerPrompt: >-
+    Address all five stage-4 findings (gateway/src/api/handlers/calendar.ts and
+    gateway/src/bootstrap/product-tools/calendar-provider.ts, plus their tests):
+
+
+    CAL-REST-001 (high) — REST list serializes Occurrence-only fields. `toWire`
+    does `const { tags, notification, ...rest } = event; return { ...rest,
+    scope, tags: [...tags], ... }`, so for list (Occurrences) `...rest` leaks
+    occurrenceId/baseEventId/occurrenceStart/occurrenceEnd into the response,
+    violating the strict shared WireCalendarEvent shape and golden-fixture
+    convergence. Fix `toWire` to emit ONLY WireCalendarEvent fields by
+    constructing the wire object explicitly (id, scope, title, description?,
+    start, end?, recurrence?, visibility, importance, group?, tags,
+    notificationPolicy?, createdAt, updatedAt — and exdates?/exceptions? only if
+    they are part of WireCalendarEvent) instead of spreading `...rest`. Apply
+    the SAME fix to the tool provider's `wire` helper in calendar-provider.ts
+    (it has the identical `...rest` spread and leaks Occurrence-only fields in
+    calendar_list/calendar_search output). Add a REST test asserting the list
+    response body contains no
+    occurrenceId/baseEventId/occurrenceStart/occurrenceEnd keys.
+
+
+    CAL-REST-002 (high) — REST list has no tags filter. `listEvents` parses
+    `group` and `importance` but not `tags`. Fix: parse tags from the query
+    string (comma-separated `tags` param, or repeated `tags` params — pick one
+    and be consistent) and propagate into the CalendarListWindow:
+    `...(tags.length ? { tags } : {})`. Add a test asserting tags filtering is
+    applied end-to-end through the REST list.
+
+
+    CAL-REST-003 (high) — store handle leak. Both `privateStore` and
+    `householdStore` are opened BEFORE the try/finally, so if the second open
+    throws the first handle leaks. Fix with a guarded pattern: `const
+    privateStore = open(...); let householdStore: CalendarStore | undefined; try
+    { householdStore = open(...); ...route handling... } finally {
+    privateStore.close(); householdStore?.close(); }`. Add a test that injects
+    an `openStore` which throws on the second call and asserts the first store's
+    `close()` was called (the test can use a close-tracking stub).
+
+
+    CAL-TOOL-001 (high) — nested update recurrence bypasses validation;
+    create/update accept incomplete raw/parsed recurrence. In
+    calendar-provider.ts: (a) `eventFields.recurrence` uses `rule:
+    z.unknown().optional()`, accepting any object. Tighten `rule` to
+    `wireRRuleSchema` and add a `.superRefine` that runs `parseRRule(rrule)` and
+    asserts rrule/rule consistency (freq/interval/count/until/byDay) — reuse the
+    same validation the wire calendarEventSchema uses from stage-1 (do not
+    duplicate the subset logic; reuse parseRRule as the single source). This
+    makes create/update reject malformed/incomplete recurrence via schema parse.
+    (b) The `common` `validateRecurrence` only runs when `"recurrence" in data`,
+    but for calendar_update the recurrence is nested under
+    `data.patch.recurrence` (or `data.event.recurrence`), so update bypasses
+    validation. With the tightened schema superRefine, the schema parse
+    validates nested recurrence automatically; verify update's nested recurrence
+    is actually validated (if the update schema's patch/event recurrence field
+    uses the tightened recurrence schema, parse will catch it). Add tests:
+    create and update with a malformed rrule -> invalid; create and update with
+    rrule/rule mismatch -> invalid; create and update with an incomplete rule
+    object (e.g. missing freq) -> invalid.
+
+
+    CAL-TOOL-002 (high) — calendar_search silently ignores
+    group/tags/importance. The run handler calls `store.list({ from, to })`
+    without p.group/p.tags/p.importance. Fix: propagate them into store.list:
+    `...(p.group !== undefined ? { group: p.group } : {})`, `...(p.tags !==
+    undefined ? { tags: p.tags } : {})`, `...(p.importance !== undefined ? {
+    importance: p.importance } : {})`, then apply the query-string filter on the
+    store-filtered results. Add a test asserting search filters by
+    group/tags/importance (not just the query string).
+
+
+    Constraints: stay within stage-4 scope (calendar.ts, calendar-provider.ts,
+    and their test files). Keep `cd gateway && bun run typecheck` and `cd
+    gateway && bun test src/api/handlers/calendar src/bootstrap/product-tools
+    src/bootstrap/product-tool-metadata src/tools/tool-broker` green. Do not
+    weaken existing tests. Reuse parseRRule and wireRRuleSchema from types.ts
+    rather than duplicating RRULE subset logic.
 findings:
   - id: CAL-REST-001
     severity: high
