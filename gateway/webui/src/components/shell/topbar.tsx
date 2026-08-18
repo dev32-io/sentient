@@ -5,7 +5,7 @@ import { StatusChip } from "../common/status-chip.tsx";
 import { UserMenu } from "./user-menu.tsx";
 import type { AuthUser } from "../../services/auth-api.ts";
 
-export type TopbarRoute = "chat" | "settings";
+export type TopbarRoute = "chat" | "calendar" | "settings";
 
 export interface TopbarProps {
   householdName: string;
@@ -15,6 +15,7 @@ export interface TopbarProps {
   markMode?: SentientMarkMode;
   onChatClick(): void;
   onSettingsClick(): void;
+  onCalendarClick(): void;
   onNotificationsClick(): void;
   onMenuClick?(): void;
   user?: AuthUser;
@@ -30,6 +31,7 @@ export function Topbar({
   markMode = "idle",
   onChatClick,
   onSettingsClick,
+  onCalendarClick,
   onNotificationsClick,
   onMenuClick,
   user,
@@ -57,6 +59,12 @@ export function Topbar({
         title="Conversation"
         active={activeRoute === "chat"}
         onClick={onChatClick}
+      />
+      <IconButton
+        iconName="calendar"
+        title="Calendar"
+        active={activeRoute === "calendar"}
+        onClick={onCalendarClick}
       />
       <IconButton
         iconName="bell"

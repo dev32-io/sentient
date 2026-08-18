@@ -17,6 +17,7 @@ import { SetupScreen } from "./components/auth/setup-screen.tsx";
 import { PermissionDialog } from "./components/permission/permission-dialog.tsx";
 import { Drawer } from "./components/sessions/drawer.tsx";
 import { SettingsView } from "./components/settings/settings-view.tsx";
+import { CalendarView } from "./components/calendar/calendar-view.tsx";
 import { AppShell } from "./components/shell/app-shell.tsx";
 import { ToastHost } from "./components/common/toast.tsx";
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
@@ -38,13 +39,14 @@ const ROUTE_STORAGE_KEY = "sentient:route";
 const ROUTE_LABELS: Record<TopbarRoute, string> = {
   chat: "Conversation",
   settings: "Household",
+  calendar: "Calendar",
 };
 const DEVICE_COUNT = 14; // fixture; wire to real telemetry once available
 
 function loadInitialRoute(): TopbarRoute {
   if (typeof sessionStorage === "undefined") return "chat";
   const saved = sessionStorage.getItem(ROUTE_STORAGE_KEY);
-  return saved === "settings" ? "settings" : "chat";
+  return saved === "settings" || saved === "calendar" ? saved : "chat";
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +277,7 @@ function AppInner() {
               setSettingsNonce((n) => n + 1);
               onRouteChange("settings");
             }}
+            onCalendarClick={() => onRouteChange("calendar")}
             onNotificationsClick={() => {
               /* WIP no-op */
             }}
@@ -293,6 +296,8 @@ function AppInner() {
               activeCycleMode={activeCycleMode}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
             />
+          ) : route === "calendar" ? (
+            <CalendarView token={token} />
           ) : (
             <SettingsView
               initialTab={settingsTab}
