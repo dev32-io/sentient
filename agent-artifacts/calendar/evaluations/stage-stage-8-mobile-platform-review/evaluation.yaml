@@ -25,7 +25,7 @@ loop:
   iteration: 2
   maxIterations: 3
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
-  reviewedCommit: 56424213196d10343a61026da92941e8bd55b0a8
+  reviewedCommit: 3fbc1e8cd6c50e09d7d239610b85b000d525a42e
   managerPrompt: |-
     Address the two remaining stage-8 blocking findings. The other five (CAL-MOBILE-001, CAL-ANDROID-001, CAL-IOS-001, CAL-MOBILE-002, CAL-ANDROID-002, CAL-MOBILE-004) are resolved — do not regress them.
 
