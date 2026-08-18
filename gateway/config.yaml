@@ -469,6 +469,17 @@ orchestrator:
     # the cap the ERROR line carries backoffCapped=true, so a stalled summarizer
     # stays visible. Range 1-256.
     max_backoff_turns: 16
+  # CALENDAR — durable dated/timed household events. The special
+  # default_event_tz_id value is resolved to the household zone at session
+  # construction (resolveTimeZone), rather than introducing a second serving TZ.
+  calendar:
+    enabled: true
+    recurrence:
+      max_occurrences: 1000
+      max_days: 366
+    nudge:
+      max_per_day: 10
+    default_event_tz_id: household
   # MEMORY (memory-system spec §11) — MEMORY.md + topic files + spark recall +
   # the dreamer nightly consolidation pass. SLICE STAGING: spark.enabled and
   # dreamer.enabled ship false here even though their zod defaults are true

@@ -41,8 +41,8 @@ function storedTime(instant: string | null, zone: string | null, allDay: number,
   if (allDay) return date ? { kind: "all-day", date: date as LocalDate } : undefined;
   return instant ? { kind: "timed", instant: instant as UtcInstant, timeZoneId: (zone ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId } : undefined;
 }
-function normalizeTime(time: CalendarTime): CalendarTime {
-  return time.kind === "timed" && !time.timeZoneId ? { ...time, timeZoneId: DEFAULT_EVENT_TIME_ZONE } : time;
+function normalizeTime(time: CalendarTime, defaultEventTimeZoneId = DEFAULT_EVENT_TIME_ZONE): CalendarTime {
+  return time.kind === "timed" && !time.timeZoneId ? { ...time, timeZoneId: defaultEventTimeZoneId as EventTimeZoneId } : time;
 }
 function json(value: unknown): string { return JSON.stringify(value); }
 function timeSortKey(time: CalendarTime): number {
@@ -54,7 +54,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   if (!ACCEPTED_CLASSES.has(cap.resource)) {
     throw new Error(`openCalendarStore: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`);
   }
-  void cfg;
+  const defaultEventTimeZoneId = (cfg.defaultEventTimeZoneId ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId;
   const calendarRoot = join(cap.rootPath, "calendar");
   const dbPath = join(calendarRoot, "calendar.db");
   mkdirSync(calendarRoot, { recursive: true });
@@ -98,21 +98,23 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
 
   const write = (event: CalendarEvent, mode: "create" | "update"): CalendarResult<CalendarEvent> => {
     if (mode === "create" && db.query("SELECT 1 FROM events WHERE id=?").get(event.id)) return { ok: false, error: "already-exists" };
-    const start = normalizeTime(event.start);
-    const end = event.end ? normalizeTime(event.end) : undefined;
+    const start = event.start;
+    const end = event.end;
     const timeColumns = (time: CalendarTime | undefined) => time?.kind === "timed"
       ? [time.instant, time.timeZoneId, 0, null] : time ? [null, null, 1, time.date] : [null, null, 0, null];
-    const s = timeColumns(start), e = timeColumns(end);
+    const normalizedStart = normalizeTime(start, defaultEventTimeZoneId);
+    const normalizedEnd = end ? normalizeTime(end, defaultEventTimeZoneId) : undefined;
+    const s = timeColumns(normalizedStart), e = timeColumns(normalizedEnd);
     const tx = db.transaction(() => {
       if (mode === "create") db.query("INSERT INTO events (id,title,description,start_instant,start_time_zone_id,start_all_day,start_date,end_instant,end_time_zone_id,end_all_day,end_date,recurrence,visibility,importance,\"group\",notification_policy,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(event.id, event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.createdAt, event.updatedAt);
       else db.query("UPDATE events SET title=?,description=?,start_instant=?,start_time_zone_id=?,start_all_day=?,start_date=?,end_instant=?,end_time_zone_id=?,end_all_day=?,end_date=?,recurrence=?,visibility=?,importance=?,\"group\"=?,notification_policy=?,updated_at=? WHERE id=?").run(event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.updatedAt, event.id);
       db.query("DELETE FROM exdates WHERE event_id=?").run(event.id); db.query("DELETE FROM exceptions WHERE event_id=?").run(event.id); db.query("DELETE FROM tags WHERE event_id=?").run(event.id);
-      for (const value of event.exdates ?? []) db.query("INSERT INTO exdates (event_id,occurrence_key) VALUES (?,?)").run(event.id, json(normalizeTime(value)));
-      for (const exception of event.exceptions ?? []) { const { occurrence, cancelled, ...override } = exception; db.query("INSERT INTO exceptions (event_id,occurrence_key,cancelled,override_json) VALUES (?,?,?,?)").run(event.id, json({ occurrence: normalizeTime(occurrence) }), cancelled ? 1 : 0, Object.keys(override).length ? json(override) : null); }
+      for (const value of event.exdates ?? []) db.query("INSERT INTO exdates (event_id,occurrence_key) VALUES (?,?)").run(event.id, json(normalizeTime(value, defaultEventTimeZoneId)));
+      for (const exception of event.exceptions ?? []) { const { occurrence, cancelled, ...override } = exception; db.query("INSERT INTO exceptions (event_id,occurrence_key,cancelled,override_json) VALUES (?,?,?,?)").run(event.id, json({ occurrence: normalizeTime(occurrence, defaultEventTimeZoneId) }), cancelled ? 1 : 0, Object.keys(override).length ? json(override) : null); }
       for (const tag of event.tags) db.query("INSERT INTO tags (event_id,tag) VALUES (?,?)").run(event.id, tag);
     });
     tx();
-    return { ok: true, value: { ...event, start, ...(end ? { end } : {}) } };
+    return { ok: true, value: { ...event, start: normalizedStart, ...(normalizedEnd ? { end: normalizedEnd } : {}) } };
   };
 
   const list = (window: CalendarListWindow): CalendarResult<Occurrence[]> => {

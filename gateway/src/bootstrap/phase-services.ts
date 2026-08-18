@@ -50,6 +50,8 @@ import { type DreamClock, type DreamScheduler, createDreamScheduler } from "../m
 import { composeMemoryBlock } from "../memory/memory-prompt.js";
 import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
+import type { CalendarStore } from "../calendar/types.js";
+import { openCalendarStore } from "../calendar/calendar-store.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore, memoryTogglesFor } from "../profile-store/profile-store.ts";
@@ -210,6 +212,13 @@ function composeMemoryPrompt(
 /** The per-session memory wiring the composition root attaches: the memory
  *  tools (merged into the broker's `native` map) and the prompt-augment seam
  *  (appends the memory block after the skill index). Null when memory is off. */
+export interface SessionCalendar {
+  readonly tools: NativeToolRunner[];
+  readonly privateStore: CalendarStore;
+  readonly householdStore: CalendarStore;
+  close(): void;
+}
+
 export interface SessionMemory {
   readonly tools: NativeToolRunner[];
   /** Appends the memory block after `skillPrompt` and emits
@@ -327,6 +336,39 @@ function wireScopeIndex(
  * to both scopes. Exported so the composition seam is unit-testable without
  * standing up the whole orchestrator.
  */
+export function buildSessionCalendar(
+  orchestratorCfg: OrchestratorConfig,
+  accessManager: AccessManager,
+  principal: UserPrincipal,
+): SessionCalendar | null {
+  if (!orchestratorCfg.calendar.enabled) return null;
+  const configured = orchestratorCfg.calendar.default_event_tz_id;
+  const calendarCfg = {
+    recurrence: {
+      maxOccurrences: orchestratorCfg.calendar.recurrence.max_occurrences,
+      maxDays: orchestratorCfg.calendar.recurrence.max_days,
+    },
+    nudge: { maxPerDay: orchestratorCfg.calendar.nudge.max_per_day },
+    // Resolve the sentinel here so every store receives a concrete household
+    // zone; an explicit IANA id remains an operator override.
+    defaultEventTimeZoneId: configured === "household" ? resolveTimeZone().zone() : configured,
+  };
+  const privateStore = openCalendarStore(accessManager.grant(principal, "calendar-private"), calendarCfg);
+  const householdStore = openCalendarStore(accessManager.grant(principal, "calendar-household"), calendarCfg);
+  const tools = composeProductToolProviders(undefined, {
+    calendar: {
+      store: privateStore,
+      capability: accessManager.grant(principal, "calendar-private"),
+    },
+  });
+  return {
+    privateStore,
+    householdStore,
+    tools: [...tools.values()],
+    close: () => { privateStore.close(); householdStore.close(); },
+  };
+}
+
 export function buildSessionMemory(
   orchestratorCfg: OrchestratorConfig,
   accessManager: AccessManager,
@@ -1513,6 +1555,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       dbFileName,
     );
     const spark = sessionMemory?.spark ?? null;
+    const sessionCalendar = buildSessionCalendar(orchestratorCfg, accessManager, principal);
 
     // The single `native` namespace map the broker resolves under
     // `NATIVE_TOOL_SERVER_KEY`: the skill tools plus (when memory is on) the
@@ -1521,6 +1564,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // `buildSessionMemory` hands back an ARRAY of runners.
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
+    for (const runner of sessionCalendar?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     // Product providers are composed once per authenticated session. Web
     // receives a dedicated user capability and operator-owned limits; Home
     // and Music receive only their app-owned credential-bearing adapters.
@@ -1823,6 +1867,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // closure above. Null when the deep-memory app is not wired.
       spark,
       onWorkSettled,
+      onDispose: () => sessionCalendar?.close(),
     });
     // Fills the slot `onDelegationProgress` above closed over — see that
     // comment for why this is safe despite running after the broker (and its

@@ -93,6 +93,7 @@ export function isAdult(role: UserRole): boolean {
 export interface CalendarConfig {
   recurrence: { maxOccurrences: number; maxDays: number };
   nudge: { maxPerDay: number };
+  defaultEventTimeZoneId?: string;
 }
 
 export type CalendarStoreError =

@@ -849,6 +849,7 @@ describe("handleSessionConfigure — one live runtime per session", () => {
 
 function testOrchestratorConfig(): OrchestratorConfig {
   return {
+    calendar: { enabled: true, recurrence: { max_occurrences: 1000, max_days: 366 }, nudge: { max_per_day: 10 }, default_event_tz_id: "household" },
     provider: {
       base_url: "http://localhost:0",
       model: "test-model",

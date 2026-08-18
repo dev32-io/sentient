@@ -257,6 +257,23 @@ export const orchestratorConfigSchema = z.object({
       max_backoff_turns: z.number().int().min(1).max(256).default(16),
     })
     .default({}),
+  // CALENDAR — durable dated/timed household events. Missing blocks default so
+  // older operator configs continue to boot unchanged.
+  calendar: z
+    .object({
+      enabled: z.boolean().default(true),
+      recurrence: z
+        .object({
+          max_occurrences: z.number().int().min(1).max(10000).default(1000),
+          max_days: z.number().int().min(1).max(3650).default(366),
+        })
+        .default({}),
+      nudge: z
+        .object({ max_per_day: z.number().int().min(0).max(1000).default(10) })
+        .default({}),
+      default_event_tz_id: z.string().min(1).default("household"),
+    })
+    .default({}),
   // MEMORY (memory-system spec §11) — MEMORY.md + topic files + spark recall +
   // the dreamer consolidation pass. Every sub-block defaults to `{}` and every
   // leaf carries its own zod default, same as the other blocks in this file:
