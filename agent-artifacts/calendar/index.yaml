@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: evaluation
 state: active
 planning:
-  revision: 109
+  revision: 117
 artifacts:
   - id: intent
     type: intent
@@ -95,9 +95,13 @@ executionStages:
       - s1-domain-contracts
       - s1-e2e-scaffolding
     checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/access src/calendar/types
-        src/calendar/e2e-helpers
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: foundation-tests
+        profile: gateway
+        command: cd gateway && bun test src/access src/calendar/types
+          src/calendar/e2e-helpers
     mode: concurrent
     review:
       tier: medium
@@ -112,10 +116,14 @@ executionStages:
       - s2-expand-recurrence
       - s2-ha-deprecation
     checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/calendar/calendar-store
-        src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
-        src/api/handlers/mcp-catalog
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: recurrence-deprecation-tests
+        profile: gateway
+        command: cd gateway && bun test src/calendar/calendar-store
+          src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+          src/api/handlers/mcp-catalog
     mode: concurrent
     review:
       tier: medium
@@ -131,8 +139,12 @@ executionStages:
       - s3-store-writes
       - s3-store-reads
     checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/calendar/calendar-store
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: store-crud-tests
+        profile: gateway
+        command: cd gateway && bun test src/calendar/calendar-store
     mode: sequential
     review:
       tier: medium
@@ -148,10 +160,14 @@ executionStages:
       - s4-rest-api
       - s4-tool-provider
     checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/api/handlers/calendar
-        src/bootstrap/product-tools src/bootstrap/product-tool-metadata
-        src/tools/tool-broker
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: rest-provider-tests
+        profile: gateway
+        command: cd gateway && bun test src/api/handlers/calendar
+          src/bootstrap/product-tools src/bootstrap/product-tool-metadata
+          src/tools/tool-broker
     mode: concurrent
     review:
       tier: medium
@@ -166,8 +182,12 @@ executionStages:
       - s5-phase-bootstrap
       - s5-nudge
     checks:
-      - cd gateway && bun run typecheck
-      - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: bootstrap-nudge-tests
+        profile: gateway
+        command: cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
     mode: sequential
     review:
       tier: medium
@@ -183,9 +203,13 @@ executionStages:
       - s6-web-ui
       - s6-mobile-sdk
     checks:
-      - cd gateway/webui && bun run test:unit && bun run typecheck
-      - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :shared:mobile-sdk:compileDebugKotlin
+      - id: web-client
+        profile: web
+        command: cd gateway/webui && bun run test:unit && bun run typecheck
+      - id: mobile-sdk
+        profile: gradle
+        command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+          ./gradlew :shared:mobile-sdk:compileDebugKotlin
     mode: concurrent
     review:
       tier: medium
@@ -198,8 +222,10 @@ executionStages:
     tasks:
       - s7-mobile-data
     checks:
-      - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :shared:mobile-data:compileDebugKotlin
+      - id: mobile-data
+        profile: gradle
+        command: ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
+          ./gradlew :shared:mobile-data:compileDebugKotlin
     mode: sequential
     review:
       tier: medium
@@ -213,13 +239,17 @@ executionStages:
       - s8-android
       - s8-ios
     checks:
-      - ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
-        :android:compileDebugKotlin
-      - ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
-        xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
-        -destination 'platform=iOS Simulator,name=iPhone 16' build && xcodebuild
-        -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
-        'platform=iOS Simulator,name=iPhone 16' test
+      - id: android-calendar
+        profile: android
+        command: ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
+          :android:compileDebugKotlin
+      - id: ios-calendar
+        profile: ios
+        command: ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
+          xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+          -destination 'platform=iOS Simulator,name=iPhone 16' build &&
+          xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+          -destination 'platform=iOS Simulator,name=iPhone 16' test
     mode: concurrent
     review:
       tier: medium
