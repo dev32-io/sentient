@@ -17,51 +17,74 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
+  state: fixing
   iteration: 2
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: 726eb41eba1fd63d09b3c524af1d7c6310d02a14
   managerPrompt: >-
-    Address CAL-S1-003 in gateway/src/calendar/types.ts only (plus types.test.ts
-    for tests):
+    Address CAL-S1-004 in gateway/src/calendar/types.ts only (plus types.test.ts
+    for tests). Valid UNTIL recurrences are rejected because the raw RFC UNTIL
+    format and the wire ISO UNTIL format are compared as strings and never
+    match.
 
 
-    The wire recurrence schema (~line 181-182) is `z.object({ rrule:
-    z.string().min(1), rule: wireRRuleSchema })`. It accepts any non-empty
-    string for the raw `rrule` and a parsed `rule` without validating the raw
-    string through parseRRule or checking rrule↔rule consistency, so
-    malformed/unsupported raw RRULEs (e.g. "GIBBERISH", "FREQ=WEEKLY;BYMONTH=1")
-    and rrule/rule mismatches pass the wire boundary.
+    Root cause: parseRRule (~line 306) returns `until` as the raw RFC string
+    ("20261231T235959Z") cast to UtcInstant, but UtcInstant is an ISO-8601
+    instant contract and wireRRuleSchema.until uses `z.string().datetime({
+    offset: true })` (ISO). The superRefine (~line 195) then compares
+    `recurrence.rule.until !== rule.until` as strings, so the ISO wire value and
+    the RFC parsed value never compare equal.
 
 
-    Fix: add a `.superRefine` on the recurrence schema (or on
-    calendarEventSchema where recurrence is present) that:
-
-    1. Runs `parseRRule(recurrence.rrule)` and rejects (addIssue) when it
-    returns {ok:false} — so malformed or unsupported-key raw RRULEs are rejected
-    at the wire boundary, consistent with the CAL-S1-001 fix.
-
-    2. When parseRRule succeeds, asserts the parsed `value` is consistent with
-    the supplied `rule` (same freq, interval, count, until, byDay). Reject on
-    any mismatch — the raw string and parsed rule must agree.
-
-    Keep using the existing parseRRule and wireRRuleSchema; do not duplicate the
-    subset logic — reuse parseRRule as the single source of RRULE validation. Do
-    not change the Recurrence interface, the stored shape, or the wire envelope.
+    Fix both, reusing parseRRule as the single RRULE validator:
 
 
-    Add focused unit tests in src/calendar/types.test.ts: (a) a calendar request
-    with recurrence.rrule="GIBBERISH" is rejected; (b)
-    recurrence.rrule="FREQ=WEEKLY;BYDAY=MO;BYMONTH=1" is rejected (unsupported
-    key at the wire boundary); (c) recurrence where rrule and rule disagree
-    (e.g. rrule says COUNT=6 but rule says count:5) is rejected; (d) a valid
-    golden-fixture-shaped recurrence is accepted.
+    1. In parseRRule, convert the validated RFC UNTIL (matched by
+    /^\d{8}T\d{6}Z$/) to a proper ISO UtcInstant before returning it as
+    `value.until` (e.g. "20261231T235959Z" -> "2026-12-31T23:59:59.000Z"). Add a
+    small helper (e.g. rfcUntilToIso) or use Date.UTC + toISOString. This makes
+    the parsed domain value honor the UtcInstant (ISO) contract. Keep the stored
+    recurrence.rrule as the raw RFC string (storage stays RFC); only the parsed
+    `rule.until` becomes ISO.
+
+
+    2. In the recurrence superRefine, compare `until` by instant equivalence,
+    not string equality — wire clients may send "2026-12-31T23:59:59Z",
+    "2026-12-31T23:59:59.000Z", or "2026-12-31T23:59:59+00:00", all valid under
+    datetime({ offset: true }). Replace the `recurrence.rule.until !==
+    rule.until` term with a normalized comparison: if both are undefined they
+    match; if exactly one is undefined they mismatch; if both are defined,
+    compare `new Date(recurrence.rule.until).getTime() === new
+    Date(rule.until).getTime()`. Keep the freq/interval/count comparisons as-is
+    (numbers/enums) and the byDay JSON.stringify comparison as-is. Do not weaken
+    the malformed-RRULE or rrule/rule-disagreement rejections from CAL-S1-003.
+
+
+    Add/adjust unit tests in src/calendar/types.test.ts:
+
+    (a) parseRRule("FREQ=DAILY;UNTIL=20261231T235959Z").value.until equals
+    "2026-12-31T23:59:59.000Z" (ISO);
+
+    (b) a valid wire UNTIL recurrence with
+    rrule="FREQ=DAILY;UNTIL=20261231T235959Z" and
+    rule.until="2026-12-31T23:59:59.000Z" is ACCEPTED by calendarEventSchema
+    (and equivalently by calendarRequestSchema wrapped in a create request);
+
+    (c) the same valid UNTIL is also accepted when the wire until is
+    "2026-12-31T23:59:59Z" (no milliseconds) and "2026-12-31T23:59:59+00:00"
+    (offset form) — instant equivalence, not string match;
+
+    (d) the existing rejections still hold: malformed rrule ("GIBBERISH"),
+    unsupported key ("FREQ=WEEKLY;BYDAY=MO;BYMONTH=1"), and rrule/rule
+    disagreement on COUNT.
 
 
     Constraints: stay within s1-domain-contracts scope (types.ts + types.test.ts
-    only). Keep `cd gateway && bun run typecheck` and `cd gateway && bun test
-    src/access src/calendar/types src/calendar/e2e-helpers` green.
+    only). If any existing parseRRule test asserted the raw RFC until string,
+    update it to the ISO form. Keep `cd gateway && bun run typecheck` and `cd
+    gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers`
+    green.
   fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
 findings:
   - id: CAL-S1-004
