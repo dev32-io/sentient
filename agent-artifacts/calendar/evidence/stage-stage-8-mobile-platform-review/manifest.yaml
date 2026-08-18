@@ -1,37 +1,38 @@
 schemaVersion: 1
 evaluation: stage-stage-8-mobile-platform-review
-recordedAt: 2026-08-18T21:02:44.114Z
+recordedAt: 2026-08-18T22:14:39.280Z
 entries:
   - result: PASS
     command: ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
-      :android:compileDebugKotlin
-    description: Android calendar-filtered unit test and Kotlin compile.
-    path: files/1-calendar-stage8-android-check-63443.log
-    checksum: sha256:3acbad4d5e07b8a13e701e0e7d81048069ba7f05f5d13ae4ac8086b638eba0ce
-  - result: PASS
-    command: ./gradlew :shared:mobile-data:assembleMobileDataXCFramework
-    description: Concrete MobileData XCFramework assembly task.
-    path: files/2-calendar-stage8-mobiledata-xcframework-44902.log
-    checksum: sha256:6196ecc5acae6bc2793dc464ccbf527d4b33666b74b61c14902ce811ba1a7bd9
-  - result: PASS; 66 existing tests passed
-    command: xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
-      -destination 'platform=iOS Simulator,name=iPhone 16' build && xcodebuild
-      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
-      'platform=iOS Simulator,name=iPhone 16' test
-    description: Authoritative iOS project/scheme build and simulator tests.
-    path: files/3-calendar-stage8-ios-xcodebuild-19099.log
-    checksum: sha256:b03db1b7d1b2ccae0ff39a211303a3efe58f69f8a67452b1068bec2aa892ce7b
-  - result: '{"success":false,"issueCount":2}'
-    command: calendarEventSchema.safeParse(exact Android create payload)
-    description: Sanitized schema reproduction for empty Android timestamps.
-    path: files/4-calendar-stage8-android-create-schema.txt
-    checksum: sha256:1b7fe1a06efbea11f9db4a76b4f4b7b47117778e3b5e83156f87d419c8903369
-  - result: '{"ok":false,"error":"invalid"}'
-    command: ephemeral CalendarStore with all-day and timed events queried by an
-      all-day window
-    description: Sanitized mixed-time-kind listing reproduction.
-    path: files/5-calendar-stage8-mixed-time-kind.txt
-    checksum: sha256:ae931e26d78d7bb967a1fd4fcae16608bb3a74c3c1947ecf1cbb6b5fcdedc115
+      :android:compileDebugKotlin && shared mobile-data/mobile-sdk calendar
+      checks
+    description: Android and touched shared KMP calendar tests/compiles.
+    path: files/1-calendar-stage8-r1-android-shared-check-25434.log
+    checksum: sha256:ca8f395291674236904d5409b5acaf08ed9eab85b687e07687c03a96f345b543
+  - result: PASS; 21 tests
+    command: cd gateway && bun run typecheck && bun test src/api/handlers/calendar
+      src/calendar/calendar-store src/calendar/types
+    description: Touched gateway calendar seams.
+    path: files/2-calendar-stage8-r1-gateway-check-27434.log
+    checksum: sha256:868251858d6bd5bd2d50824013782e5e0cf40bf8a65e90876a824e56ff843107
+  - result: PASS; CalendarViewModelTests passed; 71 total tests
+    command: ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
+      xcodebuild ... build && xcodebuild ... test
+    description: MobileData assembly and authoritative iOS build/tests.
+    path: files/3-calendar-stage8-r1-ios-check-29152.log
+    checksum: sha256:a1bf5691afa885d9e1e18f265dc4c52e27615bd7f8db5b07901f9dc7cfc7bf59
+  - result: '{"allDayOk":true,"timedOk":true,"allDayCount":1,"timedCount":1}'
+    command: ephemeral CalendarStore with both event kinds queried separately
+    description: Fresh mixed-kind listing verification.
+    path: files/4-calendar-stage8-r1-mixed-kind.txt
+    checksum: sha256:0fabb5a42b9607c6142bd42a13b9a66062fe7f8a29a0e0437f1d5942ccbff4ca
   - result: PASS; no output
     command: git diff --check
-    description: Reviewed tree has no whitespace errors.
+    description: Repair diff has no whitespace errors.
+  - result: All-day branch returns value.date from the matched event instead of the
+      edited input.
+    command: nl -ba ios/App/Settings/Calendar/CalendarViewModel.swift | sed -n
+      '240,243p'
+    description: Sanitized repair-regression evidence.
+    path: files/6-calendar-stage8-r1-repair-static.txt
+    checksum: sha256:6493ee555197838ae49f92da26c84f81bb9f1ea5446ff59f0e65c113f863c6e8

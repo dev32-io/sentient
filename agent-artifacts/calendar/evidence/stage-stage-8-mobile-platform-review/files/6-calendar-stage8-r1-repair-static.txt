@@ -1,0 +1,208 @@
+--- iOS editedStart all-day branch ---
+   250	            parser.timeZone = .current
+   251	            parser.dateFormat = value.count == 10 ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm"
+   252	            let instant = parser.date(from: value)?.ISO8601Format() ?? original.instant
+   253	            return CalendarTime.Timed(instant: instant, timeZoneId: original.timeZoneId)
+   254	        }
+   255	    }
+   256	}
+   257	
+   258	private func replacing(_ event: CalendarEvent, title: String, start: CalendarTime) -> CalendarEvent {
+   259	    CalendarEvent(
+   260	        id: event.id,
+   261	        scope: event.scope,
+   262	        title: title,
+   263	        description: event.description,
+   264	        start: start,
+   265	        end: event.end,
+   266	        recurrence: event.recurrence,
+   267	        exdates: event.exdates,
+   268	        exceptions: event.exceptions,
+   269	        visibility: event.visibility,
+   270	        importance: event.importance,
+   271	        group: event.group,
+   272	        tags: event.tags,
+   273	        notification: event.notification,
+   274	        createdAt: event.createdAt,
+   275	        updatedAt: event.updatedAt,
+--- test file declarations ---
+     1	import Testing
+     2	import Foundation
+     3	import MobileData
+     4	@testable import SentientApp
+     5	
+     6	struct CalendarViewModelTests {
+     7	    private func event(
+     8	        id: String,
+     9	        start: CalendarTime,
+    10	        occurrenceId: String? = nil,
+    11	        baseEventId: String? = nil
+    12	    ) -> CalendarEvent {
+    13	        CalendarEvent(
+    14	            id: id,
+    15	            scope: .household,
+    16	            title: "Dinner",
+    17	            description: nil,
+    18	            start: start,
+    19	            end: nil,
+    20	            recurrence: nil,
+    21	            exdates: nil,
+    22	            exceptions: nil,
+    23	            visibility: .everyone,
+    24	            importance: .normal,
+    25	            group: nil,
+    26	            tags: [],
+    27	            notification: nil,
+    28	            createdAt: "2026-01-01T00:00:00.000Z",
+    29	            updatedAt: "2026-01-01T00:00:00.000Z",
+    30	            occurrenceId: occurrenceId,
+    31	            baseEventId: baseEventId
+    32	        )
+    33	    }
+    34	
+    35	    @Test func listFoldAcceptsTimedAndAllDayRows() {
+    36	        let timed = event(
+    37	            id: "timed",
+    38	            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
+    39	        )
+    40	        let allDay = event(id: "all-day", start: CalendarTime.AllDay(date: "2026-08-02"))
+    41	        let page = CalendarEventPage(events: [timed, allDay], more: 0)
+    42	        let folded = foldCalendarList(
+    43	            phase: .loading,
+    44	            events: [],
+    45	            result: SentientResultSuccess<CalendarEventPage>(data: page)
+    46	        )
+    47	
+    48	        #expect(folded.phase == .ready)
+    49	        #expect(folded.events.map(\.id) == ["timed", "all-day"])
+    50	    }
+    51	
+    52	    @Test func listFoldPreservesLastGoodRowsOnFailure() {
+    53	        let previous = event(id: "previous", start: CalendarTime.AllDay(date: "2026-08-01"))
+    54	        let error = SentientError.Unknown(userMessage: "Calendar unavailable", cause: nil)
+    55	        let result = SentientResultFailure(error: error) as! SentientResult<CalendarEventPage>
+    56	        let folded = foldCalendarList(phase: .ready, events: [previous], result: result)
+    57	
+    58	        #expect(folded.phase == .failed("Calendar unavailable"))
+    59	        #expect(folded.events.map(\.id) == ["previous"])
+    60	    }
+    61	
+    62	    @Test func crudMutationStateTransitionsAreExplicit() {
+    63	        #expect(reduceCalendarMutation(.idle, .begin) == .saving)
+    64	        #expect(reduceCalendarMutation(.saving, .success) == .idle)
+    65	        #expect(reduceCalendarMutation(.saving, .failure("No connection")) == .failed("No connection"))
+    66	    }
+    67	
+    68	    @Test func occurrenceRowsKeepRowIdentitySeparateFromMutationIdentity() {
+    69	        let occurrence = event(
+    70	            id: "recurring-1",
+    71	            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC"),
+    72	            occurrenceId: "occurrence-1",
+    73	            baseEventId: "recurring-1"
+    74	        )
+    75	
+    76	        #expect(occurrence.rowID == "occurrence-1")
+    77	        #expect(occurrence.mutationID == "recurring-1")
+    78	    }
+    79	
+    80	    @Test func startsRenderInTheRequestedDeviceTimezone() {
+    81	        #expect(CalendarDisplayFormatter.startText(CalendarTime.AllDay(date: "2026-08-01")) == "2026-08-01")
+    82	        let timed = CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
+    83	        #expect(
+    84	            CalendarDisplayFormatter.startText(timed, timeZone: TimeZone(identifier: "America/New_York")!)
+    85	                == "2026-08-01 09:00"
+    86	        )
+    87	    }
+    88	}
+--- Android test names ---
+    35	        start = CalendarTime.AllDay("2026-08-01"), visibility = Visibility.EVERYONE,
+    36	        importance = Importance.NORMAL, createdAt = "now", updatedAt = "now",
+    37	    )
+    38	
+    39	    @Test
+    40	    fun successful_list_replaces_events_and_clears_error() {
+    41	        val state = CalendarUiState(error = "old")
+    42	            .foldList(SentientResult.Success(CalendarEventPage(listOf(event), 0)))
+    43	        assertEquals(listOf(event), state.events)
+    44	        assertEquals(false, state.loading)
+    45	        assertEquals(null, state.error)
+    46	    }
+    47	
+    48	    @Test
+    49	    fun failed_list_preserves_existing_events_for_retry() {
+    50	        val state = CalendarUiState(events = listOf(event))
+    51	            .foldList(SentientResult.Failure(SentientError.Unknown("Calendar unavailable")))
+    52	        assertEquals(listOf(event), state.events)
+    53	        assertEquals("Calendar unavailable", state.error)
+    54	        assertEquals(false, state.loading)
+    55	    }
+    56	
+    57	    @Test
+    58	    fun refresh_folds_timed_and_all_day_results_from_two_kind_windows() = runTest {
+    59	        val timed = event.copy(
+    60	            id = "timed-1",
+    61	            title = "Timed dinner",
+    62	            start = CalendarTime.Timed("2026-08-01T23:00:00.000Z", "America/Toronto"),
+    63	        )
+    64	        val list = FakeCalendarOperations(
+    65	            listResult = SentientResult.Success(CalendarEventPage(listOf(timed, event), 0)),
+    66	        )
+    67	        val vm = withMain { CalendarViewModel(list, list, list, list) }
+    68	        advanceUntilIdle()
+    69	
+    70	        assertEquals(listOf(timed, event), vm.ui.value.events)
+    71	        assertEquals(1, list.bothCalls)
+    72	        assertIs<CalendarTime.Timed>(list.timedFrom)
+    73	        assertIs<CalendarTime.AllDay>(list.allDayFrom)
+    74	        Dispatchers.resetMain()
+    75	    }
+    76	
+    77	    @Test
+    78	    fun create_transitions_through_success_and_keeps_server_metadata_out_of_draft_contract() = runTest {
+    79	        val created = event.copy(id = "created", createdAt = "server", updatedAt = "server")
+    80	        val list = FakeCalendarOperations(
+    81	            listResult = SentientResult.Success(CalendarEventPage(emptyList(), 0)),
+    82	            createResult = SentientResult.Success(created),
+    83	        )
+    84	        val vm = withMain { CalendarViewModel(list, list, list, list) }
+    85	        advanceUntilIdle()
+    86	        vm.create("  Picnic ", "2026-08-02")
+    87	        advanceUntilIdle()
+    88	
+    89	        assertEquals("Picnic", list.created?.title)
+    90	        assertEquals("", list.created?.createdAt)
+    91	        assertEquals("", list.created?.updatedAt)
+    92	        assertFalseSaving(vm)
+    93	        Dispatchers.resetMain()
+    94	    }
+    95	
+    96	    @Test
+    97	    fun update_uses_base_id_and_keeps_timed_start_kind() = runTest {
+    98	        val recurring = event.copy(
+    99	            id = "occurrence-1",
+   100	            occurrenceId = "occurrence-1",
+   101	            baseEventId = "recurring-1",
+   102	            start = CalendarTime.Timed("2026-08-01T13:00:00.000Z", "America/Toronto"),
+   103	        )
+   104	        val list = FakeCalendarOperations(
+   105	            listResult = SentientResult.Success(CalendarEventPage(listOf(recurring), 0)),
+   106	            updateResult = SentientResult.Success(recurring),
+   107	        )
+   108	        val vm = withMain { CalendarViewModel(list, list, list, list) }
+   109	        advanceUntilIdle()
+   110	        vm.update(recurring, "Updated", "2026-08-02")
+   111	        advanceUntilIdle()
+   112	
+   113	        assertEquals("recurring-1", list.updatedId)
+   114	        val updatedStart = assertIs<CalendarTime.Timed>(list.updated?.start)
+   115	        assertEquals("America/Toronto", updatedStart.timeZoneId)
+   116	        assertTrue(updatedStart.instant.isNotBlank())
+   117	        Dispatchers.resetMain()
+   118	    }
+   119	
+   120	    @Test
+   121	    fun drawer_calendar_entry_keeps_navigation_and_accessibility_contract() {
+   122	        assertEquals("calendar-open", CALENDAR_DRAWER_TEST_TAG)
+   123	        assertEquals("settings/calendar", Routes.SETTINGS_CALENDAR)
+   124	    }
+   125	

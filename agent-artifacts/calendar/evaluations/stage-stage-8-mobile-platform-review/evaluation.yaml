@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-8-mobile-platform
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' && ./gradlew
     :android:app:compileDebugKotlin
@@ -21,9 +21,9 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
   reviewedCommit: 56424213196d10343a61026da92941e8bd55b0a8
   managerPrompt: |-
@@ -48,64 +48,65 @@ loop:
 findings:
   - id: CAL-MOBILE-001
     severity: high
-    status: open
-    criterion: Mobile screens must list calendar events including timed events
-    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:47-51;
-      ios/App/Settings/Calendar/CalendarViewModel.swift:20-31;
-      gateway/src/calendar/calendar-store.ts:136
-    summary: All-day-only query fails when the calendar contains timed events.
-    blocking: true
+    status: resolved
+    criterion: Mobile mixed-kind listing
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt:37-121
+    summary: Separate timed/all-day calls now merge successfully.
+    blocking: false
   - id: CAL-ANDROID-001
     severity: high
-    status: open
-    criterion: Android screen must support create/update/delete
-    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:61-90;
-      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:81-86
-    summary: Create sends schema-invalid timestamps; timed updates are converted to
-      an empty all-day date.
-    blocking: true
+    status: resolved
+    criterion: Android create/update wire contract
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:79-128
+    summary: Server-owned timestamps are omitted and timed updates preserve their kind.
+    blocking: false
   - id: CAL-IOS-001
     severity: high
-    status: open
-    criterion: iOS brief requires list/create/update/delete
-    location: ios/App/Settings/Calendar/CalendarScreen.swift:15-45
-    summary: The iOS screen exposes listing and refresh only; CRUD ViewModel methods
-      are not wired to controls.
-    blocking: true
+    status: resolved
+    criterion: iOS CRUD controls
+    location: ios/App/Settings/Calendar/CalendarScreen.swift:15-78
+    summary: Create, update, and delete controls are wired.
+    blocking: false
   - id: CAL-MOBILE-002
     severity: high
-    status: open
-    criterion: Mobile design requires device-timezone rendering
-    location: ios/App/Settings/Calendar/CalendarScreen.swift:62-67;
-      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:74-86
-    summary: iOS displays raw UTC and Android omits event date/time rendering.
-    blocking: true
+    status: resolved
+    criterion: Device-timezone rendering
+    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:124-143;
+      ios/App/Settings/Calendar/CalendarViewModel.swift:190-229
+    summary: Timed and all-day starts are formatted appropriately for the device
+      timezone.
+    blocking: false
   - id: CAL-ANDROID-002
     severity: high
-    status: open
-    criterion: Android acceptance requires a drawer/settings-row calendar icon
-    location: android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:1-21,153-164;
-      android/src/main/kotlin/io/sentient/android/settings/SettingsCategories.kt:50-55
-    summary: Only a settings-root row exists; the drawer has no calendar action or ID.
-    blocking: true
+    status: resolved
+    criterion: Android drawer affordance
+    location: android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:68-125
+    summary: calendar-open is rendered and navigates to the calendar route.
+    blocking: false
   - id: CAL-MOBILE-003
     severity: high
     status: open
-    criterion: Boundary proof requires ViewModel folding and screen-wiring tests
-    location: android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt:13-36;
-      ios/Tests
-    summary: Android coverage is limited to two pure list folds and iOS has no
-      calendar test file.
+    criterion: Screen-wiring and CRUD test coverage
+    location: android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt:57-125;
+      ios/Tests/CalendarViewModelTests.swift:35-87
+    summary: Tests still do not exercise actual screen/drawer navigation wiring or
+      iOS ViewModel CRUD/use-case calls required by the manager acceptance.
     blocking: true
   - id: CAL-MOBILE-004
     severity: high
+    status: resolved
+    criterion: Recurring occurrence CRUD identity
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:76-99;
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:57-128
+    summary: Both occurrence identities are preserved and persistedId is used for
+      mutation.
+    blocking: false
+  - id: CAL-IOS-002
+    severity: high
     status: open
-    criterion: CRUD must work for recurring calendar events
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:106;
-      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:68-70
-    summary: Occurrence IDs are decoded as CalendarEvent.id while baseEventId is
-      dropped, so Android CRUD addresses the wrong persisted ID for recurring
-      rows.
+    criterion: Repair must preserve all-day update behavior
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:240-243
+    summary: All-day Save ignores the edited date and returns the original event date.
     blocking: true
 result:
   verdict: fail
