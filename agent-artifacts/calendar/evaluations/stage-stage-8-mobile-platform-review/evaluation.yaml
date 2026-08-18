@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-8-mobile-platform
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 3
 methods:
@@ -21,8 +21,8 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 3
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
   reviewedCommit: 56424213196d10343a61026da92941e8bd55b0a8
