@@ -17,11 +17,52 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: 164cb0e84a3625afdd69f09995f2378f9d22b99c
+  managerPrompt: >-
+    Address both blocking findings in gateway/src/calendar/types.ts only (no
+    other files, no wire-envelope invention):
+
+
+    CAL-S1-001 (parseRRule, ~lines 183-211): The parser validates the KEY=VALUE
+    shape via /^[A-Z]+=[^;]+$/ but never checks the key belongs to the bounded
+    subset. Unknown keys (e.g. BYMONTH=1, X-FOO=bar) match the regex and are
+    silently discarded. Fix: after building the values map, reject any key not
+    in the allowed set {FREQ, INTERVAL, COUNT, UNTIL, BYDAY} — return {ok:false,
+    error:"invalid"} for an unsupported key. Keep the existing FREQ-required,
+    COUNT/UNTIL mutual-exclusion, WEEKLY-requires-BYDAY, and value-format
+    checks. Add focused unit tests asserting an unknown key is rejected (e.g.
+    "FREQ=WEEKLY;BYDAY=MO;BYMONTH=1" -> invalid) alongside the existing
+    parseRRule tests in src/calendar/types.test.ts.
+
+
+    CAL-S1-002 (wire schemas, ~lines 170-181): calendarRequestSchema.body and
+    calendarResponseSchema.body are z.unknown(), so arbitrary payloads validate
+    and the concrete wire contract is unenforced. Replace z.unknown() with
+    concrete zod object schemas derived from the existing WireCalendarEvent
+    interface and the goldenCalendarFixtures (the fixtures are the source of
+    truth for the wire shape). Define: (a) a concrete calendarEventWireSchema
+    matching WireCalendarEvent (timed: instant + timeZoneId; all-day: date; plus
+    id, scope, visibility, importance, group, tags, rrule, exdates, exceptions,
+    notificationPolicy as applicable); (b) discriminated request body schemas
+    per operation (create/update payload = event fields; list/get/search =
+    filter params); (c) response body schemas (get/update = event; list = {
+    events: event[], more: number }; delete = ack). Compose
+    calendarRequestSchema/calendarResponseSchema to use the concrete body
+    schemas (a z.union or discriminated union on operation is fine). Do NOT
+    invent new envelope fields or change version/requestId/error shape —
+    preserve the existing exact wire envelope. Add unit tests asserting an
+    arbitrary/missing payload is rejected and a golden-fixture-shaped payload is
+    accepted.
+
+
+    Constraints: stay within s1-domain-contracts scope (types.ts + types.test.ts
+    only). Do not touch other stages' files. Keep `cd gateway && bun run
+    typecheck` and `cd gateway && bun test src/access src/calendar/types
+    src/calendar/e2e-helpers` green.
 findings:
   - id: CAL-S1-001
     severity: medium
