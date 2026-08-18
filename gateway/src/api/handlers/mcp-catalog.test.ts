@@ -147,7 +147,7 @@ describe("GET /api/v1/mcp-catalog — product groups", () => {
 
   it("describes native Home management and exposes confirmation-tier removals", async () => {
     const view = await viewFor();
-    expect(view.groups.home?.description).toContain("scenes, automations, scripts, todo items, and calendar events");
+    expect(view.groups.home?.description).toContain("scenes, automations, scripts, and todo items");
     expect(view.groups.home?.tools.find((tool) => tool.name === "home_create_scene")?.permission).toBe("ask");
     expect(view.groups.home?.tools.find((tool) => tool.name === "home_remove_scene")).toMatchObject({
       tier: "confirm",
@@ -155,6 +155,14 @@ describe("GET /api/v1/mcp-catalog — product groups", () => {
       dispatch: { kind: "native" },
     });
     expect(view.groups.home?.tools.some((tool) => /yaml|python|admin|file/i.test(tool.name))).toBe(false);
+    expect(view.groups.home?.tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining([
+        "home_get_calendar_events",
+        "home_create_calendar_event",
+        "home_update_calendar_event",
+        "home_remove_calendar_event",
+      ]),
+    );
   });
 
   it("applies group wildcard then explicit tool override", async () => {

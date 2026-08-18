@@ -89,10 +89,6 @@ describe("native Home tools", () => {
       "home_add_todo",
       "home_update_todo",
       "home_remove_todo",
-      "home_get_calendar_events",
-      "home_create_calendar_event",
-      "home_update_calendar_event",
-      "home_remove_calendar_event",
     ]);
     expect(definitions.every((value) => value.productGroup === "home" && value.defaultExposure === "standard")).toBe(
       true,

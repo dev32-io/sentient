@@ -30,7 +30,7 @@ const PATH = "/api/v1/mcp-catalog";
 const DELEGATE_TASK_SETTINGS_DESCRIPTION =
   "Hand a task to a background worker agent (Hermes) with its own tools and workspace.";
 const HOME_SETTINGS_DESCRIPTION =
-  "Read and control household devices, and manage scenes, automations, scripts, todo items, and calendar events. Removals require confirmation; raw code, files, and administration are not included.";
+  "Read and control household devices, and manage scenes, automations, scripts, and todo items. Removals require confirmation; raw code, files, and administration are not included.";
 
 export interface ProductToolView {
   readonly name: string;
