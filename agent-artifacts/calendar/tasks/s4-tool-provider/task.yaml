@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-tool-provider
 title: Calendar product tool group with pre-PDP household-write rejection
-status: ready
+status: running
 dependsOn:
   - s3-store-reads
 execution:
@@ -21,3 +21,9 @@ verification:
       src/bootstrap/product-tool-metadata src/tools/tool-broker
     - cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s4-tool-provider
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s4-tool-provider
+  baseCommit: 6d816e9529a29699598c78a20f7a7c4ef4a64253
+  lastRunId: 989379a5-a1cc-4e37-89be-4de48f330690
