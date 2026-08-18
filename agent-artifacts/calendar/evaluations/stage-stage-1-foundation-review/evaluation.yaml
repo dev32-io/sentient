@@ -21,7 +21,7 @@ loop:
   iteration: 2
   maxIterations: 3
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
-  reviewedCommit: 6f85bcebb1bc6d3cea9b8a73684964d79dc459aa
+  reviewedCommit: 726eb41eba1fd63d09b3c524af1d7c6310d02a14
   managerPrompt: >-
     Address CAL-S1-003 in gateway/src/calendar/types.ts only (plus types.test.ts
     for tests):
