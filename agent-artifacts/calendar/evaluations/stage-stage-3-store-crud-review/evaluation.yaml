@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-3-store-crud
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -18,8 +18,8 @@ criteria:
   - UTC storage and serving-timezone recurrence expansion through the store path
     with EXDATE/exception application
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 4e66e174-b786-453f-be70-7c7db18e7946
   reviewedCommit: 44c2da3efeadc3bf34e703f75204e0c9caf1ab10
@@ -90,6 +90,7 @@ loop:
     calendar-store.ts only if a gate must be implemented). Keep `cd gateway &&
     bun run typecheck` and `cd gateway && bun test src/calendar/calendar-store`
     green. Do not weaken existing tests.
+  fixerAgentId: 0ed72385-36d3-4360-9345-25681ae6898f
 findings:
   - id: S3-STORE-TEST-PROOF-001
     severity: high
