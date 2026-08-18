@@ -17,6 +17,8 @@ criteria:
   - DI wiring exposes calendar to platform screens without restart-mutation
     assumptions
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: 514b4f53-0de0-4eda-98b3-fd971329245e
+  reviewedCommit: 96456967876f694f4ad1921d115c8c4bcc1746e6
