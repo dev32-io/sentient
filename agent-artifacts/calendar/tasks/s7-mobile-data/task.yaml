@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s7-mobile-data
 title: Mobile-data calendar repository, use cases, and DI
-status: contribution_complete
+status: merged
 dependsOn:
   - s6-mobile-sdk
 execution:
@@ -27,3 +27,4 @@ runtime:
   baseCommit: 55f2285a205b2266eb09d50eaa54b33b78b2a4db
   lastRunId: 3b4bbe94-434f-4025-9103-438a86ea63ce
   completedCommit: 12edec2b8361eea3c74d705b61d8238c3d369811
+  mergedCommit: 7055a5ae60a9d20bf4c250fb6f662e42561ebd83
