@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s3-store-writes
 title: CalendarStore create/update/delete with household adult-gate and event-tz
   storage
-status: contribution_complete
+status: merged
 dependsOn:
   - s1-store-schema-factory
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: 979da6222567c7cbf876a60d1bd4bf3f08d0a89b
   lastRunId: 027c7a44-37d2-47e3-946f-ee6c75eb3823
   completedCommit: 7f576116191c3689bbe9c07e18f70597b6bfc2b8
+  mergedCommit: fa3000026e9cbf0ecdfecba572bd962ba181a114
