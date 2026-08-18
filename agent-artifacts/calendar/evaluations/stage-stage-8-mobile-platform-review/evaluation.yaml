@@ -25,7 +25,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
-  reviewedCommit: da8d3566a725bc366cf268be83380e55bb61b5c3
+  reviewedCommit: 56424213196d10343a61026da92941e8bd55b0a8
   managerPrompt: |-
     Address all seven stage-8 high/blocking findings. The s8-android and s8-ios contributions are incomplete/buggy in several places. Files: android/src/main/kotlin/io/sentient/android/settings/calendar/{CalendarScreen.kt,CalendarViewModel.kt}, android/src/test/.../calendar/CalendarViewModelTest.kt, the Android drawer (HistoryDrawer), ios/App/Settings/Calendar/{CalendarScreen.swift,CalendarViewModel.swift}, ios/App/Nav/{Route.swift,UserSessionHost.swift}, ios/App/Settings/{SettingsView.swift,SettingsIcon.swift}, and the shared mobile-data/calendar + mobile-sdk/calendar seams as needed.
 
