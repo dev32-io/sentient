@@ -2,7 +2,7 @@ schemaVersion: 1
 id: s2-expand-recurrence
 title: expandRecurrence pure module (bounded subset, EXDATE, exceptions,
   all-day, event-tz DST)
-status: contribution_complete
+status: merged
 dependsOn:
   - s1-domain-contracts
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
   lastRunId: c11cf12d-1c20-4c63-9741-3c073bde51c6
   completedCommit: 822915e7bb059bfb7f74a50d4e94d16513d270c3
+  mergedCommit: 8bb2e4244179250292c05a96b55a2ca664cf7148
