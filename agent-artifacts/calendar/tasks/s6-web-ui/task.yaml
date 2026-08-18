@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-web-ui
 title: Web calendar route, REST client, and view
-status: ready
+status: running
 dependsOn:
   - s4-rest-api
 execution:
@@ -20,3 +20,9 @@ verification:
     - cd gateway/webui && bun run test:unit
     - cd gateway/webui && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s6-web-ui
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s6-web-ui
+  baseCommit: b44179da5772970081870ed62d961bbc936fb9e0
+  lastRunId: da3ab1b3-621a-4715-bf23-4ec3073850de
