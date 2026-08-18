@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-3-store-crud
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/calendar/calendar-store
@@ -18,8 +18,23 @@ criteria:
   - UTC storage and serving-timezone recurrence expansion through the store path
     with EXDATE/exception application
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 4e66e174-b786-453f-be70-7c7db18e7946
   reviewedCommit: 44c2da3efeadc3bf34e703f75204e0c9caf1ab10
+findings:
+  - id: S3-STORE-TEST-PROOF-001
+    severity: high
+    status: open
+    criterion: s3-store-writes and s3-store-reads Boundary Proof
+    location: gateway/src/calendar/calendar-store.test.ts:47-85
+    summary: Required store contract tests are missing for CRUD atomic
+      replacement/cascade, all-day and timed round-trip, child/guest household
+      write rejection, admin allowance, write not-found, guest visibility
+      omission, and adult/admin visibility.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-3-store-crud-review/manifest.yaml

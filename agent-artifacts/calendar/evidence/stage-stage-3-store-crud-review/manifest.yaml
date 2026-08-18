@@ -1,0 +1,13 @@
+schemaVersion: 1
+evaluation: stage-stage-3-store-crud-review
+recordedAt: 2026-08-18T01:41:34.422Z
+entries:
+  - result: 5 pass, 0 fail
+    command: cd gateway && bun test src/calendar/calendar-store
+    description: Declared store test check passes, but the file contains only five
+      tests and omits required boundary-proof scenarios.
+    path: files/1-calendar-store.test.ts
+    checksum: sha256:028ee9879c2d3defc68f0b662bba39ba4fe7e5996eeccfe64446a5491114ec2a
+  - result: passed
+    command: cd gateway && bun run typecheck
+    description: Declared gateway typecheck passes.
