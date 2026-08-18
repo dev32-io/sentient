@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-6-clients
 scope:
   workItem: calendar
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - cd gateway/webui && bun run test:unit && bun run typecheck
   - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
@@ -18,9 +18,9 @@ criteria:
   - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
     representation
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 3
+  state: passed
   reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
   reviewedCommit: d8f0f8fd1f21fb538231de54405d040d5bbeea78
   managerPrompt: >-
@@ -81,20 +81,17 @@ findings:
     severity: high
     status: resolved
     criterion: Recurring occurrence wire fidelity
-    location: gateway/src/api/handlers/calendar.ts:120-127,244-254;
-      gateway/webui/src/components/calendar/calendar-view.tsx:64,109-111
-    summary: Expanded occurrence identity and times are now preserved through REST
-      and rendered as distinct rows.
+    location: gateway/src/api/handlers/calendar.ts:120-127,244-254
+    summary: Expanded occurrence identity and times are preserved through REST.
     blocking: false
   - id: CAL-002
     severity: high
-    status: open
+    status: resolved
     criterion: REST handler boundary proof for recurring occurrences and base GET shape
-    location: gateway/src/api/handlers/calendar.test.ts:51-72
-    summary: The REST test asserts one stub occurrence, not N recurring response
-      entries with distinct IDs and expanded starts as explicitly required.
-    blocking: true
+    location: gateway/src/api/handlers/calendar.test.ts:85-125
+    summary: Real-store test now proves the N-recurring-entry response contract.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-6-clients-review/manifest.yaml

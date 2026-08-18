@@ -1,19 +1,19 @@
 schemaVersion: 1
 evaluation: stage-stage-6-clients-review
-recordedAt: 2026-08-18T05:53:07.093Z
+recordedAt: 2026-08-18T05:55:58.152Z
 entries:
-  - result: "Passed: 19 test files, 142 tests; typecheck passed."
+  - result: 10 tests passed; typecheck passed.
+    command: cd gateway && bun test src/api/handlers/calendar.test.ts
+      src/calendar/types.test.ts && bun run typecheck
+    description: Real-store recurring REST acceptance test and preserved prior
+      handler tests.
+    path: files/1-calendar.test.ts
+    checksum: sha256:c6286e5c3fe21a9e7f30c8954c1b126b6e4070da7064ce10748ba92d447bef3f
+  - result: 19 test files, 142 tests passed; typecheck passed.
     command: cd gateway/webui && bun run test:unit && bun run typecheck
-    description: Added view occurrence, device-timezone, and CRUD coverage.
-    path: files/1-calendar-view.test.tsx
+    description: Declared web stage checks.
+    path: files/2-calendar-view.test.tsx
     checksum: sha256:31eebc4f4fe6b80d44123afd4cb6b1258d935b22fada637fadc9e82ae39bd5b8
-  - result: Typecheck passed; 9 targeted tests passed.
-    command: cd gateway && bun run typecheck && bun test
-      src/api/handlers/calendar.test.ts src/calendar/types.test.ts
-    description: Targeted REST/type contract verification; test covers one stub
-      occurrence, not N recurring entries.
-    path: files/2-calendar.test.ts
-    checksum: sha256:447789255ff862a73fd344b3a23e22d11a16714dd4fb935e638eae3ad51c348d
   - result: Both Gradle checks passed.
     command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
       ./gradlew :shared:mobile-sdk:compileDebugKotlin
@@ -21,6 +21,5 @@ entries:
     path: files/3-CalendarHttpClientTest.kt
     checksum: sha256:2ffeaae4e1b4f5ae43e4286879b4deae5e845714ccc756e2b6bc5fbeb2a423e2
   - result: No whitespace errors.
-    command: git diff --check 590e5c8fa230d523001f9fcf4eab630195d6bf88
-      396813f8d26078ace0a3579af9b5ce5b4f717782
+    command: git diff --check 396813f8d26078ace0a3579af9b5ce5b4f717782 HEAD
     description: Bounded repair diff check.
