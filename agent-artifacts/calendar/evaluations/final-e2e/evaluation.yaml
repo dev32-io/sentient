@@ -4,14 +4,14 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 053547a1-6333-4d57-84d4-25c46911452a
   reviewedCommit: ee13c5419433d1997c7231eff5a88164cb685e0c
@@ -101,6 +101,7 @@ loop:
     bun run typecheck` green. Do not regress prior stages or the resolved
     stage-8 findings. Reuse resolveTimeZone() from message-time and the existing
     wire/types.
+  fixerAgentId: 6f285787-beb8-444a-b4cf-e16818583200
 findings:
   - id: CAL-E2E-001
     severity: critical
