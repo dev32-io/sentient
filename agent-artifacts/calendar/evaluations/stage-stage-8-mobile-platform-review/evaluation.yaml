@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-8-mobile-platform
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 3
+attempt: 4
 methods:
   - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' && ./gradlew
     :android:app:compileDebugKotlin
@@ -21,9 +21,9 @@ criteria:
     state folding
   - Accessibility identifiers consistent with mobile E2E contracts
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 060b7a59-1786-4549-98ba-4b02b9167dee
   reviewedCommit: 3fbc1e8cd6c50e09d7d239610b85b000d525a42e
   managerPrompt: |-
@@ -43,14 +43,15 @@ findings:
     status: resolved
     criterion: Mobile mixed-kind listing
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt:37-121
-    summary: Separate timed/all-day calls now merge successfully.
+    summary: Separate timed/all-day calls remain in place and both platform
+      ViewModels use them.
     blocking: false
   - id: CAL-ANDROID-001
     severity: high
     status: resolved
     criterion: Android create/update wire contract
     location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:79-128
-    summary: Server-owned timestamps are omitted and timed updates preserve their kind.
+    summary: Server-owned metadata is omitted on create and timed updates preserve kind.
     blocking: false
   - id: CAL-IOS-001
     severity: high
@@ -65,41 +66,40 @@ findings:
     criterion: Device-timezone rendering
     location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt:124-143;
       ios/App/Settings/Calendar/CalendarViewModel.swift:190-229
-    summary: Timed and all-day starts are formatted appropriately for the device
-      timezone.
+    summary: Device-timezone formatting remains intact.
     blocking: false
   - id: CAL-ANDROID-002
     severity: high
     status: resolved
     criterion: Android drawer affordance
-    location: android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:68-125
-    summary: calendar-open is rendered and navigates to the calendar route.
+    location: android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:108-123;
+      android/src/main/kotlin/io/sentient/android/nav/AppNavHost.kt:190-217
+    summary: The calendar affordance and production route wiring remain present.
     blocking: false
   - id: CAL-MOBILE-003
     severity: high
     status: open
-    criterion: Screen-wiring and CRUD test coverage
-    location: android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt:57-125;
-      ios/Tests/CalendarViewModelTests.swift:35-87
-    summary: Tests still do not exercise actual screen/drawer navigation wiring or
-      iOS ViewModel CRUD/use-case calls required by the manager acceptance.
+    criterion: Actual screen/drawer wiring and CRUD/use-case test coverage
+    location: android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt:125-132
+    summary: Android CRUD tests were added, but the navigation test bypasses
+      HistoryDrawer/HistoryContent and directly tests navigateToCalendar,
+      leaving the explicit actual drawer-wiring acceptance unmet.
     blocking: true
   - id: CAL-MOBILE-004
     severity: high
     status: resolved
     criterion: Recurring occurrence CRUD identity
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:76-99;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:57-128
-    summary: Both occurrence identities are preserved and persistedId is used for
-      mutation.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:76-99
+    summary: Occurrence/base identities and persistedId mutation behavior remain intact.
     blocking: false
   - id: CAL-IOS-002
     severity: high
-    status: open
-    criterion: Repair must preserve all-day update behavior
-    location: ios/App/Settings/Calendar/CalendarViewModel.swift:240-243
-    summary: All-day Save ignores the edited date and returns the original event date.
-    blocking: true
+    status: resolved
+    criterion: iOS all-day update uses edited input
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:240-243;
+      ios/Tests/CalendarViewModelTests.swift:68-98
+    summary: The shadowing bug is fixed and the edited date reaches the update use case.
+    blocking: false
 result:
   verdict: fail
   report: report.md

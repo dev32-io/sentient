@@ -1,38 +1,32 @@
 schemaVersion: 1
 evaluation: stage-stage-8-mobile-platform-review
-recordedAt: 2026-08-18T22:14:39.280Z
+recordedAt: 2026-08-18T22:25:45.660Z
 entries:
   - result: PASS
     command: ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
-      :android:compileDebugKotlin && shared mobile-data/mobile-sdk calendar
-      checks
-    description: Android and touched shared KMP calendar tests/compiles.
-    path: files/1-calendar-stage8-r1-android-shared-check-25434.log
-    checksum: sha256:ca8f395291674236904d5409b5acaf08ed9eab85b687e07687c03a96f345b543
-  - result: PASS; 21 tests
-    command: cd gateway && bun run typecheck && bun test src/api/handlers/calendar
-      src/calendar/calendar-store src/calendar/types
-    description: Touched gateway calendar seams.
-    path: files/2-calendar-stage8-r1-gateway-check-27434.log
-    checksum: sha256:868251858d6bd5bd2d50824013782e5e0cf40bf8a65e90876a824e56ff843107
-  - result: PASS; CalendarViewModelTests passed; 71 total tests
+      :android:compileDebugKotlin
+    description: Fresh Android calendar tests and Kotlin compile.
+    path: files/1-calendar-stage8-r2-android-check-70920.log
+    checksum: sha256:05acb9c89d1bfd18dd9212c3a8171815724b96c77892574b0f6bef4ff004f9a3
+  - result: PASS
+    command: ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
+      ./gradlew :shared:mobile-data:compileDebugKotlin
+    description: Fresh shared mobile-data calendar tests and compile.
+    path: files/2-calendar-stage8-r2-mobile-data-check-76606.log
+    checksum: sha256:1016ffd5e7bb30dcce83d70c2beeeefcf8a91f6e206ee8a9bab187eec866bda6
+  - result: PASS; CRUD/all-day integration test passed; 72 total tests
     command: ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
       xcodebuild ... build && xcodebuild ... test
-    description: MobileData assembly and authoritative iOS build/tests.
-    path: files/3-calendar-stage8-r1-ios-check-29152.log
-    checksum: sha256:a1bf5691afa885d9e1e18f265dc4c52e27615bd7f8db5b07901f9dc7cfc7bf59
-  - result: '{"allDayOk":true,"timedOk":true,"allDayCount":1,"timedCount":1}'
-    command: ephemeral CalendarStore with both event kinds queried separately
-    description: Fresh mixed-kind listing verification.
-    path: files/4-calendar-stage8-r1-mixed-kind.txt
-    checksum: sha256:0fabb5a42b9607c6142bd42a13b9a66062fe7f8a29a0e0437f1d5942ccbff4ca
-  - result: PASS; no output
-    command: git diff --check
-    description: Repair diff has no whitespace errors.
-  - result: All-day branch returns value.date from the matched event instead of the
-      edited input.
-    command: nl -ba ios/App/Settings/Calendar/CalendarViewModel.swift | sed -n
-      '240,243p'
-    description: Sanitized repair-regression evidence.
-    path: files/6-calendar-stage8-r1-repair-static.txt
-    checksum: sha256:6493ee555197838ae49f92da26c84f81bb9f1ea5446ff59f0e65c113f863c6e8
+    description: Fresh MobileData assembly and iOS build/test.
+    path: files/3-calendar-stage8-r2-ios-check-72616.log
+    checksum: sha256:a00dc239bfd7d598a211b13b44690190c6e3e515e13c9356bbdc9d9faa9b89d1
+  - result: PASS
+    command: git diff --check 81922261..80d64695 -- android ios
+    description: Bounded source repair diff check.
+  - result: Test references only navigateToCalendar; no
+      HistoryDrawer/HistoryContent/ChatHost exercise.
+    command: rg -n 'HistoryDrawer|HistoryContent|navigateToCalendar|ChatHost'
+      android/src/test/kotlin/io/sentient/android/settings/calendar/CalendarViewModelTest.kt
+    description: Sanitized evidence for the remaining test-coverage gap.
+    path: files/5-calendar-stage8-r2-navigation-test-evidence.txt
+    checksum: sha256:5267a057b565a0b1f14f62370daec88efef123f51e10d5df9a9b2d00052d3015
