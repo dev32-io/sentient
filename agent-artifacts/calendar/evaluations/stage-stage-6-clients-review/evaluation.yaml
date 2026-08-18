@@ -18,6 +18,8 @@ criteria:
   - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
     representation
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
+  reviewedCommit: ea300d5170b03f7574fec5b1637eafa2fde44aeb
