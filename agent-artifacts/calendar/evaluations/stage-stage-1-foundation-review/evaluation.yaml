@@ -18,7 +18,7 @@ criteria:
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
   state: rereviewing
-  iteration: 1
+  iteration: 2
   maxIterations: 3
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: 6f85bcebb1bc6d3cea9b8a73684964d79dc459aa
