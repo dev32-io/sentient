@@ -1,4 +1,5 @@
 schemaVersion: 1
+defaultProfile: gateway
 profiles:
   gateway:
     shell: /bin/bash
