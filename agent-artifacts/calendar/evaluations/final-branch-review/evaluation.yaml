@@ -11,11 +11,125 @@ methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 17bc090b-ccf9-4078-87e2-1031d1b94ee7
   reviewedCommit: 1aed83a5633a2ac8472202841e21537ff0353ae9
+  managerPrompt: >-
+    Address the high/blocking final-branch-review findings. The two
+    low/non-blocking findings (CAL-FINAL-011 all-day GMT formatting,
+    CAL-FINAL-012 tool notificationPolicy not persisted) I will accept as
+    residual risk — do not prioritize them.
+
+
+    CAL-FINAL-001 (high) — Recurrence limits ignored; expansion runs beyond
+    query bounds and the cursor ceiling returns partial success. In
+    gateway/src/calendar/expand-recurrence.ts (expand loop ~102-140) and
+    calendar-store.ts list path (~53-66): enforce the configured recurrence
+    limits (maxOccurrences/maxDays from CalendarConfig) so a bounded rule cannot
+    run excessively, and do NOT return partial success after hitting the cursor
+    ceiling — return a typed failure (e.g. recurrence-limit) instead of a
+    truncated success. Verify with a test that an oversized bounded rule hits
+    the limit and returns a failure, not partial occurrences.
+
+
+    CAL-FINAL-002 (high) — calendar_search misses timed events by default and
+    ignores its importance filter. In
+    gateway/src/bootstrap/product-tools/calendar-provider.ts (~376-380): the
+    default search window must include timed events (query the timed window too,
+    not only all-day), and the importance filter must be forwarded to
+    store.list. Verify a search over a calendar with timed events returns them,
+    and importance filtering works.
+
+
+    CAL-FINAL-003 (high) — Impossible all-day dates and impossible raw UNTIL
+    components accepted (types.ts:149-168 localDate regex; 302-334 parseRRule
+    UNTIL). This is the stage-1 CAL-S1-005 gap. Fix: add a real-calendar-date
+    round-trip check (a shared isValidCalendarDate(y,m,d) helper using Date.UTC
+    + getUTC* verification) to localDate, and validate real date+time components
+    (month 1-12, day valid for month, hour 0-23, min/sec 0-59) for parseRRule
+    UNTIL after the regex. Reject impossible values. Add tests (reject
+    2026-13-31, 2026-02-31, 20261231T259999Z; accept valid).
+
+
+    CAL-FINAL-004 (high) — Valid create envelopes without server timestamps are
+    rejected (types.ts:238-264). The create request schema requires
+    createdAt/updatedAt, but those are server-assigned and clients don't send
+    them. Fix: the create request body schema must NOT require
+    createdAt/updatedAt (omit them from the create envelope's required fields /
+    make them optional); the server assigns them on create. Verify a create
+    without timestamps is accepted.
+
+
+    CAL-FINAL-005 (high) — Calendar error envelopes become unknown-error in the
+    web client; handler error mapping inconsistent (calendar.ts:315-331; webui
+    _helpers.ts:29-40). Fix: the web client must parse the calendar error
+    envelope ({version,requestId,error:{code,message}}) and surface the real
+    error code (not unknown-error); the REST handler must consistently use the
+    declared error envelope and status mapping for all error paths
+    (auth/invalid-body/not-found/forbidden/etc.). Verify a REST error (e.g.
+    invalid body) surfaces the correct code in the web client.
+
+
+    CAL-FINAL-006 (high) — PATCH can mutate the opposite scope when the
+    requested scope misses (calendar.ts:166-189). Fix: a PATCH with an explicit
+    requested scope must ONLY touch that scope; if the id is not found in the
+    requested scope, return not-found — do NOT fall through to the other scope
+    and mutate it. Verify a PATCH requesting household for a private-only id
+    does not mutate the private store.
+
+
+    CAL-FINAL-007 (high) — Aborted update/delete tool calls still reach the
+    store (calendar-provider.ts:389-399). Fix: in calendar_update and
+    calendar_delete run handlers, check ctx.signal.aborted BEFORE the
+    store.update/delete call and return the aborted failure immediately; do not
+    call the store when aborted. Verify an aborted update/delete makes zero
+    store calls.
+
+
+    CAL-FINAL-008 (high) — Two independently capped scope nudges can exceed the
+    session cap (phase-services.ts:349-355). Fix: the combined private+household
+    nudge must respect the configured AGGREGATE session cap (not cap each scope
+    independently and concatenate). Compose both, then truncate the combined
+    block to the aggregate cap (dropping overflow per the nudge drop order).
+    Verify the combined nudge line count does not exceed the aggregate cap.
+
+
+    CAL-FINAL-009 (high) — Timed edit values interpreted in the wrong zone and
+    new timed events use non-IANA `browser` (calendar-view.tsx:27-34,92-95).
+    Fix: the web editor must interpret timed edit values in the correct zone and
+    store a valid IANA timeZoneId for new timed events (resolve the household
+    zone or the browser's IANA zone via
+    Intl.DateTimeFormat().resolvedOptions().timeZone) — never store the literal
+    "browser" as timeZoneId. Verify a created timed event has an IANA timeZoneId
+    and the edit round-trips.
+
+
+    CAL-FINAL-010 (high) — iOS successful update appends a base row instead of
+    replacing the occurrence row, producing duplicates
+    (CalendarViewModel.swift:187-196). Fix: on a successful update, REPLACE the
+    matching occurrence row (by occurrenceId/baseEventId) in the list, not
+    append a base row. Verify an update does not create a duplicate row.
+
+
+    CAL-FINAL-013 (high) — The golden fixture is not consumed outside gateway;
+    clients/tests duplicate values. Fix: the shared golden calendar fixtures
+    (gateway/src/calendar/fixtures/calendar-wire.json) must be consumed by the
+    web client, mobile SDK, and REST/tool tests (import the fixture rather than
+    duplicating literals), so the shared wire proof is real. Verify the
+    web/SDK/REST tests use the fixture.
+
+
+    Constraints: keep all declared checks green: `cd gateway && bun run
+    typecheck`, `cd gateway && bun test src/calendar
+    src/bootstrap/product-tools/calendar-provider src/api/handlers/calendar
+    src/access src/tools/home src/tools/role-defaults
+    src/api/handlers/mcp-catalog`, `cd gateway/webui && bun run test:unit && bun
+    run typecheck`, and the mobile gradle/xcodebuild checks (JAVA_HOME set; iOS
+    18.3.1 runtime). Do not regress prior stages or the resolved
+    stage-8/final-E2E findings. Reuse existing helpers (parseRRule,
+    resolveTimeZone, wireRRuleSchema).
 findings:
   - id: CAL-FINAL-001
     severity: high
