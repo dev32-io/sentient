@@ -4,6 +4,7 @@ import type { AdminDeps } from "./api/handlers/admin.ts";
 import { createAdminHandler } from "./api/handlers/admin.ts";
 import { type ApplyHandlerDeps, createApplyHandler } from "./api/handlers/apply.ts";
 import { createAuthHandler } from "./api/handlers/auth.ts";
+import { createCalendarHandler } from "./api/handlers/calendar.ts";
 import { createDiagnosticsHandler } from "./api/handlers/diagnostics.ts";
 import { renderDownloadPage } from "./api/handlers/downloads-page.ts";
 import { renderItmsPlist } from "./api/handlers/downloads-plist.ts";
@@ -191,6 +192,11 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     maxTags: services.ttsConfig.voice_max_tags,
   });
   const handleDiagnostics = createDiagnosticsHandler({ tokens: services.auth.tokens });
+  const handleCalendar = createCalendarHandler({
+    tokens: services.auth.tokens,
+    users: services.auth.users,
+    accessManager: services.accessManager,
+  });
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,
     users: services.auth.users,
@@ -231,6 +237,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
         handleVoices,
         handleDiagnostics,
         handleSessions,
+        handleCalendar,
         handleStatic,
       });
       return router(request);
