@@ -1,0 +1,11 @@
+schemaVersion: 1
+evaluation: stage-stage-7-mobile-data-review
+recordedAt: 2026-08-18T06:01:06.573Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :shared:mobile-data:compileDebugKotlin
+  - result: clean
+    command: git diff --check 55f2285a205b2266eb09d50eaa54b33b78b2a4db
+      96456967876f694f4ad1921d115c8c4bcc1746e6
