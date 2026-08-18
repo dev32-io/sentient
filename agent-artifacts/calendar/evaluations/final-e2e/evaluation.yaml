@@ -4,12 +4,63 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+findings:
+  - id: CAL-E2E-001
+    severity: critical
+    status: open
+    criterion: AC-003 / E2E-003
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:251-290
+    summary: Native calendar tool definitions omit JSON properties; a live
+      adults-only agent create lost visibility=adults and persisted as everyone,
+      exposing the event to the child path.
+    blocking: true
+  - id: CAL-E2E-002
+    severity: high
+    status: open
+    criterion: AC-006 / E2E-007
+    location: gateway/src/api/handlers/calendar.ts:25,300;
+      gateway/src/calendar/calendar-store.ts:44-45
+    summary: Recurring events using timeZoneId=household are created but
+      list/expansion returns 422 invalid because the sentinel is not resolved to
+      an IANA household zone.
+    blocking: true
+  - id: CAL-E2E-003
+    severity: high
+    status: open
+    criterion: E2E-005
+    location: gateway/src/calendar/nudge.ts:111-130
+    summary: Over-budget nudge trimming removes weekly important/pinned entries
+      before today entries; the live capped nudge retained no important weekly
+      items.
+    blocking: true
+  - id: CAL-E2E-004
+    severity: high
+    status: open
+    criterion: E2E-008
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:39,49-67
+    summary: Recreated default CalendarApi identity causes an effect/render/request
+      loop; 218 calendar REST resource entries accumulated during one live page
+      session.
+    blocking: true
+  - id: CAL-E2E-005
+    severity: high
+    status: open
+    criterion: E2E-002
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:18-25,49-67
+    summary: The week view requests only one seven-day window; the COUNT=10 MO,FR
+      event produced 10 in a covering query but only 2 rendered in the current
+      week, missing the exact persisted matrix outcome.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/final-e2e/manifest.yaml

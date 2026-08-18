@@ -1,0 +1,15 @@
+schemaVersion: 1
+evaluation: final-e2e
+recordedAt: 2026-08-18T22:59:35.819Z
+entries:
+  - result: Sanitized per-case results, request-loop count, cleanup status, and DST
+      observations.
+    command: cat /tmp/calendar-e2e-final-20260818/evidence-summary.json
+  - result: "Completed: login, drawer open, calendar route, and assertion of the
+      mobile event."
+    command: maestro test /tmp/calendar-e2e-mobile.yaml
+  - result: One persisted private calendar row observed during E2E-001; database
+      removed during teardown.
+    command: sqlite3 -readonly <disposable-private-calendar-db> 'select count(*) ...'
+  - result: Reviewed branch clean; no evaluated product files changed.
+    command: git status --short --branch && git diff --check
