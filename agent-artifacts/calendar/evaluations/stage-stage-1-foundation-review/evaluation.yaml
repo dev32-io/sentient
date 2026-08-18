@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-1-foundation
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 3
+attempt: 4
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers
@@ -17,9 +17,9 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: rereviewing
   iteration: 3
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: d5e2805aa5c3d60bb0276b35b524a4f84756054e
   managerPrompt: >-
@@ -87,14 +87,13 @@ loop:
     green.
   fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
 findings:
-  - id: CAL-S1-004
+  - id: CAL-S1-005
     severity: medium
     status: open
-    criterion: Bounded RRULE subset and wire schema must accept valid COUNT or UNTIL
-      recurrence forms
-    location: gateway/src/calendar/types.ts:181-202, 252-270
-    summary: Raw RFC UNTIL and wire ISO UNTIL formats are incompatible; valid UNTIL
-      recurrence requests are rejected.
+    criterion: RRULE subset parsing and all-day date wire representation must reject
+      malformed values
+    location: gateway/src/calendar/types.ts:138-145, 283-305
+    summary: Impossible RRULE UNTIL timestamps and invalid all-day dates are accepted.
     blocking: true
 result:
   verdict: fail
