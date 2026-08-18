@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s7-mobile-data
 title: Mobile-data calendar repository, use cases, and DI
-status: blocked
+status: ready
 dependsOn:
   - s6-mobile-sdk
 execution:
