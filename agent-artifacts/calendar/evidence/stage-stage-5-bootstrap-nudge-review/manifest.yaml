@@ -1,12 +1,15 @@
 schemaVersion: 1
 evaluation: stage-stage-5-bootstrap-nudge-review
-recordedAt: 2026-08-18T04:43:27.146Z
+recordedAt: 2026-08-18T05:27:04.982Z
 entries:
   - result: passed
     command: cd gateway && bun run typecheck
-  - result: 4 passed, 0 failed
+  - result: 5 passed, 0 failed
     command: cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
-  - result: Bounded calendar bootstrap/config/nudge changes inspected without
-      modifying the work.
-    command: git diff --stat addf9bc06180eef45c5e452763a77b8bba4654fa
-      d17670e01324e90f5add29a393ca5520cef8e57c
+      src/bootstrap/product-tools/calendar-provider
+  - result: Repair diff inspected; both prior defects are addressed, but
+      omitted-scope household write gating is incomplete.
+    command: git diff --no-ext-diff --unified=20 76c8c4f3^ 76c8c4f3 --
+      gateway/src/bootstrap/phase-services.ts
+      gateway/src/bootstrap/product-tools/calendar-provider.ts
+      gateway/src/calendar/nudge.ts gateway/src/calendar/nudge.test.ts

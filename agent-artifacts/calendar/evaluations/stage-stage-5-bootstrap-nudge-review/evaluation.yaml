@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-5-bootstrap-nudge
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
@@ -19,9 +19,9 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
   reviewedCommit: fd8eb357a3b00a209684972f68eb6280f1df7eba
   managerPrompt: >-
@@ -120,37 +120,39 @@ loop:
 findings:
   - id: S5-BOOTSTRAP-001
     severity: high
-    status: open
-    criterion: Calendar tools are wired into the product-tool-provider composition
-      and reachable in a session
-    location: gateway/src/bootstrap/phase-services.ts:360-367
-    summary: Only the private calendar store and calendar-private capability are
-      supplied to the calendar provider; household scope requests are rejected
-      and household-backed tools are unreachable.
-    blocking: true
+    status: resolved
+    criterion: Both private and household calendar tools are reachable and routed to
+      matching stores/capabilities
+    location: gateway/src/bootstrap/phase-services.ts:360-366;
+      gateway/src/bootstrap/product-tools/calendar-provider.ts:197-214
+    summary: Both targets are now supplied and explicit/no-scope reads route correctly.
+    blocking: false
   - id: S5-NUDGE-001
     severity: high
+    status: resolved
+    criterion: Nudge line cap and deterministic drop order
+    location: gateway/src/calendar/nudge.ts:89-126
+    summary: Marker space and weekly-before-today trimming are implemented and
+      covered by a targeted test.
+    blocking: false
+  - id: S5-BOOTSTRAP-002
+    severity: high
     status: open
-    criterion: Nudge never exceeds its cap and follows deterministic drop order
-      while keeping today plus important/pinned items
-    location: gateway/src/calendar/nudge.ts:89-113
-    summary: The overflow marker is appended after line trimming, allowing maxLines
-      to be exceeded; trimming can remove today or important/pinned items
-      instead of dropping overflow/non-important weekly content first.
+    criterion: Non-adult household update/delete must fail pre-PDP with
+      household-write-forbidden and zero store calls
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:220-223,327-329
+    summary: Adult gating considers only an explicitly supplied scope; omitted-scope
+      update/delete may call householdStore before failing with store-level
+      forbidden.
     blocking: true
   - id: S5-VERIFY-001
     severity: medium
-    status: open
-    criterion: Boundary proof covers bootstrap lifecycle, compatibility, timezone
-      resolution, wiring, and prompt-cache stability
+    status: deferred
+    criterion: Required boundary verification coverage
     location: gateway/src/bootstrap/phase-services.test.ts;
-      gateway/src/calendar/nudge.test.ts;
-      shared/config/src/schemas/orchestrator-config.test.ts
-    summary: The required boundary tests for calendar bootstrap
-      capabilities/stores/close, household tool reachability, old-config
-      compatibility, timezone resolution, and prompt-cache stability are absent;
-      only two nudge tests and unrelated phase-service tests run in the assigned
-      check.
+      gateway/src/calendar/nudge.test.ts
+    summary: Required bootstrap lifecycle, compatibility/timezone, and prompt-cache
+      tests remain absent; deferred residual risk.
     blocking: false
 result:
   verdict: fail
