@@ -18,94 +18,63 @@ criteria:
   - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
     representation
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
   reviewedCommit: 396813f8d26078ace0a3579af9b5ce5b4f717782
   managerPrompt: >-
-    Address both stage-6 findings (CAL-001 wire fidelity for recurring
-    occurrences; CAL-002 missing web view/device-tz/CRUD tests).
+    Address the remaining CAL-002 gap (high, blocking). CAL-001 is resolved. The
+    fix is TEST-ONLY in gateway/src/api/handlers/calendar.test.ts — do not
+    change production code.
 
 
-    CAL-001 (high, blocking) — Expanded occurrence starts/identity are discarded
-    at the REST boundary, so recurring instances collapse to the base event.
-    Root cause: the list wire shape is `WireCalendarEvent` (no occurrence
-    fields) and `toWire` uses `event.id` (the base event id), so N occurrences
-    of a recurring event all share one id with no occurrenceId — the web client
-    can't distinguish or render each instance.
+    The current "preserves occurrence identity and expanded times in list wire
+    responses" test uses a stub store returning a single Occurrence. The
+    manager-directed acceptance requires a RECURRING-event list response
+    containing N entries with distinct occurrenceId values and expanded
+    per-occurrence starts (not the base DTSTART). The existing "returns the base
+    event shape from GET, not occurrence fields" test already covers GET
+    base-shape — keep it.
 
 
-    Fix by making the LIST wire occurrence-aware, distinct from the GET/base
-    wire:
+    Add a new test (or replace the single-occurrence test) that proves the
+    N-recurring-entries contract end-to-end through a REAL store:
 
-    1. gateway/src/calendar/types.ts: add a `WireCalendarOccurrence` interface =
-    `WireCalendarEvent` + `{ occurrenceId: string; baseEventId: string;
-    occurrenceStart: CalendarTime; occurrenceEnd?: CalendarTime }`. Keep
-    `WireCalendarEvent` for single-event GET/create/update responses.
+    - Use openCalendarStore with a temp directory (mkdtempSync, cleaned up in
+    afterEach/afterAll) and wire it via authenticatedDeps' openStore (return the
+    same store for both private and household, or just private).
 
-    2. gateway/src/api/handlers/calendar.ts: `listEvents` returns
-    `WireCalendarOccurrence[]`. Add a `toWireOccurrence(occurrence, scope)` that
-    emits the WireCalendarEvent fields (using `occurrence.start`, which is the
-    expanded start) PLUS `occurrenceId`, `baseEventId`, `occurrenceStart`, and
-    `occurrenceEnd` (when present). Map `store.list` results through
-    `toWireOccurrence`. Leave
-    `getEvent`/`createEvent`/`updateEvent`/`deleteEvent` returning
-    `WireCalendarEvent` via the existing `toWire`.
+    - Create a recurring event via the store (or via the REST POST endpoint)
+    with a bounded recurrence, e.g. FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10 and a timed
+    start (e.g. 2026-08-05T14:00:00.000Z, America/Toronto — a Wednesday) — use
+    the same recurrence shape the store/expand path already handles (rule must
+    agree with rrule).
 
-    3. gateway/src/bootstrap/product-tools/calendar-provider.ts: the tool `wire`
-    helper used by `calendar_list`/`calendar_search` must also include
-    occurrence fields when the value is an Occurrence (occurrenceId,
-    baseEventId, occurrenceStart, occurrenceEnd) so the agent can distinguish
-    recurring instances. For get/create/update (base CalendarEvent) keep the
-    base wire shape.
+    - Call the handler list endpoint GET /api/v1/calendar/events?from=...&to=...
+    over a covering window (e.g. 2026-08-01 to 2026-10-31) with a bearer token.
 
-    4. gateway/webui/src/services/calendar-api.ts: extend the list result type
-    so `CalendarList.events` carries occurrence fields (occurrenceId,
-    baseEventId, occurrenceStart?, occurrenceEnd?) — define a
-    `CalendarOccurrence` type or extend `CalendarEvent` with optional occurrence
-    fields for list entries.
+    - Assert the response is 200 and the body.events array has EXACTLY 10
+    entries.
 
-    5. gateway/webui/src/components/calendar/calendar-view.tsx: render each
-    occurrence as its own row keyed by `occurrenceId` (not the base event id),
-    displaying the expanded `start` in the browser device timezone via
-    Intl.DateTimeFormat (for timed) or the local date (for all-day). Do not
-    collapse occurrences sharing a baseEventId.
+    - Assert the 10 entries have DISTINCT occurrenceId values (e.g. a Set of
+    occurrenceId has size 10) and that each entry's start is the EXPANDED
+    per-occurrence start (the starts differ across entries and are not all equal
+    to the base DTSTART). Assert each entry carries baseEventId equal to the
+    created event's id, and occurrenceStart/occurrenceEnd where applicable.
 
-    6. Update the shared golden list fixture
-    (gateway/src/calendar/fixtures/calendar-wire.json) so the list occurrence
-    shape includes the occurrence fields, and keep it in sync with the new
-    WireCalendarOccurrence.
+    - Assert the list entries are occurrence-shaped (have
+    occurrenceId/baseEventId/occurrenceStart), confirming the list wire is
+    occurrence-aware.
 
 
-    CAL-002 (high, blocking) — Missing boundary-proof tests. Add (in
-    gateway/webui and gateway/src/api/handlers as appropriate):
-
-    - A calendar view test: a recurring event renders N distinct occurrence rows
-    (keyed by occurrenceId) across the week/day view, not collapsed to one.
-
-    - A device-timezone rendering test: a timed occurrence renders in the
-    browser device timezone (assert the formatted stamp uses the device tz via
-    Intl, not the stored instant verbatim).
-
-    - A view CRUD behavior test: create/update/delete through the calendar-api
-    client + view flow (assert the view reflects created/updated/deleted state).
+    Keep the test deterministic and fast (real SQLite is fine). Do not weaken
+    the existing tests (bearer rejection, single-occurrence identity, GET
+    base-shape, close-on-failure).
 
 
-    Also add a REST handler test asserting the list response body for a
-    recurring event contains N entries with distinct occurrenceId and the
-    expanded per-occurrence start (not the base start), and that GET returns the
-    base WireCalendarEvent (no occurrence fields).
-
-
-    Constraints: this crosses the types.ts wire schema, the REST handler, the
-    tool provider, the webui client+view, and fixtures/tests — all necessary for
-    CAL-001. Keep `cd gateway && bun run typecheck`, `cd gateway/webui && bun
-    run test:unit && bun run typecheck`, and `./gradlew
-    :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' && ./gradlew
-    :shared:mobile-sdk:compileDebugKotlin` green (JAVA_HOME is now set). Do not
-    weaken existing tests. Reuse the existing Occurrence type and
-    CalendarTime/wire types.
+    Constraints: test-only (calendar.test.ts). Keep `cd gateway && bun run
+    typecheck` and `cd gateway && bun test src/api/handlers/calendar` green.
   fixerAgentId: 38280f8d-bec3-41c3-8a3a-2cdd9b977f53
 findings:
   - id: CAL-001
