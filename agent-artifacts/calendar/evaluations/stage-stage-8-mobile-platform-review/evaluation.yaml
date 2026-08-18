@@ -7,7 +7,7 @@ scope:
   workItem: calendar
 status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' && ./gradlew
     :android:app:compileDebugKotlin
