@@ -1,10 +1,11 @@
 import type { ProductToolGroup } from "@sentient/config";
 import type { NativeToolRunner } from "../tools/tool-broker.js";
+import { calendarProductToolProvider } from "./product-tools/calendar-provider.js";
 import { homeProductToolProvider } from "./product-tools/home-provider.js";
 import { musicProductToolProvider } from "./product-tools/music-provider.js";
 import { webProductToolProvider } from "./product-tools/web-provider.js";
 
-export type FoundationProductGroup = "web" | "home" | "music";
+export type FoundationProductGroup = "web" | "home" | "music" | "calendar";
 
 /** A group-owned contribution slot. Future providers implement only their
  * factory and receive only their own configuration object; this registry and
@@ -18,12 +19,14 @@ export interface ProductToolProviderSlots {
   readonly web: ProductToolProvider<"web">;
   readonly home: ProductToolProvider<"home">;
   readonly music: ProductToolProvider<"music">;
+  readonly calendar: ProductToolProvider<"calendar">;
 }
 
 export interface ProductToolProviderConfig {
   readonly web?: Readonly<Record<string, unknown>>;
   readonly home?: Readonly<Record<string, unknown>>;
   readonly music?: Readonly<Record<string, unknown>>;
+  readonly calendar?: Readonly<Record<string, unknown>>;
 }
 
 /** Stable bootstrap-owned slots. Each value lives in its independently-owned
@@ -32,6 +35,7 @@ export const EMPTY_PRODUCT_TOOL_PROVIDERS: ProductToolProviderSlots = {
   web: webProductToolProvider,
   home: homeProductToolProvider,
   music: musicProductToolProvider,
+  calendar: calendarProductToolProvider,
 };
 
 /** Produces one authoritative native runner map and rejects cross-provider
@@ -41,7 +45,7 @@ export function composeProductToolProviders(
   config: ProductToolProviderConfig = {},
 ): Map<string, NativeToolRunner> {
   const out = new Map<string, NativeToolRunner>();
-  for (const provider of [slots.web, slots.home, slots.music] as const) {
+  for (const provider of [slots.web, slots.home, slots.music, slots.calendar] as const) {
     const providerConfig = config[provider.group] ?? {};
     for (const runner of provider.create(providerConfig)) {
       if (runner.definition.productGroup !== (provider.group satisfies ProductToolGroup)) {
