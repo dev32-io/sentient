@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-2-recurrence-deprecation
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/calendar/calendar-store
@@ -21,8 +21,34 @@ criteria:
   - HA calendar tool removal across provider output, catalog, and role defaults
     (no profile migrator)
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: f6882dce-7df2-48d9-bc4e-477c381d014d
   reviewedCommit: 38cb30ac6d073ffc40cf8a3f66016557dd6cc7b2
+findings:
+  - id: CAL-REC-001
+    severity: high
+    status: open
+    criterion: AC-005 / bounded recurrence subset
+    location: gateway/src/calendar/expand-recurrence.ts:149-177
+    summary: COUNT is consumed by pre-DTSTART BYDAY candidates.
+    blocking: true
+  - id: CAL-SCHEMA-001
+    severity: high
+    status: open
+    criterion: Frozen baseline schema and group filtering
+    location: gateway/src/calendar/schema.ts:16-34
+    summary: Events baseline has no group column.
+    blocking: true
+  - id: CAL-STORE-001
+    severity: low
+    status: open
+    criterion: Ahead-of-binary policy
+    location: gateway/src/calendar/calendar-store.ts:42-48
+    summary: Ahead-of-binary open mutates journal_mode before policy detection.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-2-recurrence-deprecation-review/manifest.yaml

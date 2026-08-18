@@ -1,0 +1,16 @@
+schemaVersion: 1
+evaluation: stage-stage-2-recurrence-deprecation-review
+recordedAt: 2026-08-18T00:53:06.223Z
+entries:
+  - result: pass
+    command: cd gateway && bun run typecheck
+  - result: 75 pass, 0 fail
+    command: cd gateway && bun test src/calendar/calendar-store
+      src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+      src/api/handlers/mcp-catalog
+  - result: An ahead-of-binary database changed journal_mode from DELETE to WAL
+      while retaining its newer user_version.
+    command: Manual Bun reproduction outside repository
+  - result: Wednesday DTSTART with FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10 returned 9
+      occurrences.
+    command: Manual Bun recurrence reproduction
