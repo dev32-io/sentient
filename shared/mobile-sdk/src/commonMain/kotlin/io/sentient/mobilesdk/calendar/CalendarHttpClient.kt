@@ -22,6 +22,7 @@ import io.sentient.mobilesdk.settings.settingsBodyJson
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import io.ktor.client.statement.bodyAsText
+import kotlinx.coroutines.withTimeout
 
 private const val EVENTS_PATH = "/calendar/events"
 
@@ -30,13 +31,16 @@ open class CalendarHttpClient(
     private val httpClient: HttpClient,
     gatewayWsUrl: String,
     private val token: () -> String,
+    private val requestTimeoutMillis: Long = 15_000L,
 ) {
     private val baseUrl = deriveBaseUrl(gatewayWsUrl)
     private val log = createLogger("calendar", "calendar-http")
 
     open suspend fun get(id: String): AuthResult<CalendarEvent> = safeSettingsCall(log) {
-        val response = httpClient.get(eventUrl(id)) { bearer() }
-        mapBody(response, CalendarEvent.serializer())
+        withTimeout(requestTimeoutMillis) {
+            val response = httpClient.get(eventUrl(id)) { bearer() }
+            mapBody(response, CalendarEvent.serializer())
+        }
     }
 
     open suspend fun getEvent(id: String): AuthResult<CalendarEvent> = get(id)
@@ -49,16 +53,18 @@ open class CalendarHttpClient(
         tags: List<String>? = null,
         importance: Importance? = null,
     ): AuthResult<CalendarEventPage> = safeSettingsCall(log) {
-        val url = URLBuilder("$baseUrl$EVENTS_PATH").apply {
+        withTimeout(requestTimeoutMillis) {
+            val url = URLBuilder("$baseUrl$EVENTS_PATH").apply {
             parameters.append("from", settingsBodyJson.encodeToString(CalendarTime.serializer(), from))
             parameters.append("to", settingsBodyJson.encodeToString(CalendarTime.serializer(), to))
             scope?.let { parameters.append("scope", scopeWire(it)) }
             group?.let { parameters.append("group", it) }
             tags?.takeIf { it.isNotEmpty() }?.let { parameters.append("tags", it.joinToString(",")) }
             importance?.let { parameters.append("importance", importanceWire(it)) }
-        }.buildString()
-        val response = httpClient.get(url) { bearer() }
-        mapBody(response, CalendarEventPage.serializer())
+            }.buildString()
+            val response = httpClient.get(url) { bearer() }
+            mapBody(response, CalendarEventPage.serializer())
+        }
     }
 
     open suspend fun listEvents(
@@ -71,15 +77,19 @@ open class CalendarHttpClient(
     ): AuthResult<CalendarEventPage> = list(from, to, scope, group, tags, importance)
 
     open suspend fun create(event: CalendarEvent): AuthResult<CalendarEvent> = safeSettingsCall(log) {
-        val response = httpClient.post("$baseUrl$EVENTS_PATH") { bearer(); jsonBody(CalendarEvent.serializer(), event) }
-        mapBody(response, CalendarEvent.serializer())
+        withTimeout(requestTimeoutMillis) {
+            val response = httpClient.post("$baseUrl$EVENTS_PATH") { bearer(); jsonBody(CalendarEvent.serializer(), event) }
+            mapBody(response, CalendarEvent.serializer())
+        }
     }
 
     open suspend fun createEvent(event: CalendarEvent): AuthResult<CalendarEvent> = create(event)
 
     open suspend fun update(id: String, event: CalendarEvent): AuthResult<CalendarEvent> = safeSettingsCall(log) {
-        val response = httpClient.patch(eventUrl(id)) { bearer(); jsonBody(CalendarEvent.serializer(), event) }
-        mapBody(response, CalendarEvent.serializer())
+        withTimeout(requestTimeoutMillis) {
+            val response = httpClient.patch(eventUrl(id)) { bearer(); jsonBody(CalendarEvent.serializer(), event) }
+            mapBody(response, CalendarEvent.serializer())
+        }
     }
 
     open suspend fun update(event: CalendarEvent): AuthResult<CalendarEvent> = update(event.id, event)
@@ -87,8 +97,10 @@ open class CalendarHttpClient(
     open suspend fun updateEvent(event: CalendarEvent): AuthResult<CalendarEvent> = update(event)
 
     open suspend fun delete(id: String): AuthResult<Unit> = safeSettingsCall(log) {
-        val response = httpClient.delete(eventUrl(id)) { bearer() }
-        mapSettingsResponse(log, response) { Unit }
+        withTimeout(requestTimeoutMillis) {
+            val response = httpClient.delete(eventUrl(id)) { bearer() }
+            mapSettingsResponse(log, response) { Unit }
+        }
     }
 
     open suspend fun deleteEvent(id: String): AuthResult<Unit> = delete(id)
