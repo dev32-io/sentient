@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-tool-provider
 title: Calendar product tool group with pre-PDP household-write rejection
-status: blocked
+status: ready
 dependsOn:
   - s3-store-reads
 execution:
