@@ -19,6 +19,8 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
+  reviewedCommit: d17670e01324e90f5add29a393ca5520cef8e57c
