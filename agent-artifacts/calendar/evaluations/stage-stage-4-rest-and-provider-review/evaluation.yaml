@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-4-rest-and-provider
 scope:
   workItem: calendar
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/api/handlers/calendar src/bootstrap/product-tools
@@ -19,9 +19,9 @@ criteria:
   - Pre-PDP household-write rejection (no permission.request, zero confirm
     calls, zero store calls) and tool tier/role reachability
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
   reviewedCommit: 22650ddaa7c809c30552d2fc0bf3a5c1c6310304
   managerPrompt: >-
@@ -105,44 +105,41 @@ loop:
 findings:
   - id: CAL-REST-001
     severity: high
-    status: open
+    status: resolved
     criterion: REST wire shape matches shared calendar schema/golden fixtures
-    location: gateway/src/api/handlers/calendar.ts:117-125,216-218
-    summary: GET list serializes Occurrence-only fields, violating the strict shared
-      calendar response shape.
-    blocking: true
+    location: gateway/src/api/handlers/calendar.ts:220-239
+    summary: Explicit wire construction removes occurrence-only fields.
+    blocking: false
   - id: CAL-REST-002
     severity: high
-    status: open
+    status: resolved
     criterion: REST list/filter
-    location: gateway/src/api/handlers/calendar.ts:89-115
-    summary: REST list has no tags filter parsing or propagation.
-    blocking: true
+    location: gateway/src/api/handlers/calendar.ts:97-111
+    summary: Comma-separated tags are parsed and propagated.
+    blocking: false
   - id: CAL-REST-003
     severity: high
-    status: open
+    status: resolved
     criterion: Request-scoped handles close in try/finally
-    location: gateway/src/api/handlers/calendar.ts:62-67
-    summary: If the second store open throws, the first opened store is leaked
-      because both opens precede finally.
-    blocking: true
+    location: gateway/src/api/handlers/calendar.ts:71-87
+    summary: Second-open failure now closes the first store.
+    blocking: false
   - id: CAL-TOOL-001
     severity: high
-    status: open
+    status: resolved
     criterion: Typed malformed-RRULE validation
-    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:72-78,146-151,241-261
-    summary: Nested update recurrence bypasses validation, and create/update accept
-      incomplete raw/parsed recurrence objects.
-    blocking: true
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:56-82
+    summary: Canonical recurrence schema validates raw/parsed consistency and nested
+      update recurrence.
+    blocking: false
   - id: CAL-TOOL-002
     severity: high
-    status: open
+    status: resolved
     criterion: Search/filter behavior
-    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:211-229
-    summary: calendar_search silently ignores group, tags, and importance despite
-      accepting those arguments.
-    blocking: true
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:280-289
+    summary: Search now forwards group, tags, and importance filters.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-4-rest-and-provider-review/manifest.yaml
