@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Capability } from "../../access/capability.js";
-import type { CalendarStore } from "../../calendar/types.js";
+import type { CalendarEvent, CalendarStore } from "../../calendar/types.js";
 import { calendarProductToolProvider } from "./calendar-provider.js";
 
 function cap(resource: Capability["resource"], role: Capability["role"]): Capability {
@@ -38,6 +38,64 @@ async function run(name: string, args: Record<string, unknown>, role: Capability
   if (validation) return validation;
   return tool.run(args, context);
 }
+
+describe("calendar product tool definitions", () => {
+  it("publishes field schemas and forwards adults visibility to the store", async () => {
+    let created: CalendarEvent | undefined;
+    const householdStore = notFoundStore({
+      create: (event) => {
+        created = event;
+        return { ok: true, value: event };
+      },
+    });
+    const tools = runners("adult", householdStore);
+    const create = tools.get("calendar_create");
+    const update = tools.get("calendar_update");
+    const list = tools.get("calendar_list");
+    const search = tools.get("calendar_search");
+    const get = tools.get("calendar_get");
+    const remove = tools.get("calendar_delete");
+    expect(create?.definition.parameters).toMatchObject({
+      properties: {
+        title: { type: "string" },
+        start: { oneOf: expect.any(Array) },
+        visibility: { type: "string", enum: ["everyone", "adults"] },
+        importance: { type: "string", enum: ["normal", "important", "pinned"] },
+        tags: { type: "array", items: { type: "string" } },
+        scope: { type: "string", enum: ["private", "household"] },
+      },
+    });
+    expect(update?.definition.parameters).toMatchObject({
+      properties: { id: { type: "string" }, patch: { properties: { visibility: { enum: ["everyone", "adults"] } } } },
+    });
+    const listProperties = (list?.definition.parameters as { properties: Record<string, unknown> }).properties;
+    expect(listProperties.from).toHaveProperty("oneOf");
+    expect(listProperties.to).toHaveProperty("oneOf");
+    expect(listProperties.group).toEqual({ type: "string" });
+    expect(listProperties.tags).toEqual({ type: "array", items: { type: "string" } });
+    expect(listProperties.importance).toEqual({ type: "string", enum: ["normal", "important", "pinned"] });
+    const searchProperties = (search?.definition.parameters as { properties: Record<string, unknown> }).properties;
+    expect(searchProperties.query).toEqual({ type: "string" });
+    expect(searchProperties.from).toHaveProperty("oneOf");
+    expect(searchProperties.to).toHaveProperty("oneOf");
+    expect(get?.definition.parameters).toMatchObject({ properties: { id: { type: "string" } } });
+    expect(remove?.definition.parameters).toMatchObject({ properties: { id: { type: "string" } } });
+
+    const result = await run(
+      "calendar_create",
+      {
+        title: "Adults event",
+        start: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },
+        visibility: "adults",
+        scope: "household",
+      },
+      "adult",
+      householdStore,
+    );
+    expect(result.isError).toBe(false);
+    expect(created?.visibility).toBe("adults");
+  });
+});
 
 describe("calendar product tool write routing", () => {
   for (const role of ["child", "guest"] as const) {

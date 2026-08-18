@@ -172,6 +172,115 @@ function validateRecurrence(value: { rrule: string; rule?: unknown } | undefined
   const parsed = parseRRule(value.rrule);
   return parsed.ok ? null : failure("malformed-rrule", "The recurrence rule is malformed.");
 }
+const calendarTimeParameter = {
+  oneOf: [
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["timed"] },
+        instant: { type: "string", format: "date-time" },
+        timeZoneId: { type: "string" },
+      },
+      required: ["kind", "instant", "timeZoneId"],
+      additionalProperties: false,
+    },
+    {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["all-day"] },
+        date: { type: "string", format: "date" },
+      },
+      required: ["kind", "date"],
+      additionalProperties: false,
+    },
+  ],
+};
+const recurrenceRuleParameter = {
+  type: "object",
+  properties: {
+    freq: { type: "string", enum: ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] },
+    interval: { type: "integer", minimum: 1 },
+    count: { type: "integer", minimum: 1 },
+    until: { type: "string", format: "date-time" },
+    byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] } },
+  },
+  required: ["freq"],
+  additionalProperties: false,
+};
+const recurrenceParameter = {
+  type: "object",
+  properties: { rrule: { type: "string" }, rule: recurrenceRuleParameter },
+  required: ["rrule", "rule"],
+  additionalProperties: false,
+};
+const visibilityParameter = { type: "string", enum: ["everyone", "adults"] };
+const importanceParameter = { type: "string", enum: ["normal", "important", "pinned"] };
+const scopeParameter = { type: "string", enum: ["private", "household"] };
+const calendarEventParameters = {
+  title: { type: "string" },
+  description: { type: "string" },
+  start: calendarTimeParameter,
+  end: calendarTimeParameter,
+  recurrence: recurrenceParameter,
+  visibility: visibilityParameter,
+  importance: importanceParameter,
+  group: { type: "string" },
+  tags: { type: "array", items: { type: "string" } },
+  notificationPolicy: { type: "object", additionalProperties: true },
+  scope: scopeParameter,
+};
+const patchParameter = { type: "object", properties: calendarEventParameters, additionalProperties: false };
+const createParameters = {
+  type: "object",
+  properties: calendarEventParameters,
+  required: ["title", "start", "scope"],
+  additionalProperties: false,
+};
+const updateParameters = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    scope: scopeParameter,
+    patch: patchParameter,
+    event: patchParameter,
+  },
+  required: ["id", "patch"],
+  additionalProperties: false,
+};
+const listParameters = {
+  type: "object",
+  properties: {
+    from: calendarTimeParameter,
+    to: calendarTimeParameter,
+    scope: scopeParameter,
+    group: { type: "string" },
+    tags: { type: "array", items: { type: "string" } },
+    importance: importanceParameter,
+  },
+  required: ["from", "to"],
+  additionalProperties: false,
+};
+const searchParameters = {
+  type: "object",
+  properties: {
+    query: { type: "string" },
+    scope: scopeParameter,
+    from: calendarTimeParameter,
+    to: calendarTimeParameter,
+    group: { type: "string" },
+    tags: { type: "array", items: { type: "string" } },
+    importance: importanceParameter,
+  },
+  required: ["query"],
+  additionalProperties: false,
+};
+const idParameters = {
+  type: "object",
+  properties: { id: { type: "string" }, scope: scopeParameter },
+  required: ["id"],
+  additionalProperties: false,
+};
+
 function runner(
   name: string,
   description: string,
@@ -248,14 +357,14 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
           ? wire(r.value as CalendarEvent, eventScope) : r.value) : storeFailure(r.error ?? "io-error");
 
     return [
-      runner("calendar_list", CALENDAR_TOOL_SETTINGS[0].description, READ, { type: "object", required: ["from", "to"] }, common(READ, listSchema), async (args) => {
+      runner("calendar_list", CALENDAR_TOOL_SETTINGS[0].description, READ, listParameters, common(READ, listSchema), async (args) => {
         const p = listSchema.parse(args);
         const results = targetsFor(p.scope).map(({ store, scope: eventScope }) => ({ result: store.list({ from: calendarTime(p.from), to: calendarTime(p.to), ...(p.group !== undefined ? { group: p.group } : {}), ...(p.tags !== undefined ? { tags: p.tags } : {}), ...(p.importance !== undefined ? { importance: p.importance } : {}) }), eventScope }));
         const failed = results.find(({ result }) => !result.ok);
         if (failed && !failed.result.ok) return storeFailure(failed.result.error);
         return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value.map((e) => wire(e, eventScope)) : []));
       }),
-      runner("calendar_get", CALENDAR_TOOL_SETTINGS[1].description, READ, { type: "object", required: ["id"] }, common(READ, idSchema), async (args) => {
+      runner("calendar_get", CALENDAR_TOOL_SETTINGS[1].description, READ, idParameters, common(READ, idSchema), async (args) => {
         const p = idSchema.parse(args);
         for (const target of targetsFor(p.scope)) {
           const r = target.store.get(p.id as CalendarEventId);
@@ -264,26 +373,26 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         }
         return storeFailure("not-found");
       }),
-      runner("calendar_search", CALENDAR_TOOL_SETTINGS[2].description, READ, { type: "object", required: ["query"] }, common(READ, searchSchema), async (args) => {
+      runner("calendar_search", CALENDAR_TOOL_SETTINGS[2].description, READ, searchParameters, common(READ, searchSchema), async (args) => {
         const p = searchSchema.parse(args); const q = p.query.toLowerCase();
         const results = targetsFor(p.scope).map(({ store, scope: eventScope }) => ({ result: store.list({ from: calendarTime(p.from ?? { kind: "all-day", date: "0001-01-01" }), to: calendarTime(p.to ?? { kind: "all-day", date: "9999-12-31" }), ...(p.group !== undefined ? { group: p.group } : {}), ...(p.tags !== undefined ? { tags: p.tags } : {}) }), eventScope }));
         const failed = results.find(({ result }) => !result.ok); if (failed && !failed.result.ok) return storeFailure(failed.result.error);
         return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value.filter((e) => `${e.title} ${e.description ?? ""}`.toLowerCase().includes(q)).map((e) => wire(e, eventScope)) : []));
       }),
-      runner("calendar_create", CALENDAR_TOOL_SETTINGS[3].description, WRITE, { type: "object", required: ["title", "start", "scope"] }, common(WRITE, createSchema, true), async (args, ctx) => {
+      runner("calendar_create", CALENDAR_TOOL_SETTINGS[3].description, WRITE, createParameters, common(WRITE, createSchema, true), async (args, ctx) => {
         if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
         const p = createSchema.parse(args); const target = targetFor(p.scope)!;
         const now = new Date().toISOString() as CalendarEvent["createdAt"];
         const event = { ...p, id: crypto.randomUUID() as CalendarEventId, createdAt: now, updatedAt: now, tags: new Set(p.tags), notification: p.notificationPolicy } as unknown as CalendarEvent;
         return runResult(target.store.create(event), target.scope);
       }),
-      runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, { type: "object", required: ["id", "patch"] }, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args) => {
+      runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, updateParameters, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args) => {
         const p = updateSchema.safeParse(args); const value = p.success ? p.data : updateAlternativeSchema.parse(args);
         const patch = ("patch" in value ? value.patch : value.event) as unknown as CalendarEventPatch;
         for (const target of writeTargetsFor(value.scope)) { const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch); if (r.ok) return runResult(r, target.scope); if (r.error !== "not-found") return storeFailure(r.error); }
         return storeFailure("not-found");
       }),
-      runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, { type: "object", required: ["id"] }, common(CONFIRM, idSchema), async (args) => {
+      runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, idParameters, common(CONFIRM, idSchema), async (args) => {
         const p = idSchema.parse(args);
         for (const target of writeTargetsFor(p.scope)) { const r = target.store.delete(p.id as CalendarEventId); if (r.ok) return result({ ok: true }); if (r.error !== "not-found") return storeFailure(r.error); }
         return storeFailure("not-found");

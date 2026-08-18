@@ -33,13 +33,15 @@ describe("composeCalendarNudge", () => {
     const events = [
       occurrence("Today", "2026-08-05T12:00:00.000Z"),
       occurrence("Important", "2026-08-06T12:00:00.000Z", "everyone", "important"),
-      occurrence("Normal", "2026-08-07T12:00:00.000Z"),
+      occurrence("Pinned", "2026-08-07T12:00:00.000Z", "everyone", "pinned"),
+      occurrence("Normal", "2026-08-08T12:00:00.000Z"),
     ];
-    const result = composeCalendarNudge(store(events), "adult", "UTC", Date.parse("2026-08-05T12:00:00Z"), { maxChars: 4000, maxLines: 6 });
+    const result = composeCalendarNudge(store(events), "adult", "UTC", Date.parse("2026-08-05T12:00:00Z"), { maxChars: 4000, maxLines: 7 });
     expect(result).toContain("Today");
     expect(result).toContain("Important");
+    expect(result).toContain("Pinned");
     expect(result).not.toContain("Normal");
-    expect(result!.split("\n")).toHaveLength(6);
+    expect(result!.split("\n")).toHaveLength(7);
   });
 
   it("uses household-local today and hides adults events for a child", () => {

@@ -22,7 +22,7 @@ import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
-import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
+import { resolveTimeZone } from "../context/message-time.js";
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
 import {
@@ -125,25 +125,6 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // confirm from the log which prompt the gateway is running on. Same shape
 // `loadCompactionSummarizerPrompt` already has, and its lines DO reach the log.
 let systemPrompt: string | null = null;
-
-/**
- * One provider for the process: the zone is a property of where the household
- * is, not of a session, and resolving it per session would re-log it per
- * socket. Swapped for a location-derived provider when the app learns where the
- * house actually is — see context/message-time.ts.
- *
- * LAZY, for the same reason `resolveSystemPrompt` below is: the resolver logs
- * which zone it picked, and at module-init time the file sink does not exist
- * yet, so a module-scope call writes that line to nowhere. Built on first use
- * instead, by which point the sink is up and an operator can actually confirm
- * from the log which zone the gateway is stamping in.
- */
-let hostTimeZone: TimeZoneProvider | null = null;
-
-function resolveTimeZone(): TimeZoneProvider {
-  hostTimeZone ??= createHostTimeZoneProvider();
-  return hostTimeZone;
-}
 
 function resolveSystemPrompt(): string {
   if (systemPrompt !== null) return systemPrompt;

@@ -1,3 +1,4 @@
+import { resolveTimeZone } from "../context/message-time.js";
 import type {
   CalendarEvent,
   CalendarTime,
@@ -7,7 +8,7 @@ import type {
   UtcInstant,
   Weekday,
 } from "./types.js";
-import { parseRRule, WEEKDAYS } from "./types.js";
+import { DEFAULT_EVENT_TIME_ZONE, parseRRule, WEEKDAYS } from "./types.js";
 
 export type RecurrenceExpansionErrorCode = "invalid-rrule" | "unbounded-rrule" | "invalid-window";
 export interface RecurrenceExpansionError {
@@ -101,7 +102,11 @@ function inWindow(t: CalendarTime, from: CalendarTime, to: CalendarTime): boolea
 function expand(event: CalendarEvent, rule: RRule, from: CalendarTime, to: CalendarTime): Occurrence[] {
   const allDay = event.start.kind === "all-day";
   const timedStart = event.start.kind === "timed" ? event.start : undefined;
-  const zone = allDay ? "UTC" : timedStart!.timeZoneId;
+  const zone = allDay
+    ? "UTC"
+    : timedStart!.timeZoneId === DEFAULT_EVENT_TIME_ZONE
+      ? resolveTimeZone().zone()
+      : timedStart!.timeZoneId;
   const startMs = allDay ? Date.parse(`${(event.start as { date: LocalDate }).date}T00:00:00Z`) : Date.parse(timedStart!.instant);
   const anchor: Date | Parts = allDay ? dayDate(startMs) : parts(startMs, zone);
   const until = rule.until ? Date.parse(rule.until) : Infinity;

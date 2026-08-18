@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarApi, CalendarOccurrence } from "../../services/calendar-api.ts";
 import { formatCalendarTime, CalendarView } from "./calendar-view.tsx";
 
@@ -22,6 +22,8 @@ const occurrence = (id: string, title: string, instant: string): CalendarOccurre
   updatedAt: instant,
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 function apiFor(events: CalendarOccurrence[]): CalendarApi {
   return {
     list: vi.fn(async () => ({ ok: true as const, value: { events, more: 0 } })),
@@ -42,6 +44,17 @@ describe("CalendarView", () => {
     render(<CalendarView api={api} token="token" />);
     await waitFor(() => expect(screen.getAllByText("Weekly")).toHaveLength(3));
     expect(document.querySelectorAll(".calendar-event")).toHaveLength(3);
+  });
+
+  it("keeps the default API stable across state rerenders", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ version: 1, requestId: "r1", body: { events: [], more: 0 } }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CalendarView token="token" />);
+    await waitFor(() => expect(screen.getByText("No events this week.")).toBeTruthy());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("formats timed occurrences in the browser device timezone", () => {

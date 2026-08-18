@@ -18,6 +18,20 @@ describe("expandRecurrence", () => {
     if (result.ok) expect(result.value).toHaveLength(10);
   });
 
+  test("resolves the household timezone sentinel during expansion", () => {
+    const e = event(timed("2026-08-05T14:00:00.000Z", "household"), "FREQ=DAILY;COUNT=2");
+    const result = expandRecurrence(
+      e,
+      timed("2026-08-01T00:00:00.000Z", "household"),
+      timed("2026-08-20T23:59:59.000Z", "household"),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(2);
+      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(true);
+    }
+  });
+
   test("does not count pre-DTSTART BYDAY candidates", () => {
     const e = event(timed("2026-08-05T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10");
     const result = expandRecurrence(e, timed("2026-08-01T00:00:00.000Z", "America/Toronto"), timed("2026-10-31T23:59:59.000Z", "America/Toronto"));

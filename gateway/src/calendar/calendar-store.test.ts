@@ -123,6 +123,28 @@ describe("CalendarStore factory", () => {
     }
   });
 
+  it("expands recurring events stored with the household timezone sentinel", () => {
+    const store = openCalendarStore(cap(root()), cfg);
+    const recurring = event("household-recurring", {
+      kind: "timed",
+      instant: "2026-08-05T14:00:00.000Z" as UtcInstant,
+      timeZoneId: "household" as EventTimeZoneId,
+    }, {
+      recurrence: { rrule: "FREQ=DAILY;COUNT=2", rule: { freq: "DAILY", count: 2 } },
+    });
+    expect(store.create(recurring).ok).toBe(true);
+    const result = store.list({
+      from: { kind: "timed", instant: "2026-08-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
+      to: { kind: "timed", instant: "2026-08-20T23:59:59.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value).toHaveLength(2);
+      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(true);
+    }
+    store.close();
+  });
+
   it("hides adult events from child and guest reads while allowing adult and admin", () => {
     const base = root();
     const adultStore = openCalendarStore(cap(base, "calendar-private"), cfg);

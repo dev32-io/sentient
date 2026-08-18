@@ -91,57 +91,77 @@ export function composeCalendarNudge(
   });
   const sort = (a: Occurrence, b: Occurrence) => occurrenceMs(a) - occurrenceMs(b) || a.occurrenceId.localeCompare(b.occurrenceId);
   todayItems.sort(sort); weeklyItems.sort(sort);
-  const candidates = [...todayItems.map((item) => ({ item, mandatory: true })), ...weeklyItems.map((item) => ({ item, mandatory: true }))];
   // The store may contain only events outside this week; those do not create a
-  // block. Normal weekly items are intentionally overflow-only and dropped
-  // before any mandatory item.
+  // block. Normal weekly items are overflow-only: they are never allowed to
+  // displace today's events or important/pinned weekly events.
   const allWeekly = occurrences.filter((item) => {
     const date = item.start.kind === "all-day" ? item.start.date : localDate(occurrenceMs(item), householdTz);
     return date >= weekStart && date <= weekEnd && !todayItems.includes(item);
   });
   const droppedNormal = allWeekly.filter((item) => item.importance === "normal");
-  if (candidates.length === 0) return null;
+  if (todayItems.length === 0 && weeklyItems.length === 0) return null;
 
   const title = `Calendar (today ${today})`;
-  const lines: string[] = [title];
-  if (todayItems.length) { lines.push("Today:"); lines.push(...todayItems.map((item) => renderLine(item, householdTz))); }
-  if (weeklyItems.length) { lines.push("Important this week:"); lines.push(...weeklyItems.map((item) => renderLine(item, householdTz))); }
+  const visibleToday = [...todayItems];
+  const visibleWeekly = [...weeklyItems];
   let omitted = droppedNormal.length;
   const maxLines = Math.max(1, budget.maxLines);
-  // The marker is part of the line budget. Remove weekly content before
-  // touching today's section; important/pinned items are the next least
-  // disposable content after normal weekly items.
-  const effectiveLines = () => Math.max(0, maxLines - (omitted > 0 ? 1 : 0));
-  while (lines.length > effectiveLines() && weeklyItems.length > 0) {
-    lines.splice(lines.length - 1, 1);
-    weeklyItems.pop();
+  const renderLines = (): string[] => {
+    const next: string[] = [title];
+    if (visibleToday.length) {
+      next.push("Today:");
+      next.push(...visibleToday.map((item) => renderLine(item, householdTz)));
+    }
+    if (visibleWeekly.length) {
+      next.push("Important this week:");
+      next.push(...visibleWeekly.map((item) => renderLine(item, householdTz)));
+    }
+    if (omitted > 0) next.push(`...and ${omitted} more`);
+    return next;
+  };
+
+  let lines = renderLines();
+  // Normal weekly items were dropped before rendering. Only when the
+  // mandatory sections themselves cannot fit do we remove an oldest mandatory
+  // occurrence, and that is a last resort across both sections rather than a
+  // policy of dropping important weekly items before today's events.
+  while (lines.length > maxLines) {
+    const mandatory = [
+      ...visibleToday.map((item) => ({ item, section: "today" as const })),
+      ...visibleWeekly.map((item) => ({ item, section: "weekly" as const })),
+    ].sort((a, b) => sort(a.item, b.item));
+    const oldest = mandatory[0];
+    if (!oldest) break;
+    const items = oldest.section === "today" ? visibleToday : visibleWeekly;
+    const index = items.findIndex((item) => item.occurrenceId === oldest.item.occurrenceId);
+    if (index < 0) break;
+    items.splice(index, 1);
     omitted++;
-    if (weeklyItems.length === 0) lines.splice(lines.indexOf("Important this week:"), 1);
+    lines = renderLines();
   }
-  // Only trim today's tail when today's section itself cannot fit. Keep the
-  // title and Today header whenever the cap permits them.
-  while (lines.length > effectiveLines() && todayItems.length > 0) {
-    const todayIndex = lines.lastIndexOf("Today:");
-    const firstTodayLine = todayIndex + 1;
-    if (lines.length <= firstTodayLine) break;
-    lines.splice(lines.length - 1, 1);
-    todayItems.pop();
-    omitted++;
-  }
-  while (lines.length > effectiveLines() && lines.length > 1) {
-    lines.splice(lines.length - 1, 1);
-    omitted++;
-  }
-  if (omitted > 0) {
-    if (maxLines === 1) lines.splice(0, lines.length, `...and ${omitted} more`);
-    else lines.push(`...and ${omitted} more`);
+  // A very small line budget can be smaller than the title plus overflow
+  // marker. Preserve the marker when possible while still respecting the cap.
+  if (lines.length > maxLines) {
+    const marker = omitted > 0 ? `...and ${omitted} more` : undefined;
+    if (marker && maxLines === 1) lines = [marker];
+    else if (marker) {
+      const body = lines[lines.length - 1] === marker ? lines.slice(0, -1) : lines;
+      lines = [...body.slice(0, maxLines - 1), marker];
+    } else lines = lines.slice(0, maxLines);
   }
   let output = lines.join("\n");
   if (output.length > budget.maxChars) {
-    output = fit(output, budget.maxChars);
-    // A truncated block must remain a valid capped block; preserve the
-    // overflow marker whenever there was anything omitted.
-    if (omitted > 0 && budget.maxChars >= 16) output = fit(output, budget.maxChars - (`\n...and ${omitted} more`).length) + `\n...and ${omitted} more`;
+    const marker = omitted > 0 ? `...and ${omitted} more` : undefined;
+    if (!marker) {
+      output = fit(output, budget.maxChars);
+    } else if (budget.maxChars <= marker.length) {
+      output = fit(marker, budget.maxChars);
+    } else {
+      const body = lines[lines.length - 1] === marker ? lines.slice(0, -1).join("\n") : output;
+      const bodyBudget = budget.maxChars - marker.length - 1;
+      output = bodyBudget > 0 ? `${fit(body, bodyBudget)}\n${marker}` : marker;
+      if (output.length > budget.maxChars) output = fit(output, budget.maxChars);
+    }
   }
   return output;
 }

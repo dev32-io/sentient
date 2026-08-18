@@ -36,7 +36,8 @@ function draftTime(draft: { start: string; allDay: boolean }): CalendarTime {
 
 export interface CalendarViewProps { api?: CalendarApi; token?: string }
 
-export function CalendarView({ api = createCalendarApi(), token: suppliedToken }: CalendarViewProps = {}): JSX.Element {
+export function CalendarView({ api, token: suppliedToken }: CalendarViewProps = {}): JSX.Element {
+  const stableApi = useMemo(() => api ?? createCalendarApi(), [api]);
   const auth = useAuth();
   const token = suppliedToken ?? (auth.status === "authenticated" ? auth.token : "");
   const [events, setEvents] = useState<CalendarOccurrence[]>([]);
@@ -54,8 +55,8 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
     const allDayTo = new Date(window.to.kind === "timed" ? window.to.instant : Date.now());
     const date = (value: Date) => value.toISOString().slice(0, 10);
     const [timedResult, allDayResult] = await Promise.all([
-      api.list(token, window),
-      api.list(token, { from: { kind: "all-day", date: date(allDayFrom) }, to: { kind: "all-day", date: date(allDayTo) } }),
+      stableApi.list(token, window),
+      stableApi.list(token, { from: { kind: "all-day", date: date(allDayFrom) }, to: { kind: "all-day", date: date(allDayTo) } }),
     ]);
     if (timedResult.ok && allDayResult.ok) {
       const merged = [...timedResult.value.events, ...allDayResult.value.events];
@@ -63,7 +64,7 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
       // identity is stable for this list; baseEventId is shared by design.
       setEvents([...new Map(merged.map((event) => [event.occurrenceId, event])).values()]); setError(null);
     } else setError("Couldn't load calendar events.");
-  }, [api, token, window]);
+  }, [stableApi, token, window]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const submit = async (event: Event) => {
@@ -72,8 +73,8 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
     setBusy(true); setError(null);
     const start = draftTime(draft);
     const result = editing
-      ? await api.update(token, editing, { title: draft.title.trim(), start })
-      : await api.create(token, {
+      ? await stableApi.update(token, editing, { title: draft.title.trim(), start })
+      : await stableApi.create(token, {
           id: crypto.randomUUID(), title: draft.title.trim(), start, scope: "private", visibility: "everyone",
           importance: "normal", tags: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
         });
@@ -83,7 +84,7 @@ export function CalendarView({ api = createCalendarApi(), token: suppliedToken }
   };
   const remove = async (id: string) => {
     if (busy) return;
-    setBusy(true); const result = await api.delete(token, id); setBusy(false);
+    setBusy(true); const result = await stableApi.delete(token, id); setBusy(false);
     if (!result.ok) { setError("Couldn't delete calendar event."); return; }
     if (editing === id) { setEditing(null); setDraft(emptyDraft()); }
     await refresh();
