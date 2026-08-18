@@ -2,6 +2,7 @@ import type { ProductToolMetadata } from "@sentient/config";
 import type { ImpactTier } from "@sentient/protocol";
 import { MUSIC_TOOL_SETTINGS } from "../tools/music/music-tools.js";
 import { WEB_TOOL_SETTINGS } from "../tools/web/web-tools.js";
+import { CALENDAR_TOOL_SETTINGS } from "./product-tools/calendar-provider.js";
 import { homeProductToolProvider } from "./product-tools/home-provider.js";
 
 /** Authoritative prompt-independent metadata for first-class foundation tools.
@@ -30,6 +31,11 @@ export function foundationProductToolMetadata(): readonly FoundationProductToolM
     ...MUSIC_TOOL_SETTINGS.map((tool) => ({
       ...tool,
       productGroup: "music" as const,
+      defaultExposure: "standard" as const,
+    })),
+    ...CALENDAR_TOOL_SETTINGS.map((tool) => ({
+      ...tool,
+      productGroup: "calendar" as const,
       defaultExposure: "standard" as const,
     })),
   ];
