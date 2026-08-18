@@ -4,6 +4,62 @@ import MobileData
 /// Calendar page state. Calendar operations deliberately go through the shared
 /// use cases exposed by SettingsComponent; this VM owns only screen folding.
 @MainActor
+protocol CalendarUseCaseOperations {
+    func listBoth(
+        timedFrom: CalendarTime.Timed,
+        timedTo: CalendarTime.Timed,
+        allDayFrom: CalendarTime.AllDay,
+        allDayTo: CalendarTime.AllDay,
+        scope: CalendarScope?,
+        group: String?,
+        tags: [String]?,
+        importance: Importance?
+    ) async throws -> SentientResult<CalendarEventPage>
+    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent>
+    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent>
+    func delete(id: String) async throws -> SentientResult<KotlinUnit>
+}
+
+@MainActor
+private struct SettingsCalendarUseCases: CalendarUseCaseOperations {
+    let settings: SettingsComponent
+
+    func listBoth(
+        timedFrom: CalendarTime.Timed,
+        timedTo: CalendarTime.Timed,
+        allDayFrom: CalendarTime.AllDay,
+        allDayTo: CalendarTime.AllDay,
+        scope: CalendarScope?,
+        group: String?,
+        tags: [String]?,
+        importance: Importance?
+    ) async throws -> SentientResult<CalendarEventPage> {
+        try await settings.listCalendar.listBoth(
+            timedFrom: timedFrom,
+            timedTo: timedTo,
+            allDayFrom: allDayFrom,
+            allDayTo: allDayTo,
+            scope: scope,
+            group: group,
+            tags: tags,
+            importance: importance
+        )
+    }
+
+    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
+        try await settings.createCalendar.create(event: event)
+    }
+
+    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
+        try await settings.updateCalendar.update(id: id, event: event)
+    }
+
+    func delete(id: String) async throws -> SentientResult<KotlinUnit> {
+        try await settings.deleteCalendar.delete(id: id)
+    }
+}
+
+@MainActor
 @Observable
 final class CalendarViewModel {
     enum Phase: Equatable { case loading, ready, failed(String) }
@@ -17,10 +73,16 @@ final class CalendarViewModel {
         return nil
     }
 
-    private let settings: SettingsComponent
+    private let useCases: any CalendarUseCaseOperations
     private let log = AppLog("settings", "calendar-vm")
 
-    init(settings: SettingsComponent) { self.settings = settings }
+    init(settings: SettingsComponent) {
+        self.useCases = SettingsCalendarUseCases(settings: settings)
+    }
+
+    init(useCases: any CalendarUseCaseOperations) {
+        self.useCases = useCases
+    }
 
     func load() async {
         phase = .loading
@@ -33,7 +95,7 @@ final class CalendarViewModel {
         do {
             // The REST/store contract accepts only one time kind per window.
             // Fetch both kinds through the shared use case and fold its merged page.
-            let result = try await settings.listCalendar.listBoth(
+            let result = try await useCases.listBoth(
                 timedFrom: CalendarTime.Timed(instant: formatter.string(from: today), timeZoneId: zone),
                 timedTo: CalendarTime.Timed(
                     instant: formatter.string(from: calendar.date(byAdding: .day, value: 1, to: end) ?? end),
@@ -81,7 +143,7 @@ final class CalendarViewModel {
     /// Use-case-shaped create entry retained for callers that already have a full event.
     func create(_ event: CalendarEvent) async {
         guard mutation != .saving else { return }
-        await mutate { try await settings.createCalendar.create(event: event) }
+        await mutate { try await useCases.create(event: event) }
     }
 
     func update(event: CalendarEvent, title: String, date: String) async {
@@ -99,7 +161,7 @@ final class CalendarViewModel {
     /// Kept as the use-case-shaped entry point for callers that already built a patch.
     func update(id: String, event: CalendarEvent) async {
         guard mutation != .saving else { return }
-        await mutate { try await settings.updateCalendar.update(id: id, event: event) }
+        await mutate { try await useCases.update(id: id, event: event) }
     }
 
     func delete(event: CalendarEvent) async {
@@ -110,7 +172,7 @@ final class CalendarViewModel {
         guard mutation != .saving else { return }
         mutation = reduceCalendarMutation(mutation, .begin)
         do {
-            let result = try await settings.deleteCalendar.delete(id: id)
+            let result = try await useCases.delete(id: id)
             switch onEnum(of: result) {
             case .success:
                 events.removeAll { $0.mutationID == id }
@@ -239,7 +301,7 @@ extension CalendarEvent {
 
     func editedStart(from value: String) -> CalendarTime {
         switch onEnum(of: start) {
-        case .allDay(let value): return CalendarTime.AllDay(date: value.date)
+        case .allDay: return CalendarTime.AllDay(date: value)
         case .timed(let original):
             // The editor accepts a local date or local date+time, but the event
             // remains timed and keeps its event timezone id in either case.

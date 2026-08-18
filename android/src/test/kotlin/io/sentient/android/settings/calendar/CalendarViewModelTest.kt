@@ -2,6 +2,7 @@ package io.sentient.android.settings.calendar
 
 import io.sentient.android.history.CALENDAR_DRAWER_TEST_TAG
 import io.sentient.android.nav.Routes
+import io.sentient.android.nav.navigateToCalendar
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobiledata.usecase.calendar.CreateCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.DeleteCalendarUseCase
@@ -114,13 +115,20 @@ class CalendarViewModelTest {
         val updatedStart = assertIs<CalendarTime.Timed>(list.updated?.start)
         assertEquals("America/Toronto", updatedStart.timeZoneId)
         assertTrue(updatedStart.instant.isNotBlank())
+
+        vm.delete(recurring)
+        advanceUntilIdle()
+        assertEquals("recurring-1", list.deletedId)
         Dispatchers.resetMain()
     }
 
     @Test
-    fun drawer_calendar_entry_keeps_navigation_and_accessibility_contract() {
+    fun drawer_calendar_entry_navigates_to_calendar_route_and_keeps_accessibility_contract() {
+        var destination: String? = null
+        navigateToCalendar { destination = it }
+
         assertEquals("calendar-open", CALENDAR_DRAWER_TEST_TAG)
-        assertEquals("settings/calendar", Routes.SETTINGS_CALENDAR)
+        assertEquals(Routes.SETTINGS_CALENDAR, destination)
     }
 
     @Test
@@ -164,6 +172,7 @@ class CalendarViewModelTest {
         var created: CalendarEvent? = null
         var updatedId: String? = null
         var updated: CalendarEvent? = null
+        var deletedId: String? = null
 
         override suspend fun list(
             from: CalendarTime,
@@ -201,6 +210,9 @@ class CalendarViewModelTest {
             return updateResult
         }
 
-        override suspend fun delete(id: String): SentientResult<Unit> = deleteResult
+        override suspend fun delete(id: String): SentientResult<Unit> {
+            deletedId = id
+            return deleteResult
+        }
     }
 }

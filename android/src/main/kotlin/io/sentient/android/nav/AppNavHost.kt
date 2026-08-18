@@ -187,6 +187,11 @@ private fun rememberUserName(): String {
     return name ?: DEFAULT_DISPLAY_NAME
 }
 
+/** The callback passed from the drawer to the host must land on the calendar route. */
+internal fun navigateToCalendar(navigate: (String) -> Unit) {
+    navigate(Routes.SETTINGS_CALENDAR)
+}
+
 private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
     composable(
         route = Routes.CHAT,
@@ -209,7 +214,7 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
                 nav.navigate(Routes.chat(null)) { popUpTo("chat") { inclusive = true } }
             },
             onOpenSettings = { nav.navigate(Routes.SETTINGS) },
-            onOpenCalendar = { nav.navigate(Routes.SETTINGS_CALENDAR) },
+            onOpenCalendar = { navigateToCalendar { route -> nav.navigate(route) } },
             onAuthExpired = { logoutTo(nav, userSession) },
         )
     }

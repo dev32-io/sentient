@@ -65,6 +65,38 @@ struct CalendarViewModelTests {
         #expect(reduceCalendarMutation(.saving, .failure("No connection")) == .failed("No connection"))
     }
 
+    @Test @MainActor func crudCallsUseCasesAndAllDayUpdateUsesEditedDate() async {
+        let useCases = CalendarUseCaseSpy()
+        let viewModel = CalendarViewModel(useCases: useCases)
+        let original = event(
+            id: "occurrence-row",
+            start: CalendarTime.AllDay(date: "2026-08-01"),
+            occurrenceId: "occurrence-1",
+            baseEventId: "base-event-1"
+        )
+
+        await viewModel.create(title: " Picnic ", date: "2026-08-02")
+        #expect(useCases.created?.title == "Picnic")
+        #expect(useCases.created?.createdAt == "")
+        #expect(useCases.created?.updatedAt == "")
+
+        await viewModel.update(event: original, title: "Updated", date: "2026-08-04")
+        #expect(useCases.updatedID == "base-event-1")
+        #expect(useCases.updated?.title == "Updated")
+        if let updated = useCases.updated {
+            if case .allDay(let start) = onEnum(of: updated.start) {
+                #expect(start.date == "2026-08-04")
+            } else {
+                Issue.record("all-day update changed the event kind")
+            }
+        } else {
+            Issue.record("update use case was not called")
+        }
+
+        await viewModel.delete(event: original)
+        #expect(useCases.deletedID == "base-event-1")
+    }
+
     @Test func occurrenceRowsKeepRowIdentitySeparateFromMutationIdentity() {
         let occurrence = event(
             id: "recurring-1",
@@ -84,5 +116,42 @@ struct CalendarViewModelTests {
             CalendarDisplayFormatter.startText(timed, timeZone: TimeZone(identifier: "America/New_York")!)
                 == "2026-08-01 09:00"
         )
+    }
+}
+
+@MainActor
+private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
+    var created: CalendarEvent?
+    var updatedID: String?
+    var updated: CalendarEvent?
+    var deletedID: String?
+
+    func listBoth(
+        timedFrom: CalendarTime.Timed,
+        timedTo: CalendarTime.Timed,
+        allDayFrom: CalendarTime.AllDay,
+        allDayTo: CalendarTime.AllDay,
+        scope: CalendarScope?,
+        group: String?,
+        tags: [String]?,
+        importance: Importance?
+    ) async throws -> SentientResult<CalendarEventPage> {
+        SentientResultSuccess(data: CalendarEventPage(events: [], more: 0))
+    }
+
+    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
+        created = event
+        return SentientResultSuccess(data: event)
+    }
+
+    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
+        updatedID = id
+        updated = event
+        return SentientResultSuccess(data: event)
+    }
+
+    func delete(id: String) async throws -> SentientResult<KotlinUnit> {
+        deletedID = id
+        return SentientResultSuccess(data: KotlinUnit())
     }
 }
