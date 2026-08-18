@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-rest-api
 title: Calendar REST API over the shared CalendarStore
-status: running
+status: contribution_complete
 dependsOn:
   - s3-store-reads
 execution:
@@ -26,3 +26,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s4-rest-api
   baseCommit: 6d816e9529a29699598c78a20f7a7c4ef4a64253
   lastRunId: 0fdb4416-c319-42d2-a2b3-19ffe3bb166b
+  completedCommit: 94808b6ab18399e0630b70a305ac7c70c5b8d841
