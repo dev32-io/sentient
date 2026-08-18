@@ -1,17 +1,16 @@
 schemaVersion: 1
 evaluation: stage-stage-1-foundation-review
-recordedAt: 2026-08-18T00:13:11.908Z
+recordedAt: 2026-08-18T00:16:13.116Z
 entries:
   - result: pass
     command: cd gateway && bun run typecheck
   - result: "pass: 33 tests, 0 failures"
     command: cd gateway && bun test src/access src/calendar/types
       src/calendar/e2e-helpers
-  - result: "true: malformed raw RRULE accepted at wire boundary"
+  - result: "false: valid bounded UNTIL recurrence rejected"
     command: cd gateway && bun -e 'import {calendarRequestSchema} from
-      "./src/calendar/types.ts"; const
-      e={id:"e",scope:"private",title:"x",start:{kind:"timed",instant:"2026-08-05T13:00:00.000Z",timeZoneId:"UTC"},visibility:"everyone",importance:"normal",tags:[],createdAt:"2026-08-01T00:00:00.000Z",updatedAt:"2026-08-01T00:00:00.000Z"};
-      console.log(calendarRequestSchema.safeParse({version:1,requestId:"r",operation:"create",body:{...e,recurrence:{rrule:"FREQ=DAILY;BOGUS=1",rule:{freq:"DAILY"}}}}).success)'
-    description: Sanitized recurrence consistency probe
+      "./src/calendar/types.ts"; /* sanitized valid UNTIL fixture */
+      console.log(calendarRequestSchema.safeParse({version:1,requestId:"r",operation:"create",body:{id:"e",scope:"private",title:"x",start:{kind:"timed",instant:"2026-08-05T13:00:00.000Z",timeZoneId:"UTC"},recurrence:{rrule:"FREQ=DAILY;UNTIL=20260805T120000Z",rule:{freq:"DAILY",until:"2026-08-05T12:00:00.000Z"}},visibility:"everyone",importance:"normal",tags:[],createdAt:"2026-08-01T00:00:00.000Z",updatedAt:"2026-08-01T00:00:00.000Z"}}).success)'
+    description: Sanitized targeted wire-schema probe
     path: files/3-types.ts
-    checksum: sha256:7465b4d43edc59f4904558937fc7fc762caf69065b1324332700db9b708f81de
+    checksum: sha256:c8ddffdf295fcefaab724fda8302fa1dc53ae3b8172de80e89dc0fef3104e2b4

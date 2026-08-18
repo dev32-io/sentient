@@ -181,6 +181,23 @@ const calendarEventSchema = z
     recurrence: z
       .object({ rrule: z.string().min(1), rule: wireRRuleSchema })
       .strict()
+      .superRefine((recurrence, ctx) => {
+        const parsed = parseRRule(recurrence.rrule);
+        if (!parsed.ok) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid recurrence rule" });
+          return;
+        }
+        const rule = parsed.value;
+        if (
+          recurrence.rule.freq !== rule.freq ||
+          recurrence.rule.interval !== rule.interval ||
+          recurrence.rule.count !== rule.count ||
+          recurrence.rule.until !== rule.until ||
+          JSON.stringify(recurrence.rule.byDay) !== JSON.stringify(rule.byDay)
+        ) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "raw and parsed recurrence rules disagree" });
+        }
+      })
       .optional(),
     exdates: z.array(wireCalendarTimeSchema).optional(),
     exceptions: z

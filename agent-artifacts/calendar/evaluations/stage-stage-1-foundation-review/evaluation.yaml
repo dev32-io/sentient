@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-1-foundation
 scope:
   workItem: calendar
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - cd gateway && bun run typecheck
   - cd gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers
@@ -17,9 +17,9 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: 726eb41eba1fd63d09b3c524af1d7c6310d02a14
   managerPrompt: >-
@@ -64,15 +64,14 @@ loop:
     src/access src/calendar/types src/calendar/e2e-helpers` green.
   fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
 findings:
-  - id: CAL-S1-003
+  - id: CAL-S1-004
     severity: medium
     status: open
-    criterion: Bounded RRULE subset and concrete wire schema must reject malformed
-      recurrence data
-    location: gateway/src/calendar/types.ts:239-276
-    summary: Wire recurrence schema does not enforce parseRRule-equivalent subset
-      rules or consistency between recurrence.rrule and recurrence.rule;
-      unsupported raw syntax is accepted.
+    criterion: Bounded RRULE subset and wire schema must accept valid COUNT or UNTIL
+      recurrence forms
+    location: gateway/src/calendar/types.ts:181-202, 252-270
+    summary: Raw RFC UNTIL and wire ISO UNTIL formats are incompatible; valid UNTIL
+      recurrence requests are rejected.
     blocking: true
 result:
   verdict: fail
