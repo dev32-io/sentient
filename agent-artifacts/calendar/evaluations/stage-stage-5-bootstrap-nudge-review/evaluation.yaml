@@ -19,11 +19,103 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
   reviewedCommit: d17670e01324e90f5add29a393ca5520cef8e57c
+  managerPrompt: >-
+    Address all three stage-5 findings (gateway/src/bootstrap/phase-services.ts,
+    gateway/src/bootstrap/product-tools/calendar-provider.ts,
+    gateway/src/calendar/nudge.ts, plus tests):
+
+
+    S5-BOOTSTRAP-001 (high, blocking) — Only the private calendar store and
+    calendar-private capability are supplied to the calendar provider; household
+    scope requests are rejected and household-backed tools are unreachable. In
+    phase-services.ts (~line 362-367) the provider is wired with `{ store:
+    privateStore, capability: grant(principal, "calendar-private") }` only. Fix
+    by making the calendar provider hold BOTH the private and household
+    store+capability and route each tool call to the store/cap matching the
+    requested scope:
+
+    - Refactor `calendarProductToolProvider.create` (calendar-provider.ts) to
+    accept both a private and a household store+capability (e.g. `{
+    privateStore, privateCap, householdStore, householdCap }` — pick a clean
+    config shape and update the bootstrap call to match). Keep backward-compat
+    minimal; this is an internal seam.
+
+    - Each tool run handler selects the store+cap for the requested `scope` arg.
+    For `calendar_list` with no scope, query BOTH stores and merge (like the
+    REST list handler does). For
+    `calendar_get`/`calendar_update`/`calendar_delete` with no explicit scope,
+    look in private then household (like the REST handler).
+
+    - The household-write adult-gate must use the household capability's role:
+    non-adult (child/guest) household create/update/delete ->
+    `household-write-forbidden` failure (isAdult(role) = adult | admin; admin
+    allowed). Private writes remain allowed for the owner.
+
+    - `scopeGate`/`scopeFor`: both scopes are now reachable; validate the
+    requested scope is private or household, and route accordingly. Do not
+    reject a household request merely because the provider also holds a private
+    cap.
+
+    - Update phase-services.ts to supply both privateStore/calendar-private and
+    householdStore/calendar-household to the provider. Keep the existing close()
+    (both stores closed on session disposal) and the nudge composition (both
+    stores nudged).
+
+    - Add tests: household
+    calendar_list/calendar_get/calendar_create/calendar_update/calendar_delete
+    are reachable and operate on the household store; private scope still works;
+    list without scope merges both; a non-adult household write is rejected with
+    household-write-forbidden (zero store calls).
+
+
+    S5-NUDGE-001 (high, blocking) — The overflow marker is appended AFTER line
+    trimming, so the final block exceeds maxLines; and end-trimming can remove
+    today or important/pinned items instead of dropping overflow/non-important
+    weekly content first. Fix composeCalendarNudge in nudge.ts:
+
+    - Account for the overflow marker line within the line cap: when omitted >
+    0, reserve one line for the `...and N more` marker (effective line budget =
+    maxLines - 1) so the final lines.length never exceeds maxLines.
+
+    - Enforce the deterministic drop order from the design: drop
+    overflow/non-important (normal) weekly items FIRST (already omitted via
+    droppedNormal); then, if still over the effective cap, drop important/pinned
+    weekly items from the end (increment omitted) — but PRESERVE today items and
+    the title/`Today:` header. Only as a last resort (today items alone exceed
+    the effective cap) trim today's tail.
+
+    - The `...and N more` marker counts toward maxLines. Keep the existing
+    char-cap handling (which already reserves space for the marker) consistent
+    with the line-cap fix.
+
+    - Add tests: a tight maxLines cap with today + important/pinned + normal
+    weekly keeps today and important/pinned, drops normal weekly, and the final
+    line count is <= maxLines (marker included); a case where weekly overflow
+    exists does NOT remove today items; empty-calendar still returns null.
+
+
+    S5-VERIFY-001 (medium, non-blocking) — Required boundary tests are absent.
+    Add focused tests covering: calendar bootstrap mints BOTH calendar-private
+    and calendar-household capabilities and opens both stores; both stores are
+    closed on session disposal; household tool reachability (from
+    S5-BOOTSTRAP-001); old-config compatibility (calendar config absent/disabled
+    -> no calendar tools, no nudge; default_event_tz_id="household" resolves to
+    resolveTimeZone()); and prompt-cache stability across an in-session calendar
+    write (the nudge/system-prompt block is composed once at session
+    construction and a calendar write does not mutate the already-composed block
+    — verify the composed nudge string is unchanged after a write).
+
+
+    Constraints: stay within stage-5 scope plus the calendar-provider.ts seam
+    needed for S5-BOOTSTRAP-001. Keep `cd gateway && bun run typecheck` and `cd
+    gateway && bun test src/bootstrap/phase-services src/calendar/nudge` green
+    (and the calendar provider tests). Do not weaken existing tests. Reuse
+    isAdult, parseRRule, and the existing store/wire types from types.ts.
 findings:
   - id: S5-BOOTSTRAP-001
     severity: high
