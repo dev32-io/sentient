@@ -213,6 +213,8 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
       const target = targetFor(requested);
       return target ? [target] : householdTarget ? [privateTarget, householdTarget] : [privateTarget];
     };
+    const writeTargetsFor = (requested?: CalendarScope): Target[] =>
+      targetsFor(requested).filter((target) => target.scope !== "household" || isAdult(target.capability.role));
     const scopeGate = (requested: CalendarScope | undefined): ToolResult | null =>
       requested !== undefined && !targetFor(requested)
         ? failure("forbidden", `The ${requested} calendar is unavailable.`)
@@ -275,13 +277,12 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
       runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, { type: "object", required: ["id", "patch"] }, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args) => {
         const p = updateSchema.safeParse(args); const value = p.success ? p.data : updateAlternativeSchema.parse(args);
         const patch = ("patch" in value ? value.patch : value.event) as unknown as CalendarEventPatch;
-        for (const target of targetsFor(value.scope)) { const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch); if (r.ok) return runResult(r, target.scope); if (r.error !== "not-found") return storeFailure(r.error); }
+        for (const target of writeTargetsFor(value.scope)) { const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch); if (r.ok) return runResult(r, target.scope); if (r.error !== "not-found") return storeFailure(r.error); }
         return storeFailure("not-found");
       }),
       runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, { type: "object", required: ["id"] }, common(CONFIRM, idSchema), async (args) => {
         const p = idSchema.parse(args);
-        const gate = householdWriteBlocked(CONFIRM, p.scope); if (gate) return gate;
-        for (const target of targetsFor(p.scope)) { const r = target.store.delete(p.id as CalendarEventId); if (r.ok) return result({ ok: true }); if (r.error !== "not-found") return storeFailure(r.error); }
+        for (const target of writeTargetsFor(p.scope)) { const r = target.store.delete(p.id as CalendarEventId); if (r.ok) return result({ ok: true }); if (r.error !== "not-found") return storeFailure(r.error); }
         return storeFailure("not-found");
       }),
     ];
