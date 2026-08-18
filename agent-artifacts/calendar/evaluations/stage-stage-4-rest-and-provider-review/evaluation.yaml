@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-4-rest-and-provider
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -19,8 +19,8 @@ criteria:
   - Pre-PDP household-write rejection (no permission.request, zero confirm
     calls, zero store calls) and tool tier/role reachability
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 8a35628f-078b-4777-8c3e-bab57e077a22
   reviewedCommit: 1fbc3834aa487bdc64948aeaa3c3c96bae93dca1
@@ -101,6 +101,7 @@ loop:
     src/bootstrap/product-tool-metadata src/tools/tool-broker` green. Do not
     weaken existing tests. Reuse parseRRule and wireRRuleSchema from types.ts
     rather than duplicating RRULE subset logic.
+  fixerAgentId: 1e834fe3-31fb-4890-8193-83c492abc2aa
 findings:
   - id: CAL-REST-001
     severity: high
