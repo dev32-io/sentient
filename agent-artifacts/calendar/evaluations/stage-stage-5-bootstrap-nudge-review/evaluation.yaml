@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-5-bootstrap-nudge
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -19,8 +19,8 @@ criteria:
   - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
     rendering, and child/guest visibility
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 3
   reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
   reviewedCommit: fd8eb357a3b00a209684972f68eb6280f1df7eba
