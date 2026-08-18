@@ -21,6 +21,8 @@ criteria:
   - HA calendar tool removal across provider output, catalog, and role defaults
     (no profile migrator)
 loop:
-  state: planned
+  state: reviewing
   iteration: 0
   maxIterations: 3
+  reviewerAgentId: f6882dce-7df2-48d9-bc4e-477c381d014d
+  reviewedCommit: 38cb30ac6d073ffc40cf8a3f66016557dd6cc7b2
