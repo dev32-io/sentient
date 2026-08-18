@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-1-foundation
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -17,7 +17,7 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: fixing
+  state: rereviewing
   iteration: 0
   maxIterations: 3
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
@@ -63,6 +63,7 @@ loop:
     only). Do not touch other stages' files. Keep `cd gateway && bun run
     typecheck` and `cd gateway && bun test src/access src/calendar/types
     src/calendar/e2e-helpers` green.
+  fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
 findings:
   - id: CAL-S1-001
     severity: medium
