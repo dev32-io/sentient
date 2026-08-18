@@ -108,8 +108,34 @@ export function composeCalendarNudge(
   if (weeklyItems.length) { lines.push("Important this week:"); lines.push(...weeklyItems.map((item) => renderLine(item, householdTz))); }
   let omitted = droppedNormal.length;
   const maxLines = Math.max(1, budget.maxLines);
-  while (lines.length > maxLines && lines.length > 1) { lines.splice(lines.length - 1, 1); omitted++; }
-  if (omitted > 0) lines.push(`...and ${omitted} more`);
+  // The marker is part of the line budget. Remove weekly content before
+  // touching today's section; important/pinned items are the next least
+  // disposable content after normal weekly items.
+  const effectiveLines = () => Math.max(0, maxLines - (omitted > 0 ? 1 : 0));
+  while (lines.length > effectiveLines() && weeklyItems.length > 0) {
+    lines.splice(lines.length - 1, 1);
+    weeklyItems.pop();
+    omitted++;
+    if (weeklyItems.length === 0) lines.splice(lines.indexOf("Important this week:"), 1);
+  }
+  // Only trim today's tail when today's section itself cannot fit. Keep the
+  // title and Today header whenever the cap permits them.
+  while (lines.length > effectiveLines() && todayItems.length > 0) {
+    const todayIndex = lines.lastIndexOf("Today:");
+    const firstTodayLine = todayIndex + 1;
+    if (lines.length <= firstTodayLine) break;
+    lines.splice(lines.length - 1, 1);
+    todayItems.pop();
+    omitted++;
+  }
+  while (lines.length > effectiveLines() && lines.length > 1) {
+    lines.splice(lines.length - 1, 1);
+    omitted++;
+  }
+  if (omitted > 0) {
+    if (maxLines === 1) lines.splice(0, lines.length, `...and ${omitted} more`);
+    else lines.push(`...and ${omitted} more`);
+  }
   let output = lines.join("\n");
   if (output.length > budget.maxChars) {
     output = fit(output, budget.maxChars);

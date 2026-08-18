@@ -357,13 +357,12 @@ export function buildSessionCalendar(
     // zone; an explicit IANA id remains an operator override.
     defaultEventTimeZoneId: configured === "household" ? resolveTimeZone().zone() : configured,
   };
-  const privateStore = openCalendarStore(accessManager.grant(principal, "calendar-private"), calendarCfg);
-  const householdStore = openCalendarStore(accessManager.grant(principal, "calendar-household"), calendarCfg);
+  const privateCap = accessManager.grant(principal, "calendar-private");
+  const householdCap = accessManager.grant(principal, "calendar-household");
+  const privateStore = openCalendarStore(privateCap, calendarCfg);
+  const householdStore = openCalendarStore(householdCap, calendarCfg);
   const tools = composeProductToolProviders(undefined, {
-    calendar: {
-      store: privateStore,
-      capability: accessManager.grant(principal, "calendar-private"),
-    },
+    calendar: { privateStore, privateCap, householdStore, householdCap },
   });
   const householdZone = resolveTimeZone().zone();
   const nudgeBudget = {

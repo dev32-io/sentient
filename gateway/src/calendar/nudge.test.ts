@@ -29,6 +29,19 @@ describe("composeCalendarNudge", () => {
     expect(result!.length).toBeLessThanOrEqual(80);
   });
 
+  it("drops normal weekly overflow while preserving today and important items within the line cap", () => {
+    const events = [
+      occurrence("Today", "2026-08-05T12:00:00.000Z"),
+      occurrence("Important", "2026-08-06T12:00:00.000Z", "everyone", "important"),
+      occurrence("Normal", "2026-08-07T12:00:00.000Z"),
+    ];
+    const result = composeCalendarNudge(store(events), "adult", "UTC", Date.parse("2026-08-05T12:00:00Z"), { maxChars: 4000, maxLines: 6 });
+    expect(result).toContain("Today");
+    expect(result).toContain("Important");
+    expect(result).not.toContain("Normal");
+    expect(result!.split("\n")).toHaveLength(6);
+  });
+
   it("uses household-local today and hides adults events for a child", () => {
     const events = [occurrence("Visible", "2026-08-06T00:30:00.000Z"), occurrence("Adults", "2026-08-05T12:00:00.000Z", "adults")];
     const result = composeCalendarNudge(store(events), "child", "America/Toronto", Date.parse("2026-08-06T00:00:00Z"));
