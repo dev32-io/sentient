@@ -21,7 +21,7 @@ loop:
   iteration: 3
   maxIterations: 3
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
-  reviewedCommit: 726eb41eba1fd63d09b3c524af1d7c6310d02a14
+  reviewedCommit: d5e2805aa5c3d60bb0276b35b524a4f84756054e
   managerPrompt: >-
     Address CAL-S1-004 in gateway/src/calendar/types.ts only (plus types.test.ts
     for tests). Valid UNTIL recurrences are rejected because the raw RFC UNTIL
