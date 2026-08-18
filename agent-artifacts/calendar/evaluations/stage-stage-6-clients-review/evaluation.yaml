@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-6-clients
 scope:
   workItem: calendar
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -18,8 +18,8 @@ criteria:
   - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
     representation
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
   reviewedCommit: ea300d5170b03f7574fec5b1637eafa2fde44aeb
@@ -106,6 +106,7 @@ loop:
     :shared:mobile-sdk:compileDebugKotlin` green (JAVA_HOME is now set). Do not
     weaken existing tests. Reuse the existing Occurrence type and
     CalendarTime/wire types.
+  fixerAgentId: 38280f8d-bec3-41c3-8a3a-2cdd9b977f53
 findings:
   - id: CAL-001
     severity: high
