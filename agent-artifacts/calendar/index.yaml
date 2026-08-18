@@ -5,7 +5,7 @@ title: Gateway-owned family calendar
 phase: evaluation
 state: active
 planning:
-  revision: 108
+  revision: 109
 artifacts:
   - id: intent
     type: intent
@@ -213,13 +213,13 @@ executionStages:
       - s8-android
       - s8-ios
     checks:
-      - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*' &&
-        ./gradlew :android:app:compileDebugKotlin
-      - ./gradlew :shared:mobile-data:assembleXCFramework && xcodebuild -project
-        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-        Simulator,name=iPhone 16' build && xcodebuild -project
-        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-        Simulator,name=iPhone 16' test
+      - ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
+        :android:compileDebugKotlin
+      - ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
+        xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16' build && xcodebuild
+        -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+        'platform=iOS Simulator,name=iPhone 16' test
     mode: concurrent
     review:
       tier: medium
