@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s4-tool-provider
 title: Calendar product tool group with pre-PDP household-write rejection
-status: contribution_complete
+status: merged
 dependsOn:
   - s3-store-reads
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: 6d816e9529a29699598c78a20f7a7c4ef4a64253
   lastRunId: 989379a5-a1cc-4e37-89be-4de48f330690
   completedCommit: ce02a03a249b0f35449ec32a6d530bc3f640748b
+  mergedCommit: 90ba12adbad48696c019a277e627da5904787c1d
