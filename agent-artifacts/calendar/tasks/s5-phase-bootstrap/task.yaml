@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s5-phase-bootstrap
 title: Mint calendar capabilities, wire the tool group, and own calendar config
-status: contribution_complete
+status: merged
 dependsOn:
   - s4-tool-provider
   - s1-store-schema-factory
@@ -28,3 +28,4 @@ runtime:
   baseCommit: addf9bc06180eef45c5e452763a77b8bba4654fa
   lastRunId: d7fcd5bb-b432-4a05-8b09-35c6985d886e
   completedCommit: fcae84f356e89d323dbb1f8c270e378635b70c5b
+  mergedCommit: b48b1c66d09b8c67347b8b3ff7701727efd39037
