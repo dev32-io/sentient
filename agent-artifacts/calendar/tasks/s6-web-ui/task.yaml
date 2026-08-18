@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: s6-web-ui
 title: Web calendar route, REST client, and view
-status: contribution_complete
+status: merged
 dependsOn:
   - s4-rest-api
 execution:
@@ -27,3 +27,4 @@ runtime:
   baseCommit: b44179da5772970081870ed62d961bbc936fb9e0
   lastRunId: da3ab1b3-621a-4715-bf23-4ec3073850de
   completedCommit: 5eb3095e31ddca81677906925b67cee67406e847
+  mergedCommit: d4ac1100a634dfd469a4bb26c4026949044c1778
