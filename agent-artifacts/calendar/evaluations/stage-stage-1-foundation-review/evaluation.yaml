@@ -17,9 +17,9 @@ criteria:
     fixtures
   - E2E scaffolding failure-safe cleanup and disposable-user isolation
 loop:
-  state: awaiting_manager
   iteration: 3
   maxIterations: 3
+  state: passed
   reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
   reviewedCommit: d5e2805aa5c3d60bb0276b35b524a4f84756054e
   managerPrompt: >-
@@ -88,19 +88,14 @@ loop:
   fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
   acceptedRisks:
     - findingId: CAL-S1-005
-      rationale: "Medium (non-critical) boundary-validation gap: localDate
-        (types.ts:140-143) and parseRRule UNTIL (types.ts:297) regexes accept
-        impossible calendar values (e.g. month 13, Feb 31, hour 25). The
-        automatic review/fix loop is exhausted at 3/3 iterations and already
-        resolved four prior medium findings (CAL-S1-001..004); per workflow-run
-        point 7, stop chasing newly discovered non-critical issues and preserve
-        as residual risk. The fix is narrow and well-understood (shared
-        isValidCalendarDate round-trip check for localDate + UNTIL) and does not
-        block downstream stages: it can be applied in a focused follow-up or
-        caught by final-branch-review. Stage-1 functional contract is otherwise
-        satisfied (typecheck + 33/33 focused tests pass; resource-class
-        isolation, wire schema, isAdult, UTC representation, and E2E scaffolding
-        all verified)."
+      rationale: The impossible-date/impossible-UNTIL validation gap (localDate regex
+        + parseRRule UNTIL) captured by this finding has since been FIXED at the
+        final-branch review under CAL-FINAL-003 (real-calendar-date round-trip
+        validation added to localDate and real date+time component validation
+        added to parseRRule UNTIL). The stage-1 code now rejects impossible
+        values; this finding is no longer a live defect. Re-approving to close
+        the stage-1 loop, which remained in awaiting_manager after the prior
+        approve.
 findings:
   - id: CAL-S1-005
     severity: medium

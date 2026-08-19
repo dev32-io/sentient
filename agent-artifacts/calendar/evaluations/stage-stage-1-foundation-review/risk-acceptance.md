@@ -41,3 +41,49 @@ entries:
 
 Canonical evaluation report: evaluations/stage-stage-1-foundation-review/evaluation.yaml
 Evidence resource: evidence/stage-stage-1-foundation-review/manifest.yaml
+
+---
+
+# Risk acceptance — stage-stage-1-foundation-review
+
+- Work item: calendar
+- Evaluation: stage-stage-1-foundation-review
+- Reviewed commit: d5e2805aa5c3d60bb0276b35b524a4f84756054e
+- Decision: Approved with risk
+- Recorded at: 2026-08-19T00:32:36.292Z
+
+## Accepted findings
+
+### CAL-S1-005 — medium
+- Location: gateway/src/calendar/types.ts:138-145, 283-305
+- Summary: Impossible RRULE UNTIL timestamps and invalid all-day dates are accepted.
+- Manager rationale: The impossible-date/impossible-UNTIL validation gap (localDate regex + parseRRule UNTIL) captured by this finding has since been FIXED at the final-branch review under CAL-FINAL-003 (real-calendar-date round-trip validation added to localDate and real date+time component validation added to parseRRule UNTIL). The stage-1 code now rejects impossible values; this finding is no longer a live defect. Re-approving to close the stage-1 loop, which remained in awaiting_manager after the prior approve.
+- Explicit Critical-risk confirmation: not required
+
+## Deterministic checks and evidence
+
+schemaVersion: 1
+evaluation: stage-stage-1-foundation-review
+recordedAt: 2026-08-18T00:20:00.502Z
+entries:
+  - result: pass
+    command: cd gateway && bun run typecheck
+  - result: "pass: 33 tests, 0 failures"
+    command: cd gateway && bun test src/access src/calendar/types
+      src/calendar/e2e-helpers
+  - result: invalidUntil returned ok:true; invalidDate returned true
+    command: cd gateway && bun -e 'import {parseRRule,wireCalendarTimeSchema} from
+      "./src/calendar/types.ts";
+      console.log(JSON.stringify({invalidUntil:parseRRule("FREQ=DAILY;UNTIL=20261399T256199Z"),invalidDate:wireCalendarTimeSchema.safeParse({kind:"all-day",date:"2026-99-99"}).success}))'
+    description: Sanitized targeted date-validation probes
+    path: files/3-types.ts
+    checksum: sha256:a4c2bc3d7f039a2bd1f783b5dce47f5e9032fae7efd96d84533bdb12f7a3fe05
+
+## Residual risks
+
+- CAL-S1-005: Impossible RRULE UNTIL timestamps and invalid all-day dates are accepted.
+
+## Provenance
+
+Canonical evaluation report: evaluations/stage-stage-1-foundation-review/evaluation.yaml
+Evidence resource: evidence/stage-stage-1-foundation-review/manifest.yaml
