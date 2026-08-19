@@ -15,7 +15,7 @@ loop:
   iteration: 1
   maxIterations: 3
   reviewerAgentId: 17bc090b-ccf9-4078-87e2-1031d1b94ee7
-  reviewedCommit: 1aed83a5633a2ac8472202841e21537ff0353ae9
+  reviewedCommit: 01b09ae38643d630d68607e3d03a5cb51ac09a41
   managerPrompt: >-
     Address the high/blocking final-branch-review findings. The two
     low/non-blocking findings (CAL-FINAL-011 all-day GMT formatting,
