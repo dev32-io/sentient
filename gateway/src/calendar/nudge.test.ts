@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarStore, Occurrence } from "./types.js";
-import { composeCalendarNudge } from "./nudge.js";
+import { capCalendarNudge, composeCalendarNudge } from "./nudge.js";
 
 const occurrence = (title: string, instant: string, visibility: "everyone" | "adults" = "everyone", importance: "normal" | "important" | "pinned" = "normal"): Occurrence => ({
   id: `${title}-id` as never,
@@ -42,6 +42,25 @@ describe("composeCalendarNudge", () => {
     expect(result).toContain("Pinned");
     expect(result).not.toContain("Normal");
     expect(result!.split("\n")).toHaveLength(7);
+  });
+
+  it("applies one aggregate cap after combining scope blocks", () => {
+    const privateBlock = composeCalendarNudge(
+      store([occurrence("Private", "2026-08-05T12:00:00.000Z")]),
+      "adult",
+      "UTC",
+      Date.parse("2026-08-05T12:00:00Z"),
+      { maxChars: 4000, maxLines: 6 },
+    );
+    const householdBlock = composeCalendarNudge(
+      store([occurrence("Household", "2026-08-05T13:00:00.000Z")]),
+      "adult",
+      "UTC",
+      Date.parse("2026-08-05T12:00:00Z"),
+      { maxChars: 4000, maxLines: 6 },
+    );
+    const combined = capCalendarNudge(`${privateBlock}\n${householdBlock}`, { maxChars: 4000, maxLines: 6 });
+    expect(combined!.split("\n")).toHaveLength(6);
   });
 
   it("uses household-local today and hides adults events for a child", () => {

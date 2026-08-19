@@ -15,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -23,17 +25,21 @@ import kotlin.test.assertTrue
 import kotlin.system.measureTimeMillis
 
 private val CALENDAR_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
-private const val EVENT = """{
+private val calendarFixture = Json.parseToJsonElement(CalendarGoldenFixture.JSON).jsonObject
+private val fixtureTimed = calendarFixture.getValue("timed").toString()
+private val fixtureOccurrenceStart = calendarFixture.getValue("listOccurrence").jsonObject.getValue("start").toString()
+
+private val EVENT = """{
   "id":"event-1","scope":"household","title":"Dinner",
-  "start":{"kind":"timed","instant":"2026-08-05T13:00:00.000Z","timeZoneId":"America/Toronto"},
+  "start":$fixtureTimed,
   "visibility":"everyone","importance":"important","tags":["family"],
   "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
 }"""
 
-private const val OCCURRENCE_EVENT = """{
+private val OCCURRENCE_EVENT = """{
   "id":"occurrence-1","baseEventId":"event-1","occurrenceId":"occurrence-1",
   "scope":"household","title":"Dinner",
-  "start":{"kind":"timed","instant":"2026-08-12T13:00:00.000Z","timeZoneId":"America/Toronto"},
+  "start":$fixtureOccurrenceStart,
   "visibility":"everyone","importance":"important","tags":[],
   "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
 }"""
@@ -60,7 +66,7 @@ class CalendarHttpClientTest {
         val event = assertIs<AuthResult.Success<CalendarEvent>>(result).value
         assertEquals("/api/v1/calendar/events/event-1", path)
         assertEquals("Bearer calendar-token", auth)
-        assertEquals("America/Toronto", (event.start as CalendarTime.Timed).timeZoneId)
+        assertEquals(calendarFixture.getValue("timed").jsonObject.getValue("timeZoneId").jsonPrimitive.content, (event.start as CalendarTime.Timed).timeZoneId)
         assertEquals(listOf("family"), event.tags)
     }
 

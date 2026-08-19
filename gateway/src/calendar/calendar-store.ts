@@ -20,7 +20,7 @@ import {
   type UtcInstant,
 } from "./types.js";
 import { CALENDAR_DDL, CALENDAR_MIGRATIONS, CALENDAR_SCHEMA_VERSION } from "./schema.js";
-import { expandRecurrence } from "./expand-recurrence.js";
+import { DEFAULT_RECURRENCE_LIMITS, expandRecurrence } from "./expand-recurrence.js";
 
 export const ACCEPTED_CLASSES: ReadonlySet<ResourceClass> = new Set(["calendar-private", "calendar-household"]);
 
@@ -55,6 +55,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     throw new Error(`openCalendarStore: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`);
   }
   const defaultEventTimeZoneId = (cfg.defaultEventTimeZoneId ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId;
+  const recurrenceLimits = cfg.recurrence ?? DEFAULT_RECURRENCE_LIMITS;
   const calendarRoot = join(cap.rootPath, "calendar");
   const dbPath = join(calendarRoot, "calendar.db");
   mkdirSync(calendarRoot, { recursive: true });
@@ -145,8 +146,8 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
             to: { kind: "timed" as const, instant: window.to.kind === "timed" ? window.to.instant : "" as UtcInstant, timeZoneId: event.start.timeZoneId },
           }
         : { from: window.from, to: window.to };
-      const expanded = expandRecurrence(event, eventWindow.from, eventWindow.to);
-      if (!expanded.ok) return { ok: false, error: expanded.error.code === "unbounded-rrule" ? "recurrence-limit" : "invalid" };
+      const expanded = expandRecurrence(event, eventWindow.from, eventWindow.to, recurrenceLimits);
+      if (!expanded.ok) return { ok: false, error: expanded.error.code === "recurrence-limit" || expanded.error.code === "unbounded-rrule" ? "recurrence-limit" : "invalid" };
       occurrences.push(...expanded.value);
     }
     occurrences.sort((a, b) => timeSortKey(a.start) - timeSortKey(b.start) || a.occurrenceId.localeCompare(b.occurrenceId));

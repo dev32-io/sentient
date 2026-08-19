@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import calendarWireFixture from "../../calendar/fixtures/calendar-wire.json";
 import type { Capability } from "../../access/capability.js";
-import type { CalendarEvent, CalendarStore } from "../../calendar/types.js";
+import type { CalendarEvent, CalendarStore, CalendarTime, Occurrence } from "../../calendar/types.js";
 import { calendarProductToolProvider } from "./calendar-provider.js";
+
+const fixtureTimed = calendarWireFixture.timed as Extract<CalendarTime, { kind: "timed" }>;
 
 function cap(resource: Capability["resource"], role: Capability["role"]): Capability {
   return { ownerUserId: "user" as Capability["ownerUserId"], resource, role, rootPath: "/tmp/calendar" };
@@ -31,12 +34,12 @@ function runners(role: Capability["role"], householdStore: CalendarStore) {
 
 const context = { signal: new AbortController().signal };
 
-async function run(name: string, args: Record<string, unknown>, role: Capability["role"], householdStore: CalendarStore) {
+async function run(name: string, args: Record<string, unknown>, role: Capability["role"], householdStore: CalendarStore, signal = context.signal) {
   const tool = runners(role, householdStore).get(name);
   if (!tool) throw new Error(`missing ${name}`);
   const validation = tool.validate?.(args);
   if (validation) return validation;
-  return tool.run(args, context);
+  return tool.run(args, { signal });
 }
 
 describe("calendar product tool definitions", () => {
@@ -85,7 +88,7 @@ describe("calendar product tool definitions", () => {
       "calendar_create",
       {
         title: "Adults event",
-        start: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },
+        start: fixtureTimed,
         visibility: "adults",
         scope: "household",
       },
@@ -94,6 +97,64 @@ describe("calendar product tool definitions", () => {
     );
     expect(result.isError).toBe(false);
     expect(created?.visibility).toBe("adults");
+  });
+});
+
+describe("calendar product tool search and cancellation", () => {
+  it("searches timed and all-day defaults and forwards importance", async () => {
+    const windows: CalendarEvent["start"][] = [];
+    const forwardedImportance: Array<string | undefined> = [];
+    const event: CalendarEvent = {
+      id: "fixture-event" as never,
+      title: "Fixture dinner",
+      start: fixtureTimed,
+      visibility: "everyone",
+      importance: "important",
+      tags: new Set(),
+      createdAt: fixtureTimed.instant as never,
+      updatedAt: fixtureTimed.instant as never,
+    };
+    const occurrence: Occurrence = {
+      ...event,
+      occurrenceId: "fixture-event:occurrence",
+      baseEventId: event.id,
+      occurrenceStart: fixtureTimed,
+    };
+    const normalOccurrence: Occurrence = {
+      ...occurrence,
+      id: "normal-event" as never,
+      baseEventId: "normal-event" as never,
+      occurrenceId: "normal-event:occurrence",
+      importance: "normal",
+    };
+    const householdStore = notFoundStore({
+      list: (window) => {
+        windows.push(window.from);
+        forwardedImportance.push(window.importance);
+        return { ok: true as const, value: window.importance === "important" ? [occurrence] : [occurrence, normalOccurrence] };
+      },
+    });
+    const result = await run("calendar_search", { query: "dinner", scope: "household", importance: "important" }, "adult", householdStore);
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.content)).toHaveLength(1);
+    expect(windows).toHaveLength(2);
+    expect(windows.some((window) => window.kind === "timed")).toBe(true);
+    expect(forwardedImportance.every((value) => value === "important")).toBe(true);
+  });
+
+  it("does not call update or delete after cancellation", async () => {
+    let updateCalls = 0;
+    let deleteCalls = 0;
+    const householdStore = notFoundStore({
+      update: () => { updateCalls++; return { ok: false as const, error: "not-found" as const }; },
+      delete: () => { deleteCalls++; return { ok: false as const, error: "not-found" as const }; },
+    });
+    const controller = new AbortController();
+    controller.abort();
+    await run("calendar_update", { id: "event", scope: "household", patch: { title: "changed" } }, "adult", householdStore, controller.signal);
+    await run("calendar_delete", { id: "event", scope: "household" }, "adult", householdStore, controller.signal);
+    expect(updateCalls).toBe(0);
+    expect(deleteCalls).toBe(0);
   });
 });
 

@@ -97,6 +97,28 @@ struct CalendarViewModelTests {
         #expect(useCases.deletedID == "base-event-1")
     }
 
+    @Test @MainActor func updateReplacesTheOccurrenceRowWhenServerReturnsTheBaseEvent() async {
+        let useCases = CalendarUseCaseSpy()
+        let viewModel = CalendarViewModel(useCases: useCases)
+        let occurrence = event(
+            id: "occurrence-row",
+            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC"),
+            occurrenceId: "occurrence-1",
+            baseEventId: "base-event-1"
+        )
+        useCases.listed = [occurrence]
+        useCases.updateResult = event(
+            id: "base-event-1",
+            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
+        )
+
+        await viewModel.load()
+        await viewModel.update(id: occurrence.mutationID, event: occurrence)
+
+        #expect(viewModel.events.count == 1)
+        #expect(viewModel.events.first?.id == "base-event-1")
+    }
+
     @Test func occurrenceRowsKeepRowIdentitySeparateFromMutationIdentity() {
         let occurrence = event(
             id: "recurring-1",
@@ -124,6 +146,8 @@ private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
     var created: CalendarEvent?
     var updatedID: String?
     var updated: CalendarEvent?
+    var updateResult: CalendarEvent?
+    var listed: [CalendarEvent] = []
     var deletedID: String?
 
     func listBoth(
@@ -136,7 +160,7 @@ private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
         tags: [String]?,
         importance: Importance?
     ) async throws -> SentientResult<CalendarEventPage> {
-        SentientResultSuccess(data: CalendarEventPage(events: [], more: 0))
+        SentientResultSuccess(data: CalendarEventPage(events: listed, more: 0))
     }
 
     func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
@@ -147,7 +171,7 @@ private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
     func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
         updatedID = id
         updated = event
-        return SentientResultSuccess(data: event)
+        return SentientResultSuccess(data: updateResult ?? event)
     }
 
     func delete(id: String) async throws -> SentientResult<KotlinUnit> {

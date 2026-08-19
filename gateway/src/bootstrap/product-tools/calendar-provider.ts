@@ -4,6 +4,7 @@ import type {
   CalendarEvent,
   CalendarEventId,
   CalendarEventPatch,
+  CalendarListWindow,
   CalendarScope,
   CalendarStore,
   CalendarTime,
@@ -128,6 +129,22 @@ const searchSchema = z
     importance: z.enum(["normal", "important", "pinned"]).optional(),
   })
   .strict();
+
+function defaultSearchWindows(): CalendarListWindow[] {
+  // Search has no caller-supplied date bounds, but recurrence expansion still
+  // needs a bounded window. Query both time kinds so timed events are included;
+  // one-off events remain searchable across the supported wire date range.
+  return [
+    {
+      from: { kind: "all-day", date: "0001-01-01" },
+      to: { kind: "all-day", date: "9999-12-31" },
+    },
+    {
+      from: { kind: "timed", instant: "0001-01-01T00:00:00.000Z" as never, timeZoneId: "UTC" as never },
+      to: { kind: "timed", instant: "9999-12-31T23:59:59.999Z" as never, timeZoneId: "UTC" as never },
+    },
+  ];
+}
 
 function result(value: unknown, isError = false): ToolResult {
   return { content: JSON.stringify(value), isError };
@@ -375,9 +392,28 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
       }),
       runner("calendar_search", CALENDAR_TOOL_SETTINGS[2].description, READ, searchParameters, common(READ, searchSchema), async (args) => {
         const p = searchSchema.parse(args); const q = p.query.toLowerCase();
-        const results = targetsFor(p.scope).map(({ store, scope: eventScope }) => ({ result: store.list({ from: calendarTime(p.from ?? { kind: "all-day", date: "0001-01-01" }), to: calendarTime(p.to ?? { kind: "all-day", date: "9999-12-31" }), ...(p.group !== undefined ? { group: p.group } : {}), ...(p.tags !== undefined ? { tags: p.tags } : {}) }), eventScope }));
-        const failed = results.find(({ result }) => !result.ok); if (failed && !failed.result.ok) return storeFailure(failed.result.error);
-        return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value.filter((e) => `${e.title} ${e.description ?? ""}`.toLowerCase().includes(q)).map((e) => wire(e, eventScope)) : []));
+        if ((p.from && !p.to) || (!p.from && p.to)) return failure("invalid-arguments", "from and to must be supplied together.");
+        const windows: CalendarListWindow[] = p.from && p.to
+          ? [{
+              from: calendarTime(p.from),
+              to: calendarTime(p.to),
+            }]
+          : defaultSearchWindows();
+        const results = targetsFor(p.scope).flatMap(({ store, scope: eventScope }) => windows.map((window) => ({
+          result: store.list({
+            ...window,
+            ...(p.group !== undefined ? { group: p.group } : {}),
+            ...(p.tags !== undefined ? { tags: p.tags } : {}),
+            ...(p.importance !== undefined ? { importance: p.importance } : {}),
+          }),
+          eventScope,
+        })));
+        const failed = results.find(({ result: searchResult }) => !searchResult.ok); if (failed && !failed.result.ok) return storeFailure(failed.result.error);
+        const seen = new Set<string>();
+        return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value
+          .filter((e) => `${e.title} ${e.description ?? ""}`.toLowerCase().includes(q))
+          .filter((e) => { const key = `${eventScope}:${e.occurrenceId}`; if (seen.has(key)) return false; seen.add(key); return true; })
+          .map((e) => wire(e, eventScope)) : []));
       }),
       runner("calendar_create", CALENDAR_TOOL_SETTINGS[3].description, WRITE, createParameters, common(WRITE, createSchema, true), async (args, ctx) => {
         if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
@@ -386,15 +422,27 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
         const event = { ...p, id: crypto.randomUUID() as CalendarEventId, createdAt: now, updatedAt: now, tags: new Set(p.tags), notification: p.notificationPolicy } as unknown as CalendarEvent;
         return runResult(target.store.create(event), target.scope);
       }),
-      runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, updateParameters, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args) => {
+      runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, updateParameters, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args, ctx) => {
+        if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
         const p = updateSchema.safeParse(args); const value = p.success ? p.data : updateAlternativeSchema.parse(args);
         const patch = ("patch" in value ? value.patch : value.event) as unknown as CalendarEventPatch;
-        for (const target of writeTargetsFor(value.scope)) { const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch); if (r.ok) return runResult(r, target.scope); if (r.error !== "not-found") return storeFailure(r.error); }
+        for (const target of writeTargetsFor(value.scope)) {
+          if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
+          const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch);
+          if (r.ok) return runResult(r, target.scope);
+          if (r.error !== "not-found") return storeFailure(r.error);
+        }
         return storeFailure("not-found");
       }),
-      runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, idParameters, common(CONFIRM, idSchema), async (args) => {
+      runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, idParameters, common(CONFIRM, idSchema), async (args, ctx) => {
+        if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
         const p = idSchema.parse(args);
-        for (const target of writeTargetsFor(p.scope)) { const r = target.store.delete(p.id as CalendarEventId); if (r.ok) return result({ ok: true }); if (r.error !== "not-found") return storeFailure(r.error); }
+        for (const target of writeTargetsFor(p.scope)) {
+          if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
+          const r = target.store.delete(p.id as CalendarEventId);
+          if (r.ok) return result({ ok: true });
+          if (r.error !== "not-found") return storeFailure(r.error);
+        }
         return storeFailure("not-found");
       }),
     ];

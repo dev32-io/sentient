@@ -4,6 +4,73 @@ import { useAuth } from "../../hooks/use-auth.tsx";
 import { createCalendarApi, type CalendarApi, type CalendarEvent, type CalendarOccurrence, type CalendarTime } from "../../services/calendar-api.ts";
 import "./calendar-view.css";
 
+type CalendarDraft = {
+  title: string;
+  start: string;
+  allDay: boolean;
+  /** Zone in which the datetime-local input is displayed and parsed. */
+  inputTimeZoneId: string;
+  /** The event's persisted zone; new events use the browser's IANA zone. */
+  eventTimeZoneId?: string;
+};
+
+export function browserTimeZone(): string {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (zone) return zone;
+  } catch {
+    // Fall through to the portable IANA fallback.
+  }
+  return "UTC";
+}
+
+function zonedParts(instant: number, timeZoneId: string): Record<string, number> {
+  const values: Record<string, number> = {};
+  for (const part of new Intl.DateTimeFormat("en-US", {
+    timeZone: timeZoneId,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(instant))) {
+    if (part.type !== "literal") values[part.type] = Number(part.value);
+  }
+  return values;
+}
+
+/** Format an instant for a datetime-local input without treating UTC fields as local fields. */
+export function formatCalendarInputValue(instant: string, timeZoneId = browserTimeZone()): string {
+  const p = zonedParts(Date.parse(instant), timeZoneId);
+  return `${String(p.year ?? 0).padStart(4, "0")}-${String(p.month ?? 1).padStart(2, "0")}-${String(p.day ?? 1).padStart(2, "0")}T${String(p.hour ?? 0).padStart(2, "0")}:${String(p.minute ?? 0).padStart(2, "0")}`;
+}
+
+/** Parse a local datetime in an explicit IANA zone to its UTC instant. */
+export function parseCalendarInput(value: string, timeZoneId = browserTimeZone()): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const naive = Date.UTC(year, month - 1, day, hour, minute);
+  const candidates = new Set<number>();
+  for (let offsetDays = -2; offsetDays <= 2; offsetDays++) {
+    const probe = naive + offsetDays * 86_400_000;
+    const p = zonedParts(probe, timeZoneId);
+    const offset = probe - Date.UTC(p.year ?? 0, (p.month ?? 1) - 1, p.day ?? 1, p.hour ?? 0, p.minute ?? 0);
+    const candidate = naive + offset;
+    const checked = zonedParts(candidate, timeZoneId);
+    if (checked.year === year && checked.month === month && checked.day === day && checked.hour === hour && checked.minute === minute) {
+      candidates.add(candidate);
+    }
+  }
+  const instant = candidates.size ? Math.min(...candidates) : NaN;
+  return Number.isFinite(instant) ? new Date(instant).toISOString() : null;
+}
+
 export function formatCalendarTime(value: CalendarTime): string {
   if (value.kind === "all-day") {
     const parts = value.date.split("-").map(Number);
@@ -22,16 +89,23 @@ function weekWindow(): { from: CalendarTime; to: CalendarTime } {
   from.setHours(0, 0, 0, 0);
   const to = new Date(from);
   to.setDate(to.getDate() + 7);
-  return { from: { kind: "timed", instant: from.toISOString(), timeZoneId: "browser" }, to: { kind: "timed", instant: to.toISOString(), timeZoneId: "browser" } };
+  const timeZoneId = browserTimeZone();
+  return { from: { kind: "timed", instant: from.toISOString(), timeZoneId }, to: { kind: "timed", instant: to.toISOString(), timeZoneId } };
 }
-function emptyDraft(): { title: string; start: string; allDay: boolean } {
+function emptyDraft(): CalendarDraft {
+  const timeZoneId = browserTimeZone();
   const start = new Date(Date.now() + 60 * 60 * 1000);
   start.setMinutes(0, 0, 0);
-  return { title: "", start: start.toISOString().slice(0, 16), allDay: false };
+  return { title: "", start: formatCalendarInputValue(start.toISOString(), timeZoneId), allDay: false, inputTimeZoneId: timeZoneId, eventTimeZoneId: timeZoneId };
 }
-function draftTime(draft: { start: string; allDay: boolean }): CalendarTime {
+function draftTime(draft: CalendarDraft): CalendarTime {
   if (draft.allDay) return { kind: "all-day", date: draft.start.slice(0, 10) };
-  return { kind: "timed", instant: new Date(draft.start).toISOString(), timeZoneId: "browser" };
+  const instant = parseCalendarInput(draft.start, draft.inputTimeZoneId);
+  return {
+    kind: "timed",
+    instant: instant ?? new Date().toISOString(),
+    timeZoneId: draft.eventTimeZoneId ?? browserTimeZone(),
+  };
 }
 
 export interface CalendarViewProps { api?: CalendarApi; token?: string }
@@ -91,7 +165,18 @@ export function CalendarView({ api, token: suppliedToken }: CalendarViewProps = 
   };
   const beginEdit = (event: CalendarEvent) => {
     setEditing((event as CalendarOccurrence).baseEventId ?? event.id);
-    setDraft({ title: event.title, allDay: event.start.kind === "all-day", start: event.start.kind === "all-day" ? event.start.date : event.start.instant.slice(0, 16) });
+    if (event.start.kind === "all-day") {
+      setDraft({ title: event.title, allDay: true, start: event.start.date, inputTimeZoneId: browserTimeZone() });
+      return;
+    }
+    const inputTimeZoneId = browserTimeZone();
+    setDraft({
+      title: event.title,
+      allDay: false,
+      start: formatCalendarInputValue(event.start.instant, inputTimeZoneId),
+      inputTimeZoneId,
+      eventTimeZoneId: event.start.timeZoneId,
+    });
   };
 
   return (

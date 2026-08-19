@@ -39,6 +39,32 @@ describe("expandRecurrence", () => {
     if (result.ok) expect(result.value).toHaveLength(10);
   });
 
+  test("returns recurrence-limit rather than partial occurrences when maxOccurrences is exceeded", () => {
+    const e = event(timed("2026-01-01T14:00:00.000Z", "UTC"), "FREQ=DAILY;COUNT=10");
+    const result = expandRecurrence(
+      e,
+      timed("2026-01-01T00:00:00.000Z", "UTC"),
+      timed("2026-01-31T23:59:59.000Z", "UTC"),
+      { maxOccurrences: 3, maxDays: 366 },
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence exceeds maxOccurrences" },
+    });
+  });
+
+  test("returns recurrence-limit when the configured day horizon is exceeded", () => {
+    const e = event(timed("2026-01-01T14:00:00.000Z", "UTC"), "FREQ=DAILY;COUNT=10");
+    const result = expandRecurrence(
+      e,
+      timed("2026-01-01T00:00:00.000Z", "UTC"),
+      timed("2026-01-31T23:59:59.000Z", "UTC"),
+      { maxOccurrences: 100, maxDays: 2 },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("recurrence-limit");
+  });
+
   test("keeps a timed event at its local hour across DST", () => {
     const e = event(timed("2026-03-02T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO;COUNT=3");
     const result = expandRecurrence(e, timed("2026-03-01T00:00:00.000Z", "America/Toronto"), timed("2026-03-31T23:59:59.000Z", "America/Toronto"));

@@ -52,7 +52,7 @@ import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import type { CalendarStore } from "../calendar/types.js";
 import { openCalendarStore } from "../calendar/calendar-store.js";
-import { composeCalendarNudge } from "../calendar/nudge.js";
+import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore, memoryTogglesFor } from "../profile-store/profile-store.ts";
@@ -352,7 +352,10 @@ export function buildSessionCalendar(
   };
   const privateNudge = composeCalendarNudge(privateStore, principal.role, householdZone, Date.now(), nudgeBudget);
   const householdNudge = composeCalendarNudge(householdStore, principal.role, householdZone, Date.now(), nudgeBudget);
-  const nudge = [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n");
+  const nudge = capCalendarNudge(
+    [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n") || null,
+    nudgeBudget,
+  );
   return {
     privateStore,
     householdStore,

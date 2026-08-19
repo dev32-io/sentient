@@ -1,5 +1,6 @@
 import type { Result, UserRole } from "@sentient/protocol";
 import { z } from "zod";
+import goldenCalendarFixture from "./fixtures/calendar-wire.json";
 
 /** The household zone is deliberately a value, not the host's current zone. */
 export type EventTimeZoneId = string & { readonly __eventTimeZoneId: unique symbol };
@@ -8,6 +9,17 @@ export const DEFAULT_EVENT_TIME_ZONE = "household" as EventTimeZoneId;
 export type CalendarEventId = string & { readonly __calendarEventId: unique symbol };
 export type LocalDate = `${number}-${number}-${number}`;
 export type UtcInstant = string & { readonly __utcInstant: unique symbol };
+
+/** Return whether the components name a real proleptic Gregorian calendar date. */
+export function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (month < 1 || month > 12 || day < 1) return false;
+  // Date.UTC treats years 0..99 as 1900..1999, so restore the requested year
+  // before checking the round-trip components.
+  const value = new Date(Date.UTC(year, month - 1, day));
+  if (year >= 0 && year <= 99) value.setUTCFullYear(year);
+  return value.getUTCFullYear() === year && value.getUTCMonth() === month - 1 && value.getUTCDate() === day;
+}
 
 export interface TimedValue {
   kind: "timed";
@@ -106,6 +118,16 @@ export type CalendarStoreError =
   | "io-error"
   | "closed"
   | "not-implemented";
+export type CalendarHttpErrorCode =
+  | CalendarStoreError
+  | "missing-token"
+  | "malformed"
+  | "expired"
+  | "signature-invalid"
+  | "wrong-purpose"
+  | "user-not-found"
+  | "invalid-user-record"
+  | "method-not-allowed";
 export type CalendarResult<T> = Result<T, CalendarStoreError>;
 export type CalendarEventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt">>;
 export interface CalendarStore {
@@ -142,13 +164,17 @@ export interface CalendarResponse<T> {
 export interface CalendarErrorResponse {
   version: 1;
   requestId: string;
-  error: { code: CalendarStoreError; message: string };
+  error: { code: CalendarHttpErrorCode; message: string };
 }
 
 const utcInstant = z.string().datetime({ offset: true }).brand<"UtcInstant">();
 const localDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    return isValidCalendarDate(year ?? NaN, month ?? NaN, day ?? NaN);
+  }, { message: "invalid calendar date" })
   .brand<"LocalDate">();
 const eventTimeZoneId = z.string().min(1).brand<"EventTimeZoneId">();
 export const wireCalendarTimeSchema = z.discriminatedUnion("kind", [
@@ -176,6 +202,17 @@ const calendarStoreErrorSchema = z.enum([
   "io-error",
   "closed",
   "not-implemented",
+]);
+const calendarHttpErrorSchema = z.enum([
+  ...calendarStoreErrorSchema.options,
+  "missing-token",
+  "malformed",
+  "expired",
+  "signature-invalid",
+  "wrong-purpose",
+  "user-not-found",
+  "invalid-user-record",
+  "method-not-allowed",
 ]);
 
 const calendarEventId = z.string().min(1).brand<"CalendarEventId">();
@@ -235,8 +272,10 @@ export const calendarEventSchema = z
   })
   .strict();
 
-/** Create requests omit server-owned timestamps; the REST handler assigns them. */
-export const calendarCreateEventSchema = calendarEventSchema.omit({ createdAt: true, updatedAt: true });
+/** Create requests do not require server-owned timestamps; the REST handler assigns them. */
+export const calendarCreateEventSchema = calendarEventSchema
+  .omit({ createdAt: true, updatedAt: true })
+  .extend({ createdAt: utcInstant.optional(), updatedAt: utcInstant.optional() });
 
 const calendarListFilters = z
   .object({
@@ -260,7 +299,7 @@ const calendarSearch = z
   .strict();
 
 const calendarRequestBodySchema = z.discriminatedUnion("operation", [
-  z.object({ operation: z.literal("create"), body: calendarEventSchema }).strict(),
+  z.object({ operation: z.literal("create"), body: calendarCreateEventSchema }).strict(),
   z.object({ operation: z.literal("update"), body: calendarEventSchema }).strict(),
   z.object({ operation: z.literal("list"), body: calendarListFilters }).strict(),
   z.object({ operation: z.literal("get"), body: calendarGet }).strict(),
@@ -276,7 +315,7 @@ export const calendarRequestSchema = z
 export const calendarErrorSchema = z.object({
   version: z.literal(1),
   requestId: z.string(),
-  error: z.object({ code: calendarStoreErrorSchema, message: z.string() }),
+  error: z.object({ code: calendarHttpErrorSchema, message: z.string() }),
 });
 const calendarOccurrenceSchema = calendarEventSchema.extend({
   occurrenceId: z.string().min(1),
@@ -299,6 +338,16 @@ function rfcUntilToIso(until: string): UtcInstant {
   return `${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6, 8)}T${until.slice(9, 11)}:${until.slice(11, 13)}:${until.slice(13, 15)}.000Z` as UtcInstant;
 }
 
+function isValidRfcUntil(until: string): boolean {
+  const year = Number(until.slice(0, 4));
+  const month = Number(until.slice(4, 6));
+  const day = Number(until.slice(6, 8));
+  const hour = Number(until.slice(9, 11));
+  const minute = Number(until.slice(11, 13));
+  const second = Number(until.slice(13, 15));
+  return isValidCalendarDate(year, month, day) && hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59;
+}
+
 export function parseRRule(raw: string): CalendarResult<RRule> {
   const parts = raw.split(";");
   if (parts.length === 0 || parts.some((part) => !/^[A-Z]+=[^;]+$/.test(part))) return { ok: false, error: "invalid" };
@@ -315,7 +364,7 @@ export function parseRRule(raw: string): CalendarResult<RRule> {
     return { ok: false, error: "invalid" };
   if (interval && !/^[1-9]\d*$/.test(interval)) return { ok: false, error: "invalid" };
   if (count && !/^[1-9]\d*$/.test(count)) return { ok: false, error: "invalid" };
-  if (until && !/^\d{8}T\d{6}Z$/.test(until)) return { ok: false, error: "invalid" };
+  if (until && (!/^\d{8}T\d{6}Z$/.test(until) || !isValidRfcUntil(until))) return { ok: false, error: "invalid" };
   const days = byDay?.split(",");
   if (
     days &&
@@ -351,8 +400,5 @@ export interface WireCalendarOccurrence extends WireCalendarEvent {
   occurrenceStart: CalendarTime;
   occurrenceEnd?: CalendarTime;
 }
-export const goldenCalendarFixtures = {
-  timed: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },
-  allDay: { kind: "all-day", date: "2026-08-05" },
-  recurrence: "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6",
-} as const;
+/** The cross-client wire fixture is the source of truth, not a second literal. */
+export const goldenCalendarFixtures = goldenCalendarFixture;

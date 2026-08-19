@@ -1,20 +1,22 @@
+import calendarWireFixture from "../../../../src/calendar/fixtures/calendar-wire.json";
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarApi, CalendarOccurrence } from "../../services/calendar-api.ts";
-import { formatCalendarTime, CalendarView } from "./calendar-view.tsx";
+import { browserTimeZone, formatCalendarInputValue, formatCalendarTime, parseCalendarInput, CalendarView } from "./calendar-view.tsx";
 
 vi.mock("../../hooks/use-auth.tsx", () => ({
   useAuth: () => ({ status: "authenticated", token: "token", user: { userId: "u_test" } }),
 }));
 
+const fixtureTimed = calendarWireFixture.timed as { kind: "timed"; instant: string; timeZoneId: string };
 const occurrence = (id: string, title: string, instant: string): CalendarOccurrence => ({
   id,
   occurrenceId: id,
   baseEventId: "weekly-event",
   scope: "private",
   title,
-  start: { kind: "timed", instant, timeZoneId: "America/Toronto" },
-  occurrenceStart: { kind: "timed", instant, timeZoneId: "America/Toronto" },
+  start: { kind: "timed", instant, timeZoneId: fixtureTimed.timeZoneId },
+  occurrenceStart: { kind: "timed", instant, timeZoneId: fixtureTimed.timeZoneId },
   visibility: "everyone",
   importance: "normal",
   tags: [],
@@ -57,11 +59,14 @@ describe("CalendarView", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("formats timed occurrences in the browser device timezone", () => {
-    const value = { kind: "timed" as const, instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" };
+  it("formats timed occurrences in the browser device timezone and round-trips editor values", () => {
+    const value = fixtureTimed;
     const expected = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value.instant));
     expect(formatCalendarTime(value)).toBe(expected);
     expect(formatCalendarTime(value)).not.toBe(value.instant);
+    const input = formatCalendarInputValue(value.instant, browserTimeZone());
+    expect(parseCalendarInput(input, browserTimeZone())).toBe(value.instant);
+    expect(browserTimeZone()).not.toBe("browser");
   });
 
   it("reflects create, update, and delete through the client flow", async () => {
@@ -69,7 +74,8 @@ describe("CalendarView", () => {
     const api = apiFor(events);
     (api.list as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ ok: true, value: { events, more: 0 } }));
     (api.create as ReturnType<typeof vi.fn>).mockImplementation(async (_token: string, event: CalendarOccurrence) => {
-      const created = occurrence("created", event.title, event.start.kind === "timed" ? event.start.instant : "2026-08-05T13:00:00.000Z");
+      expect(event.start.kind === "all-day" || event.start.timeZoneId).not.toBe("browser");
+      const created = occurrence("created", event.title, event.start.kind === "timed" ? event.start.instant : fixtureTimed.instant);
       events = [created];
       return { ok: true, value: created };
     });

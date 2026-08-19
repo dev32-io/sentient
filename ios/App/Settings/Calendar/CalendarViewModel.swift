@@ -161,7 +161,7 @@ final class CalendarViewModel {
     /// Kept as the use-case-shaped entry point for callers that already built a patch.
     func update(id: String, event: CalendarEvent) async {
         guard mutation != .saving else { return }
-        await mutate { try await useCases.update(id: id, event: event) }
+        await mutate(replacing: event) { try await useCases.update(id: id, event: event) }
     }
 
     func delete(event: CalendarEvent) async {
@@ -184,14 +184,23 @@ final class CalendarViewModel {
         } catch { mutation = reduceCalendarMutation(mutation, .failure("Couldn't delete calendar event.")) }
     }
 
-    private func mutate(_ operation: () async throws -> SentientResult<CalendarEvent>) async {
+    private func mutate(replacing original: CalendarEvent? = nil, _ operation: () async throws -> SentientResult<CalendarEvent>) async {
         mutation = reduceCalendarMutation(mutation, .begin)
         do {
             let result = try await operation()
             switch onEnum(of: result) {
             case .success(let s):
                 let rowID = s.data.rowID
-                if let index = events.firstIndex(where: { $0.rowID == rowID }) { events[index] = s.data }
+                let index = events.firstIndex { row in
+                    if let original {
+                        if row.rowID == original.rowID { return true }
+                        if let occurrenceId = original.occurrenceId, row.occurrenceId == occurrenceId { return true }
+                        if let baseEventId = original.baseEventId, row.baseEventId == baseEventId,
+                           (original.occurrenceId == nil || row.occurrenceId == original.occurrenceId) { return true }
+                    }
+                    return row.rowID == rowID
+                }
+                if let index { events[index] = s.data }
                 else { events.append(s.data) }
                 events.sort { $0.calendarSortText < $1.calendarSortText }
                 mutation = reduceCalendarMutation(mutation, .success)

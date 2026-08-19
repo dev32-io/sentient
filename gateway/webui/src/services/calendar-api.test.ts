@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import calendarWireFixture from "../../../src/calendar/fixtures/calendar-wire.json";
 import { createCalendarApi, type CalendarEvent } from "./calendar-api.ts";
 
-const timed = { kind: "timed" as const, instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" };
+const timed = calendarWireFixture.timed as Extract<CalendarEvent["start"], { kind: "timed" }>;
 const event: CalendarEvent = {
   id: "id/with space",
   scope: "private",
@@ -36,6 +37,17 @@ describe("calendar REST client", () => {
       expect.objectContaining({ method: "GET", headers: { Authorization: "Bearer secret" } }),
     );
     expect(fetchMock.mock.calls[0]?.[0]).toContain(encodeURIComponent(JSON.stringify(timed)));
+  });
+
+  it("surfaces the nested calendar error code from the shared error envelope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ version: 1, requestId: "r-error", error: { code: "invalid", message: "bad event" } }), {
+        status: 422,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await createCalendarApi().get("token", "missing");
+    expect(result).toMatchObject({ ok: false, error: { status: 422, code: "invalid", reason: "bad event" } });
   });
 
   it("URL-encodes ids and sends JSON for mutations", async () => {

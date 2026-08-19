@@ -34,6 +34,33 @@ plugins {
 // mic envelope metering, and shared talk-mode barge-in behavior.
 version = "0.5.0"
 
+// The gateway JSON is the cross-client wire fixture. Generate a test-only
+// Kotlin holder from that file instead of copying its values into SDK tests.
+val calendarWireFixture = rootProject.file("gateway/src/calendar/fixtures/calendar-wire.json")
+val generatedCalendarFixtureDir = layout.buildDirectory.dir("generated/calendar-test-fixture")
+val generateCalendarWireFixture by tasks.registering {
+    inputs.file(calendarWireFixture)
+    val outputFile = generatedCalendarFixtureDir.map { it.file("io/sentient/mobilesdk/calendar/CalendarGoldenFixture.kt") }
+    outputs.file(outputFile)
+    doLast {
+        val escaped = calendarWireFixture.readText()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+        val output = outputFile.get().asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            """package io.sentient.mobilesdk.calendar
+
+internal object CalendarGoldenFixture {
+    const val JSON: String = "$escaped"
+}
+""",
+        )
+    }
+}
+
 kotlin {
     androidTarget {
         compilations.all {
@@ -74,10 +101,13 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kopus)
         }
-        commonTest.dependencies {
-            implementation(kotlin("test"))
-            implementation(libs.kotlinx.coroutines.test)
-            implementation(libs.ktor.client.mock)
+        commonTest {
+            kotlin.srcDir(generatedCalendarFixtureDir)
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(libs.kotlinx.coroutines.test)
+                implementation(libs.ktor.client.mock)
+            }
         }
         androidMain.dependencies { implementation(libs.ktor.client.okhttp) }
         iosMain.dependencies { implementation(libs.ktor.client.darwin) }
@@ -106,6 +136,10 @@ kotlin {
             }
         }
     }
+}
+
+tasks.matching { it.name.contains("compile") && it.name.contains("TestKotlin") }.configureEach {
+    dependsOn(generateCalendarWireFixture)
 }
 
 android {

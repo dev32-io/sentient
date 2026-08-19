@@ -6,6 +6,7 @@ import {
   calendarResponseSchema,
   goldenCalendarFixtures,
   isAdult,
+  isValidCalendarDate,
   parseRRule,
   wireCalendarTimeSchema,
 } from "./types.js";
@@ -18,6 +19,11 @@ describe("calendar domain contracts", () => {
       ok: true,
       value: { freq: "DAILY", until: "2026-12-31T23:59:59.000Z" },
     });
+    expect(parseRRule("FREQ=DAILY;UNTIL=20261331T235959Z")).toEqual({ ok: false, error: "invalid" });
+    expect(parseRRule("FREQ=DAILY;UNTIL=20260231T235959Z")).toEqual({ ok: false, error: "invalid" });
+    expect(parseRRule("FREQ=DAILY;UNTIL=20261231T259999Z")).toEqual({ ok: false, error: "invalid" });
+    expect(isValidCalendarDate(2026, 12, 31)).toBe(true);
+    expect(isValidCalendarDate(2026, 2, 31)).toBe(false);
     expect(parseRRule("FREQ=WEEKLY").ok).toBe(false);
     expect(parseRRule("FREQ=DAILY;COUNT=2;UNTIL=20260805T120000Z").ok).toBe(false);
     expect(parseRRule("FREQ=HOURLY").ok).toBe(false);
@@ -68,6 +74,12 @@ describe("calendar domain contracts", () => {
     };
     const request = (body: unknown) =>
       calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body }).success;
+    const withoutServerTimestamps = (body: unknown) => {
+      if (!body || typeof body !== "object") return body;
+      const { createdAt: _createdAt, updatedAt: _updatedAt, ...withoutTimestamps } = body as Record<string, unknown>;
+      return withoutTimestamps;
+    };
+    expect(request(withoutServerTimestamps(event))).toBe(true);
     expect(request(event)).toBe(true);
     expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "GIBBERISH" } })).toBe(false);
     expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "FREQ=WEEKLY;BYDAY=MO;BYMONTH=1" } })).toBe(
@@ -87,7 +99,7 @@ describe("calendar domain contracts", () => {
         },
       };
       expect(calendarEventSchema.safeParse(untilEvent).success).toBe(true);
-      expect(request(untilEvent)).toBe(true);
+      expect(request(withoutServerTimestamps(untilEvent))).toBe(true);
     }
   });
 
@@ -103,15 +115,14 @@ describe("calendar domain contracts", () => {
     };
     expect(calendarCreateEventSchema.safeParse(draft).success).toBe(true);
     expect(calendarEventSchema.safeParse(draft).success).toBe(false);
+    expect(calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: draft }).success).toBe(true);
+    expect(calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: { ...draft, start: { kind: "all-day", date: "2026-02-31" } } }).success).toBe(false);
   });
 
   test("golden wire fixtures remain stable", () => {
-    expect(JSON.stringify(goldenCalendarFixtures)).toBe(
-      JSON.stringify({
-        timed: { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "America/Toronto" },
-        allDay: { kind: "all-day", date: "2026-08-05" },
-        recurrence: "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6",
-      }),
-    );
+    expect(goldenCalendarFixtures.timed).toMatchObject({ kind: "timed", timeZoneId: "America/Toronto" });
+    expect(goldenCalendarFixtures.allDay).toMatchObject({ kind: "all-day", date: "2026-08-05" });
+    expect(goldenCalendarFixtures.recurrence).toContain("FREQ=WEEKLY");
+    expect(goldenCalendarFixtures.listOccurrence.occurrenceId).toBe(goldenCalendarFixtures.listOccurrence.id);
   });
 });

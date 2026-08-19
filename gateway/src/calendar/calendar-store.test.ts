@@ -123,6 +123,27 @@ describe("CalendarStore factory", () => {
     }
   });
 
+  it("returns recurrence-limit instead of partial occurrences for an oversized bounded rule", () => {
+    const store = openCalendarStore(cap(root()), {
+      recurrence: { maxOccurrences: 3, maxDays: 366 },
+      nudge: { maxPerDay: 10 },
+    });
+    const recurring = event("oversized", {
+      kind: "timed",
+      instant: "2026-01-01T14:00:00.000Z" as UtcInstant,
+      timeZoneId: "UTC" as EventTimeZoneId,
+    }, {
+      recurrence: { rrule: "FREQ=DAILY;COUNT=10", rule: { freq: "DAILY", count: 10 } },
+    });
+    expect(store.create(recurring).ok).toBe(true);
+    const result = store.list({
+      from: { kind: "timed", instant: "2026-01-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
+      to: { kind: "timed", instant: "2026-01-31T23:59:59.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
+    });
+    expect(result).toEqual({ ok: false, error: "recurrence-limit" });
+    store.close();
+  });
+
   it("expands recurring events stored with the household timezone sentinel", () => {
     const store = openCalendarStore(cap(root()), cfg);
     const recurring = event("household-recurring", {

@@ -52,6 +52,58 @@ function fit(text: string, maxChars: number): string {
   return `${text.slice(0, maxChars - 1)}…`;
 }
 
+/** Apply one aggregate cap after private and household blocks have been
+ * composed. Existing overflow summaries are discarded first; only then are
+ * event lines dropped, preserving the same deterministic order as the per-store
+ * composer. */
+export function capCalendarNudge(text: string | null, budget: CalendarNudgeBudget): string | null {
+  if (!text) return null;
+  const maxLines = Math.max(1, budget.maxLines);
+  const maxChars = Math.max(1, budget.maxChars);
+  let lines = text.split("\n");
+  let omitted = 0;
+
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const marker = /^\.\.\.and (\d+) more$/.exec(lines[index] ?? "");
+    if (!marker) continue;
+    omitted += Number(marker[1] ?? 0);
+    lines.splice(index, 1);
+  }
+
+  const removeLastEvent = (): boolean => {
+    const index = lines.findLastIndex((line) => line.startsWith("- "));
+    if (index < 0) return false;
+    lines.splice(index, 1);
+    omitted++;
+    return true;
+  };
+  while (lines.length > maxLines && removeLastEvent()) {
+    // Keep removing the lowest-priority tail until the aggregate line cap fits.
+  }
+  while (lines.length > maxLines) {
+    lines.pop();
+    omitted++;
+  }
+  if (omitted > 0) {
+    const marker = `...and ${omitted} more`;
+    if (maxLines === 1) lines = [marker];
+    else {
+      while (lines.length >= maxLines && !removeLastEvent()) lines.pop();
+      lines.push(marker);
+    }
+  }
+
+  let output = lines.join("\n");
+  if (output.length <= maxChars) return output;
+  const marker = omitted > 0 ? `...and ${omitted} more` : undefined;
+  if (!marker) return fit(output, maxChars);
+  if (maxChars <= marker.length) return fit(marker, maxChars);
+  const body = lines.filter((line) => line !== marker).join("\n");
+  const bodyBudget = maxChars - marker.length - 1;
+  output = bodyBudget > 0 ? `${fit(body, bodyBudget)}\n${marker}` : marker;
+  return output.length <= maxChars ? output : fit(output, maxChars);
+}
+
 /** Compose the immutable calendar snapshot placed in a session's system
  * prompt. The store is the visibility boundary: its capability role filters
  * adults-only events; the defensive check also keeps alternate store
