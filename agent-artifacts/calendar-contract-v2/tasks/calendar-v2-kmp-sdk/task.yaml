@@ -2,7 +2,10 @@ schemaVersion: 1
 id: calendar-v2-kmp-sdk
 title: Cut the KMP calendar SDK over to REST V2
 status: draft
-dependsOn: []
+dependsOn:
+  - calendar-v2-rest
+  - calendar-v2-contracts
+  - calendar-v2-bootstrap
 execution:
   resourceClaims: []
   assignment:
