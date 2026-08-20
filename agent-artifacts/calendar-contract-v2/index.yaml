@@ -65,7 +65,9 @@ delivery:
   workingBranch: feature/calendar
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
   executionStartCommit: ad153868d35a434833d0f2509b43d360fb9db930
-evaluations: []
+evaluations:
+  - id: stage-stage-1-contracts-review
+    path: evaluations/stage-stage-1-contracts-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:

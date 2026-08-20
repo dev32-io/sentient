@@ -1,0 +1,21 @@
+schemaVersion: 1
+id: stage-stage-1-contracts-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-1-contracts
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Exact V2 tool/REST fields and strict schema behavior
+  - Calendar scope versus mutation scope and stable occurrence identity
+  - Golden fixture completeness with no V1 compatibility parsing
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
