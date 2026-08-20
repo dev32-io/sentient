@@ -4,9 +4,11 @@ import { capCalendarNudge, composeCalendarNudge } from "./nudge.js";
 
 const occurrence = (title: string, instant: string, visibility: "everyone" | "adults" = "everyone", importance: "normal" | "important" | "pinned" = "normal"): Occurrence => ({
   id: `${title}-id` as never,
+  eventId: `${title}-id` as never,
   baseEventId: `${title}-id` as never,
   occurrenceId: `${title}-occurrence`,
   occurrenceStart: { kind: "timed", instant: instant as never, timeZoneId: "UTC" as never },
+  originalStart: { kind: "timed", instant: instant as never, timeZoneId: "UTC" as never },
   title,
   start: { kind: "timed", instant: instant as never, timeZoneId: "UTC" as never },
   visibility,
