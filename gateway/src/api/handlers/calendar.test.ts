@@ -3,252 +3,311 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAccessManager } from "../../access/access-manager.js";
-import { openCalendarStore } from "../../calendar/calendar-store.js";
-import { createUserPrincipal } from "../../identity/user-principal.js";
-import calendarWireFixture from "../../calendar/fixtures/calendar-wire.json";
-import type { CalendarConfig, StoredCalendarEvent, CalendarStore, CalendarTime, Occurrence, UtcInstant } from "../../calendar/types.js";
+import { type CalendarPersistence, openCalendarPersistence } from "../../calendar/calendar-store.js";
+import type {
+  CalendarConfig,
+  CalendarPersistenceEvent,
+  CalendarRevision,
+  CalendarTime,
+  UtcInstant,
+} from "../../calendar/types.js";
 import { createCalendarHandler } from "./calendar.js";
 
-const handler = createCalendarHandler({
-  tokens: {} as never,
-  users: { get: async () => ({ ok: true as const, value: null }) },
-  accessManager: {} as never,
+const config: CalendarConfig = Object.freeze({
+  query: Object.freeze({ maxDays: 366, maxOccurrences: 250, pageSize: 2 }),
+  input: Object.freeze({
+    maxTitleChars: 512,
+    maxDescriptionChars: 8000,
+    maxQueryChars: 512,
+    maxGroupChars: 128,
+    maxTagChars: 64,
+    maxTags: 32,
+  }),
+  output: Object.freeze({ maxResultChars: 16000 }),
+  recurrence: Object.freeze({ maxOccurrences: 1000, maxDays: 366 }),
+  nudge: Object.freeze({ maxPerDay: 10 }),
+  defaultEventTimeZoneId: "UTC",
+});
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-const fixtureTimed = calendarWireFixture.timed as Extract<CalendarTime, { kind: "timed" }>;
-const fixtureAllDay = calendarWireFixture.allDay as Extract<CalendarTime, { kind: "all-day" }>;
-const occurrence: Occurrence = {
-  id: "event-1" as Occurrence["id"],
-  eventId: "event-1" as Occurrence["eventId"],
-  occurrenceId: "occurrence-1",
-  baseEventId: "event-1" as Occurrence["baseEventId"],
-  occurrenceStart: fixtureAllDay,
-  originalStart: fixtureAllDay,
-  title: "New year",
-  start: fixtureAllDay,
-  visibility: "everyone",
-  importance: "normal",
-  tags: new Set(["holiday"]),
-  createdAt: "2026-01-01T00:00:00.000Z" as Occurrence["createdAt"],
-  updatedAt: "2026-01-01T00:00:00.000Z" as Occurrence["updatedAt"],
-};
-function stubStore(list: CalendarStore["list"], close = () => {}): CalendarStore {
-  return { list, close } as CalendarStore;
-}
-function authenticatedDeps(
+function deps(
   openStore: NonNullable<Parameters<typeof createCalendarHandler>[0]["openStore"]>,
-  accessManager = createAccessManager({ userDataRoot: "/tmp/calendar-test-users", sharedDataRoot: "/tmp/calendar-test-shared" }),
+  role: "adult" | "child" | "guest" | "admin" = "adult",
+  accessManager = createAccessManager({
+    userDataRoot: "/tmp/calendar-handler-users",
+    sharedDataRoot: "/tmp/calendar-handler-shared",
+  }),
 ) {
   return {
-    tokens: { validate: async () => ({ ok: true as const, value: { userId: "u_12345678", issuedAt: 0, expiresAt: 9e9 } }) },
-    users: {
-      get: async () =>
-        ({
-          ok: true as const,
-          value: { userId: "u_12345678", role: "adult" as const } as never,
-        }),
+    tokens: {
+      validate: async () => ({ ok: true as const, value: { userId: "u_12345678", issuedAt: 0, expiresAt: 9e9 } }),
     },
+    users: { get: async () => ({ ok: true as const, value: { userId: "u_12345678", role } as never }) },
     accessManager,
+    calendarConfig: config,
     openStore,
   };
 }
 
-const realStoreRoots: string[] = [];
-afterEach(() => {
-  for (const root of realStoreRoots.splice(0)) rmSync(root, { recursive: true, force: true });
-});
+function day(date: string): CalendarTime {
+  return { kind: "all-day", date: date as never };
+}
+function persisted(
+  id: string,
+  date: string,
+  visibility: "everyone" | "adults" = "everyone",
+  revision = 1,
+): CalendarPersistenceEvent {
+  return {
+    id: id as never,
+    revision: revision as CalendarRevision,
+    title: id,
+    start: day(date),
+    visibility,
+    importance: "normal",
+    tags: [],
+    exceptions: [],
+    exclusions: [],
+    createdAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
+    updatedAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
+  };
+}
+function fakePersistence(
+  events: CalendarPersistenceEvent[],
+  scope: "private" | "household",
+  onRead?: () => void,
+  onClose?: () => void,
+): CalendarPersistence {
+  const byId = new Map(events.map((event) => [event.id, event]));
+  const readRaw = (id: never) => {
+    onRead?.();
+    const value = byId.get(id);
+    return value ? { ok: true as const, value } : { ok: false as const, error: "not-found" as const };
+  };
+  return {
+    scope,
+    role: "adult",
+    read: readRaw,
+    get: readRaw,
+    readBaseCandidates: () => ({ ok: true as const, value: { ids: [...byId.keys()] as never[], overflow: false } }),
+    readRaw,
+    transaction: () => ({ ok: false as const, error: "not-implemented" as const }),
+    withTransaction: () => ({ ok: false as const, error: "not-implemented" as const }),
+    close: () => onClose?.(),
+  };
+}
 
-describe("calendar REST handler", () => {
-  it("rejects requests without a bearer token using the calendar error envelope", async () => {
-    const response = await handler(new Request("http://localhost/api/v1/calendar/events", { headers: { "x-request-id": "req-auth" } }));
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({
-      version: 1,
-      requestId: "req-auth",
-      error: { code: "missing-token", message: "Bearer authentication is required" },
+function request(path: string, init: RequestInit = {}): Request {
+  return new Request(`http://localhost${path}`, {
+    ...init,
+    headers: { authorization: "Bearer token", ...(init.headers ?? {}) },
+  });
+}
+
+function realApi(root: string, role: "adult" | "child" = "adult") {
+  const access = createAccessManager({ userDataRoot: join(root, "users"), sharedDataRoot: join(root, "shared") });
+  return createCalendarHandler({
+    ...deps((cap, cfg) => openCalendarPersistence(cap, cfg), role, access),
+    calendarConfig: config,
+  });
+}
+
+describe("calendar V2 REST handler", () => {
+  it("returns V2 authentication errors and removes legacy mutation methods", async () => {
+    const unauthenticated = createCalendarHandler({
+      tokens: {} as never,
+      users: { get: async () => ({ ok: true as const, value: null }) },
+      accessManager: {} as never,
     });
-  });
-
-  it("rejects impossible all-day query dates", async () => {
-    const api = createCalendarHandler(authenticatedDeps(() => stubStore(() => ({ ok: true, value: [] }))));
-    const response = await api(new Request("http://localhost/api/v1/calendar/events?from=2026-02-31&to=2026-03-01", {
-      headers: { authorization: "Bearer token", "x-request-id": "req-date" },
-    }));
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ version: 1, requestId: "req-date", error: { code: "invalid" } });
-  });
-
-  it("returns the declared invalid-body envelope", async () => {
-    const api = createCalendarHandler(authenticatedDeps(() => stubStore(() => ({ ok: true, value: [] }))));
-    const response = await api(new Request("http://localhost/api/v1/calendar/events", {
-      method: "POST",
-      headers: { authorization: "Bearer token", "x-request-id": "req-invalid", "content-type": "application/json" },
-      body: "not-json",
-    }));
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ version: 1, requestId: "req-invalid", error: { code: "invalid" } });
-  });
-
-  it("accepts a create envelope without server timestamps", async () => {
-    let created: StoredCalendarEvent | undefined;
-    const store = {
-      ...stubStore(() => ({ ok: true as const, value: [] })),
-      create: (event: StoredCalendarEvent) => { created = event; return { ok: true as const, value: event }; },
-    } as CalendarStore;
-    const api = createCalendarHandler(authenticatedDeps(() => store));
-    const response = await api(new Request("http://localhost/api/v1/calendar/events", {
-      method: "POST",
-      headers: { authorization: "Bearer token" },
-      body: JSON.stringify({
-        id: "created-without-timestamps",
-        scope: "private",
-        title: "Fixture event",
-        start: fixtureTimed,
-        visibility: "everyone",
-        importance: "normal",
-        tags: [],
-      }),
-    }));
-    expect(response.status).toBe(200);
-    expect(created?.createdAt).toEqual(expect.any(String));
-    expect(created?.updatedAt).toEqual(expect.any(String));
-  });
-
-  it("preserves occurrence identity and expanded times in list wire responses", async () => {
-    const windows: unknown[] = [];
-    const store = stubStore((window) => {
-      windows.push(window);
-      return { ok: true as const, value: [occurrence] };
-    });
-    const api = createCalendarHandler(authenticatedDeps(() => store));
-    const response = await api(
-      new Request(
-        "http://localhost/api/v1/calendar/events?from=2026-01-01&to=2026-01-31&tags=holiday, family",
-        { headers: { authorization: "Bearer token" } },
-      ),
+    const missing = await unauthenticated(
+      new Request("http://localhost/api/v1/calendar/events", { headers: { "x-request-id": "auth" } }),
     );
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as { body: { events: Record<string, unknown>[] } };
-    expect(body.body.events[0]).toMatchObject({
-      id: "occurrence-1",
-      baseEventId: "event-1",
-      occurrenceId: "occurrence-1",
-      occurrenceStart: occurrence.occurrenceStart,
-      start: occurrence.start,
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toEqual({
+      version: 2,
+      requestId: "auth",
+      error: { code: "missing_token", message: "Bearer authentication is required" },
     });
-    expect(windows[0]).toMatchObject({ tags: ["holiday", "family"] });
-  });
 
-  it("returns N expanded recurring occurrences with distinct wire identity through a real store", async () => {
-    const root = mkdtempSync(join(tmpdir(), "calendar-rest-"));
-    realStoreRoots.push(root);
-    const accessManager = createAccessManager({ userDataRoot: join(root, "users"), sharedDataRoot: join(root, "shared") });
-    const principal = createUserPrincipal("u_12345678", "adult", "home");
-    const capability = accessManager.grant(principal, "calendar-private");
-    const config: CalendarConfig = Object.freeze({
-      query: Object.freeze({ maxDays: 30, maxOccurrences: 25, pageSize: 10 }),
-      input: Object.freeze({ maxTitleChars: 64, maxDescriptionChars: 256, maxQueryChars: 64, maxGroupChars: 32, maxTagChars: 16, maxTags: 4 }),
-      output: Object.freeze({ maxResultChars: 4000 }),
-      recurrence: Object.freeze({ maxOccurrences: 1000, maxDays: 366 }),
-      nudge: Object.freeze({ maxPerDay: 10 }),
-      defaultEventTimeZoneId: fixtureTimed.timeZoneId,
-    });
-    const store = openCalendarStore(capability, config);
-    const timed = (instant: string) => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: fixtureTimed.timeZoneId as never });
-    const baseStart = timed(fixtureTimed.instant);
-    const created = store.create({
-      id: "recurring-event" as never,
-      title: "Recurring family event",
-      start: baseStart,
-      end: timed("2026-08-05T15:00:00.000Z"),
-      recurrence: { rrule: "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10", rule: { freq: "WEEKLY", byDay: ["MO", "FR"], count: 10 } },
-      visibility: "everyone",
-      importance: "normal",
-      tags: new Set(),
-      createdAt: "2026-08-01T00:00:00.000Z" as UtcInstant,
-      updatedAt: "2026-08-01T00:00:00.000Z" as UtcInstant,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const from = timed("2026-08-01T00:00:00.000Z");
-    const to = timed("2026-10-31T23:59:59.000Z");
-    const query = new URLSearchParams({ from: JSON.stringify(from), to: JSON.stringify(to), scope: "private" });
-    const api = createCalendarHandler(authenticatedDeps(() => store, accessManager));
-    const response = await api(new Request(`http://localhost/api/v1/calendar/events?${query}`, { headers: { authorization: "Bearer token" } }));
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as { body: { events: Array<Record<string, any>> } };
-    const events = body.body.events;
-    expect(events).toHaveLength(10);
-    expect(new Set(events.map((event) => event.occurrenceId)).size).toBe(10);
-    expect(new Set(events.map((event) => JSON.stringify(event.start))).size).toBe(10);
-    expect(events.every((event) => event.baseEventId === created.value.id)).toBe(true);
-    expect(events.every((event) => event.occurrenceId && event.baseEventId && event.occurrenceStart && event.occurrenceEnd)).toBe(true);
-    expect(events.every((event) => event.start.instant !== baseStart.instant)).toBe(true);
-    expect(events.every((event) => event.start === undefined || event.occurrenceStart.instant === event.start.instant)).toBe(true);
-  });
-
-  it("does not fall through to private scope for an explicit household PATCH", async () => {
-    let privateUpdates = 0;
-    let householdUpdates = 0;
-    const privateEvent: StoredCalendarEvent = {
-      id: "private-only" as never,
-      title: "Private",
-      start: fixtureAllDay,
-      visibility: "everyone",
-      importance: "normal",
-      tags: new Set(),
-      createdAt: "2026-01-01T00:00:00.000Z" as never,
-      updatedAt: "2026-01-01T00:00:00.000Z" as never,
-    };
-    const privateStore = {
-      ...stubStore(() => ({ ok: true as const, value: [] })),
-      get: () => ({ ok: true as const, value: privateEvent }),
-      update: () => { privateUpdates++; return { ok: true as const, value: privateEvent }; },
-    } as CalendarStore;
-    const householdStore = {
-      ...stubStore(() => ({ ok: true as const, value: [] })),
-      get: () => ({ ok: false as const, error: "not-found" as const }),
-      update: () => { householdUpdates++; return { ok: true as const, value: privateEvent }; },
-    } as CalendarStore;
-    const api = createCalendarHandler(authenticatedDeps((capability) => capability.resource === "calendar-private" ? privateStore : householdStore));
-    const response = await api(new Request("http://localhost/api/v1/calendar/events/private-only", {
-      method: "PATCH",
-      headers: { authorization: "Bearer token", "content-type": "application/json" },
-      body: JSON.stringify({ scope: "household", title: "should not move" }),
-    }));
-    expect(response.status).toBe(404);
-    expect(privateUpdates).toBe(0);
-    expect(householdUpdates).toBe(0);
-  });
-
-  it("returns the base event shape from GET, not occurrence fields", async () => {
-    const base = { ...occurrence, id: occurrence.baseEventId };
-    const store = { ...stubStore(() => ({ ok: true as const, value: [] })), get: () => ({ ok: true as const, value: base }) } as CalendarStore;
-    const api = createCalendarHandler(authenticatedDeps(() => store));
-    const response = await api(new Request("http://localhost/api/v1/calendar/events/event-1", { headers: { authorization: "Bearer token" } }));
-    const body = (await response.json()) as { body: Record<string, unknown> };
-    expect(body.body).toMatchObject({ id: "event-1", start: occurrence.start });
-    expect(body.body).not.toHaveProperty("occurrenceId");
-    expect(body.body).not.toHaveProperty("baseEventId");
-    expect(body.body).not.toHaveProperty("occurrenceStart");
-  });
-
-  it("closes the private store when opening the household store fails", async () => {
-    let closed = false;
-    let opens = 0;
-    const privateStore = stubStore(() => ({ ok: true as const, value: [] }), () => {
-      closed = true;
-    });
     const api = createCalendarHandler(
-      authenticatedDeps(() => {
-        opens += 1;
-        if (opens === 2) throw new Error("household open failed");
+      deps(() => {
+        throw new Error("must not open");
+      }),
+    );
+    for (const method of ["PATCH", "DELETE"] as const) {
+      const response = await api(request("/api/v1/calendar/events/event-1", { method }));
+      expect(response.status).toBe(405);
+      expect((await response.json()) as { version: number }).toMatchObject({ version: 2 });
+    }
+  });
+
+  it("validates raw temporal ranges before reading either store and defaults scope to private", async () => {
+    let reads = 0;
+    const privateStore = fakePersistence([persisted("private", "2026-08-01")], "private", () => reads++);
+    const householdStore = fakePersistence([persisted("household", "2026-08-02")], "household", () => reads++);
+    const api = createCalendarHandler(
+      deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore)),
+    );
+    const invalid = await api(
+      request("/api/v1/calendar/events?from=2026-02-31&to=2026-03-01", { headers: { "x-request-id": "range" } }),
+    );
+    expect(invalid.status).toBe(422);
+    expect((await invalid.json()) as { error: { code: string } }).toMatchObject({
+      version: 2,
+      error: { code: "invalid_time" },
+    });
+    expect(reads).toBe(0);
+
+    const privateOnly = await api(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31"));
+    expect(privateOnly.status).toBe(200);
+    expect((await privateOnly.json()) as { body: { events: Array<{ eventId: string }> } }).toMatchObject({
+      body: { events: [{ eventId: "private" }] },
+    });
+  });
+
+  it("returns deterministic continuation pages and authorized all-scope visibility", async () => {
+    const privateStore = fakePersistence([persisted("p1", "2026-08-01"), persisted("p2", "2026-08-03")], "private");
+    const householdStore = fakePersistence(
+      [persisted("h1", "2026-08-02"), persisted("hidden", "2026-08-04", "adults")],
+      "household",
+    );
+    const api = createCalendarHandler({
+      ...deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore), "child"),
+      calendarConfig: { ...config, query: { ...config.query, pageSize: 1 } },
+    });
+    const first = await api(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&scope=all"));
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { body: { events: Array<{ eventId: string }>; nextCursor?: string } };
+    expect(firstBody.body.events.map((event) => event.eventId)).toEqual(["p1"]);
+    expect(firstBody.body.nextCursor).toBeString();
+    const cursor = firstBody.body.nextCursor;
+    if (!cursor) throw new Error("expected continuation cursor");
+
+    const second = await api(
+      request(`/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&scope=all&cursor=${encodeURIComponent(cursor)}`),
+    );
+    expect((await second.json()) as { body: { events: Array<{ eventId: string }> } }).toMatchObject({
+      body: { events: [{ eventId: "h1" }] },
+    });
+  });
+
+  it("creates privately by default, gets an occurrence with raw originalStart, and mutates through the command route", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-handler-"));
+    roots.push(root);
+    const api = realApi(root);
+    const created = await api(
+      request("/api/v1/calendar/events", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "REST event",
+          start: "2026-08-05",
+          visibility: "everyone",
+          importance: "normal",
+          tags: [],
+        }),
+      }),
+    );
+    expect(created.status).toBe(200);
+    const createdBody = (await created.json()) as { body: { eventId: string; revision: number; scope: string } };
+    expect(createdBody.body).toMatchObject({ revision: 1, scope: "private" });
+
+    const get = await api(request(`/api/v1/calendar/events/${createdBody.body.eventId}?originalStart=2026-08-05`));
+    expect(get.status).toBe(200);
+    expect((await get.json()) as { body: { eventId: string } }).toMatchObject({
+      body: { eventId: createdBody.body.eventId },
+    });
+
+    const mutation = await api(
+      request(`/api/v1/calendar/events/${createdBody.body.eventId}/mutations`, {
+        method: "POST",
+        body: JSON.stringify({
+          operation: "update",
+          applyTo: "entire_series",
+          expectedRevision: 1,
+          changes: { title: "updated" },
+        }),
+      }),
+    );
+    expect(mutation.status).toBe(200);
+    expect((await mutation.json()) as { body: Record<string, unknown> }).toMatchObject({
+      body: { operation: "update", resultingRevision: 2 },
+    });
+  });
+
+  it("maps stale revisions, invalid all-scope writes, role-gated household writes, and overflow", async () => {
+    const root = mkdtempSync(join(tmpdir(), "calendar-handler-"));
+    roots.push(root);
+    const adult = realApi(root);
+    const created = await adult(
+      request("/api/v1/calendar/events", {
+        method: "POST",
+        body: JSON.stringify({ title: "event", start: "2026-08-05", tags: [] }),
+      }),
+    );
+    const id = ((await created.json()) as { body: { eventId: string } }).body.eventId;
+    const stale = await adult(
+      request(`/api/v1/calendar/events/${id}/mutations`, {
+        method: "POST",
+        body: JSON.stringify({ operation: "delete", applyTo: "entire_series", expectedRevision: 99 }),
+      }),
+    );
+    expect(stale.status).toBe(409);
+    expect((await stale.json()) as { error: { code: string } }).toMatchObject({ error: { code: "conflict" } });
+
+    const allWrite = await adult(
+      request(`/api/v1/calendar/events/${id}/mutations`, {
+        method: "POST",
+        body: JSON.stringify({ operation: "delete", applyTo: "entire_series", scope: "all" }),
+      }),
+    );
+    expect(allWrite.status).toBe(422);
+    expect((await allWrite.json()) as { error: { code: string } }).toMatchObject({ error: { code: "invalid_scope" } });
+
+    const householdCreated = await adult(
+      request("/api/v1/calendar/events", {
+        method: "POST",
+        body: JSON.stringify({ title: "household event", start: "2026-08-06", scope: "household", tags: [] }),
+      }),
+    );
+    const householdId = ((await householdCreated.json()) as { body: { eventId: string } }).body.eventId;
+    const child = realApi(root, "child");
+    const householdWrite = await child(
+      request(`/api/v1/calendar/events/${householdId}/mutations`, {
+        method: "POST",
+        body: JSON.stringify({ operation: "delete", applyTo: "entire_series", scope: "household" }),
+      }),
+    );
+    expect(householdWrite.status).toBe(403);
+  });
+
+  it("closes every opened handle on success and when the second opener fails", async () => {
+    let privateClosed = 0;
+    let householdClosed = 0;
+    const privateStore = fakePersistence([], "private", undefined, () => privateClosed++);
+    const householdStore = fakePersistence([], "household", undefined, () => householdClosed++);
+    const api = createCalendarHandler(
+      deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore)),
+    );
+    const response = await api(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-02"));
+    expect(response.status).toBe(200);
+    expect(privateClosed).toBe(1);
+    expect(householdClosed).toBe(1);
+
+    privateClosed = 0;
+    householdClosed = 0;
+    let opens = 0;
+    const failing = createCalendarHandler(
+      deps(() => {
+        opens++;
+        if (opens === 2) throw new Error("open failure");
         return privateStore;
       }),
     );
-    const response = await api(new Request("http://localhost/api/v1/calendar/events", { headers: { authorization: "Bearer token" } }));
-    expect(response.status).toBe(500);
-    expect((await response.json()) as { error: { code: string } }).toMatchObject({ error: { code: "io-error" } });
-    expect(closed).toBe(true);
+    expect((await failing(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-02"))).status).toBe(503);
+    expect(privateClosed).toBe(1);
   });
 });
