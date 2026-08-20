@@ -1,22 +1,19 @@
 schemaVersion: 1
 evaluation: stage-stage-4-recurring-mutations-review
-recordedAt: 2026-08-20T03:34:50.664Z
+recordedAt: 2026-08-20T03:39:20.211Z
 entries:
-  - result: 65 pass, 0 fail
+  - result: 67 pass, 0 fail
     command: focused stage bun test
-    path: files/1-stage4-rereview-tests.log
-    checksum: sha256:8d35d42c7be0abde10e6c7e7f1033a2d5ada0b019148bc7cbb38b676facdba16
+    path: files/1-stage4-rereview2-tests.log
+    checksum: sha256:1d484473239b36ead0dde8edd174f10f47238c31903f41b59ff72e5cc8a43f37
   - result: pass
     command: gateway typecheck
-    path: files/2-stage4-rereview-typecheck.log
+    path: files/2-stage4-rereview2-typecheck.log
     checksum: sha256:8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
-  - result: Timing propagation is corrected; hidden and cancelled targets return
-      occurrence_not_found.
-    command: prior-finding runtime probes
-    path: files/3-stage4-rereview-probe.log
-    checksum: sha256:0e24f9e39b84b5be51ca1a32d4a1a64dea74d0ad50d8fce0a1515ee05eafb8ac
-  - result: Mutation succeeded while prefix and successor each produced the same
-      2026-01-06 originalStart/time.
-    command: backward re-anchor runtime probe
-    path: files/4-stage4-overlap-probe.log
-    checksum: sha256:216153a7334f32919d9173516323bbcc50d4e91bee3e871e228bf762f2ad52e5
+  - result: Backward anchor returns recurrence_conflict; original segment remains
+      unchanged with no successor.
+    command: prior S4-004 runtime probe
+    path: files/3-stage4-rereview2-overlap.log
+    checksum: sha256:dc8c366dbc626a214eb3dcb06fca043705d63ae145b7031fd3e97eb17ca47851
+  - result: pass
+    command: repair diff check

@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-4-recurring-mutations
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/calendar/calendar-mutations.test.ts src/calendar/calendar-query.test.ts
@@ -21,11 +21,11 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 3
+  state: passed
   reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
-  reviewedCommit: 6e23e8e5f997e9cd9879d9b607a4fc859ebf7f46
+  reviewedCommit: 029718e2d2498fe3a7d595790fb6e0ec19ba1031
   managerPrompt: Repair S4-004 by rejecting a re-anchored successor schedule that
     would claim the same or an earlier generated slot than the retained prefix
     terminal slot. Compute the last retained generated slot and the successor's
@@ -39,17 +39,8 @@ loop:
     assertions for prefix, successor, exceptions, exclusions, and revisions,
     then rerun all stage-4 checks.
   fixerAgentId: 6ad32506-6eaf-4d6e-94fa-57881822b1a8
-findings:
-  - id: S4-004
-    severity: high
-    status: open
-    criterion: AC-008
-    location: gateway/src/calendar/calendar-mutations.ts:987-1014;
-      gateway/src/calendar/recurrence-splitter.ts:209-275
-    summary: Backward successor re-anchoring can overlap a retained prefix slot,
-      creating duplicate cross-segment occurrence ownership.
-    blocking: true
+findings: []
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-4-recurring-mutations-review/manifest.yaml
