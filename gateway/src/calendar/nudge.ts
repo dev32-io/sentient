@@ -13,14 +13,10 @@ export interface CalendarNudgeBudget {
 const DEFAULT_BUDGET: CalendarNudgeBudget = { maxChars: 4000, maxLines: 40 };
 
 function localDate(ms: number, zone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" })
-      .formatToParts(new Date(ms));
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return `${values.year}-${values.month}-${values.day}`;
-  } catch {
-    return new Date(ms).toISOString().slice(0, 10);
-  }
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date(ms));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function dateAdd(date: string, days: number): string {
@@ -29,12 +25,33 @@ function dateAdd(date: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
-/** Approximate UTC bounds are deliberately wider than a week. Classification
- * below is in the household zone, while the store's recurrence expansion is
- * still performed in each event's own zone. */
-function queryBounds(nowMs: number): { from: string; to: string } {
-  const day = localDate(nowMs, "UTC");
-  return { from: new Date(`${dateAdd(day, -10)}T00:00:00.000Z`).toISOString(), to: new Date(`${dateAdd(day, 10)}T23:59:59.999Z`).toISOString() };
+/** Convert a household-local date boundary to an instant without using the
+ * host timezone. This is only for the legacy CalendarStore compatibility path;
+ * the V2 query service performs the same conversion at its seam. */
+function localMidnight(date: string, zone: string): number {
+  const guess = Date.parse(`${date}T00:00:00.000Z`);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts: Record<string, string> = {};
+  for (const part of formatter.formatToParts(new Date(guess))) parts[part.type] = part.value;
+  const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  return guess + (guess - represented);
+}
+
+/** Ask the normalized query seam for exactly the household-local current
+ * date period. It converts that period to event-zone candidate bounds and
+ * handles recurrence/offset details internally without widening this request. */
+function queryBounds(nowMs: number, householdTz: string): { from: string; to: string } {
+  const today = localDate(nowMs, householdTz);
+  return { from: today, to: today };
 }
 
 type NudgeOccurrence = Pick<Occurrence, "occurrenceId" | "title" | "visibility" | "importance"> & {
@@ -144,7 +161,7 @@ export function composeCalendarNudge(
   const mondayDelta = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
   const weekStart = dateAdd(today, -(mondayDelta < 0 ? 0 : mondayDelta === 0 ? 6 : mondayDelta - 1));
   const weekEnd = dateAdd(weekStart, 6);
-  const bounds = queryBounds(nowMs);
+  const bounds = queryBounds(nowMs, householdTz);
   let occurrences: NudgeOccurrence[];
   if ("listComplete" in source) {
     // The query service expands effective occurrences with the same recurrence
@@ -158,13 +175,18 @@ export function composeCalendarNudge(
     if (!result.ok) return null;
     occurrences = result.value.map(nudgeOccurrence);
   } else {
+    // Compatibility stores expose separate timed/all-day list calls rather
+    // than the normalized query seam. Keep both calls to this one local date;
+    // the V2 query service above remains the authoritative production path.
+    const timedStart = localMidnight(today, householdTz);
+    const nextMidnight = localMidnight(dateAdd(today, 1), householdTz);
     const timedResult = source.list({
-      from: { kind: "timed", instant: bounds.from as never, timeZoneId: householdTz as never },
-      to: { kind: "timed", instant: bounds.to as never, timeZoneId: householdTz as never },
+      from: { kind: "timed", instant: new Date(timedStart).toISOString() as never, timeZoneId: householdTz as never },
+      to: { kind: "timed", instant: new Date(nextMidnight - 1).toISOString() as never, timeZoneId: householdTz as never },
     });
     const allDayResult = source.list({
-      from: { kind: "all-day", date: dateAdd(today, -10) as never },
-      to: { kind: "all-day", date: dateAdd(today, 10) as never },
+      from: { kind: "all-day", date: today as never },
+      to: { kind: "all-day", date: today as never },
     });
     if (!timedResult.ok && !allDayResult.ok) return null;
     occurrences = [...(timedResult.ok ? timedResult.value : []), ...(allDayResult.ok ? allDayResult.value : [])];

@@ -403,8 +403,9 @@ export function buildSessionCalendar(
       maxChars: 4000,
       maxLines: Math.max(1, orchestratorCfg.calendar.nudge.max_per_day + 4),
     };
-    const privateNudge = composeCalendarNudge(queryService, principal.role, householdZone, Date.now(), nudgeBudget, "private");
-    const householdNudge = composeCalendarNudge(queryService, principal.role, householdZone, Date.now(), nudgeBudget, "household");
+    const nudgeNow = Date.now();
+    const privateNudge = composeCalendarNudge(queryService, principal.role, householdZone, nudgeNow, nudgeBudget, "private");
+    const householdNudge = composeCalendarNudge(queryService, principal.role, householdZone, nudgeNow, nudgeBudget, "household");
     const nudge = capCalendarNudge(
       [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n") || null,
       nudgeBudget,
