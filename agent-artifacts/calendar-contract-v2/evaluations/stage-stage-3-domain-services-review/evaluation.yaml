@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-3-domain-services
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -19,8 +19,8 @@ criteria:
   - Mutation authority, revisions, canonical recurrence, and whole-segment
     atomicity
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 1605936e-59e2-48e1-8c80-ed2d583953a1
   reviewedCommit: 6daaa64cb4f51c6e6afc24e881d12e28b7fbbaf5
@@ -39,6 +39,7 @@ loop:
     max_occurrences, and where base-candidate scanning overflows before
     expansion. Preserve all-scope complete-or-error behavior and rerun every
     stage-3 check."
+  fixerAgentId: 38fc50db-f7b6-491b-b8ce-da05db9133ad
 findings:
   - id: STAGE3-001
     severity: high
