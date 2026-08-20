@@ -19,11 +19,21 @@ criteria:
   - Nudge security and bounds remain unchanged
   - No automatic destructive reset or production mutation
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: c218381b-bef3-4d9a-95bf-ec4cd6dd8790
   reviewedCommit: 529ddee04b74f825aa207b3bf634cd43133ddfbd
+  managerPrompt: Repair STAGE6-001 without bypassing operator limits. Replace the
+    fixed ±10-day nudge query with the smallest normalized window that
+    represents the configured household-local current day (normally one date
+    period), and let the query/recurrence seam perform any internal candidate
+    handling needed for timezone offsets. Do not silently widen, disable maxDays
+    validation, or fall back to host/UTC time. Preserve existing nudge caps,
+    role visibility, prompt-cache behavior, and content-free diagnostics. Add
+    regressions with query.maxDays=1, non-UTC household zones at UTC date
+    boundaries/DST, timed and all-day events on household today, and
+    adjacent-day exclusions; rerun every stage-6 check.
 findings:
   - id: STAGE6-001
     severity: high
