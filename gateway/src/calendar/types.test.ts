@@ -19,6 +19,7 @@ import {
   isValidCalendarDate,
   parseRRule,
   wireCalendarTimeSchema,
+  wireRRuleSchema,
 } from "./types.js";
 
 describe("calendar V2 contracts", () => {
@@ -40,13 +41,20 @@ describe("calendar V2 contracts", () => {
     expect(calendarRecurrenceInputSchema.safeParse({ frequency: "monthly", weekdays: ["monday"], count: 2 }).success).toBe(false);
     expect(calendarRecurrenceInputSchema.safeParse({ frequency: "daily", count: 2, extra: true }).success).toBe(false);
     expect(parseRRule("FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6").ok).toBe(true);
+    expect(wireRRuleSchema.safeParse({ freq: "WEEKLY", byDay: ["MO", "WE"], count: 6, extra: true }).success).toBe(false);
   });
 
   test("defines private/household/all reads and private/household writes", () => {
-    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", scope: "all" }).success).toBe(true);
+    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", query: "dinner", scope: "all" }).success).toBe(true);
+    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", query: "x".repeat(257) }).success).toBe(false);
     expect(calendarCreateInputSchema.safeParse(goldenCalendarFixtures.create).success).toBe(true);
     expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: "all" }).success).toBe(false);
     expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: undefined }).success).toBe(true);
+
+    const defaults = calendarCreateInputSchema.parse({ title: "Defaults", start: "2026-08-05" });
+    expect(defaults.visibility).toBe("everyone");
+    expect(defaults.importance).toBe("normal");
+    expect(defaults.tags).toEqual([]);
   });
 
   test("keeps occurrence identity separate from event identity", () => {
@@ -83,10 +91,33 @@ describe("calendar V2 contracts", () => {
       eventId: "event-example", revision: 3, ...goldenCalendarFixtures.create,
     }).success).toBe(true);
     expect(calendarResponseSchema.safeParse({ version: 2, requestId: "r1", body: goldenCalendarFixtures.page }).success).toBe(true);
+    expect(calendarResponseSchema.safeParse({ version: 2, requestId: "r1", body: goldenCalendarFixtures.occurrence }).success).toBe(true);
     expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "list", body: { from: "2026", to: "2026-12" } }).success).toBe(true);
+    expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "get", body: { eventId: "event-example", originalStart: "2026-08-10T09:00-04:00" } }).success).toBe(true);
     expect(calendarRequestSchema.safeParse({ version: 1, requestId: "r1", operation: "list", body: { from: "2026", to: "2026-12" } }).success).toBe(false);
+    const populatedV1List = {
+      version: 1,
+      requestId: "legacy-request",
+      body: {
+        events: [{
+          id: "legacy-event",
+          scope: "private",
+          title: "Legacy event",
+          start: goldenCalendarFixtures.timed,
+          visibility: "everyone",
+          importance: "normal",
+          tags: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        }],
+        more: 0,
+      },
+    };
+    expect(calendarResponseSchema.safeParse(populatedV1List).success).toBe(false);
     expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "update", body: { eventId: "event-example", applyTo: "this_occurrence", changes: { title: "x" } } }).success).toBe(true);
     expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "update", body: { id: "event-example", patch: { title: "old" } } }).success).toBe(false);
+    expect(calendarMutationResultSchema.safeParse({ operation: "update", appliedTo: "entire_series", eventId: "event-example" }).success).toBe(false);
+    expect(calendarMutationResultSchema.safeParse({ operation: "delete", appliedTo: "entire_series", eventId: "event-example", resultingRevision: 4 }).success).toBe(false);
   });
 
   test("admin is adult-equivalent but has no separate bypass", () => {
