@@ -1,0 +1,19 @@
+schemaVersion: 1
+evaluation: stage-stage-6-bootstrap-review
+recordedAt: 2026-08-20T04:12:37.837Z
+entries:
+  - result: 82 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test
+      src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+      src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+  - result: All workspace typecheck targets passed
+    command: source scripts/env.sh && bun run typecheck
+  - result: pass
+    command: git diff --check
+      ba7ad8d4f3a883930202ce86ebf8a77aa26ab3ea..529ddee04b74f825aa207b3bf634cd43133ddfbd
+  - result: Valid today event with query.maxDays=1 produced nudge=null due to the
+      fixed 21-day nudge query being rejected.
+    command: bun /tmp/calendar-bootstrap-review.ts
+    description: Sanitized synthetic runtime evidence.
+    path: files/4-calendar-bootstrap-review-nudge.txt
+    checksum: sha256:1a95d5443a44a5d96a7dd4f248a12720156b1c8d6ece3016ebfb3dc517f9245f
