@@ -19,9 +19,11 @@ const fixtureTimed = calendarWireFixture.timed as Extract<CalendarTime, { kind: 
 const fixtureAllDay = calendarWireFixture.allDay as Extract<CalendarTime, { kind: "all-day" }>;
 const occurrence: Occurrence = {
   id: "event-1" as Occurrence["id"],
+  eventId: "event-1" as Occurrence["eventId"],
   occurrenceId: "occurrence-1",
   baseEventId: "event-1" as Occurrence["baseEventId"],
   occurrenceStart: fixtureAllDay,
+  originalStart: fixtureAllDay,
   title: "New year",
   start: fixtureAllDay,
   visibility: "everyone",

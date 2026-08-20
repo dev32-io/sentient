@@ -59,8 +59,13 @@ export interface ExceptionOverride {
   occurrence: CalendarTime;
   cancelled?: boolean;
   title?: string;
+  description?: string | null;
   start?: CalendarTime;
-  end?: CalendarTime;
+  end?: CalendarTime | null;
+  visibility?: Visibility;
+  importance?: Importance;
+  group?: Group | null;
+  tags?: Tags;
 }
 
 export interface StoredCalendarEvent {
@@ -83,9 +88,14 @@ export interface StoredCalendarEvent {
 }
 
 export interface Occurrence extends StoredCalendarEvent {
+  /** Stable identity of the persisted series, independent of displayed start. */
+  eventId: CalendarEventId;
   occurrenceId: string;
   baseEventId: CalendarEventId;
+  /** Legacy internal name retained for the store seam. */
   occurrenceStart: CalendarTime;
+  /** Stable original recurrence slot, never the moved effective start. */
+  originalStart: CalendarTime;
   occurrenceEnd?: CalendarTime;
 }
 

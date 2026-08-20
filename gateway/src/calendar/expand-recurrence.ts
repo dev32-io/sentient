@@ -7,10 +7,20 @@ import type {
   RRule,
   UtcInstant,
   Weekday,
+  CalendarRecurrenceInput,
+  Recurrence,
 } from "./types.js";
-import { DEFAULT_EVENT_TIME_ZONE, parseRRule, WEEKDAYS } from "./types.js";
+import { DEFAULT_EVENT_TIME_ZONE, parseRRule, WEEKDAYS, calendarRecurrenceInputSchema } from "./types.js";
 
-export type RecurrenceExpansionErrorCode = "invalid-rrule" | "unbounded-rrule" | "invalid-window" | "recurrence-limit";
+export type RecurrenceExpansionErrorCode = "invalid-rrule" | "unbounded-rrule" | "invalid-window" | "invalid-override" | "recurrence-limit";
+export interface CanonicalRecurrenceError {
+  readonly kind: "recurrence-error";
+  readonly code: "invalid-rrule" | "unbounded-rrule";
+  readonly message: string;
+}
+export type CanonicalRecurrenceResult =
+  | { ok: true; value: Recurrence }
+  | { ok: false; error: CanonicalRecurrenceError };
 export interface RecurrenceExpansionLimits {
   maxOccurrences: number;
   maxDays: number;
@@ -56,22 +66,90 @@ function instantForLocal(p: Parts, zone: string): number | undefined {
 }
 function addMonths(date: Date, months: number): Date { return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1)); }
 function dayDate(ms: number): Date { const d = new Date(ms); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); }
-function keyOf(t: CalendarTime): string { return t.kind === "all-day" ? t.date : new Date(t.instant).toISOString(); }
-function sameTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind && keyOf(a) === keyOf(b); }
+export function canonicalOriginalKey(t: CalendarTime): string {
+  return t.kind === "all-day" ? t.date : new Date(t.instant).toISOString();
+}
+function sameTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind && canonicalOriginalKey(a) === canonicalOriginalKey(b); }
 function failure(code: RecurrenceExpansionErrorCode, message: string): ExpandRecurrenceResult { return { ok: false, error: { kind: "recurrence-error", code, message } }; }
 
+/** Convert the model-facing recurrence into the only RRULE subset we store. */
+export function canonicalizeRecurrence(input: CalendarRecurrenceInput): CanonicalRecurrenceResult {
+  const parsed = calendarRecurrenceInputSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid structured recurrence" } };
+  const value = parsed.data;
+  const freq = value.frequency.toUpperCase();
+  const fields = [`FREQ=${freq}`];
+  if (value.interval !== undefined && value.interval !== 1) fields.push(`INTERVAL=${value.interval}`);
+  if (value.weekdays) {
+    const byDay = value.weekdays.map((day) => ({ monday: "MO", tuesday: "TU", wednesday: "WE", thursday: "TH", friday: "FR", saturday: "SA", sunday: "SU" } as const)[day]);
+    const ordered = [...new Set(byDay)].sort((a, b) => WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b));
+    fields.push(`BYDAY=${ordered.join(",")}`);
+  }
+  if (value.count !== undefined) fields.push(`COUNT=${value.count}`);
+  if (value.until !== undefined) {
+    const until = canonicalUntil(value.until);
+    if (!until) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid recurrence until" } };
+    fields.push(`UNTIL=${until}`);
+  }
+  const rrule = fields.join(";");
+  const rule = parseRRule(rrule);
+  if (!rule.ok) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid structured recurrence" } };
+  return { ok: true, value: { rrule, rule: rule.value } };
+}
+export const canonicalizeRecurrenceInput = canonicalizeRecurrence;
+
+function canonicalUntil(value: string): string | undefined {
+  let instant: number;
+  if (/^\d{4}$/.test(value)) instant = Date.parse(`${value}-12-31T23:59:59.000Z`);
+  else if (/^\d{4}-\d{2}$/.test(value)) {
+    const [year, month] = value.split("-").map(Number);
+    instant = Date.UTC(year!, month!, 0, 23, 59, 59);
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(value)) instant = Date.parse(`${value}T23:59:59.000Z`);
+  else instant = Date.parse(value);
+  if (!Number.isFinite(instant)) return undefined;
+  const d = new Date(instant);
+  return `${d.getUTCFullYear().toString().padStart(4, "0")}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}${String(d.getUTCMinutes()).padStart(2, "0")}${String(d.getUTCSeconds()).padStart(2, "0")}Z`;
+}
+
+function sameKindTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind; }
 function occurrence(event: StoredCalendarEvent, original: CalendarTime, start: CalendarTime, end: CalendarTime | undefined): Occurrence {
-  const { end: _ignoredEnd, ...withoutEnd } = event;
-  const id = `${event.id}:${keyOf(original)}`;
-  return { ...withoutEnd, start, ...(end ? { end, occurrenceEnd: end } : {}), occurrenceId: id, baseEventId: event.id, occurrenceStart: original };
+  const { end: _ignoredEnd, description: _ignoredDescription, group: _ignoredGroup, ...withoutOptionalClears } = event;
+  const id = `${event.id}:${canonicalOriginalKey(original)}`;
+  return {
+    ...withoutOptionalClears,
+    ...(event.description !== undefined ? { description: event.description } : {}),
+    ...(event.group !== undefined ? { group: event.group } : {}),
+    start,
+    ...(end ? { end, occurrenceEnd: end } : {}),
+    eventId: event.id,
+    occurrenceId: id,
+    baseEventId: event.id,
+    occurrenceStart: original,
+    originalStart: original,
+  };
 }
 function applyException(event: StoredCalendarEvent, original: CalendarTime, baseEnd = event.end): Occurrence | undefined {
   const ex = event.exceptions?.find((x) => sameTime(x.occurrence, original));
   if (ex?.cancelled) return undefined;
+  if (ex && (!sameKindTime(ex.occurrence, original) || (ex.start && !sameKindTime(ex.start, original)) || (ex.end && !sameKindTime(ex.end, original)) || (ex.start && ex.end && ex.start.kind !== ex.end.kind))) {
+    throw new Error("invalid occurrence override time kind");
+  }
   const start = ex?.start ?? original;
-  const end = ex?.end ?? baseEnd;
+  const inheritedEnd = ex?.start && ex.end === undefined ? shiftedEnd(baseEnd, original, ex.start) : baseEnd;
+  const end = ex?.end === null ? undefined : ex?.end ?? inheritedEnd;
   const result = occurrence(event, original, start, end);
   if (ex?.title !== undefined) result.title = ex.title;
+  if (ex?.description !== undefined) {
+    if (ex.description === null) delete result.description;
+    else result.description = ex.description;
+  }
+  if (ex?.visibility !== undefined) result.visibility = ex.visibility;
+  if (ex?.importance !== undefined) result.importance = ex.importance;
+  if (ex?.group !== undefined) {
+    if (ex.group === null) delete result.group;
+    else result.group = ex.group;
+  }
+  if (ex?.tags !== undefined) result.tags = ex.tags;
   return result;
 }
 
@@ -103,8 +181,8 @@ export function expandRecurrence(
   if (rule.count === undefined && rule.until === undefined) return failure("unbounded-rrule", "RRULE requires COUNT or UNTIL");
   try {
     return expand(event, rule, windowStart, windowEnd, limits);
-  } catch {
-    return failure("invalid-rrule", "unable to expand RRULE");
+  } catch (error) {
+    return failure(error instanceof Error && error.message.includes("override") ? "invalid-override" : "invalid-rrule", error instanceof Error ? error.message : "unable to expand RRULE");
   }
 }
 
@@ -138,7 +216,7 @@ function expand(
   const toMs = comparableMillis(to);
   if (!Number.isFinite(startMs) || (rule.until !== undefined && !Number.isFinite(until)) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) return failure("invalid-rrule", "recurrence dates are invalid");
   const startDayMs = allDay ? startMs : Date.parse(`${dateKey(parts(startMs, zone))}T00:00:00Z`);
-  const exdates = new Set((event.exdates ?? []).map(keyOf));
+  const exdates = new Set((event.exdates ?? []).map(canonicalOriginalKey));
   const out: Occurrence[] = [];
   let ordinal = 0;
   let lastGeneratedMs = Number.NEGATIVE_INFINITY;
@@ -165,7 +243,7 @@ function expand(
       if (ordinal >= limits.maxOccurrences) return failure("recurrence-limit", "recurrence exceeds maxOccurrences");
       ordinal++;
       lastGeneratedMs = localMs;
-      if (exdates.has(keyOf(local))) continue;
+      if (exdates.has(canonicalOriginalKey(local))) continue;
       const baseEnd = shiftedEnd(event.end, event.start, local);
       const o = applyException(event, local, baseEnd);
       if (o && inWindow(o.start, from, to)) out.push(o);
@@ -205,4 +283,78 @@ function candidateDates(anchor: Date, rule: RRule, cursor: number): Date[] {
   const year = anchor.getUTCFullYear() + cursor * interval;
   const d = new Date(Date.UTC(year, anchor.getUTCMonth(), anchor.getUTCDate()));
   return d.getUTCMonth() === anchor.getUTCMonth() && d.getUTCDate() === anchor.getUTCDate() ? [d] : [];
+}
+
+export interface GeneratedSlot {
+  readonly originalStart: CalendarTime;
+  /** One-based ordinal in the generated series, before EXDATE/cancellation filtering. */
+  readonly ordinal: number;
+}
+export type GeneratedSlotsResult =
+  | { ok: true; value: GeneratedSlot[] }
+  | { ok: false; error: RecurrenceExpansionError };
+
+/** Enumerate recurrence slots without applying exclusions, overrides, or a list window. */
+export function enumerateGeneratedSlots(
+  event: Pick<StoredCalendarEvent, "start" | "recurrence">,
+  limits: RecurrenceExpansionLimits = DEFAULT_RECURRENCE_LIMITS,
+): GeneratedSlotsResult {
+  if (!event.recurrence) return { ok: true, value: [{ originalStart: event.start, ordinal: 1 }] };
+  if (!Number.isInteger(limits.maxOccurrences) || limits.maxOccurrences < 1 || !Number.isInteger(limits.maxDays) || limits.maxDays < 1) return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "invalid recurrence expansion limits" } };
+  const parsed = parseRRule(event.recurrence.rrule);
+  if (!parsed.ok) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "malformed RRULE" } };
+  const rule = parsed.value;
+  if (rule.count === undefined && rule.until === undefined) return { ok: false, error: { kind: "recurrence-error", code: "unbounded-rrule", message: "RRULE requires COUNT or UNTIL" } };
+  const allDay = event.start.kind === "all-day";
+  const timedStart = event.start.kind === "timed" ? event.start : undefined;
+  const zone = allDay ? "UTC" : timedStart!.timeZoneId === DEFAULT_EVENT_TIME_ZONE ? resolveTimeZone().zone() : timedStart!.timeZoneId;
+  const startMs = allDay ? Date.parse(`${(event.start as { kind: "all-day"; date: LocalDate }).date}T00:00:00Z`) : Date.parse(timedStart!.instant);
+  const anchor: Date | Parts = allDay ? dayDate(startMs) : parts(startMs, zone);
+  const until = rule.until ? Date.parse(rule.until) : Infinity;
+  if (!Number.isFinite(startMs) || (rule.until !== undefined && !Number.isFinite(until))) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "recurrence dates are invalid" } };
+  const startDayMs = allDay ? startMs : Date.parse(`${dateKey(parts(startMs, zone))}T00:00:00Z`);
+  const output: GeneratedSlot[] = [];
+  let ordinal = 0;
+  const max = rule.count ?? Number.MAX_SAFE_INTEGER;
+  for (let cursor = 0; cursor < 1_000_000 && ordinal < max; cursor++) {
+    const anchorDate = allDay ? anchor as Date : new Date(Date.UTC((anchor as Parts).year, (anchor as Parts).month - 1, (anchor as Parts).day));
+    for (const date of candidateDates(anchorDate, rule, cursor)) {
+      if (ordinal >= max) break;
+      const local: CalendarTime | undefined = allDay
+        ? { kind: "all-day", date: date.toISOString().slice(0, 10) as LocalDate }
+        : (() => {
+          const a = anchor as Parts;
+          const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second };
+          const ms = instantForLocal(p, zone);
+          return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId };
+        })();
+      if (!local) continue;
+      const localMs = comparableMillis(local);
+      if (localMs < startMs) continue;
+      if (localMs > until) return { ok: true, value: output };
+      const localDayMs = allDay ? localMs : Date.parse(`${dateKey(parts(localMs, zone))}T00:00:00Z`);
+      if (!Number.isFinite(localDayMs) || localDayMs - startDayMs > limits.maxDays * MS_DAY) return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence exceeds maxDays" } };
+      if (ordinal >= limits.maxOccurrences) return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence exceeds maxOccurrences" } };
+      ordinal++;
+      output.push({ originalStart: local, ordinal });
+    }
+  }
+  if (rule.count !== undefined && ordinal >= rule.count) return { ok: true, value: output };
+  if (rule.until !== undefined && output.length > 0 && comparableMillis(output[output.length - 1]!.originalStart) >= until) return { ok: true, value: output };
+  return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence expansion exceeded its safety limit" } };
+}
+
+export function verifyGeneratedSlot(
+  event: Pick<StoredCalendarEvent, "start" | "recurrence">,
+  originalStart: CalendarTime,
+  limits: RecurrenceExpansionLimits = DEFAULT_RECURRENCE_LIMITS,
+): { ok: true; ordinal: number } | { ok: false; error: RecurrenceExpansionError } {
+  if (event.start.kind !== originalStart.kind) return { ok: false, error: { kind: "recurrence-error", code: "invalid-window", message: "occurrence time kind differs from event" } };
+  const slots = enumerateGeneratedSlots(event, limits);
+  if (!slots.ok) return slots;
+  const found = slots.value.find((slot) => sameTime(slot.originalStart, originalStart));
+  return found ? { ok: true, ordinal: found.ordinal } : { ok: false, error: { kind: "recurrence-error", code: "invalid-window", message: "originalStart is not a generated recurrence slot" } };
+}
+export function isGeneratedSlot(event: Pick<StoredCalendarEvent, "start" | "recurrence">, originalStart: CalendarTime, limits?: RecurrenceExpansionLimits): boolean {
+  return verifyGeneratedSlot(event, originalStart, limits).ok;
 }

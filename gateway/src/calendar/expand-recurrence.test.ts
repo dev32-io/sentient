@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { expandRecurrence } from "./expand-recurrence.js";
 import type { StoredCalendarEvent, UtcInstant } from "./types.js";
 
-const timed = (instant: string, timeZoneId: string) => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: timeZoneId as never });
+const timed = (instant: string, timeZoneId = "UTC") => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: timeZoneId as never });
 const event = (start: StoredCalendarEvent["start"], recurrence: string): StoredCalendarEvent => ({
   id: "family" as StoredCalendarEvent["id"], title: "event", start,
   recurrence: { rrule: recurrence, rule: undefined as never },
@@ -72,5 +72,36 @@ describe("expandRecurrence", () => {
     if (result.ok) expect(result.value.map((x) => x.start.kind === "timed" && x.start.instant)).toEqual([
       "2026-03-02T14:00:00.000Z" as UtcInstant, "2026-03-09T13:00:00.000Z" as UtcInstant, "2026-03-16T13:00:00.000Z" as UtcInstant,
     ]);
+  });
+
+  test("projects rich overrides without changing the original identity", () => {
+    const original = timed("2026-01-06T14:00:00.000Z", "UTC");
+    const e = event(timed("2026-01-05T14:00:00.000Z", "UTC"), "FREQ=DAILY;COUNT=2");
+    e.description = "base";
+    e.end = timed("2026-01-05T15:00:00.000Z");
+    e.group = "old";
+    e.tags = new Set(["old"]);
+    e.exceptions = [{ occurrence: original, title: "changed", description: "details", start: timed("2026-01-09T16:00:00.000Z"), visibility: "adults", importance: "pinned", group: "new", tags: new Set(["new"]) }];
+    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-31T00:00:00.000Z"));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const moved = result.value[1]!;
+      expect(moved.eventId).toBe(e.id);
+      expect(moved.originalStart).toEqual(original);
+      expect(moved.occurrenceStart).toEqual(original);
+      expect(moved.start).toEqual(timed("2026-01-09T16:00:00.000Z"));
+      expect(moved.end).toEqual(timed("2026-01-09T17:00:00.000Z"));
+      expect(moved.visibility).toBe("adults");
+      expect(moved.tags).toEqual(new Set(["new"]));
+    }
+  });
+
+  test("cancellation suppresses only its original slot and validates override kinds", () => {
+    const cancelled = timed("2026-01-06T14:00:00.000Z", "UTC");
+    const e = event(timed("2026-01-05T14:00:00.000Z", "UTC"), "FREQ=DAILY;COUNT=3");
+    e.exceptions = [{ occurrence: cancelled, cancelled: true }];
+    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-31T00:00:00.000Z"));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.map((x) => x.originalStart?.kind === "timed" && x.originalStart.instant)).toEqual(["2026-01-05T14:00:00.000Z" as UtcInstant, "2026-01-07T14:00:00.000Z" as UtcInstant]);
   });
 });

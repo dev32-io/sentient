@@ -116,13 +116,16 @@ describe("calendar product tool search and cancellation", () => {
     };
     const occurrence: Occurrence = {
       ...event,
+      eventId: event.id,
       occurrenceId: "fixture-event:occurrence",
       baseEventId: event.id,
       occurrenceStart: fixtureTimed,
+      originalStart: fixtureTimed,
     };
     const normalOccurrence: Occurrence = {
       ...occurrence,
       id: "normal-event" as never,
+      eventId: "normal-event" as never,
       baseEventId: "normal-event" as never,
       occurrenceId: "normal-event:occurrence",
       importance: "normal",
