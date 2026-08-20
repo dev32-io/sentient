@@ -78,6 +78,8 @@ evaluations:
     path: evaluations/stage-stage-5-gateway-adapters-review/evaluation.yaml
   - id: stage-stage-6-bootstrap-review
     path: evaluations/stage-stage-6-bootstrap-review/evaluation.yaml
+  - id: stage-stage-7-clients-review
+    path: evaluations/stage-stage-7-clients-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:

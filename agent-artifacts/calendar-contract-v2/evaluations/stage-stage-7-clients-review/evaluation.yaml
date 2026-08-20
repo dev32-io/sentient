@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: stage-stage-7-clients-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-7-clients
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway/webui && bun run test:unit --
+    src/services/calendar-api.test.ts
+    src/components/calendar/calendar-view.test.tsx
+  - source scripts/env.sh && cd gateway/webui && bun run typecheck
+  - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+    --tests '*Calendar*' --tests '*PrivacyGuard*'
+  - source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+criteria:
+  - Exact REST V2 parity across web and KMP
+  - No PATCH/DELETE or V1 wire fallback
+  - Source-level whole-series adapters preserve untouched UI compilation
+  - Calendar payload and token privacy in client diagnostics
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
