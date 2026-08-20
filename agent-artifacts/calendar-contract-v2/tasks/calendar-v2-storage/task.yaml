@@ -2,8 +2,7 @@ schemaVersion: 1
 id: calendar-v2-storage
 title: Build the fresh revisioned calendar V2 persistence boundary
 status: draft
-dependsOn:
-  - calendar-v2-contracts
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
