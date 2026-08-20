@@ -126,16 +126,66 @@ class CalendarDataTest {
     }
 
     @Test
+    fun id_only_delete_resolves_loaded_household_and_private_events() = kotlinx.coroutines.test.runTest {
+        val householdRepository = RecordingRepository(
+            pageResult = SentientResult.Success(CalendarEventPage(listOf(event))),
+        )
+        val householdUseCases = CalendarUseCases(householdRepository)
+        householdUseCases.list("2026-08-01", "2026-08-31")
+        assertEquals(SentientResult.Success(Unit), householdUseCases.delete("event-1"))
+        assertEquals(CalendarScope.HOUSEHOLD, householdRepository.lastCommand?.scope)
+        assertEquals(7, householdRepository.lastCommand?.expectedRevision)
+        assertEquals(0, householdRepository.getCalls)
+
+        val privateEvent = event.copy(scope = CalendarScope.PRIVATE, revision = 11)
+        val privateRepository = RecordingRepository(
+            pageResult = SentientResult.Success(CalendarEventPage(listOf(privateEvent))),
+        )
+        val privateUseCases = CalendarUseCases(privateRepository)
+        privateUseCases.list("2026-08-01", "2026-08-31")
+        assertEquals(SentientResult.Success(Unit), privateUseCases.delete("event-1"))
+        assertEquals(CalendarScope.PRIVATE, privateRepository.lastCommand?.scope)
+        assertEquals(11, privateRepository.lastCommand?.expectedRevision)
+    }
+
+    @Test
+    fun id_only_delete_fails_closed_for_missing_or_ambiguous_events() = kotlinx.coroutines.test.runTest {
+        val missingRepository = RecordingRepository(
+            pageResult = SentientResult.Success(CalendarEventPage(emptyList())),
+            getResult = SentientResult.Failure(SentientError.Protocol("Calendar event not found.")),
+        )
+        val missing = CalendarUseCases(missingRepository).delete("missing")
+        assertIs<SentientResult.Failure>(missing)
+        assertEquals(1, missingRepository.getCalls)
+        assertEquals(CalendarScope.ALL, missingRepository.getScope)
+        assertEquals(0, missingRepository.mutationCalls)
+
+        val ambiguousRepository = RecordingRepository(
+            pageResult = SentientResult.Success(
+                CalendarEventPage(listOf(event, event.copy(scope = CalendarScope.PRIVATE))),
+            ),
+            getResult = SentientResult.Failure(SentientError.Protocol("ambiguous")),
+        )
+        val ambiguousUseCases = CalendarUseCases(ambiguousRepository)
+        ambiguousUseCases.list("2026-08-01", "2026-08-31")
+        assertIs<SentientResult.Failure>(ambiguousUseCases.delete("event-1"))
+        assertEquals(1, ambiguousRepository.getCalls)
+        assertEquals(CalendarScope.ALL, ambiguousRepository.getScope)
+        assertEquals(0, ambiguousRepository.mutationCalls)
+    }
+
+    @Test
     fun stale_delete_conflict_propagates_without_exposing_server_body() = kotlinx.coroutines.test.runTest {
         val body = "{\"version\":2,\"requestId\":\"r1\",\"error\":{\"code\":\"conflict\",\"message\":\"private title\"}}"
         val repository = SdkCalendarRepository(
             RecordingCalendarClient(
+                listResult = AuthResult.Success(CalendarEventPage(listOf(event))),
                 mutationResult = AuthResult.Failure(AuthError.Server(409, body)),
             ),
         )
-        val failure = assertIs<SentientResult.Failure>(
-            CalendarUseCases(repository).delete(event),
-        )
+        val useCases = CalendarUseCases(repository)
+        useCases.list("2026-08-01", "2026-08-31")
+        val failure = assertIs<SentientResult.Failure>(useCases.delete("event-1"))
         assertEquals("This calendar event changed. Refresh and try again.", failure.error.userMessage)
         assertFalse(failure.error.userMessage.contains("private title"))
     }
@@ -216,13 +266,23 @@ class CalendarDataTest {
                 resultingRevision = 8,
             ),
         ),
+        private val getResult: SentientResult<CalendarEvent> = SentientResult.Failure(
+            SentientError.Protocol("unused"),
+        ),
     ) : CalendarRepository {
         var listCalls = 0
         var from: String? = null
         var to: String? = null
         var lastCommand: CalendarMutationCommand? = null
+        var getCalls = 0
+        var getScope: CalendarScope? = null
+        var mutationCalls = 0
 
-        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) = error("unused")
+        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?): SentientResult<CalendarEvent> {
+            getCalls++
+            getScope = scope
+            return getResult
+        }
 
         override suspend fun list(
             from: String,
@@ -245,6 +305,7 @@ class CalendarDataTest {
         override suspend fun create(input: CalendarCreateInput) = error("unused")
 
         override suspend fun mutate(eventId: String, command: CalendarMutationCommand): SentientResult<CalendarMutationResult> {
+            mutationCalls++
             lastCommand = command
             return mutationResult
         }

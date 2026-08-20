@@ -13,6 +13,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.URLBuilder
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLPathPart
+import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.auth.deriveBaseUrl
 import io.sentient.mobilesdk.log.createLogger
@@ -176,13 +177,12 @@ open class CalendarHttpClient(
 
     open suspend fun updateEvent(event: CalendarEvent): AuthResult<CalendarEvent> = update(event)
 
-    /** Existing delete callers retain whole-series semantics through V2 commands. */
-    open suspend fun delete(id: String): AuthResult<Unit> = safeSettingsCall(log) {
-        when (val result = mutate(id, CalendarMutationCommand.delete(CalendarMutationScope.ENTIRE_SERIES))) {
-            is AuthResult.Failure -> result
-            is AuthResult.Success -> AuthResult.Success(Unit)
-        }
-    }
+    /**
+     * Source-compatible id-only adapter. It cannot prove writable scope or
+     * expected revision, so it fails closed without issuing a write.
+     */
+    open suspend fun delete(id: String): AuthResult<Unit> =
+        AuthResult.Failure(AuthError.Unknown("calendar delete requires a selected event"))
 
     /** Selected-event adapter preserves its writable scope and optimistic revision. */
     open suspend fun delete(event: CalendarEvent): AuthResult<Unit> = safeSettingsCall(log) {

@@ -12,6 +12,7 @@ import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.calendar.toCalendarTime
+import io.sentient.mobilesdk.result.SentientError
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +92,9 @@ interface CreateCalendarUseCase {
 interface UpdateCalendarUseCase {
     suspend fun update(id: String, event: CalendarEvent): SentientResult<CalendarEvent>
 }
+
+private const val MSG_DELETE_UNRESOLVED =
+    "This calendar event could not be resolved safely. Refresh and try again."
 
 interface DeleteCalendarUseCase {
     /** Existing id-only adapter retained for platform source compatibility. */
@@ -197,18 +201,59 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         }
 
     override suspend fun delete(id: String): SentientResult<Unit> =
-        when (val result = repository.mutate(
-            id,
-            CalendarMutationCommand.delete(
-                applyTo = io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
-            ),
-        )) {
-            is SentientResult.Success -> SentientResult.Success(Unit)
-            is SentientResult.Failure -> result
+        when (val resolved = resolveDeleteEvent(id)) {
+            is SentientResult.Success -> delete(resolved.data)
+            is SentientResult.Failure -> resolved
             is SentientResult.Loading -> SentientResult.Loading()
         }
 
-    override suspend fun delete(event: CalendarEvent): SentientResult<Unit> = repository.delete(event)
+    override suspend fun delete(event: CalendarEvent): SentientResult<Unit> {
+        if (!event.hasWritableDeleteMetadata()) return unresolvedDeleteFailure()
+        return repository.delete(event)
+    }
+
+    /**
+     * The legacy id-only path has no scope or revision arguments. Prefer the
+     * latest unambiguous event already held by this use-case; otherwise reread
+     * one authoritative aggregate target before issuing any write.
+     */
+    private suspend fun resolveDeleteEvent(id: String): SentientResult<CalendarEvent> {
+        uniqueDeleteCandidateFromPage(listState.value, id)?.let { return SentientResult.Success(it) }
+        uniqueDeleteCandidateFromEvent(state.value, id)?.let { return SentientResult.Success(it) }
+        return get(id = id, originalStart = null, scope = CalendarScope.ALL)
+    }
+
+    private fun uniqueDeleteCandidateFromPage(
+        result: SentientResult<CalendarEventPage>,
+        id: String,
+    ): CalendarEvent? = when (result) {
+        is SentientResult.Success -> result.data.events
+            .filter { it.matchesDeleteId(id) }
+            .distinctBy { Triple(it.persistedId, it.scope, it.revision) }
+            .singleOrNull()
+        is SentientResult.Failure,
+        is SentientResult.Loading,
+        -> null
+    }
+
+    private fun uniqueDeleteCandidateFromEvent(
+        result: SentientResult<CalendarEvent>,
+        id: String,
+    ): CalendarEvent? = when (result) {
+        is SentientResult.Success -> result.data.takeIf { it.matchesDeleteId(id) }
+        is SentientResult.Failure,
+        is SentientResult.Loading,
+        -> null
+    }
+
+    private fun CalendarEvent.hasWritableDeleteMetadata(): Boolean =
+        (scope == CalendarScope.PRIVATE || scope == CalendarScope.HOUSEHOLD) && revision > 0
+
+    private fun CalendarEvent.matchesDeleteId(id: String): Boolean =
+        persistedId == id || baseEventId == id
+
+    private fun unresolvedDeleteFailure(): SentientResult.Failure =
+        SentientResult.Failure(SentientError.Protocol(MSG_DELETE_UNRESOLVED))
 }
 
 typealias GetCalendarEventUseCase = GetCalendarUseCase

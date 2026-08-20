@@ -11,6 +11,10 @@ import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.calendar.CalendarPatch
+import io.sentient.mobilesdk.result.SentientError
+
+private const val MSG_DELETE_UNRESOLVED =
+    "This calendar event could not be resolved safely. Refresh and try again."
 
 /**
  * Stateless V2 calendar data source. Temporal query values remain raw strings at
@@ -76,7 +80,7 @@ interface CalendarRepository {
 
     /** Whole-series adapter retained for existing repository callers. */
     suspend fun delete(id: String, expectedRevision: Int? = null): SentientResult<Unit> =
-        delete(id, scope = null, expectedRevision = expectedRevision)
+        unresolvedDeleteFailure()
 
     /** Whole-series delete adapter for callers holding the selected event. */
     suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(
@@ -90,17 +94,25 @@ interface CalendarRepository {
         id: String,
         scope: CalendarScope?,
         expectedRevision: Int? = null,
-    ): SentientResult<Unit> =
-        when (val result = mutate(id, CalendarMutationCommand.delete(
+    ): SentientResult<Unit> {
+        val writableScope = scope?.takeUnless { it == CalendarScope.ALL }
+        if ((writableScope != CalendarScope.PRIVATE && writableScope != CalendarScope.HOUSEHOLD) || expectedRevision == null || expectedRevision <= 0) {
+            return unresolvedDeleteFailure()
+        }
+        return when (val result = mutate(id, CalendarMutationCommand.delete(
             applyTo = io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
-            scope = scope?.takeUnless { it == CalendarScope.ALL },
+            scope = writableScope,
             expectedRevision = expectedRevision,
         ))) {
             is SentientResult.Success -> SentientResult.Success(Unit)
             is SentientResult.Failure -> result
             is SentientResult.Loading -> error("A repository mutation cannot return Loading")
         }
+    }
 }
+
+private fun unresolvedDeleteFailure(): SentientResult.Failure =
+    SentientResult.Failure(SentientError.Protocol(MSG_DELETE_UNRESOLVED))
 
 internal fun CalendarEvent.toEntireSeriesUpdate(): CalendarMutationCommand = CalendarMutationCommand.update(
     applyTo = io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
