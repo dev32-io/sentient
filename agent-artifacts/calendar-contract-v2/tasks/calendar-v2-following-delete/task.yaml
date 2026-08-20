@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-following-delete
 title: Add atomic this-and-following series deletion
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-mutation-core
   - calendar-v2-recurrence
@@ -30,3 +30,4 @@ runtime:
   baseCommit: cd27f8282dd9de6c383b7ebd700d423d5697a8b8
   lastRunId: d844a125-ea0d-4483-93c5-966f36577e29
   completedCommit: b5749dba1e9dc6503ab5ae823041f2815f5ccd1c
+  mergedCommit: d3672b2f9ddfcbd3f932308982a4ea09503734f9
