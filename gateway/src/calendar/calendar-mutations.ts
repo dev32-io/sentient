@@ -13,6 +13,7 @@ import {
   enumerateGeneratedSlots,
   verifyGeneratedSlot,
 } from "./expand-recurrence.js";
+import { splitRecurrence } from "./recurrence-splitter.js";
 import {
   type CalendarConfig,
   type CalendarCreateInput,
@@ -30,6 +31,7 @@ import {
   type CalendarTime,
   type CalendarTimeInput,
   type Recurrence,
+  type StoredCalendarEvent,
   type UtcInstant,
   DEFAULT_EVENT_TIME_ZONE,
   isAdult,
@@ -838,6 +840,298 @@ function updateWholeSeries(
   return result;
 }
 
+function splitMutationError(error: { code: string }): CalendarError {
+  if (error.code === "recurrence_conflict") {
+    return failure(
+      "recurrence_conflict",
+      "the requested recurrence would orphan retained exception state; no changes were made.",
+    ).error;
+  }
+  if (error.code === "invalid-window" || error.code === "invalid-override") return occurrenceNotFound().error;
+  return recurrenceError(error).error;
+}
+
+function updateThisAndFollowing(
+  command: Extract<MutationCommand, { operation: "update"; applyTo: "this_and_following" }>,
+  context: CalendarMutationContext,
+): CalendarMutationResult<CalendarMutationValue> {
+  let domainFailure: CalendarError | undefined;
+  let recurrenceConflict = false;
+  const result = context.persistence.transaction((tx) => {
+    const current = tx.readEvent(command.eventId as CalendarEventId);
+    if (!current.ok) return current;
+    const event = current.value;
+    if (command.expectedRevision !== undefined && Number(event.revision) !== Number(command.expectedRevision))
+      return { ok: false, error: "conflict" as const };
+    if (!event.recurrence) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const originalParsed = normalizeCalendarTime(command.originalStart, occurrenceTimeConfig(event, context.config));
+    if (!originalParsed.ok) {
+      domainFailure = originalParsed.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const source: StoredCalendarEvent = {
+      ...event,
+      exdates: event.exclusions,
+      exceptions: event.exceptions,
+      tags: new Set(event.tags),
+    };
+    // Use the generated slot's canonical timezone-bearing value rather than
+    // the model's spelling of originalStart. This matters when an exception
+    // moved the displayed occurrence, and across DST boundary offsets.
+    const generated = enumerateGeneratedSlots(source, recurrenceLimits(context.config));
+    if (!generated.ok) {
+      domainFailure = occurrenceMembershipError(generated.error).error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const requestedKey = canonicalOriginalKey(originalParsed.value);
+    const selected = generated.value.find((slot) => canonicalOriginalKey(slot.originalStart) === requestedKey);
+    if (!selected) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const removeRecurrence = command.changes.recurrence === null;
+    const proposedRecurrence = command.changes.recurrence === null ? undefined : command.changes.recurrence;
+    const split = splitRecurrence(
+      source,
+      selected.originalStart,
+      proposedRecurrence,
+      recurrenceLimits(context.config),
+    );
+    if (!split.ok) {
+      domainFailure = splitMutationError(split.error);
+      recurrenceConflict = split.error.code === "recurrence_conflict";
+      return { ok: false, error: "invalid" as const };
+    }
+    const proposal = split.value;
+    const changes = command.changes;
+    const selectedStart = proposal.successor.start;
+    const selectedKey = canonicalOriginalKey(selectedStart);
+    if (removeRecurrence) {
+      const futureState = [
+        ...proposal.state.successor.exceptions.map((value) => canonicalOriginalKey(value.occurrence)),
+        ...proposal.state.successor.exdates.map((value) => canonicalOriginalKey(value)),
+      ].some((key) => key > selectedKey);
+      if (futureState) {
+        domainFailure = failure(
+          "recurrence_conflict",
+          "the requested non-recurring successor would orphan retained exception state; no changes were made.",
+        ).error;
+        recurrenceConflict = true;
+        return { ok: false, error: "invalid" as const };
+      }
+    }
+    const timeConfig = occurrenceTimeConfig(event, context.config);
+    let requestedStart: CalendarTime | undefined;
+    if (changes.start !== undefined) {
+      const normalized = normalizeCalendarTime(changes.start, timeConfig, { recurring: true });
+      if (!normalized.ok) {
+        domainFailure = normalized.error;
+        return { ok: false, error: "invalid" as const };
+      }
+      requestedStart = normalized.value;
+    }
+    let successorEnd: CalendarTime | undefined;
+    if ("end" in changes) {
+      if (changes.end !== null) {
+        const normalized = normalizeCalendarTime(changes.end, timeConfig, { boundary: "end" });
+        if (!normalized.ok) {
+          domainFailure = normalized.error;
+          return { ok: false, error: "invalid" as const };
+        }
+        successorEnd = normalized.value;
+      }
+    } else {
+      successorEnd = shiftedOccurrenceEnd(event.end, event.start, selectedStart);
+    }
+    const timing = validateEffectiveTiming(selectedStart, successorEnd);
+    if (!timing.ok) {
+      domainFailure = timing.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const eventZone = event.start.kind === "timed" && event.start.timeZoneId === DEFAULT_EVENT_TIME_ZONE
+      ? context.config.defaultEventTimeZoneId
+      : event.start.kind === "timed" ? event.start.timeZoneId : undefined;
+    if (
+      event.start.kind !== selectedStart.kind ||
+      (eventZone !== undefined && selectedStart.kind === "timed" && selectedStart.timeZoneId !== eventZone) ||
+      (eventZone !== undefined && successorEnd?.kind === "timed" && successorEnd.timeZoneId !== eventZone)
+    ) {
+      domainFailure = failure(
+        "invalid_time",
+        "the successor timing must remain anchored to the event timezone; correct start/end and retry.",
+      ).error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const successorTags = changes.tags !== undefined ? [...changes.tags] : [...event.tags];
+    const metadata = validateCalendarInputLimits(
+      {
+        title: changes.title ?? event.title,
+        ...(changes.description === null
+          ? {}
+          : changes.description !== undefined
+            ? { description: changes.description }
+            : event.description !== undefined
+              ? { description: event.description }
+              : {}),
+        ...(changes.group === null
+          ? {}
+          : changes.group !== undefined
+            ? { group: changes.group }
+            : event.group !== undefined
+              ? { group: event.group }
+              : {}),
+        tags: successorTags,
+      },
+      context.config,
+    );
+    if (!metadata.ok) {
+      domainFailure = metadata.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    if (context.persistence.role !== undefined && !isAdult(context.persistence.role) && (changes.visibility ?? event.visibility) === "adults") {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    // Keep a moved/overridden selected occurrence as a single sparse child.
+    // Requested fields replace the old values on that child, rather than
+    // being applied once to the base and once again as an old override.
+    const existingSelected = proposal.state.successor.exceptions.find(
+      (value) => canonicalOriginalKey(value.occurrence) === selectedKey,
+    );
+    const selectedExcluded = proposal.state.successor.exdates.some((value) => canonicalOriginalKey(value) === selectedKey);
+    let selectedException: ExceptionOverride | undefined;
+    if (existingSelected) {
+      selectedException = { ...existingSelected, occurrence: selectedStart };
+      if (!existingSelected.cancelled) {
+        if (changes.title !== undefined) selectedException.title = changes.title;
+        if (changes.description !== undefined) selectedException.description = changes.description;
+        if (requestedStart !== undefined) selectedException.start = requestedStart;
+        if (changes.end !== undefined) {
+          if (changes.end === null) selectedException.end = null;
+          else if (successorEnd !== undefined) selectedException.end = successorEnd;
+        }
+        if (changes.visibility !== undefined) selectedException.visibility = changes.visibility;
+        if (changes.importance !== undefined) selectedException.importance = changes.importance;
+        if (changes.group !== undefined) selectedException.group = changes.group;
+        if (changes.tags !== undefined) selectedException.tags = [...changes.tags];
+      }
+    } else if (!existingSelected && selectedExcluded && removeRecurrence) {
+      selectedException = { occurrence: selectedStart, cancelled: true };
+    } else if (!existingSelected && !selectedExcluded && (requestedStart !== undefined || "end" in changes)) {
+      selectedException = { occurrence: selectedStart };
+      if (requestedStart !== undefined) selectedException.start = requestedStart;
+      if (changes.end !== undefined) {
+        if (changes.end === null) selectedException.end = null;
+        else if (successorEnd !== undefined) selectedException.end = successorEnd;
+      }
+    }
+    const successorExceptions = proposal.state.successor.exceptions.filter(
+      (value) => canonicalOriginalKey(value.occurrence) !== selectedKey,
+    );
+    if (selectedException) successorExceptions.push(selectedException);
+
+    const now = new Date().toISOString() as UtcInstant;
+    const {
+      exceptions: _exceptions,
+      exclusions: _exclusions,
+      tags: _tags,
+      revision: _revision,
+      description: _description,
+      end: _end,
+      recurrence: _recurrence,
+      group: _group,
+      ...base
+    } = event;
+    const successorId = crypto.randomUUID() as CalendarEventId;
+    const successor: CalendarPersistenceBaseEvent = {
+      ...base,
+      id: successorId,
+      title: changes.title ?? event.title,
+      ...(changes.description === null
+        ? {}
+        : changes.description !== undefined
+          ? { description: changes.description }
+          : event.description !== undefined
+            ? { description: event.description }
+            : {}),
+      start: selectedStart,
+      ...(successorEnd ? { end: successorEnd } : {}),
+      ...(!removeRecurrence ? { recurrence: proposal.successor.recurrence } : {}),
+      visibility: changes.visibility ?? event.visibility,
+      importance: changes.importance ?? event.importance,
+      ...(changes.group === null
+        ? {}
+        : changes.group !== undefined
+          ? { group: changes.group }
+          : event.group !== undefined
+            ? { group: event.group }
+            : {}),
+      revision: 1 as CalendarRevision,
+      updatedAt: now,
+    };
+    const revision = tx.compareAndSwapRevision(event.id, event.revision);
+    if (!revision.ok) return revision;
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+
+    if (proposal.prefix) {
+      const prefix: CalendarPersistenceBaseEvent = {
+        ...base,
+        id: event.id,
+        revision: revision.value,
+        start: proposal.prefix.start,
+        ...(event.end ? { end: event.end } : {}),
+        recurrence: proposal.prefix.recurrence,
+        updatedAt: now,
+      };
+      const replacedBase = tx.replaceBaseEvent(prefix);
+      if (!replacedBase.ok) return replacedBase;
+      const prefixExceptions = tx.replaceExceptions(event.id, proposal.state.prefix.exceptions);
+      if (!prefixExceptions.ok) return prefixExceptions;
+      const prefixExdates = tx.replaceExclusions(event.id, proposal.state.prefix.exdates);
+      if (!prefixExdates.ok) return prefixExdates;
+    } else {
+      const deleted = tx.deleteSegment(event.id);
+      if (!deleted.ok) return deleted;
+    }
+    const inserted = tx.insertSuccessor(successor);
+    if (!inserted.ok) return inserted;
+    const children = tx.replaceChildren(successorId, {
+      exceptions: successorExceptions,
+      exclusions: removeRecurrence ? [] : proposal.state.successor.exdates,
+      tags: successorTags,
+    });
+    if (!children.ok) return children;
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    return {
+      ok: true,
+      value: {
+        operation: "update",
+        appliedTo: "this_and_following",
+        eventId: proposal.prefix ? event.id : successorId,
+        ...(proposal.prefix ? { successorEventId: successorId } : {}),
+        resultingRevision: (proposal.prefix ? revision.value : successor.revision),
+      } as unknown as CalendarMutationValue,
+    };
+  });
+  if (!result.ok) {
+    if (isAborted(context.signal)) return aborted();
+    if (domainFailure) return { ok: false, error: domainFailure };
+    if (recurrenceConflict)
+      return failure(
+        "recurrence_conflict",
+        "the requested recurrence would orphan retained exception state; no changes were made.",
+      );
+    return storeError(result.error);
+  }
+  return result;
+}
+
 function deleteWholeSeries(
   command: Extract<MutationCommand, { operation: "delete"; applyTo: "entire_series" }>,
   context: CalendarMutationContext,
@@ -861,7 +1155,7 @@ function deleteWholeSeries(
   return result;
 }
 
-/** Dispatch update/delete commands. Occurrence branches are intentionally left to later tasks. */
+/** Dispatch update/delete commands through the atomic V2 mutation branches. */
 export function mutateCalendarEvent(
   command: CalendarMutationCommand,
   context: CalendarMutationContext,
@@ -891,13 +1185,8 @@ export function mutateCalendarEvent(
     return deleteOccurrence(value, context);
   }
   if (value.applyTo === "this_and_following") {
-    const target = context.persistence.read(value.eventId as CalendarEventId);
-    if (!target.ok) return storeError(target.error);
-    if (!target.value.recurrence)
-      return failure("occurrence_not_found", "the selected event has no occurrence at the requested scope.");
-    return invalidMutationScope(
-      "occurrence-scoped mutations are not available in this mutation branch; use entire_series.",
-    );
+    if (value.operation === "update") return updateThisAndFollowing(value, context);
+    return invalidMutationScope("this_and_following delete is not supported; use this_occurrence or entire_series.");
   }
   if (value.operation === "update") return updateWholeSeries(value, context, scope);
   return deleteWholeSeries(value, context);

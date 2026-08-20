@@ -6,6 +6,7 @@ import type { Capability } from "../access/capability.js";
 import { createCalendarEvent, mutateCalendarEvent } from "./calendar-mutations.js";
 import { openCalendarPersistence } from "./calendar-store.js";
 import { createCalendarQueryService } from "./calendar-query.js";
+import { enumerateGeneratedSlots } from "./expand-recurrence.js";
 import type {
   CalendarConfig,
   CalendarCreateInput,
@@ -322,6 +323,80 @@ describe("calendar mutation boundary", () => {
     const state = persistence.read(created.value.eventId as CalendarEventId);
     expect(state).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ cancelled: true }] , exclusions: [] } });
     persistence.close();
+  });
+
+  it("splits COUNT recurrence state at the selected original slot", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({
+      end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 5 },
+    }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const cancelled = { kind: "timed", instant: "2026-01-06T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const excluded = { kind: "timed", instant: "2026-01-08T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const moved = { kind: "timed", instant: "2026-01-07T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceChildren(eventId, {
+      exceptions: [{ occurrence: cancelled, cancelled: true }, { occurrence: moved, start: { kind: "timed", instant: "2026-01-10T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime }],
+      exclusions: [excluded],
+      tags: ["old"],
+    }))).toEqual({ ok: true, value: undefined });
+    const updated = mutateCalendarEvent(mutation({
+      operation: "update",
+      eventId,
+      applyTo: "this_and_following",
+      originalStart: "2026-01-07T14:00:00.000Z",
+      expectedRevision: 1,
+      changes: { title: "future", tags: ["new"] },
+    }), persistence, config);
+    expect(updated).toEqual({ ok: true, value: expect.objectContaining({ appliedTo: "this_and_following", eventId, successorEventId: expect.any(String), resultingRevision: 2 }) });
+    if (!updated.ok) return;
+    const successorId = (updated.value as { successorEventId: string }).successorEventId as CalendarEventId;
+    const prefix = persistence.read(eventId);
+    const successor = persistence.read(successorId);
+    expect(prefix).toMatchObject({ ok: true, value: { revision: 2, title: "synthetic event", recurrence: { rule: { count: 2 } }, exceptions: [{ cancelled: true }], exclusions: [] } });
+    expect(successor).toMatchObject({ ok: true, value: { revision: 1, title: "future", recurrence: { rule: { count: 3 } }, exclusions: [excluded], tags: ["new"] } });
+    if (successor.ok) expect(successor.value.exceptions).toHaveLength(1);
+    if (prefix.ok && successor.ok && prefix.value.recurrence && successor.value.recurrence) {
+      const prefixSlots = enumerateGeneratedSlots({ start: prefix.value.start, recurrence: prefix.value.recurrence });
+      const successorSlots = enumerateGeneratedSlots({ start: successor.value.start, recurrence: successor.value.recurrence });
+      expect(prefixSlots.ok && prefixSlots.value).toHaveLength(2);
+      expect(successorSlots.ok && successorSlots.value).toHaveLength(3);
+    }
+    persistence.close();
+  });
+
+  it("replaces the whole segment at the first slot without an empty prefix", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "weekly", weekdays: ["monday"], count: 2 } }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const result = mutateCalendarEvent(mutation({
+      operation: "update", eventId: created.value.eventId, applyTo: "this_and_following", originalStart: "2026-01-05T14:00:00.000Z", changes: { title: "replacement" },
+    }), persistence, config);
+    expect(result).toEqual({ ok: true, value: expect.objectContaining({ eventId: expect.any(String), resultingRevision: 1 }) });
+    if (!result.ok) return;
+    expect(result.value.eventId).not.toBe(created.value.eventId);
+    expect(persistence.read(created.value.eventId as CalendarEventId)).toEqual({ ok: false, error: "not-found" });
+    expect(persistence.read(result.value.eventId as CalendarEventId)).toMatchObject({ ok: true, value: { title: "replacement", revision: 1 } });
+    persistence.close();
+  });
+
+  it("rolls back the prefix and generated successor on a split failure", () => {
+    const base = root();
+    const writer = openCalendarPersistence(cap(base), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "daily", count: 3 } }), writer, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    writer.close();
+    const failing = openCalendarPersistence(cap(base), config, { fault: (operation) => { if (operation === "insert-successor") throw new Error("synthetic fault"); } });
+    const result = mutateCalendarEvent(mutation({
+      operation: "update", eventId: created.value.eventId, applyTo: "this_and_following", originalStart: "2026-01-06T14:00:00.000Z", changes: { title: "should rollback" },
+    }), failing, config);
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: "io_error" }) });
+    expect(failing.read(created.value.eventId as CalendarEventId)).toMatchObject({ ok: true, value: { title: "synthetic event", revision: 1, recurrence: { rule: { count: 3 } } } });
+    failing.close();
   });
 
   it("rejects invalid scopes and aborts before writing without logging content", () => {
