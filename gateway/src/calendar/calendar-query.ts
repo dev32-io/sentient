@@ -44,6 +44,11 @@ export interface CalendarGetInput {
 export type CalendarQueryMode = "rest" | "tool";
 export interface CalendarQueryOptions {
   readonly mode?: CalendarQueryMode;
+  readonly signal?: AbortSignal;
+}
+
+export interface CalendarGetOptions {
+  readonly signal?: AbortSignal;
 }
 
 /** The complete tool result is intentionally an array, not a page envelope. */
@@ -363,7 +368,8 @@ export class CalendarQueryService {
     return [[this.deps.private, "private"], [this.deps.household, "household"]];
   }
 
-  private collect(query: NormalizedQuery): CalendarQueryResult<{ rows: InternalRow[] }> {
+  private collect(query: NormalizedQuery, signal?: AbortSignal): CalendarQueryResult<{ rows: InternalRow[] }> {
+    if (signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
     const sources = this.sources(query.scope);
     if (!Array.isArray(sources)) return sources;
     const rows: InternalRow[] = [];
@@ -371,6 +377,7 @@ export class CalendarQueryService {
     const candidatesWindow = candidateWindow(query, this.zone);
     const expansionLimits = { ...this.recurrenceLimits, maxOccurrences: max };
     for (const [persistence, scope] of sources) {
+      if (signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
       const candidates = persistence.readBaseCandidates(max, candidatesWindow);
       if (!candidates.ok) return errorForStorage(candidates.error);
       // Never expand or return the prefix of an over-bound candidate set. The
@@ -378,6 +385,7 @@ export class CalendarQueryService {
       // decision before any occurrence work begins.
       if (candidates.value.overflow) return serializedFailure();
       for (const id of candidates.value.ids) {
+        if (signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
         const raw = persistence.readRaw(id);
         if (!raw.ok) {
           if (raw.error === "not-found") continue;
@@ -416,7 +424,7 @@ export class CalendarQueryService {
     if (operation === "search" && !query.query) return failure("invalid_range", "query is required for search.");
     const cursor = query.cursor ? decodeCursor(query.cursor, query, operation) : undefined;
     if (cursor && !cursor.ok) return cursor;
-    const collected = this.collect(query);
+    const collected = this.collect(query, options.signal);
     if (!collected.ok) return collected;
     const mode = options.mode ?? "rest";
     const start = cursor?.ok ? cursor.value : undefined;
@@ -455,17 +463,18 @@ export class CalendarQueryService {
   }
   public listPage(input: unknown): CalendarQueryResult<CalendarPage> { return this.list(input); }
   public searchPage(input: unknown): CalendarQueryResult<CalendarPage> { return this.search(input); }
-  public listComplete(input: unknown): CalendarQueryResult<CalendarCompleteResult> {
-    const result = this.page(input, "list", { mode: "tool" });
+  public listComplete(input: unknown, options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarCompleteResult> {
+    const result = this.page(input, "list", { ...options, mode: "tool" });
     return result.ok ? { ok: true, value: result.value as CalendarCompleteResult } : result;
   }
-  public searchComplete(input: unknown): CalendarQueryResult<CalendarCompleteResult> {
-    const result = this.page(input, "search", { mode: "tool" });
+  public searchComplete(input: unknown, options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarCompleteResult> {
+    const result = this.page(input, "search", { ...options, mode: "tool" });
     return result.ok ? { ok: true, value: result.value as CalendarCompleteResult } : result;
   }
 
   /** Resolve one event/occurrence only inside the requested scope. */
-  public get(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope): CalendarQueryResult<CalendarGetResult> {
+  public get(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope, options: CalendarGetOptions = {}): CalendarQueryResult<CalendarGetResult> {
+    if (options.signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
     const target: CalendarGetInput = typeof input === "string" ? { eventId: input, ...(originalStart !== undefined ? { originalStart } : {}), ...(requestedScope !== undefined ? { scope: requestedScope } : {}) } : input;
     if (!target || typeof target.eventId !== "string" || target.eventId.length === 0) return failure("not_found", "The requested calendar event was not found.");
     if (!validScope(target.scope)) return failure("invalid_scope", "scope must be private, household, or all.");
@@ -479,6 +488,7 @@ export class CalendarQueryService {
       normalizedOriginal = parsed.value;
     }
     for (const [persistence, storeScope] of sources) {
+      if (options.signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
       const raw = persistence.readRaw(target.eventId as CalendarEventId);
       if (!raw.ok) {
         if (raw.error === "not-found") continue;
@@ -507,8 +517,8 @@ export class CalendarQueryService {
     return failure(normalizedOriginal ? "occurrence_not_found" : "not_found", normalizedOriginal ? "The requested calendar occurrence was not found." : "The requested calendar event was not found.");
   }
 
-  public getEvent(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope): CalendarQueryResult<CalendarGetResult> {
-    return this.get(input, originalStart, requestedScope);
+  public getEvent(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope, options?: CalendarGetOptions): CalendarQueryResult<CalendarGetResult> {
+    return this.get(input, originalStart, requestedScope, options);
   }
   public listEvents(input: unknown): CalendarQueryResult<CalendarPage> { return this.list(input); }
   public searchEvents(input: unknown): CalendarQueryResult<CalendarPage> { return this.search(input); }
