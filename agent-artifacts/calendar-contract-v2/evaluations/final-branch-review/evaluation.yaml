@@ -4,15 +4,15 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: cfc497de-4f78-4b7a-9528-b98f7fce25d7
   reviewedCommit: 327108f287d44c1e34ab3685e602f08e3fa99de2
@@ -51,6 +51,7 @@ loop:
     KMP/mobile-data calendar/privacy tests, shared/Android compilation, root
     typecheck, and `git diff --check`; verify again that the work-item UI path
     diff remains empty.
+  fixerAgentId: fa256d94-c637-4607-972d-f4a2a6c02054
 findings:
   - id: CAL-V2-FINAL-001
     severity: high
