@@ -4,18 +4,18 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: cfc497de-4f78-4b7a-9528-b98f7fce25d7
-  reviewedCommit: 327108f287d44c1e34ab3685e602f08e3fa99de2
+  reviewedCommit: 8884fa9d77e35c7ae86ad50c1bbad602256cc1bf
   managerPrompt: >-
     Repair CAL-V2-FINAL-002 through 005, but do not alter calendar UI/ViewModel
     files. CAL-V2-FINAL-001 is a baseline-scope false positive: `git diff
@@ -55,50 +55,44 @@ loop:
 findings:
   - id: CAL-V2-FINAL-001
     severity: high
-    status: open
-    criterion: Story scope excludes web, Android, and iOS calendar UI changes;
-      existing screens/components must remain unchanged.
-    location: gateway/webui/src/components/calendar/calendar-view.tsx;
-      android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt;
-      ios/App/Settings/Calendar/CalendarScreen.swift
-    summary: Feature diff modifies calendar UI/screens/ViewModels and related UI
-      files despite the explicit no-UI-change boundary.
-    blocking: true
+    status: rejected
+    criterion: Manager guidance classifies the UI concern as baseline scope and
+      requires no UI changes in repair.
+    location: gateway/webui/src/components/calendar;
+      android/src/main/kotlin/io/sentient/android/settings/calendar;
+      ios/App/Settings/Calendar
+    summary: "Rejected: bounded repair diff has no changes under the reviewed UI paths."
+    blocking: false
   - id: CAL-V2-FINAL-002
     severity: high
-    status: open
-    criterion: Shared query/search/filter contract.
-    location: gateway/webui/src/services/calendar-api.ts:155-166,319-342;
-      gateway/src/api/handlers/calendar.ts:149-163
-    summary: Web CalendarApi.list sends query, but REST listInput drops it, so
-      list({query}) silently returns unfiltered events.
-    blocking: true
+    status: resolved
+    criterion: REST list query must be threaded into shared effective filtering.
+    location: gateway/src/api/handlers/calendar.ts:150-154
+    summary: "Resolved: query is forwarded and exact handler filtering coverage was
+      added."
+    blocking: false
   - id: CAL-V2-FINAL-003
     severity: high
     status: open
-    criterion: KMP acceptance forbids V1 more/baseEventId normalization in the clean
-      cutover.
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:165-172,433-455,502-516;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:108-110
-    summary: KMP retains CalendarEventPage.more and CalendarEvent.baseEventId, and
-      sets baseEventId = eventId in occurrence conversion.
-    blocking: true
-  - id: CAL-V2-FINAL-005
-    severity: high
-    status: open
-    criterion: Web client must remove raw RRULE input and use structured V2
-      recurrence only.
-    location: gateway/webui/src/services/calendar-api.ts:133,200,334-350,378-383
-    summary: Web client accepts legacy {rrule,rule} recurrence objects and converts
-      them into V2 payloads.
+    criterion: KMP clean cutover removes V1 more/baseEventId fields and normalization.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:455-462
+    summary: Deprecated baseEventId remains exported on CalendarEvent, so the
+      explicit V1-field removal requirement is unmet.
     blocking: true
   - id: CAL-V2-FINAL-004
     severity: medium
-    status: open
-    criterion: Every operator-configurable field requires a positive bounded schema range.
+    status: resolved
+    criterion: nudge.max_per_day uses a strictly positive bounded schema.
     location: shared/config/src/schemas/orchestrator-config.ts:299-301
-    summary: calendar.nudge.max_per_day permits zero via min(0), conflicting with
-      the stated positive-range requirement.
+    summary: "Resolved: schema minimum is 1 and zero is covered by rejection tests."
+    blocking: false
+  - id: CAL-V2-FINAL-005
+    severity: high
+    status: resolved
+    criterion: Web recurrence accepts structured V2 only.
+    location: gateway/webui/src/services/calendar-api.ts:133,200,320-350
+    summary: "Resolved: legacy RRULE types/conversion were removed and malformed
+      legacy input is rejected before fetch."
     blocking: false
 result:
   verdict: fail

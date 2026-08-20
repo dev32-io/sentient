@@ -1,11 +1,2 @@
-mobile_calendar_build_status=0
-> Task :shared:mobile-sdk:extractDeepLinksDebug UP-TO-DATE
-> Task :shared:mobile-sdk:processDebugManifest UP-TO-DATE
-> Task :android:processDebugMainManifest UP-TO-DATE
-> Task :android:processDebugManifest UP-TO-DATE
-> Task :android:processDebugManifestForPackage UP-TO-DATE
-> Task :shared:mobile-data:compileDebugLibraryResources UP-TO-DATE
-> Task :shared:mobile-sdk:compileDebugLibraryResources UP-TO-DATE
-> Task :android:processDebugResources UP-TO-DATE
-> Task :android:compileDebugKotlin UP-TO-DATE
-BUILD SUCCESSFUL in 6s
+mobile_status=0
+BUILD SUCCESSFUL in 5s
