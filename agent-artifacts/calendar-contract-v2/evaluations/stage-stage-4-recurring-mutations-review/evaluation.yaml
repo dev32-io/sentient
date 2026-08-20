@@ -21,11 +21,28 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
   reviewedCommit: 92d737abcef6cfe704781786da66b947445f0859
+  managerPrompt: Repair all three blocking recurring-mutation defects and add
+    regression coverage. For this_and_following update, apply start/end changes
+    to the successor series anchor and duration—not merely its first override—so
+    every generated successor slot follows the new schedule; preserve the
+    selected effective duration for a start-only change, derive/validate
+    duration consistently for end-only or both-boundary changes, and handle
+    timed/all-day kinds without changing stable old-segment identity.
+    Partition/remap future exceptions and exclusions only where the re-anchored
+    slot mapping remains compatible; otherwise return recurrence_conflict
+    atomically. Before splitting, resolve the selected effective occurrence and
+    enforce role visibility/authority, so a child cannot mutate an adults-only
+    occurrence and hidden state is not disclosed. Reject a selected cancelled or
+    excluded occurrence before any transaction with the stable
+    unavailable-occurrence error. Add focused tests for later successor slots
+    after start/end re-anchoring, child/adults visibility, cancelled and
+    excluded split targets, rollback, and unchanged prefix ownership; rerun all
+    stage-4 checks.
 findings:
   - id: S4-001
     severity: high
