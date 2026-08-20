@@ -7,7 +7,7 @@ scope:
   workItem: calendar-contract-v2
 status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
   - source scripts/env.sh && cd gateway && bun run typecheck
@@ -16,9 +16,9 @@ criteria:
   - Calendar scope versus mutation scope and stable occurrence identity
   - Golden fixture completeness with no V1 compatibility parsing
 loop:
-  state: reviewing
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: f27c3771-4880-47a9-8282-69b8ee9af810
   reviewedCommit: 5fc89c1a7d2557f071a50b506cb34fc466de47a8
 findings:
