@@ -80,6 +80,8 @@ evaluations:
     path: evaluations/stage-stage-6-bootstrap-review/evaluation.yaml
   - id: stage-stage-7-clients-review
     path: evaluations/stage-stage-7-clients-review/evaluation.yaml
+  - id: stage-stage-8-mobile-data-review
+    path: evaluations/stage-stage-8-mobile-data-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:

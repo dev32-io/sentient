@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: stage-stage-8-mobile-data-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-8-mobile-data
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+    --tests '*Calendar*'
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:compileDebugKotlin
+    :android:compileDebugKotlin
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Stateless repository and exhaustive SentientResult/StateFlow behavior
+  - One-call mixed-kind V2 reads, cursor propagation, and typed recurring
+    mutation use case
+  - Untouched platform UI compatibility and content-free diagnostics
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
