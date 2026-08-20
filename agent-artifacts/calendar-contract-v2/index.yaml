@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 41
+  revision: 42
 artifacts:
   - id: intent
     type: intent
@@ -66,9 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-bootstrap
-    tasks:
-      - calendar-v2-bootstrap
   - id: calendar-v2-web-client
     tasks:
       - calendar-v2-web-client
@@ -197,3 +194,20 @@ executionStages:
         security-sensitive domain behavior to untrusted inputs. A joint high
         review is needed to catch authority, error, paging, privacy, and
         wire-shape drift across both adapters after concurrent integration.
+  - id: stage-6-bootstrap
+    tasks:
+      - calendar-v2-bootstrap
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+        src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+      - source scripts/env.sh && bun run typecheck
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Immutable principal-to-capability authority and shared resolved
+          configuration
+        - Session/REST lifecycle and close behavior
+        - Nudge security and bounds remain unchanged
+        - No automatic destructive reset or production mutation
