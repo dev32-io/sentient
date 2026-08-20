@@ -6,7 +6,7 @@
 
 ## Acceptance
 
-- Fresh private and household stores create only the V2 schema at the schema-epoch path.
+- Fresh private and household stores create only the V2 schema at <cap.rootPath>/calendar-v2/calendar.db.
 - Old V1 calendar files are untouched and never read.
 - Revision compare-and-swap rejects stale writes without changing any row.
 - Injected failure rolls back base, successor, exception, exclusion, tag, and revision changes atomically.

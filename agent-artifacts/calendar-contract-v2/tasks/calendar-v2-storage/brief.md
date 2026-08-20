@@ -13,7 +13,7 @@ Capability-held calendar stores provide fresh V2 storage, revision compare-and-s
 ## Required Work
 
 - 1. Replace the calendar baseline schema with a fresh V2 schema containing integer event revision, canonical recurrence data, effective-event metadata, tags, exclusions, and one exception row per eventId/original occurrence key with rich sparse override JSON and cancellation state.
-- 2. Open V2 storage at a new schema-epoch path such as <cap.rootPath>/calendar-v2/calendar.db so an old calendar/calendar.db is ignored rather than migrated, read, reset, or deleted. Update the calendar E2E path helper and tests to the same location.
+- 2. Open V2 storage exactly at <cap.rootPath>/calendar-v2/calendar.db so an old <cap.rootPath>/calendar/calendar.db is ignored rather than migrated, read, reset, or deleted. Update the calendar E2E path helper and tests to the same exact location.
 - 3. Keep calendar-private and calendar-household class gates before path derivation, WAL/foreign-key setup, request/session close behavior, and user/household root isolation.
 - 4. Replace whole-event compatibility overloads with explicit V2 persistence operations. Expose a capability-held transaction interface that can read one base event and child state, insert a successor, compare-and-swap a base revision, replace partitioned exceptions/exclusions/tags, delete a segment, and commit or rollback as one unit.
 - 5. Assign revision 1 on create and increment exactly once for each successful mutation of a surviving segment. A supplied stale expectedRevision returns conflict before any write. Do not use updatedAt as the compare-and-swap token.
@@ -43,5 +43,5 @@ Deliver this contribution for integration in stage calendar-v2-storage.
 
 ## Interfaces and Dependencies
 
-- Produces openCalendarStore/openCalendarPersistence over a V2 capability root and an internal transaction contract consumed by query and mutation services.
+- Produces openCalendarStore/openCalendarPersistence at <cap.rootPath>/calendar-v2/calendar.db and an internal transaction contract consumed by query and mutation services.
 - Consumes V2 CalendarEvent, exceptions, exclusions, revisions, CalendarConfig, and immutable Capability values.
