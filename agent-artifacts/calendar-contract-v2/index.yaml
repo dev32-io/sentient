@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 43
+  revision: 44
 artifacts:
   - id: intent
     type: intent
@@ -66,9 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-mobile-data
-    tasks:
-      - calendar-v2-mobile-data
   - id: stage-1-contracts
     tasks:
       - calendar-v2-contracts
@@ -225,3 +222,20 @@ executionStages:
         - No PATCH/DELETE or V1 wire fallback
         - Source-level whole-series adapters preserve untouched UI compilation
         - Calendar payload and token privacy in client diagnostics
+  - id: stage-8-mobile-data
+    tasks:
+      - calendar-v2-mobile-data
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+        --tests '*Calendar*'
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin
+      - source scripts/env.sh && git diff --check
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Stateless repository and exhaustive SentientResult/StateFlow behavior
+        - One-call mixed-kind V2 reads, cursor propagation, and typed recurring
+          mutation use case
+        - Untouched platform UI compatibility and content-free diagnostics
