@@ -76,8 +76,24 @@ interface CalendarRepository {
 
     /** Whole-series adapter retained for existing repository callers. */
     suspend fun delete(id: String, expectedRevision: Int? = null): SentientResult<Unit> =
+        delete(id, scope = null, expectedRevision = expectedRevision)
+
+    /** Whole-series delete adapter for callers holding the selected event. */
+    suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(
+        id = event.persistedId,
+        scope = event.scope,
+        expectedRevision = event.revision.takeIf { it > 0 },
+    )
+
+    /** Whole-series delete adapter with explicit mutation metadata. */
+    suspend fun delete(
+        id: String,
+        scope: CalendarScope?,
+        expectedRevision: Int? = null,
+    ): SentientResult<Unit> =
         when (val result = mutate(id, CalendarMutationCommand.delete(
             applyTo = io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
+            scope = scope?.takeUnless { it == CalendarScope.ALL },
             expectedRevision = expectedRevision,
         ))) {
             is SentientResult.Success -> SentientResult.Success(Unit)

@@ -84,7 +84,7 @@ class CalendarViewModel(
 
     fun delete(event: CalendarEvent) {
         if (_ui.value.saving) return
-        mutate { deleteCalendar.delete(event.persistedId) }
+        mutate { deleteCalendar.delete(event) }
     }
 
     private fun mutate(operation: suspend () -> SentientResult<Any>) {

@@ -93,7 +93,11 @@ interface UpdateCalendarUseCase {
 }
 
 interface DeleteCalendarUseCase {
+    /** Existing id-only adapter retained for platform source compatibility. */
     suspend fun delete(id: String): SentientResult<Unit>
+
+    /** Carries the selected event's resource scope and revision to the mutation. */
+    suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(event.persistedId)
 }
 
 /** Stateless repository plus use-case-owned observable read state. */
@@ -203,6 +207,8 @@ class CalendarUseCases(private val repository: CalendarRepository) :
             is SentientResult.Failure -> result
             is SentientResult.Loading -> SentientResult.Loading()
         }
+
+    override suspend fun delete(event: CalendarEvent): SentientResult<Unit> = repository.delete(event)
 }
 
 typealias GetCalendarEventUseCase = GetCalendarUseCase

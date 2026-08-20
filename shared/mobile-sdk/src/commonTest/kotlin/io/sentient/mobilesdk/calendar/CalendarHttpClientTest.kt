@@ -249,7 +249,8 @@ class CalendarHttpClientTest {
         val updated = withContext(Dispatchers.Default) { client(engine).update(event) }
         assertEquals(4, assertIs<AuthResult.Success<CalendarEvent>>(updated).value.revision)
         assertIs<AuthResult.Success<Unit>>(withContext(Dispatchers.Default) { client(engine).delete("event-example") })
-        assertEquals(listOf("POST", "POST"), methods)
+        assertIs<AuthResult.Success<Unit>>(withContext(Dispatchers.Default) { client(engine).delete(event) })
+        assertEquals(listOf("POST", "POST", "POST"), methods)
         assertEquals(
             "{\"operation\":\"update\",\"applyTo\":\"entire_series\",\"changes\":{\"title\":\"Example event\",\"description\":null,\"start\":\"2026-08-05\",\"end\":null,\"visibility\":\"everyone\",\"importance\":\"normal\",\"group\":null,\"tags\":[],\"recurrence\":null},\"scope\":\"private\",\"expectedRevision\":3}",
             bodies[0],
@@ -257,6 +258,10 @@ class CalendarHttpClientTest {
         assertEquals(
             "{\"operation\":\"delete\",\"applyTo\":\"entire_series\"}",
             bodies[1],
+        )
+        assertEquals(
+            "{\"operation\":\"delete\",\"applyTo\":\"entire_series\",\"scope\":\"private\",\"expectedRevision\":3}",
+            bodies[2],
         )
     }
 

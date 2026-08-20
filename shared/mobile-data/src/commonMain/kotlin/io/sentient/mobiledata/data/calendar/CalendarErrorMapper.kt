@@ -33,7 +33,14 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
     is AuthError.Unknown -> SentientError.Unknown(
         userMessage = "Something went wrong. Please try again.",
     )
-    is AuthError.Server -> when (calendarErrorCode(body)) {
+    is AuthError.Server -> if (status == 401) {
+        // CalendarHttpClient's shared HTTP mapper represents 401 as Server;
+        // recognize the status here without retaining or surfacing its body.
+        SentientError.Auth(
+            userMessage = "Your session expired. Please sign in again.",
+            terminal = true,
+        )
+    } else when (calendarErrorCode(body)) {
         CalendarErrorCode.CONFLICT -> SentientError.Protocol(MSG_CONFLICT)
         CalendarErrorCode.RECURRENCE_CONFLICT -> SentientError.Protocol(MSG_RECURRENCE_CONFLICT)
         CalendarErrorCode.FORBIDDEN -> SentientError.Protocol(MSG_FORBIDDEN)

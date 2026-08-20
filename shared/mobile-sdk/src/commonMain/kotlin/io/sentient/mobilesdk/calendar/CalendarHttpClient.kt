@@ -184,7 +184,24 @@ open class CalendarHttpClient(
         }
     }
 
+    /** Selected-event adapter preserves its writable scope and optimistic revision. */
+    open suspend fun delete(event: CalendarEvent): AuthResult<Unit> = safeSettingsCall(log) {
+        when (val result = mutate(
+            event.persistedId,
+            CalendarMutationCommand.delete(
+                applyTo = CalendarMutationScope.ENTIRE_SERIES,
+                scope = event.scope.takeUnless { it == CalendarScope.ALL },
+                expectedRevision = event.revision.takeIf { it > 0 },
+            ),
+        )) {
+            is AuthResult.Failure -> result
+            is AuthResult.Success -> AuthResult.Success(Unit)
+        }
+    }
+
     open suspend fun deleteEvent(id: String): AuthResult<Unit> = delete(id)
+
+    open suspend fun deleteEvent(event: CalendarEvent): AuthResult<Unit> = delete(event)
 
     private fun CalendarEvent.toChanges() = CalendarChanges(
         title = title,
