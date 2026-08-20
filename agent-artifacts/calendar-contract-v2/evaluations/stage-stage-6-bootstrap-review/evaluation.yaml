@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: stage-stage-6-bootstrap-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-6-bootstrap
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+    src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+  - source scripts/env.sh && bun run typecheck
+criteria:
+  - Immutable principal-to-capability authority and shared resolved configuration
+  - Session/REST lifecycle and close behavior
+  - Nudge security and bounds remain unchanged
+  - No automatic destructive reset or production mutation
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
