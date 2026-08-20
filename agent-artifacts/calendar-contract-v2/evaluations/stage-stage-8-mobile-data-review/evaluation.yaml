@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-8-mobile-data
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
     --tests '*Calendar*'
@@ -20,9 +20,9 @@ criteria:
     mutation use case
   - Untouched platform UI compatibility and content-free diagnostics
 loop:
-  state: fixing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: 187996dd-1067-4e67-a0b2-b45a81b91a34
   reviewedCommit: 7ad472858616fd439c90d0038d143c27d2a707a0
   managerPrompt: "Complete CAL-MOBILE-001 without editing iOS/Android UI or
@@ -43,23 +43,22 @@ loop:
 findings:
   - id: CAL-MOBILE-001
     severity: high
-    status: open
+    status: resolved
     criterion: Whole-series delete convenience preserves selected event scope and
       expected revision for current Android/iOS callers
-    location: ios/App/Settings/Calendar/CalendarViewModel.swift:167-175;
-      shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt:199-208
-    summary: "Repair is partial: iOS still discards the selected event scope and
-      revision and calls the unsafe id-only delete adapter."
-    blocking: true
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt
+    summary: The id-only adapter resolves exact event scope/revision before mutation
+      and fails closed when it cannot do so; platform UI sources remain
+      unchanged in the net workflow diff.
+    blocking: false
   - id: CAL-MOBILE-002
     severity: low
     status: resolved
     criterion: Calendar HTTP 401 failures map to stable authentication failures
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/data/calendar/CalendarErrorMapper.kt:36-42
-    summary: 401 Server responses now map to a stable content-free authentication
-      failure.
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/data/calendar/CalendarErrorMapper.kt
+    summary: 401 responses map to a stable content-free authentication failure.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-8-mobile-data-review/manifest.yaml
