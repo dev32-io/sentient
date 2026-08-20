@@ -1132,6 +1132,141 @@ function updateThisAndFollowing(
   return result;
 }
 
+function deleteThisAndFollowing(
+  command: Extract<MutationCommand, { operation: "delete"; applyTo: "this_and_following" }>,
+  context: CalendarMutationContext,
+): CalendarMutationResult<CalendarMutationValue> {
+  if (isAborted(context.signal)) return aborted();
+  let domainFailure: CalendarError | undefined;
+  let recurrenceConflict = false;
+  const result = context.persistence.transaction((tx) => {
+    const current = tx.readEvent(command.eventId as CalendarEventId);
+    if (!current.ok) return current;
+    const event = current.value;
+    if (command.expectedRevision !== undefined && Number(event.revision) !== Number(command.expectedRevision)) {
+      return { ok: false, error: "conflict" as const };
+    }
+    if (!event.recurrence) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const originalParsed = normalizeCalendarTime(command.originalStart, occurrenceTimeConfig(event, context.config));
+    if (!originalParsed.ok) {
+      domainFailure = originalParsed.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const source: StoredCalendarEvent = {
+      ...event,
+      exdates: event.exclusions,
+      exceptions: event.exceptions,
+      tags: new Set(event.tags),
+    };
+    // Resolve against generated identity, not the displayed start of a moved
+    // exception. This also gives the splitter the canonical timezone-bearing
+    // slot used for COUNT/UNTIL arithmetic.
+    const generated = enumerateGeneratedSlots(source, recurrenceLimits(context.config));
+    if (!generated.ok) {
+      domainFailure = occurrenceMembershipError(generated.error).error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const requestedKey = canonicalOriginalKey(originalParsed.value);
+    const selected = generated.value.find((slot) => canonicalOriginalKey(slot.originalStart) === requestedKey);
+    if (!selected) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const selectedKey = canonicalOriginalKey(selected.originalStart);
+    const selectedException = event.exceptions.find(
+      (value) => canonicalOriginalKey(value.occurrence) === selectedKey,
+    );
+    if (
+      event.exclusions.some((value) => canonicalOriginalKey(value) === selectedKey) ||
+      selectedException?.cancelled ||
+      (context.persistence.role !== undefined && !isAdult(context.persistence.role) && selectedException?.visibility === "adults")
+    ) {
+      // Cancellation and effective visibility are deliberately indistinguishable
+      // from a missing occurrence to callers without authority to inspect it.
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const split = splitRecurrence(source, selected.originalStart, undefined, recurrenceLimits(context.config));
+    if (!split.ok) {
+      domainFailure = splitMutationError(split.error);
+      recurrenceConflict = split.error.code === "recurrence_conflict";
+      return { ok: false, error: "invalid" as const };
+    }
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+
+    if (!split.value.prefix) {
+      // An empty prefix is not a persisted segment. The cascade removes all
+      // selected/future child ownership and, importantly, creates no successor.
+      const deleted = tx.deleteSegment(event.id);
+      if (!deleted.ok) return deleted;
+      if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+      return {
+        ok: true,
+        value: { operation: "delete", appliedTo: "this_and_following", eventId: event.id } as CalendarMutationValue,
+      };
+    }
+
+    // CAS is the one and only revision increment for a retained prefix.
+    const revision = tx.compareAndSwapRevision(event.id, event.revision);
+    if (!revision.ok) return revision;
+    const now = new Date().toISOString() as UtcInstant;
+    const {
+      exceptions: _exceptions,
+      exclusions: _exclusions,
+      tags: _tags,
+      revision: _revision,
+      description: _description,
+      end: _end,
+      recurrence: _recurrence,
+      group: _group,
+      ...base
+    } = event;
+    const prefix: CalendarPersistenceBaseEvent = {
+      ...base,
+      id: event.id,
+      revision: revision.value,
+      start: split.value.prefix.start,
+      ...(event.end ? { end: event.end } : {}),
+      recurrence: split.value.prefix.recurrence,
+      updatedAt: now,
+    };
+    const replacedBase = tx.replaceBaseEvent(prefix);
+    if (!replacedBase.ok) return replacedBase;
+    const children = tx.replaceChildren(event.id, {
+      exceptions: split.value.state.prefix.exceptions,
+      exclusions: split.value.state.prefix.exdates,
+      tags: event.tags,
+    });
+    if (!children.ok) return children;
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    return {
+      ok: true,
+      value: {
+        operation: "delete",
+        appliedTo: "this_and_following",
+        eventId: event.id,
+        resultingRevision: revision.value,
+      } as unknown as CalendarMutationValue,
+    };
+  });
+  if (!result.ok) {
+    if (isAborted(context.signal)) return aborted();
+    if (domainFailure) return { ok: false, error: domainFailure };
+    if (recurrenceConflict)
+      return failure(
+        "recurrence_conflict",
+        "the requested recurrence would orphan retained exception state; no changes were made.",
+      );
+    return storeError(result.error);
+  }
+  return result;
+}
+
 function deleteWholeSeries(
   command: Extract<MutationCommand, { operation: "delete"; applyTo: "entire_series" }>,
   context: CalendarMutationContext,
@@ -1186,7 +1321,7 @@ export function mutateCalendarEvent(
   }
   if (value.applyTo === "this_and_following") {
     if (value.operation === "update") return updateThisAndFollowing(value, context);
-    return invalidMutationScope("this_and_following delete is not supported; use this_occurrence or entire_series.");
+    return deleteThisAndFollowing(value, context);
   }
   if (value.operation === "update") return updateWholeSeries(value, context, scope);
   return deleteWholeSeries(value, context);

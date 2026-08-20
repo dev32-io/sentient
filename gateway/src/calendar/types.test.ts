@@ -120,6 +120,8 @@ describe("calendar V2 contracts", () => {
     expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "update", body: { id: "event-example", patch: { title: "old" } } }).success).toBe(false);
     expect(calendarMutationResultSchema.safeParse({ operation: "update", appliedTo: "entire_series", eventId: "event-example" }).success).toBe(false);
     expect(calendarMutationResultSchema.safeParse({ operation: "delete", appliedTo: "entire_series", eventId: "event-example", resultingRevision: 4 }).success).toBe(false);
+    expect(calendarMutationResultSchema.safeParse({ operation: "delete", appliedTo: "this_and_following", eventId: "event-example", resultingRevision: 4 }).success).toBe(true);
+    expect(calendarMutationResultSchema.safeParse({ operation: "delete", appliedTo: "this_and_following", eventId: "event-example" }).success).toBe(true);
   });
 
   test("admin is adult-equivalent but has no separate bypass", () => {

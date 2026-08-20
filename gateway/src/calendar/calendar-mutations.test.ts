@@ -399,6 +399,110 @@ describe("calendar mutation boundary", () => {
     failing.close();
   });
 
+  it("truncates a COUNT series by generated identity and retains only past child state", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "daily", count: 5 }, tags: ["keep"] }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const cancelled = { kind: "timed", instant: "2026-01-06T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const selected = { kind: "timed", instant: "2026-01-07T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const excludedFuture = { kind: "timed", instant: "2026-01-08T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceChildren(eventId, {
+      exceptions: [{ occurrence: cancelled, cancelled: true }, { occurrence: selected, start: { kind: "timed", instant: "2026-01-10T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime }],
+      exclusions: [excludedFuture],
+      tags: ["keep"],
+    }))).toEqual({ ok: true, value: undefined });
+
+    const result = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z", expectedRevision: 1,
+    }), persistence, config);
+    expect(result).toEqual({ ok: true, value: { operation: "delete", appliedTo: "this_and_following", eventId, resultingRevision: 2 } } as never);
+    expect(persistence.read(eventId)).toMatchObject({
+      ok: true,
+      value: { revision: 2, recurrence: { rule: { count: 2 } }, exceptions: [{ cancelled: true }], exclusions: [], tags: ["keep"] },
+    });
+    const query = createCalendarQueryService({ private: persistence, role: "adult", config });
+    const listed = query.listComplete({ from: "2026-01-01", to: "2026-01-31" });
+    expect(listed.ok && listed.value.map((value) => value.originalStart)).toEqual(["2026-01-05T14:00:00.000Z"] as never);
+    persistence.close();
+  });
+
+  it("truncates UNTIL recurrence at the previous generated slot", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "weekly", weekdays: ["monday"], until: "2026-01-19" as never } }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const result = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-12T14:00:00.000Z",
+    }), persistence, config);
+    expect(result).toEqual({ ok: true, value: expect.objectContaining({ appliedTo: "this_and_following", resultingRevision: 2 }) });
+    const retained = persistence.read(eventId);
+    expect(retained).toMatchObject({ ok: true, value: { revision: 2 } });
+    if (retained.ok && retained.value.recurrence) {
+      expect(retained.value.recurrence.rule.until).toBeDefined();
+      const slots = enumerateGeneratedSlots({ start: retained.value.start, recurrence: retained.value.recurrence });
+      expect(slots.ok && slots.value.map((slot) => slot.originalStart)).toEqual([
+        { kind: "timed", instant: "2026-01-05T14:00:00.000Z", timeZoneId: "America/Toronto" },
+      ] as never);
+    }
+    persistence.close();
+  });
+
+  it("deletes the complete segment at the first slot and leaves no successor", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "weekly", weekdays: ["monday"], count: 3 } }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const result = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-05T14:00:00.000Z", expectedRevision: 1,
+    }), persistence, config);
+    expect(result).toEqual({ ok: true, value: { operation: "delete", appliedTo: "this_and_following", eventId } });
+    expect(persistence.read(eventId)).toEqual({ ok: false, error: "not-found" });
+    expect(persistence.readBaseCandidates(10, { allDayFrom: "2026-01-01", allDayTo: "2026-01-31" })).toEqual({ ok: true, value: { ids: [], overflow: false } });
+    persistence.close();
+  });
+
+  it("rejects unavailable or unauthorized targets and rolls back failed truncation", () => {
+    const base = root();
+    const writer = openCalendarPersistence(cap(base), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "daily", count: 3 } }), writer, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const cancelled = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_occurrence", originalStart: "2026-01-06T14:00:00.000Z",
+    }), writer, config);
+    expect(cancelled.ok).toBe(true);
+    const unavailable = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-06T14:00:00.000Z",
+    }), writer, config);
+    expect(unavailable).toMatchObject({ ok: false, error: { code: "occurrence_not_found" } });
+    const stale = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z", expectedRevision: 1,
+    }), writer, config);
+    expect(stale).toMatchObject({ ok: false, error: { code: "conflict" } });
+    expect(writer.read(eventId)).toMatchObject({ ok: true, value: { revision: 2, recurrence: { rule: { count: 3 } } } });
+    writer.close();
+
+    const failing = openCalendarPersistence(cap(base), config, { fault: (operation) => { if (operation === "replace-tags") throw new Error("synthetic fault"); } });
+    const rolledBack = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z", expectedRevision: 2,
+    }), failing, config);
+    expect(rolledBack).toMatchObject({ ok: false, error: { code: "io_error" } });
+    expect(failing.read(eventId)).toMatchObject({ ok: true, value: { revision: 2, recurrence: { rule: { count: 3 } } } });
+    failing.close();
+
+    const household = openCalendarPersistence(cap(base, "calendar-household", "child"), config);
+    const denied = mutateCalendarEvent(mutation({
+      operation: "delete", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z", scope: "household",
+    }), household, config);
+    expect(denied).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    household.close();
+  });
+
   it("rejects invalid scopes and aborts before writing without logging content", () => {
     const persistence = openCalendarPersistence(cap(root()), config);
     const controller = new AbortController();

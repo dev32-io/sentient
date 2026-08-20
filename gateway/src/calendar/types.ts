@@ -408,13 +408,20 @@ const survivingMutationResultSchema = z.object({
   successorEventId: z.string().min(1).optional(),
   resultingRevision: revisionSchema,
 }).strict();
-const deletionMutationResultSchema = z.object({
-  operation: z.literal("delete"),
-  appliedTo: calendarMutationScopeSchema,
-  eventId: z.string().min(1),
-  successorEventId: z.string().min(1).optional(),
-}).strict();
-export const calendarMutationResultSchema = z.discriminatedUnion("operation", [
+const deletionMutationResultSchema = z.union([
+  z.object({
+    operation: z.literal("delete"),
+    appliedTo: z.literal("this_and_following"),
+    eventId: z.string().min(1),
+    resultingRevision: revisionSchema.optional(),
+  }).strict(),
+  z.object({
+    operation: z.literal("delete"),
+    appliedTo: z.enum(["this_occurrence", "entire_series"]),
+    eventId: z.string().min(1),
+  }).strict(),
+]);
+export const calendarMutationResultSchema = z.union([
   survivingMutationResultSchema,
   deletionMutationResultSchema,
 ]);
