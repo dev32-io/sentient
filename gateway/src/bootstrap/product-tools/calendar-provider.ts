@@ -1,17 +1,25 @@
 import { z } from "zod";
 import type { Capability } from "../../access/capability.js";
-import type {
-  StoredCalendarEvent,
-  CalendarEventId,
-  CalendarEventPatch,
-  CalendarListWindow,
-  CalendarScope,
-  CalendarStore,
-  CalendarTime,
-  Occurrence,
+import { createCalendarEvent, mutateCalendarEvent } from "../../calendar/calendar-mutations.js";
+import { CalendarQueryService } from "../../calendar/calendar-query.js";
+import type { CalendarPersistence } from "../../calendar/calendar-store.js";
+import {
+  normalizeCalendarEventTimes,
+  normalizeCalendarQuery,
+  validateCalendarInputLimits,
+} from "../../calendar/calendar-temporal.js";
+import {
+  type CalendarConfig,
+  type CalendarMutationCommand,
+  type CalendarReadScope,
+  type CalendarScope,
+  calendarCreateInputSchema,
+  calendarOccurrenceChangesSchema,
+  calendarReadScopeSchema,
+  calendarTimeInputSchema,
+  calendarUpdateChangesSchema,
+  calendarWriteScopeSchema,
 } from "../../calendar/types.js";
-import { parseRRule, wireCalendarTimeSchema, wireRRuleSchema } from "../../calendar/types.js";
-import { isAdult } from "../../calendar/types.js";
 import type { NativeToolRunner } from "../../tools/tool-broker.js";
 import type { ToolResult } from "../../tools/tool-types.js";
 import type { ProductToolProvider } from "../product-tool-providers.js";
@@ -28,252 +36,209 @@ export const CALENDAR_TOOL_SETTINGS = [
   { name: "calendar_search", description: `Search durable dated/timed calendar events. ${schedulerFence}`, tier: READ },
   {
     name: "calendar_create",
-    description:
-      "Create a durable dated/timed calendar event. Do not file relative reminders, recurring briefings, or interval reminders here; those belong to a future scheduler.",
+    description: `Create a durable dated/timed calendar event. ${schedulerFence}`,
     tier: WRITE,
   },
   {
     name: "calendar_update",
-    description:
-      "Update a durable dated/timed calendar event. Do not file relative reminders, recurring briefings, or interval reminders here; those belong to a future scheduler.",
+    description: `Update a durable dated/timed calendar event. ${schedulerFence}`,
     tier: WRITE,
   },
   {
     name: "calendar_delete",
-    description:
-      "Delete a durable dated/timed calendar event. Do not use the calendar for relative reminders, recurring briefings, or interval reminders; those belong to a future scheduler.",
+    description: `Delete a durable dated/timed calendar event. ${schedulerFence}`,
     tier: CONFIRM,
   },
 ] as const;
 
 export interface CalendarProductToolConfig extends Readonly<Record<string, unknown>> {
-  readonly privateStore?: CalendarStore;
+  /** V2 adapters use persistence handles and the shared domain services only. */
+  readonly privatePersistence?: CalendarPersistence;
+  readonly householdPersistence?: CalendarPersistence;
+  readonly calendarConfig?: CalendarConfig;
+  readonly queryService?: CalendarQueryService;
   readonly privateCap?: Capability;
-  readonly householdStore?: CalendarStore;
   readonly householdCap?: Capability;
-  // Transitional aliases for callers outside the bootstrap seam.
-  readonly store?: CalendarStore;
-  readonly calendarStore?: CalendarStore;
-  readonly capability?: Capability;
-  readonly cap?: Capability;
 }
 
-const time = wireCalendarTimeSchema;
-const scope = z.enum(["private", "household"]);
-const recurrenceSchema = z
-  .object({ rrule: z.string().min(1), rule: wireRRuleSchema })
-  .strict()
-  .superRefine((recurrence, ctx) => {
-    const parsed = parseRRule(recurrence.rrule);
-    if (!parsed.ok) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid recurrence rule" });
-      return;
-    }
-    const rule = parsed.value;
-    if (
-      recurrence.rule.freq !== rule.freq ||
-      recurrence.rule.interval !== rule.interval ||
-      recurrence.rule.count !== rule.count ||
-      (recurrence.rule.until === undefined) !== (rule.until === undefined) ||
-      (recurrence.rule.until !== undefined &&
-        rule.until !== undefined &&
-        new Date(recurrence.rule.until).getTime() !== new Date(rule.until).getTime()) ||
-      JSON.stringify(recurrence.rule.byDay) !== JSON.stringify(rule.byDay)
-    ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "raw and parsed recurrence rules disagree" });
-    }
-  });
-const eventFields = {
-  title: z.string().min(1),
-  description: z.string().optional(),
-  start: time,
-  end: time.optional(),
-  recurrence: recurrenceSchema.optional(),
-  visibility: z.enum(["everyone", "adults"]).default("everyone"),
-  importance: z.enum(["normal", "important", "pinned"]).default("normal"),
-  group: z.string().optional(),
-  tags: z.array(z.string()).default([]),
-  notificationPolicy: z.record(z.unknown()).optional(),
-  scope,
+const time = calendarTimeInputSchema;
+const readScope = calendarReadScopeSchema;
+const writeScope = calendarWriteScopeSchema;
+const filters = {
+  group: z.string().min(1).optional(),
+  tags: z.array(z.string()).optional(),
+  importance: z.enum(["normal", "important", "pinned"]).optional(),
 };
-const createSchema = z.object(eventFields).strict();
-const updateSchema = z
-  .object({
-    id: z.string().min(1),
-    scope: scope.optional(),
-    patch: z.object(eventFields).partial().strict().or(z.object(eventFields).partial().strict()),
-  })
-  .strict();
-const updateAlternativeSchema = z
-  .object({ id: z.string().min(1), scope: scope.optional(), event: z.object(eventFields).partial().strict() })
-  .strict();
-const idSchema = z.object({ id: z.string().min(1), scope: scope.optional() }).strict();
-const listSchema = z
-  .object({
-    from: time,
-    to: time,
-    scope: scope.optional(),
-    group: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    importance: z.enum(["normal", "important", "pinned"]).optional(),
-  })
-  .strict();
+
+const listSchema = z.object({ from: time, to: time, scope: readScope.optional(), ...filters }).strict();
 const searchSchema = z
+  .object({ query: z.string().min(1), from: time, to: time, scope: readScope.optional(), ...filters })
+  .strict();
+const getSchema = z
+  .object({ eventId: z.string().min(1), originalStart: time.optional(), scope: readScope.optional() })
+  .strict();
+const createSchema = z
   .object({
-    query: z.string().min(1),
-    scope: scope.optional(),
-    from: time.optional(),
-    to: time.optional(),
-    group: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    importance: z.enum(["normal", "important", "pinned"]).optional(),
+    title: z.string().min(1),
+    description: z.string().min(1).optional(),
+    start: time,
+    end: time.optional(),
+    recurrence: calendarCreateInputSchema.shape.recurrence,
+    visibility: z.enum(["everyone", "adults"]).default("everyone"),
+    importance: z.enum(["normal", "important", "pinned"]).default("normal"),
+    group: z.string().min(1).optional(),
+    tags: z.array(z.string()).default([]),
+    scope: writeScope.optional(),
   })
   .strict();
-
-function defaultSearchWindows(): CalendarListWindow[] {
-  // Search has no caller-supplied date bounds, but recurrence expansion still
-  // needs a bounded window. Query both time kinds so timed events are included;
-  // one-off events remain searchable across the supported wire date range.
-  return [
-    {
-      from: { kind: "all-day", date: "0001-01-01" },
-      to: { kind: "all-day", date: "9999-12-31" },
-    },
-    {
-      from: { kind: "timed", instant: "0001-01-01T00:00:00.000Z" as never, timeZoneId: "UTC" as never },
-      to: { kind: "timed", instant: "9999-12-31T23:59:59.999Z" as never, timeZoneId: "UTC" as never },
-    },
-  ];
+const mutationTarget = {
+  eventId: z.string().min(1),
+  originalStart: time.optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  scope: writeScope.optional(),
+};
+const updateSchemaBase = z.discriminatedUnion("applyTo", [
+  z
+    .object({ ...mutationTarget, applyTo: z.literal("this_occurrence"), changes: calendarOccurrenceChangesSchema })
+    .strict(),
+  z
+    .object({ ...mutationTarget, applyTo: z.literal("this_and_following"), changes: calendarUpdateChangesSchema })
+    .strict(),
+  z.object({ ...mutationTarget, applyTo: z.literal("entire_series"), changes: calendarUpdateChangesSchema }).strict(),
+]);
+const deleteSchemaBase = z.discriminatedUnion("applyTo", [
+  z.object({ ...mutationTarget, applyTo: z.literal("this_occurrence") }).strict(),
+  z.object({ ...mutationTarget, applyTo: z.literal("this_and_following") }).strict(),
+  z.object({ ...mutationTarget, applyTo: z.literal("entire_series") }).strict(),
+]);
+function validateMutationTarget(value: { applyTo: string; originalStart?: unknown }, ctx: z.RefinementCtx): void {
+  if (value.applyTo === "entire_series" && value.originalStart !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["originalStart"],
+      message: "must be omitted for entire_series",
+    });
+  }
+  if (value.applyTo !== "entire_series" && value.originalStart === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["originalStart"],
+      message: "is required for occurrence-scoped mutations",
+    });
+  }
 }
+const updateSchema = updateSchemaBase.superRefine(validateMutationTarget);
+const deleteSchema = deleteSchemaBase.superRefine(validateMutationTarget);
 
-function result(value: unknown, isError = false): ToolResult {
-  return { content: JSON.stringify(value), isError };
-}
 function failure(code: string, message: string): ToolResult {
-  return result({ outcome: "error", code, message }, true);
+  return { content: JSON.stringify({ outcome: "error", code, message }), isError: true };
+}
+function aborted(): ToolResult {
+  return failure("aborted", "The calendar operation was cancelled; retry it.");
+}
+function invalidArguments(error: z.ZodError): ToolResult {
+  const diagnostics = error.issues.map((issue) => {
+    const path = issue.path.length
+      ? issue.path.map((part) => (typeof part === "number" ? "item" : part)).join(".")
+      : "arguments";
+    // Zod's unrecognized_keys diagnostic includes the supplied key names. Do
+    // not echo those names: model input can contain private calendar content.
+    const message = issue.code === "unrecognized_keys" ? "unsupported field; remove it" : issue.message;
+    return `${path}: ${message}`;
+  });
+  return failure("invalid_arguments", `Correct the calendar arguments. ${diagnostics.join("; ")}`);
 }
 function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | ToolResult {
-  const p = schema.safeParse(args);
-  return p.success ? p.data : failure("invalid-arguments", p.error.issues[0]?.message ?? "invalid arguments");
+  const parsed = schema.safeParse(args);
+  return parsed.success ? parsed.data : invalidArguments(parsed.error);
 }
-function wire(event: StoredCalendarEvent | Occurrence, scope: CalendarScope): Record<string, unknown> {
-  const occurrence = "occurrenceId" in event ? event : undefined;
-  return {
-    id: occurrence?.occurrenceId ?? event.id,
-    ...(occurrence ? { baseEventId: occurrence.baseEventId, occurrenceId: occurrence.occurrenceId, occurrenceStart: occurrence.occurrenceStart, ...(occurrence.occurrenceEnd !== undefined ? { occurrenceEnd: occurrence.occurrenceEnd } : {}) } : {}),
-    scope,
-    title: event.title,
-    ...(event.description !== undefined ? { description: event.description } : {}),
-    start: event.start,
-    ...(event.end !== undefined ? { end: event.end } : {}),
-    ...(event.recurrence !== undefined ? { recurrence: event.recurrence } : {}),
-    ...(event.exdates !== undefined ? { exdates: event.exdates } : {}),
-    ...(event.exceptions !== undefined ? { exceptions: event.exceptions } : {}),
-    visibility: event.visibility,
-    importance: event.importance,
-    ...(event.group !== undefined ? { group: event.group } : {}),
-    tags: [...event.tags],
-    ...(event.notification !== undefined ? { notificationPolicy: event.notification } : {}),
-    createdAt: event.createdAt,
-    updatedAt: event.updatedAt,
-  };
+function asResult(value: unknown, config: CalendarConfig): ToolResult {
+  let content: string;
+  try {
+    content = JSON.stringify(value);
+  } catch {
+    return failure("io_error", "The calendar result could not be serialized; retry the request.");
+  }
+  if (content.length > config.output.maxResultChars) {
+    return failure(
+      "result_too_large",
+      "The complete calendar result is too large. Narrow from/to or add scope, group, tags, or importance and retry.",
+    );
+  }
+  return { content, isError: false };
 }
-function storeFailure(error: string): ToolResult {
-  return failure(error, `Calendar operation failed: ${error}.`);
+function domainResult(
+  value:
+    | { readonly ok: true; readonly value: unknown }
+    | { readonly ok: false; readonly error: { code: string; message: string } },
+  config: CalendarConfig,
+): ToolResult {
+  return value.ok ? asResult(value.value, config) : failure(value.error.code, value.error.message);
 }
-function calendarTime(value: unknown): CalendarTime {
-  return value as CalendarTime;
-}
-function validateRecurrence(value: { rrule: string; rule?: unknown } | undefined): ToolResult | null {
-  if (!value) return null;
-  const parsed = parseRRule(value.rrule);
-  return parsed.ok ? null : failure("malformed-rrule", "The recurrence rule is malformed.");
-}
-const calendarTimeParameter = {
-  oneOf: [
-    {
-      type: "object",
-      properties: {
-        kind: { type: "string", enum: ["timed"] },
-        instant: { type: "string", format: "date-time" },
-        timeZoneId: { type: "string" },
-      },
-      required: ["kind", "instant", "timeZoneId"],
-      additionalProperties: false,
-    },
-    {
-      type: "object",
-      properties: {
-        kind: { type: "string", enum: ["all-day"] },
-        date: { type: "string", format: "date" },
-      },
-      required: ["kind", "date"],
-      additionalProperties: false,
-    },
-  ],
-};
-const recurrenceRuleParameter = {
-  type: "object",
-  properties: {
-    freq: { type: "string", enum: ["DAILY", "WEEKLY", "MONTHLY", "YEARLY"] },
-    interval: { type: "integer", minimum: 1 },
-    count: { type: "integer", minimum: 1 },
-    until: { type: "string", format: "date-time" },
-    byDay: { type: "array", items: { type: "string", enum: ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] } },
-  },
-  required: ["freq"],
-  additionalProperties: false,
+
+const timeParameter = {
+  type: "string",
+  description: "YYYY, YYYY-MM, YYYY-MM-DD, or an RFC 3339 time with an offset",
 };
 const recurrenceParameter = {
   type: "object",
-  properties: { rrule: { type: "string" }, rule: recurrenceRuleParameter },
-  required: ["rrule", "rule"],
+  properties: {
+    frequency: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"] },
+    interval: { type: "integer", minimum: 1 },
+    weekdays: {
+      type: "array",
+      items: { type: "string", enum: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] },
+    },
+    count: { type: "integer", minimum: 1 },
+    until: timeParameter,
+  },
+  required: ["frequency"],
   additionalProperties: false,
 };
 const visibilityParameter = { type: "string", enum: ["everyone", "adults"] };
 const importanceParameter = { type: "string", enum: ["normal", "important", "pinned"] };
-const scopeParameter = { type: "string", enum: ["private", "household"] };
-const calendarEventParameters = {
-  title: { type: "string" },
-  description: { type: "string" },
-  start: calendarTimeParameter,
-  end: calendarTimeParameter,
-  recurrence: recurrenceParameter,
-  visibility: visibilityParameter,
-  importance: importanceParameter,
+const readScopeParameter = { type: "string", enum: ["private", "household", "all"] };
+const writeScopeParameter = { type: "string", enum: ["private", "household"] };
+const filtersParameter = {
   group: { type: "string" },
   tags: { type: "array", items: { type: "string" } },
-  notificationPolicy: { type: "object", additionalProperties: true },
-  scope: scopeParameter,
+  importance: importanceParameter,
 };
-const patchParameter = { type: "object", properties: calendarEventParameters, additionalProperties: false };
-const createParameters = {
-  type: "object",
-  properties: calendarEventParameters,
-  required: ["title", "start", "scope"],
-  additionalProperties: false,
-};
-const updateParameters = {
+const changesParameter = {
   type: "object",
   properties: {
-    id: { type: "string" },
-    scope: scopeParameter,
-    patch: patchParameter,
-    event: patchParameter,
+    title: { type: "string" },
+    description: { type: "string" },
+    start: timeParameter,
+    end: timeParameter,
+    recurrence: recurrenceParameter,
+    visibility: visibilityParameter,
+    importance: importanceParameter,
+    group: { type: "string" },
+    tags: { type: "array", items: { type: "string" } },
   },
-  required: ["id", "patch"],
+  additionalProperties: false,
+};
+const createParameters = {
+  type: "object",
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    start: timeParameter,
+    end: timeParameter,
+    recurrence: recurrenceParameter,
+    visibility: visibilityParameter,
+    importance: importanceParameter,
+    group: { type: "string" },
+    tags: { type: "array", items: { type: "string" } },
+    scope: writeScopeParameter,
+  },
+  required: ["title", "start"],
   additionalProperties: false,
 };
 const listParameters = {
   type: "object",
-  properties: {
-    from: calendarTimeParameter,
-    to: calendarTimeParameter,
-    scope: scopeParameter,
-    group: { type: "string" },
-    tags: { type: "array", items: { type: "string" } },
-    importance: importanceParameter,
-  },
+  properties: { from: timeParameter, to: timeParameter, scope: readScopeParameter, ...filtersParameter },
   required: ["from", "to"],
   additionalProperties: false,
 };
@@ -281,20 +246,37 @@ const searchParameters = {
   type: "object",
   properties: {
     query: { type: "string" },
-    scope: scopeParameter,
-    from: calendarTimeParameter,
-    to: calendarTimeParameter,
-    group: { type: "string" },
-    tags: { type: "array", items: { type: "string" } },
-    importance: importanceParameter,
+    from: timeParameter,
+    to: timeParameter,
+    scope: readScopeParameter,
+    ...filtersParameter,
   },
-  required: ["query"],
+  required: ["query", "from", "to"],
   additionalProperties: false,
 };
-const idParameters = {
+const getParameters = {
   type: "object",
-  properties: { id: { type: "string" }, scope: scopeParameter },
-  required: ["id"],
+  properties: { eventId: { type: "string" }, originalStart: timeParameter, scope: readScopeParameter },
+  required: ["eventId"],
+  additionalProperties: false,
+};
+const mutationTargetParameters = {
+  eventId: { type: "string" },
+  applyTo: { type: "string", enum: ["this_occurrence", "this_and_following", "entire_series"] },
+  originalStart: timeParameter,
+  expectedRevision: { type: "integer", minimum: 1 },
+  scope: writeScopeParameter,
+};
+const updateParameters = {
+  type: "object",
+  properties: { ...mutationTargetParameters, changes: changesParameter },
+  required: ["eventId", "applyTo", "changes"],
+  additionalProperties: false,
+};
+const deleteParameters = {
+  type: "object",
+  properties: mutationTargetParameters,
+  required: ["eventId", "applyTo"],
   additionalProperties: false,
 };
 
@@ -325,126 +307,265 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
   group: "calendar",
   create(config) {
     const supplied = config as CalendarProductToolConfig;
-    const privateStore = supplied.privateStore ?? supplied.store ?? supplied.calendarStore;
-    const privateCap = supplied.privateCap ?? supplied.capability ?? supplied.cap;
-    const householdStore = supplied.householdStore;
+    const privatePersistence = supplied.privatePersistence;
+    const privateCap = supplied.privateCap;
+    const householdPersistence = supplied.householdPersistence;
     const householdCap = supplied.householdCap;
-    if (!privateStore || !privateCap) return [];
+    const calendarConfig = supplied.calendarConfig;
+    if (!privatePersistence || !privateCap || !calendarConfig) return [];
 
-    type Target = { store: CalendarStore; capability: Capability; scope: CalendarScope };
-    const privateTarget: Target = { store: privateStore, capability: privateCap, scope: "private" };
-    const householdTarget: Target | null = householdStore && householdCap
-      ? { store: householdStore, capability: householdCap, scope: "household" }
-      : null;
-    const targetFor = (requested?: CalendarScope): Target | null =>
-      requested === "household" ? householdTarget : requested === "private" ? privateTarget : null;
-    const targetsFor = (requested?: CalendarScope): Target[] => {
-      const target = targetFor(requested);
-      return target ? [target] : householdTarget ? [privateTarget, householdTarget] : [privateTarget];
+    type Target = { persistence: CalendarPersistence; capability: Capability; scope: CalendarScope };
+    const privateTarget: Target = { persistence: privatePersistence, capability: privateCap, scope: "private" };
+    const householdTarget: Target | undefined =
+      householdPersistence && householdCap
+        ? { persistence: householdPersistence, capability: householdCap, scope: "household" }
+        : undefined;
+    const target = (scope: CalendarScope | undefined): Target | undefined =>
+      scope === "household" ? householdTarget : privateTarget;
+    const query =
+      supplied.queryService ??
+      new CalendarQueryService({
+        private: privatePersistence,
+        ...(householdPersistence ? { household: householdPersistence } : {}),
+        role: privateCap.role,
+        config: calendarConfig,
+      });
+
+    const readScopeGate = (scope: CalendarReadScope | undefined): ToolResult | null => {
+      if (scope === "household" && !householdTarget)
+        return failure("forbidden", "The household calendar is unavailable.");
+      if (scope === "all" && !householdTarget)
+        return failure("forbidden", "The household calendar is unavailable for an all-scope read.");
+      return null;
     };
-    const writeTargetsFor = (requested?: CalendarScope): Target[] =>
-      targetsFor(requested).filter((target) => target.scope !== "household" || isAdult(target.capability.role));
-    const scopeGate = (requested: CalendarScope | undefined): ToolResult | null =>
-      requested !== undefined && !targetFor(requested)
-        ? failure("forbidden", `The ${requested} calendar is unavailable.`)
-        : null;
-    const householdWriteBlocked = (tier: typeof READ | typeof WRITE | typeof CONFIRM, requested?: CalendarScope) =>
-      tier !== READ && requested === "household" && householdCap && !isAdult(householdCap.role)
-        ? failure("household-write-forbidden", "Only adult household members may write to the household calendar.")
-        : null;
-    const common =
-      (tier: typeof READ | typeof WRITE | typeof CONFIRM, schema: z.ZodType<unknown>, recurrence = false) =>
-      (args: Record<string, unknown>) => {
+    const writeGate = (scope: CalendarScope | undefined): ToolResult | null => {
+      const selected = target(scope);
+      if (!selected) return failure("forbidden", "The household calendar is unavailable.");
+      if (selected.scope === "household" && !isAdultRole(selected.capability.role))
+        return failure("forbidden", "Only adult household members may write to the household calendar.");
+      return null;
+    };
+    const validateRead =
+      (schema: z.ZodType<unknown>, preflight?: (value: Record<string, unknown>) => ToolResult | null) =>
+      (args: Record<string, unknown>): ToolResult | null => {
         const parsed = parse(schema, args);
-        if (typeof parsed === "object" && parsed !== null && "content" in parsed) return parsed as ToolResult;
-        const data = parsed as Record<string, unknown>;
-        const requested = data.scope as CalendarScope | undefined;
-        const gate = scopeGate(requested) ?? householdWriteBlocked(tier, requested);
-        if (gate) return gate;
-        if (recurrence && "recurrence" in data) {
-          const invalid = validateRecurrence(data.recurrence as { rrule: string } | undefined);
-          if (invalid) return invalid;
-        }
-        return null;
+        if (isToolResult(parsed)) return parsed;
+        const value = parsed as Record<string, unknown>;
+        const gate = readScopeGate(value.scope as CalendarReadScope | undefined);
+        return gate ?? preflight?.(value) ?? null;
       };
-    const runResult = (r: { ok: boolean; value?: unknown; error?: string }, eventScope: CalendarScope): ToolResult =>
-      r.ok ? result(Array.isArray(r.value)
-        ? r.value.map((e) => wire(e as StoredCalendarEvent, eventScope))
-        : r.value && typeof r.value === "object" && "tags" in (r.value as object)
-          ? wire(r.value as StoredCalendarEvent, eventScope) : r.value) : storeFailure(r.error ?? "io-error");
+    const validateQuery = (value: Record<string, unknown>): ToolResult | null => {
+      const checked = normalizeCalendarQuery(value, calendarConfig);
+      return checked.ok ? null : failure(checked.error.code, checked.error.message);
+    };
+    const validateCreate = (value: Record<string, unknown>): ToolResult | null => {
+      const limits = validateCalendarInputLimits(
+        {
+          title: value.title as string,
+          ...(value.description !== undefined ? { description: value.description as string } : {}),
+          ...(value.group !== undefined ? { group: value.group as string } : {}),
+          tags: value.tags as string[],
+        },
+        calendarConfig,
+      );
+      if (!limits.ok) return failure(limits.error.code, limits.error.message);
+      const times = normalizeCalendarEventTimes(value.start as never, value.end as never, calendarConfig, {
+        recurring: value.recurrence !== undefined,
+      });
+      return times.ok ? null : failure(times.error.code, times.error.message);
+    };
+    const validateChanges = (value: Record<string, unknown>): ToolResult | null => {
+      const changes = value.changes as Record<string, unknown>;
+      const limits = validateCalendarInputLimits(
+        {
+          ...(changes.title !== undefined ? { title: changes.title as string } : {}),
+          ...(changes.description !== undefined && changes.description !== null
+            ? { description: changes.description as string }
+            : {}),
+          ...(changes.group !== undefined && changes.group !== null ? { group: changes.group as string } : {}),
+          ...(changes.tags !== undefined ? { tags: changes.tags as string[] } : {}),
+        },
+        calendarConfig,
+      );
+      return limits.ok ? null : failure(limits.error.code, limits.error.message);
+    };
+    const validateWrite =
+      (schema: z.ZodType<unknown>, preflight?: (value: Record<string, unknown>) => ToolResult | null) =>
+      (args: Record<string, unknown>): ToolResult | null => {
+        const parsed = parse(schema, args);
+        if (isToolResult(parsed)) return parsed;
+        const value = parsed as Record<string, unknown>;
+        const gate = writeGate(value.scope as CalendarScope | undefined);
+        return gate ?? preflight?.(value) ?? null;
+      };
 
     return [
-      runner("calendar_list", CALENDAR_TOOL_SETTINGS[0].description, READ, listParameters, common(READ, listSchema), async (args) => {
-        const p = listSchema.parse(args);
-        const results = targetsFor(p.scope).map(({ store, scope: eventScope }) => ({ result: store.list({ from: calendarTime(p.from), to: calendarTime(p.to), ...(p.group !== undefined ? { group: p.group } : {}), ...(p.tags !== undefined ? { tags: p.tags } : {}), ...(p.importance !== undefined ? { importance: p.importance } : {}) }), eventScope }));
-        const failed = results.find(({ result }) => !result.ok);
-        if (failed && !failed.result.ok) return storeFailure(failed.result.error);
-        return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value.map((e) => wire(e, eventScope)) : []));
-      }),
-      runner("calendar_get", CALENDAR_TOOL_SETTINGS[1].description, READ, idParameters, common(READ, idSchema), async (args) => {
-        const p = idSchema.parse(args);
-        for (const target of targetsFor(p.scope)) {
-          const r = target.store.get(p.id as CalendarEventId);
-          if (r.ok) return runResult(r, target.scope);
-          if (r.error !== "not-found") return storeFailure(r.error);
-        }
-        return storeFailure("not-found");
-      }),
-      runner("calendar_search", CALENDAR_TOOL_SETTINGS[2].description, READ, searchParameters, common(READ, searchSchema), async (args) => {
-        const p = searchSchema.parse(args); const q = p.query.toLowerCase();
-        if ((p.from && !p.to) || (!p.from && p.to)) return failure("invalid-arguments", "from and to must be supplied together.");
-        const windows: CalendarListWindow[] = p.from && p.to
-          ? [{
-              from: calendarTime(p.from),
-              to: calendarTime(p.to),
-            }]
-          : defaultSearchWindows();
-        const results = targetsFor(p.scope).flatMap(({ store, scope: eventScope }) => windows.map((window) => ({
-          result: store.list({
-            ...window,
-            ...(p.group !== undefined ? { group: p.group } : {}),
-            ...(p.tags !== undefined ? { tags: p.tags } : {}),
-            ...(p.importance !== undefined ? { importance: p.importance } : {}),
-          }),
-          eventScope,
-        })));
-        const failed = results.find(({ result: searchResult }) => !searchResult.ok); if (failed && !failed.result.ok) return storeFailure(failed.result.error);
-        const seen = new Set<string>();
-        return result(results.flatMap(({ result: r, eventScope }) => r.ok ? r.value
-          .filter((e) => `${e.title} ${e.description ?? ""}`.toLowerCase().includes(q))
-          .filter((e) => { const key = `${eventScope}:${e.occurrenceId}`; if (seen.has(key)) return false; seen.add(key); return true; })
-          .map((e) => wire(e, eventScope)) : []));
-      }),
-      runner("calendar_create", CALENDAR_TOOL_SETTINGS[3].description, WRITE, createParameters, common(WRITE, createSchema, true), async (args, ctx) => {
-        if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
-        const p = createSchema.parse(args); const target = targetFor(p.scope)!;
-        const now = new Date().toISOString() as StoredCalendarEvent["createdAt"];
-        const event = { ...p, id: crypto.randomUUID() as CalendarEventId, createdAt: now, updatedAt: now, tags: new Set(p.tags), notification: p.notificationPolicy } as unknown as StoredCalendarEvent;
-        return runResult(target.store.create(event), target.scope);
-      }),
-      runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, updateParameters, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args, ctx) => {
-        if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
-        const p = updateSchema.safeParse(args); const value = p.success ? p.data : updateAlternativeSchema.parse(args);
-        const patch = ("patch" in value ? value.patch : value.event) as unknown as CalendarEventPatch;
-        for (const target of writeTargetsFor(value.scope)) {
-          if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
-          const r = target.store.update(value.id as CalendarEventId, { ...patch, ...(patch.tags ? { tags: new Set(patch.tags) } : {}) } as CalendarEventPatch);
-          if (r.ok) return runResult(r, target.scope);
-          if (r.error !== "not-found") return storeFailure(r.error);
-        }
-        return storeFailure("not-found");
-      }),
-      runner("calendar_delete", CALENDAR_TOOL_SETTINGS[5].description, CONFIRM, idParameters, common(CONFIRM, idSchema), async (args, ctx) => {
-        if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
-        const p = idSchema.parse(args);
-        for (const target of writeTargetsFor(p.scope)) {
-          if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
-          const r = target.store.delete(p.id as CalendarEventId);
-          if (r.ok) return result({ ok: true });
-          if (r.error !== "not-found") return storeFailure(r.error);
-        }
-        return storeFailure("not-found");
-      }),
+      runner(
+        "calendar_list",
+        CALENDAR_TOOL_SETTINGS[0].description,
+        READ,
+        listParameters,
+        validateRead(listSchema, validateQuery),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(listSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof listSchema>;
+          const gate = readScopeGate(p.scope);
+          if (gate) return gate;
+          const result = query.listComplete(
+            {
+              from: p.from,
+              to: p.to,
+              scope: p.scope ?? "private",
+              ...(p.group !== undefined ? { group: p.group } : {}),
+              ...(p.tags !== undefined ? { tags: p.tags } : {}),
+              ...(p.importance !== undefined ? { importance: p.importance } : {}),
+            },
+            { signal: ctx.signal },
+          );
+          return ctx.signal.aborted ? aborted() : domainResult(result, calendarConfig);
+        },
+      ),
+      runner(
+        "calendar_get",
+        CALENDAR_TOOL_SETTINGS[1].description,
+        READ,
+        getParameters,
+        validateRead(getSchema),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(getSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof getSchema>;
+          const gate = readScopeGate(p.scope);
+          if (gate) return gate;
+          const result = query.get(
+            {
+              eventId: p.eventId,
+              scope: p.scope ?? "private",
+              ...(p.originalStart !== undefined ? { originalStart: p.originalStart as never } : {}),
+            },
+            undefined,
+            undefined,
+            { signal: ctx.signal },
+          );
+          return ctx.signal.aborted ? aborted() : domainResult(result, calendarConfig);
+        },
+      ),
+      runner(
+        "calendar_search",
+        CALENDAR_TOOL_SETTINGS[2].description,
+        READ,
+        searchParameters,
+        validateRead(searchSchema, validateQuery),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(searchSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof searchSchema>;
+          const gate = readScopeGate(p.scope);
+          if (gate) return gate;
+          const result = query.searchComplete(
+            {
+              query: p.query,
+              from: p.from,
+              to: p.to,
+              scope: p.scope ?? "private",
+              ...(p.group !== undefined ? { group: p.group } : {}),
+              ...(p.tags !== undefined ? { tags: p.tags } : {}),
+              ...(p.importance !== undefined ? { importance: p.importance } : {}),
+            },
+            { signal: ctx.signal },
+          );
+          return ctx.signal.aborted ? aborted() : domainResult(result, calendarConfig);
+        },
+      ),
+      runner(
+        "calendar_create",
+        CALENDAR_TOOL_SETTINGS[3].description,
+        WRITE,
+        createParameters,
+        validateWrite(createSchema, validateCreate),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(createSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof createSchema>;
+          const gate = writeGate(p.scope);
+          if (gate) return gate;
+          const selected = target(p.scope);
+          if (!selected) return failure("forbidden", "The household calendar is unavailable.");
+          return domainResult(
+            createCalendarEvent(
+              { ...p, scope: p.scope ?? "private" },
+              { persistence: selected.persistence, config: calendarConfig, signal: ctx.signal },
+            ),
+            calendarConfig,
+          );
+        },
+      ),
+      runner(
+        "calendar_update",
+        CALENDAR_TOOL_SETTINGS[4].description,
+        WRITE,
+        updateParameters,
+        validateWrite(updateSchema, validateChanges),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(updateSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof updateSchema>;
+          const gate = writeGate(p.scope);
+          if (gate) return gate;
+          const selected = target(p.scope);
+          if (!selected) return failure("forbidden", "The household calendar is unavailable.");
+          const command = { ...p, operation: "update", scope: p.scope ?? "private" } as CalendarMutationCommand;
+          return domainResult(
+            mutateCalendarEvent(command, {
+              persistence: selected.persistence,
+              config: calendarConfig,
+              signal: ctx.signal,
+            }),
+            calendarConfig,
+          );
+        },
+      ),
+      runner(
+        "calendar_delete",
+        CALENDAR_TOOL_SETTINGS[5].description,
+        CONFIRM,
+        deleteParameters,
+        validateWrite(deleteSchema),
+        async (args, ctx) => {
+          if (ctx.signal.aborted) return aborted();
+          const parsed = parse(deleteSchema, args);
+          if (isToolResult(parsed)) return parsed;
+          const p = parsed as z.infer<typeof deleteSchema>;
+          const gate = writeGate(p.scope);
+          if (gate) return gate;
+          const selected = target(p.scope);
+          if (!selected) return failure("forbidden", "The household calendar is unavailable.");
+          const command = { ...p, operation: "delete", scope: p.scope ?? "private" } as CalendarMutationCommand;
+          return domainResult(
+            mutateCalendarEvent(command, {
+              persistence: selected.persistence,
+              config: calendarConfig,
+              signal: ctx.signal,
+            }),
+            calendarConfig,
+          );
+        },
+      ),
     ];
   },
 };
+
+function isAdultRole(role: Capability["role"]): boolean {
+  return role === "adult" || role === "admin";
+}
+function isToolResult(value: unknown): value is ToolResult {
+  return (
+    Boolean(value) && typeof value === "object" && "content" in (value as object) && "isError" in (value as object)
+  );
+}

@@ -51,7 +51,7 @@ import { composeMemoryBlock } from "../memory/memory-prompt.js";
 import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
 import type { CalendarConfig, CalendarStore } from "../calendar/types.js";
-import { openCalendarStore } from "../calendar/calendar-store.js";
+import { openCalendarPersistence, openCalendarStore } from "../calendar/calendar-store.js";
 import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
@@ -366,8 +366,10 @@ export function buildSessionCalendar(
   const householdCap = accessManager.grant(principal, "calendar-household");
   const privateStore = openCalendarStore(privateCap, calendarCfg);
   const householdStore = openCalendarStore(householdCap, calendarCfg);
+  const privatePersistence = openCalendarPersistence(privateCap, calendarCfg);
+  const householdPersistence = openCalendarPersistence(householdCap, calendarCfg);
   const tools = composeProductToolProviders(undefined, {
-    calendar: { privateStore, privateCap, householdStore, householdCap },
+    calendar: { privatePersistence, householdPersistence, calendarConfig: calendarCfg, privateCap, householdCap },
   });
   const nudgeBudget = {
     maxChars: 4000,
@@ -384,7 +386,7 @@ export function buildSessionCalendar(
     householdStore,
     tools: [...tools.values()],
     nudge: nudge || null,
-    close: () => { privateStore.close(); householdStore.close(); },
+    close: () => { privateStore.close(); householdStore.close(); privatePersistence.close(); householdPersistence.close(); },
   };
 }
 
