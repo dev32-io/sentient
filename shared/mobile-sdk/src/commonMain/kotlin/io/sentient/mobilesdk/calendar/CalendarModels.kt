@@ -162,10 +162,14 @@ data class CalendarPage(
 
 typealias CalendarQueryPage = CalendarPage
 
-/** V2 bounded page. The [more] value is a source compatibility projection. */
-data class CalendarEventPage(
+/**
+ * Source-facing page adapter. V2 pagination is represented only by [nextCursor].
+ * The unused constructor parameter preserves positional source compatibility for
+ * existing platform callers without retaining a V1 page field.
+ */
+class CalendarEventPage(
     val events: List<CalendarEvent>,
-    val more: Int = 0,
+    @Suppress("UNUSED_PARAMETER") more: Int = 0,
     val nextCursor: String? = null,
 )
 
@@ -448,11 +452,18 @@ data class CalendarEvent(
     val createdAt: String = "",
     val updatedAt: String = "",
     val occurrenceId: String? = null,
+    val originalStart: CalendarTime? = null,
+    /**
+     * Deprecated source-only constructor/property for unchanged platform
+     * callers. It is never populated from V2 responses and is not an identity
+     * used by SDK or mobile-data operations; use [eventId] instead.
+     */
+    @Deprecated("Use eventId; V2 does not expose baseEventId")
     val baseEventId: String? = null,
     val revision: Int = 0,
 ) {
     val eventId: String get() = id
-    val persistedId: String get() = id
+    val persistedId: String get() = eventId
 }
 
 fun CalendarEvent.toCreateInput(): CalendarCreateInput = CalendarCreateInput(
@@ -512,6 +523,6 @@ internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent = CalendarEven
     group = group,
     tags = tags,
     occurrenceId = occurrenceId,
-    baseEventId = eventId,
+    originalStart = originalStart.toCalendarTime(),
     revision = revision,
 )

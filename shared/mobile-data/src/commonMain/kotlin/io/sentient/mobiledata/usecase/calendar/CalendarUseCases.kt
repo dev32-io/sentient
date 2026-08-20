@@ -101,7 +101,7 @@ interface DeleteCalendarUseCase {
     suspend fun delete(id: String): SentientResult<Unit>
 
     /** Carries the selected event's resource scope and revision to the mutation. */
-    suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(event.persistedId)
+    suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(event.eventId)
 }
 
 /** Stateless repository plus use-case-owned observable read state. */
@@ -229,7 +229,7 @@ class CalendarUseCases(private val repository: CalendarRepository) :
     ): CalendarEvent? = when (result) {
         is SentientResult.Success -> result.data.events
             .filter { it.matchesDeleteId(id) }
-            .distinctBy { Triple(it.persistedId, it.scope, it.revision) }
+            .distinctBy { Triple(it.eventId, it.scope, it.revision) }
             .singleOrNull()
         is SentientResult.Failure,
         is SentientResult.Loading,
@@ -250,7 +250,7 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         (scope == CalendarScope.PRIVATE || scope == CalendarScope.HOUSEHOLD) && revision > 0
 
     private fun CalendarEvent.matchesDeleteId(id: String): Boolean =
-        persistedId == id || baseEventId == id
+        eventId == id
 
     private fun unresolvedDeleteFailure(): SentientResult.Failure =
         SentientResult.Failure(SentientError.Protocol(MSG_DELETE_UNRESOLVED))

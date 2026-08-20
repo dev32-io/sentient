@@ -55,6 +55,8 @@ describe("orchestratorConfigSchema", () => {
       { query: { page_size: 101 } },
       { recurrence: { max_occurrences: 1001 } },
       { recurrence: { max_days: 367 } },
+      { nudge: { max_per_day: 0 } },
+      { nudge: { max_per_day: 1001 } },
       { input: { max_title_chars: 513 } },
       { input: { max_description_chars: 8001 } },
       { input: { max_query_chars: 513 } },

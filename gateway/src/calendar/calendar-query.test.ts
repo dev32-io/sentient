@@ -54,6 +54,8 @@ describe("CalendarQueryService", () => {
       exceptions: [{ occurrence: timed("2026-08-02T12:00:00.000Z"), title: "Dinner", group: "food", tags: ["family"] }],
     });
     const result = service([moved, event("day", day("2026-08-03"))]).search({ ...range, query: "dinner", group: "food", tags: ["family"] });
+    const listWithQuery = service([moved, event("day", day("2026-08-03"))]).list({ ...range, query: "dinner" });
+    expect(listWithQuery.ok && listWithQuery.value.events.map((row) => row.eventId)).toEqual(["base"]);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.events.map((row) => row.eventId)).toEqual(["base"]);
     const all = service([moved, event("day", day("2026-08-03"))]).listComplete(range);

@@ -130,7 +130,7 @@ export type CalendarEvent = {
   description?: string;
   start: CalendarTime;
   end?: CalendarTime;
-  recurrence?: CalendarRecurrence | { rrule: string; rule: Record<string, unknown> };
+  recurrence?: CalendarRecurrence;
   visibility: CalendarVisibility;
   importance: CalendarImportance;
   group?: string;
@@ -172,7 +172,7 @@ export type CalendarPatch = Partial<
   description?: string | null;
   end?: CalendarTime | null;
   group?: string | null;
-  recurrence?: CalendarRecurrence | { rrule: string; rule: Record<string, unknown> } | null;
+  recurrence?: CalendarRecurrence | null;
   expectedRevision?: number;
 };
 export interface CalendarGetOptions {
@@ -197,7 +197,7 @@ export type CalendarCreateInput = {
   description?: string;
   start: CalendarTimeInput | CalendarTime;
   end?: CalendarTimeInput | CalendarTime;
-  recurrence?: CalendarRecurrence | { rrule: string; rule: Record<string, unknown> };
+  recurrence?: CalendarRecurrence;
   scope?: CalendarScope;
   visibility?: CalendarVisibility;
   importance?: CalendarImportance;
@@ -320,34 +320,25 @@ function mutationResult(value: unknown): CalendarMutationResult {
     ...(typeof value.resultingRevision === "number" ? { resultingRevision: value.resultingRevision } : {}),
   };
 }
-function recurrencePayload(value: CalendarEvent["recurrence"]): CalendarRecurrence | undefined {
-  if (!value) return undefined;
-  if ("frequency" in value) return value;
-  const rule = value.rule;
-  const frequencies: Record<string, CalendarRecurrence["frequency"]> = {
-    DAILY: "daily",
-    WEEKLY: "weekly",
-    MONTHLY: "monthly",
-    YEARLY: "yearly",
-  };
-  const frequency = frequencies[String(rule.freq)] ?? frequencies[String(rule.freq).toUpperCase()];
-  if (!frequency) throw new Error("invalid recurrence");
-  const days: Record<string, CalendarWeekday> = {
-    MO: "monday",
-    TU: "tuesday",
-    WE: "wednesday",
-    TH: "thursday",
-    FR: "friday",
-    SA: "saturday",
-    SU: "sunday",
-  };
-  const recurrence: CalendarRecurrence = { frequency };
-  if (typeof rule.interval === "number") recurrence.interval = rule.interval;
-  if (Array.isArray(rule.byDay))
-    recurrence.weekdays = rule.byDay.map((day) => days[String(day)]).filter(Boolean) as CalendarWeekday[];
-  if (typeof rule.count === "number") recurrence.count = rule.count;
-  if (rule.until !== undefined) recurrence.until = rawTime(rule.until as CalendarTimeInput | CalendarTime);
-  return recurrence;
+function isStructuredRecurrence(value: unknown): value is CalendarRecurrence {
+  if (!isRecord(value)) return false;
+  const allowed = new Set(["frequency", "interval", "weekdays", "count", "until"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) return false;
+  if (!(["daily", "weekly", "monthly", "yearly"] as const).includes(value.frequency as CalendarRecurrence["frequency"])) return false;
+  if (value.interval !== undefined && (!Number.isInteger(value.interval) || (value.interval as number) < 1)) return false;
+  if (value.weekdays !== undefined && (!Array.isArray(value.weekdays) || value.weekdays.some((day) =>
+    !(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const).includes(day as CalendarWeekday),
+  ))) return false;
+  if (value.count !== undefined && (!Number.isInteger(value.count) || (value.count as number) < 1)) return false;
+  if (value.until !== undefined && typeof value.until !== "string") return false;
+  return (value.count === undefined) !== (value.until === undefined);
+}
+
+/** Only the structured V2 recurrence shape is accepted; no RRULE fallback exists. */
+function recurrencePayload(value: CalendarRecurrence | null | undefined): CalendarRecurrence | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (!isStructuredRecurrence(value)) throw new Error("invalid recurrence");
+  return value;
 }
 function createPayload(event: CalendarCreateInput): Record<string, unknown> {
   const payload: Record<string, unknown> = {
@@ -399,7 +390,7 @@ function commandPayload(command: CalendarMutationCommand): Record<string, unknow
     if (command.changes.end !== undefined && command.changes.end !== null)
       (payload.changes as Record<string, unknown>).end = rawTime(command.changes.end);
     if (command.changes.recurrence !== undefined && command.changes.recurrence !== null)
-      (payload.changes as Record<string, unknown>).recurrence = command.changes.recurrence;
+      (payload.changes as Record<string, unknown>).recurrence = recurrencePayload(command.changes.recurrence);
   }
   return payload;
 }

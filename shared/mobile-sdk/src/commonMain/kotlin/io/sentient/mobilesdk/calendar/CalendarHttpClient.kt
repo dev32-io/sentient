@@ -107,7 +107,7 @@ open class CalendarHttpClient(
             val response = httpClient.get(url) { bearer() }
             mapBody(response, CalendarPage.serializer()) { page ->
                 val events = page.events.map(EffectiveOccurrence::toCompatibility)
-                CalendarEventPage(events = events, more = if (page.nextCursor != null) 1 else 0, nextCursor = page.nextCursor)
+                CalendarEventPage(events = events, nextCursor = page.nextCursor)
             }
         }
     }
@@ -167,13 +167,13 @@ open class CalendarHttpClient(
                     id = result.value.eventId,
                     revision = result.value.resultingRevision ?: event.revision,
                     occurrenceId = null,
-                    baseEventId = null,
+                    originalStart = null,
                 ),
             )
         }
     }
 
-    open suspend fun update(event: CalendarEvent): AuthResult<CalendarEvent> = update(event.persistedId, event)
+    open suspend fun update(event: CalendarEvent): AuthResult<CalendarEvent> = update(event.eventId, event)
 
     open suspend fun updateEvent(event: CalendarEvent): AuthResult<CalendarEvent> = update(event)
 
@@ -187,7 +187,7 @@ open class CalendarHttpClient(
     /** Selected-event adapter preserves its writable scope and optimistic revision. */
     open suspend fun delete(event: CalendarEvent): AuthResult<Unit> = safeSettingsCall(log) {
         when (val result = mutate(
-            event.persistedId,
+            event.eventId,
             CalendarMutationCommand.delete(
                 applyTo = CalendarMutationScope.ENTIRE_SERIES,
                 scope = event.scope.takeUnless { it == CalendarScope.ALL },

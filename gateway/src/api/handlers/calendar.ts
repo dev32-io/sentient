@@ -150,6 +150,7 @@ function listInput(url: URL): Record<string, unknown> {
     from: url.searchParams.get("from") ?? undefined,
     to: url.searchParams.get("to") ?? undefined,
     ...(url.searchParams.get("scope") !== null ? { scope: url.searchParams.get("scope") } : {}),
+    ...(url.searchParams.get("query") !== null ? { query: url.searchParams.get("query") } : {}),
     ...(url.searchParams.get("group") !== null ? { group: url.searchParams.get("group") } : {}),
     ...(url.searchParams.get("importance") !== null ? { importance: url.searchParams.get("importance") } : {}),
     ...(url.searchParams.get("cursor") !== null ? { cursor: url.searchParams.get("cursor") } : {}),

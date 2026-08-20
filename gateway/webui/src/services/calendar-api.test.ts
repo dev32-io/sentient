@@ -111,6 +111,18 @@ describe("calendar REST V2 client", () => {
     });
   });
 
+  it("rejects legacy RRULE-shaped recurrence input instead of converting or sending it", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const legacy = {
+      title: "Legacy",
+      start: "2026-08-05",
+      recurrence: { rrule: "FREQ=DAILY;COUNT=2", rule: { freq: "DAILY", count: 2 } },
+    } as unknown as CalendarCreateInput;
+    await expect(createCalendarApi().create("token", legacy)).rejects.toThrow("invalid recurrence");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("posts every mutation scope through the one V2 command route", async () => {
     const fetchMock = vi
       .fn()

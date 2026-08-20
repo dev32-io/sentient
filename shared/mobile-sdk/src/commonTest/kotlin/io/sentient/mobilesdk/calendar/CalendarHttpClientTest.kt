@@ -84,7 +84,6 @@ class CalendarHttpClientTest {
         }
         val page = assertIs<AuthResult.Success<CalendarEventPage>>(result).value
         assertEquals("opaque-cursor", page.nextCursor)
-        assertEquals(1, page.more)
         assertTrue(requestUrl.contains("from=2026-08-01"), requestUrl)
         assertTrue(requestUrl.contains("to=2026-08-31"), requestUrl)
         assertTrue(requestUrl.contains("scope=all"), requestUrl)
@@ -116,7 +115,6 @@ class CalendarHttpClientTest {
             createdAt = "client timestamp",
             updatedAt = "client timestamp",
             occurrenceId = "client occurrence",
-            baseEventId = "client base",
             revision = 99,
         )
         assertIs<AuthResult.Success<CalendarEvent>>(withContext(Dispatchers.Default) { client(engine).create(draft) })
@@ -130,7 +128,6 @@ class CalendarHttpClientTest {
         assertFalse(json.containsKey("createdAt"), body)
         assertFalse(json.containsKey("updatedAt"), body)
         assertFalse(json.containsKey("occurrenceId"), body)
-        assertFalse(json.containsKey("baseEventId"), body)
     }
 
     @Test

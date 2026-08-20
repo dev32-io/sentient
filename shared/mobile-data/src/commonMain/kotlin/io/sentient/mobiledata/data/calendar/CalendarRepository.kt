@@ -84,7 +84,7 @@ interface CalendarRepository {
 
     /** Whole-series delete adapter for callers holding the selected event. */
     suspend fun delete(event: CalendarEvent): SentientResult<Unit> = delete(
-        id = event.persistedId,
+        id = event.eventId,
         scope = event.scope,
         expectedRevision = event.revision.takeIf { it > 0 },
     )
@@ -137,5 +137,5 @@ internal fun CalendarEvent.withMutationResult(result: CalendarMutationResult): C
     id = result.eventId,
     revision = result.resultingRevision ?: revision,
     occurrenceId = null,
-    baseEventId = null,
+    originalStart = null,
 )

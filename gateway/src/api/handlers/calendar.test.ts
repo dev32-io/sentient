@@ -169,6 +169,22 @@ describe("calendar V2 REST handler", () => {
     });
   });
 
+  it("threads the REST query parameter into effective occurrence filtering", async () => {
+    const privateStore = fakePersistence([persisted("private-match", "2026-08-01"), persisted("private-other", "2026-08-02")], "private");
+    const householdStore = fakePersistence([persisted("household-match", "2026-08-03")], "household");
+    const api = createCalendarHandler(
+      deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore)),
+    );
+
+    const response = await api(
+      request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&scope=all&query=match"),
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()) as { body: { events: Array<{ eventId: string }> } }).toMatchObject({
+      body: { events: [{ eventId: "private-match" }, { eventId: "household-match" }] },
+    });
+  });
+
   it("returns deterministic continuation pages and authorized all-scope visibility", async () => {
     const privateStore = fakePersistence([persisted("p1", "2026-08-01"), persisted("p2", "2026-08-03")], "private");
     const householdStore = fakePersistence(
