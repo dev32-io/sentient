@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-rest
 title: Replace the calendar REST API with V2 paging and mutation commands
-status: blocked
+status: ready
 dependsOn:
   - calendar-v2-query
   - calendar-v2-occurrence-mutations
