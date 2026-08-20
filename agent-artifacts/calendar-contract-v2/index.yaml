@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 42
+  revision: 43
 artifacts:
   - id: intent
     type: intent
@@ -66,12 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-web-client
-    tasks:
-      - calendar-v2-web-client
-  - id: calendar-v2-kmp-sdk
-    tasks:
-      - calendar-v2-kmp-sdk
   - id: calendar-v2-mobile-data
     tasks:
       - calendar-v2-mobile-data
@@ -211,3 +205,23 @@ executionStages:
         - Session/REST lifecycle and close behavior
         - Nudge security and bounds remain unchanged
         - No automatic destructive reset or production mutation
+  - id: stage-7-clients
+    tasks:
+      - calendar-v2-web-client
+      - calendar-v2-kmp-sdk
+    checks:
+      - source scripts/env.sh && cd gateway/webui && bun run test:unit --
+        src/services/calendar-api.test.ts
+        src/components/calendar/calendar-view.test.tsx
+      - source scripts/env.sh && cd gateway/webui && bun run typecheck
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+        --tests '*Calendar*' --tests '*PrivacyGuard*'
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Exact REST V2 parity across web and KMP
+        - No PATCH/DELETE or V1 wire fallback
+        - Source-level whole-series adapters preserve untouched UI compilation
+        - Calendar payload and token privacy in client diagnostics

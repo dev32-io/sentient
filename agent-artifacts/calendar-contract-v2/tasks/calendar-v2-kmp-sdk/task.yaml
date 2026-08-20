@@ -10,7 +10,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: calendar-v2-kmp-sdk
+  stageId: stage-7-clients
   intermediateState: complete
 verification:
   timing: task
