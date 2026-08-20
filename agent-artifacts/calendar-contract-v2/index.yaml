@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 10
+  revision: 11
 artifacts:
   - id: intent
     type: intent
@@ -38,6 +38,8 @@ tasks:
     path: tasks/calendar-v2-storage/task.yaml
   - id: calendar-v2-config
     path: tasks/calendar-v2-config/task.yaml
+  - id: calendar-v2-query
+    path: tasks/calendar-v2-query/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -59,3 +61,6 @@ executionStages:
   - id: calendar-v2-config
     tasks:
       - calendar-v2-config
+  - id: calendar-v2-query
+    tasks:
+      - calendar-v2-query

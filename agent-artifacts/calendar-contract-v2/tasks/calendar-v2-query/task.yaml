@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: calendar-v2-query
+title: Implement bounded effective-occurrence calendar queries
+status: draft
+dependsOn:
+  - calendar-v2-temporal
+  - calendar-v2-recurrence
+  - calendar-v2-storage
+  - calendar-v2-config
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-query
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-query.test.ts src/calendar/nudge.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
