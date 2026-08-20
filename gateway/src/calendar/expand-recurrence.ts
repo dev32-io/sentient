@@ -138,18 +138,18 @@ function applyException(event: StoredCalendarEvent, original: CalendarTime, base
   const inheritedEnd = ex?.start && ex.end === undefined ? shiftedEnd(baseEnd, original, ex.start) : baseEnd;
   const end = ex?.end === null ? undefined : ex?.end ?? inheritedEnd;
   const result = occurrence(event, original, start, end);
-  if (ex?.title !== undefined) result.title = ex.title;
+  if (typeof ex?.title === "string") result.title = ex.title;
   if (ex?.description !== undefined) {
     if (ex.description === null) delete result.description;
     else result.description = ex.description;
   }
-  if (ex?.visibility !== undefined) result.visibility = ex.visibility;
-  if (ex?.importance !== undefined) result.importance = ex.importance;
+  if (ex?.visibility !== undefined && ex.visibility !== null) result.visibility = ex.visibility;
+  if (ex?.importance !== undefined && ex.importance !== null) result.importance = ex.importance;
   if (ex?.group !== undefined) {
     if (ex.group === null) delete result.group;
     else result.group = ex.group;
   }
-  if (ex?.tags !== undefined) result.tags = ex.tags;
+  if (ex?.tags !== undefined) result.tags = ex.tags === null ? new Set() : new Set(ex.tags);
   return result;
 }
 
