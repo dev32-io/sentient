@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: stage-stage-2-foundations-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-2-foundations
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
+    src/calendar/calendar-temporal.test.ts
+    src/calendar/expand-recurrence.test.ts
+    src/calendar/recurrence-splitter.test.ts src/calendar/calendar-store.test.ts
+    src/calendar/e2e-helpers.test.ts
+  - source scripts/env.sh && cd shared/config && bun test
+    src/schemas/orchestrator-config.test.ts
+  - source scripts/env.sh && bun run typecheck
+criteria:
+  - Temporal and recurrence correctness including DST and generated-slot identity
+  - Fresh V2 storage isolation, capability gates, revision CAS, and rollback
+    primitives
+  - Operator limits remain bounded below the generic result cap
+  - Parallel contributions have non-overlapping source ownership and coherent
+    contracts
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3

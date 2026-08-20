@@ -68,6 +68,8 @@ delivery:
 evaluations:
   - id: stage-stage-1-contracts-review
     path: evaluations/stage-stage-1-contracts-review/evaluation.yaml
+  - id: stage-stage-2-foundations-review
+    path: evaluations/stage-stage-2-foundations-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:
