@@ -155,6 +155,18 @@ describe("splitRecurrence", () => {
     });
   });
 
+  test("rejects a re-anchored successor that cannot map retained child state", () => {
+    const event = recurring("FREQ=DAILY;COUNT=3", { exdates: [timed("2026-01-07T14:00:00.000Z")] });
+    const result = splitRecurrence(
+      event,
+      timed("2026-01-06T14:00:00.000Z"),
+      { frequency: "daily", count: 1 },
+      DEFAULT_RECURRENCE_LIMITS,
+      timed("2026-01-07T14:00:00.000Z"),
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "recurrence_conflict" } });
+  });
+
   test("slot enumeration is independent of filtered occurrence output", () => {
     const event = recurring("FREQ=DAILY;COUNT=3", { exdates: [timed("2026-01-06T14:00:00.000Z")] });
     const slots = enumerateGeneratedSlots(event);

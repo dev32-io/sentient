@@ -325,6 +325,109 @@ describe("calendar mutation boundary", () => {
     persistence.close();
   });
 
+  it("re-anchors every successor slot and preserves the selected duration", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({
+      end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 4 },
+    }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const oldFutureExclusion = { kind: "timed", instant: "2026-01-08T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceExclusions(eventId, [oldFutureExclusion]))).toEqual({ ok: true, value: undefined });
+    const result = mutateCalendarEvent(mutation({
+      operation: "update",
+      eventId,
+      applyTo: "this_and_following",
+      originalStart: "2026-01-06T14:00:00.000Z",
+      changes: {
+        start: "2026-01-06T11:00:00-05:00",
+        end: "2026-01-06T12:00:00-05:00",
+      },
+    }), persistence, config);
+    expect(result).toEqual({ ok: true, value: expect.objectContaining({ successorEventId: expect.any(String) }) });
+    if (!result.ok) return;
+    const successor = persistence.read((result.value as unknown as { successorEventId: CalendarEventId }).successorEventId);
+    expect(successor).toMatchObject({ ok: true, value: {
+      start: { instant: "2026-01-06T16:00:00.000Z" }, end: { instant: "2026-01-06T17:00:00.000Z" },
+      exclusions: [{ instant: "2026-01-08T16:00:00.000Z" }],
+    } });
+    if (successor.ok && successor.value.recurrence) {
+      const slots = enumerateGeneratedSlots({ start: successor.value.start, recurrence: successor.value.recurrence });
+      expect(slots.ok && slots.value.map((slot) => slot.originalStart)).toEqual([
+        { kind: "timed", instant: "2026-01-06T16:00:00.000Z", timeZoneId: "America/Toronto" },
+        { kind: "timed", instant: "2026-01-07T16:00:00.000Z", timeZoneId: "America/Toronto" },
+        { kind: "timed", instant: "2026-01-08T16:00:00.000Z", timeZoneId: "America/Toronto" },
+      ] as never);
+    }
+    persistence.close();
+
+    const endOnly = openCalendarPersistence(cap(root()), config);
+    const second = createCalendarEvent(createInput({
+      end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 3 },
+    }), endOnly, config);
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    const endResult = mutateCalendarEvent(mutation({
+      operation: "update", eventId: second.value.eventId, applyTo: "this_and_following",
+      originalStart: "2026-01-06T14:00:00.000Z", changes: { end: "2026-01-06T13:00:00-05:00" },
+    }), endOnly, config);
+    expect(endResult.ok).toBe(true);
+    if (endResult.ok) {
+      const endSuccessor = endOnly.read((endResult.value as unknown as { successorEventId: CalendarEventId }).successorEventId);
+      expect(endSuccessor).toMatchObject({ ok: true, value: { start: { instant: "2026-01-06T14:00:00.000Z" }, end: { instant: "2026-01-06T18:00:00.000Z" } } });
+    }
+    endOnly.close();
+
+    const allDay = openCalendarPersistence(cap(root()), config);
+    const allDayCreated = createCalendarEvent(createInput({
+      start: "2026-01-05" as CalendarCreateInput["start"],
+      end: "2026-01-06" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 3 },
+    }), allDay, config);
+    expect(allDayCreated.ok).toBe(true);
+    if (!allDayCreated.ok) return;
+    const allDayResult = mutateCalendarEvent(mutation({
+      operation: "update", eventId: allDayCreated.value.eventId, applyTo: "this_and_following",
+      originalStart: "2026-01-06", changes: { start: "2026-01-07", end: "2026-01-09" },
+    }), allDay, config);
+    expect(allDayResult.ok).toBe(true);
+    if (allDayResult.ok) {
+      const allDaySuccessor = allDay.read((allDayResult.value as unknown as { successorEventId: CalendarEventId }).successorEventId);
+      expect(allDaySuccessor).toMatchObject({ ok: true, value: { start: { date: "2026-01-07" }, end: { date: "2026-01-09" } } });
+    }
+    allDay.close();
+  });
+
+  it("rejects child access to hidden effective targets and unavailable split slots before mutation", () => {
+    const base = root();
+    const writer = openCalendarPersistence(cap(base), config);
+    const created = createCalendarEvent(createInput({ recurrence: { frequency: "daily", count: 4 } }), writer, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const hidden = { kind: "timed", instant: "2026-01-06T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const cancelled = { kind: "timed", instant: "2026-01-07T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const excluded = { kind: "timed", instant: "2026-01-08T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    expect(writer.transaction((tx) => tx.replaceChildren(eventId, {
+      exceptions: [{ occurrence: hidden, visibility: "adults" }, { occurrence: cancelled, cancelled: true }],
+      exclusions: [excluded], tags: [],
+    }))).toEqual({ ok: true, value: undefined });
+    writer.close();
+
+    const child = openCalendarPersistence(cap(base, "calendar-private", "child"), config);
+    for (const originalStart of ["2026-01-06T14:00:00.000Z", "2026-01-07T14:00:00.000Z", "2026-01-08T14:00:00.000Z"]) {
+      const result = mutateCalendarEvent(mutation({
+        operation: "update", eventId, applyTo: "this_and_following", originalStart, changes: { title: "must not apply" },
+      }), child, config);
+      expect(result).toMatchObject({ ok: false, error: { code: "occurrence_not_found" } });
+    }
+    expect(child.read(eventId)).toMatchObject({ ok: true, value: { revision: 1 } });
+    child.close();
+  });
+
   it("splits COUNT recurrence state at the selected original slot", () => {
     const persistence = openCalendarPersistence(cap(root()), config);
     const created = createCalendarEvent(createInput({
