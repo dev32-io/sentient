@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-2-foundations
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: passed
 required: true
 attempt: 3
 methods:
@@ -27,7 +27,7 @@ criteria:
 loop:
   iteration: 2
   maxIterations: 3
-  state: awaiting_manager
+  state: passed
   reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
   reviewedCommit: d4672279ad258d1cff1e70f4e3efecaa25cf260d
   managerPrompt: "Repair the two remaining blocking findings without regressing
@@ -43,10 +43,19 @@ loop:
     UNTIL split/expansion under a non-UTC household timezone, then rerun all
     stage-2 checks."
   fixerAgentId: a9c17bbc-21f7-4b19-9004-4a69b5d24568
+  acceptedRisks:
+    - findingId: F4
+      rationale: This is a temporary composition gap, not a remaining
+        foundation-algorithm defect. The reviewed plan explicitly assigns
+        resolution of the household sentinel and threading the concrete timezone
+        through REST/session factories to task calendar-v2-bootstrap in stage 6.
+        Accepting it here avoids pulling later composition work into the
+        foundation stage while preserving a blocking verification obligation for
+        stage 6 and final E2E. No ambient fallback is accepted.
 findings:
   - id: F4
     severity: high
-    status: open
+    status: accepted
     criterion: Resolved household/event timezone is threaded through every
       recurrence expansion and all-day split path.
     location: gateway/src/api/handlers/calendar.ts:22-38,96-102;
@@ -56,6 +65,7 @@ findings:
       fallback.
     blocking: true
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-2-foundations-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md
