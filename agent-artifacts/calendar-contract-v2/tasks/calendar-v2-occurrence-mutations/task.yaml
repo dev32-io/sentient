@@ -2,7 +2,9 @@ schemaVersion: 1
 id: calendar-v2-occurrence-mutations
 title: Add atomic single-occurrence update and cancellation
 status: draft
-dependsOn: []
+dependsOn:
+  - calendar-v2-mutation-core
+  - calendar-v2-recurrence
 execution:
   resourceClaims: []
   assignment:
