@@ -417,6 +417,26 @@ describe("CalendarStore factory", () => {
     authorized.close();
   });
 
+  it("rejects malformed persisted created and updated instants", () => {
+    const base = root();
+    const initial = openCalendarPersistence(cap(base), cfg);
+    const stored = event("invalid-persisted-time", { kind: "all-day", date: "2026-08-01" });
+    expect(initial.transaction((tx) => tx.insertBaseEvent({ ...stored, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    initial.close();
+
+    const db = new Database(join(base, "calendar-v2", "calendar.db"));
+    db.query("UPDATE events SET created_at = ?, updated_at = ? WHERE id = ?").run("not-an-instant", "2026-99-99", stored.id);
+    db.close();
+
+    const reopened = openCalendarPersistence(cap(base), cfg);
+    expect(reopened.read(stored.id)).toEqual({ ok: false, error: "invalid" });
+    expect(reopened.readRaw(stored.id)).toEqual({ ok: false, error: "invalid" });
+    reopened.close();
+  });
+
   it("leaves an ahead-of-binary database untouched", () => {
     const base = root();
     const dbPath = join(base, "calendar-v2", "calendar.db");

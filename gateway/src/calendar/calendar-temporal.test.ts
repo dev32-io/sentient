@@ -118,6 +118,18 @@ describe("calendar temporal boundary", () => {
     });
   });
 
+  test("uses the injected query limit through the default 512-character boundary", () => {
+    const configured = {
+      ...config,
+      input: { ...config.input!, maxQueryChars: 512 },
+    };
+    expect(validateCalendarInputLimits({ query: "x".repeat(512) }, configured)).toEqual({ ok: true, value: undefined });
+    expect(validateCalendarInputLimits({ query: "x".repeat(513) }, configured)).toMatchObject({
+      ok: false,
+      error: { field: "query", limit: 512, measured: 513 },
+    });
+  });
+
   test("enforces string and tag limits without echoing supplied content", () => {
     const secret = "do-not-echo";
     const result = validateCalendarInputLimits({ title: secret }, config);

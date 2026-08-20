@@ -89,6 +89,7 @@ interface EventRow {
 }
 
 const recurrenceSchema = z.object({ rrule: z.string().min(1), rule: wireRRuleSchema }).strict();
+const persistedUtcInstantSchema = z.string().datetime({ offset: true }).refine((value) => Number.isFinite(Date.parse(value)));
 const overrideSchema = z.object({
   title: z.string().optional(),
   description: z.string().nullable().optional(),
@@ -183,6 +184,9 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
     }
     const recurrence = row.recurrence ? parseJson(row.recurrence, recurrenceSchema) : undefined;
     if (row.recurrence && !recurrence) return { ok: false, error: "invalid" };
+    const createdAt = persistedUtcInstantSchema.safeParse(row.created_at);
+    const updatedAt = persistedUtcInstantSchema.safeParse(row.updated_at);
+    if (!createdAt.success || !updatedAt.success) return { ok: false, error: "invalid" };
     const notification = row.notification_policy === null ? undefined : parseJson(row.notification_policy, z.record(z.unknown()));
     if (row.notification_policy !== null && !notification) return { ok: false, error: "invalid" };
     const base: CalendarPersistenceBaseEvent = {
@@ -197,15 +201,15 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
       importance: row.importance as StoredCalendarEvent["importance"],
       ...(row.group === null ? {} : { group: row.group }),
       ...(notification ? { notification } : {}),
-      createdAt: row.created_at as UtcInstant,
-      updatedAt: row.updated_at as UtcInstant,
+      createdAt: createdAt.data as UtcInstant,
+      updatedAt: updatedAt.data as UtcInstant,
     } as CalendarPersistenceBaseEvent;
     if (!z.object({
       id: z.string().min(1), revision: z.number().int().positive(), title: z.string().min(1),
       description: z.string().optional(), start: wireCalendarTimeSchema, end: wireCalendarTimeSchema.optional(),
       recurrence: recurrenceSchema.optional(), visibility: z.enum(["everyone", "adults"]), importance: z.enum(["normal", "important", "pinned"]),
       group: z.string().optional(), notification: z.record(z.unknown()).optional(),
-      createdAt: z.string().min(1), updatedAt: z.string().min(1),
+      createdAt: persistedUtcInstantSchema, updatedAt: persistedUtcInstantSchema,
     }).safeParse(base).success) return { ok: false, error: "invalid" };
     return { ok: true, value: base };
   };

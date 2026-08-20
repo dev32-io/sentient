@@ -46,7 +46,9 @@ describe("calendar V2 contracts", () => {
 
   test("defines private/household/all reads and private/household writes", () => {
     expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", query: "dinner", scope: "all" }).success).toBe(true);
-    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", query: "x".repeat(257) }).success).toBe(false);
+    // Query length is enforced by the injected CalendarConfig, not a stale
+    // wire-schema ceiling (the default permits 512 characters).
+    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", query: "x".repeat(512) }).success).toBe(true);
     expect(calendarCreateInputSchema.safeParse(goldenCalendarFixtures.create).success).toBe(true);
     expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: "all" }).success).toBe(false);
     expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: undefined }).success).toBe(true);

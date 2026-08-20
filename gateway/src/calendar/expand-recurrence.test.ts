@@ -32,6 +32,20 @@ describe("expandRecurrence", () => {
     }
   });
 
+  test("orders weekly BYDAY slots relative to the DTSTART week anchor", () => {
+    const e = event(timed("2026-01-04T14:00:00.125Z", "UTC"), "FREQ=WEEKLY;BYDAY=SU,MO;COUNT=4");
+    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-20T00:00:00.000Z"));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+        "2026-01-04T14:00:00.125Z" as UtcInstant,
+        "2026-01-05T14:00:00.125Z" as UtcInstant,
+        "2026-01-11T14:00:00.125Z" as UtcInstant,
+        "2026-01-12T14:00:00.125Z" as UtcInstant,
+      ]);
+    }
+  });
+
   test("does not count pre-DTSTART BYDAY candidates", () => {
     const e = event(timed("2026-08-05T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10");
     const result = expandRecurrence(e, timed("2026-08-01T00:00:00.000Z", "America/Toronto"), timed("2026-10-31T23:59:59.000Z", "America/Toronto"));
@@ -63,6 +77,17 @@ describe("expandRecurrence", () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("recurrence-limit");
+  });
+
+  test("preserves fractional seconds in every generated originalStart", () => {
+    const e = event(timed("2026-01-01T14:00:00.125Z", "UTC"), "FREQ=DAILY;COUNT=3");
+    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-10T00:00:00.000Z"));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+      "2026-01-01T14:00:00.125Z" as UtcInstant,
+      "2026-01-02T14:00:00.125Z" as UtcInstant,
+      "2026-01-03T14:00:00.125Z" as UtcInstant,
+    ]);
   });
 
   test("keeps a timed event at its local hour across DST", () => {

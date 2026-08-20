@@ -343,7 +343,9 @@ export type CalendarOccurrenceProjection = z.infer<typeof calendarOccurrenceProj
 export const calendarQueryInputSchema = z.object({
   from: calendarTimeInputSchema,
   to: calendarTimeInputSchema,
-  query: z.string().min(1).max(256).optional(),
+  // The resolved CalendarConfig input limit is authoritative; this wire
+  // schema only validates the query's type and non-empty shape.
+  query: z.string().min(1).optional(),
   scope: calendarReadScopeSchema.optional(),
   cursor: z.string().min(1).optional(),
   limit: z.number().int().positive().max(100).optional(),

@@ -29,6 +29,21 @@ describe("canonicalizeRecurrence", () => {
       value: { rrule: "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=4", rule: { freq: "WEEKLY", byDay: ["MO", "FR"], count: 4 } },
     });
   });
+  test("normalizes date-period UNTIL at the configured event timezone", () => {
+    const result = canonicalizeRecurrence(
+      { frequency: "daily", until: "2026-08-31" as never },
+      { timeZoneId: "America/Toronto" },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.rrule).toContain("UNTIL=20260901T035959Z");
+    const month = canonicalizeRecurrence(
+      { frequency: "daily", until: "2024-02" as never },
+      { timeZoneId: "America/Toronto" },
+    );
+    expect(month.ok).toBe(true);
+    if (month.ok) expect(month.value.rrule).toContain("UNTIL=20240301T045959Z");
+  });
+
   test("requires a bound and rejects unsupported constructs", () => {
     expect(canonicalizeRecurrence({ frequency: "daily" } as never).ok).toBe(false);
   });
@@ -80,6 +95,15 @@ describe("splitRecurrence", () => {
       expect(result.value.prefix?.recurrence.rrule).toContain("UNTIL=20260309T130000Z");
       expect(result.value.successor.recurrence.rrule).toContain("UNTIL=20260330T130000Z");
     }
+  });
+
+  test("splits all-day UNTIL rules without parsing an all-day terminal as an instant", () => {
+    const event = recurring("FREQ=DAILY;UNTIL=20260105T235959Z", {
+      start: { kind: "all-day", date: "2026-01-01" },
+    });
+    const result = splitRecurrence(event, { kind: "all-day", date: "2026-01-03" });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.prefix?.recurrence.rrule).toContain("UNTIL=20260102T235959Z");
   });
 
   test("rejects a changed successor rule that would orphan future child state", () => {

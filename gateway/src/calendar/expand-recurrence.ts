@@ -38,26 +38,26 @@ export type ExpandRecurrenceResult =
 const MS_DAY = 86_400_000;
 const weekdayIndex: Record<Weekday, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
-type Parts = { year: number; month: number; day: number; hour: number; minute: number; second: number };
+type Parts = { year: number; month: number; day: number; hour: number; minute: number; second: number; millisecond: number };
 function parts(ms: number, zone: string): Parts {
   const p: Record<string, string> = {};
   for (const x of new Intl.DateTimeFormat("en-US", {
     timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
   }).formatToParts(new Date(ms))) p[x.type] = x.value;
-  return { year: Number(p.year ?? 0), month: Number(p.month ?? 0), day: Number(p.day ?? 0), hour: Number(p.hour ?? 0), minute: Number(p.minute ?? 0), second: Number(p.second ?? 0) };
+  return { year: Number(p.year ?? 0), month: Number(p.month ?? 0), day: Number(p.day ?? 0), hour: Number(p.hour ?? 0), minute: Number(p.minute ?? 0), second: Number(p.second ?? 0), millisecond: new Date(ms).getUTCMilliseconds() };
 }
 function dateKey(p: Parts): string { return `${p.year.toString().padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`; }
-function localStamp(p: Parts): string { return `${dateKey(p)}T${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}:${String(p.second).padStart(2, "0")}`; }
+function localStamp(p: Parts): string { return `${dateKey(p)}T${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}:${String(p.second).padStart(2, "0")}.${String(p.millisecond).padStart(3, "0")}`; }
 function instantForLocal(p: Parts, zone: string): number | undefined {
   // Try the offsets around the naive UTC value. Exact matches are valid; choosing
   // the smaller instant makes repeated times deterministic (the first instance).
-  const naive = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const naive = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second, p.millisecond);
   const candidates = new Set<number>();
   for (let d = -2; d <= 2; d++) {
     const probe = naive + d * MS_DAY;
     const q = parts(probe, zone);
-    const offset = probe - Date.UTC(q.year, q.month - 1, q.day, q.hour, q.minute, q.second);
+    const offset = probe - Date.UTC(q.year, q.month - 1, q.day, q.hour, q.minute, q.second, q.millisecond);
     const candidate = naive + offset;
     const got = parts(candidate, zone);
     if (localStamp(got) === localStamp(p)) candidates.add(candidate);
@@ -72,8 +72,18 @@ export function canonicalOriginalKey(t: CalendarTime): string {
 function sameTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind && canonicalOriginalKey(a) === canonicalOriginalKey(b); }
 function failure(code: RecurrenceExpansionErrorCode, message: string): ExpandRecurrenceResult { return { ok: false, error: { kind: "recurrence-error", code, message } }; }
 
+export interface RecurrenceCanonicalizationOptions {
+  /** The event/household IANA zone used for date-period UNTIL values. */
+  readonly timeZoneId?: string;
+  readonly eventTimeZoneId?: string;
+  readonly householdTimeZone?: string;
+}
+
 /** Convert the model-facing recurrence into the only RRULE subset we store. */
-export function canonicalizeRecurrence(input: CalendarRecurrenceInput): CanonicalRecurrenceResult {
+export function canonicalizeRecurrence(
+  input: CalendarRecurrenceInput,
+  options?: RecurrenceCanonicalizationOptions | string,
+): CanonicalRecurrenceResult {
   const parsed = calendarRecurrenceInputSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid structured recurrence" } };
   const value = parsed.data;
@@ -87,7 +97,7 @@ export function canonicalizeRecurrence(input: CalendarRecurrenceInput): Canonica
   }
   if (value.count !== undefined) fields.push(`COUNT=${value.count}`);
   if (value.until !== undefined) {
-    const until = canonicalUntil(value.until);
+    const until = canonicalUntil(value.until, options);
     if (!until) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid recurrence until" } };
     fields.push(`UNTIL=${until}`);
   }
@@ -98,14 +108,37 @@ export function canonicalizeRecurrence(input: CalendarRecurrenceInput): Canonica
 }
 export const canonicalizeRecurrenceInput = canonicalizeRecurrence;
 
-function canonicalUntil(value: string): string | undefined {
+function canonicalUntil(value: string, options?: RecurrenceCanonicalizationOptions | string): string | undefined {
+  const datePeriod = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(value);
   let instant: number;
-  if (/^\d{4}$/.test(value)) instant = Date.parse(`${value}-12-31T23:59:59.000Z`);
-  else if (/^\d{4}-\d{2}$/.test(value)) {
-    const [year, month] = value.split("-").map(Number);
-    instant = Date.UTC(year!, month!, 0, 23, 59, 59);
-  } else if (/^\d{4}-\d{2}-\d{2}$/.test(value)) instant = Date.parse(`${value}T23:59:59.000Z`);
-  else instant = Date.parse(value);
+  if (datePeriod) {
+    const year = Number(datePeriod[1]);
+    const month = datePeriod[2] === undefined ? 12 : Number(datePeriod[2]);
+    const day = datePeriod[3] === undefined
+      ? datePeriod[2] === undefined
+        ? 31
+        : (() => {
+            const last = new Date(0);
+            last.setUTCFullYear(year, month, 0);
+            last.setUTCHours(0, 0, 0, 0);
+            return last.getUTCDate();
+          })()
+      : Number(datePeriod[3]);
+    const configuredZone = typeof options === "string"
+      ? options
+      : options?.timeZoneId ?? options?.eventTimeZoneId ?? options?.householdTimeZone ?? resolveTimeZone().zone();
+    const zone = configuredZone === DEFAULT_EVENT_TIME_ZONE ? resolveTimeZone().zone() : configuredZone;
+    // Date-period UNTIL is the end of the represented local period, not the
+    // end of that date in UTC. This preserves the event/household wall clock.
+    const localEnd: Parts = { year, month, day, hour: 23, minute: 59, second: 59, millisecond: 0 };
+    try {
+      instant = instantForLocal(localEnd, zone) ?? Number.NaN;
+    } catch {
+      instant = Number.NaN;
+    }
+  } else {
+    instant = Date.parse(value);
+  }
   if (!Number.isFinite(instant)) return undefined;
   const d = new Date(instant);
   return `${d.getUTCFullYear().toString().padStart(4, "0")}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}T${String(d.getUTCHours()).padStart(2, "0")}${String(d.getUTCMinutes()).padStart(2, "0")}${String(d.getUTCSeconds()).padStart(2, "0")}Z`;
@@ -232,7 +265,7 @@ function expand(
       if (ordinal >= max) break;
       const local: CalendarTime | undefined = allDay
         ? { kind: "all-day", date: date.toISOString().slice(0, 10) as LocalDate }
-        : (() => { const a = anchor as Parts; const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second }; const ms = instantForLocal(p, zone); return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId }; })();
+        : (() => { const a = anchor as Parts; const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second, millisecond: a.millisecond }; const ms = instantForLocal(p, zone); return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId }; })();
       if (!local) continue;
       const localMs = comparableMillis(local);
       // BYDAY may produce days before DTSTART in the first week.
@@ -270,10 +303,14 @@ function candidateDates(anchor: Date, rule: RRule, cursor: number): Date[] {
   if (rule.freq === "DAILY") return [new Date(anchor.getTime() + cursor * interval * MS_DAY)];
   if (rule.freq === "WEEKLY") {
     const week = new Date(anchor.getTime() + cursor * interval * 7 * MS_DAY);
-    const day = week.getUTCDay();
-    const days = (rule.byDay ?? [WEEKDAYS[(day + 6) % 7] as Weekday]).map((x) => weekdayIndex[x]).sort((a, b) => a - b);
-    const monday = new Date(week.getTime() - ((day + 6) % 7) * MS_DAY);
-    return days.map((d) => new Date(monday.getTime() + ((d + 6) % 7) * MS_DAY));
+    const anchorDay = week.getUTCDay();
+    // A recurrence week is anchored by DTSTART, so a Sunday BYDAY is after
+    // Monday for a Monday-anchored series, but before Monday for a Sunday-
+    // anchored series. This makes generated COUNT ordinals chronological.
+    const days = (rule.byDay ?? [WEEKDAYS[(anchorDay + 6) % 7] as Weekday])
+      .map((x) => weekdayIndex[x])
+      .sort((a, b) => ((a - anchorDay + 7) % 7) - ((b - anchorDay + 7) % 7));
+    return days.map((d) => new Date(week.getTime() + ((d - anchorDay + 7) % 7) * MS_DAY));
   }
   if (rule.freq === "MONTHLY") {
     const d = addMonths(anchor, cursor * interval);
@@ -324,7 +361,7 @@ export function enumerateGeneratedSlots(
         ? { kind: "all-day", date: date.toISOString().slice(0, 10) as LocalDate }
         : (() => {
           const a = anchor as Parts;
-          const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second };
+          const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second, millisecond: a.millisecond };
           const ms = instantForLocal(p, zone);
           return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId };
         })();
