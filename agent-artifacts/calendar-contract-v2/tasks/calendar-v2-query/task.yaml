@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-query
 title: Implement bounded effective-occurrence calendar queries
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-temporal
   - calendar-v2-recurrence
@@ -31,3 +31,4 @@ runtime:
   baseCommit: ca1dcec157993645830a4ec1f2ac825190721453
   lastRunId: f306e8c0-6bac-4193-8e89-fa469fe9032f
   completedCommit: 46b5cc986879112b8ddd47399fc7e802cc254d9e
+  mergedCommit: 571858d7b4458b7e683743d7db039a25e45f1b23
