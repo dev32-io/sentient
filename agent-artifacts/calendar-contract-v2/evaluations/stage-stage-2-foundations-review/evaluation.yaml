@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-2-foundations
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
     src/calendar/calendar-temporal.test.ts
@@ -25,6 +25,65 @@ criteria:
   - Parallel contributions have non-overlapping source ownership and coherent
     contracts
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+  reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
+  reviewedCommit: 4b0091951b0fe148bec0657a17c68b03aed255ca
+findings:
+  - id: F1
+    severity: high
+    status: open
+    criterion: Recurrence generation and split arithmetic preserve deterministic
+      generated-slot order and COUNT identity.
+    location: gateway/src/calendar/expand-recurrence.ts:268-276
+    summary: Sunday-based sorting emits Sunday before Monday in a Monday-anchored
+      week, producing nonchronological and incorrectly ordinaled BYDAY slots.
+    blocking: true
+  - id: F2
+    severity: high
+    status: open
+    criterion: Every approved fractional temporal precision preserves stable
+      recurring occurrence identity.
+    location: gateway/src/calendar/expand-recurrence.ts:41-65, 312, 327-329
+    summary: Fractional seconds are dropped from the recurrence wall-clock anchor,
+      omitting a fractional DTSTART and changing later originalStart keys.
+    blocking: true
+  - id: F3
+    severity: high
+    status: open
+    criterion: All-day and timed UNTIL splits return correct typed proposals without
+      missing slots.
+    location: gateway/src/calendar/recurrence-splitter.ts:96-102, 196-201
+    summary: All-day prefix terminal text is cast as an ISO instant and reparsed as
+      Invalid Date, causing splitRecurrence to throw.
+    blocking: true
+  - id: F4
+    severity: high
+    status: open
+    criterion: Date periods and recurring anchors use the configured household timezone.
+    location: gateway/src/calendar/expand-recurrence.ts:76-111
+    summary: Structured recurrence date-period UNTIL is canonicalized at UTC
+      end-of-period with no household/event timezone input.
+    blocking: true
+  - id: F5
+    severity: high
+    status: open
+    criterion: Invalid persisted V2 rows return typed invalid/io_error.
+    location: gateway/src/calendar/calendar-store.ts:188-209
+    summary: created_at and updated_at are validated only as non-empty strings and
+      malformed values are returned as trusted UtcInstant fields.
+    blocking: true
+  - id: F6
+    severity: high
+    status: open
+    criterion: Operator max_query_chars controls the accepted search-query bound and
+      defaults to 512.
+    location: gateway/src/calendar/types.ts:343-349
+    summary: A hard-coded schema maximum of 256 rejects valid configured query
+      lengths from 257 through 512.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-2-foundations-review/manifest.yaml

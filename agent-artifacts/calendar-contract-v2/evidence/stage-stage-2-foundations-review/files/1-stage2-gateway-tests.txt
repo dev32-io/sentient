@@ -1,0 +1,70 @@
+bun test v1.3.11 (af24e281)
+
+src/calendar/e2e-helpers.test.ts:
+(pass) calendar E2E helpers > provisions an adult and child and isolates their private database paths [5.35ms]
+(pass) calendar E2E helpers > removes private and household databases, and is idempotent [5.74ms]
+(pass) calendar E2E helpers > tears down all resources when the case fails, and repeated teardown is safe [7.06ms]
+(pass) calendar E2E helpers > uses a stable sanitized evidence directory and metadata-only evidence API [0.52ms]
+
+src/calendar/calendar-store.test.ts:
+(pass) CalendarStore factory > gates resource class before touching the path [0.57ms]
+(pass) CalendarStore factory > creates the fresh V2 database and enables WAL [8.24ms]
+(pass) CalendarStore factory > reads and expands recurring events with filters and exceptions [33.12ms]
+(pass) CalendarStore factory > returns recurrence-limit instead of partial occurrences for an oversized bounded rule [22.22ms]
+(pass) CalendarStore factory > expands recurring events stored with the household timezone sentinel [21.89ms]
+(pass) CalendarStore factory > hides adult events from child and guest reads while allowing adult and admin [10.40ms]
+(pass) CalendarStore factory > atomically replaces mutable fields and cascades child rows on delete [10.41ms]
+(pass) CalendarStore factory > round-trips all-day and timed starts through get and list [12.19ms]
+(pass) CalendarStore factory > rejects child and guest household writes at the store gate [23.80ms]
+(pass) CalendarStore factory > allows admin household CRUD [12.04ms]
+(pass) CalendarStore factory > returns not-found for writes to an absent event [7.16ms]
+(pass) CalendarStore factory > does not inspect or modify the legacy calendar location [9.43ms]
+(pass) CalendarStore factory > provides revision CAS and explicit child-state operations [10.87ms]
+(pass) CalendarStore factory > rolls back successor, child, and revision writes together [8.31ms]
+(pass) CalendarStore factory > keeps the raw hidden-read seam capability-held [15.07ms]
+(pass) CalendarStore factory > leaves an ahead-of-binary database untouched [1.10ms]
+
+src/calendar/calendar-temporal.test.ts:
+(pass) calendar temporal boundary > accepts each approved precision and rejects offset-free or trailing values [0.37ms]
+(pass) calendar temporal boundary > expands year, month, and day periods to all-day boundaries [0.22ms]
+(pass) calendar temporal boundary > preserves timed instants and uses the household zone for recurring anchors [1.28ms]
+(pass) calendar temporal boundary > handles DST boundaries through the configured household timezone [0.48ms]
+(pass) calendar temporal boundary > rejects incompatible, inverted, and over-wide ranges before storage
+(pass) calendar temporal boundary > normalizes event start/end with leap dates and rejects inversion
+(pass) calendar temporal boundary > enforces string and tag limits without echoing supplied content [0.17ms]
+(pass) calendar temporal boundary > provides stable original keys for normalized times [0.31ms]
+
+src/calendar/types.test.ts:
+(pass) calendar V2 contracts > accepts model-friendly bounded times and rejects CalendarTime objects [0.94ms]
+(pass) calendar V2 contracts > requires exactly one recurrence bound and full weekday names [0.25ms]
+(pass) calendar V2 contracts > defines private/household/all reads and private/household writes [0.22ms]
+(pass) calendar V2 contracts > keeps occurrence identity separate from event identity [0.10ms]
+(pass) calendar V2 contracts > requires applyTo and restricts occurrence-local changes [1.27ms]
+(pass) calendar V2 contracts > supports rich clear semantics without allowing forbidden fields [0.48ms]
+(pass) calendar V2 contracts > pins V2 envelopes, pages, mutations, and stable errors [0.75ms]
+(pass) calendar V2 contracts > admin is adult-equivalent but has no separate bypass
+
+src/calendar/recurrence-splitter.test.ts:
+(pass) canonicalizeRecurrence > canonicalizes structured input and deterministically orders weekly weekdays [0.50ms]
+(pass) canonicalizeRecurrence > requires a bound and rejects unsupported constructs [0.19ms]
+(pass) splitRecurrence > counts excluded and cancelled slots in COUNT arithmetic [22.24ms]
+(pass) splitRecurrence > uses originalStart when the selected occurrence was moved [20.27ms]
+(pass) splitRecurrence > does not create an empty prefix at the first slot [11.81ms]
+(pass) splitRecurrence > retains UNTIL on successor and ends prefix at prior generated slot [15.05ms]
+(pass) splitRecurrence > rejects a changed successor rule that would orphan future child state [46.84ms]
+(pass) splitRecurrence > slot enumeration is independent of filtered occurrence output [25.13ms]
+
+src/calendar/expand-recurrence.test.ts:
+(pass) expandRecurrence > expands COUNT weekly BYDAY with inclusive bounds [16.25ms]
+(pass) expandRecurrence > resolves the household timezone sentinel during expansion [3.24ms]
+(pass) expandRecurrence > does not count pre-DTSTART BYDAY candidates [13.60ms]
+(pass) expandRecurrence > returns recurrence-limit rather than partial occurrences when maxOccurrences is exceeded [9.58ms]
+(pass) expandRecurrence > returns recurrence-limit when the configured day horizon is exceeded [5.96ms]
+(pass) expandRecurrence > keeps a timed event at its local hour across DST [5.25ms]
+(pass) expandRecurrence > projects rich overrides without changing the original identity [10.27ms]
+(pass) expandRecurrence > cancellation suppresses only its original slot and validates override kinds [14.58ms]
+
+ 52 pass
+ 0 fail
+ 237 expect() calls
+Ran 52 tests across 6 files. [528.00ms]

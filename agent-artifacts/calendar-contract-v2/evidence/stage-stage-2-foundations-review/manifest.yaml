@@ -1,0 +1,28 @@
+schemaVersion: 1
+evaluation: stage-stage-2-foundations-review
+recordedAt: 2026-08-20T02:23:27.272Z
+entries:
+  - result: 52 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test
+      src/calendar/types.test.ts src/calendar/calendar-temporal.test.ts
+      src/calendar/expand-recurrence.test.ts
+      src/calendar/recurrence-splitter.test.ts
+      src/calendar/calendar-store.test.ts src/calendar/e2e-helpers.test.ts
+    path: files/1-stage2-gateway-tests.txt
+    checksum: sha256:ca036a2b6a093225d239fcd220f51f3db2af3d3b26f57205f0d5d1d8c3abd0d8
+  - result: 10 pass, 0 fail
+    command: source scripts/env.sh && cd shared/config && bun test
+      src/schemas/orchestrator-config.test.ts
+    path: files/2-stage2-config-tests.txt
+    checksum: sha256:8607d2d476472a07ab2b0e023b0a4c1362d66435b509694e246b30712d423083
+  - result: all workspaces exited 0
+    command: source scripts/env.sh && bun run typecheck
+    path: files/3-stage2-typecheck.txt
+    checksum: sha256:7b04fd59923a17aa51136f349a76fc1e5b4ac9f0a331db200ab8f260e8a71d73
+  - result: Reproduced nonchronological MO/SU COUNT slots, omitted fractional
+      DTSTART, thrown all-day UNTIL split, and acceptance of malformed persisted
+      timestamps.
+    command: Focused Bun probes against recurrence and persistence boundaries
+  - result: clean
+    command: git diff --check
+      49c71459bbb10b760e2a1b1c60178b69806d7ade..4b0091951b0fe148bec0657a17c68b03aed255ca
