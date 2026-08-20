@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: calendar-v2-config
+title: Add operator-controlled calendar V2 safety limits
+status: draft
+dependsOn:
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-config
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd shared/config && bun test
+      src/schemas/orchestrator-config.test.ts
+    - source scripts/env.sh && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
