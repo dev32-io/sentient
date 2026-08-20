@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: calendar-v2-temporal
+title: Normalize human calendar time and enforce query/input bounds
+status: draft
+dependsOn:
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-temporal
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-temporal.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
