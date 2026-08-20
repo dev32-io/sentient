@@ -2,8 +2,7 @@ schemaVersion: 1
 id: calendar-v2-mobile-data
 title: Expose calendar V2 paging and mutations through mobile-data
 status: draft
-dependsOn:
-  - calendar-v2-kmp-sdk
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
