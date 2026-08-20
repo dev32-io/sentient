@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: calendar-v2-mobile-data
+title: Expose calendar V2 paging and mutations through mobile-data
+status: draft
+dependsOn:
+  - calendar-v2-kmp-sdk
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-mobile-data
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+      --tests '*Calendar*'
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:compileDebugKotlin
+      :android:compileDebugKotlin
+  rationale: Verify the contribution at its declared task boundary.
