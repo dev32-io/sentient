@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-config
 title: Add operator-controlled calendar V2 safety limits
-status: ready
+status: running
 dependsOn:
   - calendar-v2-contracts
 execution:
@@ -21,3 +21,9 @@ verification:
       src/schemas/orchestrator-config.test.ts
     - source scripts/env.sh && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-config
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-config
+  baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
+  lastRunId: 5bdfd44d-1da4-4c99-be0c-73024cfd0822
