@@ -30,21 +30,21 @@ Defines the clean-cutover calendar contract for the model, REST consumers, and s
 
 ## Acceptance Criteria
 
-- **AC-001:** AC-001: Each of the six tools accepts its documented model-oriented shape without exposing internal CalendarTime objects; malformed input returns a stable actionable error.
-- **AC-002:** AC-002: Omitted scope addresses private data, explicit all aggregates only authorized read scopes, and writes cannot target all.
-- **AC-003:** AC-003: Search and list reject absent, invalid, inverted, or over-limit ranges before storage work, and bounded valid queries merge and sort timed and all-day occurrences.
-- **AC-004:** AC-004: Calendar tools proactively reject over-count or over-size results without partial or malformed JSON; REST returns a deterministic page and continuation for the equivalent query.
-- **AC-005:** AC-005: Recurring creation from structured input stores a canonical bounded rule and expands the expected slots in the event timezone.
-- **AC-006:** AC-006: Single-occurrence update supports every allowed event-local field, preserves original occurrence identity, and makes effective search, filters, and role visibility observable only on that occurrence.
-- **AC-007:** AC-007: Single-occurrence delete stores exactly one canonical cancellation and leaves adjacent occurrences unchanged.
-- **AC-008:** AC-008: COUNT- and UNTIL-bounded this_and_following updates split atomically without duplicate or missing generated slots and partition compatible child state by original occurrence key.
-- **AC-009:** AC-009: This-and-following delete preserves earlier occurrences, removes the selected and future portion, and creates no successor.
-- **AC-010:** AC-010: An incompatible recurrence change or induced transaction failure leaves prefix, successor, exceptions, exclusions, and revisions unchanged.
-- **AC-011:** AC-011: A supplied stale revision returns conflict without overwriting a newer mutation and a reread provides the current revision.
-- **AC-012:** AC-012: Household role and visibility rules remain enforced at broker, capability, and store boundaries for tools and REST, including effective occurrence visibility.
-- **AC-013:** AC-013: Tool, REST, web service, and mobile SDK mutation paths share the same command semantics; no calendar screen implementation is required.
-- **AC-014:** AC-014: Calendar content, query text, and mutation payloads never enter gateway or mobile diagnostics; only sanitized structural metadata may be logged.
-- **AC-015:** AC-015: The baseline schema and all clients cut over together on fresh disposable storage; no migration or legacy REST compatibility is delivered.
+- **AC-001:** Each of the six tools accepts its documented model-oriented shape without exposing internal CalendarTime objects; malformed input returns a stable actionable error.
+- **AC-002:** Omitted scope addresses private data, explicit all aggregates only authorized read scopes, and writes cannot target all.
+- **AC-003:** Search and list reject absent, invalid, inverted, or over-limit ranges before storage work, and bounded valid queries merge and sort timed and all-day occurrences.
+- **AC-004:** Calendar tools proactively reject over-count or over-size results without partial or malformed JSON; REST returns a deterministic page and continuation for the equivalent query.
+- **AC-005:** Recurring creation from structured input stores a canonical bounded rule and expands the expected slots in the event timezone.
+- **AC-006:** Single-occurrence update supports every allowed event-local field, preserves original occurrence identity, and makes effective search, filters, and role visibility observable only on that occurrence.
+- **AC-007:** Single-occurrence delete stores exactly one canonical cancellation and leaves adjacent occurrences unchanged.
+- **AC-008:** COUNT- and UNTIL-bounded this_and_following updates split atomically without duplicate or missing generated slots and partition compatible child state by original occurrence key.
+- **AC-009:** This-and-following delete preserves earlier occurrences, removes the selected and future portion, and creates no successor.
+- **AC-010:** An incompatible recurrence change or induced transaction failure leaves prefix, successor, exceptions, exclusions, and revisions unchanged.
+- **AC-011:** A supplied stale revision returns conflict without overwriting a newer mutation and a reread provides the current revision.
+- **AC-012:** Household role and visibility rules remain enforced at broker, capability, and store boundaries for tools and REST, including effective occurrence visibility.
+- **AC-013:** Tool, REST, web service, and mobile SDK mutation paths share the same command semantics; no calendar screen implementation is required.
+- **AC-014:** Calendar content, query text, and mutation payloads never enter gateway or mobile diagnostics; only sanitized structural metadata may be logged.
+- **AC-015:** The baseline schema and all clients cut over together on fresh disposable storage; no migration or legacy REST compatibility is delivered.
 
 ## Domain Language
 
