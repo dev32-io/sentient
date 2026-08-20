@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: stage-stage-3-domain-services-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-3-domain-services
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/calendar/calendar-query.test.ts src/calendar/calendar-mutations.test.ts
+    src/calendar/nudge.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Complete-or-error model queries and deterministic bounded REST paging
+  - Effective-occurrence visibility and filter ordering
+  - Mutation authority, revisions, canonical recurrence, and whole-segment
+    atomicity
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
