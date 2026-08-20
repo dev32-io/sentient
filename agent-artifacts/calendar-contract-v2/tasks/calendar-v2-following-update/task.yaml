@@ -2,9 +2,7 @@ schemaVersion: 1
 id: calendar-v2-following-update
 title: Add atomic this-and-following series updates
 status: draft
-dependsOn:
-  - calendar-v2-mutation-core
-  - calendar-v2-recurrence
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
