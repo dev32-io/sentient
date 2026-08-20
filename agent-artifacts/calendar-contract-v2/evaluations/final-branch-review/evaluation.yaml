@@ -11,11 +11,46 @@ methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
+  state: fixing
   iteration: 0
-  maxIterations: 3
-  state: awaiting_manager
+  maxIterations: 6
   reviewerAgentId: cfc497de-4f78-4b7a-9528-b98f7fce25d7
   reviewedCommit: 327108f287d44c1e34ab3685e602f08e3fa99de2
+  managerPrompt: >-
+    Repair CAL-V2-FINAL-002 through 005, but do not alter calendar UI/ViewModel
+    files. CAL-V2-FINAL-001 is a baseline-scope false positive: `git diff
+    db9ac6826e92449b5094a097a27b4a0a7f98f502..HEAD` shows no changes under the
+    reviewed web/Android/iOS calendar UI paths; those files predate this work
+    item. Preserve that zero work-item UI diff and have re-review mark the
+    finding rejected/resolved by baseline evidence.
+
+
+    For FINAL-002, accept and validate the optional REST list `query` parameter
+    and thread it into the shared effective query service so the web client's
+    list query is never silently ignored; add exact handler/service filtering
+    tests.
+
+
+    For FINAL-003, remove KMP V1 `more` and `baseEventId` fields and every
+    eventId-to-baseEventId normalization. Use `nextCursor`, `eventId`,
+    `occurrenceId`, and `originalStart` throughout SDK/mobile-data compatibility
+    paths, including safe delete resolution, while unchanged platform consumers
+    still compile.
+
+
+    For FINAL-005, remove raw `{rrule, rule}` recurrence acceptance/parsing from
+    the exported web service contract. Web requests must use only the structured
+    V2 recurrence object; retain no legacy fallback and keep UI files untouched.
+
+
+    For FINAL-004, make `calendar.nudge.max_per_day` strictly positive with
+    bounded schema tests, consistent with the planned operator-limit contract.
+
+
+    Run focused gateway REST/query, web service/view compile tests,
+    KMP/mobile-data calendar/privacy tests, shared/Android compilation, root
+    typecheck, and `git diff --check`; verify again that the work-item UI path
+    diff remains empty.
 findings:
   - id: CAL-V2-FINAL-001
     severity: high
