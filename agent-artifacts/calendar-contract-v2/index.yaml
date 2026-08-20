@@ -74,6 +74,8 @@ evaluations:
     path: evaluations/stage-stage-3-domain-services-review/evaluation.yaml
   - id: stage-stage-4-recurring-mutations-review
     path: evaluations/stage-stage-4-recurring-mutations-review/evaluation.yaml
+  - id: stage-stage-5-gateway-adapters-review
+    path: evaluations/stage-stage-5-gateway-adapters-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:

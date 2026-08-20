@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: stage-stage-5-gateway-adapters-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-5-gateway-adapters
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/bootstrap/product-tools/calendar-provider.test.ts
+    src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+    src/calendar/calendar-mutations.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - All six tool schemas, stable tiers, pre-PDP household gate, actionable
+    errors, and proactive caps
+  - REST V2 route replacement, paging, authentication, error mapping, and handle
+    closure
+  - Tool and REST adapters share domain behavior without loopback or hidden-data
+    leakage
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
