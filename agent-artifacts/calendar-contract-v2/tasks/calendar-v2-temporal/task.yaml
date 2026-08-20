@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-temporal
 title: Normalize human calendar time and enforce query/input bounds
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-contracts
 execution:
@@ -27,3 +27,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-temporal
   baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
   lastRunId: eba35f26-694a-48fb-84fc-50e92bd3b6d2
+  completedCommit: 449295b2d06edef55537a44e460ea5c06de91bb6
