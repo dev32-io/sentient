@@ -20,24 +20,25 @@ criteria:
     mutation use case
   - Untouched platform UI compatibility and content-free diagnostics
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 187996dd-1067-4e67-a0b2-b45a81b91a34
   reviewedCommit: 7ad472858616fd439c90d0038d143c27d2a707a0
-  managerPrompt: Repair both mobile-data findings. Whole-series delete convenience
-    must preserve the selected event's actual private/household scope and carry
-    its current revision as expectedRevision, just as update does; do not
-    default a household event to private or discard stale-write protection.
-    Thread those values from the existing event/use-case state without
-    introducing hidden repository state, preserve current platform source
-    compatibility, and test household/private commands plus stale conflict
-    propagation. Also map CalendarHttpClient HTTP 401 failures to the stable
-    authentication/unauthorized mobile-data error rather than a generic protocol
-    failure; either make InvalidCredentials reachable or explicitly recognize
-    the server status without exposing raw bodies. Add focused success/failure
-    and UI-safe-message tests, retain content-free diagnostics, and rerun all
-    Stage 8 tests, shared/Android compilation, and diff checks.
+  managerPrompt: "Complete CAL-MOBILE-001 without editing iOS/Android UI or
+    ViewModel source. Keep the legacy id-only delete call source-compatible, but
+    make its mobile-data compatibility adapter safe: resolve the selected V2
+    event from existing loaded use-case state when unambiguous, or perform an
+    authoritative bounded get with read scope all, then issue entire_series
+    delete with that event's exact writable scope and current revision. Never
+    default id-only deletion to private, probe writes across scopes, or omit
+    expectedRevision; fail safely if the event cannot be resolved uniquely.
+    Retain the event-aware overload as the direct path. Add a regression that
+    invokes the same id-only path used by the unchanged iOS ViewModel for a
+    household event and asserts household scope plus expectedRevision, along
+    with private, missing/ambiguous, and stale-conflict cases. Confirm platform
+    sources remain unchanged and rerun Stage 8 tests and Android/shared
+    compilation."
   fixerAgentId: 1a0afb2a-3939-4b42-a0e8-3367c367178c
 findings:
   - id: CAL-MOBILE-001
