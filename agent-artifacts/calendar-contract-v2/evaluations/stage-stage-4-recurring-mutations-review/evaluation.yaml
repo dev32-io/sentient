@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-4-recurring-mutations
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -21,8 +21,8 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 3
   reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
   reviewedCommit: 6e23e8e5f997e9cd9879d9b607a4fc859ebf7f46
