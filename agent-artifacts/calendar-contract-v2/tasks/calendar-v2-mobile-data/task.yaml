@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-mobile-data
 title: Expose calendar V2 paging and mutations through mobile-data
-status: ready
+status: running
 dependsOn:
   - calendar-v2-kmp-sdk
 execution:
@@ -22,3 +22,9 @@ verification:
     - source scripts/env.sh && ./gradlew :shared:mobile-data:compileDebugKotlin
       :android:compileDebugKotlin
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: e6d8e1dedcee93d7cd7963da6b7cbe1684328926
+  lastRunId: 75b575aa-56db-4c54-a0f9-02d824c2c63e
