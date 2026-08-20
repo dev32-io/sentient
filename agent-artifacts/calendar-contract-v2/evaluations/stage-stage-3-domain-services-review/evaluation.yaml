@@ -19,11 +19,26 @@ criteria:
   - Mutation authority, revisions, canonical recurrence, and whole-segment
     atomicity
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 1605936e-59e2-48e1-8c80-ed2d583953a1
   reviewedCommit: 6daaa64cb4f51c6e6afc24e881d12e28b7fbbaf5
+  managerPrompt: "Repair all three blocking query defects and add regressions.
+    Build each response from one complete bounded effective candidate set: the
+    store must expose a bounded candidate-read primitive with max-plus-one
+    overflow signaling rather than loading every base ID; any candidate or
+    expanded-occurrence overflow must return result_too_large, never a subset.
+    Apply exceptions, authorization, and filters, then deterministically sort
+    the complete bounded set by effective start/scope/eventId/originalStart;
+    only after that validate/apply the opaque cursor and slice a REST page. Tool
+    mode must return result_too_large whenever the complete sorted result would
+    have a next REST page, even when it remains below max_occurrences, and must
+    still enforce serialized output size. Add tests where late source rows sort
+    before early rows, where a tool result is page_size+1 but below
+    max_occurrences, and where base-candidate scanning overflows before
+    expansion. Preserve all-scope complete-or-error behavior and rerun every
+    stage-3 check."
 findings:
   - id: STAGE3-001
     severity: high
