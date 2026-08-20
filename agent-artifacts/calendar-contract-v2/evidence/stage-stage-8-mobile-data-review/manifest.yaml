@@ -1,0 +1,24 @@
+schemaVersion: 1
+evaluation: stage-stage-8-mobile-data-review
+recordedAt: 2026-08-20T04:50:59.505Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+    description: Focused Calendar mobile-data tests pass.
+    path: files/1-CalendarDataTest.kt
+    checksum: sha256:ec4e18152976bab67bccdafa0b9da3ca19d922697dda79081ffb9ab20f8109c4
+  - result: BUILD SUCCESSFUL; diff check clean
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin && git
+      diff --check
+    description: Declared shared/Android compile and whitespace checks pass.
+  - result: Delete sends no scope/revision; VM passes only event ID; handler
+      defaults omitted scope to private.
+    command: git show
+      d164f404:shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt
+      | sed -n '195,205p'; git show
+      d164f404:android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt
+      | sed -n '85,88p'; git show d164f404:gateway/src/api/handlers/calendar.ts
+      | sed -n '224,231p'
+    description: Concrete source evidence for the blocking delete adapter defect.
