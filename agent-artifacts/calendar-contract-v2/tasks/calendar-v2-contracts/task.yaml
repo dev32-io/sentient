@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-contracts
 title: Define the calendar V2 domain and wire contracts
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -26,3 +26,4 @@ runtime:
   baseCommit: db9ac6826e92449b5094a097a27b4a0a7f98f502
   lastRunId: d69c2091-57fe-4de3-b1af-88dc84ea3ef1
   completedCommit: 7062d8a7cd6a643c7c2d76857d5b91f87658206a
+  mergedCommit: 737c146fae9c63e624683aafb6c531f319fe8b59
