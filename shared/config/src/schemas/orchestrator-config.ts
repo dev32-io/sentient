@@ -262,10 +262,38 @@ export const orchestratorConfigSchema = z.object({
   calendar: z
     .object({
       enabled: z.boolean().default(true),
+      // Query limits bound both the amount of recurrence expansion and the
+      // number of rows a REST page or complete tool result may contain.
+      // Tools fail with result_too_large rather than returning a partial page;
+      // REST uses page_size and a continuation cursor.
+      query: z
+        .object({
+          max_days: z.number().int().min(1).max(366).default(366),
+          max_occurrences: z.number().int().min(1).max(1000).default(250),
+          page_size: z.number().int().min(1).max(100).default(100),
+        })
+        .default({}),
+      // Input caps are enforced by the V2 boundary adapters before storage or
+      // provider work. Each is independently tunable downward from the safe
+      // shipped ceiling.
+      input: z
+        .object({
+          max_title_chars: z.number().int().min(1).max(512).default(512),
+          max_description_chars: z.number().int().min(1).max(8000).default(8000),
+          max_query_chars: z.number().int().min(1).max(512).default(512),
+          max_group_chars: z.number().int().min(1).max(128).default(128),
+          max_tag_chars: z.number().int().min(1).max(64).default(64),
+          max_tags: z.number().int().min(1).max(32).default(32),
+        })
+        .default({}),
+      // This is a proactive calendar limit, not the generic broker cap. It is
+      // intentionally strictly below tools.max_tool_result_chars' default
+      // backstop so an actionable result_too_large error still fits.
+      output: z.object({ max_result_chars: z.number().int().min(1).max(19999).default(16000) }).default({}),
       recurrence: z
         .object({
-          max_occurrences: z.number().int().min(1).max(10000).default(1000),
-          max_days: z.number().int().min(1).max(3650).default(366),
+          max_occurrences: z.number().int().min(1).max(1000).default(1000),
+          max_days: z.number().int().min(1).max(366).default(366),
         })
         .default({}),
       nudge: z

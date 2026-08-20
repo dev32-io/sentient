@@ -50,7 +50,7 @@ import { type DreamClock, type DreamScheduler, createDreamScheduler } from "../m
 import { composeMemoryBlock } from "../memory/memory-prompt.js";
 import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
-import type { CalendarStore } from "../calendar/types.js";
+import type { CalendarConfig, CalendarStore } from "../calendar/types.js";
 import { openCalendarStore } from "../calendar/calendar-store.js";
 import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
@@ -328,16 +328,40 @@ export function buildSessionCalendar(
 ): SessionCalendar | null {
   if (!orchestratorCfg.calendar.enabled) return null;
   const configured = orchestratorCfg.calendar.default_event_tz_id;
-  const calendarCfg = {
-    recurrence: {
+  // The schema keeps the shipped 20,000-character relationship safe. This
+  // second check covers an operator who lowers the generic broker backstop:
+  // the calendar must reject proactively, strictly before that backstop.
+  if (orchestratorCfg.calendar.output.max_result_chars >= orchestratorCfg.tools.max_tool_result_chars) {
+    throw new Error(
+      "orchestrator.calendar.output.max_result_chars must be strictly below orchestrator.tools.max_tool_result_chars",
+    );
+  }
+  // Resolve the household zone once and freeze the complete mapping. Every
+  // calendar consumer receives the same limits and concrete timezone; no
+  // adapter reads the YAML shape or resolves the sentinel independently.
+  const householdZone = resolveTimeZone().zone();
+  const calendarCfg: CalendarConfig = Object.freeze({
+    query: Object.freeze({
+      maxDays: orchestratorCfg.calendar.query.max_days,
+      maxOccurrences: orchestratorCfg.calendar.query.max_occurrences,
+      pageSize: orchestratorCfg.calendar.query.page_size,
+    }),
+    input: Object.freeze({
+      maxTitleChars: orchestratorCfg.calendar.input.max_title_chars,
+      maxDescriptionChars: orchestratorCfg.calendar.input.max_description_chars,
+      maxQueryChars: orchestratorCfg.calendar.input.max_query_chars,
+      maxGroupChars: orchestratorCfg.calendar.input.max_group_chars,
+      maxTagChars: orchestratorCfg.calendar.input.max_tag_chars,
+      maxTags: orchestratorCfg.calendar.input.max_tags,
+    }),
+    output: Object.freeze({ maxResultChars: orchestratorCfg.calendar.output.max_result_chars }),
+    recurrence: Object.freeze({
       maxOccurrences: orchestratorCfg.calendar.recurrence.max_occurrences,
       maxDays: orchestratorCfg.calendar.recurrence.max_days,
-    },
-    nudge: { maxPerDay: orchestratorCfg.calendar.nudge.max_per_day },
-    // Resolve the sentinel here so every store receives a concrete household
-    // zone; an explicit IANA id remains an operator override.
-    defaultEventTimeZoneId: configured === "household" ? resolveTimeZone().zone() : configured,
-  };
+    }),
+    nudge: Object.freeze({ maxPerDay: orchestratorCfg.calendar.nudge.max_per_day }),
+    defaultEventTimeZoneId: configured === "household" ? householdZone : configured,
+  });
   const privateCap = accessManager.grant(principal, "calendar-private");
   const householdCap = accessManager.grant(principal, "calendar-household");
   const privateStore = openCalendarStore(privateCap, calendarCfg);
@@ -345,7 +369,6 @@ export function buildSessionCalendar(
   const tools = composeProductToolProviders(undefined, {
     calendar: { privateStore, privateCap, householdStore, householdCap },
   });
-  const householdZone = resolveTimeZone().zone();
   const nudgeBudget = {
     maxChars: 4000,
     maxLines: Math.max(1, orchestratorCfg.calendar.nudge.max_per_day + 4),

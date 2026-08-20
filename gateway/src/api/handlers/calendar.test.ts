@@ -145,7 +145,14 @@ describe("calendar REST handler", () => {
     const accessManager = createAccessManager({ userDataRoot: join(root, "users"), sharedDataRoot: join(root, "shared") });
     const principal = createUserPrincipal("u_12345678", "adult", "home");
     const capability = accessManager.grant(principal, "calendar-private");
-    const config: CalendarConfig = { recurrence: { maxOccurrences: 1000, maxDays: 366 }, nudge: { maxPerDay: 10 }, defaultEventTimeZoneId: fixtureTimed.timeZoneId };
+    const config: CalendarConfig = Object.freeze({
+      query: Object.freeze({ maxDays: 30, maxOccurrences: 25, pageSize: 10 }),
+      input: Object.freeze({ maxTitleChars: 64, maxDescriptionChars: 256, maxQueryChars: 64, maxGroupChars: 32, maxTagChars: 16, maxTags: 4 }),
+      output: Object.freeze({ maxResultChars: 4000 }),
+      recurrence: Object.freeze({ maxOccurrences: 1000, maxDays: 366 }),
+      nudge: Object.freeze({ maxPerDay: 10 }),
+      defaultEventTimeZoneId: fixtureTimed.timeZoneId,
+    });
     const store = openCalendarStore(capability, config);
     const timed = (instant: string) => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: fixtureTimed.timeZoneId as never });
     const baseStart = timed(fixtureTimed.instant);

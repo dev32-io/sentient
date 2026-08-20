@@ -474,7 +474,34 @@ orchestrator:
   # construction (resolveTimeZone), rather than introducing a second serving TZ.
   calendar:
     enabled: true
+    query:
+      # Maximum normalized query span in days (1-366).
+      max_days: 366
+      # Maximum complete occurrences considered by a query (1-1000).
+      # Tools return result_too_large instead of a partial result; REST pages.
+      max_occurrences: 250
+      # Maximum REST page size (1-100); tools still require a complete result.
+      page_size: 100
+    input:
+      # Maximum title length accepted by calendar create/update (1-512).
+      max_title_chars: 512
+      # Maximum description length accepted by calendar create/update (1-8000).
+      max_description_chars: 8000
+      # Maximum free-text search query length (1-512).
+      max_query_chars: 512
+      # Maximum event group length (1-128).
+      max_group_chars: 128
+      # Maximum length of one tag (1-64).
+      max_tag_chars: 64
+      # Maximum number of tags on one event (1-32).
+      max_tags: 32
+    output:
+      # Proactive serialized model-result limit (1-19999), not the broker cap.
+      # Calendar tools return result_too_large with narrowing guidance before
+      # the generic 20000-character tool-result backstop; REST pages instead.
+      max_result_chars: 16000
     recurrence:
+      # Recurrence expansion ceiling (1-1000 occurrences, 1-366 days).
       max_occurrences: 1000
       max_days: 366
     nudge:

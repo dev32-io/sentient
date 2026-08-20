@@ -112,10 +112,32 @@ export function isAdult(role: UserRole): boolean {
   return role === "adult" || role === "admin";
 }
 
+/**
+ * The resolved, immutable calendar configuration shared by every calendar
+ * adapter. YAML snake_case is mapped to this camelCase domain shape at the
+ * composition root; `defaultEventTimeZoneId` is concrete by then (the
+ * `household` sentinel has already been resolved).
+ */
 export interface CalendarConfig {
-  recurrence: { maxOccurrences: number; maxDays: number };
-  nudge: { maxPerDay: number };
-  defaultEventTimeZoneId?: string;
+  readonly query: Readonly<{
+    readonly maxDays: number;
+    readonly maxOccurrences: number;
+    readonly pageSize: number;
+  }>;
+  readonly input: Readonly<{
+    readonly maxTitleChars: number;
+    readonly maxDescriptionChars: number;
+    readonly maxQueryChars: number;
+    readonly maxGroupChars: number;
+    readonly maxTagChars: number;
+    readonly maxTags: number;
+  }>;
+  readonly output: Readonly<{
+    readonly maxResultChars: number;
+  }>;
+  readonly recurrence: Readonly<{ readonly maxOccurrences: number; readonly maxDays: number }>;
+  readonly nudge: Readonly<{ readonly maxPerDay: number }>;
+  readonly defaultEventTimeZoneId: string;
 }
 
 export type CalendarStoreError =
