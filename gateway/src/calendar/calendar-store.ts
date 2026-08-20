@@ -7,7 +7,7 @@ import {
   DEFAULT_EVENT_TIME_ZONE,
   isAdult,
   type CalendarConfig,
-  type CalendarEvent,
+  type StoredCalendarEvent,
   type CalendarEventId,
   type CalendarEventPatch,
   type CalendarListWindow,
@@ -33,7 +33,7 @@ type EventRow = {
   id: string; title: string; description: string | null;
   start_instant: string | null; start_time_zone_id: string | null; start_all_day: number; start_date: string | null;
   end_instant: string | null; end_time_zone_id: string | null; end_all_day: number; end_date: string | null;
-  recurrence: string | null; visibility: CalendarEvent["visibility"]; importance: CalendarEvent["importance"];
+  recurrence: string | null; visibility: StoredCalendarEvent["visibility"]; importance: StoredCalendarEvent["importance"];
   group: string | null; notification_policy: string | null; created_at: string; updated_at: string;
 };
 
@@ -74,7 +74,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   const gate = <T>(operation: () => CalendarResult<T>): CalendarResult<T> =>
     cap.resource === "calendar-household" && !isAdult(cap.role) ? { ok: false, error: "forbidden" } : operation();
 
-  const read = (id: CalendarEventId): CalendarResult<CalendarEvent> => {
+  const read = (id: CalendarEventId): CalendarResult<StoredCalendarEvent> => {
     const row = db.query<EventRow, [string]>("SELECT * FROM events WHERE id = ?").get(id);
     if (!row) return { ok: false, error: "not-found" };
     if (row.visibility === "adults" && !isAdult(cap.role)) return { ok: false, error: "not-found" };
@@ -88,7 +88,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     const exceptions = db.query<{ occurrence_key: string; cancelled: number; override_json: string | null }, [string]>("SELECT * FROM exceptions WHERE event_id = ? ORDER BY occurrence_key").all(id)
       .map((r) => ({ ...(JSON.parse(r.occurrence_key) as { occurrence: CalendarTime }), cancelled: !!r.cancelled, ...(r.override_json ? JSON.parse(r.override_json) : {}) }));
     const end = storedTime(row.end_instant, row.end_time_zone_id, row.end_all_day, row.end_date);
-    const value: CalendarEvent = {
+    const value: StoredCalendarEvent = {
       id: row.id as CalendarEventId, title: row.title, ...(row.description === null ? {} : { description: row.description }), start,
       ...(end ? { end } : {}), ...(row.recurrence ? { recurrence: JSON.parse(row.recurrence) } : {}), exdates, exceptions,
       visibility: row.visibility, importance: row.importance, ...(row.group === null ? {} : { group: row.group }), tags: new Set(tags),
@@ -97,7 +97,7 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     return { ok: true, value };
   };
 
-  const write = (event: CalendarEvent, mode: "create" | "update"): CalendarResult<CalendarEvent> => {
+  const write = (event: StoredCalendarEvent, mode: "create" | "update"): CalendarResult<StoredCalendarEvent> => {
     if (mode === "create" && db.query("SELECT 1 FROM events WHERE id=?").get(event.id)) return { ok: false, error: "already-exists" };
     const start = event.start;
     const end = event.end;
@@ -158,10 +158,10 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     get: (id) => usable(() => read(id)),
     list: (window) => usable(() => list(window)),
     create: (event) => usable(() => gate(() => write(event, "create"))),
-    update: ((idOrEvent: CalendarEventId | CalendarEvent, patch?: CalendarEventPatch) => usable(() => gate(() => {
+    update: ((idOrEvent: CalendarEventId | StoredCalendarEvent, patch?: CalendarEventPatch) => usable(() => gate(() => {
       const current = typeof idOrEvent === "string" ? read(idOrEvent) : read(idOrEvent.id);
       if (!current.ok) return current;
-      const event = typeof idOrEvent === "string" ? { ...current.value, ...patch, id: idOrEvent } as CalendarEvent : idOrEvent;
+      const event = typeof idOrEvent === "string" ? { ...current.value, ...patch, id: idOrEvent } as StoredCalendarEvent : idOrEvent;
       return write(event, "update");
     }))) as CalendarStore["update"],
     "delete": (id) => usable(() => gate(() => {

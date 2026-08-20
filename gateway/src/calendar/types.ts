@@ -63,7 +63,7 @@ export interface ExceptionOverride {
   end?: CalendarTime;
 }
 
-export interface CalendarEvent {
+export interface StoredCalendarEvent {
   id: CalendarEventId;
   title: string;
   description?: string;
@@ -82,7 +82,7 @@ export interface CalendarEvent {
   updatedAt: UtcInstant;
 }
 
-export interface Occurrence extends CalendarEvent {
+export interface Occurrence extends StoredCalendarEvent {
   occurrenceId: string;
   baseEventId: CalendarEventId;
   occurrenceStart: CalendarTime;
@@ -94,7 +94,7 @@ export interface CalendarNotification {
   [key: string]: unknown;
 }
 export interface CalendarNotifier {
-  notify(_event: CalendarEvent | Occurrence): void | Promise<void>;
+  notify(_event: StoredCalendarEvent | Occurrence): void | Promise<void>;
 }
 
 /** Admin is adult-equivalent for calendar visibility, not a bypass. */
@@ -118,24 +118,16 @@ export type CalendarStoreError =
   | "io-error"
   | "closed"
   | "not-implemented";
-export type CalendarHttpErrorCode =
-  | CalendarStoreError
-  | "missing-token"
-  | "malformed"
-  | "expired"
-  | "signature-invalid"
-  | "wrong-purpose"
-  | "user-not-found"
-  | "invalid-user-record"
-  | "method-not-allowed";
+/** External V2 errors are stable snake_case codes; store errors do not cross this boundary. */
+export type CalendarHttpErrorCode = CalendarErrorCode;
 export type CalendarResult<T> = Result<T, CalendarStoreError>;
-export type CalendarEventPatch = Partial<Omit<CalendarEvent, "id" | "createdAt">>;
+export type CalendarEventPatch = Partial<Omit<StoredCalendarEvent, "id" | "createdAt">>;
 export interface CalendarStore {
-  get(id: CalendarEventId): CalendarResult<CalendarEvent>;
+  get(id: CalendarEventId): CalendarResult<StoredCalendarEvent>;
   list(window: CalendarListWindow): CalendarResult<Occurrence[]>;
-  create(event: CalendarEvent): CalendarResult<CalendarEvent>;
-  update(event: CalendarEvent): CalendarResult<CalendarEvent>;
-  update(id: CalendarEventId, patch: CalendarEventPatch): CalendarResult<CalendarEvent>;
+  create(event: StoredCalendarEvent): CalendarResult<StoredCalendarEvent>;
+  update(event: StoredCalendarEvent): CalendarResult<StoredCalendarEvent>;
+  update(id: CalendarEventId, patch: CalendarEventPatch): CalendarResult<StoredCalendarEvent>;
   delete(id: CalendarEventId): CalendarResult<void>;
   close(): void;
 }
@@ -151,20 +143,20 @@ export interface CalendarListWindow {
 }
 
 export interface CalendarRequest<T> {
-  version: 1;
+  version: 2;
   requestId: string;
   operation: string;
   body: T;
 }
 export interface CalendarResponse<T> {
-  version: 1;
+  version: 2;
   requestId: string;
   body: T;
 }
 export interface CalendarErrorResponse {
-  version: 1;
+  version: 2;
   requestId: string;
-  error: { code: CalendarHttpErrorCode; message: string };
+  error: CalendarError;
 }
 
 const utcInstant = z.string().datetime({ offset: true }).brand<"UtcInstant">();
@@ -192,147 +184,231 @@ export const wireRRuleSchema = z
   .refine((r) => !(r.count !== undefined && r.until !== undefined), {
     message: "COUNT and UNTIL are mutually exclusive",
   });
-const calendarStoreErrorSchema = z.enum([
-  "not-found",
-  "already-exists",
-  "invalid",
-  "forbidden",
-  "conflict",
-  "recurrence-limit",
-  "io-error",
-  "closed",
-  "not-implemented",
-]);
-const calendarHttpErrorSchema = z.enum([
-  ...calendarStoreErrorSchema.options,
-  "missing-token",
-  "malformed",
-  "expired",
-  "signature-invalid",
-  "wrong-purpose",
-  "user-not-found",
-  "invalid-user-record",
-  "method-not-allowed",
-]);
+/**
+ * Boundary time input is intentionally human/model-friendly.  CalendarTime is
+ * kept above for normalized storage and recurrence expansion only.
+ */
+export type CalendarTimeInput = string & { readonly __calendarTimeInput: unique symbol };
+const calendarTimeInputPattern = /^(?:\d{4}|\d{4}-\d{2}|\d{4}-\d{2}-\d{2}|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2}))$/;
+function isCalendarTimeInput(value: string): boolean {
+  if (/^\d{4}$/.test(value)) return true;
+  const month = /^(\d{4})-(\d{2})$/.exec(value);
+  if (month) return isValidCalendarDate(Number(month[1]), Number(month[2]), 1);
+  const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (date) return isValidCalendarDate(Number(date[1]), Number(date[2]), Number(date[3]));
+  const dateTime = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if (!dateTime || !isValidCalendarDate(Number(dateTime[1]), Number(dateTime[2]), Number(dateTime[3]))) return false;
+  const hour = Number(dateTime[4]);
+  const minute = Number(dateTime[5]);
+  const second = dateTime[6] === undefined ? 0 : Number(dateTime[6]);
+  const offsetHour = dateTime[9] === undefined ? 0 : Number(dateTime[9]);
+  const offsetMinute = dateTime[10] === undefined ? 0 : Number(dateTime[10]);
+  return hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59 && Number.isFinite(Date.parse(value));
+}
+export const calendarTimeInputSchema = z
+  .string()
+  .regex(calendarTimeInputPattern, "expected YYYY, YYYY-MM, YYYY-MM-DD, or offset RFC 3339 time")
+  .refine(isCalendarTimeInput, "invalid calendar time")
+  .brand<"CalendarTimeInput">();
 
-const calendarEventId = z.string().min(1).brand<"CalendarEventId">();
-export const calendarEventSchema = z
+export type CalendarReadScope = CalendarScope | "all";
+export type CalendarWriteScope = CalendarScope;
+export type CalendarMutationScope = "this_occurrence" | "this_and_following" | "entire_series";
+export type CalendarRevision = number & { readonly __calendarRevision: unique symbol };
+
+export const calendarReadScopeSchema = z.enum(["private", "household", "all"]);
+export const calendarWriteScopeSchema = z.enum(["private", "household"]);
+export const calendarMutationScopeSchema = z.enum(["this_occurrence", "this_and_following", "entire_series"]);
+export const calendarRevisionSchema = z.number().int().positive().brand<"CalendarRevision">();
+const revisionSchema = calendarRevisionSchema;
+
+export const calendarRecurrenceInputSchema = z
   .object({
-    id: calendarEventId,
-    scope: z.enum(["private", "household"]),
-    title: z.string(),
-    description: z.string().optional(),
-    start: wireCalendarTimeSchema,
-    end: wireCalendarTimeSchema.optional(),
-    recurrence: z
-      .object({ rrule: z.string().min(1), rule: wireRRuleSchema })
-      .strict()
-      .superRefine((recurrence, ctx) => {
-        const parsed = parseRRule(recurrence.rrule);
-        if (!parsed.ok) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid recurrence rule" });
-          return;
-        }
-        const rule = parsed.value;
-        if (
-          recurrence.rule.freq !== rule.freq ||
-          recurrence.rule.interval !== rule.interval ||
-          recurrence.rule.count !== rule.count ||
-          (recurrence.rule.until === undefined) !== (rule.until === undefined) ||
-          (recurrence.rule.until !== undefined &&
-            rule.until !== undefined &&
-            new Date(recurrence.rule.until).getTime() !== new Date(rule.until).getTime()) ||
-          JSON.stringify(recurrence.rule.byDay) !== JSON.stringify(rule.byDay)
-        ) {
-          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "raw and parsed recurrence rules disagree" });
-        }
-      })
-      .optional(),
-    exdates: z.array(wireCalendarTimeSchema).optional(),
-    exceptions: z
-      .array(
-        z
-          .object({
-            occurrence: wireCalendarTimeSchema,
-            cancelled: z.boolean().optional(),
-            title: z.string().optional(),
-            start: wireCalendarTimeSchema.optional(),
-            end: wireCalendarTimeSchema.optional(),
-          })
-          .strict(),
-      )
-      .optional(),
-    visibility: z.enum(["everyone", "adults"]),
-    importance: z.enum(["normal", "important", "pinned"]),
-    group: z.string().optional(),
-    tags: z.array(z.string()),
-    notificationPolicy: z.object({ kind: z.string() }).catchall(z.unknown()).optional(),
-    createdAt: utcInstant,
-    updatedAt: utcInstant,
+    frequency: z.enum(["daily", "weekly", "monthly", "yearly"]),
+    interval: z.number().int().positive().optional(),
+    weekdays: z.array(z.enum(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])).min(1).optional(),
+    count: z.number().int().positive().optional(),
+    until: calendarTimeInputSchema.optional(),
   })
-  .strict();
-
-/** Create requests do not require server-owned timestamps; the REST handler assigns them. */
-export const calendarCreateEventSchema = calendarEventSchema
-  .omit({ createdAt: true, updatedAt: true })
-  .extend({ createdAt: utcInstant.optional(), updatedAt: utcInstant.optional() });
-
-const calendarListFilters = z
-  .object({
-    from: wireCalendarTimeSchema,
-    to: wireCalendarTimeSchema,
-    scope: z.enum(["private", "household"]).optional(),
-    group: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    importance: z.enum(["normal", "important", "pinned"]).optional(),
-  })
-  .strict();
-const calendarGet = z.object({ id: calendarEventId }).strict();
-const calendarSearch = z
-  .object({
-    query: z.string().min(1),
-    scope: z.enum(["private", "household"]).optional(),
-    group: z.string().optional(),
-    tags: z.array(z.string()).optional(),
-    importance: z.enum(["normal", "important", "pinned"]).optional(),
-  })
-  .strict();
-
-const calendarRequestBodySchema = z.discriminatedUnion("operation", [
-  z.object({ operation: z.literal("create"), body: calendarCreateEventSchema }).strict(),
-  z.object({ operation: z.literal("update"), body: calendarEventSchema }).strict(),
-  z.object({ operation: z.literal("list"), body: calendarListFilters }).strict(),
-  z.object({ operation: z.literal("get"), body: calendarGet }).strict(),
-  z.object({ operation: z.literal("search"), body: calendarSearch }).strict(),
-  z.object({ operation: z.literal("delete"), body: calendarGet }).strict(),
-]);
-export const calendarRequestSchema = z
-  .object({ version: z.literal(1), requestId: z.string().min(1), operation: z.string(), body: z.unknown() })
-  .superRefine((request, ctx) => {
-    const parsed = calendarRequestBodySchema.safeParse({ operation: request.operation, body: request.body });
-    if (!parsed.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid calendar request body" });
+  .strict()
+  .superRefine((rule, ctx) => {
+    if ((rule.count === undefined) === (rule.until === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "exactly one of count or until is required" });
+    }
+    if (rule.frequency === "weekly" && rule.weekdays === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "weekly recurrence requires weekdays" });
+    }
+    if (rule.frequency !== "weekly" && rule.weekdays !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "weekdays are only valid for weekly recurrence" });
+    }
+    if (rule.weekdays !== undefined && new Set(rule.weekdays).size !== rule.weekdays.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "weekdays must be unique" });
+    }
   });
-export const calendarErrorSchema = z.object({
-  version: z.literal(1),
-  requestId: z.string(),
-  error: z.object({ code: calendarHttpErrorSchema, message: z.string() }),
-});
-const calendarOccurrenceSchema = calendarEventSchema.extend({
-  occurrenceId: z.string().min(1),
-  baseEventId: calendarEventId,
-  occurrenceStart: wireCalendarTimeSchema,
-  occurrenceEnd: wireCalendarTimeSchema.optional(),
+export type CalendarRecurrenceInput = z.infer<typeof calendarRecurrenceInputSchema>;
+export type RecurrenceInput = CalendarRecurrenceInput;
+
+const optionalDescription = z.string().min(1).optional();
+const optionalGroup = z.string().min(1).optional();
+const eventMetadataShape = {
+  title: z.string().min(1),
+  description: optionalDescription,
+  start: calendarTimeInputSchema,
+  end: calendarTimeInputSchema.optional(),
+  visibility: z.enum(["everyone", "adults"]),
+  importance: z.enum(["normal", "important", "pinned"]),
+  group: optionalGroup,
+  tags: z.array(z.string()),
+  recurrence: calendarRecurrenceInputSchema.optional(),
+};
+
+/** Input used by create; scope is optional because adapters default it to private. */
+export const calendarCreateInputSchema = z.object({
+  ...eventMetadataShape,
+  notificationPolicy: z.record(z.unknown()).optional(),
+  scope: calendarWriteScopeSchema.optional(),
 }).strict();
-const calendarResponseBodySchema = z.union([
-  calendarEventSchema,
-  z.object({ events: z.array(calendarOccurrenceSchema), more: z.number().int().nonnegative() }).strict(),
-  z.object({ ok: z.literal(true) }).strict(),
+export type CalendarCreateInput = z.infer<typeof calendarCreateInputSchema>;
+export const calendarCreateEventSchema = calendarCreateInputSchema;
+
+/** Revisioned event returned by V2 boundaries. */
+export const calendarEventSchema = z.object({
+  eventId: z.string().min(1),
+  revision: revisionSchema,
+  scope: calendarWriteScopeSchema,
+  ...eventMetadataShape,
+}).strict();
+export type CalendarEvent = z.infer<typeof calendarEventSchema>;
+export type CalendarEventV2 = CalendarEvent;
+
+export const calendarOccurrenceProjectionSchema = z.object({
+  eventId: z.string().min(1),
+  occurrenceId: z.string().min(1),
+  originalStart: calendarTimeInputSchema,
+  recurring: z.boolean(),
+  revision: revisionSchema,
+  scope: calendarWriteScopeSchema,
+  ...eventMetadataShape,
+}).strict();
+export type CalendarOccurrenceProjection = z.infer<typeof calendarOccurrenceProjectionSchema>;
+
+export const calendarQueryInputSchema = z.object({
+  from: calendarTimeInputSchema,
+  to: calendarTimeInputSchema,
+  scope: calendarReadScopeSchema.optional(),
+  cursor: z.string().min(1).optional(),
+  limit: z.number().int().positive().max(100).optional(),
+  group: z.string().min(1).optional(),
+  tags: z.array(z.string()).optional(),
+  importance: z.enum(["normal", "important", "pinned"]).optional(),
+}).strict();
+export type CalendarQueryInput = z.infer<typeof calendarQueryInputSchema>;
+
+export const calendarPageSchema = z.object({
+  events: z.array(calendarOccurrenceProjectionSchema).max(100),
+  nextCursor: z.string().min(1).optional(),
+}).strict();
+export type CalendarPage = z.infer<typeof calendarPageSchema>;
+export type CalendarQueryPage = CalendarPage;
+
+const updateChangeShape = {
+  title: z.string().min(1).optional(),
+  description: z.string().min(1).nullable().optional(),
+  start: calendarTimeInputSchema.optional(),
+  end: calendarTimeInputSchema.nullable().optional(),
+  visibility: z.enum(["everyone", "adults"]).optional(),
+  importance: z.enum(["normal", "important", "pinned"]).optional(),
+  group: z.string().min(1).nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  recurrence: calendarRecurrenceInputSchema.nullable().optional(),
+};
+const changesSchema = z.object(updateChangeShape).strict().refine((changes) => Object.keys(changes).length > 0, "at least one change is required");
+const occurrenceChangesSchema = z.object({ ...updateChangeShape, recurrence: z.never().optional() }).strict()
+  .refine((changes) => Object.keys(changes).length > 0, "at least one change is required");
+const mutationTargetShape = {
+  eventId: z.string().min(1),
+  scope: calendarWriteScopeSchema.optional(),
+  originalStart: calendarTimeInputSchema.optional(),
+  expectedRevision: revisionSchema.optional(),
+};
+const updateCommandSchemas = [
+  z.object({ operation: z.literal("update"), ...mutationTargetShape, applyTo: z.literal("this_occurrence"), changes: occurrenceChangesSchema }).strict(),
+  z.object({ operation: z.literal("update"), ...mutationTargetShape, applyTo: z.literal("this_and_following"), changes: changesSchema }).strict(),
+  z.object({ operation: z.literal("update"), ...mutationTargetShape, applyTo: z.literal("entire_series"), changes: changesSchema }).strict(),
+] as const;
+const deleteCommandSchemas = [
+  z.object({ operation: z.literal("delete"), ...mutationTargetShape, applyTo: z.literal("this_occurrence") }).strict(),
+  z.object({ operation: z.literal("delete"), ...mutationTargetShape, applyTo: z.literal("this_and_following") }).strict(),
+  z.object({ operation: z.literal("delete"), ...mutationTargetShape, applyTo: z.literal("entire_series") }).strict(),
+] as const;
+export const calendarMutationCommandSchema = z.union([
+  z.object({ operation: z.literal("create"), input: calendarCreateInputSchema }).strict(),
+  ...updateCommandSchemas,
+  ...deleteCommandSchemas,
 ]);
-export const calendarResponseSchema = z.object({
-  version: z.literal(1),
-  requestId: z.string(),
-  body: calendarResponseBodySchema,
+export type CalendarMutationCommand = z.infer<typeof calendarMutationCommandSchema>;
+export const calendarUpdateChangesSchema = changesSchema;
+export const calendarOccurrenceChangesSchema = occurrenceChangesSchema;
+
+export const calendarMutationResultSchema = z.object({
+  operation: z.enum(["create", "update", "delete"]),
+  appliedTo: calendarMutationScopeSchema,
+  eventId: z.string().min(1),
+  successorEventId: z.string().min(1).optional(),
+  resultingRevision: revisionSchema.optional(),
+}).strict();
+export type CalendarMutationResult = z.infer<typeof calendarMutationResultSchema>;
+
+export type CalendarErrorCode =
+  | "invalid_time" | "invalid_range" | "range_too_wide" | "invalid_scope" | "forbidden"
+  | "not_found" | "occurrence_not_found" | "result_too_large" | "recurrence_conflict"
+  | "conflict" | "aborted" | "io_error"
+  | "missing_token" | "malformed" | "expired" | "signature_invalid" | "wrong_purpose"
+  | "user_not_found" | "invalid_user_record";
+export interface CalendarError {
+  code: CalendarErrorCode;
+  message: string;
+}
+export const calendarErrorCodeSchema = z.enum([
+  "invalid_time", "invalid_range", "range_too_wide", "invalid_scope", "forbidden", "not_found",
+  "occurrence_not_found", "result_too_large", "recurrence_conflict", "conflict", "aborted", "io_error",
+  "missing_token", "malformed", "expired", "signature_invalid", "wrong_purpose", "user_not_found", "invalid_user_record",
+]);
+export const calendarErrorBodySchema = z.object({
+  code: calendarErrorCodeSchema,
+  message: z.string().min(1),
+}).strict();
+export const calendarErrorSchema = z.object({
+  version: z.literal(2),
+  requestId: z.string().min(1),
+  error: calendarErrorBodySchema,
+}).strict();
+export const calendarErrorResponseSchema = calendarErrorSchema;
+
+const updateRequestSchemas = updateCommandSchemas.map((schema) => schema.omit({ operation: true }));
+const deleteRequestSchemas = deleteCommandSchemas.map((schema) => schema.omit({ operation: true }));
+const calendarRequestBodySchema = z.discriminatedUnion("operation", [
+  z.object({ operation: z.literal("create"), body: calendarCreateInputSchema }).strict(),
+  z.object({ operation: z.literal("list"), body: calendarQueryInputSchema }).strict(),
+  z.object({ operation: z.literal("get"), body: z.object({ eventId: z.string().min(1), scope: calendarReadScopeSchema.optional() }).strict() }).strict(),
+  z.object({ operation: z.literal("update"), body: z.union([updateRequestSchemas[0]!, updateRequestSchemas[1]!, updateRequestSchemas[2]!]) }).strict(),
+  z.object({ operation: z.literal("delete"), body: z.union([deleteRequestSchemas[0]!, deleteRequestSchemas[1]!, deleteRequestSchemas[2]!]) }).strict(),
+]);
+export const calendarRequestSchema = z.object({
+  version: z.literal(2),
+  requestId: z.string().min(1),
+  operation: z.string(),
+  body: z.unknown(),
+}).strict().superRefine((request, ctx) => {
+  if (!calendarRequestBodySchema.safeParse({ operation: request.operation, body: request.body }).success) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "invalid calendar request body" });
+  }
 });
+export const calendarResponseSchema = z.object({
+  version: z.literal(2),
+  requestId: z.string().min(1),
+  body: z.union([calendarEventSchema, calendarPageSchema, calendarMutationResultSchema]),
+}).strict();
 
 function rfcUntilToIso(until: string): UtcInstant {
   return `${until.slice(0, 4)}-${until.slice(4, 6)}-${until.slice(6, 8)}T${until.slice(9, 11)}:${until.slice(11, 13)}:${until.slice(13, 15)}.000Z` as UtcInstant;
@@ -360,31 +436,17 @@ export function parseRRule(raw: string): CalendarResult<RRule> {
   const count = values.get("COUNT");
   const until = values.get("UNTIL");
   const byDay = values.get("BYDAY");
-  if (values.size !== parts.length || (count && until) || (freq === "WEEKLY" ? !byDay : byDay))
-    return { ok: false, error: "invalid" };
+  if (values.size !== parts.length || (count && until) || (freq === "WEEKLY" ? !byDay : byDay)) return { ok: false, error: "invalid" };
   if (interval && !/^[1-9]\d*$/.test(interval)) return { ok: false, error: "invalid" };
   if (count && !/^[1-9]\d*$/.test(count)) return { ok: false, error: "invalid" };
   if (until && (!/^\d{8}T\d{6}Z$/.test(until) || !isValidRfcUntil(until))) return { ok: false, error: "invalid" };
   const days = byDay?.split(",");
-  if (
-    days &&
-    (days.length === 0 || days.some((day) => !WEEKDAYS.includes(day as Weekday)) || new Set(days).size !== days.length)
-  )
-    return { ok: false, error: "invalid" };
-  return {
-    ok: true,
-    value: {
-      freq: freq as RRuleFrequency,
-      ...(interval ? { interval: Number(interval) } : {}),
-      ...(count ? { count: Number(count) } : {}),
-      ...(until ? { until: rfcUntilToIso(until) } : {}),
-      ...(days ? { byDay: days as Weekday[] } : {}),
-    },
-  };
+  if (days && (days.length === 0 || days.some((day) => !WEEKDAYS.includes(day as Weekday)) || new Set(days).size !== days.length)) return { ok: false, error: "invalid" };
+  return { ok: true, value: { freq: freq as RRuleFrequency, ...(interval ? { interval: Number(interval) } : {}), ...(count ? { count: Number(count) } : {}), ...(until ? { until: rfcUntilToIso(until) } : {}), ...(days ? { byDay: days as Weekday[] } : {}) } };
 }
 
-/** JSON representation used by REST, tools, web, and SDK: sets become arrays. */
-export interface WireCalendarEvent extends Omit<CalendarEvent, "tags" | "start" | "end" | "exdates" | "notification"> {
+/** Internal normalized values projected for the legacy store/tool seams. */
+export interface WireCalendarEvent extends Omit<StoredCalendarEvent, "tags" | "start" | "end" | "exdates" | "notification"> {
   scope: CalendarScope;
   start: CalendarTime;
   end?: CalendarTime;
@@ -392,13 +454,10 @@ export interface WireCalendarEvent extends Omit<CalendarEvent, "tags" | "start" 
   tags: readonly string[];
   notificationPolicy?: CalendarNotification;
 }
-
-/** LIST entries retain the identity and expanded times of recurring occurrences. */
 export interface WireCalendarOccurrence extends WireCalendarEvent {
   occurrenceId: string;
   baseEventId: CalendarEventId;
   occurrenceStart: CalendarTime;
   occurrenceEnd?: CalendarTime;
 }
-/** The cross-client wire fixture is the source of truth, not a second literal. */
 export const goldenCalendarFixtures = goldenCalendarFixture;

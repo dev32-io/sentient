@@ -1,9 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import {
-  calendarCreateEventSchema,
+  calendarCreateInputSchema,
+  calendarErrorSchema,
   calendarEventSchema,
+  calendarMutationCommandSchema,
+  calendarMutationResultSchema,
+  calendarOccurrenceChangesSchema,
+  calendarOccurrenceProjectionSchema,
+  calendarPageSchema,
+  calendarQueryInputSchema,
+  calendarRecurrenceInputSchema,
   calendarRequestSchema,
   calendarResponseSchema,
+  calendarTimeInputSchema,
+  calendarUpdateChangesSchema,
   goldenCalendarFixtures,
   isAdult,
   isValidCalendarDate,
@@ -11,35 +21,72 @@ import {
   wireCalendarTimeSchema,
 } from "./types.js";
 
-describe("calendar domain contracts", () => {
-  test("accepts only the bounded RRULE subset", () => {
-    expect(parseRRule("FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6").ok).toBe(true);
-    expect(parseRRule("FREQ=DAILY;INTERVAL=2;UNTIL=20260805T120000Z").ok).toBe(true);
-    expect(parseRRule("FREQ=DAILY;UNTIL=20261231T235959Z")).toMatchObject({
-      ok: true,
-      value: { freq: "DAILY", until: "2026-12-31T23:59:59.000Z" },
-    });
-    expect(parseRRule("FREQ=DAILY;UNTIL=20261331T235959Z")).toEqual({ ok: false, error: "invalid" });
-    expect(parseRRule("FREQ=DAILY;UNTIL=20260231T235959Z")).toEqual({ ok: false, error: "invalid" });
-    expect(parseRRule("FREQ=DAILY;UNTIL=20261231T259999Z")).toEqual({ ok: false, error: "invalid" });
-    expect(isValidCalendarDate(2026, 12, 31)).toBe(true);
+describe("calendar V2 contracts", () => {
+  test("accepts model-friendly bounded times and rejects CalendarTime objects", () => {
+    for (const value of ["2026", "2026-08", "2026-08-05", "2026-08-05T09:00-04:00", "2026-08-05T13:00:01.125Z"]) {
+      expect(calendarTimeInputSchema.safeParse(value).success).toBe(true);
+    }
+    for (const value of ["2026-02-31", "2026-08-05T25:00Z", "2026-08-05T09:00", "2026-08-05T09:00:00.1234567890Z", { kind: "timed", instant: "2026-08-05T13:00:00.000Z", timeZoneId: "UTC" }]) {
+      expect(calendarTimeInputSchema.safeParse(value).success).toBe(false);
+    }
+    expect(wireCalendarTimeSchema.safeParse(goldenCalendarFixtures.timed).success).toBe(true);
     expect(isValidCalendarDate(2026, 2, 31)).toBe(false);
-    expect(parseRRule("FREQ=WEEKLY").ok).toBe(false);
-    expect(parseRRule("FREQ=DAILY;COUNT=2;UNTIL=20260805T120000Z").ok).toBe(false);
-    expect(parseRRule("FREQ=HOURLY").ok).toBe(false);
-    expect(parseRRule("FREQ=WEEKLY;BYDAY=MO;BYMONTH=1")).toEqual({ ok: false, error: "invalid" });
   });
 
-  test("keeps timed values UTC plus event zone and all-day values date-only", () => {
-    expect(JSON.stringify(wireCalendarTimeSchema.parse(goldenCalendarFixtures.timed as unknown))).toBe(
-      JSON.stringify(goldenCalendarFixtures.timed),
-    );
-    expect(JSON.stringify(wireCalendarTimeSchema.parse(goldenCalendarFixtures.allDay as unknown))).toBe(
-      JSON.stringify(goldenCalendarFixtures.allDay),
-    );
-    expect(() =>
-      wireCalendarTimeSchema.parse({ kind: "all-day", date: "2026-08-05", timeZoneId: "UTC" } as unknown),
-    ).toThrow();
+  test("requires exactly one recurrence bound and full weekday names", () => {
+    expect(calendarRecurrenceInputSchema.safeParse(goldenCalendarFixtures.recurrenceInput).success).toBe(true);
+    expect(calendarRecurrenceInputSchema.safeParse({ frequency: "daily", count: 2, until: "2026-12-31" }).success).toBe(false);
+    expect(calendarRecurrenceInputSchema.safeParse({ frequency: "weekly", count: 2 }).success).toBe(false);
+    expect(calendarRecurrenceInputSchema.safeParse({ frequency: "monthly", weekdays: ["monday"], count: 2 }).success).toBe(false);
+    expect(calendarRecurrenceInputSchema.safeParse({ frequency: "daily", count: 2, extra: true }).success).toBe(false);
+    expect(parseRRule("FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6").ok).toBe(true);
+  });
+
+  test("defines private/household/all reads and private/household writes", () => {
+    expect(calendarQueryInputSchema.safeParse({ from: "2026-08-01", to: "2026-08-31", scope: "all" }).success).toBe(true);
+    expect(calendarCreateInputSchema.safeParse(goldenCalendarFixtures.create).success).toBe(true);
+    expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: "all" }).success).toBe(false);
+    expect(calendarCreateInputSchema.safeParse({ ...goldenCalendarFixtures.create, scope: undefined }).success).toBe(true);
+  });
+
+  test("keeps occurrence identity separate from event identity", () => {
+    const occurrence = calendarOccurrenceProjectionSchema.parse(goldenCalendarFixtures.occurrence);
+    expect(occurrence.eventId).not.toBe(occurrence.occurrenceId);
+    expect(calendarPageSchema.safeParse(goldenCalendarFixtures.page).success).toBe(true);
+    expect(calendarPageSchema.safeParse({ events: [], more: 0 }).success).toBe(false);
+  });
+
+  test("requires applyTo and restricts occurrence-local changes", () => {
+    const target = { operation: "update", eventId: "event-example", originalStart: "2026-08-10T09:00-04:00" } as const;
+    expect(calendarMutationCommandSchema.safeParse({ ...target, applyTo: "this_occurrence", changes: { title: "Moved", description: null, end: null, group: null, tags: [] } }).success).toBe(true);
+    expect(calendarMutationCommandSchema.safeParse({ ...target, changes: { title: "Missing scope" } }).success).toBe(false);
+    expect(calendarMutationCommandSchema.safeParse({ ...target, applyTo: "this_occurrence", changes: { recurrence: null } }).success).toBe(false);
+    expect(calendarMutationCommandSchema.safeParse({ ...target, applyTo: "this_and_following", changes: { recurrence: { frequency: "weekly", weekdays: ["friday"], count: 3 } } }).success).toBe(true);
+    expect(calendarMutationCommandSchema.safeParse({ operation: "delete", eventId: "event-example", applyTo: "entire_series" }).success).toBe(true);
+    expect(calendarMutationCommandSchema.safeParse({ operation: "delete", eventId: "event-example" }).success).toBe(false);
+    expect(calendarMutationCommandSchema.safeParse({ ...target, applyTo: "entire_series", changes: { eventId: "other" } }).success).toBe(false);
+  });
+
+  test("supports rich clear semantics without allowing forbidden fields", () => {
+    expect(calendarUpdateChangesSchema.safeParse({ description: null, end: null, group: null, recurrence: null, tags: [] }).success).toBe(true);
+    expect(calendarOccurrenceChangesSchema.safeParse({ description: null, end: null, group: null, tags: [] }).success).toBe(true);
+    expect(calendarOccurrenceChangesSchema.safeParse({ scope: "household" }).success).toBe(false);
+    expect(calendarOccurrenceChangesSchema.safeParse({ revision: 4 }).success).toBe(false);
+    expect(calendarOccurrenceChangesSchema.safeParse({ notificationPolicy: null }).success).toBe(false);
+    expect(calendarOccurrenceChangesSchema.safeParse({ recurrence: null }).success).toBe(false);
+  });
+
+  test("pins V2 envelopes, pages, mutations, and stable errors", () => {
+    expect(calendarMutationResultSchema.safeParse(goldenCalendarFixtures.mutation).success).toBe(true);
+    expect(calendarErrorSchema.safeParse(goldenCalendarFixtures.error).success).toBe(true);
+    expect(calendarEventSchema.safeParse({
+      eventId: "event-example", revision: 3, ...goldenCalendarFixtures.create,
+    }).success).toBe(true);
+    expect(calendarResponseSchema.safeParse({ version: 2, requestId: "r1", body: goldenCalendarFixtures.page }).success).toBe(true);
+    expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "list", body: { from: "2026", to: "2026-12" } }).success).toBe(true);
+    expect(calendarRequestSchema.safeParse({ version: 1, requestId: "r1", operation: "list", body: { from: "2026", to: "2026-12" } }).success).toBe(false);
+    expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "update", body: { eventId: "event-example", applyTo: "this_occurrence", changes: { title: "x" } } }).success).toBe(true);
+    expect(calendarRequestSchema.safeParse({ version: 2, requestId: "r1", operation: "update", body: { id: "event-example", patch: { title: "old" } } }).success).toBe(false);
   });
 
   test("admin is adult-equivalent but has no separate bypass", () => {
@@ -47,82 +94,5 @@ describe("calendar domain contracts", () => {
     expect(isAdult("admin")).toBe(true);
     expect(isAdult("child")).toBe(false);
     expect(isAdult("guest")).toBe(false);
-  });
-
-  test("wire envelopes reject arbitrary bodies and accept a golden-shaped event", () => {
-    expect(
-      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "get", body: {} }).success,
-    ).toBe(false);
-    expect(
-      calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: { arbitrary: true } }).success,
-    ).toBe(false);
-
-    const event = {
-      id: "event-1",
-      scope: "private",
-      title: "Dentist",
-      start: goldenCalendarFixtures.timed,
-      recurrence: {
-        rrule: goldenCalendarFixtures.recurrence,
-        rule: { freq: "WEEKLY", byDay: ["MO", "WE"], count: 6 },
-      },
-      visibility: "everyone",
-      importance: "normal",
-      tags: ["health"],
-      createdAt: "2026-08-01T00:00:00.000Z",
-      updatedAt: "2026-08-01T00:00:00.000Z",
-    };
-    const request = (body: unknown) =>
-      calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body }).success;
-    const withoutServerTimestamps = (body: unknown) => {
-      if (!body || typeof body !== "object") return body;
-      const { createdAt: _createdAt, updatedAt: _updatedAt, ...withoutTimestamps } = body as Record<string, unknown>;
-      return withoutTimestamps;
-    };
-    expect(request(withoutServerTimestamps(event))).toBe(true);
-    expect(request(event)).toBe(true);
-    expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "GIBBERISH" } })).toBe(false);
-    expect(request({ ...event, recurrence: { ...event.recurrence, rrule: "FREQ=WEEKLY;BYDAY=MO;BYMONTH=1" } })).toBe(
-      false,
-    );
-    expect(
-      request({ ...event, recurrence: { ...event.recurrence, rule: { ...event.recurrence.rule, count: 5 } } }),
-    ).toBe(false);
-    expect(calendarResponseSchema.safeParse({ version: 1, requestId: "req-1", body: event }).success).toBe(true);
-
-    for (const until of ["2026-12-31T23:59:59.000Z", "2026-12-31T23:59:59Z", "2026-12-31T23:59:59+00:00"]) {
-      const untilEvent = {
-        ...event,
-        recurrence: {
-          rrule: "FREQ=DAILY;UNTIL=20261231T235959Z",
-          rule: { freq: "DAILY", until },
-        },
-      };
-      expect(calendarEventSchema.safeParse(untilEvent).success).toBe(true);
-      expect(request(withoutServerTimestamps(untilEvent))).toBe(true);
-    }
-  });
-
-  test("create payloads omit server-owned timestamps", () => {
-    const draft = {
-      id: "event-1",
-      scope: "private",
-      title: "Dentist",
-      start: goldenCalendarFixtures.timed,
-      visibility: "everyone",
-      importance: "normal",
-      tags: [],
-    };
-    expect(calendarCreateEventSchema.safeParse(draft).success).toBe(true);
-    expect(calendarEventSchema.safeParse(draft).success).toBe(false);
-    expect(calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: draft }).success).toBe(true);
-    expect(calendarRequestSchema.safeParse({ version: 1, requestId: "req-1", operation: "create", body: { ...draft, start: { kind: "all-day", date: "2026-02-31" } } }).success).toBe(false);
-  });
-
-  test("golden wire fixtures remain stable", () => {
-    expect(goldenCalendarFixtures.timed).toMatchObject({ kind: "timed", timeZoneId: "America/Toronto" });
-    expect(goldenCalendarFixtures.allDay).toMatchObject({ kind: "all-day", date: "2026-08-05" });
-    expect(goldenCalendarFixtures.recurrence).toContain("FREQ=WEEKLY");
-    expect(goldenCalendarFixtures.listOccurrence.occurrenceId).toBe(goldenCalendarFixtures.listOccurrence.id);
   });
 });

@@ -2,7 +2,7 @@ import type { AccessManager } from "../../access/access-manager.js";
 import { openCalendarStore } from "../../calendar/calendar-store.js";
 import {
   type CalendarConfig,
-  type CalendarEvent,
+  type StoredCalendarEvent,
   type CalendarEventId,
   type CalendarListWindow,
   type CalendarStore,
@@ -224,7 +224,7 @@ function deleteEvent(
   return errorFor("not-found", requestId);
 }
 
-function parseEvent(value: unknown, serverAssignTimestamps = false): { event: CalendarEvent; scope: Scope } | null {
+function parseEvent(value: unknown, serverAssignTimestamps = false): { event: StoredCalendarEvent; scope: Scope } | null {
   if (!value || typeof value !== "object") return null;
   const scope = parseScope((value as Record<string, unknown>).scope) ?? "private";
   const {
@@ -245,23 +245,24 @@ function parseEvent(value: unknown, serverAssignTimestamps = false): { event: Ca
   const parsed = (serverAssignTimestamps ? calendarCreateEventSchema : calendarEventSchema).safeParse({ ...candidate, scope });
   if (!parsed.success) return null;
   const wire = parsed.data;
-  const { scope: _wireScope, notificationPolicy, ...rest } = wire;
-  const now = new Date().toISOString() as CalendarEvent["createdAt"];
+  const notificationPolicy = "notificationPolicy" in wire ? wire.notificationPolicy : undefined;
+  const { scope: _wireScope, ...rest } = wire;
+  const now = new Date().toISOString() as StoredCalendarEvent["createdAt"];
   const event = {
     ...rest,
     createdAt: serverAssignTimestamps
       ? now
-      : (wire as unknown as { createdAt: CalendarEvent["createdAt"] }).createdAt,
+      : (wire as unknown as { createdAt: StoredCalendarEvent["createdAt"] }).createdAt,
     updatedAt: serverAssignTimestamps
       ? now
-      : (wire as unknown as { updatedAt: CalendarEvent["updatedAt"] }).updatedAt,
+      : (wire as unknown as { updatedAt: StoredCalendarEvent["updatedAt"] }).updatedAt,
     ...(notificationPolicy ? { notification: notificationPolicy } : {}),
     tags: new Set(wire.tags),
-  } as unknown as CalendarEvent;
+  } as unknown as StoredCalendarEvent;
   return { event, scope };
 }
 
-function toWire(event: CalendarEvent, scope: Scope): WireCalendarEvent {
+function toWire(event: StoredCalendarEvent, scope: Scope): WireCalendarEvent {
   return {
     id: event.id,
     scope,

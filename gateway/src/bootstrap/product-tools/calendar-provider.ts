@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Capability } from "../../access/capability.js";
 import type {
-  CalendarEvent,
+  StoredCalendarEvent,
   CalendarEventId,
   CalendarEventPatch,
   CalendarListWindow,
@@ -156,7 +156,7 @@ function parse<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T | Tool
   const p = schema.safeParse(args);
   return p.success ? p.data : failure("invalid-arguments", p.error.issues[0]?.message ?? "invalid arguments");
 }
-function wire(event: CalendarEvent | Occurrence, scope: CalendarScope): Record<string, unknown> {
+function wire(event: StoredCalendarEvent | Occurrence, scope: CalendarScope): Record<string, unknown> {
   const occurrence = "occurrenceId" in event ? event : undefined;
   return {
     id: occurrence?.occurrenceId ?? event.id,
@@ -369,9 +369,9 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
       };
     const runResult = (r: { ok: boolean; value?: unknown; error?: string }, eventScope: CalendarScope): ToolResult =>
       r.ok ? result(Array.isArray(r.value)
-        ? r.value.map((e) => wire(e as CalendarEvent, eventScope))
+        ? r.value.map((e) => wire(e as StoredCalendarEvent, eventScope))
         : r.value && typeof r.value === "object" && "tags" in (r.value as object)
-          ? wire(r.value as CalendarEvent, eventScope) : r.value) : storeFailure(r.error ?? "io-error");
+          ? wire(r.value as StoredCalendarEvent, eventScope) : r.value) : storeFailure(r.error ?? "io-error");
 
     return [
       runner("calendar_list", CALENDAR_TOOL_SETTINGS[0].description, READ, listParameters, common(READ, listSchema), async (args) => {
@@ -418,8 +418,8 @@ export const calendarProductToolProvider: ProductToolProvider<"calendar"> = {
       runner("calendar_create", CALENDAR_TOOL_SETTINGS[3].description, WRITE, createParameters, common(WRITE, createSchema, true), async (args, ctx) => {
         if (ctx.signal.aborted) return failure("aborted", "The calendar operation was cancelled.");
         const p = createSchema.parse(args); const target = targetFor(p.scope)!;
-        const now = new Date().toISOString() as CalendarEvent["createdAt"];
-        const event = { ...p, id: crypto.randomUUID() as CalendarEventId, createdAt: now, updatedAt: now, tags: new Set(p.tags), notification: p.notificationPolicy } as unknown as CalendarEvent;
+        const now = new Date().toISOString() as StoredCalendarEvent["createdAt"];
+        const event = { ...p, id: crypto.randomUUID() as CalendarEventId, createdAt: now, updatedAt: now, tags: new Set(p.tags), notification: p.notificationPolicy } as unknown as StoredCalendarEvent;
         return runResult(target.store.create(event), target.scope);
       }),
       runner("calendar_update", CALENDAR_TOOL_SETTINGS[4].description, WRITE, updateParameters, common(WRITE, updateSchema.or(updateAlternativeSchema), true), async (args, ctx) => {

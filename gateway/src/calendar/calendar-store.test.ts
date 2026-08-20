@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import type { Capability } from "../access/capability.js";
 import { openCalendarStore } from "./calendar-store.js";
 import { CALENDAR_SCHEMA_VERSION } from "./schema.js";
-import type { CalendarConfig, CalendarEvent, CalendarEventId, EventTimeZoneId, UtcInstant } from "./types.js";
+import type { CalendarConfig, StoredCalendarEvent, CalendarEventId, EventTimeZoneId, UtcInstant } from "./types.js";
 
 const cfg = {} as CalendarConfig;
 const roots: string[] = [];
@@ -18,7 +18,7 @@ function root(): string {
   roots.push(value);
   return value;
 }
-function event(id: string, start: CalendarEvent["start"], extra: Partial<CalendarEvent> = {}): CalendarEvent {
+function event(id: string, start: StoredCalendarEvent["start"], extra: Partial<StoredCalendarEvent> = {}): StoredCalendarEvent {
   return {
     id: id as CalendarEventId,
     title: id,

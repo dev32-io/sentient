@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import calendarWireFixture from "../../calendar/fixtures/calendar-wire.json";
 import type { Capability } from "../../access/capability.js";
-import type { CalendarEvent, CalendarStore, CalendarTime, Occurrence } from "../../calendar/types.js";
+import type { StoredCalendarEvent, CalendarStore, CalendarTime, Occurrence } from "../../calendar/types.js";
 import { calendarProductToolProvider } from "./calendar-provider.js";
 
 const fixtureTimed = calendarWireFixture.timed as Extract<CalendarTime, { kind: "timed" }>;
@@ -44,7 +44,7 @@ async function run(name: string, args: Record<string, unknown>, role: Capability
 
 describe("calendar product tool definitions", () => {
   it("publishes field schemas and forwards adults visibility to the store", async () => {
-    let created: CalendarEvent | undefined;
+    let created: StoredCalendarEvent | undefined;
     const householdStore = notFoundStore({
       create: (event) => {
         created = event;
@@ -102,9 +102,9 @@ describe("calendar product tool definitions", () => {
 
 describe("calendar product tool search and cancellation", () => {
   it("searches timed and all-day defaults and forwards importance", async () => {
-    const windows: CalendarEvent["start"][] = [];
+    const windows: StoredCalendarEvent["start"][] = [];
     const forwardedImportance: Array<string | undefined> = [];
-    const event: CalendarEvent = {
+    const event: StoredCalendarEvent = {
       id: "fixture-event" as never,
       title: "Fixture dinner",
       start: fixtureTimed,

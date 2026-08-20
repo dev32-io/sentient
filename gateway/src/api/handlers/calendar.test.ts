@@ -6,7 +6,7 @@ import { createAccessManager } from "../../access/access-manager.js";
 import { openCalendarStore } from "../../calendar/calendar-store.js";
 import { createUserPrincipal } from "../../identity/user-principal.js";
 import calendarWireFixture from "../../calendar/fixtures/calendar-wire.json";
-import type { CalendarConfig, CalendarEvent, CalendarStore, CalendarTime, Occurrence, UtcInstant } from "../../calendar/types.js";
+import type { CalendarConfig, StoredCalendarEvent, CalendarStore, CalendarTime, Occurrence, UtcInstant } from "../../calendar/types.js";
 import { createCalendarHandler } from "./calendar.js";
 
 const handler = createCalendarHandler({
@@ -88,10 +88,10 @@ describe("calendar REST handler", () => {
   });
 
   it("accepts a create envelope without server timestamps", async () => {
-    let created: CalendarEvent | undefined;
+    let created: StoredCalendarEvent | undefined;
     const store = {
       ...stubStore(() => ({ ok: true as const, value: [] })),
-      create: (event: CalendarEvent) => { created = event; return { ok: true as const, value: event }; },
+      create: (event: StoredCalendarEvent) => { created = event; return { ok: true as const, value: event }; },
     } as CalendarStore;
     const api = createCalendarHandler(authenticatedDeps(() => store));
     const response = await api(new Request("http://localhost/api/v1/calendar/events", {
@@ -181,7 +181,7 @@ describe("calendar REST handler", () => {
   it("does not fall through to private scope for an explicit household PATCH", async () => {
     let privateUpdates = 0;
     let householdUpdates = 0;
-    const privateEvent: CalendarEvent = {
+    const privateEvent: StoredCalendarEvent = {
       id: "private-only" as never,
       title: "Private",
       start: fixtureAllDay,

@@ -9,19 +9,74 @@
     "date": "2026-08-05"
   },
   "recurrence": "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6",
-  "listOccurrence": {
-    "id": "occurrence-1",
-    "baseEventId": "event-1",
-    "occurrenceId": "occurrence-1",
-    "occurrenceStart": {
-      "kind": "timed",
-      "instant": "2026-08-10T13:00:00.000Z",
-      "timeZoneId": "America/Toronto"
-    },
-    "start": {
-      "kind": "timed",
-      "instant": "2026-08-10T13:00:00.000Z",
-      "timeZoneId": "America/Toronto"
+  "recurrenceInput": {
+    "frequency": "weekly",
+    "weekdays": ["monday", "wednesday"],
+    "count": 6
+  },
+  "create": {
+    "scope": "private",
+    "title": "Example event",
+    "start": "2026-08-05T09:00-04:00",
+    "end": "2026-08-05T10:00-04:00",
+    "visibility": "everyone",
+    "importance": "normal",
+    "tags": ["example"],
+    "recurrence": {
+      "frequency": "weekly",
+      "weekdays": ["monday", "wednesday"],
+      "count": 6
+    }
+  },
+  "occurrence": {
+    "eventId": "event-example",
+    "occurrenceId": "event-example@2026-08-10T09:00-04:00",
+    "originalStart": "2026-08-10T09:00-04:00",
+    "recurring": true,
+    "scope": "private",
+    "revision": 3,
+    "title": "Example event",
+    "start": "2026-08-10T09:00-04:00",
+    "end": "2026-08-10T10:00-04:00",
+    "visibility": "everyone",
+    "importance": "normal",
+    "tags": ["example"],
+    "recurrence": {
+      "frequency": "weekly",
+      "weekdays": ["monday", "wednesday"],
+      "count": 6
+    }
+  },
+  "page": {
+    "events": [
+      {
+        "eventId": "event-example",
+        "occurrenceId": "event-example@2026-08-10T09:00-04:00",
+        "originalStart": "2026-08-10T09:00-04:00",
+        "recurring": true,
+        "scope": "private",
+        "revision": 3,
+        "title": "Example event",
+        "start": "2026-08-10T09:00-04:00",
+        "visibility": "everyone",
+        "importance": "normal",
+        "tags": ["example"]
+      }
+    ],
+    "nextCursor": "opaque-cursor"
+  },
+  "mutation": {
+    "operation": "update",
+    "appliedTo": "this_occurrence",
+    "eventId": "event-example",
+    "resultingRevision": 4
+  },
+  "error": {
+    "version": 2,
+    "requestId": "request-example",
+    "error": {
+      "code": "occurrence_not_found",
+      "message": "The requested occurrence was not found."
     }
   }
 }

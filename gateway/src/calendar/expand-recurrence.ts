@@ -1,6 +1,6 @@
 import { resolveTimeZone } from "../context/message-time.js";
 import type {
-  CalendarEvent,
+  StoredCalendarEvent,
   CalendarTime,
   LocalDate,
   Occurrence,
@@ -60,12 +60,12 @@ function keyOf(t: CalendarTime): string { return t.kind === "all-day" ? t.date :
 function sameTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind && keyOf(a) === keyOf(b); }
 function failure(code: RecurrenceExpansionErrorCode, message: string): ExpandRecurrenceResult { return { ok: false, error: { kind: "recurrence-error", code, message } }; }
 
-function occurrence(event: CalendarEvent, original: CalendarTime, start: CalendarTime, end: CalendarTime | undefined): Occurrence {
+function occurrence(event: StoredCalendarEvent, original: CalendarTime, start: CalendarTime, end: CalendarTime | undefined): Occurrence {
   const { end: _ignoredEnd, ...withoutEnd } = event;
   const id = `${event.id}:${keyOf(original)}`;
   return { ...withoutEnd, start, ...(end ? { end, occurrenceEnd: end } : {}), occurrenceId: id, baseEventId: event.id, occurrenceStart: original };
 }
-function applyException(event: CalendarEvent, original: CalendarTime, baseEnd = event.end): Occurrence | undefined {
+function applyException(event: StoredCalendarEvent, original: CalendarTime, baseEnd = event.end): Occurrence | undefined {
   const ex = event.exceptions?.find((x) => sameTime(x.occurrence, original));
   if (ex?.cancelled) return undefined;
   const start = ex?.start ?? original;
@@ -76,7 +76,7 @@ function applyException(event: CalendarEvent, original: CalendarTime, baseEnd = 
 }
 
 export function expandRecurrence(
-  event: CalendarEvent,
+  event: StoredCalendarEvent,
   windowStart: CalendarTime,
   windowEnd: CalendarTime,
   limits: RecurrenceExpansionLimits = DEFAULT_RECURRENCE_LIMITS,
@@ -118,7 +118,7 @@ function inWindow(t: CalendarTime, from: CalendarTime, to: CalendarTime): boolea
   return a >= f && a <= z;
 }
 function expand(
-  event: CalendarEvent,
+  event: StoredCalendarEvent,
   rule: RRule,
   from: CalendarTime,
   to: CalendarTime,

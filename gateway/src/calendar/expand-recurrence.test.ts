@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { expandRecurrence } from "./expand-recurrence.js";
-import type { CalendarEvent, UtcInstant } from "./types.js";
+import type { StoredCalendarEvent, UtcInstant } from "./types.js";
 
 const timed = (instant: string, timeZoneId: string) => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: timeZoneId as never });
-const event = (start: CalendarEvent["start"], recurrence: string): CalendarEvent => ({
-  id: "family" as CalendarEvent["id"], title: "event", start,
+const event = (start: StoredCalendarEvent["start"], recurrence: string): StoredCalendarEvent => ({
+  id: "family" as StoredCalendarEvent["id"], title: "event", start,
   recurrence: { rrule: recurrence, rule: undefined as never },
   visibility: "everyone", importance: "normal", tags: new Set(),
   createdAt: "2026-01-01T00:00:00.000Z" as UtcInstant, updatedAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
