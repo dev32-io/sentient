@@ -21,28 +21,23 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
   reviewedCommit: 6e23e8e5f997e9cd9879d9b607a4fc859ebf7f46
-  managerPrompt: Repair all three blocking recurring-mutation defects and add
-    regression coverage. For this_and_following update, apply start/end changes
-    to the successor series anchor and duration—not merely its first override—so
-    every generated successor slot follows the new schedule; preserve the
-    selected effective duration for a start-only change, derive/validate
-    duration consistently for end-only or both-boundary changes, and handle
-    timed/all-day kinds without changing stable old-segment identity.
-    Partition/remap future exceptions and exclusions only where the re-anchored
-    slot mapping remains compatible; otherwise return recurrence_conflict
-    atomically. Before splitting, resolve the selected effective occurrence and
-    enforce role visibility/authority, so a child cannot mutate an adults-only
-    occurrence and hidden state is not disclosed. Reject a selected cancelled or
-    excluded occurrence before any transaction with the stable
-    unavailable-occurrence error. Add focused tests for later successor slots
-    after start/end re-anchoring, child/adults visibility, cancelled and
-    excluded split targets, rollback, and unchanged prefix ownership; rerun all
-    stage-4 checks.
+  managerPrompt: Repair S4-004 by rejecting a re-anchored successor schedule that
+    would claim the same or an earlier generated slot than the retained prefix
+    terminal slot. Compute the last retained generated slot and the successor's
+    first generated slot in their correct all-day/timed and event-timezone
+    domains before opening or committing the split transaction; require strict
+    chronological separation. Do not silently truncate additional prefix
+    occurrences or allow different segment IDs to mask duplicate ownership.
+    Return recurrence_conflict with no writes when the new anchor or recurrence
+    rule causes equality/backward overlap. Add timed and all-day tests for
+    equal, earlier, and valid later anchors, including atomic no-change
+    assertions for prefix, successor, exceptions, exclusions, and revisions,
+    then rerun all stage-4 checks.
   fixerAgentId: 6ad32506-6eaf-4d6e-94fa-57881822b1a8
 findings:
   - id: S4-004
