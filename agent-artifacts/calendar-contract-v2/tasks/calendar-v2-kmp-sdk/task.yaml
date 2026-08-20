@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-kmp-sdk
 title: Cut the KMP calendar SDK over to REST V2
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-rest
   - calendar-v2-contracts
@@ -30,3 +30,4 @@ runtime:
   baseCommit: 7f7cc7f912460ffe628a8b5842b2d87c3b9ce324
   lastRunId: fd065ace-09c3-4ac3-86a3-4a2413bcbcc3
   completedCommit: 05e9c586c201a8c9795d52710fc30ad9f6cfb889
+  mergedCommit: 2d6b43f0bbd88dc3acc4b856fe6c6def2bb56cfc
