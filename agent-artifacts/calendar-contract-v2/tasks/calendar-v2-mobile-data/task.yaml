@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-mobile-data
 title: Expose calendar V2 paging and mutations through mobile-data
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-kmp-sdk
 execution:
@@ -29,3 +29,4 @@ runtime:
   baseCommit: e6d8e1dedcee93d7cd7963da6b7cbe1684328926
   lastRunId: 75b575aa-56db-4c54-a0f9-02d824c2c63e
   completedCommit: 432aef85304822a7ef8aec32639de3f77d6f54b7
+  mergedCommit: 9f8cab228d09ba4f6a9f420bafcc420b252da9d6
