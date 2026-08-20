@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-query
 title: Implement bounded effective-occurrence calendar queries
-status: ready
+status: running
 dependsOn:
   - calendar-v2-temporal
   - calendar-v2-recurrence
@@ -24,3 +24,9 @@ verification:
       src/calendar/calendar-query.test.ts src/calendar/nudge.test.ts
     - source scripts/env.sh && cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-query
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-query
+  baseCommit: ca1dcec157993645830a4ec1f2ac825190721453
+  lastRunId: f306e8c0-6bac-4193-8e89-fa469fe9032f
