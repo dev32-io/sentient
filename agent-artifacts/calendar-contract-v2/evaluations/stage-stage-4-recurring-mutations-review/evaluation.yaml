@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-4-recurring-mutations
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/calendar/calendar-mutations.test.ts src/calendar/calendar-query.test.ts
@@ -21,11 +21,11 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
-  reviewedCommit: 92d737abcef6cfe704781786da66b947445f0859
+  reviewedCommit: 6e23e8e5f997e9cd9879d9b607a4fc859ebf7f46
   managerPrompt: Repair all three blocking recurring-mutation defects and add
     regression coverage. For this_and_following update, apply start/end changes
     to the successor series anchor and duration—not merely its first override—so
@@ -45,29 +45,14 @@ loop:
     stage-4 checks.
   fixerAgentId: 6ad32506-6eaf-4d6e-94fa-57881822b1a8
 findings:
-  - id: S4-001
+  - id: S4-004
     severity: high
     status: open
     criterion: AC-008
-    location: gateway/src/calendar/calendar-mutations.ts:927-950,1001-1037,1052-1065
-    summary: this_and_following start/end changes do not re-anchor successor timing
-      for all following occurrences.
-    blocking: true
-  - id: S4-002
-    severity: high
-    status: open
-    criterion: AC-012
-    location: gateway/src/calendar/calendar-mutations.ts:885-999
-    summary: this_and_following update permits a child to mutate an adults-only
-      effective occurrence.
-    blocking: true
-  - id: S4-003
-    severity: high
-    status: open
-    criterion: Unavailable occurrence failure contract
-    location: gateway/src/calendar/calendar-mutations.ts:885-912,1004-1037
-    summary: this_and_following update accepts a cancelled selected occurrence and
-      creates a successor.
+    location: gateway/src/calendar/calendar-mutations.ts:987-1014;
+      gateway/src/calendar/recurrence-splitter.ts:209-275
+    summary: Backward successor re-anchoring can overlap a retained prefix slot,
+      creating duplicate cross-segment occurrence ownership.
     blocking: true
 result:
   verdict: fail

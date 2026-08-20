@@ -1,21 +1,22 @@
 schemaVersion: 1
 evaluation: stage-stage-4-recurring-mutations-review
-recordedAt: 2026-08-20T03:24:57.097Z
+recordedAt: 2026-08-20T03:34:50.664Z
 entries:
-  - result: 62 pass, 0 fail
+  - result: 65 pass, 0 fail
     command: focused stage bun test
-    path: files/1-stage4-tests.log
-    checksum: sha256:eb578578ac6ff6d1fc9aceb541ab26fd76a5b97cda38581445abf4a4e22cdc48
+    path: files/1-stage4-rereview-tests.log
+    checksum: sha256:8d35d42c7be0abde10e6c7e7f1033a2d5ada0b019148bc7cbb38b676facdba16
   - result: pass
     command: gateway typecheck
-    path: files/2-stage4-typecheck.log
+    path: files/2-stage4-rereview-typecheck.log
     checksum: sha256:8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
-  - result: Successor timing remained on the old schedule for future slots; child
-      mutation of an adults-only overridden slot succeeded.
-    command: runtime timing and visibility probe
-    path: files/3-stage4-probe.log
-    checksum: sha256:725de87f4b85e24546cb4811e36bbde21b6e607404df113631118ad468abbd59
-  - result: Following update on a cancelled slot succeeded and created a successor.
-    command: runtime unavailable-target probe
-    path: files/4-stage4-unavailable-probe.log
-    checksum: sha256:476951da98c7335e0a30a6271b85168dee61c2b723312a8437288e75539c7434
+  - result: Timing propagation is corrected; hidden and cancelled targets return
+      occurrence_not_found.
+    command: prior-finding runtime probes
+    path: files/3-stage4-rereview-probe.log
+    checksum: sha256:0e24f9e39b84b5be51ca1a32d4a1a64dea74d0ad50d8fce0a1515ee05eafb8ac
+  - result: Mutation succeeded while prefix and successor each produced the same
+      2026-01-06 originalStart/time.
+    command: backward re-anchor runtime probe
+    path: files/4-stage4-overlap-probe.log
+    checksum: sha256:216153a7334f32919d9173516323bbcc50d4e91bee3e871e228bf762f2ad52e5
