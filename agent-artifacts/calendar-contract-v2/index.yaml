@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 40
+  revision: 41
 artifacts:
   - id: intent
     type: intent
@@ -66,12 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-tools
-    tasks:
-      - calendar-v2-tools
-  - id: calendar-v2-rest
-    tasks:
-      - calendar-v2-rest
   - id: calendar-v2-bootstrap
     tasks:
       - calendar-v2-bootstrap
@@ -179,3 +173,27 @@ executionStages:
         concurrency, authorization, and multi-row atomicity. The sequential
         contributions intentionally share one mutation service, so one high
         review must verify the assembled state machine and rollback invariants.
+  - id: stage-5-gateway-adapters
+    tasks:
+      - calendar-v2-tools
+      - calendar-v2-rest
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/bootstrap/product-tools/calendar-provider.test.ts
+        src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+        src/calendar/calendar-mutations.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: concurrent
+    review:
+      tier: high
+      focus:
+        - All six tool schemas, stable tiers, pre-PDP household gate, actionable
+          errors, and proactive caps
+        - REST V2 route replacement, paging, authentication, error mapping, and
+          handle closure
+        - Tool and REST adapters share domain behavior without loopback or
+          hidden-data leakage
+      rationale: The tool and REST boundaries independently expose the same
+        security-sensitive domain behavior to untrusted inputs. A joint high
+        review is needed to catch authority, error, paging, privacy, and
+        wire-shape drift across both adapters after concurrent integration.
