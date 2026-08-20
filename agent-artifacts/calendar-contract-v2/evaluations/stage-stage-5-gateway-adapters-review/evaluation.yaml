@@ -22,9 +22,11 @@ criteria:
   - Tool and REST adapters share domain behavior without loopback or hidden-data
     leakage
 loop:
+  state: awaiting_manager
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
+  reviewerAgentId: 323e2cb3-81c3-4167-ab7e-cd58ac964b2f
+  reviewedCommit: 3062b4f0fb87b0a10d5db91e6219f667e03f90d4
 findings:
   - id: STAGE5-001
     severity: high
