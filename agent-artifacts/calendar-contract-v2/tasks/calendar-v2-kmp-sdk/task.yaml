@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-kmp-sdk
 title: Cut the KMP calendar SDK over to REST V2
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-rest
   - calendar-v2-contracts
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-kmp-sdk
   baseCommit: 7f7cc7f912460ffe628a8b5842b2d87c3b9ce324
   lastRunId: fd065ace-09c3-4ac3-86a3-4a2413bcbcc3
+  completedCommit: 05e9c586c201a8c9795d52710fc30ad9f6cfb889
