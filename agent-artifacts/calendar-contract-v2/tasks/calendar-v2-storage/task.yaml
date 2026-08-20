@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: calendar-v2-storage
+title: Build the fresh revisioned calendar V2 persistence boundary
+status: draft
+dependsOn:
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-storage
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-store.test.ts src/calendar/e2e-helpers.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
