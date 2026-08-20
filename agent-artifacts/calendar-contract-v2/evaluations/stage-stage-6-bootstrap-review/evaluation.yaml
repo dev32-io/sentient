@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-6-bootstrap
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -19,8 +19,8 @@ criteria:
   - Nudge security and bounds remain unchanged
   - No automatic destructive reset or production mutation
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: c218381b-bef3-4d9a-95bf-ec4cd6dd8790
   reviewedCommit: 529ddee04b74f825aa207b3bf634cd43133ddfbd
@@ -34,6 +34,7 @@ loop:
     regressions with query.maxDays=1, non-UTC household zones at UTC date
     boundaries/DST, timed and all-day events on household today, and
     adjacent-day exclusions; rerun every stage-6 check.
+  fixerAgentId: 8a0ad946-25c6-480f-b3c4-53b9b70d8eb7
 findings:
   - id: STAGE6-001
     severity: high
