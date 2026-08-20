@@ -3,17 +3,16 @@ package io.sentient.mobilesdk.calendar
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.headersOf
 import io.ktor.http.content.OutgoingContent
-import io.ktor.serialization.kotlinx.json.json
+import io.ktor.http.headersOf
+import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -26,48 +25,179 @@ import kotlin.system.measureTimeMillis
 
 private val CALENDAR_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
 private val calendarFixture = Json.parseToJsonElement(CalendarGoldenFixture.JSON).jsonObject
-private val fixtureTimed = calendarFixture.getValue("timed").toString()
-private val fixtureOccurrenceStart = calendarFixture.getValue("listOccurrence").jsonObject.getValue("start").toString()
-
-private val EVENT = """{
-  "id":"event-1","scope":"household","title":"Dinner",
-  "start":$fixtureTimed,
-  "visibility":"everyone","importance":"important","tags":["family"],
-  "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
-}"""
-
-private val OCCURRENCE_EVENT = """{
-  "id":"occurrence-1","baseEventId":"event-1","occurrenceId":"occurrence-1",
-  "scope":"household","title":"Dinner",
-  "start":$fixtureOccurrenceStart,
-  "visibility":"everyone","importance":"important","tags":[],
-  "createdAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"
-}"""
+private val fixtureCreate = calendarFixture.getValue("create").toString()
+private val fixtureOccurrence = calendarFixture.getValue("occurrence").toString()
+private val fixturePage = calendarFixture.getValue("page").toString()
 
 class CalendarHttpClientTest {
     private fun client(engine: MockEngine, requestTimeoutMillis: Long = 15_000L) = CalendarHttpClient(
-        HttpClient(engine) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } },
+        HttpClient(engine),
         "wss://gateway.example/api/v1/ws",
         { "calendar-token" },
         requestTimeoutMillis,
     )
 
     @Test
-    fun get_decodesGoldenTimedValueAndSendsBearer() = runTest {
+    fun get_decodesV2OccurrenceAndSendsBearer() = runTest {
         var path = ""
         var auth = ""
         val engine = MockEngine { request ->
             path = request.url.encodedPath
             auth = request.headers[HttpHeaders.Authorization].orEmpty()
-            respond("""{"version":1,"requestId":"r1","body":$EVENT}""", HttpStatusCode.OK, CALENDAR_HEADERS)
+            respond("{\"version\":2,\"requestId\":\"r1\",\"body\":$fixtureOccurrence}", HttpStatusCode.OK, CALENDAR_HEADERS)
         }
 
-        val result = withContext(Dispatchers.Default) { client(engine).get("event-1") }
+        val result = withContext(Dispatchers.Default) { client(engine).get("event-example", CalendarScope.PRIVATE) }
         val event = assertIs<AuthResult.Success<CalendarEvent>>(result).value
-        assertEquals("/api/v1/calendar/events/event-1", path)
+        assertEquals("/api/v1/calendar/events/event-example", path)
         assertEquals("Bearer calendar-token", auth)
-        assertEquals(calendarFixture.getValue("timed").jsonObject.getValue("timeZoneId").jsonPrimitive.content, (event.start as CalendarTime.Timed).timeZoneId)
-        assertEquals(listOf("family"), event.tags)
+        assertEquals("event-example", event.id)
+        assertEquals("event-example@2026-08-10T09:00-04:00", event.occurrenceId)
+        assertEquals(3, event.revision)
+        assertEquals("2026-08-10T09:00-04:00", event.start.toWireValue())
+    }
+
+    @Test
+    fun list_usesRawTemporalValuesAndReturnsCursor() = runTest {
+        var requestUrl = ""
+        val engine = MockEngine { request ->
+            requestUrl = request.url.toString()
+            respond("{\"version\":2,\"requestId\":\"r2\",\"body\":$fixturePage}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val result = withContext(Dispatchers.Default) {
+            client(engine).list(
+                CalendarTime.AllDay("2026-08-01"),
+                CalendarTime.AllDay("2026-08-31"),
+                scope = CalendarScope.ALL,
+                group = "family",
+                tags = listOf("dinner", "family"),
+                importance = Importance.IMPORTANT,
+                cursor = "prior-cursor",
+                query = "dinner",
+                limit = 25,
+            )
+        }
+        val page = assertIs<AuthResult.Success<CalendarEventPage>>(result).value
+        assertEquals("opaque-cursor", page.nextCursor)
+        assertEquals(1, page.more)
+        assertTrue(requestUrl.contains("from=2026-08-01"), requestUrl)
+        assertTrue(requestUrl.contains("to=2026-08-31"), requestUrl)
+        assertTrue(requestUrl.contains("scope=all"), requestUrl)
+        assertTrue(requestUrl.contains("cursor=prior-cursor"), requestUrl)
+        assertTrue(requestUrl.contains("query=dinner"), requestUrl)
+        assertFalse(requestUrl.contains("kind%22"), requestUrl)
+    }
+
+    @Test
+    fun create_emitsOnlyV2CreateFields() = runTest {
+        var method = ""
+        var path = ""
+        var body = ""
+        val engine = MockEngine { request ->
+            method = request.method.value
+            path = request.url.encodedPath
+            body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            respond("{\"version\":2,\"requestId\":\"r3\",\"body\":$fixtureOccurrence}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val draft = CalendarEvent(
+            id = "client-only-id",
+            scope = CalendarScope.PRIVATE,
+            title = "Example event",
+            start = CalendarTime.Timed("2026-08-05T09:00-04:00", "America/Toronto"),
+            end = CalendarTime.Timed("2026-08-05T10:00-04:00", "America/Toronto"),
+            visibility = Visibility.EVERYONE,
+            importance = Importance.NORMAL,
+            tags = listOf("example"),
+            createdAt = "client timestamp",
+            updatedAt = "client timestamp",
+            occurrenceId = "client occurrence",
+            baseEventId = "client base",
+            revision = 99,
+        )
+        assertIs<AuthResult.Success<CalendarEvent>>(withContext(Dispatchers.Default) { client(engine).create(draft) })
+        assertEquals("POST", method)
+        assertEquals("/api/v1/calendar/events", path)
+        val json = Json.parseToJsonElement(body).jsonObject
+        assertEquals("private", json.getValue("scope").jsonPrimitive.content)
+        assertEquals("2026-08-05T09:00-04:00", json.getValue("start").jsonPrimitive.content)
+        assertFalse(json.containsKey("eventId"), body)
+        assertFalse(json.containsKey("revision"), body)
+        assertFalse(json.containsKey("createdAt"), body)
+        assertFalse(json.containsKey("updatedAt"), body)
+        assertFalse(json.containsKey("occurrenceId"), body)
+        assertFalse(json.containsKey("baseEventId"), body)
+    }
+
+    @Test
+    fun mutate_supportsEveryScopeAndNeverUsesPatchOrDelete() = runTest {
+        val methods = mutableListOf<String>()
+        val paths = mutableListOf<String>()
+        val bodies = mutableListOf<String>()
+        val resultBody = "{\"operation\":\"update\",\"appliedTo\":\"entire_series\",\"eventId\":\"event-example\",\"resultingRevision\":4}"
+        val engine = MockEngine { request ->
+            methods += request.method.value
+            paths += request.url.encodedPath
+            bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            respond("{\"version\":2,\"requestId\":\"r4\",\"body\":$resultBody}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val c = client(engine)
+        for (scope in CalendarMutationScope.entries) {
+            val command = CalendarMutationCommand.update(
+                applyTo = scope,
+                changes = CalendarChanges(title = "new title"),
+                originalStart = if (scope == CalendarMutationScope.ENTIRE_SERIES) null else "2026-08-10T09:00-04:00",
+                expectedRevision = 3,
+            )
+            val result = withContext(Dispatchers.Default) { c.mutate("event-example", command) }
+            assertIs<AuthResult.Success<CalendarMutationResult>>(result)
+        }
+        assertEquals(listOf("POST", "POST", "POST"), methods)
+        assertTrue(paths.all { it == "/api/v1/calendar/events/event-example/mutations" })
+        assertTrue(bodies.all { !it.contains("eventId") }, bodies.toString())
+        assertTrue(bodies[0].contains("this_occurrence"))
+        assertTrue(bodies[1].contains("this_and_following"))
+        assertTrue(bodies[2].contains("entire_series"))
+    }
+
+    @Test
+    fun convenienceUpdateAndDeleteMapToEntireSeries() = runTest {
+        val bodies = mutableListOf<String>()
+        val methods = mutableListOf<String>()
+        val resultBody = "{\"operation\":\"update\",\"appliedTo\":\"entire_series\",\"eventId\":\"event-example\",\"resultingRevision\":4}"
+        val engine = MockEngine { request ->
+            methods += request.method.value
+            bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            val body = if (methods.size == 1) resultBody else "{\"operation\":\"delete\",\"appliedTo\":\"entire_series\",\"eventId\":\"event-example\"}"
+            respond("{\"version\":2,\"requestId\":\"r5\",\"body\":$body}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val event = CalendarEvent(
+            id = "event-example", scope = CalendarScope.PRIVATE, title = "Example event",
+            start = CalendarTime.AllDay("2026-08-05"), visibility = Visibility.EVERYONE,
+            importance = Importance.NORMAL, revision = 3,
+        )
+        val updated = withContext(Dispatchers.Default) { client(engine).update(event) }
+        assertEquals(4, assertIs<AuthResult.Success<CalendarEvent>>(updated).value.revision)
+        assertIs<AuthResult.Success<Unit>>(withContext(Dispatchers.Default) { client(engine).delete("event-example") })
+        assertEquals(listOf("POST", "POST"), methods)
+        assertTrue(bodies.all { it.contains("entire_series") })
+    }
+
+    @Test
+    fun staleRevisionAndDomainErrorRemainInAuthServerEnvelope() = runTest {
+        val engine = MockEngine {
+            respond(
+                "{\"version\":2,\"requestId\":\"request-example\",\"error\":{\"code\":\"conflict\",\"message\":\"revision is stale\"}}",
+                HttpStatusCode.Conflict,
+                CALENDAR_HEADERS,
+            )
+        }
+        val result = withContext(Dispatchers.Default) {
+            client(engine).mutate("event-example", CalendarMutationCommand.delete(CalendarMutationScope.ENTIRE_SERIES))
+        }
+        val failure = assertIs<AuthResult.Failure>(result)
+        val server = assertIs<AuthError.Server>(failure.error)
+        assertEquals(409, server.status)
+        assertTrue(server.body.contains("conflict"))
     }
 
     @Test
@@ -77,84 +207,11 @@ class CalendarHttpClientTest {
             delay(requestTimeoutMillis * 100)
             respond("{}", HttpStatusCode.OK, CALENDAR_HEADERS)
         }
-
         lateinit var result: AuthResult<CalendarEvent>
         val elapsedMillis = measureTimeMillis {
-            result = withContext(Dispatchers.Default) {
-                client(engine, requestTimeoutMillis).get("event-1")
-            }
+            result = withContext(Dispatchers.Default) { client(engine, requestTimeoutMillis).get("event-example") }
         }
-
         assertIs<AuthResult.Failure>(result)
         assertTrue(elapsedMillis < 1_000L, "request took ${elapsedMillis}ms")
-    }
-
-    @Test
-    fun occurrence_rows_preserve_both_id_fields_and_use_base_id_for_mutation() = runTest {
-        var path = ""
-        var body = ""
-        val engine = MockEngine { request ->
-            path = request.url.encodedPath
-            if (request.method.value == "PATCH") {
-                body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-            }
-            val body = if (request.method.value == "GET")
-                "{\"events\":[$OCCURRENCE_EVENT],\"more\":0}"
-            else OCCURRENCE_EVENT
-            respond("{\"version\":1,\"requestId\":\"r3\",\"body\":$body}", HttpStatusCode.OK, CALENDAR_HEADERS)
-        }
-        val pageResult = withContext(Dispatchers.Default) {
-            client(engine).list(CalendarTime.AllDay("2026-08-01"), CalendarTime.AllDay("2026-08-31"))
-        }
-        val occurrence = assertIs<AuthResult.Success<CalendarEventPage>>(pageResult).value.events.single()
-        assertEquals("event-1", occurrence.id)
-        assertEquals("occurrence-1", occurrence.occurrenceId)
-        assertEquals("event-1", occurrence.baseEventId)
-        assertEquals("event-1", occurrence.persistedId)
-        withContext(Dispatchers.Default) { client(engine).update(occurrence) }
-        assertEquals("/api/v1/calendar/events/event-1", path)
-        assertFalse(body.contains("occurrenceId"), body)
-        assertFalse(body.contains("baseEventId"), body)
-    }
-
-    @Test
-    fun create_omits_server_owned_timestamps_and_occurrence_metadata() = runTest {
-        var body = ""
-        val engine = MockEngine { request ->
-            body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-            respond("{\"version\":1,\"requestId\":\"r4\",\"body\":$EVENT}", HttpStatusCode.OK, CALENDAR_HEADERS)
-        }
-        val draft = CalendarEvent(
-            id = "draft", scope = CalendarScope.HOUSEHOLD, title = "Draft",
-            start = CalendarTime.AllDay("2026-08-05"), visibility = Visibility.EVERYONE,
-            importance = Importance.NORMAL, createdAt = "", updatedAt = "",
-            occurrenceId = "occurrence-ignored", baseEventId = "event-ignored",
-        )
-        val createResult = withContext(Dispatchers.Default) { client(engine).create(draft) }
-        assertIs<AuthResult.Success<CalendarEvent>>(createResult)
-        assertFalse(body.contains("createdAt"), body)
-        assertFalse(body.contains("updatedAt"), body)
-        assertFalse(body.contains("occurrenceId"), body)
-        assertFalse(body.contains("baseEventId"), body)
-    }
-
-    @Test
-    fun list_encodesTimeWindowAndMapsPage() = runTest {
-        var url = ""
-        val engine = MockEngine { request ->
-            url = request.url.toString()
-            respond("""{"version":1,"requestId":"r2","body":{"events":[$EVENT],"more":0}}""", HttpStatusCode.OK, CALENDAR_HEADERS)
-        }
-        val result = withContext(Dispatchers.Default) {
-            client(engine).list(
-                CalendarTime.AllDay("2026-08-01"),
-                CalendarTime.AllDay("2026-08-31"),
-                scope = CalendarScope.HOUSEHOLD,
-            )
-        }
-        val page = assertIs<AuthResult.Success<CalendarEventPage>>(result).value
-        assertEquals(1, page.events.size)
-        assertTrue(url.contains("scope=household"), url)
-        assertTrue(url.contains("2026-08-01"), url)
     }
 }

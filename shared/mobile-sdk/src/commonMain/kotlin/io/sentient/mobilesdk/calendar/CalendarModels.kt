@@ -1,34 +1,36 @@
-@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
-
 package io.sentient.mobilesdk.calendar
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonClassDiscriminator
 
-/** A UTC instant paired with the event's IANA (or gateway) time-zone id. */
-@Serializable
-data class TimedValue(val kind: String = "timed", val instant: String, val timeZoneId: String)
-
-/** A date without a time or time-zone. */
-@Serializable
-data class AllDayValue(val kind: String = "all-day", val date: String)
-
-@Serializable
-@JsonClassDiscriminator("kind")
+/**
+ * Source-level time convenience retained for existing mobile callers.  REST V2
+ * uses the raw RFC3339/date spelling (see [CalendarTime.toWireValue]); this
+ * type is never used as a query or request-body serializer.
+ */
 sealed class CalendarTime {
-    @Serializable
-    @SerialName("timed")
     data class Timed(val instant: String, val timeZoneId: String) : CalendarTime()
-
-    @Serializable
-    @SerialName("all-day")
     data class AllDay(val date: String) : CalendarTime()
+
+    fun toWireValue(): String = when (this) {
+        is Timed -> instant
+        is AllDay -> date
+    }
 }
 
+/** Explicit marker used when a V2 raw temporal value has no IANA zone field. */
+const val CALENDAR_WIRE_TIME_ZONE = "wire"
+
+fun String.toCalendarTime(): CalendarTime =
+    if (matches(Regex("^\\d{4}-\\d{2}-\\d{2}$"))) CalendarTime.AllDay(this)
+    else CalendarTime.Timed(this, CALENDAR_WIRE_TIME_ZONE)
+
 @Serializable
-enum class Visibility { @SerialName("everyone") EVERYONE, @SerialName("adults") ADULTS }
+enum class Visibility {
+    @SerialName("everyone") EVERYONE,
+    @SerialName("adults") ADULTS,
+}
 
 @Serializable
 enum class Importance {
@@ -38,32 +40,126 @@ enum class Importance {
 }
 
 @Serializable
-enum class CalendarScope { @SerialName("private") PRIVATE, @SerialName("household") HOUSEHOLD }
+enum class CalendarScope {
+    @SerialName("private") PRIVATE,
+    @SerialName("household") HOUSEHOLD,
+    @SerialName("all") ALL,
+}
 
+typealias CalendarReadScope = CalendarScope
 typealias Group = String
 typealias Tags = List<String>
-
 typealias CalendarEventId = String
 typealias UtcInstant = String
-
 typealias LocalDate = String
+typealias CalendarRevision = Int
 
 @Serializable
-enum class RRuleFrequency { DAILY, WEEKLY, MONTHLY, YEARLY }
+enum class RecurrenceFrequency {
+    @SerialName("daily") DAILY,
+    @SerialName("weekly") WEEKLY,
+    @SerialName("monthly") MONTHLY,
+    @SerialName("yearly") YEARLY,
+}
 
 @Serializable
-data class RRule(
-    val freq: RRuleFrequency,
+enum class Weekday {
+    @SerialName("monday") MONDAY,
+    @SerialName("tuesday") TUESDAY,
+    @SerialName("wednesday") WEDNESDAY,
+    @SerialName("thursday") THURSDAY,
+    @SerialName("friday") FRIDAY,
+    @SerialName("saturday") SATURDAY,
+    @SerialName("sunday") SUNDAY,
+}
+
+/** Structured recurrence used by every V2 create/update wire shape. */
+@Serializable
+data class StructuredRecurrence(
+    val frequency: RecurrenceFrequency,
     val interval: Int? = null,
+    val weekdays: List<Weekday>? = null,
     val count: Int? = null,
     val until: String? = null,
-    val byDay: List<String>? = null,
 )
 
-@Serializable
-data class Recurrence(val rrule: String, val rule: RRule)
+typealias RecurrenceInput = StructuredRecurrence
+typealias CalendarRecurrence = StructuredRecurrence
 
+/** Exact V2 create input. Server-owned identity, revision, and timestamps are absent. */
 @Serializable
+data class CalendarCreateInput(
+    val scope: CalendarScope? = null,
+    val title: String,
+    val description: String? = null,
+    val start: String,
+    val end: String? = null,
+    val visibility: Visibility = Visibility.EVERYONE,
+    val importance: Importance = Importance.NORMAL,
+    val group: String? = null,
+    val tags: List<String> = emptyList(),
+    val recurrence: StructuredRecurrence? = null,
+    @SerialName("notificationPolicy") val notificationPolicy: JsonObject? = null,
+)
+
+/** Exact V2 persisted event projection (get/create response body). */
+@Serializable
+data class CalendarEventV2(
+    val eventId: String,
+    val revision: Int,
+    val scope: CalendarScope,
+    val title: String,
+    val description: String? = null,
+    val start: String,
+    val end: String? = null,
+    val visibility: Visibility,
+    val importance: Importance,
+    val group: String? = null,
+    val tags: List<String> = emptyList(),
+    val recurrence: StructuredRecurrence? = null,
+)
+
+/** Exact V2 effective occurrence projection (list and occurrence get response body). */
+@Serializable
+data class EffectiveOccurrence(
+    val eventId: String,
+    val occurrenceId: String,
+    val originalStart: String,
+    val recurring: Boolean,
+    val revision: Int,
+    val scope: CalendarScope,
+    val title: String,
+    val description: String? = null,
+    val start: String,
+    val end: String? = null,
+    val visibility: Visibility,
+    val importance: Importance,
+    val group: String? = null,
+    val tags: List<String> = emptyList(),
+    val recurrence: StructuredRecurrence? = null,
+)
+
+/** Exact V2 bounded page returned by list. */
+@Serializable
+data class CalendarPage(
+    val events: List<EffectiveOccurrence>,
+    val nextCursor: String? = null,
+)
+
+typealias CalendarQueryPage = CalendarPage
+
+/** V2 bounded page. The [more] value is a source compatibility projection. */
+data class CalendarEventPage(
+    val events: List<CalendarEvent>,
+    val more: Int = 0,
+    val nextCursor: String? = null,
+)
+
+typealias CalendarList = CalendarEventPage
+
+typealias CalendarOccurrence = EffectiveOccurrence
+
+/** Source-only legacy convenience for callers that keep local exception state. */
 data class ExceptionOverride(
     val occurrence: CalendarTime,
     val cancelled: Boolean? = null,
@@ -73,6 +169,117 @@ data class ExceptionOverride(
 )
 
 @Serializable
+enum class CalendarMutationScope(val wire: String) {
+    @SerialName("this_occurrence") THIS_OCCURRENCE("this_occurrence"),
+    @SerialName("this_and_following") THIS_AND_FOLLOWING("this_and_following"),
+    @SerialName("entire_series") ENTIRE_SERIES("entire_series"),
+}
+
+@Serializable
+enum class CalendarOperation(val wire: String) {
+    @SerialName("update") UPDATE("update"),
+    @SerialName("delete") DELETE("delete"),
+}
+
+/** Allowlisted V2 update fields. Null means omitted by the request encoder. */
+@Serializable
+data class CalendarChanges(
+    val title: String? = null,
+    val description: String? = null,
+    val start: String? = null,
+    val end: String? = null,
+    val visibility: Visibility? = null,
+    val importance: Importance? = null,
+    val group: String? = null,
+    val tags: List<String>? = null,
+    val recurrence: StructuredRecurrence? = null,
+)
+
+/** A typed update/delete command; eventId is supplied by the URL, not duplicated in the body. */
+@Serializable
+data class CalendarMutationCommand(
+    val operation: CalendarOperation,
+    val applyTo: CalendarMutationScope,
+    val changes: CalendarChanges? = null,
+    val scope: CalendarScope? = null,
+    val originalStart: String? = null,
+    val expectedRevision: Int? = null,
+) {
+    companion object {
+        fun update(
+            applyTo: CalendarMutationScope,
+            changes: CalendarChanges,
+            scope: CalendarScope? = null,
+            originalStart: String? = null,
+            expectedRevision: Int? = null,
+        ) = CalendarMutationCommand(CalendarOperation.UPDATE, applyTo, changes, scope, originalStart, expectedRevision)
+
+        fun delete(
+            applyTo: CalendarMutationScope,
+            scope: CalendarScope? = null,
+            originalStart: String? = null,
+            expectedRevision: Int? = null,
+        ) = CalendarMutationCommand(CalendarOperation.DELETE, applyTo, null, scope, originalStart, expectedRevision)
+    }
+}
+
+@Serializable
+data class CalendarMutationResult(
+    val operation: CalendarOperation,
+    val appliedTo: CalendarMutationScope,
+    val eventId: String,
+    val successorEventId: String? = null,
+    val resultingRevision: Int? = null,
+)
+
+@Serializable
+enum class CalendarErrorCode {
+    @SerialName("invalid_time") INVALID_TIME,
+    @SerialName("invalid_range") INVALID_RANGE,
+    @SerialName("range_too_wide") RANGE_TOO_WIDE,
+    @SerialName("invalid_scope") INVALID_SCOPE,
+    @SerialName("invalid_mutation_scope") INVALID_MUTATION_SCOPE,
+    @SerialName("forbidden") FORBIDDEN,
+    @SerialName("not_found") NOT_FOUND,
+    @SerialName("occurrence_not_found") OCCURRENCE_NOT_FOUND,
+    @SerialName("result_too_large") RESULT_TOO_LARGE,
+    @SerialName("recurrence_conflict") RECURRENCE_CONFLICT,
+    @SerialName("conflict") CONFLICT,
+    @SerialName("aborted") ABORTED,
+    @SerialName("io_error") IO_ERROR,
+    @SerialName("missing_token") MISSING_TOKEN,
+    @SerialName("malformed") MALFORMED,
+    @SerialName("expired") EXPIRED,
+    @SerialName("signature_invalid") SIGNATURE_INVALID,
+    @SerialName("wrong_purpose") WRONG_PURPOSE,
+    @SerialName("user_not_found") USER_NOT_FOUND,
+    @SerialName("invalid_user_record") INVALID_USER_RECORD,
+}
+
+typealias CalendarHttpErrorCode = CalendarErrorCode
+
+@Serializable
+data class CalendarError(val code: CalendarErrorCode, val message: String)
+
+@Serializable
+data class CalendarErrorResponse(
+    val version: Int,
+    val requestId: String,
+    val error: CalendarError,
+)
+
+@Serializable
+data class CalendarResponse<T>(
+    val version: Int,
+    val requestId: String,
+    val body: T,
+)
+
+/**
+ * Compatibility view consumed by existing Android/iOS screens. Its properties
+ * are intentionally not serializable V1 fields; CalendarHttpClient maps this
+ * view to/from the exact DTOs above.
+ */
 data class CalendarEvent(
     val id: String,
     val scope: CalendarScope,
@@ -80,40 +287,81 @@ data class CalendarEvent(
     val description: String? = null,
     val start: CalendarTime,
     val end: CalendarTime? = null,
-    val recurrence: Recurrence? = null,
+    val recurrence: StructuredRecurrence? = null,
     val exdates: List<CalendarTime>? = null,
     val exceptions: List<ExceptionOverride>? = null,
     val visibility: Visibility,
     val importance: Importance,
     val group: String? = null,
     val tags: List<String> = emptyList(),
-    @SerialName("notificationPolicy") val notification: JsonObject? = null,
-    val createdAt: String,
-    val updatedAt: String,
-    /** The occurrence identity returned by list responses, when this is an occurrence row. */
+    val notification: JsonObject? = null,
+    val createdAt: String = "",
+    val updatedAt: String = "",
     val occurrenceId: String? = null,
-    /** The persisted base-event identity used for CRUD on occurrence rows. */
     val baseEventId: String? = null,
+    val revision: Int = 0,
 ) {
-    /** The server resource addressed by update/delete, never an occurrence identity. */
-    val persistedId: String get() = baseEventId ?: id
+    val eventId: String get() = id
+    val persistedId: String get() = id
 }
 
-/** Occurrence-only fields are used by local consumers when expanding a recurring event. */
-@Serializable
-data class Occurrence(
-    val occurrenceId: String,
-    val baseEventId: String,
-    val occurrenceStart: CalendarTime,
-    val occurrenceEnd: CalendarTime? = null,
-    val event: CalendarEvent,
+fun CalendarEvent.toCreateInput(): CalendarCreateInput = CalendarCreateInput(
+    scope = scope.takeUnless { it == CalendarScope.ALL },
+    title = title,
+    description = description,
+    start = start.toWireValue(),
+    end = end?.toWireValue(),
+    visibility = visibility,
+    importance = importance,
+    group = group,
+    tags = tags,
+    recurrence = recurrence,
+    notificationPolicy = notification,
 )
 
-@Serializable
-data class CalendarEventPage(val events: List<CalendarEvent>, val more: Int)
+fun CalendarEvent.toV2(): CalendarEventV2 = CalendarEventV2(
+    eventId = id,
+    revision = revision,
+    scope = scope,
+    title = title,
+    description = description,
+    start = start.toWireValue(),
+    end = end?.toWireValue(),
+    visibility = visibility,
+    importance = importance,
+    group = group,
+    tags = tags,
+    recurrence = recurrence,
+)
 
-@Serializable
-data class CalendarResponse<T>(val version: Int, val requestId: String, val body: T)
+internal fun CalendarEventV2.toCompatibility(): CalendarEvent = CalendarEvent(
+    id = eventId,
+    scope = scope,
+    title = title,
+    description = description,
+    start = start.toCalendarTime(),
+    end = end?.toCalendarTime(),
+    recurrence = recurrence,
+    visibility = visibility,
+    importance = importance,
+    group = group,
+    tags = tags,
+    revision = revision,
+)
 
-/** Convenience aliases retained as descriptive names for repository consumers. */
-typealias CalendarList = CalendarEventPage
+internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent = CalendarEvent(
+    id = eventId,
+    scope = scope,
+    title = title,
+    description = description,
+    start = start.toCalendarTime(),
+    end = end?.toCalendarTime(),
+    recurrence = recurrence,
+    visibility = visibility,
+    importance = importance,
+    group = group,
+    tags = tags,
+    occurrenceId = occurrenceId,
+    baseEventId = eventId,
+    revision = revision,
+)
