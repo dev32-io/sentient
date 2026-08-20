@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 39
+  revision: 40
 artifacts:
   - id: intent
     type: intent
@@ -66,15 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-occurrence-mutations
-    tasks:
-      - calendar-v2-occurrence-mutations
-  - id: calendar-v2-following-update
-    tasks:
-      - calendar-v2-following-update
-  - id: calendar-v2-following-delete
-    tasks:
-      - calendar-v2-following-delete
   - id: calendar-v2-tools
     tasks:
       - calendar-v2-tools
@@ -160,3 +151,31 @@ executionStages:
         are security/data-integrity seams that require joint post-merge review;
         splitting review would miss disagreement between read and write
         projections.
+  - id: stage-4-recurring-mutations
+    tasks:
+      - calendar-v2-occurrence-mutations
+      - calendar-v2-following-update
+      - calendar-v2-following-delete
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/calendar-mutations.test.ts
+        src/calendar/calendar-query.test.ts
+        src/calendar/expand-recurrence.test.ts
+        src/calendar/recurrence-splitter.test.ts
+        src/calendar/calendar-store.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: sequential
+    review:
+      tier: high
+      focus:
+        - Rich single-occurrence override and canonical cancellation invariants
+        - COUNT and UNTIL split arithmetic including excluded/cancelled slots
+          and DST
+        - Exception/exclusion partitioning, recurrence conflicts, first-slot
+          behavior, and atomic rollback
+        - No duplicate, missing, or cross-segment occurrence ownership
+      rationale: Google-style recurrence mutations combine immutable occurrence
+        identity, COUNT/UNTIL arithmetic, exception migration, optimistic
+        concurrency, authorization, and multi-row atomicity. The sequential
+        contributions intentionally share one mutation service, so one high
+        review must verify the assembled state machine and rollback invariants.

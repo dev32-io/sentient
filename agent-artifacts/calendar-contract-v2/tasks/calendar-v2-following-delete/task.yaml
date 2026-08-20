@@ -10,7 +10,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: calendar-v2-following-delete
+  stageId: stage-4-recurring-mutations
   intermediateState: complete
 verification:
   timing: task
