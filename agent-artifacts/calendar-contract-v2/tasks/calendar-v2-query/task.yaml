@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-query
 title: Implement bounded effective-occurrence calendar queries
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-temporal
   - calendar-v2-recurrence
@@ -30,3 +30,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-query
   baseCommit: ca1dcec157993645830a4ec1f2ac825190721453
   lastRunId: f306e8c0-6bac-4193-8e89-fa469fe9032f
+  completedCommit: 46b5cc986879112b8ddd47399fc7e802cc254d9e
