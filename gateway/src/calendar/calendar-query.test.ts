@@ -95,6 +95,31 @@ describe("CalendarQueryService", () => {
     }
   });
 
+  it("pages REST results despite the tool result budget, while tools reject the complete overflow", () => {
+    const events = [
+      event("a", day("2026-08-01"), { title: "a".repeat(100) }),
+      event("b", day("2026-08-02"), { title: "b".repeat(100) }),
+      event("c", day("2026-08-03"), { title: "c".repeat(100) }),
+    ];
+    const rest = service(events, [], "adult", 1);
+    const first = rest.list(range);
+    expect(first.ok).toBe(true);
+    if (!first.ok || !first.value.nextCursor) throw new Error("expected REST continuation");
+    expect(first.value.events.map((row) => row.eventId)).toEqual(["a", "b"]);
+    const second = rest.list({ ...range, cursor: first.value.nextCursor });
+    expect(second.ok && second.value.events.map((row) => row.eventId)).toEqual(["c"]);
+    expect(second.ok && second.value.nextCursor).toBeUndefined();
+
+    // Keep the tool query on one REST page so this assertion proves the
+    // proactive serialized-size check, rather than only continuation rejection.
+    const tool = new CalendarQueryService({
+      private: persistence(events.slice(0, 2)),
+      role: "adult",
+      config: { ...config, query: { ...config.query, pageSize: 10 }, output: { maxResultChars: 1 } },
+    });
+    expect(tool.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
+  });
+
   it("rejects a tool result that needs a REST page even below maxOccurrences", () => {
     const query = service([event("a", day("2026-08-01")), event("b", day("2026-08-02")), event("c", day("2026-08-03"))]);
     expect(query.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });

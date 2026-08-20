@@ -442,8 +442,10 @@ export class CalendarQueryService {
     const events = after.slice(0, limit).map((row) => projectOccurrence(row.occurrence, row.scope, row.revision));
     const last = after[events.length - 1];
     const hasMore = after.length > events.length;
+    // REST consumers receive bounded pages and may traverse the complete
+    // aggregate with the cursor. The model-result character budget applies to
+    // complete tool results, not to the REST aggregate (or its pages).
     const page: CalendarPage = { events, ...(hasMore && last ? { nextCursor: encodeCursor(query, operation, tupleFor(last)) } : {}) };
-    if (!serializeWithinBudget(page, this.deps.config.output.maxResultChars)) return serializedFailure();
     return { ok: true, value: page };
   }
 

@@ -195,6 +195,36 @@ describe("calendar V2 REST handler", () => {
     });
   });
 
+  it("keeps REST paging traversable when the complete aggregate exceeds the model result budget", async () => {
+    const privateStore = fakePersistence(
+      [
+        { ...persisted("a", "2026-08-01"), title: "a".repeat(100) },
+        { ...persisted("b", "2026-08-02"), title: "b".repeat(100) },
+        { ...persisted("c", "2026-08-03"), title: "c".repeat(100) },
+      ],
+      "private",
+    );
+    const householdStore = fakePersistence([], "household");
+    const api = createCalendarHandler({
+      ...deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore)),
+      calendarConfig: { ...config, query: { ...config.query, pageSize: 2 }, output: { maxResultChars: 1 } },
+    });
+    const first = await api(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31"));
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { body: { events: Array<{ eventId: string }>; nextCursor?: string } };
+    expect(firstBody.body.events.map((event) => event.eventId)).toEqual(["a", "b"]);
+    expect(firstBody.body.nextCursor).toBeString();
+    if (!firstBody.body.nextCursor) throw new Error("expected continuation cursor");
+
+    const second = await api(
+      request(`/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&cursor=${encodeURIComponent(firstBody.body.nextCursor)}`),
+    );
+    expect(second.status).toBe(200);
+    expect((await second.json()) as { body: { events: Array<{ eventId: string }>; nextCursor?: string } }).toMatchObject({
+      body: { events: [{ eventId: "c" }] },
+    });
+  });
+
   it("creates privately by default, gets an occurrence with raw originalStart, and mutates through the command route", async () => {
     const root = mkdtempSync(join(tmpdir(), "calendar-handler-"));
     roots.push(root);
