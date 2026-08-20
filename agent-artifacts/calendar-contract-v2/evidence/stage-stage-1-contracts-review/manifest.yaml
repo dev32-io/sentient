@@ -1,24 +1,17 @@
 schemaVersion: 1
 evaluation: stage-stage-1-contracts-review
-recordedAt: 2026-08-20T01:28:34.154Z
+recordedAt: 2026-08-20T02:07:20.490Z
 entries:
   - result: 8 pass, 0 fail
     command: source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
-    description: Declared stage schema test passed.
+    description: Focused V2 contract tests pass.
     path: files/1-types.test.ts
-    checksum: sha256:df89c9eaa7f6d6cb0b3f2180181a87ce54afeee5d08dabf75623c528036baf77
-  - result: tsc --noEmit passed
+    checksum: sha256:7b9d68b81cb90cebf5591b22fc878d52ff4163851a1590cb4c36f96a7b9df860
+  - result: tsc --noEmit completed successfully
     command: source scripts/env.sh && cd gateway && bun run typecheck
-    description: Declared gateway typecheck passed.
+    description: Gateway typecheck passes.
     path: files/2-types.ts
-    checksum: sha256:b5c80e511ade94d59209c95d9b5196333c2b8159323abaac6736b04fe666963c
-  - result: passed with no output
-    command: git diff --check db9ac6826e92449b5094a097a27b4a0a7f98f502
-      5fc89c1a7d2557f071a50b506cb34fc466de47a8
-    description: Reviewed diff has no whitespace errors.
-  - result: createMinimal=false; getOccurrenceStart=false; responseOccurrence=false;
-      queryWithText=false; oldListPage=false; oldMutation=false
-    command: source scripts/env.sh && cd gateway && bun -e '<sanitized schema probes>'
-    description: Minimal runtime probes demonstrate the contract gaps and V1 rejection.
-    path: files/4-types.ts
-    checksum: sha256:b5c80e511ade94d59209c95d9b5196333c2b8159323abaac6736b04fe666963c
+    checksum: sha256:1e486014790e07278d998c9fe303990f094b3aae856c91b19b852a541cf50e0c
+  - result: clean
+    command: git diff --check cecd4ede^ bf7a8ebe873fa9730a4db6f3ef7084b7c9aee63f
+    description: Bounded repair diff has no whitespace errors.

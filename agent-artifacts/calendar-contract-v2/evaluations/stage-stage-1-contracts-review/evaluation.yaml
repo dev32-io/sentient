@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-1-contracts
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
   - source scripts/env.sh && cd gateway && bun run typecheck
@@ -16,11 +16,11 @@ criteria:
   - Calendar scope versus mutation scope and stable occurrence identity
   - Golden fixture completeness with no V1 compatibility parsing
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
-  reviewerAgentId: f27c3771-4880-47a9-8282-69b8ee9af810
-  reviewedCommit: 5fc89c1a7d2557f071a50b506cb34fc466de47a8
+  state: passed
+  reviewerAgentId: 2c9df5c8-893e-43de-9697-2bb1bc887bcb
+  reviewedCommit: bf7a8ebe873fa9730a4db6f3ef7084b7c9aee63f
   managerPrompt: "Address all six review findings before re-review. Specifically:
     add the bounded search query field to the authoritative shared query input;
     restore documented create defaults for visibility, importance, and tags;
@@ -31,54 +31,8 @@ loop:
     V1 list fixture rejection test. Preserve the clean V2-only contract and
     rerun the stage checks."
   fixerAgentId: 9fa68091-94a2-4940-a985-981097920ba1
-findings:
-  - id: CAL-V2-001
-    severity: high
-    status: open
-    criterion: Shared bounded list/search input
-    location: gateway/src/calendar/types.ts:295-305
-    summary: calendarQueryInputSchema omits query, so calendar_search cannot use the
-      authoritative shared input.
-    blocking: true
-  - id: CAL-V2-002
-    severity: high
-    status: open
-    criterion: Optional/defaulted create fields
-    location: gateway/src/calendar/types.ts:263-282
-    summary: Create requires visibility, importance, and tags instead of applying
-      documented defaults.
-    blocking: true
-  - id: CAL-V2-003
-    severity: high
-    status: open
-    criterion: Occurrence get by originalStart
-    location: gateway/src/calendar/types.ts:390-394
-    summary: The get request body cannot carry originalStart.
-    blocking: true
-  - id: CAL-V2-004
-    severity: high
-    status: open
-    criterion: Occurrence response projection
-    location: gateway/src/calendar/types.ts:347-351
-    summary: calendarResponseSchema excludes CalendarOccurrenceProjection.
-    blocking: true
-  - id: CAL-V2-005
-    severity: high
-    status: open
-    criterion: Resulting revision when a record remains
-    location: gateway/src/calendar/types.ts:353-360
-    summary: resultingRevision is optional even for surviving create/update results.
-    blocking: true
-  - id: CAL-V2-006
-    severity: low
-    status: open
-    criterion: Fixture rejection and strict parsing proof
-    location: gateway/src/calendar/types.test.ts:52-68;
-      gateway/src/calendar/types.ts:160-183
-    summary: Tests do not cover a populated V1 list fixture, and wireRRuleSchema
-      accepts unknown keys.
-    blocking: false
+findings: []
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-1-contracts-review/manifest.yaml

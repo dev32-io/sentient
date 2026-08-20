@@ -181,6 +181,7 @@ export const wireRRuleSchema = z
     until: utcInstant.optional(),
     byDay: z.array(z.enum(WEEKDAYS)).min(1).optional(),
   })
+  .strict()
   .refine((r) => !(r.count !== undefined && r.until !== undefined), {
     message: "COUNT and UNTIL are mutually exclusive",
   });
@@ -265,6 +266,9 @@ const eventMetadataShape = {
 /** Input used by create; scope is optional because adapters default it to private. */
 export const calendarCreateInputSchema = z.object({
   ...eventMetadataShape,
+  visibility: z.enum(["everyone", "adults"]).default("everyone"),
+  importance: z.enum(["normal", "important", "pinned"]).default("normal"),
+  tags: z.array(z.string()).default([]),
   notificationPolicy: z.record(z.unknown()).optional(),
   scope: calendarWriteScopeSchema.optional(),
 }).strict();
@@ -295,6 +299,7 @@ export type CalendarOccurrenceProjection = z.infer<typeof calendarOccurrenceProj
 export const calendarQueryInputSchema = z.object({
   from: calendarTimeInputSchema,
   to: calendarTimeInputSchema,
+  query: z.string().min(1).max(256).optional(),
   scope: calendarReadScopeSchema.optional(),
   cursor: z.string().min(1).optional(),
   limit: z.number().int().positive().max(100).optional(),
@@ -350,13 +355,23 @@ export type CalendarMutationCommand = z.infer<typeof calendarMutationCommandSche
 export const calendarUpdateChangesSchema = changesSchema;
 export const calendarOccurrenceChangesSchema = occurrenceChangesSchema;
 
-export const calendarMutationResultSchema = z.object({
-  operation: z.enum(["create", "update", "delete"]),
+const survivingMutationResultSchema = z.object({
+  operation: z.enum(["create", "update"]),
   appliedTo: calendarMutationScopeSchema,
   eventId: z.string().min(1),
   successorEventId: z.string().min(1).optional(),
-  resultingRevision: revisionSchema.optional(),
+  resultingRevision: revisionSchema,
 }).strict();
+const deletionMutationResultSchema = z.object({
+  operation: z.literal("delete"),
+  appliedTo: calendarMutationScopeSchema,
+  eventId: z.string().min(1),
+  successorEventId: z.string().min(1).optional(),
+}).strict();
+export const calendarMutationResultSchema = z.discriminatedUnion("operation", [
+  survivingMutationResultSchema,
+  deletionMutationResultSchema,
+]);
 export type CalendarMutationResult = z.infer<typeof calendarMutationResultSchema>;
 
 export type CalendarErrorCode =
@@ -387,10 +402,15 @@ export const calendarErrorResponseSchema = calendarErrorSchema;
 
 const updateRequestSchemas = updateCommandSchemas.map((schema) => schema.omit({ operation: true }));
 const deleteRequestSchemas = deleteCommandSchemas.map((schema) => schema.omit({ operation: true }));
+export const calendarGetInputSchema = z.object({
+  eventId: z.string().min(1),
+  scope: calendarReadScopeSchema.optional(),
+  originalStart: calendarTimeInputSchema.optional(),
+}).strict();
 const calendarRequestBodySchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("create"), body: calendarCreateInputSchema }).strict(),
   z.object({ operation: z.literal("list"), body: calendarQueryInputSchema }).strict(),
-  z.object({ operation: z.literal("get"), body: z.object({ eventId: z.string().min(1), scope: calendarReadScopeSchema.optional() }).strict() }).strict(),
+  z.object({ operation: z.literal("get"), body: calendarGetInputSchema }).strict(),
   z.object({ operation: z.literal("update"), body: z.union([updateRequestSchemas[0]!, updateRequestSchemas[1]!, updateRequestSchemas[2]!]) }).strict(),
   z.object({ operation: z.literal("delete"), body: z.union([deleteRequestSchemas[0]!, deleteRequestSchemas[1]!, deleteRequestSchemas[2]!]) }).strict(),
 ]);
@@ -407,7 +427,7 @@ export const calendarRequestSchema = z.object({
 export const calendarResponseSchema = z.object({
   version: z.literal(2),
   requestId: z.string().min(1),
-  body: z.union([calendarEventSchema, calendarPageSchema, calendarMutationResultSchema]),
+  body: z.union([calendarEventSchema, calendarOccurrenceProjectionSchema, calendarPageSchema, calendarMutationResultSchema]),
 }).strict();
 
 function rfcUntilToIso(until: string): UtcInstant {
