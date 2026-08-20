@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { enumerateGeneratedSlots, expandRecurrence } from "./expand-recurrence.js";
+import { DEFAULT_RECURRENCE_LIMITS, enumerateGeneratedSlots, expandRecurrence } from "./expand-recurrence.js";
 import { canonicalizeRecurrence, splitRecurrence, verifyGeneratedSlot } from "./recurrence-splitter.js";
 import type { ExceptionOverride, StoredCalendarEvent, UtcInstant } from "./types.js";
 
@@ -46,6 +46,10 @@ describe("canonicalizeRecurrence", () => {
 
   test("requires a bound and rejects unsupported constructs", () => {
     expect(canonicalizeRecurrence({ frequency: "daily" } as never).ok).toBe(false);
+    expect(canonicalizeRecurrence({ frequency: "daily", until: "2026-08-31" as never })).toMatchObject({
+      ok: false,
+      error: { code: "missing-timezone" },
+    });
   });
 });
 
@@ -97,13 +101,41 @@ describe("splitRecurrence", () => {
     }
   });
 
-  test("splits all-day UNTIL rules without parsing an all-day terminal as an instant", () => {
+  test("requires a resolved timezone for all-day structured UNTIL", () => {
     const event = recurring("FREQ=DAILY;UNTIL=20260105T235959Z", {
       start: { kind: "all-day", date: "2026-01-01" },
     });
-    const result = splitRecurrence(event, { kind: "all-day", date: "2026-01-03" });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.prefix?.recurrence.rrule).toContain("UNTIL=20260102T235959Z");
+    expect(splitRecurrence(event, { kind: "all-day", date: "2026-01-03" }, {
+      frequency: "daily",
+      until: "2026-01-05" as never,
+    })).toMatchObject({ ok: false, error: { code: "missing-timezone" } });
+  });
+
+  test("uses the non-UTC household timezone for all-day UNTIL split and expansion", () => {
+    const canonical = canonicalizeRecurrence(
+      { frequency: "daily", until: "2026-01-03" as never },
+      { timeZoneId: "America/Toronto" },
+    );
+    expect(canonical.ok).toBe(true);
+    if (!canonical.ok) return;
+    const event = recurring(canonical.value.rrule, {
+      start: { kind: "all-day", date: "2026-01-01" },
+      recurrence: canonical.value,
+    });
+    const limits = { ...DEFAULT_RECURRENCE_LIMITS, timeZoneId: "America/Toronto" };
+    const expanded = expandRecurrence(event, { kind: "all-day", date: "2026-01-01" }, { kind: "all-day", date: "2026-01-10" }, limits);
+    expect(expanded.ok).toBe(true);
+    if (expanded.ok) expect(expanded.value.map((item) => item.originalStart)).toEqual([
+      { kind: "all-day", date: "2026-01-01" },
+      { kind: "all-day", date: "2026-01-02" },
+      { kind: "all-day", date: "2026-01-03" },
+    ]);
+    const split = splitRecurrence(event, { kind: "all-day", date: "2026-01-02" }, undefined, limits);
+    expect(split.ok).toBe(true);
+    if (split.ok) {
+      expect(split.value.prefix?.recurrence.rrule).toContain("UNTIL=20260101T235959Z");
+      expect(split.value.successor.recurrence.rrule).toContain("UNTIL=20260104T045959Z");
+    }
   });
 
   test("rejects a changed successor rule that would orphan future child state", () => {

@@ -8,7 +8,7 @@ import { openCalendarPersistence, openCalendarStore } from "./calendar-store.js"
 import { CALENDAR_SCHEMA_VERSION } from "./schema.js";
 import type { CalendarConfig, CalendarPersistenceBaseEvent, StoredCalendarEvent, CalendarEventId, CalendarRevision, EventTimeZoneId, UtcInstant } from "./types.js";
 
-const cfg = {} as CalendarConfig;
+const cfg = { defaultEventTimeZoneId: "America/Toronto" } as CalendarConfig;
 const roots: string[] = [];
 function cap(rootPath: string, resource: Capability["resource"] = "calendar-private"): Capability {
   return { ownerUserId: "u1" as Capability["ownerUserId"], resource, rootPath, role: "adult" };

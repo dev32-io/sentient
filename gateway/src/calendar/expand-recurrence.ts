@@ -1,4 +1,3 @@
-import { resolveTimeZone } from "../context/message-time.js";
 import type {
   StoredCalendarEvent,
   CalendarTime,
@@ -12,10 +11,10 @@ import type {
 } from "./types.js";
 import { DEFAULT_EVENT_TIME_ZONE, parseRRule, WEEKDAYS, calendarRecurrenceInputSchema } from "./types.js";
 
-export type RecurrenceExpansionErrorCode = "invalid-rrule" | "unbounded-rrule" | "invalid-window" | "invalid-override" | "recurrence-limit";
+export type RecurrenceExpansionErrorCode = "invalid-rrule" | "unbounded-rrule" | "invalid-window" | "invalid-override" | "recurrence-limit" | "missing-timezone" | "invalid-timezone";
 export interface CanonicalRecurrenceError {
   readonly kind: "recurrence-error";
-  readonly code: "invalid-rrule" | "unbounded-rrule";
+  readonly code: "invalid-rrule" | "unbounded-rrule" | "missing-timezone" | "invalid-timezone";
   readonly message: string;
 }
 export type CanonicalRecurrenceResult =
@@ -24,6 +23,8 @@ export type CanonicalRecurrenceResult =
 export interface RecurrenceExpansionLimits {
   maxOccurrences: number;
   maxDays: number;
+  /** Resolved household zone for all-day events and the household sentinel. */
+  timeZoneId?: string;
 }
 export const DEFAULT_RECURRENCE_LIMITS: RecurrenceExpansionLimits = { maxOccurrences: 1000, maxDays: 366 };
 export interface RecurrenceExpansionError {
@@ -71,6 +72,24 @@ export function canonicalOriginalKey(t: CalendarTime): string {
 }
 function sameTime(a: CalendarTime, b: CalendarTime): boolean { return a.kind === b.kind && canonicalOriginalKey(a) === canonicalOriginalKey(b); }
 function failure(code: RecurrenceExpansionErrorCode, message: string): ExpandRecurrenceResult { return { ok: false, error: { kind: "recurrence-error", code, message } }; }
+function canonicalFailure(code: CanonicalRecurrenceError["code"], message: string): CanonicalRecurrenceResult {
+  return { ok: false, error: { kind: "recurrence-error", code, message } };
+}
+function isDatePeriod(value: string): boolean { return /^(?:\d{4}|\d{4}-\d{2}|\d{4}-\d{2}-\d{2})$/.test(value); }
+function configuredZone(options?: RecurrenceCanonicalizationOptions | string): string | undefined {
+  const zone = typeof options === "string"
+    ? options
+    : options?.timeZoneId ?? options?.eventTimeZoneId ?? options?.householdTimeZone;
+  return zone && zone !== DEFAULT_EVENT_TIME_ZONE ? zone : undefined;
+}
+function zoneIsValid(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface RecurrenceCanonicalizationOptions {
   /** The event/household IANA zone used for date-period UNTIL values. */
@@ -98,7 +117,16 @@ export function canonicalizeRecurrence(
   if (value.count !== undefined) fields.push(`COUNT=${value.count}`);
   if (value.until !== undefined) {
     const until = canonicalUntil(value.until, options);
-    if (!until) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "invalid recurrence until" } };
+    if (!until) {
+      const code = isDatePeriod(value.until)
+        ? configuredZone(options) === undefined
+          ? "missing-timezone"
+          : "invalid-timezone"
+        : "invalid-rrule";
+      return canonicalFailure(code, code === "missing-timezone"
+        ? "a resolved household or event timezone is required for date-period UNTIL"
+        : "invalid recurrence until");
+    }
     fields.push(`UNTIL=${until}`);
   }
   const rrule = fields.join(";");
@@ -124,15 +152,12 @@ function canonicalUntil(value: string, options?: RecurrenceCanonicalizationOptio
             return last.getUTCDate();
           })()
       : Number(datePeriod[3]);
-    const configuredZone = typeof options === "string"
-      ? options
-      : options?.timeZoneId ?? options?.eventTimeZoneId ?? options?.householdTimeZone ?? resolveTimeZone().zone();
-    const zone = configuredZone === DEFAULT_EVENT_TIME_ZONE ? resolveTimeZone().zone() : configuredZone;
+    const zone = configuredZone(options);
     // Date-period UNTIL is the end of the represented local period, not the
     // end of that date in UTC. This preserves the event/household wall clock.
     const localEnd: Parts = { year, month, day, hour: 23, minute: 59, second: 59, millisecond: 0 };
     try {
-      instant = instantForLocal(localEnd, zone) ?? Number.NaN;
+      instant = zone && zoneIsValid(zone) ? instantForLocal(localEnd, zone) ?? Number.NaN : Number.NaN;
     } catch {
       instant = Number.NaN;
     }
@@ -228,6 +253,16 @@ function inWindow(t: CalendarTime, from: CalendarTime, to: CalendarTime): boolea
   const z = comparableMillis(to);
   return a >= f && a <= z;
 }
+function expansionZone(start: CalendarTime, limits: RecurrenceExpansionLimits):
+  | { ok: true; value: string }
+  | { ok: false; error: RecurrenceExpansionError } {
+  const zone = start.kind === "timed" && start.timeZoneId !== DEFAULT_EVENT_TIME_ZONE
+    ? start.timeZoneId
+    : limits.timeZoneId;
+  if (!zone) return { ok: false, error: { kind: "recurrence-error", code: "missing-timezone", message: "a resolved household or event timezone is required for recurrence expansion" } };
+  if (!zoneIsValid(zone)) return { ok: false, error: { kind: "recurrence-error", code: "invalid-timezone", message: "the resolved recurrence timezone is invalid" } };
+  return { ok: true, value: zone };
+}
 function expand(
   event: StoredCalendarEvent,
   rule: RRule,
@@ -237,11 +272,9 @@ function expand(
 ): ExpandRecurrenceResult {
   const allDay = event.start.kind === "all-day";
   const timedStart = event.start.kind === "timed" ? event.start : undefined;
-  const zone = allDay
-    ? "UTC"
-    : timedStart!.timeZoneId === DEFAULT_EVENT_TIME_ZONE
-      ? resolveTimeZone().zone()
-      : timedStart!.timeZoneId;
+  const resolvedZone = expansionZone(event.start, limits);
+  if (!resolvedZone.ok) return { ok: false, error: resolvedZone.error };
+  const zone = resolvedZone.value;
   const startMs = allDay ? Date.parse(`${(event.start as { date: LocalDate }).date}T00:00:00Z`) : Date.parse(timedStart!.instant);
   const anchor: Date | Parts = allDay ? dayDate(startMs) : parts(startMs, zone);
   const until = rule.until ? Date.parse(rule.until) : Infinity;
@@ -249,6 +282,7 @@ function expand(
   const toMs = comparableMillis(to);
   if (!Number.isFinite(startMs) || (rule.until !== undefined && !Number.isFinite(until)) || !Number.isFinite(fromMs) || !Number.isFinite(toMs)) return failure("invalid-rrule", "recurrence dates are invalid");
   const startDayMs = allDay ? startMs : Date.parse(`${dateKey(parts(startMs, zone))}T00:00:00Z`);
+  const untilDayMs = allDay && Number.isFinite(until) ? Date.parse(`${dateKey(parts(until, zone))}T00:00:00Z`) : until;
   const exdates = new Set((event.exdates ?? []).map(canonicalOriginalKey));
   const out: Occurrence[] = [];
   let ordinal = 0;
@@ -268,9 +302,10 @@ function expand(
         : (() => { const a = anchor as Parts; const p: Parts = { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: a.hour, minute: a.minute, second: a.second, millisecond: a.millisecond }; const ms = instantForLocal(p, zone); return ms === undefined ? undefined : { kind: "timed", instant: new Date(ms).toISOString() as UtcInstant, timeZoneId: timedStart!.timeZoneId }; })();
       if (!local) continue;
       const localMs = comparableMillis(local);
-      // BYDAY may produce days before DTSTART in the first week.
-      if (localMs < startMs) continue;
-      if (localMs > until || localMs > toMs) return { ok: true, value: out };
+      // RFC weekly periods are Monday-anchored. Only the first period can
+      // contain BYDAY candidates before DTSTART.
+      if (cursor === 0 && localMs < startMs) continue;
+      if (localMs > untilDayMs || localMs > toMs) return { ok: true, value: out };
       const localDayMs = allDay ? localMs : Date.parse(`${dateKey(parts(localMs, zone))}T00:00:00Z`);
       if (!Number.isFinite(startDayMs) || !Number.isFinite(localDayMs) || localDayMs - startDayMs > limits.maxDays * MS_DAY) return failure("recurrence-limit", "recurrence exceeds maxDays");
       if (ordinal >= limits.maxOccurrences) return failure("recurrence-limit", "recurrence exceeds maxOccurrences");
@@ -283,7 +318,7 @@ function expand(
     }
   }
   if (rule.count !== undefined && ordinal >= rule.count) return { ok: true, value: out };
-  if (rule.until !== undefined && lastGeneratedMs >= until) return { ok: true, value: out };
+  if (rule.until !== undefined && lastGeneratedMs >= untilDayMs) return { ok: true, value: out };
   return failure("recurrence-limit", "recurrence expansion exceeded its safety limit");
 }
 function shiftedEnd(end: CalendarTime | undefined, original: CalendarTime, start: CalendarTime): CalendarTime | undefined {
@@ -302,15 +337,12 @@ function candidateDates(anchor: Date, rule: RRule, cursor: number): Date[] {
   const interval = rule.interval ?? 1;
   if (rule.freq === "DAILY") return [new Date(anchor.getTime() + cursor * interval * MS_DAY)];
   if (rule.freq === "WEEKLY") {
-    const week = new Date(anchor.getTime() + cursor * interval * 7 * MS_DAY);
-    const anchorDay = week.getUTCDay();
-    // A recurrence week is anchored by DTSTART, so a Sunday BYDAY is after
-    // Monday for a Monday-anchored series, but before Monday for a Sunday-
-    // anchored series. This makes generated COUNT ordinals chronological.
-    const days = (rule.byDay ?? [WEEKDAYS[(anchorDay + 6) % 7] as Weekday])
+    const monday = new Date(anchor.getTime() - ((anchor.getUTCDay() + 6) % 7) * MS_DAY);
+    const week = new Date(monday.getTime() + cursor * interval * 7 * MS_DAY);
+    const days = (rule.byDay ?? [WEEKDAYS[(anchor.getUTCDay() + 6) % 7] as Weekday])
       .map((x) => weekdayIndex[x])
-      .sort((a, b) => ((a - anchorDay + 7) % 7) - ((b - anchorDay + 7) % 7));
-    return days.map((d) => new Date(week.getTime() + ((d - anchorDay + 7) % 7) * MS_DAY));
+      .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+    return days.map((d) => new Date(week.getTime() + ((d + 6) % 7) * MS_DAY));
   }
   if (rule.freq === "MONTHLY") {
     const d = addMonths(anchor, cursor * interval);
@@ -344,12 +376,15 @@ export function enumerateGeneratedSlots(
   if (rule.count === undefined && rule.until === undefined) return { ok: false, error: { kind: "recurrence-error", code: "unbounded-rrule", message: "RRULE requires COUNT or UNTIL" } };
   const allDay = event.start.kind === "all-day";
   const timedStart = event.start.kind === "timed" ? event.start : undefined;
-  const zone = allDay ? "UTC" : timedStart!.timeZoneId === DEFAULT_EVENT_TIME_ZONE ? resolveTimeZone().zone() : timedStart!.timeZoneId;
+  const resolvedZone = expansionZone(event.start, limits);
+  if (!resolvedZone.ok) return resolvedZone;
+  const zone = resolvedZone.value;
   const startMs = allDay ? Date.parse(`${(event.start as { kind: "all-day"; date: LocalDate }).date}T00:00:00Z`) : Date.parse(timedStart!.instant);
   const anchor: Date | Parts = allDay ? dayDate(startMs) : parts(startMs, zone);
   const until = rule.until ? Date.parse(rule.until) : Infinity;
   if (!Number.isFinite(startMs) || (rule.until !== undefined && !Number.isFinite(until))) return { ok: false, error: { kind: "recurrence-error", code: "invalid-rrule", message: "recurrence dates are invalid" } };
   const startDayMs = allDay ? startMs : Date.parse(`${dateKey(parts(startMs, zone))}T00:00:00Z`);
+  const untilDayMs = allDay && Number.isFinite(until) ? Date.parse(`${dateKey(parts(until, zone))}T00:00:00Z`) : until;
   const output: GeneratedSlot[] = [];
   let ordinal = 0;
   const max = rule.count ?? Number.MAX_SAFE_INTEGER;
@@ -367,8 +402,8 @@ export function enumerateGeneratedSlots(
         })();
       if (!local) continue;
       const localMs = comparableMillis(local);
-      if (localMs < startMs) continue;
-      if (localMs > until) return { ok: true, value: output };
+      if (cursor === 0 && localMs < startMs) continue;
+      if (localMs > untilDayMs) return { ok: true, value: output };
       const localDayMs = allDay ? localMs : Date.parse(`${dateKey(parts(localMs, zone))}T00:00:00Z`);
       if (!Number.isFinite(localDayMs) || localDayMs - startDayMs > limits.maxDays * MS_DAY) return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence exceeds maxDays" } };
       if (ordinal >= limits.maxOccurrences) return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence exceeds maxOccurrences" } };
@@ -377,7 +412,7 @@ export function enumerateGeneratedSlots(
     }
   }
   if (rule.count !== undefined && ordinal >= rule.count) return { ok: true, value: output };
-  if (rule.until !== undefined && output.length > 0 && comparableMillis(output[output.length - 1]!.originalStart) >= until) return { ok: true, value: output };
+  if (rule.until !== undefined && output.length > 0 && comparableMillis(output[output.length - 1]!.originalStart) >= untilDayMs) return { ok: true, value: output };
   return { ok: false, error: { kind: "recurrence-error", code: "recurrence-limit", message: "recurrence expansion exceeded its safety limit" } };
 }
 

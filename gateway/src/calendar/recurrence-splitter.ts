@@ -16,7 +16,7 @@ import type {
   UtcInstant,
   ExceptionOverride,
 } from "./types.js";
-import { WEEKDAYS, parseRRule } from "./types.js";
+import { DEFAULT_EVENT_TIME_ZONE, WEEKDAYS, parseRRule } from "./types.js";
 
 export interface RecurrenceConflictError {
   readonly kind: "recurrence-conflict";
@@ -31,6 +31,8 @@ export interface RecurrenceSplitError {
     | "invalid-window"
     | "invalid-override"
     | "recurrence-limit"
+    | "missing-timezone"
+    | "invalid-timezone"
     | "recurrence_conflict";
   readonly message: string;
 }
@@ -179,10 +181,10 @@ export function splitRecurrence(
   const parsed = parseRRule(event.recurrence.rrule);
   if (!parsed.ok) return failure("invalid-rrule", "malformed RRULE");
   const oldRule = parsed.value;
-  const normalized = normalizeSuccessorRecurrence(
-    proposedSuccessorRecurrence,
-    event.start.kind === "timed" ? event.start.timeZoneId : undefined,
-  );
+  const eventZone = event.start.kind === "timed" && event.start.timeZoneId !== DEFAULT_EVENT_TIME_ZONE
+    ? event.start.timeZoneId
+    : limits.timeZoneId;
+  const normalized = normalizeSuccessorRecurrence(proposedSuccessorRecurrence, eventZone);
   if (!normalized.ok) return normalized;
 
   let successorRecurrence: Recurrence;

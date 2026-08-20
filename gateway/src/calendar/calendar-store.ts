@@ -439,7 +439,10 @@ function eventWithoutPersistenceFields(event: CalendarPersistenceEvent): StoredC
 export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: CalendarStoreDeps = {}): CalendarStore {
   const persistence = openCalendarPersistence(cap, cfg, deps);
   const defaultEventTimeZoneId = (cfg.defaultEventTimeZoneId ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId;
-  const recurrenceLimits = cfg.recurrence ?? DEFAULT_RECURRENCE_LIMITS;
+  const recurrenceLimits = {
+    ...(cfg.recurrence ?? DEFAULT_RECURRENCE_LIMITS),
+    timeZoneId: defaultEventTimeZoneId,
+  };
   let closed = false;
   const usable = <T>(operation: () => CalendarResult<T>): CalendarResult<T> => {
     if (closed) return { ok: false, error: "closed" };

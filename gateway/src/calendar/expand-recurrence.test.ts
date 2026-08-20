@@ -24,6 +24,7 @@ describe("expandRecurrence", () => {
       e,
       timed("2026-08-01T00:00:00.000Z", "household"),
       timed("2026-08-20T23:59:59.000Z", "household"),
+      { maxOccurrences: 1000, maxDays: 366, timeZoneId: "America/Toronto" },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -44,6 +45,20 @@ describe("expandRecurrence", () => {
         "2026-01-12T14:00:00.125Z" as UtcInstant,
       ]);
     }
+  });
+
+  test("keeps INTERVAL=2 weekly BYDAY periods on the Monday anchor", () => {
+    const e = event(timed("2026-01-07T14:00:00.000Z", "UTC"), "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;COUNT=6");
+    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-03-01T00:00:00.000Z"));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+      "2026-01-07T14:00:00.000Z" as UtcInstant,
+      "2026-01-09T14:00:00.000Z" as UtcInstant,
+      "2026-01-19T14:00:00.000Z" as UtcInstant,
+      "2026-01-21T14:00:00.000Z" as UtcInstant,
+      "2026-01-23T14:00:00.000Z" as UtcInstant,
+      "2026-02-02T14:00:00.000Z" as UtcInstant,
+    ]);
   });
 
   test("does not count pre-DTSTART BYDAY candidates", () => {
