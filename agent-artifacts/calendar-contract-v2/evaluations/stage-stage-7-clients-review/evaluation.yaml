@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-7-clients
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway/webui && bun run test:unit --
     src/services/calendar-api.test.ts
@@ -22,6 +22,36 @@ criteria:
   - Source-level whole-series adapters preserve untouched UI compilation
   - Calendar payload and token privacy in client diagnostics
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+  reviewerAgentId: 76324f5f-1898-4883-bf7d-81cb576d44a4
+  reviewedCommit: 8bba3b8f8c792323a9f70d8fabdad7044ce22af6
+findings:
+  - id: CAL-V2-KMP-NULL-CHANGES
+    severity: high
+    status: open
+    criterion: KMP mutation supports V2 event-local update semantics and exact
+      web/KMP wire parity, including explicit clears.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:185-196;
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:31-40;
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:144-150
+    summary: CalendarChanges nullable clear fields are encoded with shared JSON
+      configured as explicitNulls=false, so description/end/group/recurrence
+      nulls are omitted instead of sent as JSON null. Mobile cannot issue the
+      gateway's clear operations and silently sends a different command than
+      web.
+    blocking: true
+  - id: CAL-V2-KMP-CANCEL-PARSE
+    severity: low
+    status: open
+    criterion: CalendarHttpClient preserves cancellation behavior.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:57-61
+    summary: runCatching wraps the suspending response parser and catches
+      CancellationException, converting cancellation during parsing into
+      AuthError.Unknown. The declared tests cover timeout but not cancellation.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-7-clients-review/manifest.yaml

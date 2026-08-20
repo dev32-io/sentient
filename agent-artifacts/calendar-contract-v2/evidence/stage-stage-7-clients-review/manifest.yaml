@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: stage-stage-7-clients-review
+recordedAt: 2026-08-20T04:33:28.472Z
+entries:
+  - result: "PASS: 2 files, 11 tests"
+    command: source scripts/env.sh && cd gateway/webui && bun run test:unit --
+      src/services/calendar-api.test.ts
+      src/components/calendar/calendar-view.test.tsx
+  - result: PASS
+    command: source scripts/env.sh && cd gateway/webui && bun run typecheck
+  - result: "PASS: BUILD SUCCESSFUL"
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+      --tests '*Calendar*' --tests '*PrivacyGuard*'
+  - result: "PASS: BUILD SUCCESSFUL"
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+  - result: "PASS: 1 test"
+    command: source scripts/env.sh && cd gateway/webui && bun run test:unit --
+      src/services/calendar-api.integration.test.ts
+  - result: "PASS: no whitespace errors"
+    command: git diff --check
+      7f7cc7f912460ffe628a8b5842b2d87c3b9ce324..8bba3b8f8c792323a9f70d8fabdad7044ce22af6
