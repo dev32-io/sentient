@@ -22,11 +22,26 @@ criteria:
   - Source-level whole-series adapters preserve untouched UI compilation
   - Calendar payload and token privacy in client diagnostics
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 76324f5f-1898-4883-bf7d-81cb576d44a4
   reviewedCommit: 8bba3b8f8c792323a9f70d8fabdad7044ce22af6
+  managerPrompt: "Repair both client findings and add exact-wire regressions. KMP
+    update changes must represent three states for every nullable-clearable
+    field—omitted/no change, concrete replacement, and explicit JSON null
+    clear—independently of the shared Json explicitNulls=false setting.
+    Introduce a typed tri-state patch representation and/or a CalendarChanges
+    custom serializer that emits null keys only for explicit clears while
+    preserving omission for unchanged description/end/group/recurrence; keep
+    empty-array tag clearing and exact gateway field names. Verify every clear
+    and omission against the golden gateway command, including whole-series
+    convenience adapters, and ensure web/KMP parity. Also preserve coroutine
+    cancellation throughout response parsing: never convert
+    CancellationException into AuthError.Unknown; rethrow it before generic
+    error mapping and add a test that cancellation raised during parser
+    execution propagates. Rerun all Stage 7 web, KMP calendar/privacy, and
+    compile checks."
 findings:
   - id: CAL-V2-KMP-NULL-CHANGES
     severity: high
