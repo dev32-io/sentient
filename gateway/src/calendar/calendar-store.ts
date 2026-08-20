@@ -55,6 +55,8 @@ export interface CalendarPersistenceTransaction {
 }
 
 export interface CalendarPersistence {
+  /** The attenuated resource selected when this persistence handle was opened. */
+  readonly scope?: "private" | "household";
   read(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   get(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   /** Candidate ids are metadata only; each row is still validated on read. */
@@ -416,6 +418,7 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
   });
 
   return {
+    scope: cap.resource === "calendar-household" ? "household" : "private",
     read: (id) => usable(() => authorized(id, false)),
     get: (id) => usable(() => authorized(id, false)),
     listBaseEventIds: () => usable(() => ({ ok: true, value: db.query<{ id: string }, []>("SELECT id FROM events ORDER BY id").all().map((row) => row.id as CalendarEventId) })),
