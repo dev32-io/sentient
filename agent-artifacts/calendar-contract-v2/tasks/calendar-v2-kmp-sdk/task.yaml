@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: calendar-v2-kmp-sdk
+title: Cut the KMP calendar SDK over to REST V2
+status: draft
+dependsOn:
+  - calendar-v2-rest
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-kmp-sdk
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+      --tests '*Calendar*' --tests '*PrivacyGuard*'
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+  rationale: Verify the contribution at its declared task boundary.
