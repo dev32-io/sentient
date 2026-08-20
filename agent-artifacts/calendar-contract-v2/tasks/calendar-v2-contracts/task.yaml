@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-contracts
 title: Define the calendar V2 domain and wire contracts
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -19,3 +19,9 @@ verification:
     - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
     - source scripts/env.sh && cd gateway && bun run typecheck
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: db9ac6826e92449b5094a097a27b4a0a7f98f502
+  lastRunId: d69c2091-57fe-4de3-b1af-88dc84ea3ef1
