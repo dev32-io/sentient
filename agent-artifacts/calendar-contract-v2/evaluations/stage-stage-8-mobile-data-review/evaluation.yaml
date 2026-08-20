@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-8-mobile-data
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -20,8 +20,8 @@ criteria:
     mutation use case
   - Untouched platform UI compatibility and content-free diagnostics
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 187996dd-1067-4e67-a0b2-b45a81b91a34
   reviewedCommit: d164f404b9bcee505aaa7f406e4b4c7903bdb9bc
@@ -38,6 +38,7 @@ loop:
     the server status without exposing raw bodies. Add focused success/failure
     and UI-safe-message tests, retain content-free diagnostics, and rerun all
     Stage 8 tests, shared/Android compilation, and diff checks.
+  fixerAgentId: 1a0afb2a-3939-4b42-a0e8-3367c367178c
 findings:
   - id: CAL-MOBILE-001
     severity: high
