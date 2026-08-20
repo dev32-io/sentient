@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 36
+  revision: 37
 artifacts:
   - id: intent
     type: intent
@@ -66,9 +66,6 @@ delivery:
   createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
 evaluations: []
 executionStages:
-  - id: calendar-v2-contracts
-    tasks:
-      - calendar-v2-contracts
   - id: calendar-v2-temporal
     tasks:
       - calendar-v2-temporal
@@ -114,3 +111,17 @@ executionStages:
   - id: calendar-v2-mobile-data
     tasks:
       - calendar-v2-mobile-data
+  - id: stage-1-contracts
+    tasks:
+      - calendar-v2-contracts
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/types.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Exact V2 tool/REST fields and strict schema behavior
+        - Calendar scope versus mutation scope and stable occurrence identity
+        - Golden fixture completeness with no V1 compatibility parsing
