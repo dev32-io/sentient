@@ -1,25 +1,47 @@
 package io.sentient.mobiledata.usecase.calendar
 
 import io.sentient.mobiledata.data.calendar.CalendarRepository
+import io.sentient.mobiledata.data.calendar.toEntireSeriesUpdate
+import io.sentient.mobiledata.data.calendar.withMutationResult
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.calendar.CalendarEvent
 import io.sentient.mobilesdk.calendar.CalendarEventPage
+import io.sentient.mobilesdk.calendar.CalendarMutationCommand
+import io.sentient.mobilesdk.calendar.CalendarMutationResult
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
+import io.sentient.mobilesdk.calendar.toCalendarTime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** VM-facing read operation; the implementation folds its result into [state]. */
+/** VM-facing get operation; the implementation folds its result into [state]. */
 interface GetCalendarUseCase {
     val state: StateFlow<SentientResult<CalendarEvent>>
     suspend fun get(id: String): SentientResult<CalendarEvent>
+
+    /** V2 occurrence-get adapter; legacy callers continue using [get] above. */
+    suspend fun get(
+        id: String,
+        originalStart: String?,
+        scope: CalendarScope? = null,
+    ): SentientResult<CalendarEvent> = get(id)
 }
 
-/** VM-facing range query; the implementation folds its result into [state]. */
+/** VM-facing V2 mutation command. All recurrence scopes are carried by the command. */
+interface MutateCalendarUseCase {
+    suspend fun mutate(
+        eventId: String,
+        command: CalendarMutationCommand,
+    ): SentientResult<CalendarMutationResult>
+}
+
+/** VM-facing range query; the implementation folds its result into [listState]. */
 interface ListCalendarUseCase {
     val listState: StateFlow<SentientResult<CalendarEventPage>>
+
+    /** Existing source-level adapter retained for current platform VMs. */
     suspend fun list(
         from: CalendarTime,
         to: CalendarTime,
@@ -29,11 +51,27 @@ interface ListCalendarUseCase {
         importance: Importance? = null,
     ): SentientResult<CalendarEventPage>
 
-    /**
-     * Lists both time kinds without ever passing a mixed-kind window to the
-     * gateway. The REST/store contract requires one kind per request, so the
-     * platform screens use this operation for their combined calendar view.
-     */
+    /** Raw V2 query adapter with optional cursor/search/limit. */
+    suspend fun list(
+        from: String,
+        to: String,
+        scope: CalendarScope? = null,
+        group: String? = null,
+        tags: List<String>? = null,
+        importance: Importance? = null,
+        cursor: String? = null,
+        query: String? = null,
+        limit: Int? = null,
+    ): SentientResult<CalendarEventPage> = list(
+        from = from.toCalendarTime(),
+        to = to.toCalendarTime(),
+        scope = scope,
+        group = group,
+        tags = tags,
+        importance = importance,
+    )
+
+    /** Existing four-boundary signature is a source adapter, not two requests. */
     suspend fun listBoth(
         timedFrom: CalendarTime.Timed,
         timedTo: CalendarTime.Timed,
@@ -58,13 +96,11 @@ interface DeleteCalendarUseCase {
     suspend fun delete(id: String): SentientResult<Unit>
 }
 
-/**
- * Stateless repository plus use-case-owned observable read state. CRUD results are
- * returned directly so a VM can decide how to fold them into its screen state.
- */
+/** Stateless repository plus use-case-owned observable read state. */
 class CalendarUseCases(private val repository: CalendarRepository) :
     GetCalendarUseCase,
     ListCalendarUseCase,
+    MutateCalendarUseCase,
     CreateCalendarUseCase,
     UpdateCalendarUseCase,
     DeleteCalendarUseCase {
@@ -75,7 +111,16 @@ class CalendarUseCases(private val repository: CalendarRepository) :
     private val _listState = MutableStateFlow<SentientResult<CalendarEventPage>>(SentientResult.Loading())
     override val listState: StateFlow<SentientResult<CalendarEventPage>> = _listState.asStateFlow()
 
-    override suspend fun get(id: String): SentientResult<CalendarEvent> = repository.get(id).also { _getState.value = it }
+    override suspend fun get(id: String): SentientResult<CalendarEvent> = get(id, null, null)
+
+    override suspend fun get(
+        id: String,
+        originalStart: String?,
+        scope: CalendarScope?,
+    ): SentientResult<CalendarEvent> {
+        _getState.value = SentientResult.Loading()
+        return repository.get(id, originalStart, scope).also { _getState.value = it }
+    }
 
     override suspend fun list(
         from: CalendarTime,
@@ -84,16 +129,30 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         group: String?,
         tags: List<String>?,
         importance: Importance?,
-    ): SentientResult<CalendarEventPage> = listBoth(
-        timedFrom = from.asTimedBoundary(end = false),
-        timedTo = to.asTimedBoundary(end = true),
-        allDayFrom = from.asAllDayBoundary(),
-        allDayTo = to.asAllDayBoundary(),
+    ): SentientResult<CalendarEventPage> = list(
+        from = from.toWireValue(),
+        to = to.toWireValue(),
         scope = scope,
         group = group,
         tags = tags,
         importance = importance,
     )
+
+    override suspend fun list(
+        from: String,
+        to: String,
+        scope: CalendarScope?,
+        group: String?,
+        tags: List<String>?,
+        importance: Importance?,
+        cursor: String?,
+        query: String?,
+        limit: Int?,
+    ): SentientResult<CalendarEventPage> {
+        _listState.value = SentientResult.Loading()
+        return repository.list(from, to, scope, group, tags, importance, cursor, query, limit)
+            .also { _listState.value = it }
+    }
 
     override suspend fun listBoth(
         timedFrom: CalendarTime.Timed,
@@ -105,59 +164,50 @@ class CalendarUseCases(private val repository: CalendarRepository) :
         tags: List<String>?,
         importance: Importance?,
     ): SentientResult<CalendarEventPage> {
-        _listState.value = SentientResult.Loading()
-
-        // Keep these as two independent repository calls. The gateway and store
-        // deliberately reject a window whose endpoints do not have one time kind,
-        // and a calendar can contain both kinds at once.
-        val timed = repository.list(timedFrom, timedTo, scope, group, tags, importance)
-        if (timed !is SentientResult.Success) {
-            _listState.value = timed
-            return timed
-        }
-        val allDay = repository.list(allDayFrom, allDayTo, scope, group, tags, importance)
-        if (allDay !is SentientResult.Success) {
-            _listState.value = allDay
-            return allDay
-        }
-
-        val events = (timed.data.events + allDay.data.events)
-            .distinctBy { it.occurrenceId ?: it.id }
-            .sortedWith(compareBy<CalendarEvent>({ it.start.sortKey() }, { it.occurrenceId ?: it.id }))
-        return SentientResult.Success(CalendarEventPage(events, timed.data.more + allDay.data.more)).also {
-            _listState.value = it
-        }
+        // V2 merges timed and all-day occurrences. Use the explicit all-day
+        // date range as the shared raw window: the gateway applies its approved
+        // calendar zone when projecting timed occurrences, rather than inheriting
+        // a device default timezone from this adapter.
+        return list(
+            from = allDayFrom.date,
+            to = allDayTo.date,
+            scope = scope,
+            group = group,
+            tags = tags,
+            importance = importance,
+        )
     }
+
+    override suspend fun mutate(
+        eventId: String,
+        command: CalendarMutationCommand,
+    ): SentientResult<CalendarMutationResult> = repository.mutate(eventId, command)
 
     override suspend fun create(event: CalendarEvent): SentientResult<CalendarEvent> = repository.create(event)
 
     override suspend fun update(id: String, event: CalendarEvent): SentientResult<CalendarEvent> =
-        repository.update(id, event)
+        when (val result = repository.mutate(id, event.toEntireSeriesUpdate())) {
+            is SentientResult.Success -> SentientResult.Success(event.withMutationResult(result.data))
+            is SentientResult.Failure -> result
+            is SentientResult.Loading -> SentientResult.Loading(event)
+        }
 
-    override suspend fun delete(id: String): SentientResult<Unit> = repository.delete(id)
+    override suspend fun delete(id: String): SentientResult<Unit> =
+        when (val result = repository.mutate(
+            id,
+            CalendarMutationCommand.delete(
+                applyTo = io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
+            ),
+        )) {
+            is SentientResult.Success -> SentientResult.Success(Unit)
+            is SentientResult.Failure -> result
+            is SentientResult.Loading -> SentientResult.Loading()
+        }
 }
 
-private fun CalendarTime.asTimedBoundary(end: Boolean): CalendarTime.Timed = when (this) {
-    is CalendarTime.Timed -> this
-    is CalendarTime.AllDay -> CalendarTime.Timed(
-        instant = "${date}T${if (end) "23:59:59.999Z" else "00:00:00.000Z"}",
-        timeZoneId = "UTC",
-    )
-}
-
-private fun CalendarTime.asAllDayBoundary(): CalendarTime.AllDay = when (this) {
-    is CalendarTime.AllDay -> this
-    is CalendarTime.Timed -> CalendarTime.AllDay(instant.take(10))
-}
-
-private fun CalendarTime.sortKey(): String = when (this) {
-    is CalendarTime.AllDay -> date
-    is CalendarTime.Timed -> instant.take(10)
-}
-
-/** Explicitly named aliases for platform DI consumers that prefer operation names. */
 typealias GetCalendarEventUseCase = GetCalendarUseCase
 typealias ListCalendarEventsUseCase = ListCalendarUseCase
+typealias MutateCalendarEventUseCase = MutateCalendarUseCase
 typealias CreateCalendarEventUseCase = CreateCalendarUseCase
 typealias UpdateCalendarEventUseCase = UpdateCalendarUseCase
 typealias DeleteCalendarEventUseCase = DeleteCalendarUseCase

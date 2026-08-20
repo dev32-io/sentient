@@ -43,6 +43,7 @@ import io.sentient.mobiledata.usecase.calendar.CreateCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.DeleteCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.GetCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.ListCalendarUseCase
+import io.sentient.mobiledata.usecase.calendar.MutateCalendarUseCase
 import io.sentient.mobiledata.usecase.calendar.UpdateCalendarUseCase
 import io.sentient.mobiledata.usecase.settings.AccountUseCases
 import io.sentient.mobiledata.usecase.settings.AdminUseCases
@@ -105,6 +106,7 @@ class SettingsComponent(
     val calendar = CalendarUseCases(calendarRepository)
     val getCalendar: GetCalendarUseCase = calendar
     val listCalendar: ListCalendarUseCase = calendar
+    val mutateCalendar: MutateCalendarUseCase = calendar
     val createCalendar: CreateCalendarUseCase = calendar
     val updateCalendar: UpdateCalendarUseCase = calendar
     val deleteCalendar: DeleteCalendarUseCase = calendar

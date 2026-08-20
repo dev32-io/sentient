@@ -1,62 +1,83 @@
 package io.sentient.mobiledata.calendar
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondOk
-import io.ktor.client.HttpClient
 import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
+import io.sentient.mobiledata.di.SettingsComponent
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobiledata.usecase.calendar.CalendarUseCases
+import io.sentient.mobiledata.usecase.calendar.MutateCalendarUseCase
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
+import io.sentient.mobilesdk.calendar.CalendarCreateInput
 import io.sentient.mobilesdk.calendar.CalendarEvent
 import io.sentient.mobilesdk.calendar.CalendarEventPage
 import io.sentient.mobilesdk.calendar.CalendarHttpClient
+import io.sentient.mobilesdk.calendar.CalendarMutationCommand
+import io.sentient.mobilesdk.calendar.CalendarMutationResult
+import io.sentient.mobilesdk.calendar.CalendarMutationScope
+import io.sentient.mobilesdk.calendar.CalendarOperation
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.calendar.Visibility
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotSame
 
 class CalendarDataTest {
     private val time = CalendarTime.AllDay("2026-08-01")
-    private val event = CalendarEvent("event-1", CalendarScope.HOUSEHOLD, "Dinner", start = time, visibility = Visibility.EVERYONE, importance = Importance.NORMAL, createdAt = "now", updatedAt = "now")
+    private val event = CalendarEvent(
+        "event-1",
+        CalendarScope.HOUSEHOLD,
+        "Dinner",
+        start = time,
+        visibility = Visibility.EVERYONE,
+        importance = Importance.NORMAL,
+        createdAt = "now",
+        updatedAt = "now",
+        revision = 7,
+    )
 
     @Test
-    fun repository_maps_sdk_success_and_failure_to_envelope() = kotlinx.coroutines.test.runTest {
-        val client = FakeCalendarClient(AuthResult.Success(event))
-        val repository = SdkCalendarRepository(client)
-        assertEquals(SentientResult.Success(event), repository.get("event-1"))
-
-        val failing = SdkCalendarRepository(FakeCalendarClient(AuthResult.Failure(AuthError.InvalidCredentials)))
-        assertIs<SentientResult.Failure>(failing.get("event-1"))
-    }
-
-    @Test
-    fun usecase_folds_latest_list_result_into_state() = kotlinx.coroutines.test.runTest {
-        val page = CalendarEventPage(listOf(event), 0)
-        val repository = FakeRepository(SentientResult.Success(page))
-        val useCases = CalendarUseCases(repository)
-        assertEquals(SentientResult.Success(page), useCases.list(time, time))
-        assertEquals(SentientResult.Success(page), useCases.listState.value)
-    }
-
-    @Test
-    fun listBoth_uses_separate_time_kind_windows_and_merges_pages() = kotlinx.coroutines.test.runTest {
-        val timedEvent = event.copy(
-            id = "timed-event",
-            title = "Timed",
-            start = CalendarTime.Timed("2026-08-01T13:00:00.000Z", "UTC"),
-        )
-        val repository = RecordingRepository(
-            listOf(
-                SentientResult.Success(CalendarEventPage(listOf(timedEvent), 1)),
-                SentientResult.Success(CalendarEventPage(listOf(event), 2)),
+    fun repository_forwards_raw_range_cursor_and_mutation_without_state() = kotlinx.coroutines.test.runTest {
+        val client = RecordingCalendarClient(
+            listResult = AuthResult.Success(CalendarEventPage(listOf(event), nextCursor = "cursor-2")),
+            mutationResult = AuthResult.Success(
+                CalendarMutationResult(
+                    CalendarOperation.UPDATE,
+                    CalendarMutationScope.ENTIRE_SERIES,
+                    eventId = "event-1",
+                    resultingRevision = 8,
+                ),
             ),
         )
+        val repository = SdkCalendarRepository(client)
+
+        val page = assertIs<SentientResult.Success<CalendarEventPage>>(
+            repository.list("2026-08-01", "2026-08-31", cursor = "cursor-1", limit = 25),
+        ).data
+        assertEquals("cursor-1", client.cursor)
+        assertEquals("2026-08-01", client.from)
+        assertEquals("2026-08-31", client.to)
+        assertEquals("cursor-2", page.nextCursor)
+        val mutation = assertIs<SentientResult.Success<CalendarMutationResult>>(
+            repository.mutate("event-1", CalendarMutationCommand.delete(CalendarMutationScope.ENTIRE_SERIES)),
+        ).data
+        assertEquals(CalendarMutationScope.ENTIRE_SERIES, mutation.appliedTo)
+        assertFalse(repository === SdkCalendarRepository(client))
+    }
+
+    @Test
+    fun listBoth_uses_one_mixed_kind_v2_query_and_preserves_cursor() = kotlinx.coroutines.test.runTest {
+        val page = CalendarEventPage(listOf(event), nextCursor = "next")
+        val repository = RecordingRepository(SentientResult.Success(page))
         val useCases = CalendarUseCases(repository)
+
         val result = useCases.listBoth(
             timedFrom = CalendarTime.Timed("2026-08-01T00:00:00.000Z", "UTC"),
             timedTo = CalendarTime.Timed("2026-08-02T00:00:00.000Z", "UTC"),
@@ -64,40 +85,129 @@ class CalendarDataTest {
             allDayTo = CalendarTime.AllDay("2026-08-02"),
         )
 
-        val page = assertIs<SentientResult.Success<CalendarEventPage>>(result).data
-        assertEquals(listOf("event-1", "timed-event"), page.events.map { it.id })
-        assertEquals(3, page.more)
-        assertEquals(2, repository.windows.size)
-        assertIs<CalendarTime.Timed>(repository.windows[0].first)
-        assertIs<CalendarTime.AllDay>(repository.windows[1].first)
+        assertEquals(SentientResult.Success(page), result)
+        assertEquals(1, repository.listCalls)
+        assertEquals("2026-08-01", repository.from)
+        assertEquals("2026-08-02", repository.to)
+        assertEquals("next", useCases.listState.value.let { assertIs<SentientResult.Success<CalendarEventPage>>(it).data.nextCursor })
     }
 
-    private class FakeCalendarClient(private val result: AuthResult<CalendarEvent>) :
-        CalendarHttpClient(HttpClient(MockEngine { respondOk() }), "ws://localhost", { "token" }) {
-        override suspend fun get(id: String): AuthResult<CalendarEvent> = result
+    @Test
+    fun update_and_delete_adapters_mutate_entire_series_and_carry_revision() = kotlinx.coroutines.test.runTest {
+        val repository = RecordingRepository(
+            pageResult = SentientResult.Success(CalendarEventPage(listOf(event))),
+            mutationResult = SentientResult.Success(
+                CalendarMutationResult(
+                    CalendarOperation.UPDATE,
+                    CalendarMutationScope.ENTIRE_SERIES,
+                    eventId = "event-1",
+                    resultingRevision = 8,
+                ),
+            ),
+        )
+        val useCases = CalendarUseCases(repository)
+
+        val updated = assertIs<SentientResult.Success<CalendarEvent>>(useCases.update("event-1", event)).data
+        assertEquals(8, updated.revision)
+        assertEquals(CalendarMutationScope.ENTIRE_SERIES, repository.lastCommand?.applyTo)
+        assertEquals(7, repository.lastCommand?.expectedRevision)
+
+        assertEquals(SentientResult.Success(Unit), useCases.delete("event-1"))
+        assertEquals(CalendarOperation.DELETE, repository.lastCommand?.operation)
+        assertEquals(CalendarMutationScope.ENTIRE_SERIES, repository.lastCommand?.applyTo)
     }
 
-    private class FakeRepository(private val page: SentientResult<CalendarEventPage>) : CalendarRepository {
-        override suspend fun get(id: String) = error("unused")
-        override suspend fun list(from: CalendarTime, to: CalendarTime, scope: CalendarScope?, group: String?, tags: List<String>?, importance: Importance?) = page
-        override suspend fun create(event: CalendarEvent) = error("unused")
-        override suspend fun update(id: String, event: CalendarEvent) = error("unused")
-        override suspend fun delete(id: String) = error("unused")
+    @Test
+    fun mutation_failure_is_typed_and_does_not_expose_server_body() = kotlinx.coroutines.test.runTest {
+        val body = "{\"version\":2,\"requestId\":\"r1\",\"error\":{\"code\":\"conflict\",\"message\":\"private title\"}}"
+        val repository = SdkCalendarRepository(
+            RecordingCalendarClient(
+                mutationResult = AuthResult.Failure(AuthError.Server(409, body)),
+            ),
+        )
+        val failure = assertIs<SentientResult.Failure>(
+            repository.mutate("event-1", CalendarMutationCommand.delete(CalendarMutationScope.ENTIRE_SERIES)),
+        )
+        assertEquals("This calendar event changed. Refresh and try again.", failure.error.userMessage)
+        assertFalse(failure.error.userMessage.contains("private title"))
+    }
+
+    @Test
+    fun settings_exports_typed_mutation_use_case() {
+        val component = SettingsComponent(HttpClient(MockEngine { respondOk() }), "ws://localhost", { "token" })
+        assertIs<MutateCalendarUseCase>(component.mutateCalendar)
+        assertEquals(component.calendar, component.mutateCalendar)
+    }
+
+    private class RecordingCalendarClient(
+        private val listResult: AuthResult<CalendarEventPage> = AuthResult.Failure(AuthError.Unknown("unused")),
+        val mutationResult: AuthResult<CalendarMutationResult> = AuthResult.Failure(AuthError.Unknown("unused")),
+    ) : CalendarHttpClient(HttpClient(MockEngine { respondOk() }), "ws://localhost", { "token" }) {
+        var from: String? = null
+        var to: String? = null
+        var cursor: String? = null
+
+        override suspend fun list(
+            from: String,
+            to: String,
+            scope: CalendarScope?,
+            group: String?,
+            tags: List<String>?,
+            importance: Importance?,
+            cursor: String?,
+            query: String?,
+            limit: Int?,
+        ): AuthResult<CalendarEventPage> {
+            this.from = from
+            this.to = to
+            this.cursor = cursor
+            return listResult
+        }
+
+        override suspend fun mutate(eventId: String, command: CalendarMutationCommand) = mutationResult
     }
 
     private class RecordingRepository(
-        private val results: List<SentientResult<CalendarEventPage>>,
+        private val pageResult: SentientResult<CalendarEventPage>,
+        private val mutationResult: SentientResult<CalendarMutationResult> = SentientResult.Success(
+            CalendarMutationResult(
+                CalendarOperation.UPDATE,
+                CalendarMutationScope.ENTIRE_SERIES,
+                eventId = "event-1",
+                resultingRevision = 8,
+            ),
+        ),
     ) : CalendarRepository {
-        val windows = mutableListOf<Pair<CalendarTime, CalendarTime>>()
-        private var index = 0
+        var listCalls = 0
+        var from: String? = null
+        var to: String? = null
+        var lastCommand: CalendarMutationCommand? = null
 
-        override suspend fun get(id: String) = error("unused")
-        override suspend fun list(from: CalendarTime, to: CalendarTime, scope: CalendarScope?, group: String?, tags: List<String>?, importance: Importance?): SentientResult<CalendarEventPage> {
-            windows += from to to
-            return results[index++]
+        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) = error("unused")
+
+        override suspend fun list(
+            from: String,
+            to: String,
+            scope: CalendarScope?,
+            group: String?,
+            tags: List<String>?,
+            importance: Importance?,
+            cursor: String?,
+            query: String?,
+            limit: Int?,
+        ): SentientResult<CalendarEventPage> {
+            listCalls++
+            this.from = from
+            this.to = to
+            return pageResult
         }
+
         override suspend fun create(event: CalendarEvent) = error("unused")
-        override suspend fun update(id: String, event: CalendarEvent) = error("unused")
-        override suspend fun delete(id: String) = error("unused")
+        override suspend fun create(input: CalendarCreateInput) = error("unused")
+
+        override suspend fun mutate(eventId: String, command: CalendarMutationCommand): SentientResult<CalendarMutationResult> {
+            lastCommand = command
+            return mutationResult
+        }
     }
 }
