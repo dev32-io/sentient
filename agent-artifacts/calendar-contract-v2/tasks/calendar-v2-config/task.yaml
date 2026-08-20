@@ -2,7 +2,8 @@ schemaVersion: 1
 id: calendar-v2-config
 title: Add operator-controlled calendar V2 safety limits
 status: draft
-dependsOn: []
+dependsOn:
+  - calendar-v2-contracts
 execution:
   resourceClaims: []
   assignment:
