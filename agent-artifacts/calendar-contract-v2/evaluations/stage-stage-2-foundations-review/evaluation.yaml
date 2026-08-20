@@ -25,23 +25,23 @@ criteria:
   - Parallel contributions have non-overlapping source ownership and coherent
     contracts
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
   reviewedCommit: 8350a63c407b5930338fb2c9cee12765b31a327d
-  managerPrompt: "Repair all six blocking findings and add regression coverage
-    before re-review: order weekly BYDAY slots chronologically relative to the
-    recurrence week anchor so COUNT ordinals are deterministic; preserve
-    fractional seconds in recurrence anchors and every originalStart key; make
-    UNTIL split terminal handling type-aware so all-day values never pass
-    through ISO-instant parsing; normalize structured date-period UNTIL using
-    the configured household/event timezone rather than UTC; strictly validate
-    created_at and updated_at as valid UTC instants before returning persisted
-    rows; and remove the hard-coded 256-character query restriction so the
-    injected max_query_chars configuration (default 512) is authoritative. Rerun
-    every stage-2 check and preserve the reviewed clean-cutover, capability, and
-    privacy boundaries."
+  managerPrompt: "Repair the two remaining blocking findings without regressing
+    the first repair set. Weekly recurrence must retain RFC-style
+    Monday-anchored week periods (WKST=MO): sort BYDAY within that anchored
+    week, exclude pre-DTSTART slots only from the first period, and advance
+    eligible periods by INTERVAL whole anchored weeks so INTERVAL>1 never emits
+    skipped-week slots. Remove every ambient host-timezone fallback from
+    structured date-period UNTIL normalization; require and thread the resolved
+    household/event timezone through expansion and all-day successor split
+    paths, with typed failure if absent. Add focused regressions for an
+    INTERVAL=2 multi-BYDAY DTSTART not on Monday and for all-day structured
+    UNTIL split/expansion under a non-UTC household timezone, then rerun all
+    stage-2 checks."
   fixerAgentId: a9c17bbc-21f7-4b19-9004-4a69b5d24568
 findings:
   - id: F4
