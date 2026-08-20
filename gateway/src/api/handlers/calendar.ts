@@ -1,28 +1,25 @@
 import type { AccessManager } from "../../access/access-manager.js";
-import { openCalendarStore } from "../../calendar/calendar-store.js";
+import { createCalendarEvent, mutateCalendarEvent } from "../../calendar/calendar-mutations.js";
+import { createCalendarQueryService } from "../../calendar/calendar-query.js";
+import { type CalendarPersistence, openCalendarPersistence } from "../../calendar/calendar-store.js";
+import { normalizeCalendarQuery } from "../../calendar/calendar-temporal.js";
 import {
   type CalendarConfig,
-  type StoredCalendarEvent,
+  type CalendarCreateInput,
+  type CalendarError,
   type CalendarEventId,
-  type CalendarListWindow,
-  type CalendarStore,
-  type CalendarTime,
-  type Occurrence,
-  type Importance,
-  type WireCalendarEvent,
-  type WireCalendarOccurrence,
+  type CalendarMutationCommand,
+  type CalendarTimeInput,
   calendarCreateEventSchema,
-  calendarEventSchema,
-  wireCalendarTimeSchema,
+  calendarMutationCommandSchema,
 } from "../../calendar/types.js";
 import { type UserPrincipal, createUserPrincipal } from "../../identity/user-principal.js";
 import type { TokenPayload, TokenResult } from "../../user-auth/types.js";
 import type { UserStore } from "../../user-auth/user-store.js";
 
-const ROOT = "/api/v1/calendar";
-const EVENTS = `${ROOT}/events`;
+const EVENTS = "/api/v1/calendar/events";
 const HOUSEHOLD_ID = "home";
-const config: CalendarConfig = Object.freeze({
+const defaultConfig: CalendarConfig = Object.freeze({
   query: Object.freeze({ maxDays: 366, maxOccurrences: 250, pageSize: 100 }),
   input: Object.freeze({
     maxTitleChars: 512,
@@ -38,310 +35,273 @@ const config: CalendarConfig = Object.freeze({
   defaultEventTimeZoneId: "household",
 });
 
-type Scope = "private" | "household";
 export interface CalendarHandlerDeps {
   tokens: { validate: (token: string) => Promise<TokenResult<TokenPayload>> };
   users: Pick<UserStore, "get">;
   accessManager: AccessManager;
   calendarConfig?: CalendarConfig;
-  /** Injectable to keep request lifetime and close behaviour testable. */
-  openStore?: (cap: ReturnType<AccessManager["grant"]>, cfg: CalendarConfig) => CalendarStore;
+  /** Injectable request-scoped V2 persistence opener used by handler tests. */
+  openStore?: (cap: ReturnType<AccessManager["grant"]>, cfg: CalendarConfig) => CalendarPersistence;
 }
 
 export function createCalendarHandler(deps: CalendarHandlerDeps): (request: Request) => Promise<Response> {
   return (request) => handleCalendar(deps, request);
 }
 
+type Route =
+  | { kind: "list" }
+  | { kind: "get"; eventId: CalendarEventId }
+  | { kind: "mutate"; eventId: CalendarEventId };
+
 async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Promise<Response> {
   const requestId = request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
   const token = readBearer(request);
-  if (!token) return error(401, "missing-token", "Bearer authentication is required", requestId);
+  if (!token) return error(401, "missing_token", "Bearer authentication is required", requestId);
+
   let valid: TokenResult<TokenPayload>;
   try {
     valid = await deps.tokens.validate(token);
   } catch {
-    return error(500, "io-error", "Authentication service is unavailable", requestId);
+    return error(503, "io_error", "Authentication service is unavailable", requestId);
   }
-  if (!valid.ok) return error(401, valid.error, "Invalid bearer token", requestId);
+  if (!valid.ok) return error(401, tokenErrorCode(valid.error), "Invalid bearer token", requestId);
+
   let stored: Awaited<ReturnType<UserStore["get"]>>;
   try {
     stored = await deps.users.get(valid.value.userId);
   } catch {
-    return error(500, "io-error", "User service is unavailable", requestId);
+    return error(503, "io_error", "User service is unavailable", requestId);
   }
-  if (!stored.ok || stored.value === null) return error(401, "user-not-found", "Authenticated user was not found", requestId);
+  if (!stored.ok || stored.value === null)
+    return error(401, "user_not_found", "Authenticated user was not found", requestId);
 
   let principal: UserPrincipal;
   try {
     principal = createUserPrincipal(valid.value.userId, stored.value.role, HOUSEHOLD_ID);
   } catch {
-    return error(401, "invalid-user-record", "Authenticated user record is invalid", requestId);
+    return error(401, "invalid_user_record", "Authenticated user record is invalid", requestId);
+  }
+
+  const route = matchRoute(new URL(request.url).pathname);
+  if (!route) return error(404, "not_found", "Calendar route not found", requestId);
+  if (!methodAllowed(request.method, route.kind)) {
+    return error(405, "invalid_range", "Method is not supported for this calendar route", requestId);
   }
 
   const url = new URL(request.url);
-  const match = new RegExp(`^${EVENTS}(?:/([^/]+))?$`).exec(url.pathname);
-  if (!match) return error(404, "not-found", "Calendar route not found", requestId);
-  const id = match[1] === undefined ? undefined : safeDecode(match[1]);
-  if (match[1] !== undefined && id === null) return error(404, "not-found", "Calendar event not found", requestId);
-
   let body: unknown;
-  if (request.method === "POST" || request.method === "PATCH") {
+  if (request.method === "POST") {
     try {
       body = await request.json();
     } catch {
-      return error(422, "invalid", "Request body is not valid JSON", requestId);
+      return error(422, "malformed", "Request body is not valid JSON", requestId);
     }
-    body = stripIdentity(body);
   }
-  const open = deps.openStore ?? ((cap, cfg) => openCalendarStore(cap, cfg));
-  const cfg = deps.calendarConfig ?? config;
-  let privateStore: CalendarStore | undefined;
-  let householdStore: CalendarStore | undefined;
+
+  const cfg = deps.calendarConfig ?? defaultConfig;
+  if (route.kind === "list" && request.method === "GET") {
+    const preflight = preflightList(listInput(url), cfg, requestId);
+    if (preflight) return preflight;
+  }
+  const open = deps.openStore ?? ((cap, config) => openCalendarPersistence(cap, config));
+  let privateStore: CalendarPersistence | undefined;
+  let householdStore: CalendarPersistence | undefined;
   try {
+    // Both handles are capability-bound to this immutable principal. The
+    // query/mutation services select a scope explicitly; opening both does
+    // not grant the handler ambient authority or cause an omitted-scope read
+    // to search the household store.
     privateStore = open(deps.accessManager.grant(principal, "calendar-private"), cfg);
     householdStore = open(deps.accessManager.grant(principal, "calendar-household"), cfg);
-    if (request.method === "GET" && id === undefined) return listEvents(privateStore, householdStore, url, requestId);
-    if (request.method === "GET" && id !== undefined)
-      return getEvent(privateStore, householdStore, id as CalendarEventId, requestId);
-    if (request.method === "POST" && id === undefined)
-      return createEvent(privateStore, householdStore, body, requestId);
-    if (request.method === "PATCH" && id !== undefined)
-      return updateEvent(privateStore, householdStore, id as CalendarEventId, body, requestId);
-    if (request.method === "DELETE" && id !== undefined)
-      return deleteEvent(privateStore, householdStore, id as CalendarEventId, requestId);
-    return error(405, "method-not-allowed", "Method is not supported for this route", requestId);
+    const query = createCalendarQueryService({
+      private: privateStore,
+      household: householdStore,
+      role: principal.role,
+      config: cfg,
+    });
+
+    if (route.kind === "list") {
+      if (request.method === "POST") return createEvent(privateStore, householdStore, body, cfg, requestId);
+      return listEvents(query, url, requestId);
+    }
+    if (route.kind === "get") return getEvent(query, route.eventId, url, requestId);
+    if (route.kind === "mutate") return mutateEvent(privateStore, householdStore, route.eventId, body, cfg, requestId);
+    return error(404, "not_found", "Calendar route not found", requestId);
   } catch {
-    return error(500, "io-error", "Calendar storage is unavailable", requestId);
+    // Domain services return typed failures. This catch is only the adapter
+    // seam for an opener/service/serialization failure that escaped it.
+    return error(503, "io_error", "Calendar storage is unavailable", requestId);
   } finally {
-    privateStore?.close();
-    householdStore?.close();
+    closeStore(privateStore);
+    closeStore(householdStore);
   }
 }
 
-function listEvents(privateStore: CalendarStore, householdStore: CalendarStore, url: URL, requestId: string): Response {
-  const scope = parseScope(url.searchParams.get("scope"));
-  const from = parseTime(url.searchParams.get("from"));
-  const to = parseTime(url.searchParams.get("to"));
-  if (!from || !to || from.kind !== to.kind)
-    return error(422, "invalid", "from and to are required and must have the same time kind", requestId);
-  const group = url.searchParams.get("group");
-  const tags = (url.searchParams.get("tags") ?? "")
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-  const importance = url.searchParams.get("importance");
-  const window: CalendarListWindow = {
-    from,
-    to,
-    ...(group ? { group } : {}),
-    ...(tags.length ? { tags } : {}),
-    ...(importance && ["normal", "important", "pinned"].includes(importance)
-      ? { importance: importance as Importance }
-      : {}),
+function listEvents(query: ReturnType<typeof createCalendarQueryService>, url: URL, requestId: string): Response {
+  const result = query.list(listInput(url));
+  return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
+}
+
+function listInput(url: URL): Record<string, unknown> {
+  const input: Record<string, unknown> = {
+    from: url.searchParams.get("from") ?? undefined,
+    to: url.searchParams.get("to") ?? undefined,
+    ...(url.searchParams.get("scope") !== null ? { scope: url.searchParams.get("scope") } : {}),
+    ...(url.searchParams.get("group") !== null ? { group: url.searchParams.get("group") } : {}),
+    ...(url.searchParams.get("importance") !== null ? { importance: url.searchParams.get("importance") } : {}),
+    ...(url.searchParams.get("cursor") !== null ? { cursor: url.searchParams.get("cursor") } : {}),
   };
-  const stores: Array<[CalendarStore, Scope]> =
-    scope === "private"
-      ? [[privateStore, "private"]]
-      : scope === "household"
-        ? [[householdStore, "household"]]
-        : [
-            [privateStore, "private"],
-            [householdStore, "household"],
-          ];
-  const events: WireCalendarOccurrence[] = [];
-  for (const [store, storeScope] of stores) {
-    const result = store.list(window);
-    if (!result.ok) return errorFor(result.error, requestId);
-    events.push(...result.value.map((occurrence) => toWireOccurrence(occurrence, storeScope)));
+  const tags = url.searchParams.get("tags");
+  if (tags !== null)
+    input.tags = tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  return input;
+}
+
+function preflightList(input: Record<string, unknown>, cfg: CalendarConfig, requestId: string): Response | undefined {
+  if (input.scope !== undefined && input.scope !== "private" && input.scope !== "household" && input.scope !== "all") {
+    return error(422, "invalid_scope", "scope must be private, household, or all", requestId);
   }
-  return Response.json({ version: 1, requestId, body: { events, more: 0 } });
+  const result = normalizeCalendarQuery(input, cfg);
+  return result.ok ? undefined : errorFor(result.error, requestId);
 }
 
 function getEvent(
-  privateStore: CalendarStore,
-  householdStore: CalendarStore,
-  id: CalendarEventId,
+  query: ReturnType<typeof createCalendarQueryService>,
+  eventId: CalendarEventId,
+  url: URL,
   requestId: string,
 ): Response {
-  const privateResult = privateStore.get(id);
-  if (privateResult.ok) return wireResponse(toWire(privateResult.value, "private"), requestId);
-  if (privateResult.error !== "not-found") return errorFor(privateResult.error, requestId);
-  const householdResult = householdStore.get(id);
-  if (householdResult.ok) return wireResponse(toWire(householdResult.value, "household"), requestId);
-  if (householdResult.error !== "not-found") return errorFor(householdResult.error, requestId);
-  return errorFor("not-found", requestId);
+  const scope = url.searchParams.get("scope");
+  const originalStart = url.searchParams.get("originalStart");
+  const result = query.get({
+    eventId,
+    ...(scope !== null ? { scope: scope as "private" | "household" | "all" } : {}),
+    ...(originalStart !== null ? { originalStart: originalStart as CalendarTimeInput } : {}),
+  });
+  return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
 function createEvent(
-  privateStore: CalendarStore,
-  householdStore: CalendarStore,
+  privateStore: CalendarPersistence,
+  householdStore: CalendarPersistence,
   input: unknown,
+  cfg: CalendarConfig,
   requestId: string,
 ): Response {
-  const parsed = parseEvent(input, true);
-  if (!parsed) return errorFor("invalid", requestId);
-  const scope = parsed.scope;
-  const result = (scope === "household" ? householdStore : privateStore).create(parsed.event);
-  return result.ok ? wireResponse(toWire(result.value, scope), requestId) : errorFor(result.error, requestId);
+  if (isRecord(input) && input.scope !== undefined && input.scope !== "private" && input.scope !== "household") {
+    return error(422, "invalid_scope", "calendar writes require one private or household target", requestId);
+  }
+  const candidate = isRecord(input) ? { ...input, scope: input.scope ?? "private" } : input;
+  const parsed = calendarCreateEventSchema.safeParse(candidate);
+  if (!parsed.success) return error(422, "malformed", "Calendar create fields are invalid", requestId);
+  const persistence = parsed.data.scope === "household" ? householdStore : privateStore;
+  const result = createCalendarEvent(parsed.data as CalendarCreateInput, persistence, cfg);
+  return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
-function updateEvent(
-  privateStore: CalendarStore,
-  householdStore: CalendarStore,
-  id: CalendarEventId,
+function mutateEvent(
+  privateStore: CalendarPersistence,
+  householdStore: CalendarPersistence,
+  eventId: CalendarEventId,
   input: unknown,
+  cfg: CalendarConfig,
   requestId: string,
 ): Response {
-  const requestedScope =
-    input && typeof input === "object" ? parseScope((input as Record<string, unknown>).scope) : undefined;
-  const stores: Array<[CalendarStore, Scope]> = requestedScope
-    ? [[requestedScope === "household" ? householdStore : privateStore, requestedScope]]
-    : [
-        [privateStore, "private"],
-        [householdStore, "household"],
-      ];
-  for (const [store, scope] of stores) {
-    const current = store.get(id);
-    if (!current.ok) {
-      if (current.error !== "not-found") return errorFor(current.error, requestId);
-      if (requestedScope !== undefined) return errorFor("not-found", requestId);
-      continue;
-    }
-    const supplied = parseEvent({
-      ...toWire(current.value, scope),
-      ...(input && typeof input === "object" ? input : {}),
-      scope,
-    });
-    if (!supplied) return errorFor("invalid", requestId);
-    const { id: _eventId, createdAt: _createdAt, ...patch } = supplied.event;
-    const result = store.update(id, patch);
-    return result.ok ? wireResponse(toWire(result.value, scope), requestId) : errorFor(result.error, requestId);
+  if (!isRecord(input) || (input.operation !== "update" && input.operation !== "delete")) {
+    return error(422, "malformed", "Mutation operation must be update or delete", requestId);
   }
-  return errorFor("not-found", requestId);
-}
-
-function deleteEvent(
-  privateStore: CalendarStore,
-  householdStore: CalendarStore,
-  id: CalendarEventId,
-  requestId: string,
-): Response {
-  for (const store of [privateStore, householdStore]) {
-    const found = store.get(id);
-    if (!found.ok) {
-      if (found.error !== "not-found") return errorFor(found.error, requestId);
-      continue;
-    }
-    const result = store.delete(id);
-    return result.ok ? Response.json({ version: 1, requestId, body: { ok: true } }) : errorFor(result.error, requestId);
+  if (input.scope !== undefined && input.scope !== "private" && input.scope !== "household") {
+    return error(422, "invalid_scope", "calendar writes require one private or household target", requestId);
   }
-  return errorFor("not-found", requestId);
+  // The path is authoritative. A body cannot redirect a command to another
+  // event, and the command service remains the sole mutation authority.
+  const candidate = { ...input, eventId };
+  const parsed = calendarMutationCommandSchema.safeParse(candidate);
+  if (!parsed.success || parsed.data.operation === "create") {
+    return error(422, "malformed", "Mutation fields are invalid", requestId);
+  }
+  const scope = parsed.data.scope ?? "private";
+  const persistence = scope === "household" ? householdStore : privateStore;
+  const result = mutateCalendarEvent(parsed.data as CalendarMutationCommand, persistence, cfg);
+  return result.ok ? response(result.value, requestId) : errorFor(result.error, requestId);
 }
 
-function parseEvent(value: unknown, serverAssignTimestamps = false): { event: StoredCalendarEvent; scope: Scope } | null {
-  if (!value || typeof value !== "object") return null;
-  const scope = parseScope((value as Record<string, unknown>).scope) ?? "private";
-  const {
-    scope: _scope,
-    userId: _userId,
-    householdId: _householdId,
-    ...rawCandidate
-  } = value as Record<string, unknown>;
-  // Timestamps are response metadata, not client-owned create fields. Remove
-  // them before validation so old clients that included placeholders remain
-  // compatible while new clients can omit them entirely.
-  const candidate = serverAssignTimestamps
-    ? (() => {
-        const { createdAt: _createdAt, updatedAt: _updatedAt, ...withoutTimestamps } = rawCandidate;
-        return withoutTimestamps;
-      })()
-    : rawCandidate;
-  const parsed = (serverAssignTimestamps ? calendarCreateEventSchema : calendarEventSchema).safeParse({ ...candidate, scope });
-  if (!parsed.success) return null;
-  const wire = parsed.data;
-  const notificationPolicy = "notificationPolicy" in wire ? wire.notificationPolicy : undefined;
-  const { scope: _wireScope, ...rest } = wire;
-  const now = new Date().toISOString() as StoredCalendarEvent["createdAt"];
-  const event = {
-    ...rest,
-    createdAt: serverAssignTimestamps
-      ? now
-      : (wire as unknown as { createdAt: StoredCalendarEvent["createdAt"] }).createdAt,
-    updatedAt: serverAssignTimestamps
-      ? now
-      : (wire as unknown as { updatedAt: StoredCalendarEvent["updatedAt"] }).updatedAt,
-    ...(notificationPolicy ? { notification: notificationPolicy } : {}),
-    tags: new Set(wire.tags),
-  } as unknown as StoredCalendarEvent;
-  return { event, scope };
+function matchRoute(pathname: string): Route | undefined {
+  if (pathname === EVENTS) return { kind: "list" };
+  const match = new RegExp(`^${EVENTS}/([^/]+)(/mutations)?$`).exec(pathname);
+  if (!match) return undefined;
+  const rawEventId = match[1];
+  if (rawEventId === undefined) return undefined;
+  const eventId = safeDecode(rawEventId);
+  if (eventId === null || eventId.length === 0) return undefined;
+  return match[2] === "/mutations"
+    ? { kind: "mutate", eventId: eventId as CalendarEventId }
+    : { kind: "get", eventId: eventId as CalendarEventId };
 }
 
-function toWire(event: StoredCalendarEvent, scope: Scope): WireCalendarEvent {
-  return {
-    id: event.id,
-    scope,
-    title: event.title,
-    ...(event.description !== undefined ? { description: event.description } : {}),
-    start: event.start,
-    ...(event.end !== undefined ? { end: event.end } : {}),
-    ...(event.recurrence !== undefined ? { recurrence: event.recurrence } : {}),
-    ...(event.exdates !== undefined ? { exdates: event.exdates } : {}),
-    ...(event.exceptions !== undefined ? { exceptions: event.exceptions } : {}),
-    visibility: event.visibility,
-    importance: event.importance,
-    ...(event.group !== undefined ? { group: event.group } : {}),
-    tags: [...event.tags],
-    ...(event.notification !== undefined ? { notificationPolicy: event.notification } : {}),
-    createdAt: event.createdAt,
-    updatedAt: event.updatedAt,
-  };
+function methodAllowed(method: string, route: Route["kind"]): boolean {
+  return route === "list"
+    ? method === "GET" || method === "POST"
+    : route === "get"
+      ? method === "GET"
+      : method === "POST";
 }
-function toWireOccurrence(occurrence: Occurrence, scope: Scope): WireCalendarOccurrence {
-  return {
-    ...toWire(occurrence, scope),
-    id: occurrence.occurrenceId as CalendarEventId,
-    baseEventId: occurrence.baseEventId,
-    start: occurrence.start,
-    ...(occurrence.end !== undefined ? { end: occurrence.end } : {}),
-    occurrenceId: occurrence.occurrenceId,
-    occurrenceStart: occurrence.occurrenceStart,
-    ...(occurrence.occurrenceEnd !== undefined ? { occurrenceEnd: occurrence.occurrenceEnd } : {}),
-  };
+
+function response(body: unknown, requestId: string): Response {
+  return Response.json({ version: 2, requestId, body });
 }
-function wireResponse(event: WireCalendarEvent, requestId: string): Response {
-  return Response.json({ version: 1, requestId, body: event });
+
+function errorFor(failure: CalendarError, requestId: string): Response {
+  return error(statusFor(failure.code), failure.code, failure.message, requestId);
 }
-function stripIdentity(value: unknown): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const { userId: _userId, householdId: _householdId, ...copy } = value as Record<string, unknown>;
-  return copy;
+
+function statusFor(code: CalendarError["code"]): number {
+  if (
+    [
+      "missing_token",
+      "expired",
+      "signature_invalid",
+      "wrong_purpose",
+      "user_not_found",
+      "invalid_user_record",
+    ].includes(code)
+  )
+    return 401;
+  if (
+    [
+      "invalid_time",
+      "invalid_range",
+      "range_too_wide",
+      "invalid_scope",
+      "invalid_mutation_scope",
+      "malformed",
+    ].includes(code)
+  )
+    return 422;
+  if (["not_found", "occurrence_not_found"].includes(code)) return 404;
+  if (code === "forbidden") return 403;
+  if (["conflict", "recurrence_conflict"].includes(code)) return 409;
+  if (code === "result_too_large") return 413;
+  if (code === "aborted") return 409;
+  return 503;
 }
-function parseScope(value: string | unknown): Scope | undefined {
-  return value === "private" || value === "household" ? value : undefined;
+
+function error(status: number, code: string, message: string, requestId: string): Response {
+  return Response.json({ version: 2, requestId, error: { code, message } }, { status });
 }
-function parseTime(value: string | null): CalendarTime | null {
-  if (!value) return null;
-  const candidate = (() => {
-    try {
-      const parsed = JSON.parse(value);
-      if (parsed && (parsed.kind === "timed" || parsed.kind === "all-day")) return parsed;
-    } catch {}
-    if (/^\d{4}-\d\d-\d\d$/.test(value)) return { kind: "all-day", date: value };
-    if (!Number.isNaN(Date.parse(value)))
-      return {
-        kind: "timed",
-        instant: new Date(value).toISOString(),
-        timeZoneId: "household",
-      };
-    return null;
-  })();
-  const parsed = wireCalendarTimeSchema.safeParse(candidate);
-  return parsed.success ? parsed.data as unknown as CalendarTime : null;
+
+function tokenErrorCode(code: string): string {
+  return code.replaceAll("-", "_");
 }
+
 function readBearer(request: Request): string | null {
-  const parts = (request.headers.get("authorization") ?? "").split(" ");
+  const parts = (request.headers.get("authorization") ?? "").trim().split(/\s+/);
   return parts.length === 2 && parts[0]?.toLowerCase() === "bearer" && parts[1] ? parts[1] : null;
 }
+
 function safeDecode(raw: string): string | null {
   try {
     return decodeURIComponent(raw);
@@ -349,18 +309,16 @@ function safeDecode(raw: string): string | null {
     return null;
   }
 }
-function statusFor(code: string): number {
-  if (["missing-token", "malformed", "expired", "signature-invalid", "wrong-purpose", "user-not-found", "invalid-user-record"].includes(code)) return 401;
-  if (code === "not-found") return 404;
-  if (code === "forbidden") return 403;
-  if (code === "method-not-allowed") return 405;
-  if (["already-exists", "conflict"].includes(code)) return 409;
-  if (["invalid", "recurrence-limit"].includes(code)) return 422;
-  return 500;
+
+function closeStore(store: CalendarPersistence | undefined): void {
+  try {
+    store?.close();
+  } catch {
+    // Closing is best effort; never replace the request result with a close
+    // failure, and never allow one handle to prevent the other from closing.
+  }
 }
-function error(status: number, code: string, message: string, requestId: string): Response {
-  return Response.json({ version: 1, requestId, error: { code, message } }, { status });
-}
-function errorFor(code: string, requestId: string, message = "Calendar operation failed"): Response {
-  return error(statusFor(code), code, message, requestId);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -196,6 +196,7 @@ export function createGatewayServer(options: GatewayServerOptions): Server<Sessi
     tokens: services.auth.tokens,
     users: services.auth.users,
     accessManager: services.accessManager,
+    ...(services.calendarConfig ? { calendarConfig: services.calendarConfig } : {}),
   });
   const handleSessions = createSessionsHandler({
     tokens: services.auth.tokens,

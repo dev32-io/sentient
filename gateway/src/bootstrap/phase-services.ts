@@ -20,6 +20,9 @@ import { migrateWebToolsEnabled } from "../admin/web-tools-migrator.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
+import { openCalendarPersistence, openCalendarStore } from "../calendar/calendar-store.js";
+import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
+import type { CalendarConfig, CalendarStore } from "../calendar/types.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
 import { resolveTimeZone } from "../context/message-time.js";
@@ -50,9 +53,6 @@ import { type DreamClock, type DreamScheduler, createDreamScheduler } from "../m
 import { composeMemoryBlock } from "../memory/memory-prompt.js";
 import { createMemoryRetriever } from "../memory/memory-retriever.js";
 import { type MemoryStore, openMemoryStore } from "../memory/memory-store.js";
-import type { CalendarConfig, CalendarStore } from "../calendar/types.js";
-import { openCalendarPersistence, openCalendarStore } from "../calendar/calendar-store.js";
-import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
 import { createPersonalityStore } from "../profile-store/personality-store.js";
 import type { PersonalityStore } from "../profile-store/personality-store.js";
 import { type ProfileStore, createProfileStore, memoryTogglesFor } from "../profile-store/profile-store.ts";
@@ -321,26 +321,15 @@ function wireScopeIndex(
  * to both scopes. Exported so the composition seam is unit-testable without
  * standing up the whole orchestrator.
  */
-export function buildSessionCalendar(
-  orchestratorCfg: OrchestratorConfig,
-  accessManager: AccessManager,
-  principal: UserPrincipal,
-): SessionCalendar | null {
-  if (!orchestratorCfg.calendar.enabled) return null;
-  const configured = orchestratorCfg.calendar.default_event_tz_id;
-  // The schema keeps the shipped 20,000-character relationship safe. This
-  // second check covers an operator who lowers the generic broker backstop:
-  // the calendar must reject proactively, strictly before that backstop.
+export function resolveCalendarConfig(orchestratorCfg: OrchestratorConfig): CalendarConfig {
   if (orchestratorCfg.calendar.output.max_result_chars >= orchestratorCfg.tools.max_tool_result_chars) {
     throw new Error(
       "orchestrator.calendar.output.max_result_chars must be strictly below orchestrator.tools.max_tool_result_chars",
     );
   }
-  // Resolve the household zone once and freeze the complete mapping. Every
-  // calendar consumer receives the same limits and concrete timezone; no
-  // adapter reads the YAML shape or resolves the sentinel independently.
+  const configured = orchestratorCfg.calendar.default_event_tz_id;
   const householdZone = resolveTimeZone().zone();
-  const calendarCfg: CalendarConfig = Object.freeze({
+  return Object.freeze({
     query: Object.freeze({
       maxDays: orchestratorCfg.calendar.query.max_days,
       maxOccurrences: orchestratorCfg.calendar.query.max_occurrences,
@@ -362,6 +351,16 @@ export function buildSessionCalendar(
     nudge: Object.freeze({ maxPerDay: orchestratorCfg.calendar.nudge.max_per_day }),
     defaultEventTimeZoneId: configured === "household" ? householdZone : configured,
   });
+}
+
+export function buildSessionCalendar(
+  orchestratorCfg: OrchestratorConfig,
+  accessManager: AccessManager,
+  principal: UserPrincipal,
+): SessionCalendar | null {
+  if (!orchestratorCfg.calendar.enabled) return null;
+  const calendarCfg = resolveCalendarConfig(orchestratorCfg);
+  const householdZone = resolveTimeZone().zone();
   const privateCap = accessManager.grant(principal, "calendar-private");
   const householdCap = accessManager.grant(principal, "calendar-household");
   const privateStore = openCalendarStore(privateCap, calendarCfg);
@@ -558,6 +557,8 @@ export interface PhaseServicesInput {
 }
 
 export interface PhaseServicesOutput {
+  /** Resolved V2 calendar limits and concrete household timezone for REST and sessions. */
+  readonly calendarConfig: CalendarConfig | undefined;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly tls: GatewayTlsMaterial | undefined;
@@ -615,6 +616,7 @@ export interface PhaseServicesOutput {
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
   const { cfg, auth, secretsStore } = input;
+  const calendarConfig = cfg.orchestrator ? resolveCalendarConfig(cfg.orchestrator) : undefined;
 
   const stt = cfg.stt ? createSttService(cfg) : null;
   const tts = createTtsService({ cfg });
@@ -742,6 +744,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   });
 
   return {
+    calendarConfig,
     stt,
     tts,
     tls,
@@ -1810,9 +1813,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // principal never sees `@adults`-tagged content. Private scope only in S1.
     // Null `sessionMemory` (master switch off) leaves the skill prompt as-is.
     const memoryPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
-    const sessionSystemPrompt = sessionCalendar?.nudge
-      ? `${memoryPrompt}\n\n${sessionCalendar.nudge}`
-      : memoryPrompt;
+    const sessionSystemPrompt = sessionCalendar?.nudge ? `${memoryPrompt}\n\n${sessionCalendar.nudge}` : memoryPrompt;
 
     const runtime = buildSessionRuntime({
       principal,
