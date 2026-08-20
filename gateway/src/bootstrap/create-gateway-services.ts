@@ -85,6 +85,7 @@ export async function testProviderImpl(
 export interface GatewayServices {
   readonly installState: InstallState;
   readonly calendarConfig: CalendarConfig | undefined;
+  readonly calendarHouseholdTimeZone: string | undefined;
   readonly hermesVersionPath: string;
   readonly sttHealthUrl: string;
   readonly ttsHealthUrl: string;
@@ -285,6 +286,7 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
   return {
     installState,
     calendarConfig: services.calendarConfig,
+    calendarHouseholdTimeZone: services.calendarHouseholdTimeZone,
     hermesVersionPath,
     sttHealthUrl: cfg.companions.stt_health_url,
     ttsHealthUrl: cfg.companions.tts_health_url,

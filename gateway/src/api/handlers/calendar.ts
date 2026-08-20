@@ -40,6 +40,8 @@ export interface CalendarHandlerDeps {
   users: Pick<UserStore, "get">;
   accessManager: AccessManager;
   calendarConfig?: CalendarConfig;
+  /** Concrete household zone resolved by the composition root. */
+  householdTimeZone?: string;
   /** Injectable request-scoped V2 persistence opener used by handler tests. */
   openStore?: (cap: ReturnType<AccessManager["grant"]>, cfg: CalendarConfig) => CalendarPersistence;
 }
@@ -118,6 +120,7 @@ async function handleCalendar(deps: CalendarHandlerDeps, request: Request): Prom
       household: householdStore,
       role: principal.role,
       config: cfg,
+      ...(deps.householdTimeZone ? { householdTimeZone: deps.householdTimeZone } : {}),
     });
 
     if (route.kind === "list") {

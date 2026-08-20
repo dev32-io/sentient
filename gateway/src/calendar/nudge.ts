@@ -1,6 +1,8 @@
 import type { UserRole } from "@sentient/protocol";
 import { formatStamp } from "../context/message-time.js";
-import type { CalendarStore, Occurrence } from "./types.js";
+import type { CalendarQueryService } from "./calendar-query.js";
+import { queryEffectiveOccurrences } from "./calendar-query.js";
+import type { CalendarStore, CalendarTime, CalendarOccurrenceProjection, Occurrence } from "./types.js";
 import { isAdult } from "./types.js";
 
 export interface CalendarNudgeBudget {
@@ -35,15 +37,35 @@ function queryBounds(nowMs: number): { from: string; to: string } {
   return { from: new Date(`${dateAdd(day, -10)}T00:00:00.000Z`).toISOString(), to: new Date(`${dateAdd(day, 10)}T23:59:59.999Z`).toISOString() };
 }
 
-function occurrenceMs(occurrence: Occurrence): number {
+type NudgeOccurrence = Pick<Occurrence, "occurrenceId" | "title" | "visibility" | "importance"> & {
+  start: CalendarTime;
+};
+
+function occurrenceMs(occurrence: NudgeOccurrence): number {
   return occurrence.start.kind === "timed" ? Date.parse(occurrence.start.instant) : Date.parse(`${occurrence.start.date}T00:00:00Z`);
 }
 
-function renderLine(occurrence: Occurrence, zone: string): string {
+function renderLine(occurrence: NudgeOccurrence, zone: string): string {
   const stamp = occurrence.start.kind === "timed"
     ? formatStamp(Date.parse(occurrence.start.instant), zone)
     : occurrence.start.date;
   return `- ${stamp} ${occurrence.title}`;
+}
+
+function projectionTime(value: CalendarOccurrenceProjection["start"]): CalendarTime {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? { kind: "all-day", date: value as never }
+    : { kind: "timed", instant: value as never, timeZoneId: "UTC" as never };
+}
+
+function nudgeOccurrence(value: CalendarOccurrenceProjection): NudgeOccurrence {
+  return {
+    occurrenceId: value.occurrenceId,
+    title: value.title,
+    visibility: value.visibility,
+    importance: value.importance,
+    start: projectionTime(value.start),
+  };
 }
 
 function fit(text: string, maxChars: number): string {
@@ -109,11 +131,12 @@ export function capCalendarNudge(text: string | null, budget: CalendarNudgeBudge
  * adults-only events; the defensive check also keeps alternate store
  * implementations honest. */
 export function composeCalendarNudge(
-  store: CalendarStore,
+  source: CalendarStore | CalendarQueryService,
   role: UserRole,
   householdTz: string,
   now: number | Date,
   budget: CalendarNudgeBudget = DEFAULT_BUDGET,
+  scope: "private" | "household" = "private",
 ): string | null {
   const nowMs = now instanceof Date ? now.getTime() : now;
   const today = localDate(nowMs, householdTz);
@@ -122,16 +145,31 @@ export function composeCalendarNudge(
   const weekStart = dateAdd(today, -(mondayDelta < 0 ? 0 : mondayDelta === 0 ? 6 : mondayDelta - 1));
   const weekEnd = dateAdd(weekStart, 6);
   const bounds = queryBounds(nowMs);
-  const timedResult = store.list({
-    from: { kind: "timed", instant: bounds.from as never, timeZoneId: householdTz as never },
-    to: { kind: "timed", instant: bounds.to as never, timeZoneId: householdTz as never },
-  });
-  const allDayResult = store.list({
-    from: { kind: "all-day", date: dateAdd(today, -10) as never },
-    to: { kind: "all-day", date: dateAdd(today, 10) as never },
-  });
-  if (!timedResult.ok && !allDayResult.ok) return null;
-  const occurrences = [...(timedResult.ok ? timedResult.value : []), ...(allDayResult.ok ? allDayResult.value : [])]
+  let occurrences: NudgeOccurrence[];
+  if ("listComplete" in source) {
+    // The query service expands effective occurrences with the same recurrence
+    // and candidate bounds as tools/REST. Nudge asks for one explicit scope so
+    // it cannot accidentally become an all-scope or mutation path.
+    const result = queryEffectiveOccurrences(source, {
+      from: bounds.from,
+      to: bounds.to,
+      scope,
+    });
+    if (!result.ok) return null;
+    occurrences = result.value.map(nudgeOccurrence);
+  } else {
+    const timedResult = source.list({
+      from: { kind: "timed", instant: bounds.from as never, timeZoneId: householdTz as never },
+      to: { kind: "timed", instant: bounds.to as never, timeZoneId: householdTz as never },
+    });
+    const allDayResult = source.list({
+      from: { kind: "all-day", date: dateAdd(today, -10) as never },
+      to: { kind: "all-day", date: dateAdd(today, 10) as never },
+    });
+    if (!timedResult.ok && !allDayResult.ok) return null;
+    occurrences = [...(timedResult.ok ? timedResult.value : []), ...(allDayResult.ok ? allDayResult.value : [])];
+  }
+  occurrences = occurrences
     .filter((item) => isAdult(role) || item.visibility !== "adults")
     .filter((item, index, all) => all.findIndex((candidate) => candidate.occurrenceId === item.occurrenceId) === index);
   if (occurrences.length === 0) return null;
@@ -141,7 +179,7 @@ export function composeCalendarNudge(
     const date = item.start.kind === "all-day" ? item.start.date : localDate(occurrenceMs(item), householdTz);
     return date >= weekStart && date <= weekEnd && !todayItems.includes(item) && (item.importance === "important" || item.importance === "pinned");
   });
-  const sort = (a: Occurrence, b: Occurrence) => occurrenceMs(a) - occurrenceMs(b) || a.occurrenceId.localeCompare(b.occurrenceId);
+  const sort = (a: NudgeOccurrence, b: NudgeOccurrence) => occurrenceMs(a) - occurrenceMs(b) || a.occurrenceId.localeCompare(b.occurrenceId);
   todayItems.sort(sort); weeklyItems.sort(sort);
   // The store may contain only events outside this week; those do not create a
   // block. Normal weekly items are overflow-only: they are never allowed to

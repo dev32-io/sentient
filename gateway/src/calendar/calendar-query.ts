@@ -533,10 +533,24 @@ export const createCalendarQuery = createCalendarQueryService;
 export const CalendarQuery = CalendarQueryService;
 export const projectCalendarOccurrence = projectOccurrence;
 
-/** Internal bounded seam for nudge composition and other trusted producers. */
+/** Internal bounded seam for nudge composition and other trusted producers.
+ * REST pages are traversed here rather than using the tool-complete mode so a
+ * small operator page_size cannot make a bounded nudge disappear. The service
+ * still enforces maxOccurrences before returning any page, and the hard page
+ * count is one above the shipped 1000-occurrence ceiling. */
 export function queryEffectiveOccurrences(
   service: CalendarQueryService,
   input: Parameters<CalendarQueryService["listComplete"]>[0],
 ): CalendarQueryResult<CalendarCompleteResult> {
-  return service.listComplete(input);
+  const occurrences: CalendarCompleteResult = [];
+  let cursor: string | undefined;
+  for (let page = 0; page <= 1000; page++) {
+    const pageInput = cursor === undefined ? input : { ...(input as Record<string, unknown>), cursor };
+    const result = service.list(pageInput);
+    if (!result.ok) return result as CalendarQueryResult<CalendarCompleteResult>;
+    occurrences.push(...result.value.events);
+    if (result.value.nextCursor === undefined) return { ok: true, value: occurrences };
+    cursor = result.value.nextCursor;
+  }
+  return failure("result_too_large", `The calendar result is too large to return. ${GUIDANCE}`);
 }
