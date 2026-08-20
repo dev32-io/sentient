@@ -421,7 +421,7 @@ export const calendarMutationResultSchema = z.discriminatedUnion("operation", [
 export type CalendarMutationResult = z.infer<typeof calendarMutationResultSchema>;
 
 export type CalendarErrorCode =
-  | "invalid_time" | "invalid_range" | "range_too_wide" | "invalid_scope" | "forbidden"
+  | "invalid_time" | "invalid_range" | "range_too_wide" | "invalid_scope" | "invalid_mutation_scope" | "forbidden"
   | "not_found" | "occurrence_not_found" | "result_too_large" | "recurrence_conflict"
   | "conflict" | "aborted" | "io_error"
   | "missing_token" | "malformed" | "expired" | "signature_invalid" | "wrong_purpose"
@@ -431,7 +431,7 @@ export interface CalendarError {
   message: string;
 }
 export const calendarErrorCodeSchema = z.enum([
-  "invalid_time", "invalid_range", "range_too_wide", "invalid_scope", "forbidden", "not_found",
+  "invalid_time", "invalid_range", "range_too_wide", "invalid_scope", "invalid_mutation_scope", "forbidden", "not_found",
   "occurrence_not_found", "result_too_large", "recurrence_conflict", "conflict", "aborted", "io_error",
   "missing_token", "malformed", "expired", "signature_invalid", "wrong_purpose", "user_not_found", "invalid_user_record",
 ]);
