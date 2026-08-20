@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-6-bootstrap
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
@@ -19,11 +19,11 @@ criteria:
   - Nudge security and bounds remain unchanged
   - No automatic destructive reset or production mutation
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: c218381b-bef3-4d9a-95bf-ec4cd6dd8790
-  reviewedCommit: 529ddee04b74f825aa207b3bf634cd43133ddfbd
+  reviewedCommit: a59794963a0e8de7be557bf3aea596ebad3d772b
   managerPrompt: Repair STAGE6-001 without bypassing operator limits. Replace the
     fixed ±10-day nudge query with the smallest normalized window that
     represents the configured household-local current day (normally one date
@@ -38,15 +38,14 @@ loop:
 findings:
   - id: STAGE6-001
     severity: high
-    status: open
+    status: resolved
     criterion: Nudge retains its existing product behavior while using a bounded
       effective-occurrence seam
-    location: gateway/src/calendar/nudge.ts:147-159;
-      gateway/src/calendar/calendar-query.ts:541-555
-    summary: Fixed ±10-day nudge bounds exceed supported query.maxDays values below
-      21, so the bounded query fails and valid nudges disappear.
-    blocking: true
+    location: gateway/src/calendar/nudge.ts; gateway/src/bootstrap/phase-services.ts
+    summary: Fixed ±10-day nudge query replaced with one household-local date
+      period; low-limit and timezone regressions pass.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-6-bootstrap-review/manifest.yaml
