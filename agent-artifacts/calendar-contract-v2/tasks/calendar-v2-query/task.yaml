@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-query
 title: Implement bounded effective-occurrence calendar queries
-status: blocked
+status: ready
 dependsOn:
   - calendar-v2-temporal
   - calendar-v2-recurrence
