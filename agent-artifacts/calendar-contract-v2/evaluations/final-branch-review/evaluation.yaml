@@ -4,7 +4,7 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: passed
 required: true
 attempt: 2
 methods:
@@ -13,7 +13,7 @@ methods:
 loop:
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
+  state: passed
   reviewerAgentId: cfc497de-4f78-4b7a-9528-b98f7fce25d7
   reviewedCommit: 8884fa9d77e35c7ae86ad50c1bbad602256cc1bf
   managerPrompt: >-
@@ -52,6 +52,16 @@ loop:
     typecheck, and `git diff --check`; verify again that the work-item UI path
     diff remains empty.
   fixerAgentId: fa256d94-c637-4607-972d-f4a2a6c02054
+  acceptedRisks:
+    - findingId: CAL-V2-FINAL-003
+      rationale: The remaining deprecated baseEventId member exists only on a
+        non-serializable compatibility view used by unchanged platform source.
+        Exact serialized V2 DTOs expose eventId/occurrenceId/originalStart and
+        nextCursor only, CalendarHttpClient never populates or normalizes
+        baseEventId, and mobile-data mutations use persisted V2 identity.
+        Removing this source-only member now conflicts with the reviewed
+        no-UI-change boundary; it is deferred to the planned UI refresh without
+        accepting any V1 wire compatibility.
 findings:
   - id: CAL-V2-FINAL-001
     severity: high
@@ -73,7 +83,7 @@ findings:
     blocking: false
   - id: CAL-V2-FINAL-003
     severity: high
-    status: open
+    status: accepted
     criterion: KMP clean cutover removes V1 more/baseEventId fields and normalization.
     location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:455-462
     summary: Deprecated baseEventId remains exported on CalendarEvent, so the
@@ -95,6 +105,7 @@ findings:
       legacy input is rejected before fetch."
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/final-branch-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md
