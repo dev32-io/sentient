@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-7-clients
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && cd gateway/webui && bun run test:unit --
     src/services/calendar-api.test.ts
@@ -22,11 +22,11 @@ criteria:
   - Source-level whole-series adapters preserve untouched UI compilation
   - Calendar payload and token privacy in client diagnostics
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: passed
   reviewerAgentId: 76324f5f-1898-4883-bf7d-81cb576d44a4
-  reviewedCommit: 8bba3b8f8c792323a9f70d8fabdad7044ce22af6
+  reviewedCommit: 0611481e7dcdf3fea3f215fbc5c75288bf4de6d2
   managerPrompt: "Repair both client findings and add exact-wire regressions. KMP
     update changes must represent three states for every nullable-clearable
     field—omitted/no change, concrete replacement, and explicit JSON null
@@ -46,28 +46,24 @@ loop:
 findings:
   - id: CAL-V2-KMP-NULL-CHANGES
     severity: high
-    status: open
+    status: resolved
     criterion: KMP mutation supports V2 event-local update semantics and exact
       web/KMP wire parity, including explicit clears.
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:185-196;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:31-40;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:144-150
-    summary: CalendarChanges nullable clear fields are encoded with shared JSON
-      configured as explicitNulls=false, so description/end/group/recurrence
-      nulls are omitted instead of sent as JSON null. Mobile cannot issue the
-      gateway's clear operations and silently sends a different command than
-      web.
-    blocking: true
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:203-346;
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt:167-232
+    summary: Tri-state patch encoding and exact-wire regressions close the
+      explicit-clear defect.
+    blocking: false
   - id: CAL-V2-KMP-CANCEL-PARSE
     severity: low
-    status: open
+    status: resolved
     criterion: CalendarHttpClient preserves cancellation behavior.
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:57-61
-    summary: runCatching wraps the suspending response parser and catches
-      CancellationException, converting cancellation during parsing into
-      AuthError.Unknown. The declared tests cover timeout but not cancellation.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:52-73;
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt:264-276
+    summary: Cancellation is rethrown during response parsing and covered by
+      regression test.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-stage-7-clients-review/manifest.yaml
