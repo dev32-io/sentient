@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-config
 title: Add operator-controlled calendar V2 safety limits
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-contracts
 execution:
@@ -27,3 +27,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-config
   baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
   lastRunId: 5bdfd44d-1da4-4c99-be0c-73024cfd0822
+  completedCommit: 752b976030c384850bc74339ce51dc2aebecceec
