@@ -2,11 +2,7 @@ schemaVersion: 1
 id: calendar-v2-query
 title: Implement bounded effective-occurrence calendar queries
 status: draft
-dependsOn:
-  - calendar-v2-temporal
-  - calendar-v2-recurrence
-  - calendar-v2-storage
-  - calendar-v2-config
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
