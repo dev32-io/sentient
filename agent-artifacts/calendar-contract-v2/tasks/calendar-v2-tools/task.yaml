@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-tools
 title: Replace all six model-facing calendar tool adapters
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-query
   - calendar-v2-occurrence-mutations
@@ -33,3 +33,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-tools
   baseCommit: b9ddfec0746dd72b119b783df148aff5921eb642
   lastRunId: e1d47f33-2fb6-45c3-8bb1-a0cd5cc2c56e
+  completedCommit: 8e35ff29f6127fca67c708b47a975fe80cc5d631
