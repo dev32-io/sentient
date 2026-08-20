@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 2
+  revision: 3
 artifacts:
   - id: intent
     type: intent
@@ -15,6 +15,11 @@ artifacts:
   - id: calendar-contract-v2-behavior
     type: spec
     path: specs/calendar-contract-v2-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-contract-v2-design
+    type: design
+    path: design/calendar-contract-v2-design.md
     status: draft
     narrativeSchemaVersion: 2
 tasks: []
