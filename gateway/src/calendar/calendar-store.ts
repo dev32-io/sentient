@@ -54,13 +54,26 @@ export interface CalendarPersistenceTransaction {
   deleteSegment(id: CalendarEventId): CalendarResult<void>;
 }
 
+export interface CalendarCandidateWindow {
+  readonly timedFrom?: UtcInstant;
+  readonly timedTo?: UtcInstant;
+  readonly allDayFrom?: LocalDate;
+  readonly allDayTo?: LocalDate;
+}
+
+export interface CalendarCandidateBatch {
+  /** At most the requested bound; callers must not use this batch when overflow is true. */
+  readonly ids: CalendarEventId[];
+  readonly overflow: boolean;
+}
+
 export interface CalendarPersistence {
   /** The attenuated resource selected when this persistence handle was opened. */
   readonly scope?: "private" | "household";
   read(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   get(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
-  /** Candidate ids are metadata only; each row is still validated on read. */
-  listBaseEventIds(): CalendarResult<CalendarEventId[]>;
+  /** Read a bounded, conservatively windowed candidate set. The store reads max+one rows to signal overflow. */
+  readBaseCandidates(limit: number, window: CalendarCandidateWindow): CalendarResult<CalendarCandidateBatch>;
   /** Narrow capability-held seam for query projection; public stores never expose it. */
   readRaw(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   transaction<T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T>;
@@ -417,11 +430,38 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
     }
   });
 
+  const readBaseCandidates = (limit: number, window: CalendarCandidateWindow): CalendarResult<CalendarCandidateBatch> => usable(() => {
+    if (!Number.isInteger(limit) || limit < 1) return { ok: false, error: "invalid" };
+    const timedFrom = window.timedFrom ?? "9999-12-31T23:59:59.999Z";
+    const timedTo = window.timedTo ?? "0001-01-01T00:00:00.000Z";
+    const allDayFrom = window.allDayFrom ?? "9999-12-31";
+    const allDayTo = window.allDayTo ?? "0001-01-01";
+    // Recurring rows can begin before the window; exception rows are included
+    // conservatively because an override may move an occurrence into it.
+    const rows = db.query<{ id: string }, [string, string, string, string, string, string, number]>(`
+      SELECT id FROM events
+      WHERE (
+        (start_instant BETWEEN ? AND ? OR (recurrence IS NOT NULL AND start_instant <= ?))
+        OR (start_date BETWEEN ? AND ? OR (recurrence IS NOT NULL AND start_date <= ?))
+        OR EXISTS (SELECT 1 FROM exceptions WHERE exceptions.event_id = events.id)
+      )
+      ORDER BY id
+      LIMIT ?
+    `).all(timedFrom, timedTo, timedTo, allDayFrom, allDayTo, allDayTo, limit + 1);
+    return {
+      ok: true,
+      value: {
+        ids: rows.slice(0, limit).map((row) => row.id as CalendarEventId),
+        overflow: rows.length > limit,
+      },
+    };
+  });
+
   return {
     scope: cap.resource === "calendar-household" ? "household" : "private",
     read: (id) => usable(() => authorized(id, false)),
     get: (id) => usable(() => authorized(id, false)),
-    listBaseEventIds: () => usable(() => ({ ok: true, value: db.query<{ id: string }, []>("SELECT id FROM events ORDER BY id").all().map((row) => row.id as CalendarEventId) })),
+    readBaseCandidates,
     readRaw: (id) => usable(() => authorized(id, true)),
     transaction,
     withTransaction: transaction,
@@ -492,10 +532,14 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   };
   const list = (window: { from: CalendarTime; to: CalendarTime; group?: string; tags?: readonly string[]; importance?: StoredCalendarEvent["importance"] }): CalendarResult<Occurrence[]> => {
     if (window.from.kind !== window.to.kind) return { ok: false, error: "invalid" };
-    const candidates = persistence.listBaseEventIds();
+    const candidateLimit = cfg.query?.maxOccurrences ?? cfg.recurrence?.maxOccurrences ?? 1000;
+    const candidates = persistence.readBaseCandidates(candidateLimit, window.from.kind === "timed"
+      ? { timedFrom: window.from.instant, timedTo: window.to.kind === "timed" ? window.to.instant : window.from.instant }
+      : { allDayFrom: window.from.date, allDayTo: window.to.kind === "all-day" ? window.to.date : window.from.date });
     if (!candidates.ok) return candidates;
+    if (candidates.value.overflow) return { ok: false, error: "recurrence-limit" };
     const occurrences: Occurrence[] = [];
-    for (const id of candidates.value) {
+    for (const id of candidates.value.ids) {
       const result = read(id);
       if (!result.ok) { if (result.error === "not-found") continue; return result; }
       const event = result.value;

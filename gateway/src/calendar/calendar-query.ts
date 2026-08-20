@@ -17,7 +17,7 @@ import {
   type UtcInstant,
   isAdult,
 } from "./types.js";
-import type { CalendarPersistence } from "./calendar-store.js";
+import type { CalendarCandidateWindow, CalendarPersistence } from "./calendar-store.js";
 import { expandRecurrence, type RecurrenceExpansionLimits } from "./expand-recurrence.js";
 import { normalizeCalendarQuery, normalizeCalendarTime } from "./calendar-temporal.js";
 
@@ -230,6 +230,25 @@ function allDayWindow(query: NormalizedQuery, zone: string): { from: CalendarTim
   if (query.from.kind === "all-day" && query.to.kind === "all-day") return { from: query.from, to: query.to };
   return { from: { kind: "all-day", date: localDateForInstant(timeMillis(query.from), zone) as never }, to: { kind: "all-day", date: localDateForInstant(timeMillis(query.to), zone) as never } };
 }
+function candidateWindow(query: NormalizedQuery, zone: string): CalendarCandidateWindow {
+  if (query.from.kind === "timed" && query.to.kind === "timed") {
+    return {
+      timedFrom: query.from.instant,
+      timedTo: query.to.instant,
+      allDayFrom: localDateForInstant(timeMillis(query.from), zone) as never,
+      allDayTo: localDateForInstant(timeMillis(query.to), zone) as never,
+    };
+  }
+  const from = localMidnight(query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone), zone);
+  const toDate = query.to.kind === "all-day" ? query.to.date : localDateForInstant(timeMillis(query.to), zone);
+  const to = localMidnight(addDate(toDate, 1), zone) - 1;
+  return {
+    timedFrom: new Date(from).toISOString() as UtcInstant,
+    timedTo: new Date(to).toISOString() as UtcInstant,
+    allDayFrom: query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone) as never,
+    allDayTo: toDate as never,
+  };
+}
 function withinWindow(value: CalendarTime, window: { from: CalendarTime; to: CalendarTime }): boolean {
   return value.kind === window.from.kind && timeMillis(value) >= timeMillis(window.from) && timeMillis(value) <= timeMillis(window.to);
 }
@@ -344,16 +363,21 @@ export class CalendarQueryService {
     return [[this.deps.private, "private"], [this.deps.household, "household"]];
   }
 
-  private collect(query: NormalizedQuery): CalendarQueryResult<{ rows: InternalRow[]; aggregateOverflow: boolean }> {
+  private collect(query: NormalizedQuery): CalendarQueryResult<{ rows: InternalRow[] }> {
     const sources = this.sources(query.scope);
     if (!Array.isArray(sources)) return sources;
     const rows: InternalRow[] = [];
     const max = this.deps.config.query.maxOccurrences;
-    let aggregateOverflow = false;
+    const candidatesWindow = candidateWindow(query, this.zone);
+    const expansionLimits = { ...this.recurrenceLimits, maxOccurrences: max };
     for (const [persistence, scope] of sources) {
-      const ids = persistence.listBaseEventIds();
-      if (!ids.ok) return errorForStorage(ids.error);
-      for (const id of ids.value) {
+      const candidates = persistence.readBaseCandidates(max, candidatesWindow);
+      if (!candidates.ok) return errorForStorage(candidates.error);
+      // Never expand or return the prefix of an over-bound candidate set. The
+      // store has already read max+one rows, so this is a complete-or-error
+      // decision before any occurrence work begins.
+      if (candidates.value.overflow) return serializedFailure();
+      for (const id of candidates.value.ids) {
         const raw = persistence.readRaw(id);
         if (!raw.ok) {
           if (raw.error === "not-found") continue;
@@ -363,7 +387,7 @@ export class CalendarQueryService {
         const windows = event.start.kind === "timed"
           ? timedWindow(query, this.zone, event.start.timeZoneId)
           : allDayWindow(query, this.zone);
-        const expanded = expandEffective(event, windows, this.recurrenceLimits);
+        const expanded = expandEffective(event, windows, expansionLimits);
         if (!expanded.ok) return errorForStorage(expanded.error.code === "recurrence-limit" ? "recurrence-limit" : "invalid");
         for (const occurrence of expanded.value) {
           if (!isAdult(this.deps.role) && occurrence.visibility === "adults") continue;
@@ -375,17 +399,14 @@ export class CalendarQueryService {
           if (query.importance !== undefined && occurrence.importance !== query.importance) continue;
           if (query.tags !== undefined && !query.tags.every((tag) => occurrence.tags.has(tag))) continue;
           rows.push({ occurrence, scope, revision: raw.value.revision });
-          if (rows.length > max) {
-            aggregateOverflow = true;
-            break;
-          }
+          if (rows.length > max) return serializedFailure();
         }
-        if (aggregateOverflow) break;
       }
-      if (aggregateOverflow) break;
     }
+    // Paging is deliberately applied only after every authorized effective
+    // row has been collected and ordered. Source order is not a sort key.
     rows.sort((a, b) => compareTuple(tupleFor(a), tupleFor(b)));
-    return { ok: true, value: { rows, aggregateOverflow } };
+    return { ok: true, value: { rows } };
   }
 
   private page(input: unknown, operation: "list" | "search", options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
@@ -400,13 +421,16 @@ export class CalendarQueryService {
     const mode = options.mode ?? "rest";
     const start = cursor?.ok ? cursor.value : undefined;
     const after = collected.value.rows.filter((row) => !start || compareTuple(tupleFor(row), start) > 0);
+    const limit = Math.min(query.limit ?? this.deps.config.query.pageSize, this.deps.config.query.pageSize);
     if (mode === "tool") {
-      if (start || collected.value.aggregateOverflow) return serializedFailure();
+      // Tools cannot represent a continuation. This check is intentionally
+      // independent of maxOccurrences: a complete result larger than one REST
+      // page is still incomplete from the tool's perspective.
+      if (start || after.length > limit) return serializedFailure();
       const complete = after.map((row) => projectOccurrence(row.occurrence, row.scope, row.revision));
       if (!serializeWithinBudget(complete, this.deps.config.output.maxResultChars)) return serializedFailure();
       return { ok: true, value: complete };
     }
-    const limit = Math.min(query.limit ?? this.deps.config.query.pageSize, this.deps.config.query.pageSize);
     const events = after.slice(0, limit).map((row) => projectOccurrence(row.occurrence, row.scope, row.revision));
     const last = after[events.length - 1];
     const hasMore = after.length > events.length;

@@ -220,7 +220,10 @@ describe("calendar mutation boundary", () => {
       signal: controller.signal,
     });
     expect(result).toEqual({ ok: false, error: expect.objectContaining({ code: "aborted" }) });
-    expect(persistence.listBaseEventIds()).toEqual({ ok: true, value: [] });
+    expect(persistence.readBaseCandidates(1, {
+      allDayFrom: "2026-01-01",
+      allDayTo: "2026-01-02",
+    })).toEqual({ ok: true, value: { ids: [], overflow: false } });
     const invalid = mutateCalendarEvent(
       mutation({ operation: "delete", eventId: "x", scope: "all" }),
       persistence,

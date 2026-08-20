@@ -31,7 +31,9 @@ function event(id: string, start: ReturnType<typeof timed> | ReturnType<typeof d
 function persistence(events: CalendarPersistenceEvent[], fail = false): CalendarPersistence {
   const map = new Map(events.map((value) => [value.id, value]));
   return {
-    listBaseEventIds: () => fail ? { ok: false, error: "io-error" } : { ok: true, value: [...map.keys()] },
+    readBaseCandidates: (limit) => fail
+      ? { ok: false, error: "io-error" }
+      : { ok: true, value: { ids: [...map.keys()].slice(0, limit), overflow: map.size > limit } },
     readRaw: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
     read: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
     get: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
@@ -80,6 +82,27 @@ describe("CalendarQueryService", () => {
     expect(defaultScope.ok && defaultScope.value.map((row) => row.eventId)).toEqual(["private"]);
     const all = query.listComplete({ ...range, scope: "all" });
     expect(all.ok && all.value.map((row) => row.eventId)).toEqual(["private", "override"]);
+  });
+
+  it("sorts the complete candidate set instead of trusting source order", () => {
+    const query = service([event("late", day("2026-08-03")), event("early", day("2026-08-01")), event("middle", day("2026-08-02"))]);
+    const result = query.list({ ...range, limit: 3 });
+    expect(result.ok && result.value.events.map((row) => row.eventId)).toEqual(["early", "middle"]);
+    expect(result.ok && result.value.nextCursor).toBeDefined();
+    if (result.ok && result.value.nextCursor) {
+      const second = query.list({ ...range, limit: 3, cursor: result.value.nextCursor });
+      expect(second.ok && second.value.events.map((row) => row.eventId)).toEqual(["late"]);
+    }
+  });
+
+  it("rejects a tool result that needs a REST page even below maxOccurrences", () => {
+    const query = service([event("a", day("2026-08-01")), event("b", day("2026-08-02")), event("c", day("2026-08-03"))]);
+    expect(query.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
+  });
+
+  it("rejects candidate overflow before reading or expanding a base event", () => {
+    const events = Array.from({ length: config.query.maxOccurrences + 1 }, (_, index) => event(`event-${index}`, day("2026-08-01")));
+    expect(service(events).list(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
   });
 
   it("uses deterministic cursors and refuses a cursor for a changed filter shape", () => {
