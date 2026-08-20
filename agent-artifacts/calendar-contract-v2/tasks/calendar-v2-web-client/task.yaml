@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-web-client
 title: Cut the web calendar service over to REST V2
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-rest
   - calendar-v2-contracts
@@ -31,3 +31,4 @@ runtime:
   baseCommit: 7f7cc7f912460ffe628a8b5842b2d87c3b9ce324
   lastRunId: 91928e46-3a7b-4777-8000-1c51fb230489
   completedCommit: 4126195bb1445a6235cf4523d19c5b9ea39d8b32
+  mergedCommit: 2d6b43f0bbd88dc3acc4b856fe6c6def2bb56cfc
