@@ -1,0 +1,18 @@
+schemaVersion: 1
+evaluation: stage-stage-3-domain-services-review
+recordedAt: 2026-08-20T02:53:39.384Z
+entries:
+  - result: 15 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-query.test.ts
+      src/calendar/calendar-mutations.test.ts src/calendar/nudge.test.ts
+  - result: pass
+    command: source scripts/env.sh && cd gateway && bun run typecheck
+  - result: "Synthetic reproduction: tool returned 3 rows at pageSize 2; all-scope
+      REST omitted the earliest household row across both returned pages."
+    command: source scripts/env.sh && bun /tmp/calendar-stage3-query-evidence.ts
+    path: files/3-calendar-stage3-query-evidence.ts
+    checksum: sha256:746d6f7db94513743349b286f832520b1c1df23d9c03c5c28b74d56b0c83a433
+  - result: pass
+    command: git diff --check
+      ca1dcec157993645830a4ec1f2ac825190721453..6daaa64cb4f51c6e6afc24e881d12e28b7fbbaf5

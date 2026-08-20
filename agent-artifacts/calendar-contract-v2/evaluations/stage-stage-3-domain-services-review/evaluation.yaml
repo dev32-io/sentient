@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-3-domain-services
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/calendar/calendar-query.test.ts src/calendar/calendar-mutations.test.ts
@@ -19,6 +19,36 @@ criteria:
   - Mutation authority, revisions, canonical recurrence, and whole-segment
     atomicity
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+  reviewerAgentId: 1605936e-59e2-48e1-8c80-ed2d583953a1
+  reviewedCommit: 6daaa64cb4f51c6e6afc24e881d12e28b7fbbaf5
+findings:
+  - id: STAGE3-001
+    severity: high
+    status: open
+    criterion: Query requirements 5-7 and complete deterministic aggregate/page acceptance
+    location: gateway/src/calendar/calendar-query.ts:377-387,398-413
+    summary: Pre-sort source-order overflow makes REST pages incomplete and
+      permanently skips rows.
+    blocking: true
+  - id: STAGE3-002
+    severity: high
+    status: open
+    criterion: Query requirement 7 complete-or-error tool behavior
+    location: gateway/src/calendar/calendar-query.ts:403-407
+    summary: Tool mode does not reject results that require REST pagination.
+    blocking: true
+  - id: STAGE3-003
+    severity: high
+    status: open
+    criterion: Bounded query work and aggregate early-stop requirements
+    location: gateway/src/calendar/calendar-query.ts:353-368;
+      gateway/src/calendar/calendar-store.ts:424
+    summary: Unbounded base-ID loading and scanning bypass configured work bounds.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-3-domain-services-review/manifest.yaml

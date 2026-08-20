@@ -1,0 +1,11 @@
+import { CalendarQueryService } from "/Users/kevinye/Development/sentient/gateway/src/calendar/calendar-query.ts";
+const config:any={query:{maxDays:31,maxOccurrences:2,pageSize:2},input:{maxTitleChars:80,maxDescriptionChars:200,maxQueryChars:40,maxGroupChars:20,maxTagChars:20,maxTags:5},output:{maxResultChars:10000},recurrence:{maxOccurrences:100,maxDays:366},nudge:{maxPerDay:10},defaultEventTimeZoneId:"UTC"};
+const ev=(id:string,date:string)=>({id,title:id,start:{kind:"all-day",date},visibility:"everyone",importance:"normal",tags:[],exceptions:[],exclusions:[],revision:1,createdAt:"2026-01-01T00:00:00.000Z",updatedAt:"2026-01-01T00:00:00.000Z"});
+const store=(xs:any[])=>{const m=new Map(xs.map(x=>[x.id,x]));return {listBaseEventIds:()=>({ok:true,value:[...m.keys()]}),readRaw:(id:string)=>m.has(id)?({ok:true,value:m.get(id)}):({ok:false,error:"not-found"}),read:(id:string)=>m.has(id)?({ok:true,value:m.get(id)}):({ok:false,error:"not-found"}),get:(id:string)=>m.has(id)?({ok:true,value:m.get(id)}):({ok:false,error:"not-found"}),transaction:()=>({ok:false,error:"not-implemented"}),withTransaction:()=>({ok:false,error:"not-implemented"}),close(){}} as any};
+const range={from:"2026-08-01",to:"2026-08-10"};
+const tool=new CalendarQueryService({private:store([ev("a","2026-08-01"),ev("b","2026-08-02"),ev("c","2026-08-03")]),role:"adult",config:{...config,query:{...config.query,maxOccurrences:10}}});
+console.log("tool-over-page",JSON.stringify(tool.listComplete(range)));
+const rest=new CalendarQueryService({private:store([ev("p8","2026-08-08"),ev("p9","2026-08-09"),ev("p10","2026-08-10")]),household:store([ev("h1","2026-08-01")]),role:"adult",config});
+const first=rest.list({...range,scope:"all"});
+console.log("all-scope-first-page",JSON.stringify(first));
+if(first.ok && first.value.nextCursor) console.log("all-scope-second-page",JSON.stringify(rest.list({...range,scope:"all",cursor:first.value.nextCursor})));
