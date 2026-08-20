@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-following-update
 title: Add atomic this-and-following series updates
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-mutation-core
   - calendar-v2-recurrence
@@ -31,3 +31,4 @@ runtime:
   baseCommit: 4548dc98b51fb44df39a86770231fd9ffac4c898
   lastRunId: 1fc7726a-31be-4a4a-b783-297058617752
   completedCommit: 50d514c8781959c6ee9d65faf823926bbe6b7cd3
+  mergedCommit: 0fcfd686dee683d3d5bf48797b3a1c336b01ec2c
