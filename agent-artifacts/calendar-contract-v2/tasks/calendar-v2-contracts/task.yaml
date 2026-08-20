@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-contracts
 title: Define the calendar V2 domain and wire contracts
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -25,3 +25,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: db9ac6826e92449b5094a097a27b4a0a7f98f502
   lastRunId: d69c2091-57fe-4de3-b1af-88dc84ea3ef1
+  completedCommit: 7062d8a7cd6a643c7c2d76857d5b91f87658206a
