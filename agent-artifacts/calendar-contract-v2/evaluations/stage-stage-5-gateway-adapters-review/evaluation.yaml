@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-5-gateway-adapters
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/bootstrap/product-tools/calendar-provider.test.ts
@@ -22,6 +22,20 @@ criteria:
   - Tool and REST adapters share domain behavior without loopback or hidden-data
     leakage
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+findings:
+  - id: STAGE5-001
+    severity: high
+    status: open
+    criterion: REST V2 paging and proactive model-output limits remain boundary-specific
+    location: gateway/src/calendar/calendar-query.ts:442-446
+    summary: REST paging can return 413 instead of events plus nextCursor because
+      the model-result character cap is applied to the full count-limited
+      aggregate.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-5-gateway-adapters-review/manifest.yaml
