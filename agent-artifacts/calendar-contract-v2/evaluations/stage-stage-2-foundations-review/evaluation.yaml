@@ -25,11 +25,23 @@ criteria:
   - Parallel contributions have non-overlapping source ownership and coherent
     contracts
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
   reviewedCommit: 4b0091951b0fe148bec0657a17c68b03aed255ca
+  managerPrompt: "Repair all six blocking findings and add regression coverage
+    before re-review: order weekly BYDAY slots chronologically relative to the
+    recurrence week anchor so COUNT ordinals are deterministic; preserve
+    fractional seconds in recurrence anchors and every originalStart key; make
+    UNTIL split terminal handling type-aware so all-day values never pass
+    through ISO-instant parsing; normalize structured date-period UNTIL using
+    the configured household/event timezone rather than UTC; strictly validate
+    created_at and updated_at as valid UTC instants before returning persisted
+    rows; and remove the hard-coded 256-character query restriction so the
+    injected max_query_chars configuration (default 512) is authoritative. Rerun
+    every stage-2 check and preserve the reviewed clean-cutover, capability, and
+    privacy boundaries."
 findings:
   - id: F1
     severity: high
