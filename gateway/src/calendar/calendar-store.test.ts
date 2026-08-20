@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Capability } from "../access/capability.js";
-import { openCalendarStore } from "./calendar-store.js";
+import { openCalendarPersistence, openCalendarStore } from "./calendar-store.js";
 import { CALENDAR_SCHEMA_VERSION } from "./schema.js";
-import type { CalendarConfig, StoredCalendarEvent, CalendarEventId, EventTimeZoneId, UtcInstant } from "./types.js";
+import type { CalendarConfig, CalendarPersistenceBaseEvent, StoredCalendarEvent, CalendarEventId, CalendarRevision, EventTimeZoneId, UtcInstant } from "./types.js";
 
 const cfg = {} as CalendarConfig;
 const roots: string[] = [];
@@ -42,15 +42,17 @@ describe("CalendarStore factory", () => {
     expect(existsSync(missing)).toBe(false);
   });
 
-  it("creates the private database, migrates v0, and enables WAL", () => {
+  it("creates the fresh V2 database and enables WAL", () => {
     const base = root();
     const store = openCalendarStore(cap(base), cfg);
-    const db = new Database(join(base, "calendar", "calendar.db"));
+    const db = new Database(join(base, "calendar-v2", "calendar.db"));
     expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(
       CALENDAR_SCHEMA_VERSION,
     );
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
     expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeTruthy();
+    expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'exclusions'").get()).toBeTruthy();
+    expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'exdates'").get()).toBeNull();
     expect(
       db
         .query<{ name: string }, []>("PRAGMA table_info(events)")
@@ -265,8 +267,8 @@ describe("CalendarStore factory", () => {
     expect(store.delete(original.id)).toEqual({ ok: true, value: undefined });
     expect(store.get(original.id)).toEqual({ ok: false, error: "not-found" });
     store.close();
-    const db = new Database(join(base, "calendar", "calendar.db"));
-    for (const table of ["exceptions", "exdates", "tags"]) {
+    const db = new Database(join(base, "calendar-v2", "calendar.db"));
+    for (const table of ["exceptions", "exclusions", "tags"]) {
       expect(
         db
           .query<{ count: number }, [string]>(`SELECT COUNT(*) AS count FROM ${table} WHERE event_id = ?`)
@@ -343,10 +345,78 @@ describe("CalendarStore factory", () => {
     store.close();
   });
 
+  it("does not inspect or modify the legacy calendar location", () => {
+    const base = root();
+    const legacyRoot = join(base, "calendar");
+    mkdirSync(legacyRoot, { recursive: true });
+    const legacyPath = join(legacyRoot, "calendar.db");
+    const legacyContents = "legacy-calendar-sentinel";
+    writeFileSync(legacyPath, legacyContents);
+    const store = openCalendarStore(cap(base), cfg);
+    expect(existsSync(join(base, "calendar-v2", "calendar.db"))).toBe(true);
+    expect(readFileSync(legacyPath, "utf8")).toBe(legacyContents);
+    store.close();
+  });
+
+  it("provides revision CAS and explicit child-state operations", () => {
+    const base = root();
+    const persistence = openCalendarPersistence(cap(base), cfg);
+    const created = event("revisioned", { kind: "all-day", date: "2026-04-01" });
+    const baseEvent = { ...created, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent;
+    expect(persistence.transaction((tx) => tx.insertBaseEvent(baseEvent))).toEqual({ ok: true, value: undefined });
+    expect(persistence.transaction((tx) => tx.replaceChildren(created.id, {
+      exceptions: [{ occurrence: created.start, description: null }], exclusions: [], tags: ["z", "a"],
+    }))).toEqual({ ok: true, value: undefined });
+    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 9 as CalendarRevision))).toEqual({ ok: false, error: "conflict" });
+    const unchanged = persistence.read(created.id);
+    expect(unchanged).toMatchObject({ ok: true, value: { revision: 1, tags: ["a", "z"] } });
+    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 1 as CalendarRevision))).toEqual({ ok: true, value: 2 as CalendarRevision });
+    expect(persistence.read(created.id)).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ description: null }] } });
+    persistence.close();
+  });
+
+  it("rolls back successor, child, and revision writes together", () => {
+    const base = root();
+    const created = event("rollback-prefix", { kind: "all-day", date: "2026-05-01" });
+    const adult = openCalendarPersistence(cap(base), cfg);
+    expect(adult.transaction((tx) => tx.insertBaseEvent({ ...created, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({ ok: true, value: undefined });
+    const failing = openCalendarPersistence(cap(base), cfg, {
+      fault: (operation) => { if (operation === "replace-tags") throw new Error("injected sqlite failure"); },
+    });
+    const successor = event("rollback-successor", { kind: "all-day", date: "2026-06-01" });
+    const result = failing.transaction((tx) => {
+      const inserted = tx.insertSuccessor({ ...successor, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent);
+      if (!inserted.ok) return inserted;
+      const revision = tx.compareAndSwapRevision(created.id, 1 as CalendarRevision);
+      if (!revision.ok) return revision;
+      return tx.replaceChildren(created.id, { exceptions: [], exclusions: [], tags: ["partial"] });
+    });
+    expect(result).toEqual({ ok: false, error: "io-error" });
+    expect(failing.read(successor.id)).toEqual({ ok: false, error: "not-found" });
+    expect(failing.read(created.id)).toMatchObject({ ok: true, value: { revision: 1, tags: [] } });
+    failing.close();
+    adult.close();
+  });
+
+  it("keeps the raw hidden-read seam capability-held", () => {
+    const base = root();
+    const adult = openCalendarPersistence(cap(base), cfg);
+    const hidden = event("raw-hidden", { kind: "all-day", date: "2026-07-01" }, { visibility: "adults" });
+    expect(adult.transaction((tx) => tx.insertBaseEvent({ ...hidden, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({ ok: true, value: undefined });
+    adult.close();
+    const child = openCalendarPersistence({ ...cap(base), role: "child" }, cfg);
+    expect(child.read(hidden.id)).toEqual({ ok: false, error: "not-found" });
+    expect(child.readRaw(hidden.id)).toMatchObject({ ok: true, value: { id: hidden.id, visibility: "adults" } });
+    child.close();
+    const authorized = openCalendarPersistence(cap(base), cfg);
+    expect(authorized.readRaw(hidden.id).ok).toBe(true);
+    authorized.close();
+  });
+
   it("leaves an ahead-of-binary database untouched", () => {
     const base = root();
-    const dbPath = join(base, "calendar", "calendar.db");
-    mkdirSync(join(base, "calendar"), { recursive: true });
+    const dbPath = join(base, "calendar-v2", "calendar.db");
+    mkdirSync(join(base, "calendar-v2"), { recursive: true });
     const db = new Database(dbPath);
     db.exec("PRAGMA journal_mode = DELETE;");
     db.exec(`PRAGMA user_version = ${CALENDAR_SCHEMA_VERSION + 10}`);

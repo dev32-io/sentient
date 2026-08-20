@@ -71,7 +71,7 @@ function applyException(event: StoredCalendarEvent, original: CalendarTime, base
   const start = ex?.start ?? original;
   const end = ex?.end ?? baseEnd;
   const result = occurrence(event, original, start, end);
-  if (ex?.title !== undefined) result.title = ex.title;
+  if (typeof ex?.title === "string") result.title = ex.title;
   return result;
 }
 

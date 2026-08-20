@@ -115,7 +115,7 @@ describe("calendar E2E helpers", () => {
   it("uses a stable sanitized evidence directory and metadata-only evidence API", () => {
     expect(calendarE2EDirectory("run/one", "case secret")).toBe("qa/web/evidence/calendar-e2e/run_one/case_secret");
     expect(calendarE2EPaths("/tmp/users", "/tmp/shared", "u_abc12345").householdCalendarDb).toBe(
-      "/tmp/shared/home/calendar/calendar.db",
+      "/tmp/shared/home/calendar-v2/calendar.db",
     );
   });
 });

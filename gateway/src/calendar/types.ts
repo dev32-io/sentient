@@ -58,9 +58,15 @@ export interface ExceptionOverride {
   /** The occurrence's original start, used as the stable exception key. */
   occurrence: CalendarTime;
   cancelled?: boolean;
+  /** Sparse effective-event fields. Null is an explicit clear. */
   title?: string;
-  start?: CalendarTime;
-  end?: CalendarTime;
+  description?: string | null;
+  start?: CalendarTime | null;
+  end?: CalendarTime | null;
+  visibility?: Visibility | null;
+  importance?: Importance | null;
+  group?: Group | null;
+  tags?: readonly string[] | null;
 }
 
 export interface StoredCalendarEvent {
@@ -122,6 +128,17 @@ export type CalendarStoreError =
 export type CalendarHttpErrorCode = CalendarErrorCode;
 export type CalendarResult<T> = Result<T, CalendarStoreError>;
 export type CalendarEventPatch = Partial<Omit<StoredCalendarEvent, "id" | "createdAt">>;
+/** A normalized V2 row. Child state is deliberately stored separately. */
+export interface CalendarPersistenceBaseEvent extends Omit<StoredCalendarEvent, "exdates" | "exceptions" | "tags"> {
+  revision: CalendarRevision;
+}
+export interface CalendarPersistenceChildren {
+  exceptions: readonly ExceptionOverride[];
+  exclusions: readonly CalendarTime[];
+  tags: readonly string[];
+}
+export interface CalendarPersistenceEvent extends CalendarPersistenceBaseEvent, CalendarPersistenceChildren {}
+
 export interface CalendarStore {
   get(id: CalendarEventId): CalendarResult<StoredCalendarEvent>;
   list(window: CalendarListWindow): CalendarResult<Occurrence[]>;

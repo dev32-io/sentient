@@ -3,7 +3,7 @@ import { join, relative, resolve, sep } from "node:path";
 import type { CreateUserInput, UserProvisioner, UserSummary } from "../admin/user-provisioner.js";
 import { getLog } from "../logging/logger.js";
 
-/** The only household used by the v1 calendar E2E harness. */
+/** The only household used by the calendar V2 E2E harness. */
 export const CALENDAR_E2E_HOUSEHOLD_ID = "home";
 /** Evidence is metadata-only; screenshots and traces are written by the harness. */
 export const CALENDAR_E2E_EVIDENCE_ROOT = "qa/web/evidence/calendar-e2e";
@@ -60,8 +60,8 @@ export function calendarE2EPaths(userDataRoot: string, sharedDataRoot: string, u
   const householdRoot = safeChild(sharedDataRoot, CALENDAR_E2E_HOUSEHOLD_ID);
   return {
     householdId: CALENDAR_E2E_HOUSEHOLD_ID,
-    privateCalendarDb: safeChild(privateRoot, "calendar", "calendar.db"),
-    householdCalendarDb: safeChild(householdRoot, "calendar", "calendar.db"),
+    privateCalendarDb: safeChild(privateRoot, "calendar-v2", "calendar.db"),
+    householdCalendarDb: safeChild(householdRoot, "calendar-v2", "calendar.db"),
   };
 }
 
@@ -75,14 +75,14 @@ async function removeOne(path: string, deps: CalendarE2EHelperDeps, report: Cale
   }
 }
 
-/** Remove both private databases and the shared database. Safe to call repeatedly. */
+/** Remove both private V2 databases and the shared V2 database. Safe to call repeatedly. */
 export async function cleanupCalendarE2E(
   deps: CalendarE2EHelperDeps,
   users?: Pick<DisposableCalendarUsers, "adult" | "child">,
 ): Promise<CalendarCleanupReport> {
   const ids = users ? [users.adult.userId, users.child.userId] : [];
   const paths = ids.flatMap((id) => [calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, id).privateCalendarDb]);
-  paths.push(safeChild(deps.sharedDataRoot, CALENDAR_E2E_HOUSEHOLD_ID, "calendar", "calendar.db"));
+  paths.push(safeChild(deps.sharedDataRoot, CALENDAR_E2E_HOUSEHOLD_ID, "calendar-v2", "calendar.db"));
   const report: CalendarCleanupReport = { removed: [], failures: [] };
   for (const path of new Set(paths)) await removeOne(path, deps, report);
   return report;
