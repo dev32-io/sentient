@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-storage
 title: Build the fresh revisioned calendar V2 persistence boundary
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-contracts
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
   lastRunId: 384ce43e-21cf-4ad4-9207-a06dbff890fb
   completedCommit: c4cf2edfe4e3392f0a76a06b172bda98fa48fed1
+  mergedCommit: e63648f3407946ea89239aba854a81f37c75587b
