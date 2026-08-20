@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: calendar-v2-web-client
+title: Cut the web calendar service over to REST V2
+status: draft
+dependsOn:
+  - calendar-v2-rest
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-v2-web-client
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway/webui && bun run test:unit --
+      src/services/calendar-api.test.ts
+      src/components/calendar/calendar-view.test.tsx
+    - source scripts/env.sh && cd gateway/webui && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
