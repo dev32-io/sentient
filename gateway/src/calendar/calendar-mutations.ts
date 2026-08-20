@@ -11,6 +11,7 @@ import {
   canonicalOriginalKey,
   canonicalizeRecurrence,
   enumerateGeneratedSlots,
+  verifyGeneratedSlot,
 } from "./expand-recurrence.js";
 import {
   type CalendarConfig,
@@ -24,11 +25,14 @@ import {
   type CalendarPersistenceBaseEvent,
   type CalendarPersistenceEvent,
   type CalendarRevision,
+  type ExceptionOverride,
   type CalendarScope,
   type CalendarTime,
   type CalendarTimeInput,
   type Recurrence,
   type UtcInstant,
+  DEFAULT_EVENT_TIME_ZONE,
+  isAdult,
   calendarCreateInputSchema,
   calendarMutationCommandSchema,
 } from "./types.js";
@@ -400,6 +404,258 @@ function validateChildrenAgainstRecurrence(
   return { ok: true, value: undefined };
 }
 
+function occurrenceTimeConfig(event: CalendarPersistenceEvent, config: CalendarConfig): CalendarConfig {
+  if (event.start.kind !== "timed") return config;
+  const zone = event.start.timeZoneId === DEFAULT_EVENT_TIME_ZONE ? config.defaultEventTimeZoneId : event.start.timeZoneId;
+  return { ...config, defaultEventTimeZoneId: zone };
+}
+
+function shiftedOccurrenceEnd(
+  end: CalendarTime | undefined,
+  original: CalendarTime,
+  start: CalendarTime,
+): CalendarTime | undefined {
+  if (!end || end.kind !== original.kind || start.kind !== original.kind) return undefined;
+  if (start.kind === "timed" && original.kind === "timed" && end.kind === "timed") {
+    const duration = Date.parse(end.instant) - Date.parse(original.instant);
+    return { ...start, instant: new Date(Date.parse(start.instant) + duration).toISOString() as UtcInstant };
+  }
+  if (start.kind === "all-day" && original.kind === "all-day" && end.kind === "all-day") {
+    const duration = Date.parse(`${end.date}T00:00:00Z`) - Date.parse(`${original.date}T00:00:00Z`);
+    return { kind: "all-day", date: new Date(Date.parse(`${start.date}T00:00:00Z`) + duration).toISOString().slice(0, 10) as never };
+  }
+  return undefined;
+}
+
+function tagsForOverride(value: ExceptionOverride["tags"]): string[] | null | undefined {
+  if (value === undefined || value === null) return value;
+  return Array.isArray(value) ? [...value] : [...value];
+}
+
+function occurrenceNotFound(): FailureResult {
+  return failure("occurrence_not_found", "the requested calendar occurrence was not found.");
+}
+
+function occurrenceMembershipError(error: { code: string }): FailureResult {
+  if (error.code === "recurrence-limit" || error.code === "unbounded-rrule" || error.code === "missing-timezone" || error.code === "invalid-timezone") return recurrenceError(error);
+  if (error.code === "invalid-rrule") return failure("malformed", "recurrence is invalid; provide one bounded supported recurrence and retry.");
+  return occurrenceNotFound();
+}
+
+function updateOccurrence(
+  command: Extract<MutationCommand, { operation: "update"; applyTo: "this_occurrence" }>,
+  context: CalendarMutationContext,
+): CalendarMutationResult<CalendarMutationValue> {
+  let domainFailure: CalendarError | undefined;
+  const result = context.persistence.transaction((tx) => {
+    const current = tx.readEvent(command.eventId as CalendarEventId);
+    if (!current.ok) {
+      if (current.error === "not-found") domainFailure = occurrenceNotFound().error;
+      return current;
+    }
+    const event = current.value;
+    if (command.expectedRevision !== undefined && Number(event.revision) !== Number(command.expectedRevision)) return { ok: false, error: "conflict" as const };
+    const originalParsed = normalizeCalendarTime(command.originalStart, context.config);
+    if (!originalParsed.ok) {
+      domainFailure = originalParsed.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const original = originalParsed.value;
+    if (!event.recurrence) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const membership = verifyGeneratedSlot(event, original, recurrenceLimits(context.config));
+    if (!membership.ok) {
+      domainFailure = occurrenceMembershipError(membership.error).error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const key = canonicalOriginalKey(original);
+    if (event.exclusions.some((value) => canonicalOriginalKey(value) === key)) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const existing = event.exceptions.find((value) => canonicalOriginalKey(value.occurrence) === key);
+    if (existing?.cancelled) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const currentVisibility = existing?.visibility ?? event.visibility;
+    if (context.persistence.role !== undefined && !isAdult(context.persistence.role) && currentVisibility === "adults") {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const changes = command.changes;
+    const timeConfig = occurrenceTimeConfig(event, context.config);
+    let nextStart = existing?.start ?? undefined;
+    if (changes.start !== undefined) {
+      const normalized = normalizeCalendarTime(changes.start, timeConfig);
+      if (!normalized.ok) {
+        domainFailure = normalized.error;
+        return { ok: false, error: "invalid" as const };
+      }
+      nextStart = normalized.value;
+    }
+    let nextEnd: CalendarTime | null | undefined = existing?.end;
+    if ("end" in changes) {
+      if (changes.end === null) nextEnd = null;
+      else {
+        const normalized = normalizeCalendarTime(changes.end, timeConfig, { boundary: "end" });
+        if (!normalized.ok) {
+          domainFailure = normalized.error;
+          return { ok: false, error: "invalid" as const };
+        }
+        nextEnd = normalized.value;
+      }
+    }
+    const effectiveStart = nextStart ?? original;
+    const effectiveEnd = nextEnd === null
+      ? undefined
+      : nextEnd ?? shiftedOccurrenceEnd(event.end, event.start, effectiveStart);
+    const timing = validateEffectiveTiming(effectiveStart, effectiveEnd);
+    if (!timing.ok) {
+      domainFailure = timing.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const eventZone = event.start.kind === "timed" && event.start.timeZoneId === DEFAULT_EVENT_TIME_ZONE
+      ? context.config.defaultEventTimeZoneId
+      : event.start.kind === "timed" ? event.start.timeZoneId : undefined;
+    if (
+      event.start.kind !== effectiveStart.kind ||
+      (eventZone !== undefined && effectiveStart.kind === "timed" && effectiveStart.timeZoneId !== eventZone) ||
+      (eventZone !== undefined && effectiveEnd?.kind === "timed" && effectiveEnd.timeZoneId !== eventZone)
+    ) {
+      domainFailure = failure("invalid_time", "the occurrence timing must remain anchored to the event timezone; correct start/end and retry.").error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const nextTitle = changes.title ?? existing?.title ?? event.title;
+    const nextDescription = "description" in changes
+      ? changes.description === null ? undefined : changes.description
+      : existing?.description === null ? undefined : existing?.description ?? event.description;
+    const nextGroup = "group" in changes
+      ? changes.group === null ? undefined : changes.group
+      : existing?.group === null ? undefined : existing?.group ?? event.group;
+    const existingTags = existing?.tags === null ? [] : tagsForOverride(existing?.tags) ?? [...event.tags];
+    const nextTags = changes.tags !== undefined ? changes.tags : existingTags;
+    const metadata = validateCalendarInputLimits(
+      {
+        title: nextTitle,
+        ...(nextDescription !== undefined ? { description: nextDescription } : {}),
+        ...(nextGroup !== undefined ? { group: nextGroup } : {}),
+        tags: nextTags,
+      },
+      context.config,
+    );
+    if (!metadata.ok) {
+      domainFailure = metadata.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    if (context.persistence.role !== undefined && !isAdult(context.persistence.role) && (changes.visibility ?? existing?.visibility ?? event.visibility) === "adults") {
+      // A child may edit a visible private occurrence, but must not receive or
+      // infer a hidden effective target through the mutation result.
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+
+    const merged: ExceptionOverride = { occurrence: original };
+    const title = changes.title ?? existing?.title;
+    if (title !== undefined) merged.title = title;
+    if (changes.description !== undefined) merged.description = changes.description;
+    else if (existing?.description !== undefined) merged.description = existing.description;
+    if (nextStart !== undefined) merged.start = nextStart;
+    if (changes.end === null) merged.end = null;
+    else if (changes.end !== undefined && nextEnd !== undefined) merged.end = nextEnd;
+    else if (existing?.end !== undefined) merged.end = existing.end;
+    if (changes.visibility !== undefined) merged.visibility = changes.visibility;
+    else if (existing?.visibility !== undefined) merged.visibility = existing.visibility;
+    if (changes.importance !== undefined) merged.importance = changes.importance;
+    else if (existing?.importance !== undefined) merged.importance = existing.importance;
+    if (changes.group !== undefined) merged.group = changes.group;
+    else if (existing?.group !== undefined) merged.group = existing.group;
+    if (changes.tags !== undefined) merged.tags = changes.tags;
+    else if (existing?.tags !== undefined) merged.tags = tagsForOverride(existing.tags) ?? null;
+
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    const revision = tx.compareAndSwapRevision(event.id, event.revision);
+    if (!revision.ok) return revision;
+    const exceptions = event.exceptions.filter((value) => canonicalOriginalKey(value.occurrence) !== key);
+    exceptions.push(merged);
+    const replaced = tx.replaceExceptions(event.id, exceptions);
+    if (!replaced.ok) return replaced;
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    return {
+      ok: true,
+      value: { operation: "update", appliedTo: "this_occurrence", eventId: event.id, resultingRevision: revision.value } as unknown as CalendarMutationValue,
+    };
+  });
+  if (!result.ok) {
+    if (isAborted(context.signal)) return aborted();
+    if (domainFailure) return { ok: false, error: domainFailure };
+    return storeError(result.error);
+  }
+  return result;
+}
+
+function deleteOccurrence(
+  command: Extract<MutationCommand, { operation: "delete"; applyTo: "this_occurrence" }>,
+  context: CalendarMutationContext,
+): CalendarMutationResult<CalendarMutationValue> {
+  let domainFailure: CalendarError | undefined;
+  const result = context.persistence.transaction((tx) => {
+    const current = tx.readEvent(command.eventId as CalendarEventId);
+    if (!current.ok) {
+      if (current.error === "not-found") domainFailure = occurrenceNotFound().error;
+      return current;
+    }
+    const event = current.value;
+    if (command.expectedRevision !== undefined && Number(event.revision) !== Number(command.expectedRevision)) return { ok: false, error: "conflict" as const };
+    const originalParsed = normalizeCalendarTime(command.originalStart, context.config);
+    if (!originalParsed.ok) {
+      domainFailure = originalParsed.error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const original = originalParsed.value;
+    if (!event.recurrence) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const membership = verifyGeneratedSlot(event, original, recurrenceLimits(context.config));
+    if (!membership.ok) {
+      domainFailure = occurrenceMembershipError(membership.error).error;
+      return { ok: false, error: "invalid" as const };
+    }
+    const key = canonicalOriginalKey(original);
+    const existing = event.exceptions.find((value) => canonicalOriginalKey(value.occurrence) === key);
+    if (existing?.cancelled || (context.persistence.role !== undefined && !isAdult(context.persistence.role) && existing?.visibility === "adults")) {
+      domainFailure = occurrenceNotFound().error;
+      return { ok: false, error: "invalid" as const };
+    }
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    const revision = tx.compareAndSwapRevision(event.id, event.revision);
+    if (!revision.ok) return revision;
+    const exceptions = event.exceptions.filter((value) => canonicalOriginalKey(value.occurrence) !== key);
+    exceptions.push({ occurrence: original, cancelled: true });
+    const exclusions = event.exclusions.filter((value) => canonicalOriginalKey(value) !== key);
+    // Remove an EXDATE before inserting the cancelled exception: each child
+    // replacement validates against the other child table inside the same
+    // transaction, so the intermediate state must not contain both forms.
+    const replacedExclusions = tx.replaceExclusions(event.id, exclusions);
+    if (!replacedExclusions.ok) return replacedExclusions;
+    const replacedExceptions = tx.replaceExceptions(event.id, exceptions);
+    if (!replacedExceptions.ok) return replacedExceptions;
+    if (isAborted(context.signal)) return { ok: false, error: "conflict" as const };
+    return { ok: true, value: { operation: "delete", appliedTo: "this_occurrence", eventId: event.id } as CalendarMutationValue };
+  });
+  if (!result.ok) {
+    if (isAborted(context.signal)) return aborted();
+    if (domainFailure) return { ok: false, error: domainFailure };
+    return storeError(result.error);
+  }
+  return result;
+}
+
 function updateWholeSeries(
   command: Extract<MutationCommand, { operation: "update"; applyTo: "entire_series" }>,
   context: CalendarMutationContext,
@@ -630,7 +886,11 @@ export function mutateCalendarEvent(
   const scopeResult = validateScope(context, "scope" in value ? (value.scope ?? "private") : "private");
   if (!scopeResult.ok) return scopeResult;
   const scope = scopeResult.value;
-  if (value.applyTo !== "entire_series") {
+  if (value.applyTo === "this_occurrence") {
+    if (value.operation === "update") return updateOccurrence(value, context);
+    return deleteOccurrence(value, context);
+  }
+  if (value.applyTo === "this_and_following") {
     const target = context.persistence.read(value.eventId as CalendarEventId);
     if (!target.ok) return storeError(target.error);
     if (!target.value.recurrence)

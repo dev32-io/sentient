@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Capability, ResourceClass } from "../access/capability.js";
+import type { UserRole } from "@sentient/protocol";
 import {
   DEFAULT_EVENT_TIME_ZONE,
   isAdult,
@@ -70,6 +71,8 @@ export interface CalendarCandidateBatch {
 export interface CalendarPersistence {
   /** The attenuated resource selected when this persistence handle was opened. */
   readonly scope?: "private" | "household";
+  /** Role stamped into the capability, used for effective occurrence visibility. */
+  readonly role?: UserRole;
   read(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   get(id: CalendarEventId): CalendarResult<CalendarPersistenceEvent>;
   /** Read a bounded, conservatively windowed candidate set. The store reads max+one rows to signal overflow. */
@@ -459,6 +462,7 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
 
   return {
     scope: cap.resource === "calendar-household" ? "household" : "private",
+    role: cap.role,
     read: (id) => usable(() => authorized(id, false)),
     get: (id) => usable(() => authorized(id, false)),
     readBaseCandidates,

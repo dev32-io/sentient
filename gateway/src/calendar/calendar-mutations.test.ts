@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Capability } from "../access/capability.js";
 import { createCalendarEvent, mutateCalendarEvent } from "./calendar-mutations.js";
 import { openCalendarPersistence } from "./calendar-store.js";
+import { createCalendarQueryService } from "./calendar-query.js";
 import type {
   CalendarConfig,
   CalendarCreateInput,
@@ -208,6 +209,119 @@ describe("calendar mutation boundary", () => {
       value: { title: "synthetic event", revision: 1 },
     });
     failing.close();
+  });
+
+  it("updates one occurrence sparsely, preserves identity, and cancels only that slot", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(
+      createInput({
+        description: "base description",
+        end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+        recurrence: { frequency: "weekly", weekdays: ["monday"], count: 3 },
+        group: "base",
+        tags: ["base"],
+      }),
+      persistence,
+      config,
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const original = "2026-01-12T14:00:00.000Z";
+    const updated = mutateCalendarEvent(mutation({
+      operation: "update",
+      eventId: created.value.eventId,
+      applyTo: "this_occurrence",
+      originalStart: original,
+      expectedRevision: 1,
+      changes: {
+        title: "moved occurrence",
+        description: "override description",
+        start: "2026-01-12T16:00:00.000Z",
+        visibility: "adults",
+        importance: "pinned",
+        group: "override",
+        tags: ["override"],
+      },
+    }), persistence, config);
+    expect(updated).toEqual({ ok: true, value: expect.objectContaining({ appliedTo: "this_occurrence", resultingRevision: 2 }) });
+    const raw = persistence.read(created.value.eventId as CalendarEventId);
+    expect(raw).toMatchObject({ ok: true, value: { revision: 2 } });
+    if (!raw.ok) return;
+    const exception = raw.value.exceptions.find((value) => String(value.occurrence.kind === "timed" && value.occurrence.instant) === original);
+    expect(exception).toMatchObject({ title: "moved occurrence", start: { kind: "timed", instant: "2026-01-12T16:00:00.000Z" } });
+
+    const query = createCalendarQueryService({ private: persistence, role: "adult", config });
+    const listed = query.listComplete({ from: "2026-01-01", to: "2026-01-31" });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    const moved = listed.value.find((value) => value.originalStart === original);
+    expect(moved).toMatchObject({
+      eventId: created.value.eventId,
+      originalStart: original,
+      start: "2026-01-12T16:00:00.000Z",
+      title: "moved occurrence",
+      visibility: "adults",
+    });
+    expect(moved?.occurrenceId).toBe(`${created.value.eventId}:${original}`);
+    const cleared = mutateCalendarEvent(mutation({
+      operation: "update",
+      eventId: created.value.eventId,
+      applyTo: "this_occurrence",
+      originalStart: original,
+      expectedRevision: 2,
+      changes: { description: null, end: null, group: null, tags: [] },
+    }), persistence, config);
+    expect(cleared).toEqual({ ok: true, value: expect.objectContaining({ resultingRevision: 3 }) });
+    const clearedState = persistence.read(created.value.eventId as CalendarEventId);
+    expect(clearedState).toMatchObject({ ok: true, value: { exceptions: [{ description: null, end: null, group: null, tags: [] }] } });
+
+    const cancelled = mutateCalendarEvent(mutation({
+      operation: "delete",
+      eventId: created.value.eventId,
+      applyTo: "this_occurrence",
+      originalStart: "2026-01-19T14:00:00.000Z",
+      expectedRevision: 3,
+    }), persistence, config);
+    expect(cancelled).toEqual({ ok: true, value: expect.objectContaining({ appliedTo: "this_occurrence" }) });
+    const repeated = mutateCalendarEvent(mutation({
+      operation: "delete",
+      eventId: created.value.eventId,
+      applyTo: "this_occurrence",
+      originalStart: "2026-01-19T14:00:00.000Z",
+    }), persistence, config);
+    expect(repeated).toMatchObject({ ok: false, error: { code: "occurrence_not_found" } });
+    const after = query.listComplete({ from: "2026-01-01", to: "2026-01-31" });
+    expect(after.ok && after.value.map((value) => String(value.originalStart))).toEqual(["2026-01-05T14:00:00.000Z", original]);
+    persistence.close();
+  });
+
+  it("clears optional occurrence fields and removes a conflicting exdate atomically", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({
+      description: "description",
+      end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 2 },
+      group: "group",
+      tags: ["tag"],
+    }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const second = {
+      kind: "timed",
+      instant: "2026-01-06T14:00:00.000Z",
+      timeZoneId: "America/Toronto",
+    } as unknown as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceExclusions(created.value.eventId as CalendarEventId, [second]))).toEqual({ ok: true, value: undefined });
+    const cancelled = mutateCalendarEvent(mutation({
+      operation: "delete",
+      eventId: created.value.eventId,
+      applyTo: "this_occurrence",
+      originalStart: "2026-01-06T14:00:00.000Z",
+    }), persistence, config);
+    expect(cancelled.ok).toBe(true);
+    const state = persistence.read(created.value.eventId as CalendarEventId);
+    expect(state).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ cancelled: true }] , exclusions: [] } });
+    persistence.close();
   });
 
   it("rejects invalid scopes and aborts before writing without logging content", () => {
