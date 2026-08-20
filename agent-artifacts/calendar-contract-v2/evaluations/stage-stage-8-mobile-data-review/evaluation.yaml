@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-8-mobile-data
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
     --tests '*Calendar*'
@@ -20,11 +20,11 @@ criteria:
     mutation use case
   - Untouched platform UI compatibility and content-free diagnostics
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 187996dd-1067-4e67-a0b2-b45a81b91a34
-  reviewedCommit: d164f404b9bcee505aaa7f406e4b4c7903bdb9bc
+  reviewedCommit: 7ad472858616fd439c90d0038d143c27d2a707a0
   managerPrompt: Repair both mobile-data findings. Whole-series delete convenience
     must preserve the selected event's actual private/household scope and carry
     its current revision as expectedRevision, just as update does; do not
@@ -43,21 +43,20 @@ findings:
   - id: CAL-MOBILE-001
     severity: high
     status: open
-    criterion: Source-level update/delete convenience behavior and typed recurring
-      mutation compatibility
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt:195-204
-    summary: Delete convenience commands omit calendar scope and expected revision,
-      so current household callers target private storage and lose stale
-      conflict protection.
+    criterion: Whole-series delete convenience preserves selected event scope and
+      expected revision for current Android/iOS callers
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:167-175;
+      shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt:199-208
+    summary: "Repair is partial: iOS still discards the selected event scope and
+      revision and calls the unsafe id-only delete adapter."
     blocking: true
   - id: CAL-MOBILE-002
     severity: low
-    status: open
-    criterion: Stable HTTP/domain error mapping
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/data/calendar/CalendarErrorMapper.kt:25-43
-    summary: Calendar 401 responses are AuthError.Server and map to a generic
-      calendar protocol error; the InvalidCredentials branch is unreachable
-      through CalendarHttpClient.
+    status: resolved
+    criterion: Calendar HTTP 401 failures map to stable authentication failures
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/data/calendar/CalendarErrorMapper.kt:36-42
+    summary: 401 Server responses now map to a stable content-free authentication
+      failure.
     blocking: false
 result:
   verdict: fail

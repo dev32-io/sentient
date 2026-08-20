@@ -23,6 +23,7 @@ import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.calendar.Visibility
+import io.sentient.mobilesdk.result.SentientError
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -112,9 +113,31 @@ class CalendarDataTest {
         assertEquals(CalendarMutationScope.ENTIRE_SERIES, repository.lastCommand?.applyTo)
         assertEquals(7, repository.lastCommand?.expectedRevision)
 
-        assertEquals(SentientResult.Success(Unit), useCases.delete("event-1"))
+        assertEquals(SentientResult.Success(Unit), useCases.delete(event))
         assertEquals(CalendarOperation.DELETE, repository.lastCommand?.operation)
         assertEquals(CalendarMutationScope.ENTIRE_SERIES, repository.lastCommand?.applyTo)
+        assertEquals(CalendarScope.HOUSEHOLD, repository.lastCommand?.scope)
+        assertEquals(7, repository.lastCommand?.expectedRevision)
+
+        val privateEvent = event.copy(scope = CalendarScope.PRIVATE, revision = 11)
+        assertEquals(SentientResult.Success(Unit), useCases.delete(privateEvent))
+        assertEquals(CalendarScope.PRIVATE, repository.lastCommand?.scope)
+        assertEquals(11, repository.lastCommand?.expectedRevision)
+    }
+
+    @Test
+    fun stale_delete_conflict_propagates_without_exposing_server_body() = kotlinx.coroutines.test.runTest {
+        val body = "{\"version\":2,\"requestId\":\"r1\",\"error\":{\"code\":\"conflict\",\"message\":\"private title\"}}"
+        val repository = SdkCalendarRepository(
+            RecordingCalendarClient(
+                mutationResult = AuthResult.Failure(AuthError.Server(409, body)),
+            ),
+        )
+        val failure = assertIs<SentientResult.Failure>(
+            CalendarUseCases(repository).delete(event),
+        )
+        assertEquals("This calendar event changed. Refresh and try again.", failure.error.userMessage)
+        assertFalse(failure.error.userMessage.contains("private title"))
     }
 
     @Test
@@ -130,6 +153,22 @@ class CalendarDataTest {
         )
         assertEquals("This calendar event changed. Refresh and try again.", failure.error.userMessage)
         assertFalse(failure.error.userMessage.contains("private title"))
+    }
+
+    @Test
+    fun unauthorized_calendar_failure_is_auth_typed_and_ui_safe() = kotlinx.coroutines.test.runTest {
+        val body = "{\"error\":\"token canary\"}"
+        val repository = SdkCalendarRepository(
+            RecordingCalendarClient(
+                mutationResult = AuthResult.Failure(AuthError.Server(401, body)),
+            ),
+        )
+        val failure = assertIs<SentientResult.Failure>(
+            repository.mutate("event-1", CalendarMutationCommand.delete(CalendarMutationScope.ENTIRE_SERIES)),
+        )
+        assertIs<SentientError.Auth>(failure.error)
+        assertEquals("Your session expired. Please sign in again.", failure.error.userMessage)
+        assertFalse(failure.error.userMessage.contains("token canary"))
     }
 
     @Test
