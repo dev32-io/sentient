@@ -50,15 +50,26 @@ internal suspend fun <T> mapSettingsResponse(
     parse: suspend (HttpResponse) -> T,
 ): AuthResult<T> {
     if (!response.status.isSuccess()) {
-        val body = runCatching { response.bodyAsText() }.getOrDefault("")
+        val body = try {
+            response.bodyAsText()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            ""
+        }
         log.warn("http.error", mapOf("status" to response.status.value))
         return AuthResult.Failure(AuthError.Server(status = response.status.value, body = body))
     }
-    return runCatching { AuthResult.Success(parse(response)) }
-        .getOrElse { e ->
-            log.warn("parse.error", mapOf("type" to "decode"))
-            AuthResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
-        }
+    return try {
+        AuthResult.Success(parse(response))
+    } catch (e: CancellationException) {
+        // Parsing may suspend while consuming the response body. Cancellation
+        // is control flow, never a malformed response or AuthError.Unknown.
+        throw e
+    } catch (e: Throwable) {
+        log.warn("parse.error", mapOf("type" to "decode"))
+        AuthResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
+    }
 }
 
 /** Wraps a client call so a transport failure becomes AuthError.Network, never a throw. */

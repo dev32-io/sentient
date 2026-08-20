@@ -9,6 +9,9 @@ import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
+import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.settings.mapSettingsResponse
+import io.ktor.client.request.get
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
@@ -18,9 +21,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.measureTimeMillis
 
 private val CALENDAR_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
@@ -160,6 +165,72 @@ class CalendarHttpClientTest {
     }
 
     @Test
+    fun calendarChanges_preserveOmissionReplacementAndExplicitClearOnWire() = runTest {
+        val bodies = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            bodies += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            respond(
+                "{\"version\":2,\"requestId\":\"r-wire\",\"body\":" + calendarFixture.getValue("mutation") + "}",
+                HttpStatusCode.OK,
+                CALENDAR_HEADERS,
+            )
+        }
+        val c = client(engine)
+        withContext(Dispatchers.Default) {
+            c.mutate(
+                "event-example",
+                CalendarMutationCommand.update(
+                    CalendarMutationScope.ENTIRE_SERIES,
+                    CalendarChanges(title = "replacement"),
+                ),
+            )
+            c.mutate(
+                "event-example",
+                CalendarMutationCommand.update(
+                    CalendarMutationScope.ENTIRE_SERIES,
+                    CalendarChanges(
+                        description = CalendarPatch.Clear,
+                        end = CalendarPatch.Clear,
+                        group = CalendarPatch.Clear,
+                        tags = emptyList(),
+                        recurrence = CalendarPatch.Clear,
+                    ),
+                ),
+            )
+            c.mutate(
+                "event-example",
+                CalendarMutationCommand.update(
+                    CalendarMutationScope.ENTIRE_SERIES,
+                    CalendarChanges(
+                        description = CalendarPatch.Value("new description"),
+                        end = CalendarPatch.Value("2026-08-05T10:00-04:00"),
+                        group = CalendarPatch.Value("family"),
+                        recurrence = CalendarPatch.Value(
+                            StructuredRecurrence(
+                                frequency = RecurrenceFrequency.WEEKLY,
+                                weekdays = listOf(Weekday.MONDAY, Weekday.WEDNESDAY),
+                                count = 6,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        }
+        assertEquals(
+            "{\"operation\":\"update\",\"applyTo\":\"entire_series\",\"changes\":{\"title\":\"replacement\"}}",
+            bodies[0],
+        )
+        assertEquals(
+            "{\"operation\":\"update\",\"applyTo\":\"entire_series\",\"changes\":{\"description\":null,\"end\":null,\"group\":null,\"tags\":[],\"recurrence\":null}}",
+            bodies[1],
+        )
+        assertEquals(
+            "{\"operation\":\"update\",\"applyTo\":\"entire_series\",\"changes\":{\"description\":\"new description\",\"end\":\"2026-08-05T10:00-04:00\",\"group\":\"family\",\"recurrence\":{\"frequency\":\"weekly\",\"weekdays\":[\"monday\",\"wednesday\"],\"count\":6}}}",
+            bodies[2],
+        )
+    }
+
+    @Test
     fun convenienceUpdateAndDeleteMapToEntireSeries() = runTest {
         val bodies = mutableListOf<String>()
         val methods = mutableListOf<String>()
@@ -179,7 +250,29 @@ class CalendarHttpClientTest {
         assertEquals(4, assertIs<AuthResult.Success<CalendarEvent>>(updated).value.revision)
         assertIs<AuthResult.Success<Unit>>(withContext(Dispatchers.Default) { client(engine).delete("event-example") })
         assertEquals(listOf("POST", "POST"), methods)
-        assertTrue(bodies.all { it.contains("entire_series") })
+        assertEquals(
+            "{\"operation\":\"update\",\"applyTo\":\"entire_series\",\"changes\":{\"title\":\"Example event\",\"description\":null,\"start\":\"2026-08-05\",\"end\":null,\"visibility\":\"everyone\",\"importance\":\"normal\",\"group\":null,\"tags\":[],\"recurrence\":null},\"scope\":\"private\",\"expectedRevision\":3}",
+            bodies[0],
+        )
+        assertEquals(
+            "{\"operation\":\"delete\",\"applyTo\":\"entire_series\"}",
+            bodies[1],
+        )
+    }
+
+    @Test
+    fun cancellationDuringResponseParsingIsRethrown() = runTest {
+        val engine = MockEngine {
+            respond("{}", HttpStatusCode.OK, CALENDAR_HEADERS)
+        }
+        val httpClient = HttpClient(engine)
+        val response = httpClient.get("https://gateway.example/calendar/events")
+        assertFailsWith<CancellationException> {
+            mapSettingsResponse(createLogger("calendar-test"), response) {
+                throw CancellationException("parser cancelled")
+            }
+        }
+        httpClient.close()
     }
 
     @Test

@@ -53,7 +53,7 @@ class CalendarPrivacyGuardTest {
             "event-example",
             CalendarMutationCommand.update(
                 CalendarMutationScope.ENTIRE_SERIES,
-                CalendarChanges(title = mutation, description = description),
+                CalendarChanges(title = mutation, description = CalendarPatch.Value(description)),
             ),
         )
 

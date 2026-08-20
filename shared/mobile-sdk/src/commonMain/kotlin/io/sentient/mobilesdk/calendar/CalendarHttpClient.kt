@@ -188,14 +188,16 @@ open class CalendarHttpClient(
 
     private fun CalendarEvent.toChanges() = CalendarChanges(
         title = title,
-        description = description,
+        // Update adapters treat the compatibility event as a full replacement:
+        // nullable fields are explicit clears, not accidental omissions.
+        description = description?.let { CalendarPatch.Value(it) } ?: CalendarPatch.Clear,
         start = start.toWireValue(),
-        end = end?.toWireValue(),
+        end = end?.toWireValue()?.let { CalendarPatch.Value(it) } ?: CalendarPatch.Clear,
         visibility = visibility,
         importance = importance,
-        group = group,
+        group = group?.let { CalendarPatch.Value(it) } ?: CalendarPatch.Clear,
         tags = tags,
-        recurrence = recurrence,
+        recurrence = recurrence?.let { CalendarPatch.Value(it) } ?: CalendarPatch.Clear,
     )
 
     private fun eventUrl(id: String) = "$baseUrl$EVENTS_PATH/${id.encodeURLPathPart()}"
