@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: stage-7-clients
 scope:
   workItem: calendar-contract-v2
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -22,8 +22,8 @@ criteria:
   - Source-level whole-series adapters preserve untouched UI compilation
   - Calendar payload and token privacy in client diagnostics
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 3
   reviewerAgentId: 76324f5f-1898-4883-bf7d-81cb576d44a4
   reviewedCommit: 8bba3b8f8c792323a9f70d8fabdad7044ce22af6
@@ -42,6 +42,7 @@ loop:
     error mapping and add a test that cancellation raised during parser
     execution propagates. Rerun all Stage 7 web, KMP calendar/privacy, and
     compile checks."
+  fixerAgentId: b24777b7-d4c3-4293-945f-80f07ce14b18
 findings:
   - id: CAL-V2-KMP-NULL-CHANGES
     severity: high
