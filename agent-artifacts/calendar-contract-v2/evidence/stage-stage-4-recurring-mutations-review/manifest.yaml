@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: stage-stage-4-recurring-mutations-review
+recordedAt: 2026-08-20T03:24:57.097Z
+entries:
+  - result: 62 pass, 0 fail
+    command: focused stage bun test
+    path: files/1-stage4-tests.log
+    checksum: sha256:eb578578ac6ff6d1fc9aceb541ab26fd76a5b97cda38581445abf4a4e22cdc48
+  - result: pass
+    command: gateway typecheck
+    path: files/2-stage4-typecheck.log
+    checksum: sha256:8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+  - result: Successor timing remained on the old schedule for future slots; child
+      mutation of an adults-only overridden slot succeeded.
+    command: runtime timing and visibility probe
+    path: files/3-stage4-probe.log
+    checksum: sha256:725de87f4b85e24546cb4811e36bbde21b6e607404df113631118ad468abbd59
+  - result: Following update on a cancelled slot succeeded and created a successor.
+    command: runtime unavailable-target probe
+    path: files/4-stage4-unavailable-probe.log
+    checksum: sha256:476951da98c7335e0a30a6271b85168dee61c2b723312a8437288e75539c7434

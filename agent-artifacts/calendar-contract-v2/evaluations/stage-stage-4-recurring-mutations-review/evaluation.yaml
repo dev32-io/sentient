@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-4-recurring-mutations
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway && bun test
     src/calendar/calendar-mutations.test.ts src/calendar/calendar-query.test.ts
@@ -21,6 +21,37 @@ criteria:
     and atomic rollback
   - No duplicate, missing, or cross-segment occurrence ownership
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+  reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
+  reviewedCommit: 92d737abcef6cfe704781786da66b947445f0859
+findings:
+  - id: S4-001
+    severity: high
+    status: open
+    criterion: AC-008
+    location: gateway/src/calendar/calendar-mutations.ts:927-950,1001-1037,1052-1065
+    summary: this_and_following start/end changes do not re-anchor successor timing
+      for all following occurrences.
+    blocking: true
+  - id: S4-002
+    severity: high
+    status: open
+    criterion: AC-012
+    location: gateway/src/calendar/calendar-mutations.ts:885-999
+    summary: this_and_following update permits a child to mutate an adults-only
+      effective occurrence.
+    blocking: true
+  - id: S4-003
+    severity: high
+    status: open
+    criterion: Unavailable occurrence failure contract
+    location: gateway/src/calendar/calendar-mutations.ts:885-912,1004-1037
+    summary: this_and_following update accepts a cancelled selected occurrence and
+      creates a successor.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-4-recurring-mutations-review/manifest.yaml
