@@ -72,6 +72,8 @@ evaluations:
     path: evaluations/stage-stage-2-foundations-review/evaluation.yaml
   - id: stage-stage-3-domain-services-review
     path: evaluations/stage-stage-3-domain-services-review/evaluation.yaml
+  - id: stage-stage-4-recurring-mutations-review
+    path: evaluations/stage-stage-4-recurring-mutations-review/evaluation.yaml
 executionStages:
   - id: stage-1-contracts
     tasks:

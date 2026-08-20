@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: stage-stage-4-recurring-mutations-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-4-recurring-mutations
+scope:
+  workItem: calendar-contract-v2
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/calendar/calendar-mutations.test.ts src/calendar/calendar-query.test.ts
+    src/calendar/expand-recurrence.test.ts
+    src/calendar/recurrence-splitter.test.ts src/calendar/calendar-store.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Rich single-occurrence override and canonical cancellation invariants
+  - COUNT and UNTIL split arithmetic including excluded/cancelled slots and DST
+  - Exception/exclusion partitioning, recurrence conflicts, first-slot behavior,
+    and atomic rollback
+  - No duplicate, missing, or cross-segment occurrence ownership
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 3
