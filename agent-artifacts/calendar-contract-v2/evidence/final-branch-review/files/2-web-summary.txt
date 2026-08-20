@@ -1,0 +1,4 @@
+web_tests_typecheck_status=0
+ Test Files  2 passed (2)
+      Tests  11 passed (11)
+$ tsc --noEmit
