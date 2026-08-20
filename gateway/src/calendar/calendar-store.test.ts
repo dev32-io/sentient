@@ -124,10 +124,14 @@ describe("CalendarStore factory", () => {
   });
 
   it("returns recurrence-limit instead of partial occurrences for an oversized bounded rule", () => {
-    const store = openCalendarStore(cap(root()), {
-      recurrence: { maxOccurrences: 3, maxDays: 366 },
-      nudge: { maxPerDay: 10 },
-    });
+    const store = openCalendarStore(cap(root()), Object.freeze({
+      query: Object.freeze({ maxDays: 30, maxOccurrences: 3, pageSize: 10 }),
+      input: Object.freeze({ maxTitleChars: 64, maxDescriptionChars: 256, maxQueryChars: 64, maxGroupChars: 32, maxTagChars: 16, maxTags: 4 }),
+      output: Object.freeze({ maxResultChars: 4000 }),
+      recurrence: Object.freeze({ maxOccurrences: 3, maxDays: 366 }),
+      nudge: Object.freeze({ maxPerDay: 10 }),
+      defaultEventTimeZoneId: "UTC",
+    }));
     const recurring = event("oversized", {
       kind: "timed",
       instant: "2026-01-01T14:00:00.000Z" as UtcInstant,

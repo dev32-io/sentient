@@ -22,7 +22,21 @@ import type { UserStore } from "../../user-auth/user-store.js";
 const ROOT = "/api/v1/calendar";
 const EVENTS = `${ROOT}/events`;
 const HOUSEHOLD_ID = "home";
-const config = { recurrence: { maxOccurrences: 1000, maxDays: 366 }, nudge: { maxPerDay: 10 } } as CalendarConfig;
+const config: CalendarConfig = Object.freeze({
+  query: Object.freeze({ maxDays: 366, maxOccurrences: 250, pageSize: 100 }),
+  input: Object.freeze({
+    maxTitleChars: 512,
+    maxDescriptionChars: 8000,
+    maxQueryChars: 512,
+    maxGroupChars: 128,
+    maxTagChars: 64,
+    maxTags: 32,
+  }),
+  output: Object.freeze({ maxResultChars: 16000 }),
+  recurrence: Object.freeze({ maxOccurrences: 1000, maxDays: 366 }),
+  nudge: Object.freeze({ maxPerDay: 10 }),
+  defaultEventTimeZoneId: "household",
+});
 
 type Scope = "private" | "household";
 export interface CalendarHandlerDeps {
