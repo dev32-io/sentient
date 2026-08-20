@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-occurrence-mutations
 title: Add atomic single-occurrence update and cancellation
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-mutation-core
   - calendar-v2-recurrence
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient
   baseCommit: 8d9d227a1b7f5f3e8c5a4621d43a7489927822c1
   lastRunId: 0192d06d-45ca-41ff-9669-0d0a20c68671
+  completedCommit: bdaa0cea111a623ca21a7066c04a1c5fe5d6a77f
