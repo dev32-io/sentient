@@ -1,0 +1,76 @@
+bun test v1.3.11 (af24e281)
+
+src/calendar/e2e-helpers.test.ts:
+(pass) calendar E2E helpers > provisions an adult and child and isolates their private database paths [1.97ms]
+(pass) calendar E2E helpers > removes private and household databases, and is idempotent [5.26ms]
+(pass) calendar E2E helpers > tears down all resources when the case fails, and repeated teardown is safe [5.36ms]
+(pass) calendar E2E helpers > uses a stable sanitized evidence directory and metadata-only evidence API [0.05ms]
+
+src/calendar/calendar-store.test.ts:
+(pass) CalendarStore factory > gates resource class before touching the path [0.47ms]
+(pass) CalendarStore factory > creates the fresh V2 database and enables WAL [7.80ms]
+(pass) CalendarStore factory > reads and expands recurring events with filters and exceptions [34.63ms]
+(pass) CalendarStore factory > returns recurrence-limit instead of partial occurrences for an oversized bounded rule [19.70ms]
+(pass) CalendarStore factory > expands recurring events stored with the household timezone sentinel [9.75ms]
+(pass) CalendarStore factory > hides adult events from child and guest reads while allowing adult and admin [10.81ms]
+(pass) CalendarStore factory > atomically replaces mutable fields and cascades child rows on delete [9.55ms]
+(pass) CalendarStore factory > round-trips all-day and timed starts through get and list [16.92ms]
+(pass) CalendarStore factory > rejects child and guest household writes at the store gate [13.62ms]
+(pass) CalendarStore factory > allows admin household CRUD [8.25ms]
+(pass) CalendarStore factory > returns not-found for writes to an absent event [12.82ms]
+(pass) CalendarStore factory > does not inspect or modify the legacy calendar location [6.28ms]
+(pass) CalendarStore factory > provides revision CAS and explicit child-state operations [13.22ms]
+(pass) CalendarStore factory > rolls back successor, child, and revision writes together [6.27ms]
+(pass) CalendarStore factory > keeps the raw hidden-read seam capability-held [8.93ms]
+(pass) CalendarStore factory > rejects malformed persisted created and updated instants [13.99ms]
+(pass) CalendarStore factory > leaves an ahead-of-binary database untouched [1.01ms]
+
+src/calendar/calendar-temporal.test.ts:
+(pass) calendar temporal boundary > accepts each approved precision and rejects offset-free or trailing values [0.23ms]
+(pass) calendar temporal boundary > expands year, month, and day periods to all-day boundaries [0.31ms]
+(pass) calendar temporal boundary > preserves timed instants and uses the household zone for recurring anchors [1.02ms]
+(pass) calendar temporal boundary > handles DST boundaries through the configured household timezone [3.64ms]
+(pass) calendar temporal boundary > rejects incompatible, inverted, and over-wide ranges before storage
+(pass) calendar temporal boundary > normalizes event start/end with leap dates and rejects inversion [0.23ms]
+(pass) calendar temporal boundary > uses the injected query limit through the default 512-character boundary [0.02ms]
+(pass) calendar temporal boundary > enforces string and tag limits without echoing supplied content
+(pass) calendar temporal boundary > provides stable original keys for normalized times
+
+src/calendar/types.test.ts:
+(pass) calendar V2 contracts > accepts model-friendly bounded times and rejects CalendarTime objects [0.17ms]
+(pass) calendar V2 contracts > requires exactly one recurrence bound and full weekday names
+(pass) calendar V2 contracts > defines private/household/all reads and private/household writes [0.65ms]
+(pass) calendar V2 contracts > keeps occurrence identity separate from event identity [0.09ms]
+(pass) calendar V2 contracts > requires applyTo and restricts occurrence-local changes [2.49ms]
+(pass) calendar V2 contracts > supports rich clear semantics without allowing forbidden fields
+(pass) calendar V2 contracts > pins V2 envelopes, pages, mutations, and stable errors [1.30ms]
+(pass) calendar V2 contracts > admin is adult-equivalent but has no separate bypass [0.23ms]
+
+src/calendar/recurrence-splitter.test.ts:
+(pass) canonicalizeRecurrence > canonicalizes structured input and deterministically orders weekly weekdays [0.35ms]
+(pass) canonicalizeRecurrence > normalizes date-period UNTIL at the configured event timezone [1.57ms]
+(pass) canonicalizeRecurrence > requires a bound and rejects unsupported constructs [0.47ms]
+(pass) splitRecurrence > counts excluded and cancelled slots in COUNT arithmetic [15.76ms]
+(pass) splitRecurrence > uses originalStart when the selected occurrence was moved [18.66ms]
+(pass) splitRecurrence > does not create an empty prefix at the first slot [11.46ms]
+(pass) splitRecurrence > retains UNTIL on successor and ends prefix at prior generated slot [11.31ms]
+(pass) splitRecurrence > splits all-day UNTIL rules without parsing an all-day terminal as an instant [0.19ms]
+(pass) splitRecurrence > rejects a changed successor rule that would orphan future child state [21.42ms]
+(pass) splitRecurrence > slot enumeration is independent of filtered occurrence output [10.51ms]
+
+src/calendar/expand-recurrence.test.ts:
+(pass) expandRecurrence > expands COUNT weekly BYDAY with inclusive bounds [10.19ms]
+(pass) expandRecurrence > resolves the household timezone sentinel during expansion [3.32ms]
+(pass) expandRecurrence > orders weekly BYDAY slots relative to the DTSTART week anchor [6.95ms]
+(pass) expandRecurrence > does not count pre-DTSTART BYDAY candidates [8.52ms]
+(pass) expandRecurrence > returns recurrence-limit rather than partial occurrences when maxOccurrences is exceeded [5.58ms]
+(pass) expandRecurrence > returns recurrence-limit when the configured day horizon is exceeded [8.98ms]
+(pass) expandRecurrence > preserves fractional seconds in every generated originalStart [7.39ms]
+(pass) expandRecurrence > keeps a timed event at its local hour across DST [3.11ms]
+(pass) expandRecurrence > projects rich overrides without changing the original identity [3.37ms]
+(pass) expandRecurrence > cancellation suppresses only its original slot and validates override kinds [5.59ms]
+
+ 58 pass
+ 0 fail
+ 252 expect() calls
+Ran 58 tests across 6 files. [420.00ms]

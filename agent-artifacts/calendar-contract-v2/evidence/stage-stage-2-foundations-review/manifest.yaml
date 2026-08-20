@@ -1,28 +1,29 @@
 schemaVersion: 1
 evaluation: stage-stage-2-foundations-review
-recordedAt: 2026-08-20T02:23:27.272Z
+recordedAt: 2026-08-20T02:32:42.978Z
 entries:
-  - result: 52 pass, 0 fail
+  - result: 58 pass, 0 fail
     command: source scripts/env.sh && cd gateway && bun test
       src/calendar/types.test.ts src/calendar/calendar-temporal.test.ts
       src/calendar/expand-recurrence.test.ts
       src/calendar/recurrence-splitter.test.ts
       src/calendar/calendar-store.test.ts src/calendar/e2e-helpers.test.ts
-    path: files/1-stage2-gateway-tests.txt
-    checksum: sha256:ca036a2b6a093225d239fcd220f51f3db2af3d3b26f57205f0d5d1d8c3abd0d8
+    path: files/1-stage2-rereview-gateway.txt
+    checksum: sha256:5e64410bd3dca212137bd0f7d945d955547586c98ae891a4dfa5f065d8c5f405
   - result: 10 pass, 0 fail
     command: source scripts/env.sh && cd shared/config && bun test
       src/schemas/orchestrator-config.test.ts
-    path: files/2-stage2-config-tests.txt
-    checksum: sha256:8607d2d476472a07ab2b0e023b0a4c1362d66435b509694e246b30712d423083
+    path: files/2-stage2-rereview-config.txt
+    checksum: sha256:f111538a09a9ded25274109e2ef3c5aeea7db130492264a3eea289180c0912da
   - result: all workspaces exited 0
     command: source scripts/env.sh && bun run typecheck
-    path: files/3-stage2-typecheck.txt
-    checksum: sha256:7b04fd59923a17aa51136f349a76fc1e5b4ac9f0a331db200ab8f260e8a71d73
-  - result: Reproduced nonchronological MO/SU COUNT slots, omitted fractional
-      DTSTART, thrown all-day UNTIL split, and acceptance of malformed persisted
-      timestamps.
-    command: Focused Bun probes against recurrence and persistence boundaries
+    path: files/3-stage2-rereview-typecheck.txt
+    checksum: sha256:6a3ab3e9bcf0792bd8b8d69507f2cbac9dbac46c541e4078fec836eedc5f5029
+  - result: Confirmed F2/F3 repairs; INTERVAL=2 weekly slots used rolling DTSTART
+      windows; all-day changed successor UNTIL used host-zone terminal instead
+      of explicit configured-zone terminal.
+    command: Focused repair probes
+    path: files/4-stage2-rereview-probes.txt
+    checksum: sha256:20ac022e4d839abadcea71764ef09e9eda2fb180a9b11ee8fe1efc7f88f44ea8
   - result: clean
-    command: git diff --check
-      49c71459bbb10b760e2a1b1c60178b69806d7ade..4b0091951b0fe148bec0657a17c68b03aed255ca
+    command: git diff --check 4b009195..8350a63c
