@@ -2,10 +2,7 @@ schemaVersion: 1
 id: calendar-v2-bootstrap
 title: Wire calendar V2 services into sessions and REST
 status: draft
-dependsOn:
-  - calendar-v2-tools
-  - calendar-v2-rest
-  - calendar-v2-config
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
