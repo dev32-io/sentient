@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-rest
 title: Replace the calendar REST API with V2 paging and mutation commands
-status: running
+status: contribution_complete
 dependsOn:
   - calendar-v2-query
   - calendar-v2-occurrence-mutations
@@ -31,3 +31,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-rest
   baseCommit: b9ddfec0746dd72b119b783df148aff5921eb642
   lastRunId: 20df945c-d044-42ee-8ffb-a399fafaafbf
+  completedCommit: f4671f1cb5ffd3887ba3e65abc2012c4ac861645
