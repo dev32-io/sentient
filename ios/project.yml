@@ -24,8 +24,8 @@ targets:
         # mobile release. NOTE — since the 1.0.0 OTA-trigger bump this app-facing
         # release version is its own track, no longer numerically equal to the
         # mobile-sdk/data module source versions (those stayed on the 0.x line).
-        CFBundleShortVersionString: 1.3.0
-        CFBundleVersion: "10"
+        CFBundleShortVersionString: 1.4.0
+        CFBundleVersion: "11"
         # Register bundled custom fonts so UIKit can load them by family name.
         # Filenames MUST match the .ttf files in App/Resources/Fonts/ exactly.
         UIAppFonts:

@@ -15,7 +15,8 @@ plugins {
 // + permission / delegation passthroughs on ChatComponent.
 // Bumped to 0.4.0: lockstep with mobile-sdk 0.4.0 (2.0 memory-branch release).
 // Bumped to 0.5.0: lockstep with mobile-sdk 0.5.0 (mobile interaction reliability).
-version = "0.5.0"
+// Bumped to 0.6.0: lockstep with mobile-sdk 0.6.0 (calendar V2 data APIs).
+version = "0.6.0"
 
 kotlin {
     androidTarget {
