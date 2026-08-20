@@ -2,12 +2,7 @@ schemaVersion: 1
 id: calendar-v2-rest
 title: Replace the calendar REST API with V2 paging and mutation commands
 status: draft
-dependsOn:
-  - calendar-v2-query
-  - calendar-v2-occurrence-mutations
-  - calendar-v2-following-update
-  - calendar-v2-following-delete
-  - calendar-v2-config
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
