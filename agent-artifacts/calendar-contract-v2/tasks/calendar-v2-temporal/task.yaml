@@ -2,8 +2,7 @@ schemaVersion: 1
 id: calendar-v2-temporal
 title: Normalize human calendar time and enforce query/input bounds
 status: draft
-dependsOn:
-  - calendar-v2-contracts
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
