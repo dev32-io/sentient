@@ -503,6 +503,43 @@ function preflightFollowingOccurrence(
   return undefined;
 }
 
+function preflightFollowingUpdateAnchor(
+  command: Extract<MutationCommand, { operation: "update"; applyTo: "this_and_following" }>,
+  context: CalendarMutationContext,
+): FailureResult | undefined {
+  const current = context.persistence.read(command.eventId as CalendarEventId);
+  if (!current.ok) return current.error === "not-found" ? occurrenceNotFound() : storeError(current.error);
+  const event = current.value;
+  if (!event.recurrence || command.originalStart === undefined) return occurrenceNotFound();
+  const timeConfig = occurrenceTimeConfig(event, context.config);
+  const original = normalizeCalendarTime(command.originalStart, timeConfig);
+  if (!original.ok) return failure(original.error.code, original.error.message);
+  const source: StoredCalendarEvent = {
+    ...event,
+    exdates: event.exclusions,
+    exceptions: event.exceptions,
+    tags: new Set(event.tags),
+  };
+  const generated = enumerateGeneratedSlots(source, recurrenceLimits(context.config));
+  if (!generated.ok) return occurrenceMembershipError(generated.error);
+  const selected = generated.value.find((slot) => canonicalOriginalKey(slot.originalStart) === canonicalOriginalKey(original.value));
+  if (!selected) return occurrenceNotFound();
+  let successorStart = selected.originalStart;
+  if (command.changes.start !== undefined) {
+    const requested = normalizeCalendarTime(command.changes.start, timeConfig, { recurring: true });
+    if (!requested.ok) return failure(requested.error.code, requested.error.message);
+    successorStart = requested.value;
+  }
+  const split = splitRecurrence(
+    source,
+    selected.originalStart,
+    command.changes.recurrence === null ? undefined : command.changes.recurrence,
+    recurrenceLimits(context.config),
+    successorStart,
+  );
+  return split.ok ? undefined : { ok: false, error: splitMutationError(split.error) };
+}
+
 function updateOccurrence(
   command: Extract<MutationCommand, { operation: "update"; applyTo: "this_occurrence" }>,
   context: CalendarMutationContext,
@@ -917,6 +954,8 @@ function updateThisAndFollowing(
   if (isAborted(context.signal)) return aborted();
   const unavailable = preflightFollowingOccurrence(command.eventId as CalendarEventId, command.originalStart, context);
   if (unavailable) return unavailable;
+  const invalidAnchor = preflightFollowingUpdateAnchor(command, context);
+  if (invalidAnchor) return invalidAnchor;
   let domainFailure: CalendarError | undefined;
   let recurrenceConflict = false;
   const result = context.persistence.transaction((tx) => {

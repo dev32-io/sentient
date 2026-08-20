@@ -72,6 +72,15 @@ function conflict(message: string): RecurrenceSplitResult<never> {
 function sameTime(a: CalendarTime, b: CalendarTime): boolean {
   return a.kind === b.kind && canonicalOriginalKey(a) === canonicalOriginalKey(b);
 }
+/** Compare generated slots in their persisted temporal domain. Timed slots are
+ * absolute instants (already resolved in the event timezone); all-day slots are
+ * local calendar dates and must not be compared through an offset-bearing instant. */
+function compareGeneratedTime(a: CalendarTime, b: CalendarTime): number | undefined {
+  if (a.kind !== b.kind) return undefined;
+  const aValue = a.kind === "all-day" ? Date.parse(`${a.date}T00:00:00Z`) : Date.parse(a.instant);
+  const bValue = b.kind === "all-day" ? Date.parse(`${b.date}T00:00:00Z`) : Date.parse(b.instant);
+  return Number.isFinite(aValue) && Number.isFinite(bValue) ? aValue - bValue : undefined;
+}
 function recurrenceFromRule(rule: RRule, terminal?: CalendarTime): Recurrence {
   const fields = [`FREQ=${rule.freq}`];
   if (rule.interval !== undefined && rule.interval !== 1) fields.push(`INTERVAL=${rule.interval}`);
@@ -212,7 +221,18 @@ export function splitRecurrence(
     return conflict("successor recurrence does not generate the selected slot");
   }
 
+  // The old segment retains every generated slot before the split point. A
+  // successor that starts at or before its terminal slot would make two
+  // segment identities claim one generated occurrence (or hide a prefix slot).
+  // Check this in the same all-day/timed domain as the generated values before
+  // partitioning any child state.
   const prefixLast = selected.ordinal > 1 ? slots.value[selected.ordinal - 2]?.originalStart : undefined;
+  if (prefixLast) {
+    const successorFirst = candidate.value[0]?.originalStart;
+    const separation = successorFirst ? compareGeneratedTime(prefixLast, successorFirst) : undefined;
+    if (separation === undefined || separation >= 0)
+      return conflict("successor starts at or before the retained prefix terminal slot");
+  }
   if (prefixLast) {
     prefixRecurrence =
       oldRule.count !== undefined

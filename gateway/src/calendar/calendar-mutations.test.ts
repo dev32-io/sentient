@@ -401,6 +401,79 @@ describe("calendar mutation boundary", () => {
     allDay.close();
   });
 
+  it("rejects timed anchor overlap atomically and preserves prefix ownership for a later anchor", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({
+      end: "2026-01-05T10:00:00-05:00" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 4 },
+    }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const past = { kind: "timed", instant: "2026-01-05T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    const future = { kind: "timed", instant: "2026-01-08T14:00:00.000Z", timeZoneId: "America/Toronto" } as unknown as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceChildren(eventId, {
+      exceptions: [{ occurrence: past, title: "past" }], exclusions: [future], tags: ["keep"],
+    }))).toEqual({ ok: true, value: undefined });
+    const before = persistence.read(eventId);
+    for (const start of ["2026-01-06T09:00:00-05:00", "2026-01-05T09:00:00-05:00"]) {
+      const result = mutateCalendarEvent(mutation({
+        operation: "update", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z",
+        changes: { start },
+      }), persistence, config);
+      expect(result).toMatchObject({ ok: false, error: { code: "recurrence_conflict" } });
+      expect(persistence.read(eventId)).toEqual(before);
+      expect(persistence.readBaseCandidates(10, { timedFrom: "2026-01-01T00:00:00.000Z" as never, timedTo: "2026-01-31T00:00:00.000Z" as never })).toMatchObject({ ok: true, value: { ids: [eventId] } });
+    }
+    const later = mutateCalendarEvent(mutation({
+      operation: "update", eventId, applyTo: "this_and_following", originalStart: "2026-01-07T14:00:00.000Z",
+      changes: { start: "2026-01-08T09:00:00-05:00" },
+    }), persistence, config);
+    expect(later).toEqual({ ok: true, value: expect.objectContaining({ eventId, successorEventId: expect.any(String) }) });
+    if (later.ok) {
+      expect(persistence.read(eventId)).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ title: "past" }], exclusions: [] } });
+      const successor = persistence.read((later.value as unknown as { successorEventId: CalendarEventId }).successorEventId);
+      expect(successor).toMatchObject({ ok: true, value: { start: { instant: "2026-01-08T14:00:00.000Z" }, exclusions: [{ instant: "2026-01-09T14:00:00.000Z" }] } });
+    }
+    persistence.close();
+  });
+
+  it("rejects all-day anchor overlap atomically and accepts a later date anchor", () => {
+    const persistence = openCalendarPersistence(cap(root()), config);
+    const created = createCalendarEvent(createInput({
+      start: "2026-01-05" as CalendarCreateInput["start"],
+      end: "2026-01-06" as CalendarCreateInput["end"],
+      recurrence: { frequency: "daily", count: 4 },
+    }), persistence, config);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const eventId = created.value.eventId as CalendarEventId;
+    const past = { kind: "all-day", date: "2026-01-05" } as CalendarTime;
+    const future = { kind: "all-day", date: "2026-01-08" } as CalendarTime;
+    expect(persistence.transaction((tx) => tx.replaceChildren(eventId, {
+      exceptions: [{ occurrence: past, title: "past" }], exclusions: [future], tags: ["keep"],
+    }))).toEqual({ ok: true, value: undefined });
+    const before = persistence.read(eventId);
+    for (const start of ["2026-01-06", "2026-01-05"]) {
+      const result = mutateCalendarEvent(mutation({
+        operation: "update", eventId, applyTo: "this_and_following", originalStart: "2026-01-07",
+        changes: { start },
+      }), persistence, config);
+      expect(result).toMatchObject({ ok: false, error: { code: "recurrence_conflict" } });
+      expect(persistence.read(eventId)).toEqual(before);
+    }
+    const later = mutateCalendarEvent(mutation({
+      operation: "update", eventId, applyTo: "this_and_following", originalStart: "2026-01-07",
+      changes: { start: "2026-01-08" },
+    }), persistence, config);
+    expect(later.ok).toBe(true);
+    if (later.ok) {
+      expect(persistence.read(eventId)).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ title: "past" }], exclusions: [] } });
+      expect(persistence.read((later.value as unknown as { successorEventId: CalendarEventId }).successorEventId)).toMatchObject({ ok: true, value: { start: { date: "2026-01-08" }, exclusions: [{ date: "2026-01-09" }] } });
+    }
+    persistence.close();
+  });
+
   it("rejects child access to hidden effective targets and unavailable split slots before mutation", () => {
     const base = root();
     const writer = openCalendarPersistence(cap(base), config);
