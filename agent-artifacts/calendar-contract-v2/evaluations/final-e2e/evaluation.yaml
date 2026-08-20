@@ -4,12 +4,19 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: passed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: passed
+  reviewerAgentId: 30536928-0078-4987-a32e-4aa4f5f506af
+  reviewedCommit: 65378f1c513bbc25c6c1bf9fdb1afb99bdbe45ec
+findings: []
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/final-e2e/manifest.yaml

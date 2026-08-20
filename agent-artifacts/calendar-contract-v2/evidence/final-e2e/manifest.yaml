@@ -1,0 +1,25 @@
+schemaVersion: 1
+evaluation: final-e2e
+recordedAt: 2026-08-20T05:15:17.985Z
+entries:
+  - result: 178 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test src/calendar
+      src/bootstrap/product-tools/calendar-provider.test.ts
+      src/api/handlers/calendar.test.ts src/bootstrap/phase-services.test.ts
+      src/runtime/session-runtime.test.ts
+    description: Gateway calendar domain, adapter, REST, bootstrap, and lifecycle coverage.
+  - result: 11 tests passed; TypeScript check passed
+    command: source scripts/env.sh && cd gateway/webui && bun run test:unit --
+      src/services/calendar-api.test.ts
+      src/components/calendar/calendar-view.test.tsx && bun run typecheck
+    description: Web V2 service and unchanged calendar view compatibility.
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+      --tests '*Calendar*' --tests '*PrivacyGuard*'
+      :shared:mobile-sdk:compileDebugKotlin
+      :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+      :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin
+    description: Mobile SDK/data calendar/privacy tests and Android/KMP compilation.
+  - result: Clean status; no diff-check errors
+    command: git status --short && git diff --check
+    description: Confirmed evaluated work was not modified.
