@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-contracts
 title: Define the calendar V2 domain and wire contracts
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

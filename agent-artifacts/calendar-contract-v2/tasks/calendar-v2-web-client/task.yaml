@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-web-client
 title: Cut the web calendar service over to REST V2
-status: draft
+status: blocked
 dependsOn:
   - calendar-v2-rest
   - calendar-v2-contracts

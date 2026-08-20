@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-tools
 title: Replace all six model-facing calendar tool adapters
-status: draft
+status: blocked
 dependsOn:
   - calendar-v2-query
   - calendar-v2-occurrence-mutations

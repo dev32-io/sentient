@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-mutation-core
 title: Create the mutation command boundary and whole-event operations
-status: draft
+status: blocked
 dependsOn:
   - calendar-v2-temporal
   - calendar-v2-recurrence
