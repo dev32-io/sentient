@@ -16,11 +16,20 @@ criteria:
   - Calendar scope versus mutation scope and stable occurrence identity
   - Golden fixture completeness with no V1 compatibility parsing
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 3
-  state: awaiting_manager
   reviewerAgentId: f27c3771-4880-47a9-8282-69b8ee9af810
   reviewedCommit: 5fc89c1a7d2557f071a50b506cb34fc466de47a8
+  managerPrompt: "Address all six review findings before re-review. Specifically:
+    add the bounded search query field to the authoritative shared query input;
+    restore documented create defaults for visibility, importance, and tags;
+    allow calendar_get to select an occurrence by originalStart; include
+    CalendarOccurrenceProjection in the response schema; require
+    resultingRevision for mutation results where a record survives while keeping
+    it absent for deletion; make wire RRULE parsing strict and add a populated
+    V1 list fixture rejection test. Preserve the clean V2-only contract and
+    rerun the stage checks."
 findings:
   - id: CAL-V2-001
     severity: high
