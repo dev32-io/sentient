@@ -2,7 +2,9 @@ schemaVersion: 1
 id: calendar-v2-following-delete
 title: Add atomic this-and-following series deletion
 status: draft
-dependsOn: []
+dependsOn:
+  - calendar-v2-mutation-core
+  - calendar-v2-recurrence
 execution:
   resourceClaims: []
   assignment:
