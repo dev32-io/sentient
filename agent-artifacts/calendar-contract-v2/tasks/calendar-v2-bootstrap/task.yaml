@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: calendar-v2-bootstrap
 title: Wire calendar V2 services into sessions and REST
-status: contribution_complete
+status: merged
 dependsOn:
   - calendar-v2-tools
   - calendar-v2-rest
@@ -31,3 +31,4 @@ runtime:
   baseCommit: ba7ad8d4f3a883930202ce86ebf8a77aa26ab3ea
   lastRunId: e2fa5e4f-ad85-40fc-aebf-108f2c799c3b
   completedCommit: 0344bcc064660ecaf33daedc3036e6b6a89a1d46
+  mergedCommit: 619d3ba104b907373b1aee7357e6df4e41b3a6de
