@@ -2,8 +2,7 @@ schemaVersion: 1
 id: calendar-v2-recurrence
 title: Implement effective occurrences and recurrence split arithmetic
 status: draft
-dependsOn:
-  - calendar-v2-contracts
+dependsOn: []
 execution:
   resourceClaims: []
   assignment:
