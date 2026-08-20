@@ -24,4 +24,4 @@ limits:
   maxActiveSubagentsPerSession: 16
   maxSubagentDepth: 1
   protocolNudges: 1
-  repairRounds: 3
+  repairRounds: 6
