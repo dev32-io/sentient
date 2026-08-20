@@ -5,7 +5,7 @@ title: Model-friendly bounded calendar contracts and recurring mutations
 phase: planning
 state: active
 planning:
-  revision: 26
+  revision: 27
 artifacts:
   - id: intent
     type: intent
