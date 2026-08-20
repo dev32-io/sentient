@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-2-foundations
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
     src/calendar/calendar-temporal.test.ts
@@ -25,11 +25,11 @@ criteria:
   - Parallel contributions have non-overlapping source ownership and coherent
     contracts
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 3
+  state: awaiting_manager
   reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
-  reviewedCommit: 8350a63c407b5930338fb2c9cee12765b31a327d
+  reviewedCommit: d4672279ad258d1cff1e70f4e3efecaa25cf260d
   managerPrompt: "Repair the two remaining blocking findings without regressing
     the first repair set. Weekly recurrence must retain RFC-style
     Monday-anchored week periods (WKST=MO): sort BYDAY within that anchored
@@ -47,23 +47,13 @@ findings:
   - id: F4
     severity: high
     status: open
-    criterion: Structured recurrence date-period UNTIL uses configured
-      household/event timezone.
-    location: gateway/src/calendar/expand-recurrence.ts:83-100,111-130;
-      gateway/src/calendar/recurrence-splitter.ts:107-119,182-185
-    summary: UNTIL normalization still has an ambient host-timezone fallback, and
-      all-day structured successor splits cannot receive the configured
-      household timezone.
-    blocking: true
-  - id: F7
-    severity: high
-    status: open
-    criterion: Weekly ordering repair preserves recurrence interval/week semantics
-      and deterministic generated-slot identity.
-    location: gateway/src/calendar/expand-recurrence.ts:301-313
-    summary: Repair changed weekly periods from Monday-anchored RRULE weeks to
-      rolling DTSTART-day windows, causing INTERVAL>1 BYDAY series to generate
-      slots in skipped weeks.
+    criterion: Resolved household/event timezone is threaded through every
+      recurrence expansion and all-day split path.
+    location: gateway/src/api/handlers/calendar.ts:22-38,96-102;
+      gateway/src/calendar/calendar-store.ts:439-446,506-508
+    summary: Default server calendar handling still passes the unresolved household
+      sentinel, so all-day recurring reads fail after the repair removed ambient
+      fallback.
     blocking: true
 result:
   verdict: fail
