@@ -2,7 +2,7 @@ schemaVersion: 1
 id: calendar-contract-v2
 kind: story
 title: Model-friendly bounded calendar contracts and recurring mutations
-phase: execution
+phase: evaluation
 state: active
 planning:
   revision: 61

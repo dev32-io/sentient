@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: stage-1-contracts
 scope:
   workItem: calendar-contract-v2
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
   - source scripts/env.sh && cd gateway && bun run typecheck
@@ -16,6 +16,57 @@ criteria:
   - Calendar scope versus mutation scope and stable occurrence identity
   - Golden fixture completeness with no V1 compatibility parsing
 loop:
-  state: planned
   iteration: 0
   maxIterations: 3
+  state: awaiting_manager
+findings:
+  - id: CAL-V2-001
+    severity: high
+    status: open
+    criterion: Shared bounded list/search input
+    location: gateway/src/calendar/types.ts:295-305
+    summary: calendarQueryInputSchema omits query, so calendar_search cannot use the
+      authoritative shared input.
+    blocking: true
+  - id: CAL-V2-002
+    severity: high
+    status: open
+    criterion: Optional/defaulted create fields
+    location: gateway/src/calendar/types.ts:263-282
+    summary: Create requires visibility, importance, and tags instead of applying
+      documented defaults.
+    blocking: true
+  - id: CAL-V2-003
+    severity: high
+    status: open
+    criterion: Occurrence get by originalStart
+    location: gateway/src/calendar/types.ts:390-394
+    summary: The get request body cannot carry originalStart.
+    blocking: true
+  - id: CAL-V2-004
+    severity: high
+    status: open
+    criterion: Occurrence response projection
+    location: gateway/src/calendar/types.ts:347-351
+    summary: calendarResponseSchema excludes CalendarOccurrenceProjection.
+    blocking: true
+  - id: CAL-V2-005
+    severity: high
+    status: open
+    criterion: Resulting revision when a record remains
+    location: gateway/src/calendar/types.ts:353-360
+    summary: resultingRevision is optional even for surviving create/update results.
+    blocking: true
+  - id: CAL-V2-006
+    severity: low
+    status: open
+    criterion: Fixture rejection and strict parsing proof
+    location: gateway/src/calendar/types.test.ts:52-68;
+      gateway/src/calendar/types.ts:160-183
+    summary: Tests do not cover a populated V1 list fixture, and wireRRuleSchema
+      accepts unknown keys.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-stage-1-contracts-review/manifest.yaml
