@@ -8,7 +8,7 @@
 
 - Every approved temporal precision normalizes deterministically.
 - Missing, impossible, offset-free timed, incompatible, inverted, and over-wide values fail before a store is called with an actionable stable code.
-- Date-period expansion uses the household timezone rather than the host's implicit timezone.
+- Date-period expansion and recurring wall-clock anchoring use the configured household timezone rather than the host's implicit timezone or a fixed offset.
 - No validation message or diagnostic log includes calendar content.
 
 ## Boundary Proof
