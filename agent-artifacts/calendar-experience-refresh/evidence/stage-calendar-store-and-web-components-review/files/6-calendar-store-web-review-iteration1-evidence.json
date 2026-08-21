@@ -1,0 +1,144 @@
+{
+  "matrixEntries": 16,
+  "viewportMatrixComplete": true,
+  "narrowChecks": [
+    {
+      "view": "day",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 285.828125,
+        "height": 44
+      }
+    },
+    {
+      "view": "day",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 635.015625,
+        "height": 44
+      }
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      }
+    }
+  ],
+  "comparisonArtifacts": [
+    "comparison-month-1024x900.png",
+    "comparison-month-1440x1000.png",
+    "comparison-month-390x844.png",
+    "comparison-month-768x900.png"
+  ],
+  "productionViews": [
+    "day",
+    "month",
+    "week",
+    "year"
+  ],
+  "referenceArtifacts": [
+    "reference-1024x900.png",
+    "reference-1440x1000.png",
+    "reference-390x844.png",
+    "reference-768x900.png"
+  ]
+}

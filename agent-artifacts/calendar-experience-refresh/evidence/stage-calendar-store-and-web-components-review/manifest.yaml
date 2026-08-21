@@ -1,6 +1,6 @@
 schemaVersion: 1
 evaluation: stage-calendar-store-and-web-components-review
-recordedAt: 2026-08-21T00:34:30-07:00
+recordedAt: 2026-08-21T07:43:38.996Z
 entries:
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
@@ -12,9 +12,21 @@ entries:
     command: source scripts/env.sh && bun run --filter @sentient/webui build
   - result: passed
     command: source scripts/env.sh && git diff --check
-  - result: 4 reference PNGs, 16 production PNGs, and 4 side-by-side Month comparisons captured at exact viewports
-    command: Chrome DevTools Protocol capture of sentient-design/design/web/calendar.html and gateway/webui/calendar-evidence.html
-  - result: exact viewport and scrollWidth/target measurements recorded for Day, Week, Month, and Year
-    command: agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files/scroll-width-evidence.json
-  - result: comparison method and intentional prototype-fixture content difference recorded
-    command: agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files/visual-comparison.md
+  - result: 16 production entries cover all four views at all four required
+      viewports; narrow Month/Week have seven columns, no horizontal overflow,
+      compact controls, and minimum 44x44 targets
+    command: python3 generated sanitized matrix summary
+    description: Sanitized responsive evidence summary generated outside the repository.
+    path: files/6-calendar-store-web-review-iteration1-evidence.json
+    checksum: sha256:42c755927040eb9f7bd62d9e5e6151012c1a6656d9e6077d967485259fc48272
+  - result: Only comparison-month-1024x900.png, comparison-month-1440x1000.png,
+      comparison-month-390x844.png, and comparison-month-768x900.png exist
+    command: find
+      agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files
+      -name 'comparison-*.png'
+    path: files/7-visual-comparison.md
+    checksum: sha256:e87fb36877df5897d9612fb31cfc67e38a0d3cc7f741f62e8059048f3a14ba61
+  - result: canvasDateSelect/canvasMonthSelect use onDateChange fallback;
+      onAnchorDateChange is not included
+    command: nl -ba gateway/webui/src/components/calendar/calendar-shell.tsx | sed
+      -n '958,981p'
