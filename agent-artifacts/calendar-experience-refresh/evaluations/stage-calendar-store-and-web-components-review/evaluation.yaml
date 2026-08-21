@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-store-and-web-components
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -28,8 +28,8 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
   reviewedCommit: ae6359d4d2a2db86922ad0deb01e156e2713dc9c
@@ -48,6 +48,7 @@ loop:
     collapsed controls. Also correct Week/Month/Year weekday placement and
     labels to consistently honor locale and weekStartsOn, with focused tests.
     Run all stage checks and return for automatic re-review.
+  fixerAgentId: baa80db0-6a7c-4fb4-94c3-979aa35cb9fc
 findings:
   - id: CAL-STORE-OBS-001
     severity: high
