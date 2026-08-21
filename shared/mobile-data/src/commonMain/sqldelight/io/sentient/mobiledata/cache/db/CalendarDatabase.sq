@@ -173,6 +173,24 @@ WHERE account_id = ?
   AND window_end = ?
   AND timezone_input = ?;
 
+touchSnapshot:
+UPDATE calendar_month_snapshot
+SET last_accessed_at = ?
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+setSnapshotFreshness:
+UPDATE calendar_month_snapshot
+SET freshness = ?
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
 insertOccurrence:
 INSERT INTO calendar_occurrence(
   account_id,

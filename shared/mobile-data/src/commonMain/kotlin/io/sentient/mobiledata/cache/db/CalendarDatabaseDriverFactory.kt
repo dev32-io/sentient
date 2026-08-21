@@ -23,8 +23,8 @@ fun interface CalendarDatabaseDriverFactory {
 class CalendarDatabaseHandle internal constructor(
     /** The injected platform driver, exposed for transaction and listener seams. */
     val driver: SqlDriver,
-    /** The generated typed database bound to [driver]. */
-    val database: CalendarDatabase = CalendarDatabase(driver),
+    /** The generated typed database bound to [driver]. Kept internal behind the cache store. */
+    internal val database: CalendarDatabase = CalendarDatabase(driver),
 ) {
     private var isClosed: Boolean = false
 

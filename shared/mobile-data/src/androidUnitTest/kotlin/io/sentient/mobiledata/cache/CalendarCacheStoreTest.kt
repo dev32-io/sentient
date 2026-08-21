@@ -1,0 +1,295 @@
+package io.sentient.mobiledata.cache
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.sentient.mobiledata.cache.db.CalendarDatabase
+import io.sentient.mobiledata.cache.db.openCalendarDatabase
+import io.sentient.mobilesdk.calendar.CalendarScope
+import io.sentient.mobilesdk.calendar.EffectiveOccurrence
+import io.sentient.mobilesdk.calendar.Importance
+import io.sentient.mobilesdk.calendar.RecurrenceFrequency
+import io.sentient.mobilesdk.calendar.StructuredRecurrence
+import io.sentient.mobilesdk.calendar.Visibility
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class CalendarCacheStoreTest {
+    @Test
+    fun `complete replacement emits once and preserves raw V2 temporal identity`() = runTest {
+        val fixture = Fixture()
+        try {
+            val initial = assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window))
+            assertNull(initial.value)
+
+            val initialFlow = fixture.store.observeSnapshot(fixture.window).first()
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(initialFlow).value)
+            val firstObserved = CompletableDeferred<Unit>()
+            val observations = async(start = CoroutineStart.UNDISPATCHED) {
+                fixture.store.observeSnapshot(fixture.window).take(2).onEach { firstObserved.complete(Unit) }.toList()
+            }
+            firstObserved.await()
+            val occurrence = timedOccurrence()
+            val replacement = fixture.store.replaceSnapshot(
+                window = fixture.window,
+                occurrences = listOf(occurrence),
+                fetchedAt = 10L,
+                lastAccessedAt = 11L,
+            )
+            assertIs<CalendarCacheResult.Success<Unit>>(replacement)
+
+            val values = observations.await()
+            assertEquals(2, values.size)
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(values[0]).value)
+            val snapshot = assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(values[1]).value
+            assertEquals(10L, snapshot?.fetchedAt)
+            assertEquals(11L, snapshot?.lastAccessedAt)
+            assertEquals(occurrence, snapshot?.occurrences?.single())
+            assertEquals("2026-06-14T09:30:00-07:00", snapshot?.occurrences?.single()?.originalStart)
+            assertEquals("2026-06-14T10:30:00-06:00", snapshot?.occurrences?.single()?.start)
+            assertEquals("2026-06-14T11:30:00-06:00", snapshot?.occurrences?.single()?.end)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `invalid replacement does not replace the previous complete snapshot`() = runTest {
+        val fixture = Fixture()
+        try {
+            val original = timedOccurrence(eventId = "old-event", occurrenceId = "old-occurrence")
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.replaceSnapshot(fixture.window, listOf(original), fetchedAt = 1L),
+            )
+
+            val failure = assertIs<CalendarCacheResult.Failure>(
+                fixture.store.replaceSnapshot(
+                    fixture.window,
+                    listOf(original, original),
+                    fetchedAt = 2L,
+                ),
+            )
+            assertEquals(CalendarCacheFailureReason.INVALID_SNAPSHOT, failure.error.reason)
+            val retained = assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value
+            assertEquals(listOf(original), retained?.occurrences)
+            assertEquals(1L, retained?.fetchedAt)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `database failure during replacement rolls back the previous complete snapshot`() = runTest {
+        val fixture = Fixture()
+        try {
+            val original = timedOccurrence(eventId = "old-event", occurrenceId = "old-occurrence")
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.replaceSnapshot(fixture.window, listOf(original), fetchedAt = 1L),
+            )
+            fixture.driver.execute(
+                null,
+                """
+                CREATE TRIGGER fail_calendar_occurrence_insert
+                BEFORE INSERT ON calendar_occurrence
+                BEGIN
+                  SELECT RAISE(ABORT, 'synthetic failure');
+                END
+                """.trimIndent(),
+                0,
+            )
+
+            val failure = assertIs<CalendarCacheResult.Failure>(
+                fixture.store.replaceSnapshot(
+                    fixture.window,
+                    listOf(original.copy(eventId = "new-event", occurrenceId = "new-occurrence")),
+                    fetchedAt = 2L,
+                ),
+            )
+            assertEquals(CalendarCacheFailureReason.DATABASE, failure.error.reason)
+            val retained = assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value
+            assertEquals(listOf(original), retained?.occurrences)
+            assertEquals(1L, retained?.fetchedAt)
+        } finally {
+            fixture.driver.execute(null, "DROP TRIGGER IF EXISTS fail_calendar_occurrence_insert", 0)
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `preferences round trip supported controls and retain absent facets`() = runTest {
+        val fixture = Fixture()
+        try {
+            val preferences = CalendarCachePreferences(
+                view = io.sentient.mobiledata.calendar.CalendarView.WEEK,
+                anchorDate = "2026-06-14",
+                scopes = listOf(CalendarScope.PRIVATE, CalendarScope.HOUSEHOLD),
+                groups = listOf("Absent group", "Family"),
+                tags = listOf("old-tag", "meal"),
+                importance = Importance.IMPORTANT,
+                searchText = "breakfast query",
+                updatedAt = 22L,
+            )
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.writePreferences(preferences))
+            val observed = assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(fixture.store.readPreferences()).value
+            assertEquals(preferences.copy(groups = listOf("Absent group", "Family"), tags = listOf("meal", "old-tag")), observed)
+
+            val initialPreference = fixture.store.observePreferences().first()
+            assertEquals(
+                preferences.copy(tags = listOf("meal", "old-tag")),
+                assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(initialPreference).value,
+            )
+            val firstPreferenceObserved = CompletableDeferred<Unit>()
+            val preferenceFlow = async(start = CoroutineStart.UNDISPATCHED) {
+                fixture.store.observePreferences().take(2).onEach { firstPreferenceObserved.complete(Unit) }.toList()
+            }
+            firstPreferenceObserved.await()
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.writePreferences(preferences.copy(view = io.sentient.mobiledata.calendar.CalendarView.YEAR, updatedAt = 23L)),
+            )
+            val emissions = preferenceFlow.await()
+            assertEquals(2, emissions.size)
+            assertEquals(io.sentient.mobiledata.calendar.CalendarView.YEAR, assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(emissions.last()).value?.view)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `namespace switch and purge isolate rows and preferences`() = runTest {
+        val fixture = Fixture()
+        try {
+            val value = timedOccurrence()
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.replaceSnapshot(fixture.window, listOf(value), fetchedAt = 1L))
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.writePreferences(CalendarCachePreferences(anchorDate = "2026-06-14", searchText = "private text")),
+            )
+
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.switchNamespace(CalendarCacheNamespace("account-b", "backend-a"), purgePrevious = false),
+            )
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value)
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(fixture.store.readPreferences()).value)
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.replaceSnapshot(fixture.window, listOf(value.copy(eventId = "other")), fetchedAt = 2L))
+
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.switchNamespace(CalendarCacheNamespace("account-a", "backend-a"), purgePrevious = false),
+            )
+            assertEquals(listOf(value), assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value?.occurrences)
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.purgeNamespace())
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value)
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(fixture.store.readPreferences()).value)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `access and freshness metadata update without changing occurrences`() = runTest {
+        val fixture = Fixture()
+        try {
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.replaceSnapshot(fixture.window, listOf(timedOccurrence()), fetchedAt = 4L, lastAccessedAt = 5L))
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.markAccessed(fixture.window, 9L))
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.markFreshness(fixture.window, CalendarCacheFreshness.STALE))
+            val snapshot = assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value
+            assertEquals(9L, snapshot?.lastAccessedAt)
+            assertEquals(CalendarCacheFreshness.STALE, snapshot?.freshness)
+            assertEquals(1, snapshot?.occurrences?.size)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `corrupt payload is a typed failure without partial content`() = runTest {
+        val fixture = Fixture()
+        try {
+            assertIs<CalendarCacheResult.Success<Unit>>(fixture.store.replaceSnapshot(fixture.window, listOf(timedOccurrence()), fetchedAt = 1L))
+            fixture.driver.execute(
+                null,
+                "UPDATE calendar_occurrence SET payload_json = '{broken}' WHERE account_id = 'account-a'",
+                0,
+            )
+            val failure = assertIs<CalendarCacheResult.Failure>(fixture.store.readSnapshot(fixture.window))
+            assertEquals(CalendarCacheFailureReason.DECODE, failure.error.reason)
+            assertTrue("Breakfast" !in failure.toString())
+            assertTrue("query" !in failure.toString())
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `close cancels observation and rejects later operations`() = runTest {
+        val fixture = Fixture()
+        val observation = async {
+            fixture.store.observeSnapshot(fixture.window).collect {
+                awaitCancellation()
+            }
+        }
+        observation.cancelAndJoin()
+        fixture.store.close()
+        val failure = assertIs<CalendarCacheResult.Failure>(fixture.store.readSnapshot(fixture.window))
+        assertEquals(CalendarCacheFailureReason.CLOSED, failure.error.reason)
+        assertTrue(fixture.store.isClosed)
+        fixture.close()
+    }
+
+    private class Fixture {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        private val handle = openCalendarDatabase {
+            CalendarDatabase.Schema.create(driver)
+            driver
+        }
+        val store: CalendarCacheStore = createCalendarCacheStore(
+            handle = handle,
+            namespace = CalendarCacheNamespace("account-a", "backend-a"),
+            observationContext = Dispatchers.Unconfined,
+        )
+        val window = CalendarCacheWindow(
+            windowStart = "2026-06-01",
+            windowEnd = "2026-07-01",
+            timezoneInput = "America/Los_Angeles",
+        )
+
+        fun close() {
+            store.close()
+            // The store owns the handle; this is only a safety net for a failed open.
+        }
+    }
+
+    private fun timedOccurrence(
+        eventId: String = "event-1",
+        occurrenceId: String = "occurrence-1",
+    ) = EffectiveOccurrence(
+        eventId = eventId,
+        occurrenceId = occurrenceId,
+        originalStart = "2026-06-14T09:30:00-07:00",
+        recurring = true,
+        revision = 7,
+        scope = CalendarScope.HOUSEHOLD,
+        title = "Breakfast",
+        description = "Private description",
+        start = "2026-06-14T10:30:00-06:00",
+        end = "2026-06-14T11:30:00-06:00",
+        visibility = Visibility.EVERYONE,
+        importance = Importance.IMPORTANT,
+        group = "Family",
+        tags = listOf("meal", "old-tag"),
+        recurrence = StructuredRecurrence(
+            frequency = RecurrenceFrequency.WEEKLY,
+            interval = 1,
+        ),
+    )
+}
