@@ -289,6 +289,15 @@ class CalendarDatabaseFoundationTest {
     }
 
     @Test
+    fun `driver open failure is typed and content free`() {
+        val failure = assertFailsWith<CalendarDatabaseOpenException> {
+            openCalendarDatabase { error("private database path and payload") }
+        }
+        assertEquals(null, failure.message)
+        assertTrue("private database" !in failure.toString())
+    }
+
+    @Test
     fun `common handle closes the injected driver`() {
         val driver = newInMemoryDriver()
         val handle = openCalendarDatabase { driver }

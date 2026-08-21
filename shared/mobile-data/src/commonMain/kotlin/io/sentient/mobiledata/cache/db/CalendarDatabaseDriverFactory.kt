@@ -1,6 +1,7 @@
 package io.sentient.mobiledata.cache.db
 
 import app.cash.sqldelight.db.SqlDriver
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * Platform-neutral seam for the calendar database driver.
@@ -12,6 +13,12 @@ import app.cash.sqldelight.db.SqlDriver
 fun interface CalendarDatabaseDriverFactory {
     fun create(): SqlDriver
 }
+
+/** Content-free failure from a driver open/migration; the platform cause is not retained. */
+class CalendarDatabaseOpenException : IllegalStateException()
+
+/** Content-free failure from a driver close; the platform cause is not retained. */
+class CalendarDatabaseCloseException : IllegalStateException()
 
 /**
  * A connection-scoped generated database and its driver.
@@ -36,7 +43,12 @@ class CalendarDatabaseHandle internal constructor(
     fun close() {
         if (!isClosed) {
             isClosed = true
-            driver.close()
+            try {
+                driver.close()
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                throw CalendarDatabaseCloseException()
+            }
         }
     }
 }
@@ -45,15 +57,26 @@ class CalendarDatabaseHandle internal constructor(
  * Open a ready-to-use [CalendarDatabase] from a platform-owned driver factory.
  *
  * If generated database binding fails, the newly-created driver is closed before
- * the exception is rethrown so failed opens do not leak a protected connection.
+ * a content-free typed open failure is returned so failed opens do not leak a
+ * protected connection.
  */
 fun openCalendarDatabase(factory: CalendarDatabaseDriverFactory): CalendarDatabaseHandle {
-    val driver = factory.create()
+    val driver = try {
+        factory.create()
+    } catch (failure: Throwable) {
+        if (failure is CancellationException) throw failure
+        throw CalendarDatabaseOpenException()
+    }
     return try {
         CalendarDatabaseHandle(driver)
     } catch (failure: Throwable) {
-        driver.close()
-        throw failure
+        if (failure is CancellationException) throw failure
+        try {
+            driver.close()
+        } catch (closeFailure: Throwable) {
+            if (closeFailure is CancellationException) throw closeFailure
+        }
+        throw CalendarDatabaseOpenException()
     }
 }
 

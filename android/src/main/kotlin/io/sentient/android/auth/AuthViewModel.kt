@@ -5,8 +5,8 @@
 // dispatch(AuthIntent). Side work (REST listUsers/login, token save) runs in
 // viewModelScope. Navigation to chat is NOT modelled here — AppNavHost's login
 // destination watches DisplayNameStore.name and navigates to chat when it appears.
-// On a successful login we save the token + displayName; the nav layer reacts and
-// enters the chat route, which resolves the ChatComponent + connects the SDK.
+// On a successful login we save the token, explicit server user id, and display
+// name; the nav layer reacts only after identity + display state are present.
 //
 // PIN is NEVER logged. Auto-submit fires once 4 digits are entered.
 // ---------------------------------------------------------------------------
@@ -20,6 +20,7 @@ import io.sentient.android.sdk.DisplayNameStore
 import io.sentient.mobilesdk.auth.AuthClient
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
+import io.sentient.mobilesdk.protocol.AuthUser
 import io.sentient.mobilesdk.auth.AuthUserLite
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.secure.SecureTokenStore
@@ -70,6 +71,8 @@ class AuthViewModel(
     private val authClientProvider: () -> AuthClient = { AppDependencies.authClient },
     private val tokenStore: SecureTokenStore = AppDependencies.tokenStore,
     private val displayNameStore: DisplayNameStore = DisplayNameHolder.store,
+    /** Receives the server-authenticated identity; never infer it from display data or tokens. */
+    private val onAuthenticated: (AuthUser) -> Unit = {},
 ) : ViewModel() {
     private val log = createLogger("android", "auth-viewmodel")
 
@@ -131,15 +134,22 @@ class AuthViewModel(
         viewModelScope.launch {
             when (val result = authClientProvider().login(user.userId, pin)) {
                 is AuthResult.Success -> {
-                    log.info("login.ok", mapOf("userId" to user.userId))
+                    val authenticated = result.value.user
+                    if (authenticated.userId.isBlank()) {
+                        log.warn("login.rejected", mapOf("reason" to "missing-authenticated-id"))
+                        _state.update {
+                            it.copy(submitting = false, pin = "", error = "Something went wrong. Please try again.")
+                        }
+                        return@launch
+                    }
+                    log.info("login.ok", mapOf("userId" to authenticated.userId))
                     tokenStore.save(result.value.token)
-                    // Persist the display name for the post-login chat / history
-                    // headers (this VM's selectedUser is reset after login). Display
-                    // name, not a secret — kept out of the token path. Mirrors iOS
-                    // AuthModel.performLogin → displayNameStore.save. AppNavHost's
-                    // login destination watches the name and navigates to chat, which
-                    // resolves the ChatComponent and connects the SDK.
-                    displayNameStore.save(user.displayName)
+                    // Persist presentation data separately from the explicit server
+                    // identity. The callback is the only transport into the
+                    // authenticated UserSessionManager boundary, and runs first so
+                    // navigation cannot build a session from display-name state.
+                    onAuthenticated(authenticated)
+                    displayNameStore.save(authenticated.displayName)
                 }
                 is AuthResult.Failure -> {
                     log.warn("login.failed", mapOf("error" to result.error::class.simpleName))

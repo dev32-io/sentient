@@ -83,7 +83,9 @@ object AppDependencies {
             buildTimeAllowSelfSigned = io.sentient.android.BuildConfig.DEBUG,
         )
         require(r is ResolvedBackend.Configured) { "AuthClient accessed while backend unconfigured" }
-        log.info("build-auth-client", mapOf("gatewayWsUrl" to r.gatewayWsUrl))
+        // Keep diagnostics structural: the configured URL may contain sensitive
+        // user-info in custom builds, so never log it.
+        log.info("build-auth-client", mapOf("configured" to true))
         return AuthClient(
             gatewayWsUrl = r.gatewayWsUrl,
             httpClient = buildAuthHttpClient(r.allowSelfSignedDevHost),

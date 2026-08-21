@@ -3,8 +3,9 @@
 //
 // Models the "logged-in user": owns ONE ChatComponent (+ its SentientSdk + a
 // session CoroutineScope), lazily built on first access and background-connected.
-// shutdown() (logout) disconnects clearSession=true, cancels the scope, and nulls
-// the component so the next login rebuilds a fresh SDK/connection.
+// It also owns one CalendarExperience/database for the same authenticated lifetime.
+// shutdown() purges/closes that calendar boundary before cancelling the scope and
+// nulling the components so the next login rebuilds a fresh session.
 //
 // Replaces the old per-chat-entry SdkSessionFactory.create() + MobileSession: the
 // SDK now lives for the duration of a login, and switching conversation is a
@@ -21,15 +22,29 @@ import android.content.Context
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ResolvedBackend
 import io.sentient.android.backend.resolveBackend
+import io.sentient.android.calendar.AndroidCalendarDatabaseDriverFactory
+import io.sentient.android.calendar.CalendarSessionState
+import io.sentient.android.calendar.CalendarSessionUnavailableReason
+import io.sentient.android.calendar.calendarCacheNamespace
+import io.sentient.android.calendar.normalizedCalendarBackendIdentity
 import io.sentient.android.presence.NetworkChangeObserver
 import io.sentient.android.presence.PresenceCoordinator
 import io.sentient.android.sdk.AppDependencies
+import io.sentient.android.sdk.AuthenticatedUserStore
 import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.sdk.SdkFaultHolder
 import io.sentient.android.sdk.buildAuthHttpClient
 import io.sentient.android.sdk.buildSettingsHttpClient
 import io.sentient.android.update.UpdateDeps
 import io.sentient.android.update.buildUpdateDeps
+import io.sentient.mobiledata.cache.CalendarCacheNamespace
+import io.sentient.mobiledata.cache.CalendarCacheStore
+import io.sentient.mobiledata.cache.createCalendarCacheStore
+import io.sentient.mobiledata.cache.db.CalendarDatabaseHandle
+import io.sentient.mobiledata.cache.db.openCalendarDatabase
+import io.sentient.mobiledata.calendar.CalendarExperience
+import io.sentient.mobiledata.calendar.CalendarExperienceFactory
+import io.sentient.mobiledata.calendar.DefaultCalendarExperienceFactory
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.di.SettingsComponent
 import io.sentient.mobiledata.result.SentientResult
@@ -46,9 +61,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * One per logged-in user (Koin single). Lazily builds the SDK + ChatComponent on
@@ -61,6 +83,8 @@ import kotlinx.coroutines.launch
 class UserSessionManager(
     private val appContext: Context,
     private val presence: PresenceCoordinator? = null,
+    /** Injected by production Koin; nullable keeps the Android boundary testable without Application startup. */
+    private val authenticatedUserStore: AuthenticatedUserStore? = null,
 ) {
     private val log = createLogger("android", "user-session")
 
@@ -69,6 +93,16 @@ class UserSessionManager(
     private var settingsComponent: SettingsComponent? = null
     private var networkObserver: NetworkChangeObserver? = null
     private var updateDeps: UpdateDeps? = null
+    private var authenticatedUserId: String? = null
+    private var activeBackendIdentity: String? = null
+    private var calendarRuntime: CalendarRuntime? = null
+
+    private val _calendarSessionState = MutableStateFlow<CalendarSessionState>(CalendarSessionState.Unauthenticated)
+    /** Typed availability for the Android calendar adapter; unavailable never falls back to another store. */
+    val calendarSessionState: StateFlow<CalendarSessionState> = _calendarSessionState.asStateFlow()
+    val calendarState: StateFlow<CalendarSessionState> get() = calendarSessionState
+    /** Explicit identity selected for the current authenticated lifetime. */
+    val activeUserId: String? get() = authenticatedUserId ?: authenticatedUserStore?.userId?.value
 
     /**
      * The active [ChatComponent]. Builds the SDK + scope on first call and launches
@@ -76,7 +110,34 @@ class UserSessionManager(
      * [shutdown]. Single-threaded build path (Main/composition), so no lock needed.
      */
     fun component(): ChatComponent {
-        chatComponent?.let { return it }
+        val userId = authenticatedUserId
+            ?: authenticatedUserStore?.userId?.value
+            ?: run {
+                _calendarSessionState.value = CalendarSessionState.Unavailable(
+                    CalendarSessionUnavailableReason.AUTHENTICATED_ID_MISSING,
+                )
+                throw IllegalStateException("authenticated user identity is unavailable")
+            }
+        return component(userId)
+    }
+
+    /**
+     * Build the connection scope for the explicit server-authenticated identity.
+     * A different identity is a hard session boundary, never a namespace mutation
+     * inferred from a display name or token.
+     */
+    fun component(explicitUserId: String): ChatComponent {
+        val userId = explicitUserId.trim()
+        require(userId.isNotEmpty()) { "authenticated user id must not be blank" }
+        chatComponent?.let { current ->
+            val currentBackendIdentity = runCatching {
+                normalizedCalendarBackendIdentity(resolveConfiguredBackend().gatewayWsUrl)
+            }.getOrNull()
+            if (authenticatedUserId == userId && currentBackendIdentity == activeBackendIdentity) return current
+            shutdown()
+        }
+        authenticatedUserId = userId
+        authenticatedUserStore?.save(userId)
         log.info("build")
 
         // SDK is built first so the scope's CoroutineExceptionHandler can route an
@@ -89,18 +150,26 @@ class UserSessionManager(
         val handler = CoroutineExceptionHandler { _, e ->
             if (e is CancellationException) return@CoroutineExceptionHandler
             if (isTerminalAuthError(e)) {
-                log.warn("scope.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                log.warn("scope.auth-failure → login", mapOf("errorType" to (e::class.simpleName ?: "unknown")))
                 newSdk.signalAuthExpired()
             } else {
-                log.warn("scope.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+                log.warn("scope.transient-caught (recovered)", mapOf("errorType" to (e::class.simpleName ?: "unknown")))
             }
         }
         val sessionScope =
             CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + handler)
+        val resolvedBackend = resolveConfiguredBackend()
+        activeBackendIdentity = runCatching {
+            normalizedCalendarBackendIdentity(resolvedBackend.gatewayWsUrl)
+        }.getOrNull()
         // No durable resume-cursor store: the SDK's ResumeCursor stays in-memory and
         // defaults to NoOpResumeCursorStore. A cold relaunch takes the recovered:false
         // REST-refetch path (history comes from the gateway/Hermes on attach).
-        newSdk = buildSdk(sessionScope)
+        newSdk = buildSdk(sessionScope, resolvedBackend)
+        // Open/migrate the protected database off the UI dispatcher. The bounded
+        // synchronous wait keeps construction atomic: a route can never observe a
+        // half-built session resource, and an SDK construction failure cannot leak it.
+        val newCalendarRuntime = buildCalendarRuntime(userId, resolvedBackend, sessionScope)
         // `loadAudioPreferences` reads `settingsComponent`, assigned a few lines below:
         // the lambda only runs from `connect()`, by which time it is set. Seeds the chat
         // TTS toggle from the stored profile instead of the SDK's default.
@@ -116,7 +185,30 @@ class UserSessionManager(
         chatComponent = component
         // Settings slice of the SAME connection scope, built beside chat: it binds its
         // live audio-pref fast-save to the chat component and rolls the shared token store.
-        settingsComponent = buildSettingsComponent(component)
+        // Its single CalendarRepository is also the repository given to the shared
+        // CalendarExperience factory; Android creates no parallel calendar data path.
+        val newSettingsComponent = buildSettingsComponent(
+            chat = component,
+            backend = resolvedBackend,
+            calendarExperienceFactory = newCalendarRuntime?.factory,
+        )
+        settingsComponent = newSettingsComponent
+        if (newCalendarRuntime != null) {
+            val experience = newSettingsComponent.calendarExperience
+            if (experience != null) {
+                newCalendarRuntime.experience = experience
+                calendarRuntime = newCalendarRuntime
+                _calendarSessionState.value = CalendarSessionState.Available(
+                    namespace = newCalendarRuntime.namespace,
+                    experience = experience,
+                )
+            } else {
+                newCalendarRuntime.closeAndPurge()
+                _calendarSessionState.value = CalendarSessionState.Unavailable(
+                    CalendarSessionUnavailableReason.DATABASE_OPEN,
+                )
+            }
+        }
 
         // DEBUG-only: expose the live SDK to DebugFaultReceiver so Maestro can arm
         // faults via `adb shell am broadcast`. WeakReference — logout/GC unaffected.
@@ -132,10 +224,10 @@ class UserSessionManager(
                 throw e
             } catch (e: Throwable) {
                 if (isTerminalAuthError(e)) {
-                    log.warn("connect.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                    log.warn("connect.auth-failure → login", mapOf("errorType" to (e::class.simpleName ?: "unknown")))
                     newSdk.signalAuthExpired()
                 } else {
-                    log.warn("connect.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+                    log.warn("connect.transient-caught (recovered)", mapOf("errorType" to (e::class.simpleName ?: "unknown")))
                 }
             }
         }
@@ -152,6 +244,21 @@ class UserSessionManager(
         return component
     }
 
+    /** Capture the server-authenticated id before the session is first resolved by Koin. */
+    fun beginAuthenticatedSession(serverAuthenticatedUserId: String) {
+        val userId = serverAuthenticatedUserId.trim()
+        require(userId.isNotEmpty()) { "authenticated user id must not be blank" }
+        if (chatComponent != null && authenticatedUserId != userId) shutdown()
+        authenticatedUserId = userId
+        authenticatedUserStore?.save(userId)
+    }
+
+    /** Shared experience for the current authenticated lifetime; null means typed unavailable. */
+    fun calendarExperience(): CalendarExperience? = calendarRuntime?.experience
+
+    /** Backend replacement is a logout boundary even when the setup screen owns the route. */
+    fun onBackendReplaced() = performLocalLogout()
+
     /**
      * The active [SettingsComponent] (settings REST clients → repos → usecases), built
      * beside the [ChatComponent] on the same connection scope. Per-route settings VMs
@@ -166,25 +273,86 @@ class UserSessionManager(
     }
 
     /**
+     * Opens the Android database only after an explicit identity and backend have
+     * been captured. Any protected-path/open/migration failure becomes the typed
+     * unavailable state; no alternate path or in-memory replacement is attempted.
+     */
+    private fun buildCalendarRuntime(
+        userId: String,
+        backend: ResolvedBackend.Configured,
+        sessionScope: CoroutineScope,
+    ): CalendarRuntime? {
+        val namespace = try {
+            calendarCacheNamespace(userId, backend.gatewayWsUrl)
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            _calendarSessionState.value = CalendarSessionState.Unavailable(
+                CalendarSessionUnavailableReason.BACKEND_IDENTITY_INVALID,
+            )
+            return null
+        }
+
+        return runBlocking(Dispatchers.IO) {
+            var handle: CalendarDatabaseHandle? = null
+            var store: CalendarCacheStore? = null
+            var transferred = false
+            try {
+                val openedHandle = openCalendarDatabase(AndroidCalendarDatabaseDriverFactory(appContext))
+                handle = openedHandle
+                val openedStore = createCalendarCacheStore(
+                    handle = openedHandle,
+                    namespace = namespace,
+                    observationContext = Dispatchers.IO,
+                )
+                store = openedStore
+                val factory: CalendarExperienceFactory = DefaultCalendarExperienceFactory(
+                    cacheStore = openedStore,
+                    scope = sessionScope,
+                )
+                transferred = true
+                CalendarRuntime(namespace = namespace, store = openedStore, factory = factory)
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                _calendarSessionState.value = CalendarSessionState.Unavailable(
+                    CalendarSessionUnavailableReason.DATABASE_OPEN,
+                )
+                null
+            } finally {
+                if (!transferred) {
+                    store?.close()
+                    handle?.close()
+                }
+            }
+        }
+    }
+
+    /**
      * Builds the settings slice: a DEDICATED long-timeout HttpClient (Hermes-restart
      * apply blocks multi-seconds), the resolved host, the shared token store (read per
      * request + rolled on rename), the live audio patch bound to [chat], and logout.
      */
-    private fun buildSettingsComponent(chat: ChatComponent): SettingsComponent {
-        val r = resolveConfiguredBackend()
+    private fun buildSettingsComponent(
+        chat: ChatComponent,
+        backend: ResolvedBackend.Configured,
+        calendarExperienceFactory: CalendarExperienceFactory?,
+    ): SettingsComponent {
         val tokenStore = AppDependencies.tokenStore
         return SettingsComponent(
-            httpClient = buildSettingsHttpClient(r.allowSelfSignedDevHost),
-            gatewayWsUrl = r.gatewayWsUrl,
+            httpClient = buildSettingsHttpClient(backend.allowSelfSignedDevHost),
+            gatewayWsUrl = backend.gatewayWsUrl,
             token = { tokenStore.load() ?: "" },
             liveAudioPatch = chat::patchAudioPreferences,
             onTokenRefreshed = { token -> tokenStore.save(token) },
             onLoggedOut = { performLocalLogout() },
+            calendarExperienceFactory = calendarExperienceFactory,
         )
     }
 
-    private fun buildSdk(sessionScope: CoroutineScope): SentientSdk {
-        val r = resolveConfiguredBackend()
+    private fun buildSdk(
+        sessionScope: CoroutineScope,
+        backend: ResolvedBackend.Configured,
+    ): SentientSdk {
+        val r = backend
         val config = SdkConfig(
             gatewayWsUrl = r.gatewayWsUrl,
             allowSelfSignedDevHost = r.allowSelfSignedDevHost,
@@ -276,26 +444,34 @@ class UserSessionManager(
     }
 
     /**
-     * Local logout teardown for the settings AccountUseCases `onLoggedOut` hook: clear
-     * the token + display name (flips the auth gate) then tear down via [shutdown].
-     * Mirrors the root-screen logout minus navigation (the screen observes the gate).
+     * Local logout teardown for the settings AccountUseCases `onLoggedOut` hook:
+     * dispose the calendar before clearing the explicit identity and auth gate.
+     * That keeps a successor login from racing the predecessor purge.
      */
     fun performLocalLogout() {
         log.info("local-logout")
+        shutdown()
         AppDependencies.tokenStore.clear()
         DisplayNameHolder.store.clear()
-        shutdown()
+        authenticatedUserStore?.clear()
     }
 
     /**
-     * Logout teardown: disconnect (clearSession=true), cancel the session scope, and
-     * null the components so the next [component] call rebuilds a fresh SDK. Idempotent.
+     * Logout teardown. Calendar collectors are invalidated first, then a fresh
+     * bounded non-cancelled context purges the active namespace, closes the
+     * experience/driver, and only then is the session scope cancelled and DI
+     * cleared. Idempotent for route recreation and repeated auth-expiry signals.
      */
     fun shutdown() {
         log.info("shutdown")
         presence?.unbind()
         networkObserver?.stop()
         networkObserver = null
+
+        val oldCalendarRuntime = calendarRuntime
+        calendarRuntime = null
+        oldCalendarRuntime?.closeAndPurge()
+
         chatComponent?.disconnect(clearSession = true)
         chatComponent?.close()
         scope?.cancel()
@@ -303,7 +479,58 @@ class UserSessionManager(
         chatComponent = null
         settingsComponent = null
         scope = null
+        authenticatedUserId = null
+        activeBackendIdentity = null
+        _calendarSessionState.value = CalendarSessionState.Unauthenticated
         // Drop the update deps so a re-login rebuilds them against the current backend.
         updateDeps = null
+    }
+
+    private class CalendarRuntime(
+        val namespace: CalendarCacheNamespace,
+        val store: CalendarCacheStore,
+        val factory: CalendarExperienceFactory,
+        var experience: CalendarExperience? = null,
+    ) {
+        /**
+         * This is deliberately not run on the cancelled session scope. Timeout
+         * cancellation is handled only to guarantee the driver still closes.
+         */
+        fun closeAndPurge() {
+            val currentExperience = experience
+            runBlocking(Dispatchers.IO + NonCancellable) {
+                try {
+                    withTimeout(CALENDAR_SESSION_PURGE_TIMEOUT_MS) {
+                        if (currentExperience != null) {
+                            currentExperience.disposeAndPurge()
+                        } else {
+                            store.purgeNamespace(namespace)
+                        }
+                    }
+                } catch (_: TimeoutCancellationException) {
+                    // The bounded teardown still closes below; no diagnostic carries
+                    // a driver/path/row detail.
+                } catch (failure: Throwable) {
+                    // Logout still clears the session on database failure; never
+                    // rethrow a driver message or payload during teardown.
+                    if (failure is CancellationException) throw failure
+                } finally {
+                    try {
+                        currentExperience?.close()
+                    } catch (failure: Throwable) {
+                        if (failure is CancellationException) throw failure
+                    }
+                    try {
+                        store.close()
+                    } catch (failure: Throwable) {
+                        if (failure is CancellationException) throw failure
+                    }
+                }
+            }
+        }
+    }
+
+    private companion object {
+        const val CALENDAR_SESSION_PURGE_TIMEOUT_MS: Long = 5_000L
     }
 }

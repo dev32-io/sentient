@@ -26,7 +26,9 @@ class BackendConfigStore(context: Context) {
     val config: StateFlow<BackendConfig?> = _config.asStateFlow()
 
     fun save(config: BackendConfig) {
-        log.info("save", mapOf("host" to config.host, "port" to config.port, "security" to config.security.name))
+        // Host input is operator configuration and may be malformed or contain
+        // user-info; keep diagnostics structural rather than echoing it.
+        log.info("save", mapOf("port" to config.port, "security" to config.security.name))
         prefs.edit()
             .putString(KEY_HOST, config.host)
             .putInt(KEY_PORT, config.port)

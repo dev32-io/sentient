@@ -78,6 +78,9 @@ android {
 dependencies {
     implementation(project(":shared:mobile-sdk"))
     implementation(project(":shared:mobile-data"))
+    // AndroidSqliteDriver is platform-only; shared mobile-data exposes only the
+    // framework-free CalendarDatabaseDriverFactory seam.
+    implementation(libs.sqldelight.android.driver)
     // Koin — runtime DI for the Android UI layer (no KSP). koin-bom aligns the module
     // versions; compose + nav integration give koinViewModel() / koinNavViewModel().
     implementation(platform(libs.koin.bom))
