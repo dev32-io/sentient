@@ -99,7 +99,7 @@ internal class MicCaptureEngine(
             }
             armed = true
         }.onFailure { err ->
-            failReset(err.message ?: "unknown")
+            failReset("audio-setup-failed")
             return
         }
         state.value = VoiceAudioState(Phase.Ready, micActive = true, playbackActive = false)
@@ -147,12 +147,12 @@ internal class MicCaptureEngine(
             error = errVar.ptr,
         )
         if (!categorySet) {
-            log.warn("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-category-failed", mapOf("code" to "audio-session-failure"))
             return@memScoped false
         }
         val activated = s.setActive(true, errVar.ptr)
         if (!activated) {
-            log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-activate-failed", mapOf("code" to "audio-session-failure"))
             return@memScoped false
         }
         log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "default", "vpio" to false))
@@ -163,7 +163,7 @@ internal class MicCaptureEngine(
         runCatching {
             AVAudioSession.sharedInstance()
                 .setActive(false, AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation, null)
-        }.onFailure { log.warn("session-deactivate-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        }.onFailure { log.warn("session-deactivate-failed", mapOf("code" to "audio-operation-failure")) }
     }
 
     private fun ensureRunning(): Boolean {

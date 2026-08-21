@@ -49,16 +49,59 @@ sealed class AuthResult<out T> {
     data class Failure(val error: AuthError) : AuthResult<Nothing>()
 }
 
+enum class AuthServerErrorCode {
+    CONFLICT,
+    RECURRENCE_CONFLICT,
+    FORBIDDEN,
+    NOT_FOUND,
+    OCCURRENCE_NOT_FOUND,
+    INVALID_TIME,
+    INVALID_RANGE,
+    INVALID_SCOPE,
+    INVALID_MUTATION_SCOPE,
+    MALFORMED,
+    UNKNOWN,
+}
+
 sealed class AuthError {
     /** Server returned 401 with body { error: "invalid-credentials" } */
     data object InvalidCredentials : AuthError()
 
-    /** Network or connection failure — no server response available. */
-    data class Network(val cause: String) : AuthError()
+    /** Network or connection failure — only a structural code crosses the boundary. */
+    class Network(@Suppress("UNUSED_PARAMETER") cause: String) : AuthError() {
+        val cause: String = "network-error"
+    }
 
-    /** Server returned 5xx or an unexpected non-2xx status. */
-    data class Server(val status: Int, val body: String) : AuthError()
+    /** Server returned 5xx or an unexpected non-2xx status; body is never retained. */
+    class Server(
+        val status: Int,
+        body: String,
+    ) : AuthError() {
+        /** Stable allowlisted code; response content itself is never retained. */
+        val code: AuthServerErrorCode = authServerErrorCode(body)
+        /** Compatibility property is structural and content-free. */
+        val body: String = "server-error"
+    }
 
-    /** Unexpected response structure or decode failure. */
-    data class Unknown(val cause: String) : AuthError()
+    /** Unexpected response structure or decode failure; exception text is discarded. */
+    class Unknown(@Suppress("UNUSED_PARAMETER") cause: String) : AuthError() {
+        val cause: String = "unknown-error"
+    }
+}
+
+private fun authServerErrorCode(body: String): AuthServerErrorCode {
+    val compact = body.filterNot(Char::isWhitespace)
+    return when {
+        compact.contains("\"code\":\"recurrence_conflict\"") -> AuthServerErrorCode.RECURRENCE_CONFLICT
+        compact.contains("\"code\":\"conflict\"") -> AuthServerErrorCode.CONFLICT
+        compact.contains("\"code\":\"forbidden\"") -> AuthServerErrorCode.FORBIDDEN
+        compact.contains("\"code\":\"occurrence_not_found\"") -> AuthServerErrorCode.OCCURRENCE_NOT_FOUND
+        compact.contains("\"code\":\"not_found\"") -> AuthServerErrorCode.NOT_FOUND
+        compact.contains("\"code\":\"invalid_time\"") -> AuthServerErrorCode.INVALID_TIME
+        compact.contains("\"code\":\"invalid_range\"") -> AuthServerErrorCode.INVALID_RANGE
+        compact.contains("\"code\":\"invalid_scope\"") -> AuthServerErrorCode.INVALID_SCOPE
+        compact.contains("\"code\":\"invalid_mutation_scope\"") -> AuthServerErrorCode.INVALID_MUTATION_SCOPE
+        compact.contains("\"code\":\"malformed\"") -> AuthServerErrorCode.MALFORMED
+        else -> AuthServerErrorCode.UNKNOWN
+    }
 }

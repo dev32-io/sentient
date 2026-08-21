@@ -50,6 +50,7 @@ android {
         applicationId = "io.dev32.sentient"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 15; versionName = "1.4.0"
     }
     buildFeatures { compose = true; buildConfig = true }
@@ -112,4 +113,10 @@ dependencies {
     // JVM unit tests (Layer 1): pure use-cases, mappers, pure models.
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlinx.coroutines.test)
+    // Real AndroidSqliteDriver lifecycle proof runs as an instrumentation test;
+    // JVM unit tests continue to use fakes/in-memory boundaries.
+    androidTestImplementation(libs.kotlin.test)
+    androidTestImplementation("androidx.test:core:1.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

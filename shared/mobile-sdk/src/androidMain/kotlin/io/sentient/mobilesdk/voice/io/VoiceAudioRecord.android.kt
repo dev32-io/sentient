@@ -97,10 +97,10 @@ internal class VoiceAudioRecord(
         // (canonical blocking-call dispatcher, NOT Default's CPU-bound pool).
         withContext(Dispatchers.IO) {
             runCatching { r.stop() } // unblocks the in-flight read()
-                .onFailure { log.warn("stop-record-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+                .onFailure { log.warn("stop-record-failed", mapOf("code" to "operation-failure")) }
             joinReader(thread)
             runCatching { r.release() }
-                .onFailure { log.warn("release-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+                .onFailure { log.warn("release-failed", mapOf("code" to "operation-failure")) }
         }
     }
 
@@ -176,7 +176,7 @@ internal class VoiceAudioRecord(
     private fun joinReader(thread: Thread?) {
         if (thread == null) return
         runCatching { thread.join(READER_JOIN_TIMEOUT_MS) }
-            .onFailure { log.warn("join-interrupted", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("join-interrupted", mapOf("code" to "operation-failure")) }
         if (thread.isAlive) {
             log.warn("reader-still-alive", mapOf("afterMs" to READER_JOIN_TIMEOUT_MS))
             thread.interrupt()

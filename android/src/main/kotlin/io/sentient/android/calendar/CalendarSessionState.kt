@@ -5,6 +5,7 @@ import io.sentient.mobiledata.calendar.CalendarExperience
 
 /** Content-free reasons a protected calendar database cannot be made available. */
 enum class CalendarSessionUnavailableReason {
+    INITIALIZING,
     AUTHENTICATED_ID_MISSING,
     BACKEND_IDENTITY_INVALID,
     DATABASE_OPEN,

@@ -86,7 +86,7 @@ final class VoiceSamplePlayer: NSObject, AVAudioPlayerDelegate, @unchecked Senda
             try session.setCategory(.playback, mode: .default)
             try session.setActive(true)
         } catch {
-            log.warn("session.activate.failed reason=\(error.localizedDescription)")
+            log.warn("session.activate.failed code=audio-session")
         }
     }
 
@@ -94,7 +94,7 @@ final class VoiceSamplePlayer: NSObject, AVAudioPlayerDelegate, @unchecked Senda
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
-            log.warn("session.deactivate.failed reason=\(error.localizedDescription)")
+            log.warn("session.deactivate.failed code=audio-session")
         }
     }
 }

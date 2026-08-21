@@ -38,5 +38,5 @@ fun MobileSdk.initAndroid(context: Context) {
 private fun loadOpusNative() {
     runCatching { OpusLoader.load() }
         .onSuccess { log.info("opus-native-loaded") }
-        .onFailure { log.error("opus-native-load-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        .onFailure { log.error("opus-native-load-failed", mapOf("code" to "operation-failure")) }
 }

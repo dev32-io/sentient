@@ -63,14 +63,14 @@ internal class VoiceAudioPlayback {
     fun start(rate: Int, path: VoiceAudioPath): Boolean {
         val built =
             runCatching { buildTrack(rate, path) }.getOrElse { e ->
-                log.error("track-build-failed", mapOf("cause" to (e.message ?: "unknown")))
+                log.error("track-build-failed", mapOf("code" to "operation-failure"))
                 return false
             }
         track = built
         overflow.reset(ringCapacityBytes(rate))
         enqueuedBytes = 0L
         runCatching { built.play() }.onFailure {
-            log.error("track-play-failed", mapOf("cause" to (it.message ?: "unknown")))
+            log.error("track-play-failed", mapOf("code" to "operation-failure"))
             teardown(built)
             track = null
             return false
@@ -103,7 +103,7 @@ internal class VoiceAudioPlayback {
         }
         enqueuedBytes += bytes.size
         runCatching { writeToTrack(active, bytes) }.onFailure {
-            log.error("play-frame-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to bytes.size))
+            log.error("play-frame-failed", mapOf("code" to "audio-frame-failure", "bytes" to bytes.size))
         }
     }
 
@@ -129,7 +129,7 @@ internal class VoiceAudioPlayback {
             return
         }
         runCatching { active.flush() }
-            .onFailure { log.warn("flush-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("flush-failed", mapOf("code" to "operation-failure")) }
         enqueuedBytes = 0L
         log.info("flush-playback", mapOf("reason" to "barge-in/interrupt drop-guard"))
     }
@@ -240,9 +240,9 @@ internal class VoiceAudioPlayback {
 
     private fun teardown(active: AudioTrack) {
         runCatching { active.stop() }
-            .onFailure { log.warn("track-stop-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("track-stop-failed", mapOf("code" to "operation-failure")) }
         runCatching { active.release() }
-            .onFailure { log.warn("track-release-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("track-release-failed", mapOf("code" to "operation-failure")) }
         resampler = null
     }
 }

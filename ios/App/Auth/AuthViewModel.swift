@@ -96,7 +96,7 @@ final class AuthViewModel: ObservableObject {
                 error = message(for: failure.error)
             }
         } catch {
-            log.warn("loadUsers.threw: \(error)")
+            log.warn("loadUsers.threw code=transport")
             self.error = "Can't reach the server. Check your connection."
         }
         isLoadingUsers = false
@@ -170,7 +170,7 @@ final class AuthViewModel: ObservableObject {
                 error = message(for: failure.error)
             }
         } catch {
-            log.warn("login.threw: \(error)")
+            log.warn("login.threw code=transport")
             isSubmitting = false
             self.pin = ""
             self.error = "Something went wrong. Please try again."

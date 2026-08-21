@@ -83,14 +83,20 @@ class SettingsComponent(
     calendarExperience: CalendarExperience? = null,
     /** Creates the experience after this component has built its single calendar repository. */
     calendarExperienceFactory: CalendarExperienceFactory? = null,
-    /**
-     * Optional session-owned repository. The iOS session supplies the same
-     * stateless repository used to build [calendarExperience], avoiding a
-     * second calendar transport wrapper while preserving source compatibility
-     * for callers that let this component build its own repository.
-     */
+    /** Optional session-owned repository for callers that explicitly own persistence. */
     injectedCalendarRepository: CalendarRepository? = null,
+    /**
+     * Authenticated platform sessions pass this boundary before protected
+     * persistence is opened. Its fail-closed delegate prevents this component
+     * from constructing a network-only calendar repository on setup failure.
+     * Null preserves the legacy, explicitly non-persistent construction path.
+     */
+    calendarDependency: CalendarDependencyBoundary? = null,
 ) {
+    private val protectedCalendarDependency = calendarDependency
+    private val settingsHttpClient = httpClient
+    private val settingsGatewayWsUrl = gatewayWsUrl
+    private val settingsToken = token
     private val log = createLogger("data", "settings", "component")
 
     // ── REST clients (over the single injected HttpClient) ──
@@ -108,17 +114,46 @@ class SettingsComponent(
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
-    val calendarRepository: CalendarRepository = injectedCalendarRepository
-        ?: SdkCalendarRepository(CalendarHttpClient(httpClient, gatewayWsUrl, token))
+    /**
+     * A supplied authenticated boundary is selected before any repository is
+     * constructed. This ordering is the fail-closed guarantee: a protected
+     * session never creates SdkCalendarRepository while its database is absent.
+     */
+    val calendarRepository: CalendarRepository = when {
+        calendarDependency != null -> calendarDependency.repository
+        injectedCalendarRepository != null -> injectedCalendarRepository
+        else -> SdkCalendarRepository(CalendarHttpClient(httpClient, gatewayWsUrl, token))
+    }
+
+    private val legacyCalendarExperience: CalendarExperience? =
+        calendarExperience ?: calendarExperienceFactory?.create(calendarRepository)
+
+    /** Shared cache-first experience; an authenticated boundary may install it asynchronously. */
+    val calendarExperience: CalendarExperience?
+        get() = protectedCalendarDependency?.experience ?: legacyCalendarExperience
+    val experience: CalendarExperience? get() = calendarExperience
+
+    /** Structural dependency state for native/session availability surfaces. */
+    val calendarDependencyState: CalendarDependencyState?
+        get() = protectedCalendarDependency?.state?.value
 
     /**
-     * Shared cache-first calendar seam. Platform session stages inject the
-     * driver-backed experience here; existing settings construction remains
-     * valid before those platform drivers exist.
+     * Completes protected setup after the platform has opened the database.
+     * The repository is created only after setup succeeds and uses this
+     * component's one settings HTTP client.
      */
-    val calendarExperience: CalendarExperience? =
-        calendarExperience ?: calendarExperienceFactory?.create(calendarRepository)
-    val experience: CalendarExperience? get() = calendarExperience
+    fun installCalendarExperience(factory: CalendarExperienceFactory): CalendarExperience? {
+        val dependency = protectedCalendarDependency ?: return null
+        val repository = SdkCalendarRepository(
+            CalendarHttpClient(settingsHttpClient, settingsGatewayWsUrl, settingsToken),
+        )
+        val experience = factory.create(repository)
+        if (!dependency.install(repository, experience)) {
+            experience.close()
+            return null
+        }
+        return experience
+    }
 
     // ── Usecases (VM-facing) ──
     val applyProfileChange = ApplyProfileChangeUseCase(profileRepository, liveAudioPatch)

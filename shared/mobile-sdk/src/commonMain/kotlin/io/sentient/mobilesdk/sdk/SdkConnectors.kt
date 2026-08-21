@@ -235,8 +235,8 @@ class SdkConnectors(
         }
         log.info("loadHistory.start", mapOf("sessionId" to sessionId, "generation" to forGeneration))
         s.launch {
-            val items = runCatching { client.getMessages(sessionId) }.getOrElse { e ->
-                log.warn("loadHistory.error", mapOf("sessionId" to sessionId, "cause" to (e.message ?: "unknown")))
+            val items = runCatching { client.getMessages(sessionId) }.getOrElse {
+                log.warn("loadHistory.error", mapOf("sessionId" to sessionId, "code" to "transport-failure"))
                 emptyList()
             }
             log.info("loadHistory.done", mapOf("sessionId" to sessionId, "count" to items.size, "generation" to forGeneration))

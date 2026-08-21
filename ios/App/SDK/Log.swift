@@ -24,8 +24,26 @@ struct AppLog {
         self.logger = os.Logger(subsystem: "io.sentient.app", category: category)
     }
 
-    func debug(_ message: String) { logger.debug("\(message, privacy: .public)") }
-    func info(_ message: String) { logger.info("\(message, privacy: .public)") }
-    func warn(_ message: String) { logger.warning("\(message, privacy: .public)") }
-    func error(_ message: String) { logger.error("\(message, privacy: .public)") }
+    func debug(_ message: String) { logger.debug("\(sanitize(message), privacy: .public)") }
+    func info(_ message: String) { logger.info("\(sanitize(message), privacy: .public)") }
+    func warn(_ message: String) { logger.warning("\(sanitize(message), privacy: .public)") }
+    func error(_ message: String) { logger.error("\(sanitize(message), privacy: .public)") }
+
+    /// App-side logs do not pass through the Kotlin sanitizer. Remove endpoint
+    /// material and all free-form reason/error fields before os_log emission.
+    private func sanitize(_ message: String) -> String {
+        var value = message
+        let patterns = [
+            #"(?i)\b(?:https?|wss?)://[^\s]+"#,
+            #"(?i)(reason|error|host|url)=.*$"#,
+        ]
+        for pattern in patterns {
+            value = value.replacingOccurrences(
+                of: pattern,
+                with: "[redacted]",
+                options: .regularExpression
+            )
+        }
+        return value
+    }
 }

@@ -36,6 +36,18 @@ import platform.Security.*
 
 private val log = createLogger("transport", "ws", "ios")
 
+private fun normalizedEndpointIdentity(raw: String): String = try {
+    val url = NSURL(string = raw)
+    val scheme = url.scheme?.lowercase()
+    val host = url.host?.lowercase()
+    if (scheme !in setOf("ws", "wss") || host.isNullOrBlank()) return "invalid"
+    val port = url.port?.intValue ?: if (scheme == "wss") 443 else 80
+    val path = url.path.orEmpty().trimEnd('/').removeSuffix("/ws").ifEmpty { "/" }
+    "$scheme|$host|$port|$path"
+} catch (_: Throwable) {
+    "invalid"
+}
+
 /**
  * iOS production [WebSocketEngine] backed by Ktor's Darwin engine.
  *
@@ -46,7 +58,8 @@ private val log = createLogger("transport", "ws", "ios")
 class IosWebSocketEngine : WebSocketEngine {
 
     override suspend fun open(url: String, allowSelfSignedDevHost: Boolean): WebSocketSession {
-        log.info("open", mapOf("url" to url, "allowSelfSignedDevHost" to allowSelfSignedDevHost))
+        val endpoint = normalizedEndpointIdentity(url)
+        log.info("open", mapOf("endpoint" to endpoint, "allowSelfSignedDevHost" to allowSelfSignedDevHost))
 
         val ktorClient = HttpClient(Darwin) {
             engine {
@@ -84,13 +97,13 @@ class IosWebSocketEngine : WebSocketEngine {
         val session: DefaultWebSocketSession = try {
             ktorClient.webSocketSession(url)
         } catch (e: Exception) {
-            log.error("connect-failed", mapOf("url" to url, "error" to e.message))
+            log.error("connect-failed", mapOf("endpoint" to endpoint, "code" to TransportFailureCode.OPEN_FAILED.name))
             ktorClient.close()
             throw e
         }
 
-        log.info("connected", mapOf("url" to url))
-        return KtorIosWebSocketSession(session, ktorClient, url)
+        log.info("connected", mapOf("endpoint" to endpoint))
+        return KtorIosWebSocketSession(session, ktorClient, endpoint)
     }
 }
 
@@ -101,7 +114,7 @@ class IosWebSocketEngine : WebSocketEngine {
 private class KtorIosWebSocketSession(
     private val session: DefaultWebSocketSession,
     private val client: HttpClient,
-    private val url: String,
+    private val endpoint: String,
 ) : WebSocketSession {
 
     override val incoming: Flow<WsIncoming> = channelFlow {
@@ -111,9 +124,10 @@ private class KtorIosWebSocketSession(
                     // Close frame received — log only; break and let closeReason.await()
                     // emit the single terminal WsIncoming.Closed.
                     val reason = frame.readReason()
+                    val code = reason?.code?.toInt() ?: WS_NORMAL_CLOSURE
                     log.info(
                         "close-frame",
-                        mapOf("code" to (reason?.code?.toInt() ?: WS_NORMAL_CLOSURE), "reason" to (reason?.message ?: "")),
+                        mapOf("code" to code, "reasonCode" to structuralCloseReason(code)),
                     )
                     break
                 }
@@ -129,24 +143,21 @@ private class KtorIosWebSocketSession(
             val closeReason = session.closeReason.await()
             if (closeReason != null) {
                 val code = closeReason.code.toInt()
-                val reason = closeReason.message
-                log.info("closed-clean", mapOf("code" to code, "reason" to reason))
-                send(WsIncoming.Closed(code, reason))
+                log.info("closed-clean", mapOf("code" to code, "reasonCode" to structuralCloseReason(code)))
+                send(WsIncoming.Closed(code, structuralCloseReason(code)))
             } else {
-                log.info("closed-no-reason", mapOf("url" to url))
-                send(WsIncoming.Closed(WS_NORMAL_CLOSURE, ""))
+                log.info("closed-no-reason", mapOf("endpoint" to endpoint))
+                send(WsIncoming.Closed(WS_NORMAL_CLOSURE, structuralCloseReason(WS_NORMAL_CLOSURE)))
             }
         } catch (e: ClosedReceiveChannelException) {
             // Normal close of the incoming channel — treat as clean closure.
             val closeReason = session.closeReason.await()
             val code = closeReason?.code?.toInt() ?: WS_NORMAL_CLOSURE
-            val reason = closeReason?.message ?: ""
-            log.info("closed-channel", mapOf("code" to code, "reason" to reason))
-            send(WsIncoming.Closed(code, reason))
+            log.info("closed-channel", mapOf("code" to code, "reasonCode" to structuralCloseReason(code)))
+            send(WsIncoming.Closed(code, structuralCloseReason(code)))
         } catch (e: Exception) {
-            val msg = e.message ?: e::class.simpleName ?: "unknown"
-            log.error("session-failure", mapOf("url" to url, "error" to msg))
-            send(WsIncoming.Failure(msg))
+            log.error("session-failure", mapOf("endpoint" to endpoint, "code" to TransportFailureCode.RECEIVE_FAILED.name))
+            send(WsIncoming.Failure(TransportFailureCode.RECEIVE_FAILED))
         } finally {
             client.close()
         }
@@ -163,8 +174,9 @@ private class KtorIosWebSocketSession(
     }
 
     override suspend fun close(code: Int, reason: String) {
-        log.info("close", mapOf("code" to code, "reason" to reason))
-        session.close(CloseReason(code.toShort(), reason))
+        val reasonCode = structuralCloseReason(code)
+        log.info("close", mapOf("code" to code, "reasonCode" to reasonCode))
+        session.close(CloseReason(code.toShort(), reasonCode))
     }
 
     // -----------------------------------------------------------------------

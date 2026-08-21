@@ -112,7 +112,7 @@ final class VoiceFishViewModel {
         } catch is CancellationError {
         } catch {
             phase = .failed
-            log.warn("browse.threw reason=\(error.localizedDescription)")
+            log.warn("browse.threw code=transport")
         }
     }
 
@@ -147,7 +147,7 @@ final class VoiceFishViewModel {
             } catch is CancellationError {
             } catch {
                 notice = "Couldn't load more voices"
-                log.warn("loadMore.threw reason=\(error.localizedDescription)")
+                log.warn("loadMore.threw code=transport")
             }
         }
     }
@@ -224,7 +224,7 @@ final class VoiceFishViewModel {
                 }
             } catch {
                 notice = "Couldn't clone this voice"
-                log.warn("clone.threw reason=\(error.localizedDescription)")
+                log.warn("clone.threw code=transport")
             }
         }
     }

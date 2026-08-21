@@ -34,6 +34,8 @@ private val IOS_CALENDAR_BACKUP_KEY: String =
 
 /** A structural, typed reason for an unavailable iOS calendar boundary. */
 enum class IosCalendarUnavailableReason {
+    INITIALIZING,
+    CLOSED,
     MISSING_AUTHENTICATED_USER_ID,
     INVALID_BACKEND_IDENTITY,
     APPLICATION_SUPPORT_UNAVAILABLE,

@@ -94,7 +94,7 @@ internal class Pcm16Converter(
         return bytes
     }
 
-    /** Drives the converter's single-buffer pull; returns the NSError description or null. */
+    /** Drives the converter's single-buffer pull; returns a structural code or null. */
     private fun runConvert(conv: AVAudioConverter, out: AVAudioPCMBuffer, buffer: AVAudioPCMBuffer): String? = memScoped {
         val errVar = alloc<kotlinx.cinterop.ObjCObjectVar<platform.Foundation.NSError?>>()
         var delivered = false
@@ -114,7 +114,7 @@ internal class Pcm16Converter(
                 buffer
             }
         }
-        errVar.value?.localizedDescription
+        if (errVar.value == null) null else "converter-error"
     }
 
     /** Logs a convert failure with its reason (always — failures are rare + critical) and returns null. */

@@ -3,6 +3,7 @@ package io.sentient.mobiledata.data.calendar
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
+import io.sentient.mobilesdk.auth.AuthServerErrorCode
 import io.sentient.mobilesdk.calendar.CalendarErrorCode
 import io.sentient.mobilesdk.result.SentientError
 
@@ -43,7 +44,7 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
         )
     } else if (status == 403) {
         SentientError.Protocol(MSG_FORBIDDEN)
-    } else when (calendarErrorCode(body)) {
+    } else when (code.toCalendarErrorCode()) {
         CalendarErrorCode.CONFLICT -> SentientError.Protocol(MSG_CONFLICT)
         CalendarErrorCode.RECURRENCE_CONFLICT -> SentientError.Protocol(MSG_RECURRENCE_CONFLICT)
         CalendarErrorCode.FORBIDDEN -> SentientError.Protocol(MSG_FORBIDDEN)
@@ -60,20 +61,16 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
     }
 }
 
-/** The wire error body is never returned; this only recognizes stable code tokens. */
-private fun calendarErrorCode(body: String): CalendarErrorCode? {
-    val compact = body.filterNot(Char::isWhitespace)
-    return when {
-        compact.contains("\"code\":\"recurrence_conflict\"") -> CalendarErrorCode.RECURRENCE_CONFLICT
-        compact.contains("\"code\":\"conflict\"") -> CalendarErrorCode.CONFLICT
-        compact.contains("\"code\":\"forbidden\"") -> CalendarErrorCode.FORBIDDEN
-        compact.contains("\"code\":\"occurrence_not_found\"") -> CalendarErrorCode.OCCURRENCE_NOT_FOUND
-        compact.contains("\"code\":\"not_found\"") -> CalendarErrorCode.NOT_FOUND
-        compact.contains("\"code\":\"invalid_time\"") -> CalendarErrorCode.INVALID_TIME
-        compact.contains("\"code\":\"invalid_range\"") -> CalendarErrorCode.INVALID_RANGE
-        compact.contains("\"code\":\"invalid_scope\"") -> CalendarErrorCode.INVALID_SCOPE
-        compact.contains("\"code\":\"invalid_mutation_scope\"") -> CalendarErrorCode.INVALID_MUTATION_SCOPE
-        compact.contains("\"code\":\"malformed\"") -> CalendarErrorCode.MALFORMED
-        else -> null
-    }
+private fun AuthServerErrorCode.toCalendarErrorCode(): CalendarErrorCode? = when (this) {
+    AuthServerErrorCode.CONFLICT -> CalendarErrorCode.CONFLICT
+    AuthServerErrorCode.RECURRENCE_CONFLICT -> CalendarErrorCode.RECURRENCE_CONFLICT
+    AuthServerErrorCode.FORBIDDEN -> CalendarErrorCode.FORBIDDEN
+    AuthServerErrorCode.NOT_FOUND -> CalendarErrorCode.NOT_FOUND
+    AuthServerErrorCode.OCCURRENCE_NOT_FOUND -> CalendarErrorCode.OCCURRENCE_NOT_FOUND
+    AuthServerErrorCode.INVALID_TIME -> CalendarErrorCode.INVALID_TIME
+    AuthServerErrorCode.INVALID_RANGE -> CalendarErrorCode.INVALID_RANGE
+    AuthServerErrorCode.INVALID_SCOPE -> CalendarErrorCode.INVALID_SCOPE
+    AuthServerErrorCode.INVALID_MUTATION_SCOPE -> CalendarErrorCode.INVALID_MUTATION_SCOPE
+    AuthServerErrorCode.MALFORMED -> CalendarErrorCode.MALFORMED
+    AuthServerErrorCode.UNKNOWN -> null
 }

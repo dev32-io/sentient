@@ -118,13 +118,13 @@ class HistoryViewModel(
                 warn("load-failed", it)
                 _state.value = _state.value.copy(
                     loading = false,
-                    error = it.message ?: "Couldn't load chats.",
+                    error = "Couldn't load chats.",
                 )
             }
     }
 
-    private fun warn(event: String, e: Throwable, extra: Map<String, Any?> = emptyMap()) {
-        log.warn(event, extra + mapOf("reason" to (e.message ?: e::class.simpleName)))
+    private fun warn(event: String, _e: Throwable, extra: Map<String, Any?> = emptyMap()) {
+        log.warn(event, extra + mapOf("code" to "history-operation-failure"))
     }
 }
 

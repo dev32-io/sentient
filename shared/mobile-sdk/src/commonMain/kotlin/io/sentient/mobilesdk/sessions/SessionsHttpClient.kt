@@ -286,22 +286,22 @@ open class SessionsHttpClient(
         val root: JsonObject = json.parseToJsonElement(body).jsonObject
         val array = root[field]?.jsonArray ?: return emptyList()
         json.decodeFromJsonElement(ListSerializer(elementSerializer), array)
-    }.getOrElse { e ->
-        log.warn("parse.error", mapOf("cause" to (e.message?.take(PREVIEW_LEN) ?: "unknown")))
+    }.getOrElse {
+        log.warn("parse.error", mapOf("code" to "decode-failure"))
         emptyList()
     }
 
     private suspend fun <T> safeGet(block: suspend () -> T): T where T : List<*> {
         @Suppress("UNCHECKED_CAST")
-        return runCatching { block() }.getOrElse { e ->
-            log.warn("network.error", mapOf("cause" to (e.message ?: "unknown")))
+        return runCatching { block() }.getOrElse {
+            log.warn("network.error", mapOf("code" to "transport-failure"))
             emptyList<Nothing>() as T
         }
     }
 
     private suspend fun safeBoolean(block: suspend () -> Boolean): Boolean =
-        runCatching { block() }.getOrElse { e ->
-            log.warn("network.error", mapOf("cause" to (e.message ?: "unknown")))
+        runCatching { block() }.getOrElse {
+            log.warn("network.error", mapOf("code" to "transport-failure"))
             false
         }
 

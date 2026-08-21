@@ -353,7 +353,7 @@ class SdkVoice(
             c.ack?.complete(c.playback)
         }.onFailure { err ->
             if (err is CancellationException) { c.ack?.complete(false); throw err }
-            log.warn("command-failed", mapOf("cmd" to "Configure", "error" to (err.message ?: "unknown")))
+            log.warn("command-failed", mapOf("cmd" to "Configure", "code" to "voice-command-failure"))
             c.ack?.complete(false)
         }
     }

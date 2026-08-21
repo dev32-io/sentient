@@ -112,7 +112,7 @@ class SdkLifecycle(
         val open = try {
             bundleEngine.open(gatewayWsUrl, allowSelfSignedDevHost)
         } catch (e: Exception) {
-            log.warn("connect.open-failed", mapOf("error" to (e.message ?: "unknown")))
+            log.warn("connect.open-failed", mapOf("code" to "transport-open-failed"))
             return ConnectResult.Failure(LastErrorKind.NETWORK)
         }
         session = open
@@ -224,7 +224,7 @@ class SdkLifecycle(
             // whether retrying is the right move.
             is ServerMessage.CommandRejected -> log.warn(
                 "command.rejected",
-                mapOf("command" to msg.command, "reason" to msg.reason),
+                mapOf("code" to "server-command-rejected"),
             )
             // A forbidden mid re-establish means the anchored session was revoked
             // elsewhere — the orchestrator drops the anchor so reconnects stop

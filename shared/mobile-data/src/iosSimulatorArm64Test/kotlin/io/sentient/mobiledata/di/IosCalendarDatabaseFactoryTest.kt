@@ -8,8 +8,27 @@ import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import io.sentient.mobiledata.cache.db.CalendarDatabase
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
+import platform.Foundation.NSThread
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.first
+import io.sentient.mobiledata.cache.CalendarCacheNamespace
+import io.sentient.mobiledata.cache.CalendarCachePreferences
+import io.sentient.mobiledata.cache.CalendarCacheResult
+import io.sentient.mobiledata.cache.CalendarCacheWindow
+import io.sentient.mobiledata.cache.createCalendarCacheStore
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalForeignApi::class)
@@ -63,6 +82,50 @@ class IosCalendarDatabaseFactoryTest {
                 .isNotEmpty(),
         )
         reopened.close()
+    }
+
+    @Test
+    fun `session purge switch isolation and stale emission stay bounded off main`() = runBlocking(Dispatchers.Default) {
+        assertTrue(!NSThread.isMainThread)
+        val factory = IosCalendarDatabaseDriverFactory()
+        val path = factory.databasePath()
+        val manager = NSFileManager.defaultManager
+        listOf(path, "$path-wal", "$path-shm", "$path-journal").forEach {
+            manager.removeItemAtPath(it, error = null)
+        }
+        val handle = io.sentient.mobiledata.cache.db.openCalendarDatabase(factory)
+        val accountA = CalendarCacheNamespace("account-a", "backend-a")
+        val accountB = CalendarCacheNamespace("account-b", "backend-b")
+        val window = CalendarCacheWindow("2026-06-01", "2026-07-01", "UTC")
+        val store = createCalendarCacheStore(handle, accountA, Dispatchers.Default)
+        try {
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                store.replaceSnapshot(window, emptyList(), fetchedAt = 10L),
+            )
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                store.writePreferences(CalendarCachePreferences(anchorDate = "2026-06-15")),
+            )
+
+            val cancelledScope = CoroutineScope(Job() + Dispatchers.Default)
+            val cancelled = cancelledScope.launch { awaitCancellation() }
+            cancelled.cancelAndJoin()
+            withContext(NonCancellable + Dispatchers.Default) {
+                withTimeout(1_000L) {
+                    assertIs<CalendarCacheResult.Success<Unit>>(store.purgeNamespace(accountA))
+                }
+            }
+
+            assertIs<CalendarCacheResult.Success<Unit>>(store.switchNamespace(accountB, purgePrevious = true))
+            val successorEmission = store.observeSnapshot(window).first()
+            assertNull(assertIs<CalendarCacheResult.Success<io.sentient.mobiledata.cache.CalendarCacheSnapshot?>>(successorEmission).value)
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(store.readPreferences()).value)
+
+            // A user/backend successor cannot resurrect the predecessor rows.
+            assertIs<CalendarCacheResult.Success<Unit>>(store.switchNamespace(accountA, purgePrevious = false))
+            assertNull(assertIs<CalendarCacheResult.Success<io.sentient.mobiledata.cache.CalendarCacheSnapshot?>>(store.readSnapshot(window)).value)
+        } finally {
+            store.close()
+        }
     }
 
     private fun legacySchema(): SqlSchema<QueryResult.Value<Unit>> = object : SqlSchema<QueryResult.Value<Unit>> {

@@ -30,7 +30,7 @@ class VoicePreviewPlayer(private val appContext: Context) {
         val file = runCatching {
             File.createTempFile(TEMP_PREFIX, TEMP_SUFFIX, appContext.cacheDir).apply { writeBytes(bytes) }
         }.getOrElse { e ->
-            log.warn("bytes.temp-failed", mapOf("cause" to (e.message ?: "unknown")))
+            log.warn("bytes.temp-failed", mapOf("code" to "voice-operation-failure"))
             onComplete()
             return
         }
@@ -64,7 +64,7 @@ class VoicePreviewPlayer(private val appContext: Context) {
             }
             mp.prepareAsync()
         }.onFailure { e ->
-            log.warn("play.start-failed", mapOf("cause" to (e.message ?: "unknown")))
+            log.warn("play.start-failed", mapOf("code" to "voice-operation-failure"))
             stop()
             onComplete()
         }

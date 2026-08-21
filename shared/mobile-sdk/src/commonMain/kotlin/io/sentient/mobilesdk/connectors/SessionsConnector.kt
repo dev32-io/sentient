@@ -63,8 +63,10 @@ class SessionsTimeoutException(val frameType: String) :
     Exception("timeout waiting for $frameType")
 
 /** Thrown when the gateway returns a sessions.error for a lifecycle request. */
-class SessionsRequestException(val code: String, override val message: String) :
-    Exception("$code: $message")
+class SessionsRequestException(
+    val code: String,
+    @Suppress("UNUSED_PARAMETER") message: String,
+) : Exception("session-request-failed")
 
 private const val DEFAULT_TIMEOUT_MS = 5_000L
 private const val DEFAULT_MINT_DEBOUNCE_MS = 3_000L
@@ -116,7 +118,7 @@ class SessionsConnector(
         val waiter = switchedWaiters.remove(msg.requestId)
         if (waiter != null) {
             log.warn("switch.error", mapOf("requestId" to msg.requestId, "code" to msg.code))
-            waiter.completeExceptionally(SessionsRequestException(msg.code, msg.message))
+            waiter.completeExceptionally(SessionsRequestException(msg.code, ""))
         }
     }
 

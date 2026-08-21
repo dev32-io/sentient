@@ -52,7 +52,7 @@ struct CalendarSessionLifecycleTests {
         #expect(factory.databasePath().contains("Application Support"))
     }
 
-    @Test func missingAuthenticatedIdentityFailsClosedWithTypedState() {
+    @Test func missingAuthenticatedIdentityFailsClosedWithTypedState() async {
         let session = createUserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
             allowSelfSignedDevHost: true,
@@ -61,6 +61,7 @@ struct CalendarSessionLifecycleTests {
             devFaultsEnabled: false,
             onLoggedOut: {}
         )
+        try? await session.awaitCalendarLifecycle()
         defer { session.close() }
 
         #expect(!session.calendarAvailability.isAvailable)
@@ -69,7 +70,7 @@ struct CalendarSessionLifecycleTests {
         #expect(session.settings.calendarExperience == nil)
     }
 
-    @Test func credentialBearingBackendFailsClosedWithoutEnteringNamespace() {
+    @Test func credentialBearingBackendFailsClosedWithoutEnteringNamespace() async {
         let session = createUserSession(
             gatewayWsUrl: "wss://user:token@example.com/api/v1/ws",
             allowSelfSignedDevHost: false,
@@ -78,6 +79,7 @@ struct CalendarSessionLifecycleTests {
             devFaultsEnabled: false,
             onLoggedOut: {}
         )
+        try? await session.awaitCalendarLifecycle()
         defer { session.close() }
 
         #expect(!session.calendarAvailability.isAvailable)
@@ -86,7 +88,25 @@ struct CalendarSessionLifecycleTests {
         #expect(session.calendarExperience == nil)
     }
 
-    @Test func sessionOwnsOneCalendarExperienceAcrossRouteReadsAndClosesOnDispose() {
+    @Test func queryAndFragmentSecretsFailClosedBeforeNamespaceDerivation() async {
+        let session = createUserSession(
+            gatewayWsUrl: "wss://example.com/api/v1/ws?token=query-secret#fragment-secret",
+            allowSelfSignedDevHost: false,
+            authenticatedUserId: "user-a",
+            capabilities: [],
+            devFaultsEnabled: false,
+            onLoggedOut: {}
+        )
+        try? await session.awaitCalendarLifecycle()
+        defer { session.close() }
+
+        #expect(!session.calendarAvailability.isAvailable)
+        #expect(session.calendarAvailability.unavailableReason == .invalidBackendIdentity)
+        #expect(session.calendarNamespace == nil)
+        #expect(session.calendarExperience == nil)
+    }
+
+    @Test func sessionOwnsOneCalendarExperienceAcrossRouteReadsAndClosesOnDispose() async {
         let session = createUserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
             allowSelfSignedDevHost: true,
@@ -95,6 +115,7 @@ struct CalendarSessionLifecycleTests {
             devFaultsEnabled: false,
             onLoggedOut: {}
         )
+        try? await session.awaitCalendarLifecycle()
         defer { session.close() }
 
         let first = session.calendarExperience
@@ -105,24 +126,27 @@ struct CalendarSessionLifecycleTests {
         #expect(session.calendarAvailability.isAvailable)
 
         session.close()
+        try? await session.awaitCalendarLifecycle()
         #expect(first?.isClosed == true)
     }
 
-    @Test @MainActor func swiftUserSessionRetainsCalendarAboveRouteLifetime() {
+    @Test @MainActor func swiftUserSessionRetainsCalendarAboveRouteLifetime() async {
         let session = UserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
             allowSelfSignedDevHost: true,
             authenticatedUserId: "swift-user",
             onLoggedOut: {}
         )
+        await session.awaitCalendarLifecycle()
         #expect(session.calendarNamespace?.accountId == "swift-user")
         let experience = session.calendarExperience
         #expect(experience != nil)
         session.shutdown()
+        await session.awaitCalendarLifecycle()
         #expect(experience?.isClosed == true)
     }
 
-    @Test func successorSessionCannotReadPredecessorNamespace() {
+    @Test func successorSessionCannotReadPredecessorNamespace() async {
         let first = createUserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
             allowSelfSignedDevHost: true,
@@ -131,8 +155,10 @@ struct CalendarSessionLifecycleTests {
             devFaultsEnabled: false,
             onLoggedOut: {}
         )
+        try? await first.awaitCalendarLifecycle()
         let firstNamespace = first.calendarNamespace
         first.close()
+        try? await first.awaitCalendarLifecycle()
 
         let second = createUserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
@@ -142,11 +168,13 @@ struct CalendarSessionLifecycleTests {
             devFaultsEnabled: false,
             onLoggedOut: {}
         )
-        defer { second.close() }
+        try? await second.awaitCalendarLifecycle()
 
         #expect(firstNamespace?.accountId == "user-a")
         #expect(second.calendarNamespace?.accountId == "user-b")
         #expect(second.calendarNamespace?.accountId != firstNamespace?.accountId)
         #expect(second.calendarExperience?.isClosed == false)
+        second.close()
+        try? await second.awaitCalendarLifecycle()
     }
 }

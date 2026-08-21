@@ -322,7 +322,8 @@ class CalendarHttpClientTest {
         val failure = assertIs<AuthResult.Failure>(result)
         val server = assertIs<AuthError.Server>(failure.error)
         assertEquals(409, server.status)
-        assertTrue(server.body.contains("conflict"))
+        assertEquals("server-error", server.body)
+        assertFalse(server.body.contains("conflict"))
     }
 
     @Test

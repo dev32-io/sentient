@@ -96,7 +96,7 @@ open class VitalsUploader(
                 mapOf(
                     "fileName" to fileName,
                     "chars" to body.length,
-                    "reason" to (e.message?.take(PREVIEW_LEN) ?: "unknown"),
+                    "code" to "upload-failure",
                 ),
             )
             null

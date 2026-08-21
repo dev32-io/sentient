@@ -25,7 +25,7 @@ class UpdateInstallReceiver : BroadcastReceiver() {
         when (status) {
             PackageInstaller.STATUS_PENDING_USER_ACTION -> launchConfirm(context, intent)
             PackageInstaller.STATUS_SUCCESS -> log.info("install.status.success")
-            else -> log.warn("install.status.failed", mapOf("status" to status, "msg" to message))
+            else -> log.warn("install.status.failed", mapOf("status" to status, "code" to "installer-failure"))
         }
     }
 

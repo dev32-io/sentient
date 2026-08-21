@@ -201,7 +201,8 @@ class ProfileHttpClientTest {
         val err = result.error
         assertIs<AuthError.Server>(err)
         assertEquals(422, err.status)
-        assertTrue(err.body.contains("userId-mismatch"))
+        assertEquals("server-error", err.body)
+        assertFalse(err.body.contains("userId-mismatch"))
     }
 
     // IMPORTANT-3-mandated: a real decode through the real client, not a hand-verified

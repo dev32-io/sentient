@@ -91,7 +91,7 @@ final class VoiceAddViewModel {
         } catch {
             notice = "Couldn't start recording"
             recordState = .idle
-            log.warn("record.start.failed reason=\(error.localizedDescription)")
+            log.warn("record.start.failed code=audio-session")
         }
     }
 
@@ -125,7 +125,7 @@ final class VoiceAddViewModel {
             previewingTake = true
         } catch {
             notice = "Couldn't play the take"
-            log.warn("review.play.failed reason=\(error.localizedDescription)")
+            log.warn("review.play.failed code=transport")
         }
     }
 
@@ -142,7 +142,7 @@ final class VoiceAddViewModel {
         case .success(let url):
             copyPickedFile(url)
         case .failure(let error):
-            log.warn("upload.pick.failed reason=\(error.localizedDescription)")
+            log.warn("upload.pick.failed code=file-picker")
         }
     }
 
@@ -161,7 +161,7 @@ final class VoiceAddViewModel {
             log.info("upload.picked bytes=\(data.count)")
         } catch {
             notice = "Couldn't read that file"
-            log.warn("upload.read.failed reason=\(error.localizedDescription)")
+            log.warn("upload.read.failed code=file-read")
         }
     }
 
@@ -191,13 +191,13 @@ final class VoiceAddViewModel {
                     done = true
                 case .failure(let f):
                     notice = "Couldn't create voice"
-                    log.warn("create.failed reason=\(f.error.userMessage)")
+                    log.warn("create.failed kind=\(f.error.kind.name)")
                 case .loading:
                     break
                 }
             } catch {
                 notice = "Couldn't create voice"
-                log.warn("create.threw reason=\(error.localizedDescription)")
+                log.warn("create.threw code=transport")
             }
         }
     }

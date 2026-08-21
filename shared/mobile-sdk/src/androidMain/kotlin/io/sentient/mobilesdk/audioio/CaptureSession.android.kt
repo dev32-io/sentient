@@ -38,9 +38,9 @@ internal class CaptureSession(
         Pcm16Resampler(captureRate, targetRate)
 
     fun release() {
-        runCatching { record.stop() }.onFailure { log.warn("stop-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        runCatching { record.release() }.onFailure { log.warn("release-failed", mapOf("cause" to (it.message ?: "unknown"))) }
-        runCatching { aec?.release() }.onFailure { log.warn("aec-release-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        runCatching { record.stop() }.onFailure { log.warn("stop-failed", mapOf("code" to "operation-failure")) }
+        runCatching { record.release() }.onFailure { log.warn("release-failed", mapOf("code" to "operation-failure")) }
+        runCatching { aec?.release() }.onFailure { log.warn("aec-release-failed", mapOf("code" to "operation-failure")) }
         log.debug("released")
     }
 }

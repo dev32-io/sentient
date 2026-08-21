@@ -105,7 +105,7 @@ final class AppConfig: ObservableObject {
     /// backend), bumps configGeneration to re-show the splash. The in-flight
     /// session is torn down by ChatView's disappear path, not here.
     func reconfigure(_ config: BackendConfig) {
-        log.info("reconfigure host=\(config.host) port=\(config.port)")
+        log.info("reconfigure hostLength=\(config.host.count) port=\(config.port)")
         configStore.save(config)
         tokenStore.clear()
         displayNameStore.clear()

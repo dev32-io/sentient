@@ -58,7 +58,7 @@ class SentientMobileVitals {
         )
         files.startSession(meta)
         runCatching { files.flush(platform.deviceSnapshot().renderBlock("@init")) }
-            .onFailure { log.warn("snapshot.init-failed", mapOf("reason" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("snapshot.init-failed", mapOf("code" to "snapshot-failure")) }
         platform.registerCrashHandler {
             // Non-blocking drain: iOS NSLock is non-reentrant; if the crashing thread
             // held the ring lock (crashed mid-append), a blocking drain() would deadlock

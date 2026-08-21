@@ -41,14 +41,30 @@ final class UserSession: ObservableObject {
 
     /// One session-owned calendar experience. Route recreation never rebuilds
     /// this object because it is held above the authenticated NavigationStack.
-    var calendarExperience: CalendarExperience? { inner.calendarExperience }
+    @Published private(set) var calendarExperience: CalendarExperience?
 
     /// Typed fail-closed state for protected calendar storage/open failures.
-    var calendarAvailability: IosCalendarAvailability { inner.calendarAvailability }
+    @Published private(set) var calendarAvailability: IosCalendarAvailability
 
     /// Namespace is derived from the explicit authenticated userId and backend
     /// identity; it is not derived from display name or token text.
-    var calendarNamespace: CalendarCacheNamespace? { inner.calendarNamespace }
+    @Published private(set) var calendarNamespace: CalendarCacheNamespace?
+
+    private var calendarLifecycleTask: Task<Void, Never>?
+
+    /// Awaits background calendar open/disposal without blocking MainActor and
+    /// publishes the typed result back to this MainActor-owned object.
+    func awaitCalendarLifecycle() async {
+        do {
+            try await inner.awaitCalendarLifecycle()
+        } catch {
+            log.warn("calendar.lifecycle-await code=background-failure")
+        }
+        guard !Task.isCancelled else { return }
+        calendarAvailability = inner.calendarAvailability
+        calendarExperience = inner.calendarExperience
+        calendarNamespace = inner.calendarNamespace
+    }
 
     /// Build the User session from a resolved backend (gateway URL + dev-TLS
     /// posture). FaultHooks are armed in debug builds (no adb-equivalent arming
@@ -87,6 +103,9 @@ final class UserSession: ObservableObject {
                 }
             }
         )
+        self.calendarAvailability = inner.calendarAvailability
+        self.calendarExperience = inner.calendarExperience
+        self.calendarNamespace = inner.calendarNamespace
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.
         inner.open()
@@ -100,6 +119,9 @@ final class UserSession: ObservableObject {
         })
         monitor.start()
         self.networkMonitor = monitor
+        self.calendarLifecycleTask = Task { [weak self] in
+            await self?.awaitCalendarLifecycle()
+        }
         closeSession = { [weak self] in self?.shutdown() }
     }
 
@@ -138,15 +160,21 @@ final class UserSession: ObservableObject {
     /// Logout teardown: disconnect (clearSession=true) + cancel the session scope.
     func shutdown() {
         log.info("shutdown")
+        calendarLifecycleTask?.cancel()
+        calendarLifecycleTask = nil
         networkMonitor?.cancel()
         networkMonitor = nil
         inner.close()
+        calendarAvailability = inner.calendarAvailability
+        calendarExperience = inner.calendarExperience
+        calendarNamespace = inner.calendarNamespace
     }
 
     /// Auth-expiry/account callbacks can remove the host from the SwiftUI tree
     /// without first reaching the explicit logout button. Keep the KMP boundary
     /// fail-closed if that is the final owner release.
     deinit {
+        calendarLifecycleTask?.cancel()
         networkMonitor?.cancel()
         inner.close()
     }

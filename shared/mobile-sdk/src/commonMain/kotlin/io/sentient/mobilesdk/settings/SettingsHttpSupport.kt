@@ -68,7 +68,7 @@ internal suspend fun <T> mapSettingsResponse(
         throw e
     } catch (e: Throwable) {
         log.warn("parse.error", mapOf("type" to "decode"))
-        AuthResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
+        AuthResult.Failure(AuthError.Unknown(cause = "decode-failure"))
     }
 }
 
@@ -83,5 +83,5 @@ internal suspend fun <T> safeSettingsCall(log: Log, block: suspend () -> AuthRes
         throw e
     } catch (e: Throwable) {
         log.warn("network.error", mapOf("type" to "transport"))
-        AuthResult.Failure(AuthError.Network(cause = e.message ?: "network error"))
+        AuthResult.Failure(AuthError.Network(cause = "transport-failure"))
     }

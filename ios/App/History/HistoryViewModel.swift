@@ -79,8 +79,8 @@ final class HistoryViewModel: ObservableObject {
             guard !Task.isCancelled else { return }
             loading = false
             hasLoaded = true
-            self.error = error.localizedDescription
-            log.warn("load-failed reason=\(error.localizedDescription)")
+            self.error = "Can't load conversation history."
+            log.warn("load-failed code=transport")
         }
     }
 
@@ -89,7 +89,7 @@ final class HistoryViewModel: ObservableObject {
     func renameSession(_ sessionId: String, title: String) async {
         log.info("renameSession sessionId=\(sessionId)")
         do { try await component.renameSession.invoke(sessionId: sessionId, title: title) } catch {
-            log.warn("renameSession failed reason=\(error.localizedDescription)")
+            log.warn("renameSession failed code=transport")
         }
         await refresh()
     }
@@ -97,7 +97,7 @@ final class HistoryViewModel: ObservableObject {
     func deleteSession(_ sessionId: String) async {
         log.info("deleteSession sessionId=\(sessionId)")
         do { try await component.deleteSession.invoke(sessionId: sessionId) } catch {
-            log.warn("deleteSession failed reason=\(error.localizedDescription)")
+            log.warn("deleteSession failed code=transport")
         }
         await refresh()
     }

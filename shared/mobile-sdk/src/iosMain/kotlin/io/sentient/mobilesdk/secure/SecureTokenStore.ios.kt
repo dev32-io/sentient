@@ -88,7 +88,7 @@ class IosSecureTokenStore : SecureTokenStore {
         // (SIGABRT via trapOnUndeclaredException). Catch here so a Keychain
         // hiccup logs WARN and the SDK still connects.
         runCatching { saveToKeychain(token) }.onFailure { e ->
-            log.warn("save-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+            log.warn("save-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
         }
     }
 
@@ -144,7 +144,7 @@ class IosSecureTokenStore : SecureTokenStore {
         // A load failure must degrade to null, never abort the process across
         // the @ObjCExport boundary (see save()).
         return runCatching { loadFromKeychain() }.getOrElse { e ->
-            log.warn("load-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+            log.warn("load-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
             null
         }
     }
@@ -211,7 +211,7 @@ class IosSecureTokenStore : SecureTokenStore {
                 else -> log.warn("clear-failed", mapOf("status" to status))
             }
         }.onFailure { e ->
-            log.warn("clear-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+            log.warn("clear-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
         }
     }
 

@@ -50,7 +50,7 @@ class VoiceRecorder {
         val bufferBytes = maxOf(minBuffer, SAMPLE_RATE * BYTES_PER_SAMPLE) // ~1s of headroom
         val rec = runCatching { AudioRecord(source, SAMPLE_RATE, channelMask, encoding, bufferBytes) }
             .getOrElse { e ->
-                log.error("construct", mapOf("cause" to (e.message ?: "unknown")))
+                log.error("construct", mapOf("code" to "voice-operation-failure"))
                 return false
             }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {

@@ -129,7 +129,7 @@ class AuthViewModel(
 
     private fun submit(user: AuthUserLite?, pin: String) {
         if (user == null) return
-        log.info("login.start", mapOf("userId" to user.userId)) // PIN intentionally omitted
+        log.info("login.start", mapOf("userIdLength" to user.userId.length)) // PIN intentionally omitted
         _state.update { it.copy(submitting = true, error = null) }
         viewModelScope.launch {
             when (val result = authClientProvider().login(user.userId, pin)) {
@@ -142,7 +142,7 @@ class AuthViewModel(
                         }
                         return@launch
                     }
-                    log.info("login.ok", mapOf("userId" to authenticated.userId))
+                    log.info("login.ok", mapOf("userIdLength" to authenticated.userId.length))
                     tokenStore.save(result.value.token)
                     // Persist presentation data separately from the explicit server
                     // identity. The callback is the only transport into the

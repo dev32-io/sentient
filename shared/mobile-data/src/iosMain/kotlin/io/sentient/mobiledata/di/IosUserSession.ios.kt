@@ -1,39 +1,27 @@
 // ---------------------------------------------------------------------------
 // IosUserSession — the User/Connection scope for iOS (SKIE-exposed to Swift).
 //
-// Mirrors the Android UserSessionManager: models the "logged-in user" by owning
-// ONE ChatComponent (+ its SentientSdk + a session CoroutineScope), built once
-// for the duration of a login. The same authenticated scope owns one calendar
-// database/cache/experience, which lives above NavigationStack route recreation.
-//
-// Lifecycle:
-//   - open()   — background connect(); the UI never blocks on it.
-//   - pause()  — app background: KEEP the socket.
-//   - resume() — app foreground: one-shot liveness probe / reconnect.
-//   - close()  — logout/auth expiry: calendar observation is cancelled first,
-//                the current namespace is purged in a bounded NonCancellable
-//                context, then the protected driver and session are closed.
+// The authenticated session publishes its settings component immediately with a
+// typed, fail-closed calendar boundary. Application Support/NativeSqliteDriver
+// setup is queued on a background executor and installed only after open,
+// migration, and protection checks succeed. Route recreation therefore never
+// rebuilds the experience, while MainActor construction never performs database
+// I/O.
 // ---------------------------------------------------------------------------
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package io.sentient.mobiledata.di
 
 import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheStore
 import io.sentient.mobiledata.cache.createCalendarCacheStore
+import io.sentient.mobiledata.cache.db.CalendarDatabaseHandle
 import io.sentient.mobiledata.cache.db.openCalendarDatabase
 import io.sentient.mobiledata.calendar.CalendarExperience
+import io.sentient.mobiledata.calendar.CalendarExperienceFactory
 import io.sentient.mobiledata.calendar.createCalendarExperience
-import io.sentient.mobiledata.data.calendar.CalendarRepository
-import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
 import io.sentient.mobiledata.result.SentientResult
-import io.sentient.mobilesdk.calendar.CalendarCreateInput
-import io.sentient.mobilesdk.calendar.CalendarEvent
-import io.sentient.mobilesdk.calendar.CalendarEventPage
-import io.sentient.mobilesdk.calendar.CalendarHttpClient
-import io.sentient.mobilesdk.calendar.CalendarMutationCommand
-import io.sentient.mobilesdk.calendar.CalendarMutationResult
-import io.sentient.mobilesdk.calendar.CalendarScope
-import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.AudioPreferences
 import io.sentient.mobilesdk.result.SentientError
@@ -46,14 +34,18 @@ import io.sentient.mobilesdk.settings.createSettingsHttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.Volatile
 
 private const val IOS_CALENDAR_TEARDOWN_TIMEOUT_MILLIS = 2_000L
 private const val IOS_INVALID_GATEWAY_WS_URL = "ws://invalid.invalid/api/v1/ws"
@@ -62,78 +54,65 @@ private fun safeIosGatewayWsUrl(gatewayWsUrl: String): String = try {
     normalizeIosBackendIdentity(gatewayWsUrl)
     gatewayWsUrl
 } catch (_: Throwable) {
+    // Invalid/user-controlled endpoint material never reaches a transport
+    // factory or its diagnostics.
     IOS_INVALID_GATEWAY_WS_URL
 }
 
-/**
- * One calendar boundary inside an authenticated iOS session. The runtime owns
- * the store and experience together so a failed construction can close every
- * already-open resource without exposing a partial object to Swift.
- */
+/** Serialize database open/dispose operations across successor sessions. */
+private object IosCalendarLifecycleQueue {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val tail = AtomicReference<Deferred<Unit>?>(null)
+
+    fun enqueue(block: suspend () -> Unit): Deferred<Unit> {
+        val previous = tail.load()
+        val next = scope.async(start = CoroutineStart.LAZY) {
+            // A failed predecessor must not strand a new authenticated session;
+            // its own finally block is responsible for closing its resources.
+            try {
+                previous?.await()
+            } catch (_: Throwable) {
+                // Structural lifecycle queue failure; no predecessor detail escapes.
+            }
+            block()
+        }
+        tail.store(next)
+        next.start()
+        return next
+    }
+}
+
+/** Runtime owns the store, experience, and the background scope used by both. */
 private class IosCalendarRuntime(
     val namespace: CalendarCacheNamespace,
     private val cacheStore: CalendarCacheStore,
-    val experience: CalendarExperience,
+    val factory: CalendarExperienceFactory,
+    val experienceScope: CoroutineScope,
+    @Volatile var experience: CalendarExperience? = null,
 ) {
     private var disposed = false
 
-    suspend fun disposeAndPurge(): CalendarCacheResult<Unit> {
-        if (disposed) return CalendarCacheResult.Success(Unit)
+    suspend fun disposeAndPurge(): CalendarCacheResult<Unit> = withContext(NonCancellable) {
+        if (disposed) return@withContext CalendarCacheResult.Success(Unit)
         disposed = true
-        return experience.disposeAndPurge()
+        try {
+            experience?.disposeAndPurge() ?: cacheStore.purgeNamespace(namespace)
+        } finally {
+            runCatching { experience?.close() }
+            runCatching { cacheStore.close() }
+            experienceScope.cancel()
+        }
     }
 
     fun forceClose() {
-        // This path is also used after a timed-out purge. It must close the
-        // driver even though disposeAndPurge may already have marked itself.
         disposed = true
-        experience.close()
-        cacheStore.close()
+        runCatching { experience?.close() }
+        runCatching { cacheStore.close() }
+        experienceScope.cancel()
     }
 }
 
-private data class IosCalendarSetup(
-    val runtime: IosCalendarRuntime?,
-    val repository: CalendarRepository,
-    val availability: IosCalendarAvailability,
-)
-
-/** A fail-closed repository used when protected calendar storage is unavailable. */
-private class UnavailableCalendarRepository : CalendarRepository {
-    private fun <T : Any> failure(): SentientResult<T> = SentientResult.Failure(
-        SentientError.Protocol("Calendar storage is unavailable."),
-    )
-
-    override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?): SentientResult<CalendarEvent> = failure()
-
-    override suspend fun list(
-        from: String,
-        to: String,
-        scope: CalendarScope?,
-        group: String?,
-        tags: List<String>?,
-        importance: Importance?,
-        cursor: String?,
-        query: String?,
-        limit: Int?,
-    ): SentientResult<CalendarEventPage> = failure()
-
-    override suspend fun create(event: CalendarEvent): SentientResult<CalendarEvent> = failure()
-
-    override suspend fun create(input: CalendarCreateInput): SentientResult<CalendarEvent> = failure()
-
-    override suspend fun mutate(
-        eventId: String,
-        command: CalendarMutationCommand,
-    ): SentientResult<CalendarMutationResult> = failure()
-}
-
-/**
- * One per logged-in user. Holds the SDK + ChatComponent + settings + the
- * session-scoped calendar experience. [authenticatedUserId] is supplied by the
- * server-authenticated login response; it is never inferred from display name
- * or token text.
- */
+/** One protected calendar lifetime above NavigationStack route recreation. */
 class IosUserSession(
     gatewayWsUrl: String,
     allowSelfSignedDevHost: Boolean,
@@ -145,34 +124,32 @@ class IosUserSession(
 ) {
     private val log = createLogger("data", "ios-user-session")
     private val userId = authenticatedUserId.trim()
-    // Existing HTTP/WS factories log the configured endpoint structurally. Do
-    // not pass an endpoint containing userinfo/query/fragment material into
-    // them; calendar setup retains the original only to classify it unavailable.
     private val safeGatewayWsUrl = safeIosGatewayWsUrl(gatewayWsUrl)
-    private var closed = false
 
-    // Last-resort guard for an uncaught throw on a connection-scope coroutine.
+    @Volatile
+    private var closed = false
+    @Volatile
+    private var calendarRuntime: IosCalendarRuntime? = null
+    @Volatile
+    private var calendarDisposalJob: Deferred<Unit>? = null
+
     private val exceptionHandler = CoroutineExceptionHandler { _, e ->
         if (e is CancellationException) return@CoroutineExceptionHandler
         if (isTerminalAuthError(e)) {
-            log.warn("scope.auth-failure → login", mapOf("error" to (e.message ?: "")))
+            log.warn("scope.auth-failure", mapOf("code" to "auth-expired"))
             sdk.signalAuthExpired()
         } else {
-            log.warn("scope.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+            log.warn("scope.transient-caught", mapOf("code" to "scope-failure"))
         }
     }
 
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1) + exceptionHandler)
 
-    // Calendar work intentionally has a separate lifetime from the SDK scope.
-    // close() must keep this scope alive while its NonCancellable purge finishes;
-    // cancelling the authenticated SDK scope first would cancel the purge too.
+    /** Separate background lifetime so close can purge before cancelling it. */
     private val calendarScope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
 
-    // Build the platform bundle once so the token store is shared between the SDK
-    // WS transport and both REST clients (same Keychain item).
     private val bundle = createPlatformBundle()
 
     private val sessionsHttpClient = createSessionsHttpClient(
@@ -203,27 +180,23 @@ class IosUserSession(
         },
     )
 
-    // Settings and calendar share one configured Darwin HTTP client. The
-    // repository remains stateless; only the experience owns cache policy.
     private val settingsHttpClient = createSettingsHttpClient(allowSelfSignedDevHost)
-    private val remoteCalendarRepository: CalendarRepository = SdkCalendarRepository(
-        CalendarHttpClient(
-            settingsHttpClient,
-            safeGatewayWsUrl,
-            { bundle.tokenStore.load() ?: "" },
-        ),
-    )
-    private val calendarSetup: IosCalendarSetup = buildCalendarSetup(
-        repository = remoteCalendarRepository,
-        userId = userId,
-        gatewayWsUrl = gatewayWsUrl,
-        scope = calendarScope,
-    )
+    private val calendarDependency = CalendarDependencyBoundary.initializing()
+
+    /** Namespace derivation is synchronous and content-free; database work is not. */
+    private val initialCalendarNamespace: CalendarCacheNamespace? = try {
+        iosCalendarNamespace(userId, gatewayWsUrl)
+    } catch (failure: IosCalendarDatabaseFailure) {
+        calendarDependency.disable(failure.reason.toDependencyReason())
+        null
+    } catch (_: Throwable) {
+        calendarDependency.disable(CalendarDependencyUnavailableReason.INVALID_BACKEND_IDENTITY)
+        null
+    }
 
     /**
-     * Settings slice of this connection scope. When protected calendar storage
-     * fails, its calendar repository is fail-closed and no remote calendar rows
-     * are exposed through the legacy use-case surface.
+     * Settings is safe to expose before the database is ready: its calendar
+     * usecases point at the boundary's disabled delegate, never at the network.
      */
     val settings: SettingsComponent = SettingsComponent(
         httpClient = settingsHttpClient,
@@ -232,21 +205,28 @@ class IosUserSession(
         liveAudioPatch = component::patchAudioPreferences,
         onTokenRefreshed = { bundle.tokenStore.save(it) },
         onLoggedOut = onLoggedOut,
-        calendarExperience = calendarSetup.runtime?.experience,
-        injectedCalendarRepository = calendarSetup.repository,
+        calendarDependency = calendarDependency,
     )
+
+    /** Background initialization is queued after any predecessor teardown. */
+    private val calendarInitializationJob: Deferred<Unit> = IosCalendarLifecycleQueue.enqueue {
+        initializeCalendar()
+    }
 
     /** Explicit identity retained by this authenticated boundary. */
     val authenticatedUserId: String get() = userId
 
     /** One shared calendar experience for the authenticated lifetime, if available. */
-    val calendarExperience: CalendarExperience? get() = calendarSetup.runtime?.experience
+    val calendarExperience: CalendarExperience?
+        get() = calendarDependency.experience
 
     /** Typed fail-closed state for protected calendar storage. */
-    val calendarAvailability: IosCalendarAvailability get() = calendarSetup.availability
+    val calendarAvailability: IosCalendarAvailability
+        get() = calendarDependency.state.value.toIosAvailability()
 
-    /** Namespace used by the cache, exposed for SKIE/native lifecycle tests. */
-    val calendarNamespace: CalendarCacheNamespace? get() = calendarSetup.runtime?.namespace
+    /** Namespace is published only after the protected runtime is installed. */
+    val calendarNamespace: CalendarCacheNamespace?
+        get() = calendarRuntime?.namespace
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
@@ -257,65 +237,135 @@ class IosUserSession(
                 throw e
             } catch (e: Throwable) {
                 if (isTerminalAuthError(e)) {
-                    log.warn("open.auth-failure → login", mapOf("error" to (e.message ?: "")))
+                    log.warn("open.auth-failure", mapOf("code" to "auth-expired"))
                     sdk.signalAuthExpired()
                 } else {
-                    log.warn("open.transient-caught (recovered)", mapOf("error" to (e.message ?: "")))
+                    log.warn("open.transient-caught", mapOf("code" to "connect-failure"))
                 }
             }
         }
     }
 
-    /** App background → keep the authenticated socket. */
     fun pause() {
-        // Do not drop the socket on background; resume/ensureConnected verifies it.
+        // Keep the authenticated socket while backgrounded.
     }
 
-    /** App foreground → one-shot liveness probe/reconnect primitive. */
     fun resume() {
         sdk.onForeground()
     }
 
     /**
-     * Logout/auth-expiry teardown. The calendar experience cancels its
-     * observation and prefetch work, then purges the active namespace in a
-     * bounded NonCancellable context before closing its driver. Only after that
-     * does the SDK scope close, so a successor session cannot race the purge.
+     * Non-blocking disposal boundary. The purge and NativeSqliteDriver close
+     * run on the lifecycle queue's Default executor; MainActor callers only
+     * publish the closed state and schedule the operation.
      */
     fun close() {
         if (closed) return
         closed = true
-
-        val runtime = calendarSetup.runtime
-        if (runtime != null) {
-            runBlocking(Dispatchers.Default) {
-                try {
-                    withContext(NonCancellable) {
-                        withTimeout(IOS_CALENDAR_TEARDOWN_TIMEOUT_MILLIS) {
-                            val result = runtime.disposeAndPurge()
-                            if (result is CalendarCacheResult.Failure) {
-                                log.warn(
-                                    "calendar.purge-failed",
-                                    mapOf("reason" to result.error.reason.name),
-                                )
-                            }
-                        }
-                    }
-                } catch (_: Throwable) {
-                    // A timeout or driver failure still fails closed: invalidate
-                    // the experience and close the store rather than retaining
-                    // readable rows after logout.
-                    runtime.forceClose()
-                    log.warn("calendar.close-failed", mapOf("reason" to "bounded-teardown"))
-                }
-            }
+        calendarDependency.disable(CalendarDependencyUnavailableReason.CLOSED)
+        val runtimeAtClose = calendarRuntime
+        calendarRuntime = null
+        calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
+            disposeRuntime(runtimeAtClose)
+            calendarScope.cancel()
         }
 
         sdk.disconnect(clearSession = true)
         component.close()
-        calendarScope.cancel()
         scope.cancel()
         settingsHttpClient.close()
+    }
+
+    /** Await the background open or disposal in tests and lifecycle coordinators. */
+    suspend fun awaitCalendarLifecycle() {
+        calendarDisposalJob?.await() ?: calendarInitializationJob.await()
+    }
+
+    private suspend fun initializeCalendar() {
+        val namespace = initialCalendarNamespace ?: return
+        if (closed) return
+        val runtime = buildCalendarRuntime(namespace) ?: return
+        var transferred = false
+        try {
+            if (closed) return
+            val experience = settings.installCalendarExperience(runtime.factory)
+                ?: throw IllegalStateException()
+            runtime.experience = experience
+            if (closed) return
+            calendarRuntime = runtime
+            transferred = true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            calendarDependency.disable(CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
+        } finally {
+            if (!transferred) {
+                runtime.disposeAndPurge()
+            }
+        }
+    }
+
+    private suspend fun buildCalendarRuntime(namespace: CalendarCacheNamespace): IosCalendarRuntime? =
+        withContext(Dispatchers.Default) {
+            var handle: CalendarDatabaseHandle? = null
+            var store: CalendarCacheStore? = null
+            var transferred = false
+            try {
+                val openedHandle = openCalendarDatabase(IosCalendarDatabaseDriverFactory())
+                handle = openedHandle
+                val openedStore = createCalendarCacheStore(
+                    handle = openedHandle,
+                    namespace = namespace,
+                    observationContext = Dispatchers.Default,
+                )
+                store = openedStore
+                val experienceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                // SettingsComponent creates the one remote repository only after
+                // this protected store is open, then supplies that repository to
+                // this factory. No network repository is created on failure.
+                val factory = CalendarExperienceFactory { repository ->
+                    createCalendarExperience(
+                        repository = repository,
+                        cacheStore = openedStore,
+                        scope = experienceScope,
+                    )
+                }
+                transferred = true
+                IosCalendarRuntime(
+                    namespace = namespace,
+                    cacheStore = openedStore,
+                    factory = factory,
+                    experienceScope = experienceScope,
+                )
+            } catch (failure: IosCalendarDatabaseFailure) {
+                calendarDependency.disable(failure.reason.toDependencyReason())
+                null
+            } catch (_: Throwable) {
+                calendarDependency.disable(CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
+                null
+            } finally {
+                if (!transferred) {
+                    runCatching { store?.close() }
+                    runCatching { handle?.close() }
+                }
+            }
+        }
+
+    private suspend fun disposeRuntime(runtime: IosCalendarRuntime?) {
+        if (runtime == null) return
+        try {
+            withContext(NonCancellable) {
+                withTimeout(IOS_CALENDAR_TEARDOWN_TIMEOUT_MILLIS) {
+                    val result = runtime.disposeAndPurge()
+                    if (result is CalendarCacheResult.Failure) {
+                        log.warn("calendar.purge-failed", mapOf("code" to result.error.reason.name))
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            runtime.forceClose()
+            log.warn("calendar.close-failed", mapOf("code" to "bounded-teardown"))
+        }
     }
 }
 
@@ -336,57 +386,35 @@ fun createUserSession(
     onLoggedOut = onLoggedOut,
 )
 
-private fun buildCalendarSetup(
-    repository: CalendarRepository,
-    userId: String,
-    gatewayWsUrl: String,
-    scope: CoroutineScope,
-): IosCalendarSetup {
-    val namespace = try {
-        iosCalendarNamespace(userId, gatewayWsUrl)
-    } catch (failure: IosCalendarDatabaseFailure) {
-        return unavailableCalendarSetup(failure.reason)
-    } catch (_: Throwable) {
-        return unavailableCalendarSetup(IosCalendarUnavailableReason.INVALID_BACKEND_IDENTITY)
-    }
-
-    var handle: io.sentient.mobiledata.cache.db.CalendarDatabaseHandle? = null
-    var cacheStore: CalendarCacheStore? = null
-    var experience: CalendarExperience? = null
-    return try {
-        handle = openCalendarDatabase(IosCalendarDatabaseDriverFactory())
-        cacheStore = createCalendarCacheStore(
-            handle = handle,
-            namespace = namespace,
-            observationContext = Dispatchers.Default,
-        )
-        experience = createCalendarExperience(
-            repository = repository,
-            cacheStore = cacheStore,
-            scope = scope,
-        )
-        IosCalendarSetup(
-            runtime = IosCalendarRuntime(namespace, cacheStore, experience),
-            repository = repository,
-            availability = IosCalendarAvailability.available(),
-        )
-    } catch (failure: IosCalendarDatabaseFailure) {
-        experience?.close()
-        cacheStore?.close()
-        handle?.close()
-        unavailableCalendarSetup(failure.reason)
-    } catch (_: Throwable) {
-        experience?.close()
-        cacheStore?.close()
-        handle?.close()
-        unavailableCalendarSetup(IosCalendarUnavailableReason.STORE_OPEN_FAILED)
-    }
+private fun IosCalendarUnavailableReason.toDependencyReason(): CalendarDependencyUnavailableReason = when (this) {
+    IosCalendarUnavailableReason.INITIALIZING -> CalendarDependencyUnavailableReason.INITIALIZING
+    IosCalendarUnavailableReason.CLOSED -> CalendarDependencyUnavailableReason.CLOSED
+    IosCalendarUnavailableReason.MISSING_AUTHENTICATED_USER_ID ->
+        CalendarDependencyUnavailableReason.MISSING_AUTHENTICATED_USER_ID
+    IosCalendarUnavailableReason.INVALID_BACKEND_IDENTITY ->
+        CalendarDependencyUnavailableReason.INVALID_BACKEND_IDENTITY
+    IosCalendarUnavailableReason.APPLICATION_SUPPORT_UNAVAILABLE,
+    IosCalendarUnavailableReason.PROTECTION_UNAVAILABLE ->
+        CalendarDependencyUnavailableReason.PROTECTED_STORAGE
+    IosCalendarUnavailableReason.MIGRATION_FAILED ->
+        CalendarDependencyUnavailableReason.MIGRATION_FAILED
+    IosCalendarUnavailableReason.DRIVER_OPEN_FAILED,
+    IosCalendarUnavailableReason.STORE_OPEN_FAILED ->
+        CalendarDependencyUnavailableReason.STORE_OPEN_FAILED
 }
 
-private fun unavailableCalendarSetup(
-    reason: IosCalendarUnavailableReason,
-): IosCalendarSetup = IosCalendarSetup(
-    runtime = null,
-    repository = UnavailableCalendarRepository(),
-    availability = IosCalendarAvailability.unavailable(reason),
-)
+private fun CalendarDependencyState.toIosAvailability(): IosCalendarAvailability = when (this) {
+    is CalendarDependencyState.Available -> IosCalendarAvailability.available()
+    is CalendarDependencyState.Unavailable -> IosCalendarAvailability.unavailable(
+        when (reason) {
+            CalendarDependencyUnavailableReason.INITIALIZING -> IosCalendarUnavailableReason.INITIALIZING
+            CalendarDependencyUnavailableReason.MISSING_AUTHENTICATED_USER_ID -> IosCalendarUnavailableReason.MISSING_AUTHENTICATED_USER_ID
+            CalendarDependencyUnavailableReason.INVALID_BACKEND_IDENTITY -> IosCalendarUnavailableReason.INVALID_BACKEND_IDENTITY
+            CalendarDependencyUnavailableReason.PROTECTED_STORAGE -> IosCalendarUnavailableReason.PROTECTION_UNAVAILABLE
+            CalendarDependencyUnavailableReason.DATABASE_OPEN -> IosCalendarUnavailableReason.DRIVER_OPEN_FAILED
+            CalendarDependencyUnavailableReason.MIGRATION_FAILED -> IosCalendarUnavailableReason.MIGRATION_FAILED
+            CalendarDependencyUnavailableReason.STORE_OPEN_FAILED -> IosCalendarUnavailableReason.STORE_OPEN_FAILED
+            CalendarDependencyUnavailableReason.CLOSED -> IosCalendarUnavailableReason.CLOSED
+        },
+    )
+}

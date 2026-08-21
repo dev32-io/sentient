@@ -75,6 +75,23 @@ class LogSanitizerTest {
     }
 
     @Test
+    fun redacts_endpoint_userinfo_query_fragment_and_path_material() {
+        val msg = "connect wss://user:secret@example.test/api/v1/ws?token=query-secret#fragment-secret"
+        val out = sanitizeLog(msg)
+        assertFalse(out.contains("user:secret"))
+        assertFalse(out.contains("query-secret"))
+        assertFalse(out.contains("fragment-secret"))
+        assertTrue(out.contains("[redacted-endpoint]"))
+    }
+
+    @Test
+    fun redacts_http_endpoint_secrets_case_insensitively() {
+        val out = sanitizeLog("HTTP HTTPS wss://EXAMPLE.test/?password=secret")
+        assertFalse(out.contains("password=secret"))
+        assertTrue(out.contains("[redacted-endpoint]"))
+    }
+
+    @Test
     fun passes_through_safe_messages() {
         val msg = "session started sessionId=abc123 cycleId=xyz"
         val out = sanitizeLog(msg)
