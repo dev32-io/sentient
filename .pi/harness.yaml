@@ -5,7 +5,7 @@ schemaVersion: 2
 modelTiers:
   max:
     - openai-codex/gpt-5.6-sol#high
-    - ollama-cloud/deepseek-v4-pr:0813#off
+    - ollama-cloud/deepseek-v4-pro:0813#off
   high:
     - openai-codex/gpt-5.6-sol#medium
     - ollama-cloud/deepseek-v4-pro:0813#off
