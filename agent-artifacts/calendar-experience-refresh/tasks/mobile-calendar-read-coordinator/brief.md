@@ -11,7 +11,7 @@ One shared CalendarExperience loads persisted preferences and complete cached mo
 - Explicit scope-all remote pagination and complete atomic replacement
 - Stale-while-revalidate freshness/error state
 - Equivalent-request coalescing and obsolete foreground cancellation
-- SettingsComponent/session exposure and deterministic tests
+- Source-compatible shared component/factory exposure and deterministic tests
 
 ## Required Work
 
@@ -21,8 +21,8 @@ One shared CalendarExperience loads persisted preferences and complete cached mo
 - 4. Keep cached data visible on connectivity failure and update freshness/error metadata only. Treat authorization, forbidden, malformed, decode, and contract failures distinctly rather than hiding them as offline cache fallback.
 - 5. Coalesce equivalent window requests, cancel obsolete foreground work with CancellationException propagation, and prevent cancelled/incomplete pagination from replacing a complete snapshot.
 - 6. Persist view/anchor/filter intents through CalendarCacheStore and recompute projections locally without refetching filtered subsets.
-- 7. Expose CalendarExperience from the authenticated shared component without moving stateful policy into SdkCalendarRepository or shared/mobile-sdk.
-- 8. Add coroutine/SQLDelight tests for cache-first timing, delayed remote response, complete multipage success, later-page failure, cursor loop, cancellation, coalescing, local filter updates, freshness transitions, and one observable fresh emission.
+- 7. Expose CalendarExperience through a source-compatible authenticated shared seam: preserve existing SettingsComponent constructors/call sites with a default/optional injected experience or add a separate CalendarExperienceFactory. Do not require an AndroidSqliteDriver or Context before the later platform-session stage.
+- 8. Add coroutine/SQLDelight tests for cache-first timing, delayed remote response, complete multipage success, later-page failure, cursor loop, cancellation, coalescing, local filter updates, freshness transitions, source-compatible component construction, and one observable fresh emission.
 
 ## Integration Expectation
 
@@ -32,7 +32,7 @@ Deliver this contribution for integration in stage mobile-calendar-read-coordina
 
 - CalendarCacheStore owns durable snapshots; SdkCalendarRepository remains the stateless remote boundary; pure projection functions own Day/Week/Month/Year and filtering.
 - The exact mobile interaction references are sentient-design/HANDOFF.md, sentient-design/brand-spec.md, sentient-design/design/mobile/calendar.html, and sentient-design/components/mobile/sentient-mobile.js. The shared state must directly support their horizontal filters, compact views, agenda rows, floating view selector, sheets, and freshness states without copying fixtures or visual code.
-- Continuous UI state uses StateFlow; Android collects it and iOS consumes its SKIE AsyncSequence.
+- Continuous UI state uses StateFlow; Android collects it and iOS consumes its SKIE AsyncSequence. This stage must preserve existing platform call sites until platform drivers are wired later.
 
 ## Boundary — Excluded
 
@@ -45,4 +45,4 @@ Deliver this contribution for integration in stage mobile-calendar-read-coordina
 ## Interfaces and Dependencies
 
 - Consumes CalendarCacheStore, pure mobile projection functions, and stateless CalendarRepository.
-- Produces CalendarExperience StateFlow and read/presentation intents for platform ViewModels.
+- Produces CalendarExperience StateFlow/read intents plus a source-compatible factory/injection seam for platform session tasks.
