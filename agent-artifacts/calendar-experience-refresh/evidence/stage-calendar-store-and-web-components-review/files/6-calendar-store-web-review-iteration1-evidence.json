@@ -124,21 +124,52 @@
     }
   ],
   "comparisonArtifacts": [
-    "comparison-month-1024x900.png",
+    "comparison-day-1440x1000.png",
+    "comparison-day-1024x900.png",
+    "comparison-day-768x900.png",
+    "comparison-day-390x844.png",
+    "comparison-week-1440x1000.png",
+    "comparison-week-1024x900.png",
+    "comparison-week-768x900.png",
+    "comparison-week-390x844.png",
     "comparison-month-1440x1000.png",
+    "comparison-month-1024x900.png",
+    "comparison-month-768x900.png",
     "comparison-month-390x844.png",
-    "comparison-month-768x900.png"
+    "comparison-year-1440x1000.png",
+    "comparison-year-1024x900.png",
+    "comparison-year-768x900.png",
+    "comparison-year-390x844.png"
   ],
   "productionViews": [
     "day",
-    "month",
     "week",
+    "month",
     "year"
   ],
   "referenceArtifacts": [
-    "reference-1024x900.png",
-    "reference-1440x1000.png",
-    "reference-390x844.png",
-    "reference-768x900.png"
-  ]
+    "reference-day-1440x1000.png",
+    "reference-day-1024x900.png",
+    "reference-day-768x900.png",
+    "reference-day-390x844.png",
+    "reference-week-1440x1000.png",
+    "reference-week-1024x900.png",
+    "reference-week-768x900.png",
+    "reference-week-390x844.png",
+    "reference-month-1440x1000.png",
+    "reference-month-1024x900.png",
+    "reference-month-768x900.png",
+    "reference-month-390x844.png",
+    "reference-year-1440x1000.png",
+    "reference-year-1024x900.png",
+    "reference-year-768x900.png",
+    "reference-year-390x844.png"
+  ],
+  "referenceStates": [
+    "day",
+    "week",
+    "month",
+    "year"
+  ],
+  "scrollWidthEvidence": "scroll-width-evidence.json"
 }

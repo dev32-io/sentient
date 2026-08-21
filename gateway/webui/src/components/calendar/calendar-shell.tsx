@@ -891,6 +891,78 @@ export function FloatingViewBar({
   );
 }
 
+type CalendarCanvasActionInputKey =
+  | "onSelectDate"
+  | "onDateSelect"
+  | "onOpenDay"
+  | "onDaySelect"
+  | "onSelectMonth"
+  | "onMonthSelect"
+  | "onOpenEvent"
+  | "onEventSelect"
+  | "onEventClick"
+  | "onOpenOverflow"
+  | "onOverflow"
+  | "onDateChange"
+  | "onAnchorDateChange";
+
+type CalendarCanvasActionInputs = {
+  readonly [Key in CalendarCanvasActionInputKey]?: CalendarWorkspaceProps[Key] | undefined;
+};
+
+function monthStartDate(year: number, month: number): CalendarDate {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01` as CalendarDate;
+}
+
+/**
+ * Normalize the compatibility callback aliases once at the workspace boundary.
+ * Leaves can then use canonical callbacks while function/component slots still
+ * receive every supported alias, including the anchor-only date fallback.
+ */
+function createCalendarCanvasActionAdapter(inputs: CalendarCanvasActionInputs): CalendarCanvasCallbacks {
+  const anchorDateChange = inputs.onDateChange ?? inputs.onAnchorDateChange;
+  const dateSelect = inputs.onSelectDate
+    ?? inputs.onDateSelect
+    ?? inputs.onOpenDay
+    ?? inputs.onDaySelect
+    ?? (anchorDateChange === undefined ? undefined : (date: CalendarDate) => anchorDateChange(date));
+  const monthSelect = inputs.onSelectMonth
+    ?? inputs.onMonthSelect
+    ?? (anchorDateChange === undefined ? undefined : (year: number, month: number) => anchorDateChange(monthStartDate(year, month)));
+  const eventOpen = inputs.onOpenEvent ?? inputs.onEventSelect ?? inputs.onEventClick;
+  const overflowOpen = inputs.onOpenOverflow ?? inputs.onOverflow;
+
+  return {
+    ...(dateSelect === undefined
+      ? {}
+      : {
+          onSelectDate: dateSelect,
+          onDateSelect: dateSelect,
+          onOpenDay: dateSelect,
+          onDaySelect: dateSelect,
+        }),
+    ...(monthSelect === undefined
+      ? {}
+      : {
+          onSelectMonth: monthSelect,
+          onMonthSelect: monthSelect,
+        }),
+    ...(eventOpen === undefined
+      ? {}
+      : {
+          onOpenEvent: eventOpen,
+          onEventSelect: eventOpen,
+          onEventClick: eventOpen,
+        }),
+    ...(overflowOpen === undefined
+      ? {}
+      : {
+          onOpenOverflow: overflowOpen,
+          onOverflow: overflowOpen,
+        }),
+  };
+}
+
 function renderCanvasSlot(slot: CalendarCanvasChild | undefined, props: CalendarCanvasSlotProps): ComponentChildren {
   if (typeof slot === "function") return slot(props);
   // A component-valued child is still a slot: clone it with the same shared
@@ -955,10 +1027,21 @@ export function CalendarWorkspace({
   const anchorDate = suppliedAnchorDate && isCalendarDate(suppliedAnchorDate) ? suppliedAnchorDate : DEFAULT_DATE;
   const selectedDate = suppliedSelectedDate && isCalendarDate(suppliedSelectedDate) ? suppliedSelectedDate : anchorDate;
   const filters = filterState(selectedFilters ?? suppliedFilters);
-  const canvasDateSelect = onSelectDate ?? (onDateChange === undefined ? undefined : (date: CalendarDate) => onDateChange(date));
-  const canvasMonthSelect = onSelectMonth ?? onMonthSelect ?? (onDateChange === undefined
-    ? undefined
-    : (year: number, month: number) => onDateChange(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`));
+  const canvasActions = createCalendarCanvasActionAdapter({
+    onSelectDate,
+    onDateSelect,
+    onOpenDay,
+    onDaySelect,
+    onSelectMonth,
+    onMonthSelect,
+    onOpenEvent,
+    onEventSelect,
+    onEventClick,
+    onOpenOverflow,
+    onOverflow,
+    onDateChange,
+    onAnchorDateChange,
+  });
   const canvasSlotProps: CalendarCanvasSlotProps = {
     view,
     selectedView: view,
@@ -969,17 +1052,9 @@ export function CalendarWorkspace({
     loading,
     refreshing,
     ...(emptyLabel === undefined ? {} : { emptyLabel }),
-    ...(canvasDateSelect === undefined ? {} : { onSelectDate: canvasDateSelect }),
-    ...(onDateSelect === undefined ? {} : { onDateSelect }),
-    ...(onOpenDay === undefined ? {} : { onOpenDay }),
-    ...(onDaySelect === undefined ? {} : { onDaySelect }),
-    ...(canvasMonthSelect === undefined ? {} : { onSelectMonth: canvasMonthSelect }),
-    ...(onOpenEvent === undefined ? {} : { onOpenEvent }),
-    ...(onEventSelect === undefined ? {} : { onEventSelect }),
-    ...(onEventClick === undefined ? {} : { onEventClick }),
-    ...(onOpenOverflow === undefined ? {} : { onOpenOverflow }),
-    ...(onOverflow === undefined ? {} : { onOverflow }),
+    ...canvasActions,
   };
+  const anchorDateChange = onDateChange ?? onAnchorDateChange;
   const slot = renderCanvas ?? canvas ?? children;
   const generatedAnnouncement = resultCount === undefined
     ? `${VIEW_LABELS[view]} calendar view.`
@@ -1021,8 +1096,7 @@ export function CalendarWorkspace({
           {...(onPrevious === undefined ? {} : { onPrevious })}
           {...(onNext === undefined ? {} : { onNext })}
           {...(onToday === undefined ? {} : { onToday })}
-          {...(onDateChange === undefined ? {} : { onDateChange })}
-          {...(onAnchorDateChange === undefined ? {} : { onAnchorDateChange })}
+          {...(anchorDateChange === undefined ? {} : { onDateChange: anchorDateChange })}
         />
         <div class="calendar-workspace__compact">
           <CalendarCompactControls

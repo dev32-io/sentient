@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { describe, expect, it, vi } from "vitest";
+import type { CalendarOccurrenceV2 } from "../../services/calendar-api.ts";
 import {
   CALENDAR_SIDEBAR_COLLAPSE_BREAKPOINT,
   CALENDAR_SUPPORTED_SCOPES,
@@ -33,6 +34,24 @@ const selectedFilters: CalendarFilters = {
   importance: "important",
   search: "dentist",
 };
+
+function occurrence(overrides: Partial<CalendarOccurrenceV2> = {}): CalendarOccurrenceV2 {
+  const start = overrides.start ?? "2024-02-29T09:00:00Z";
+  return {
+    eventId: "event-1",
+    occurrenceId: "event-1@2024-02-29T09:00:00Z",
+    originalStart: start,
+    recurring: false,
+    revision: 1,
+    scope: "private",
+    title: "Event",
+    start,
+    visibility: "everyone",
+    importance: "normal",
+    tags: [],
+    ...overrides,
+  };
+}
 
 describe("calendar shell filter state", () => {
   it("normalizes only supported scopes and keeps selected stale facets removable", () => {
@@ -108,6 +127,162 @@ describe("CalendarWorkspace", () => {
     expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy();
     fireEvent.click(container.querySelector('[data-calendar-date="2026-08-09"] .calendar-day-cell__date') as HTMLButtonElement);
     expect(onSelectDate).toHaveBeenCalledWith("2026-08-09");
+  });
+
+  it("normalizes canvas intents for anchor-only consumers and preserves workspace navigation", () => {
+    const onAnchorDateChange = vi.fn();
+    const previous = vi.fn();
+    const next = vi.fn();
+    const today = vi.fn();
+    const viewChange = vi.fn();
+    const rows = [1, 2, 3, 4].map((index) =>
+      occurrence({
+        eventId: `dense-${index}`,
+        occurrenceId: `dense-${index}@1`,
+        title: `Dense event ${index}`,
+        start: `2024-02-29T${String(8 + index).padStart(2, "0")}:00:00Z`,
+      }),
+    );
+    const monthProjection = projectCalendar({
+      occurrences: rows,
+      view: "month",
+      anchorDate: "2024-02-29",
+      selectedDate: "2024-02-29",
+      locale: "en-US",
+      timeZone: "UTC",
+      weekStartsOn: 0,
+      today: "2024-02-29",
+      density: { maxVisibleEvents: 2, maxIndicators: 3 },
+    }).view;
+    const yearProjection = projectCalendar({
+      occurrences: rows,
+      view: "year",
+      anchorDate: "2024-02-29",
+      selectedDate: "2024-02-29",
+      locale: "en-US",
+      timeZone: "UTC",
+      weekStartsOn: 0,
+      today: "2024-02-29",
+      density: { maxVisibleEvents: 2, maxIndicators: 3 },
+    }).view;
+    const { container, rerender } = render(
+      <CalendarWorkspace
+        view="month"
+        anchorDate="2024-02-29"
+        selectedDate="2024-02-29"
+        projection={monthProjection}
+        onAnchorDateChange={onAnchorDateChange}
+        onPrevious={previous}
+        onNext={next}
+        onToday={today}
+        onViewChange={viewChange}
+      >
+        <CalendarCanvas />
+      </CalendarWorkspace>,
+    );
+
+    fireEvent.click(container.querySelector('[data-calendar-date="2024-02-29"] .calendar-day-cell__date') as HTMLButtonElement);
+    fireEvent.click(screen.getByRole("button", { name: /Dense event 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more events on Thursday, February 29, 2024/i }));
+    expect(onAnchorDateChange).toHaveBeenNthCalledWith(1, "2024-02-29");
+    expect(onAnchorDateChange).toHaveBeenNthCalledWith(2, "2024-02-29");
+    expect(onAnchorDateChange).toHaveBeenNthCalledWith(3, "2024-02-29");
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous period" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next period" }));
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    expect(previous).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(today).toHaveBeenCalledTimes(1);
+    expect(viewChange).toHaveBeenCalledWith("year");
+
+    rerender(
+      <CalendarWorkspace
+        view="year"
+        anchorDate="2024-02-29"
+        selectedDate="2024-02-29"
+        projection={yearProjection}
+        onAnchorDateChange={onAnchorDateChange}
+      >
+        <CalendarCanvas />
+      </CalendarWorkspace>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select February 2024" }));
+    expect(onAnchorDateChange).toHaveBeenLastCalledWith("2024-02-01");
+  });
+
+  it("normalizes compatibility date, month, event, and overflow aliases for a canvas slot", () => {
+    const onDateSelect = vi.fn();
+    const onMonthSelect = vi.fn();
+    const onEventSelect = vi.fn();
+    const onOverflow = vi.fn();
+    const rows = [1, 2, 3, 4].map((index) =>
+      occurrence({
+        eventId: `alias-${index}`,
+        occurrenceId: `alias-${index}@1`,
+        title: `Alias event ${index}`,
+        start: `2024-02-29T${String(8 + index).padStart(2, "0")}:00:00Z`,
+      }),
+    );
+    const projection = projectCalendar({
+      occurrences: rows,
+      view: "month",
+      anchorDate: "2024-02-29",
+      selectedDate: "2024-02-29",
+      locale: "en-US",
+      timeZone: "UTC",
+      weekStartsOn: 0,
+      today: "2024-02-29",
+      density: { maxVisibleEvents: 2, maxIndicators: 3 },
+    }).view;
+    const yearProjection = projectCalendar({
+      occurrences: rows,
+      view: "year",
+      anchorDate: "2024-02-29",
+      selectedDate: "2024-02-29",
+      locale: "en-US",
+      timeZone: "UTC",
+      weekStartsOn: 0,
+      today: "2024-02-29",
+      density: { maxVisibleEvents: 2, maxIndicators: 3 },
+    }).view;
+    const { container, rerender } = render(
+      <CalendarWorkspace
+        view="month"
+        anchorDate="2024-02-29"
+        projection={projection}
+        onDateSelect={onDateSelect}
+        onMonthSelect={onMonthSelect}
+        onEventSelect={onEventSelect}
+        onOverflow={onOverflow}
+      >
+        <CalendarCanvas />
+      </CalendarWorkspace>,
+    );
+
+    fireEvent.click(container.querySelector('[data-calendar-date="2024-02-29"] .calendar-day-cell__date') as HTMLButtonElement);
+    fireEvent.click(screen.getByRole("button", { name: /Alias event 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: /more events on Thursday, February 29, 2024/i }));
+    expect(onDateSelect).toHaveBeenCalledWith("2024-02-29");
+    expect(onEventSelect).toHaveBeenCalledWith(expect.objectContaining({ eventId: "alias-1" }), "2024-02-29");
+    expect(onOverflow).toHaveBeenCalledWith("2024-02-29", expect.arrayContaining([expect.objectContaining({ eventId: "alias-4" })]));
+
+    rerender(
+      <CalendarWorkspace
+        view="year"
+        anchorDate="2024-02-29"
+        projection={yearProjection}
+        onDateSelect={onDateSelect}
+        onMonthSelect={onMonthSelect}
+        onEventSelect={onEventSelect}
+        onOverflow={onOverflow}
+      >
+        <CalendarCanvas />
+      </CalendarWorkspace>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select February 2024" }));
+    expect(onMonthSelect).toHaveBeenCalledWith(2024, 2);
   });
 
   it("keeps both roomy and compact controls on the same controlled filter state", () => {
