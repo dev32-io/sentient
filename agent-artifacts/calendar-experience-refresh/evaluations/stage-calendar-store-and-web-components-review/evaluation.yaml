@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: stage-calendar-store-and-web-components-review
+type: combined-review
+checkpoint: stage-review
+stageId: calendar-store-and-web-components
+scope:
+  workItem: calendar-experience-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
+    run --filter @sentient/webui typecheck && bun run --filter @sentient/webui
+    build
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Atomic observable SQLDelight store, raw RFC3339 temporal round-trip, and
+    namespace/purge behavior
+  - Web leaf components remain isolated through a typed CalendarWorkspace canvas
+    slot, component-scoped CSS, shared calendar-time helpers, and explicit
+    draft/capability ownership
+  - Exact web comparison uses sentient-design/HANDOFF.md,
+    sentient-design/brand-spec.md, sentient-design/design/web/calendar.html, and
+    sentient-design/components/web/sentient-web.js at 1440x1000, 1024x900,
+    768x900, and 390x844
+  - 900px sidebar collapse, seven-column no-overflow correction, viewport-safe
+    preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
+    and reduced motion
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
