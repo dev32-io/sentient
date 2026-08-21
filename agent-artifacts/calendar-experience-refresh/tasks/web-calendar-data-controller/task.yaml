@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-data-controller
 title: Implement complete web calendar loading and preference state
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -20,3 +20,9 @@ verification:
     - source scripts/env.sh && bun run --filter @sentient/webui typecheck
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/web-calendar-data-controller
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-data-controller
+  baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
+  lastRunId: 833b6b94-ba06-42bc-87e0-af60510b25e2
