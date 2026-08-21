@@ -42,6 +42,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException as KotlinCancellationException
 import kotlin.time.Clock as KtClock
 
@@ -141,6 +143,18 @@ private data class InFlightRequestRegistration(
     val deferred: Deferred<WindowLoadResult>,
 )
 
+/**
+ * The request registry has its own atomic linearization point because request
+ * cancellation is also initiated by non-suspending public intents such as
+ * [CalendarExperience.observe]. A coroutine Mutex cannot make removal atomic
+ * there: falling back to an asynchronous cleanup leaves a stale Deferred
+ * visible to the next lookup.
+ */
+private data class InFlightRequestRegistry(
+    val generation: Long,
+    val entries: Map<CalendarWindowRequestKey, InFlightRequestRegistration>,
+)
+
 private data class BookkeepingJobRegistration(
     val bookkeepingGeneration: Long,
     val job: Job,
@@ -182,6 +196,7 @@ data class CalendarPrefetchDiagnostic(
  * repository state is retained: the repository remains a stateless transport
  * boundary and this class owns only observation/revalidation coordination.
  */
+@OptIn(ExperimentalAtomicApi::class)
 class CalendarExperience(
     private val repository: CalendarRepository,
     private val cacheStore: CalendarCacheStore,
@@ -232,9 +247,11 @@ class CalendarExperience(
     private var observedNamespace: CalendarCacheNamespace = cacheStore.currentNamespace.value
     private var accessDisabled: Boolean = false
     private var bookkeepingGeneration: Long = 0L
-    /** Protects all in-flight/prefetch/access bookkeeping and registration. */
+    /** Protects prefetch/access bookkeeping and registration. */
     private val bookkeepingMutex = Mutex()
-    private val inFlightRequests = mutableMapOf<CalendarWindowRequestKey, InFlightRequestRegistration>()
+    private val inFlightRequests = AtomicReference(
+        InFlightRequestRegistry(generation = 0L, entries = emptyMap()),
+    )
     private val prefetchJobs = mutableMapOf<CalendarWindowRequestKey, BookkeepingJobRegistration>()
     private val scheduledPrefetchKeys = mutableMapOf<CalendarWindowRequestKey, Long>()
     private val _prefetchDiagnostics = MutableStateFlow<List<CalendarPrefetchDiagnostic>>(emptyList())
@@ -1897,42 +1914,72 @@ class CalendarExperience(
             continuationFence != null && !isMutationFenceCurrent(continuationFence)
         ) return WindowLoadResult.Cancelled
         val key = CalendarWindowRequestKey(namespace, window)
-        val registrationGeneration = bookkeepingGeneration
         // Registration and the LAZY start are deliberately separate: a fast
-        // completion cannot occur before a coalescing entry is visible.
-        val request = bookkeepingMutex.withLock {
-            val existing = inFlightRequests[key]?.takeIf { !it.deferred.isCompleted }?.deferred
-            if (existing != null) {
-                existing
-            } else {
-                val created = scope.async(start = CoroutineStart.LAZY) {
-                    loadWindowUncoalesced(window, namespace, namespaceEpoch, continuationFence)
-                }
-                inFlightRequests[key] = InFlightRequestRegistration(registrationGeneration, created)
-                created.invokeOnCompletion {
-                    scope.launch {
-                        bookkeepingMutex.withLock {
-                            if (inFlightRequests[key]?.deferred === created) inFlightRequests.remove(key)
-                        }
-                    }
-                }
-                created
-            }
-        }
-        if (registrationGeneration != bookkeepingGeneration) {
-            bookkeepingMutex.withLock {
-                val entry = inFlightRequests[key]
-                if (entry?.deferred === request && entry.bookkeepingGeneration == registrationGeneration) {
-                    inFlightRequests.remove(key)
-                    request.cancel()
-                }
-            }
-            return WindowLoadResult.Cancelled
-        }
+        // completion cannot occur before a coalescing entry is visible. The
+        // atomic registry also makes cancellation/removal linear with lookup,
+        // even though this public operation may be initiated synchronously.
+        val request = registerInFlightRequest(key, window, namespace, namespaceEpoch, continuationFence)
+            ?: return WindowLoadResult.Cancelled
         request.start()
         val result = request.await()
         return if (continuationFence == null || isMutationFenceCurrent(continuationFence)) result
         else WindowLoadResult.Cancelled
+    }
+
+    private fun registerInFlightRequest(
+        key: CalendarWindowRequestKey,
+        window: CalendarCacheWindow,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+        continuationFence: MutationContinuationFence?,
+    ): Deferred<WindowLoadResult>? {
+        while (true) {
+            if (!isNamespaceCurrent(namespace, namespaceEpoch) ||
+                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            ) return null
+            val registry = inFlightRequests.load()
+            val existing = registry.entries[key]
+            if (existing != null &&
+                existing.bookkeepingGeneration == registry.generation &&
+                existing.deferred.isActive
+            ) {
+                return existing.deferred
+            }
+
+            // Keep the new Deferred lazy until its exact entry is installed.
+            // If cancellation wins the CAS, this object is never reusable.
+            val created = scope.async(start = CoroutineStart.LAZY) {
+                loadWindowUncoalesced(window, namespace, namespaceEpoch, continuationFence)
+            }
+            val nextEntries = registry.entries.toMutableMap()
+            nextEntries[key] = InFlightRequestRegistration(registry.generation, created)
+            val next = InFlightRequestRegistry(registry.generation, nextEntries.toMap())
+            if (inFlightRequests.compareAndSet(registry, next)) {
+                // Remove/cancel the predecessor only after the replacement is
+                // published. Its completion callback compares identity and can
+                // therefore never erase this replacement.
+                if (existing != null) existing.deferred.cancel()
+                created.invokeOnCompletion { removeInFlightRequest(key, created) }
+                return created
+            }
+            // Another registrar or cancellation won the linearization point.
+            // This lazy child has not performed remote work and is disposable.
+            created.cancel()
+        }
+    }
+
+    private fun removeInFlightRequest(
+        key: CalendarWindowRequestKey,
+        completed: Deferred<WindowLoadResult>,
+    ) {
+        while (true) {
+            val registry = inFlightRequests.load()
+            if (registry.entries[key]?.deferred !== completed) return
+            val nextEntries = registry.entries.toMutableMap()
+            nextEntries.remove(key)
+            val next = registry.copy(entries = nextEntries.toMap())
+            if (inFlightRequests.compareAndSet(registry, next)) return
+        }
     }
 
     private suspend fun loadWindowUncoalesced(
@@ -2471,33 +2518,36 @@ class CalendarExperience(
         _prefetchDiagnostics.value = emptyList()
     }
 
+    /**
+     * Atomically advances the request generation, removes the exact old
+     * entries, then cancels the detached Deferreds. This cannot use a
+     * suspending Mutex: [observe] and namespace invalidation must complete the
+     * registry transition synchronously before a same-key lookup can run.
+     */
     private fun cancelSharedRequests() {
-        val cancellationGeneration = ++bookkeepingGeneration
-        if (bookkeepingMutex.tryLock()) {
-            val requests = try {
-                val keys = inFlightRequests.filterValues {
-                    it.bookkeepingGeneration < cancellationGeneration
-                }.keys.toList()
-                val selected = keys.mapNotNull { inFlightRequests[it]?.deferred }
-                keys.forEach { inFlightRequests.remove(it) }
-                selected
-            } finally {
-                bookkeepingMutex.unlock()
-            }
-            requests.forEach { it.cancel() }
-        } else {
-            scope.launch {
-                val requests = bookkeepingMutex.withLock {
-                    val keys = inFlightRequests.filterValues {
-                        it.bookkeepingGeneration < cancellationGeneration
-                    }.keys.toList()
-                    val selected = keys.mapNotNull { inFlightRequests[it]?.deferred }
-                    keys.forEach { inFlightRequests.remove(it) }
-                    selected
-                }
-                requests.forEach { it.cancel() }
+        ++bookkeepingGeneration
+        val requests: List<Deferred<WindowLoadResult>>
+        while (true) {
+            val registry = inFlightRequests.load()
+            val cancellationGeneration = registry.generation + 1L
+            val selected = registry.entries.values
+                .filter { it.bookkeepingGeneration < cancellationGeneration }
+                .map { it.deferred }
+            val next = InFlightRequestRegistry(
+                generation = cancellationGeneration,
+                entries = registry.entries.filterValues {
+                    it.bookkeepingGeneration >= cancellationGeneration
+                },
+            )
+            if (inFlightRequests.compareAndSet(registry, next)) {
+                requests = selected
+                break
             }
         }
+        // Cancellation is deliberately outside the atomic registry update:
+        // no lookup can observe the removed entries, and a completion callback
+        // can only remove an entry whose Deferred identity still matches.
+        requests.forEach { it.cancel() }
     }
 
     private fun adjacentMonthWindows(window: CalendarCacheWindow): List<CalendarCacheWindow> {

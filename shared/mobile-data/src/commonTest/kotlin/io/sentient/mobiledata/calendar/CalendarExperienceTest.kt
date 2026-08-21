@@ -33,6 +33,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -360,6 +361,130 @@ class CalendarExperienceTest {
             assertTrue(repository.cancelled)
             assertTrue(repository.calls >= 2)
             firstGate.complete(Unit)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `cancel then immediate same-key observation starts a fresh request`() = runTest {
+        val window = monthWindow()
+        val otherWindow = CalendarCacheWindow("2026-07-01", "2026-08-01")
+        val gate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "fresh"))),
+            beforePage = { gate.await() },
+        )
+        val experience = experience(repository, FakeCacheStore(), window, this)
+        try {
+            experience.observe(window)
+            runCurrent()
+            assertEquals(1, repository.windows.count { it == (window.windowStart to window.windowEnd) })
+
+            // The second observation synchronously removes/cancels the first
+            // request. Returning to the original key must not join it.
+            experience.observe(otherWindow)
+            runCurrent()
+            experience.observe(window)
+            runCurrent()
+
+            assertTrue(
+                repository.windows.count { it == (window.windowStart to window.windowEnd) } >= 2,
+                repository.windows.toString(),
+            )
+            assertTrue(repository.cancelled)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertEquals("fresh", experience.state.value.projection?.visibleEvents?.single()?.title)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `namespace switch away and back does not reuse the predecessor request`() = runTest {
+        val window = monthWindow()
+        val gate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "fresh"))),
+            beforePage = { gate.await() },
+        )
+        val experience = experience(repository, FakeCacheStore(), window, this)
+        try {
+            experience.observe(window)
+            runCurrent()
+            val successor = CalendarCacheNamespace("account-b", "backend-b")
+            assertIs<CalendarCacheResult.Success<Unit>>(experience.switchNamespace(successor))
+            runCurrent()
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                experience.switchNamespace(CalendarCacheNamespace("account", "backend")),
+            )
+            runCurrent()
+
+            // A -> B -> A uses the same request key on the final switch. The
+            // cancelled A entry must already be absent before that lookup.
+            assertEquals(3, repository.windows.count { it == (window.windowStart to window.windowEnd) })
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `old request completion cannot erase a newer same-key registration`() = runTest {
+        val window = monthWindow()
+        val otherWindow = CalendarCacheWindow("2026-07-01", "2026-08-01")
+        val gate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "fresh"))),
+            beforePage = { gate.await() },
+            swallowCancellation = true,
+        )
+        val experience = experience(repository, FakeCacheStore(), window, this)
+        try {
+            experience.observe(window)
+            runCurrent()
+            experience.observe(otherWindow)
+            experience.observe(window)
+            runCurrent()
+
+            // The predecessor is cancellation-resistant and may finish after
+            // the replacement has been registered. Its identity-checked
+            // completion must not remove the replacement entry.
+            assertTrue(
+                repository.windows.count { it == (window.windowStart to window.windowEnd) } >= 2,
+                repository.windows.toString(),
+            )
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertEquals("fresh", experience.state.value.projection?.visibleEvents?.single()?.title)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `concurrent adjacent prefetch requests coalesce at the registry boundary`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window))
+        val repository = FakeRepository(pages = listOf(page(event(title = "remote"))))
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            val callers = List(16) {
+                launch {
+                    experience.prefetchAdjacent(window).single().join()
+                }
+            }
+            callers.forEach { it.join() }
+            advanceUntilIdle()
+
+            val grouped = repository.windows.groupingBy { it }.eachCount()
+            assertTrue(grouped.values.all { it == 1 }, grouped.toString())
         } finally {
             experience.close()
         }
