@@ -88,7 +88,7 @@ function projectedTime(
   // only a formatting fallback; it is never copied into the source identity.
   const localDate = calendarDateForInstant(raw, timeOptions.timeZone) ?? calendarDateForInstant(raw, "UTC");
   if (!localDate) return null;
-  const source: CalendarTime = sourceTemporal(value) ?? { kind: "timed", instant: raw, timeZoneId: "UTC" };
+  const source: CalendarTime = sourceTemporal(value) ?? { kind: "timed", instant: raw };
   return {
     kind,
     raw,

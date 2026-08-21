@@ -4,8 +4,8 @@ import { bearerHeaders, handleFetch, jsonHeaders } from "./_helpers";
 /** Raw temporal values accepted by the V2 REST contract. */
 export type CalendarTimeInput = string;
 
-/** Source-level time convenience retained for the existing calendar view. */
-export type CalendarTime = { kind: "timed"; instant: string; timeZoneId: string } | { kind: "all-day"; date: string };
+/** Source-level time convenience; V2 decoding leaves timeZoneId absent unless supplied by the source model. */
+export type CalendarTime = { kind: "timed"; instant: string; timeZoneId?: string } | { kind: "all-day"; date: string };
 
 export type CalendarScope = "private" | "household";
 export type CalendarReadScope = CalendarScope | "all";
@@ -251,7 +251,10 @@ function sourceTime(value: unknown): CalendarTime {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return { kind: "all-day", date: value };
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value)))
     throw new Error("invalid calendar time");
-  return { kind: "timed", instant: value, timeZoneId: "UTC" };
+  // V2 sends an offset-bearing RFC3339 value, not an IANA event zone. Keep
+  // the exact wire value and leave the compatibility zone absent unless a
+  // caller supplied one through the source-level model.
+  return { kind: "timed", instant: value };
 }
 function sourceRecurrence(value: unknown): CalendarRecurrence | undefined {
   if (!isRecord(value)) return undefined;

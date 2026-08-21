@@ -78,6 +78,44 @@ describe("calendar REST V2 client", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/calendar/events/event%2F1?scope=all&originalStart=2026-08-10");
   });
 
+  it("preserves raw V2 temporal values without synthesizing an event timezone", async () => {
+    const start = "2026-11-01T09:15:00-04:00";
+    const end = "2026-11-01T10:15:00-04:00";
+    const originalStart = "2026-11-01T09:15:00-04:00";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        envelope({
+          events: [
+            { ...v2Occurrence, start, end, originalStart },
+            {
+              ...v2Event,
+              eventId: "all-day-event",
+              occurrenceId: "all-day-event@2026-11-02",
+              start: "2026-11-02",
+              originalStart: "2026-11-02",
+              recurring: false,
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createCalendarApi().list("token", { from: "2026-11-01", to: "2026-11-30" });
+
+    expect(result).toMatchObject({ ok: true, value: { events: expect.any(Array) } });
+    if (!result.ok) throw new Error("expected a decoded calendar page");
+    const timed = result.value.events[0];
+    const allDay = result.value.events[1];
+    expect(timed?.start).toEqual({ kind: "timed", instant: start });
+    expect(timed?.end).toEqual({ kind: "timed", instant: end });
+    expect(timed?.originalStart).toEqual({ kind: "timed", instant: originalStart });
+    expect(timed?.start).not.toHaveProperty("timeZoneId");
+    expect(allDay?.start).toEqual({ kind: "all-day", date: "2026-11-02" });
+    expect(allDay?.originalStart).toEqual({ kind: "all-day", date: "2026-11-02" });
+  });
+
   it("strips server-owned fields and converts source times for create", async () => {
     const response = { ...v2Event, revision: 1 };
     const fetchMock = vi.fn().mockResolvedValue(new Response(envelope(response), { status: 200 }));
