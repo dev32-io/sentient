@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "design/mobile/login.html",
+  "entry": "design/mobile/login.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-08-20T17:16:49.102Z",
+  "updatedAt": "2026-08-20T17:16:49.102Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

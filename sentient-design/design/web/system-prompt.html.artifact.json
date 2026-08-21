@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "design/web/system-prompt.html",
+  "entry": "design/web/system-prompt.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-08-20T16:58:35.234Z",
+  "updatedAt": "2026-08-20T16:58:35.234Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

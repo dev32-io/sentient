@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "sentient-family-calendar.html",
+  "entry": "sentient-family-calendar.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-08-19T02:58:38.024Z",
+  "updatedAt": "2026-08-19T02:58:38.024Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}
