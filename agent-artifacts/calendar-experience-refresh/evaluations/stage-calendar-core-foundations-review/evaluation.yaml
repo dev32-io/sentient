@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-core-foundations
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -28,8 +28,8 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 6
   reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
   reviewedCommit: d0c8e10ecaf7656a794d02a4cc9940339c52fcf3
