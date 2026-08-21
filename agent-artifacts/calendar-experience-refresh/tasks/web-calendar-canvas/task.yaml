@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-canvas
 title: Implement responsive web Day, Week, Month, and Year canvases
-status: contribution_complete
+status: merged
 dependsOn:
   - web-calendar-projections
 execution:
@@ -29,3 +29,4 @@ runtime:
   baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
   lastRunId: 53c34ae3-bd0b-4650-94a1-ca8112fddd19
   completedCommit: f532198efc8190611f813600647492be0fb8d529
+  mergedCommit: de2bd60ca0a7d9598915a2d9584eee551c2a4d2f
