@@ -96,6 +96,8 @@ evaluations:
     path: evaluations/stage-native-calendar-components-review/evaluation.yaml
   - id: stage-calendar-delivery-completion-review
     path: evaluations/stage-calendar-delivery-completion-review/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:
