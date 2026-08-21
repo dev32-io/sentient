@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: ios-calendar-viewmodel
+title: Make iOS CalendarViewModel a thin SKIE state adapter
+status: draft
+dependsOn:
+  - ios-calendar-database-session
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: ios-calendar-viewmodel
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && xcodegen generate && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.

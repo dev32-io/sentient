@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 27
+  revision: 28
 artifacts:
   - id: intent
     type: intent
@@ -60,6 +60,8 @@ tasks:
     path: tasks/ios-calendar-database-session/task.yaml
   - id: android-calendar-viewmodel
     path: tasks/android-calendar-viewmodel/task.yaml
+  - id: ios-calendar-viewmodel
+    path: tasks/ios-calendar-viewmodel/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -114,3 +116,6 @@ executionStages:
   - id: android-calendar-viewmodel
     tasks:
       - android-calendar-viewmodel
+  - id: ios-calendar-viewmodel
+    tasks:
+      - ios-calendar-viewmodel
