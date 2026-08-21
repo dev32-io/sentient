@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 79
+  revision: 80
 artifacts:
   - id: intent
     type: intent
@@ -281,23 +281,27 @@ executionStages:
     checks:
       - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
         :android:testDebugUnitTest :android:assembleDebug
-      - source scripts/env.sh && ./gradlew
-        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
-        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
-        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
-      - source scripts/env.sh && ./qa/mobile/run-e2e.sh all --tags calendar
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
       - source scripts/env.sh && git diff --check
     mode: concurrent
     review:
       tier: medium
       focus:
-        - Android and iOS are thin shared-StateFlow consumers with no duplicated
-          cache/network/policy
-        - Production screens match sentient-design/design/mobile/calendar.html
-          and sentient-design/components/mobile/sentient-mobile.js at 390x844
-          and 430x932
+        - Android and iOS production code remains thin over shared StateFlow
+          with no duplicated cache/network/policy
+        - Production screens compare directly to sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js at exact logical
+          390x844 and 430x932 profiles
         - Day/Week/Month/Year, filters, sheets, cache/offline/recovery,
-          mutations, conflicts, permissions, temporal behavior, accessibility,
-          safe areas, and reduced motion
-        - Calendar-tagged Maestro coverage maps Android/iOS portions of approved
-          CAL-UX-001 through CAL-UX-014 using local synthetic data only
+          mutations, conflicts, permissions, temporal behavior, semantic
+          accessibility, safe areas, and reduced motion
+        - The runtime's final E2E agent—not concurrent task checks—runs Android
+          then iOS sequentially with direct Maestro/existing fault controls,
+          unique disposable fixture namespaces, guaranteed cleanup, and
+          CAL-UX-001..014 evidence; no qa/mobile runner extension or mandatory
+          actual assistive-technology session is required
