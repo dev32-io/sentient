@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-projections
 title: Build shared mobile calendar projections and filter semantics
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -25,3 +25,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-projections
   baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
   lastRunId: acb7c6af-44b8-49c5-8f12-1a3d0ff1bde5
+  completedCommit: 391875f79d2266a229391c53ce3609341115d2c6
