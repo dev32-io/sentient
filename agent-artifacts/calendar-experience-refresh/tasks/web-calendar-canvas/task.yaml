@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-canvas
 title: Implement responsive web Day, Week, Month, and Year canvases
-status: running
+status: contribution_complete
 dependsOn:
   - web-calendar-projections
 execution:
@@ -28,3 +28,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-canvas
   baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
   lastRunId: 53c34ae3-bd0b-4650-94a1-ca8112fddd19
+  completedCommit: f532198efc8190611f813600647492be0fb8d529
