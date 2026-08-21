@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-read-coordinator
 title: Implement shared cache-first calendar observation and revalidation
-status: blocked
+status: ready
 dependsOn:
   - mobile-calendar-store
   - mobile-calendar-projections
