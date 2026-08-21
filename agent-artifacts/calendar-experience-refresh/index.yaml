@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 37
+  revision: 38
 artifacts:
   - id: intent
     type: intent
@@ -80,7 +80,7 @@ delivery:
   createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
 evaluations: []
 executionStages:
-  - id: native-calendar-assembly
+  - id: calendar-core-foundations
     tasks:
       - mobile-sqldelight-foundation
       - mobile-calendar-projections
@@ -103,37 +103,13 @@ executionStages:
       - android-calendar-overlays
       - ios-calendar-surface
       - ios-calendar-overlays
+      - android-calendar-assembly
+      - ios-calendar-assembly
     checks:
       - source scripts/env.sh && git diff --check
     mode: sequential
     review:
       tier: medium
       focus:
-        - Calendar delivery plan coherence
-  - id: calendar-delivery-completion
-    tasks:
-      - android-calendar-assembly
-      - ios-calendar-assembly
-    checks:
-      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
-        :android:testDebugUnitTest :android:assembleDebug
-      - source scripts/env.sh && ./gradlew
-        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
-        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
-        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
-      - source scripts/env.sh && ./qa/mobile/run-e2e.sh all --tags calendar
-      - source scripts/env.sh && git diff --check
-    mode: concurrent
-    review:
-      tier: medium
-      focus:
-        - Android and iOS are thin shared-StateFlow consumers with no duplicated
-          cache/network/policy
-        - Production screens match sentient-design/design/mobile/calendar.html
-          and sentient-design/components/mobile/sentient-mobile.js at 390x844
-          and 430x932
-        - Day/Week/Month/Year, filters, sheets, cache/offline/recovery,
-          mutations, conflicts, permissions, temporal behavior, accessibility,
-          safe areas, and reduced motion
-        - Calendar-tagged Maestro coverage maps Android/iOS portions of approved
-          CAL-UX-001 through CAL-UX-014 using local synthetic data only
+        - Temporary complete topological task sequence while execution stages
+          are decomposed

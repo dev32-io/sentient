@@ -16,7 +16,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: native-calendar-assembly
+  stageId: calendar-core-foundations
   intermediateState: complete
 verification:
   timing: task
