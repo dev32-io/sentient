@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.skie)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.sqldelight)
 }
 
 // Shared mobile-data source version. Set to 0.1.0 with the WS-resilience + REST
@@ -43,6 +44,11 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
+            // CalendarDatabase exposes SqlDriver through the common seam, so runtime is
+            // API-visible. Coroutine query helpers remain an implementation dependency
+            // until CalendarCacheStore defines its own domain-facing flow types.
+            api(libs.sqldelight.runtime)
+            implementation(libs.sqldelight.coroutines.extensions)
             // SettingsComponent takes a Ktor HttpClient in its public constructor so the
             // connection scope can build the settings REST clients over the same engine the
             // platform configures (generous request timeout for the restart-blocking apply).
@@ -53,6 +59,24 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.mock)
+        }
+        // The native driver is needed by the generated iOS framework only. Android
+        // driver wiring belongs to the later authenticated Android session task.
+        iosMain.dependencies { implementation(libs.sqldelight.native.driver) }
+
+        // SQLDelight's JVM SQLite driver is test-only and must not enter commonMain or
+        // either native target. Host-side database fixtures run with androidUnitTest.
+        val androidUnitTest by getting {
+            dependencies { implementation(libs.sqldelight.sqlite.driver) }
+        }
+    }
+}
+
+sqldelight {
+    databases {
+        create("CalendarDatabase") {
+            packageName.set("io.sentient.mobiledata.cache.db")
+            schemaOutputDirectory.set(file("src/commonMain/sqldelight/databases"))
         }
     }
 }
