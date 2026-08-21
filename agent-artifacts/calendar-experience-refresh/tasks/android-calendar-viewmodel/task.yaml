@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-viewmodel
 title: Make Android CalendarViewModel a thin shared-state adapter
-status: blocked
+status: ready
 dependsOn:
   - android-calendar-database-session
 execution:
