@@ -2,7 +2,7 @@ schemaVersion: 1
 id: calendar-experience-refresh
 kind: story
 title: Cross-platform family calendar experience
-phase: planning
+phase: execution
 state: active
 planning:
   revision: 80
@@ -78,6 +78,7 @@ integrationUnits: []
 delivery:
   workingBranch: feature/calendar
   createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
+  executionStartCommit: 2dd9449aed19afb112e0d49f109193a0f98492db
 evaluations: []
 executionStages:
   - id: calendar-core-foundations
