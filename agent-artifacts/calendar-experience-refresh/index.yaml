@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 45
+  revision: 46
 artifacts:
   - id: intent
     type: intent
@@ -154,13 +154,23 @@ executionStages:
       - mobile-calendar-retention-offline
       - mobile-calendar-mutations
     checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+        :shared:mobile-data:allTests
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:assembleMobileDataDebugXCFramework
       - source scripts/env.sh && git diff --check
     mode: sequential
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
-          decomposed
+        - Nonblocking adjacent prefetch, transactional twelve-month LRU, offline
+          states, recovery, and isolation
+        - Exact V2 create/edit/delete recurrence, revision, conflict,
+          permission, and temporal semantics
+        - Offline writes produce no optimistic success, queue row, or hidden
+          retry
+        - Shared state fully supports exact mobile reference
+          preview/editor/freshness flows without native policy
   - id: mobile-platform-sessions
     tasks:
       - android-calendar-database-session
