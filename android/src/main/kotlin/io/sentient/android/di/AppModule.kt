@@ -103,10 +103,7 @@ val appModule = module {
     // Per-category page VMs — scaffold placeholders (P3a). A page agent gives each a
     // real constructor (usecases off get<SettingsComponent>()) when it fills the page.
     viewModel { MemoryViewModel(get<SettingsComponent>()) }
-    viewModel {
-        val settings = get<SettingsComponent>()
-        CalendarViewModel(settings.listCalendar, settings.createCalendar, settings.updateCalendar, settings.deleteCalendar)
-    }
+    viewModel { CalendarViewModel(get<UserSessionManager>().calendarExperience()) }
     viewModel { PersonalitiesViewModel(get<SettingsComponent>()) }
     viewModel {
         val settings = get<SettingsComponent>()

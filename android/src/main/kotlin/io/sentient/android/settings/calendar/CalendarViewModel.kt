@@ -2,166 +2,247 @@ package io.sentient.android.settings.calendar
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.sentient.mobiledata.result.SentientResult
-import io.sentient.mobiledata.usecase.calendar.CreateCalendarUseCase
-import io.sentient.mobiledata.usecase.calendar.DeleteCalendarUseCase
-import io.sentient.mobiledata.usecase.calendar.ListCalendarUseCase
-import io.sentient.mobiledata.usecase.calendar.UpdateCalendarUseCase
-import io.sentient.mobilesdk.calendar.CalendarEvent
-import io.sentient.mobilesdk.calendar.CalendarEventPage
-import io.sentient.mobilesdk.calendar.CalendarScope
-import io.sentient.mobilesdk.calendar.CalendarTime
-import io.sentient.mobilesdk.calendar.Importance
-import io.sentient.mobilesdk.calendar.Visibility
+import io.sentient.mobiledata.calendar.CalendarAgendaSection
+import io.sentient.mobiledata.calendar.CalendarConflictReviewState
+import io.sentient.mobiledata.calendar.CalendarDateInterval
+import io.sentient.mobiledata.calendar.CalendarDeleteConfirmationState
+import io.sentient.mobiledata.calendar.CalendarExperience
+import io.sentient.mobiledata.calendar.CalendarExperienceError
+import io.sentient.mobiledata.calendar.CalendarExperienceIntent
+import io.sentient.mobiledata.calendar.CalendarExperienceState
+import io.sentient.mobiledata.calendar.CalendarFacetOptions
+import io.sentient.mobiledata.calendar.CalendarFilters
+import io.sentient.mobiledata.calendar.CalendarFreshness
+import io.sentient.mobiledata.calendar.CalendarLoadingState
+import io.sentient.mobiledata.calendar.CalendarLocale
+import io.sentient.mobiledata.calendar.CalendarMonthProjection
+import io.sentient.mobiledata.calendar.CalendarMutationAvailability
+import io.sentient.mobiledata.calendar.CalendarMutationDraft
+import io.sentient.mobiledata.calendar.CalendarMutationEditorState
+import io.sentient.mobiledata.calendar.CalendarMutationError
+import io.sentient.mobiledata.calendar.CalendarMutationOutcome
+import io.sentient.mobiledata.calendar.CalendarMutationPhase
+import io.sentient.mobiledata.calendar.CalendarNavigationAction
+import io.sentient.mobiledata.calendar.CalendarOfflineState
+import io.sentient.mobiledata.calendar.CalendarProjectedEvent
+import io.sentient.mobiledata.calendar.CalendarView
+import io.sentient.mobiledata.calendar.CalendarWeekProjection
+import io.sentient.mobiledata.calendar.CalendarYearProjection
+import io.sentient.mobiledata.calendar.CalendarDayProjection
+import io.sentient.mobilesdk.calendar.CalendarMutationScope
+import io.sentient.mobilesdk.calendar.EffectiveOccurrence
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.OffsetDateTime
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.util.UUID
 
-/** Calendar screen state. All operation results are folded here, at the UI boundary. */
+/** Stable semantic content states. Rendering and geometry remain Compose concerns. */
+enum class CalendarContentState {
+    LOADING,
+    EMPTY,
+    CONTENT,
+    ERROR,
+    UNAVAILABLE_OFFLINE,
+}
+
+/**
+ * Immutable Android projection of the session-owned shared calendar state.
+ *
+ * Shared projection and mutation values are deliberately retained rather than
+ * reconstructed. This keeps occurrence identity and all calendar policy at the
+ * shared boundary while giving Compose one state object to render.
+ */
 data class CalendarUiState(
-    val events: List<CalendarEvent> = emptyList(),
-    val loading: Boolean = true,
-    val error: String? = null,
-    val saving: Boolean = false,
-    val operationError: String? = null,
-)
+    val anchorDate: String,
+    val selectedDate: String,
+    val todayDate: String,
+    val view: CalendarView,
+    val locale: CalendarLocale,
+    val filters: CalendarFilters,
+    val visibleInterval: CalendarDateInterval?,
+    val selectedInterval: CalendarDateInterval?,
+    val day: CalendarDayProjection?,
+    val week: CalendarWeekProjection?,
+    val month: CalendarMonthProjection?,
+    val year: CalendarYearProjection?,
+    val facets: CalendarFacetOptions,
+    /** Exact authorized values used by preview/edit callbacks; identities are never rebuilt on Android. */
+    val authorizedOccurrences: List<EffectiveOccurrence>,
+    val agendaRows: List<CalendarAgendaSection>,
+    val visibleEvents: List<CalendarProjectedEvent>,
+    val freshness: CalendarFreshness,
+    val offline: CalendarOfflineState,
+    val loading: CalendarLoadingState,
+    val hasCompleteCache: Boolean,
+    val contentState: CalendarContentState,
+    val error: CalendarExperienceError?,
+    val mutationAvailability: CalendarMutationAvailability,
+    val mutationPhase: CalendarMutationPhase,
+    val preview: EffectiveOccurrence?,
+    val editor: CalendarMutationEditorState?,
+    val deleteConfirmation: CalendarDeleteConfirmationState?,
+    val conflict: CalendarConflictReviewState?,
+    val mutationError: CalendarMutationError?,
+    /** Acknowledged shared state: it remains present until [acknowledgeOutcome]. */
+    val outcome: CalendarMutationOutcome?,
+) {
+    val isRefreshing: Boolean get() = loading.isRefreshing || freshness == CalendarFreshness.REFRESHING
+    val isOffline: Boolean get() = offline != CalendarOfflineState.ONLINE
+    val isEmpty: Boolean get() = contentState == CalendarContentState.EMPTY
+    val isSubmitting: Boolean get() = mutationPhase == CalendarMutationPhase.SUBMITTING
+    val permissionError: CalendarMutationError? get() = mutationError?.takeIf { it.isPermission }
+}
 
-private val EDITOR_DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-private val DISPLAY_DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-
-class CalendarViewModel(
-    private val listCalendar: ListCalendarUseCase,
-    private val createCalendar: CreateCalendarUseCase,
-    private val updateCalendar: UpdateCalendarUseCase,
-    private val deleteCalendar: DeleteCalendarUseCase,
+/**
+ * Route-scoped collector over a session-scoped [CalendarExperience]. Clearing
+ * this ViewModel cancels only collection; ownership and closing stay with the
+ * authenticated session.
+ */
+class CalendarViewModel internal constructor(
+    sharedState: StateFlow<CalendarExperienceState>,
+    private val forward: (CalendarExperienceIntent) -> Unit,
+    startExperience: () -> Unit,
+    collectionScope: CoroutineScope? = null,
 ) : ViewModel() {
-    private val _ui = MutableStateFlow(CalendarUiState())
+    constructor(experience: CalendarExperience?) : this(
+        sharedState = experience?.state ?: MutableStateFlow(CalendarExperienceState(
+            anchorDate = "1970-01-01",
+            selectedDate = "1970-01-01",
+            todayDate = "1970-01-01",
+            offline = CalendarOfflineState.UNAVAILABLE,
+        )),
+        forward = experience?.let { value -> { intent -> value.dispatch(intent) } } ?: {},
+        startExperience = experience?.let { value -> { value.start() } } ?: {},
+        collectionScope = null,
+    )
+
+    private val _ui = MutableStateFlow(sharedState.value.toAndroidUiState())
     val ui: StateFlow<CalendarUiState> = _ui.asStateFlow()
 
-    init { refresh() }
-
-    fun refresh() {
-        viewModelScope.launch {
-            _ui.update { it.copy(loading = true, error = null) }
-            val today = LocalDate.now()
-            val end = today.plusYears(1)
-            val zone = ZoneId.systemDefault()
-            val result = listCalendar.listBoth(
-                timedFrom = CalendarTime.Timed(today.atStartOfDay(zone).toInstant().toString(), zone.id),
-                timedTo = CalendarTime.Timed(end.plusDays(1).atStartOfDay(zone).toInstant().toString(), zone.id),
-                allDayFrom = CalendarTime.AllDay(today.toString()),
-                allDayTo = CalendarTime.AllDay(end.toString()),
-            )
-            _ui.update { it.foldList(result) }
+    init {
+        // start() is shared/idempotent. Route recreation joins the existing
+        // observation and never acquires ownership of the experience.
+        startExperience()
+        (collectionScope ?: viewModelScope).launch {
+            sharedState.collect { _ui.value = it.toAndroidUiState() }
         }
     }
 
-    fun create(title: String, date: String) {
-        if (title.isBlank() || date.isBlank() || _ui.value.saving) return
-        mutate { createCalendar.create(newEvent(title.trim(), date.trim())) }
-    }
+    fun today() = navigate(CalendarNavigationAction.Today)
+    fun previous() = navigate(CalendarNavigationAction.Previous)
+    fun next() = navigate(CalendarNavigationAction.Next)
+    fun selectDate(date: String) = navigate(CalendarNavigationAction.SelectDate(date))
+    fun selectMonth(year: Int, month: Int) = navigate(CalendarNavigationAction.SelectMonth(year, month))
+    fun selectView(view: CalendarView) = navigate(CalendarNavigationAction.SelectView(view))
+    fun setFilters(filters: CalendarFilters) = navigate(CalendarNavigationAction.SetFilters(filters))
+    fun search(text: String) = setFilters(ui.value.filters.copy(text = text))
+    fun setLocale(locale: CalendarLocale) = forward(CalendarExperienceIntent.SetLocale(locale))
+    fun refresh() = forward(CalendarExperienceIntent.Refresh)
 
-    fun update(event: CalendarEvent, title: String, date: String) {
-        if (title.isBlank() || date.isBlank() || _ui.value.saving) return
-        mutate {
-            val start = event.start.updatedFromEditor(date.trim())
-            updateCalendar.update(
-                event.mutationId,
-                event.copy(title = title.trim(), start = start),
-            )
-        }
-    }
+    fun openPreview(occurrence: EffectiveOccurrence) =
+        forward(CalendarExperienceIntent.OpenPreview(occurrence))
 
-    fun delete(event: CalendarEvent) {
-        if (_ui.value.saving) return
-        mutate { deleteCalendar.delete(event.mutationId) }
-    }
+    fun add(draft: CalendarMutationDraft? = null) =
+        forward(CalendarExperienceIntent.CreateDraft(draft))
 
-    private fun mutate(operation: suspend () -> SentientResult<Any>) {
-        viewModelScope.launch {
-            _ui.update { it.copy(saving = true, operationError = null) }
-            when (val result = operation()) {
-                is SentientResult.Success -> { _ui.update { it.copy(saving = false) }; refresh() }
-                is SentientResult.Failure -> _ui.update {
-                    it.copy(saving = false, operationError = result.error.userMessage)
-                }
-                is SentientResult.Loading -> Unit
-            }
-        }
-    }
+    fun edit(occurrence: EffectiveOccurrence, inputTimeZoneId: String? = null) =
+        forward(CalendarExperienceIntent.EditOccurrence(occurrence, inputTimeZoneId))
 
-    private fun newEvent(title: String, date: String) = CalendarEvent(
-        id = UUID.randomUUID().toString(), scope = CalendarScope.HOUSEHOLD, title = title,
-        start = CalendarTime.AllDay(date), visibility = Visibility.EVERYONE,
-        importance = Importance.NORMAL, createdAt = "", updatedAt = "",
-        occurrenceId = null, baseEventId = null,
+    fun openEditor(occurrence: EffectiveOccurrence?, draft: CalendarMutationDraft? = null) =
+        forward(CalendarExperienceIntent.OpenEditor(occurrence, draft))
+
+    fun updateDraft(draft: CalendarMutationDraft) =
+        forward(CalendarExperienceIntent.UpdateDraft(draft))
+
+    fun chooseRecurrenceScope(scope: CalendarMutationScope) =
+        forward(CalendarExperienceIntent.ChooseMutationScope(scope))
+
+    fun save(draft: CalendarMutationDraft? = null) =
+        forward(CalendarExperienceIntent.Submit(draft))
+
+    fun requestDelete() = forward(CalendarExperienceIntent.RequestDelete)
+
+    fun confirmDelete(scope: CalendarMutationScope? = null) =
+        forward(CalendarExperienceIntent.ConfirmDelete(scope))
+
+    fun rereadConflict() = forward(CalendarExperienceIntent.RereadConflict)
+
+    fun reviewConflict(draft: CalendarMutationDraft) =
+        forward(CalendarExperienceIntent.ReviewConflict(draft))
+
+    fun close() = forward(CalendarExperienceIntent.Cancel)
+    fun acknowledgeOutcome() = forward(CalendarExperienceIntent.AcknowledgeOutcome)
+
+    private fun navigate(action: CalendarNavigationAction) =
+        forward(CalendarExperienceIntent.Navigate(action))
+}
+
+internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
+    val projection = projection
+    val agenda = when (view) {
+        CalendarView.DAY -> projection?.day?.agenda
+        CalendarView.WEEK -> projection?.week?.agenda
+        CalendarView.MONTH,
+        CalendarView.YEAR,
+        -> null
+    }.orEmpty()
+    val visibleEvents = projection?.visibleEvents.orEmpty()
+    val contentState = when {
+        isUnavailableOffline -> CalendarContentState.UNAVAILABLE_OFFLINE
+        loading.isInitial && projection == null -> CalendarContentState.LOADING
+        error != null && projection == null -> CalendarContentState.ERROR
+        visibleEvents.isEmpty() -> CalendarContentState.EMPTY
+        else -> CalendarContentState.CONTENT
+    }
+    return CalendarUiState(
+        anchorDate = anchorDate,
+        selectedDate = selectedDate,
+        todayDate = todayDate,
+        view = view,
+        locale = locale,
+        filters = filters,
+        visibleInterval = visibleInterval,
+        selectedInterval = selectedInterval,
+        day = projection?.day,
+        week = projection?.week,
+        month = projection?.month,
+        year = projection?.year,
+        facets = facets,
+        authorizedOccurrences = authorizedOccurrences,
+        agendaRows = agenda,
+        visibleEvents = visibleEvents,
+        freshness = freshness,
+        offline = offline,
+        loading = loading,
+        hasCompleteCache = hasCompleteCache,
+        contentState = contentState,
+        error = error,
+        mutationAvailability = mutationAvailability,
+        mutationPhase = mutation.phase,
+        preview = mutation.preview,
+        editor = mutation.editor,
+        deleteConfirmation = mutation.deleteConfirmation,
+        conflict = mutation.conflict,
+        mutationError = mutation.error,
+        outcome = mutation.outcome,
     )
 }
 
-internal fun CalendarUiState.foldList(result: SentientResult<CalendarEventPage>): CalendarUiState = when (result) {
-    is SentientResult.Loading -> copy(loading = true)
-    is SentientResult.Success -> copy(loading = false, events = result.data.events, error = null)
-    is SentientResult.Failure -> copy(loading = false, error = result.error.userMessage)
-}
+/** Android date-picker conversion. All identity and non-temporal draft fields survive unchanged. */
+fun CalendarMutationDraft.withAllDayPickerValues(start: LocalDate, end: LocalDate?): CalendarMutationDraft =
+    copy(allDay = true, start = start.toString(), end = end?.toString())
 
-/** Stable row identity; occurrence rows must not collide with their base event. */
-internal val CalendarEvent.rowId: String get() = occurrenceId ?: id
-
-/**
- * The resource id used by the legacy platform mutation adapter.
- *
- * V2 occurrence rows already carry the recurring event id in [eventId]. When a
- * compatibility caller still supplies [baseEventId], prefer it only for an
- * occurrence row; [occurrenceId] and [originalStart] remain on the copied
- * payload as independent occurrence metadata.
- */
-@Suppress("DEPRECATION")
-internal val CalendarEvent.mutationId: String
-    get() = if (occurrenceId != null) baseEventId ?: persistedId else persistedId
-
-/** Formats a start in the device timezone, never by printing the UTC wire instant. */
-internal fun formatCalendarStart(start: CalendarTime, zone: ZoneId = ZoneId.systemDefault()): String = when (start) {
-    is CalendarTime.AllDay -> start.date
-    is CalendarTime.Timed -> runCatching {
-        parseInstant(start.instant).atZone(zone).format(DISPLAY_DATE_TIME)
-    }.getOrDefault("Invalid date")
-}
-
-/** Text used by the editable start field; timed values are converted to device time. */
-internal fun calendarEditorStart(start: CalendarTime, zone: ZoneId = ZoneId.systemDefault()): String = when (start) {
-    is CalendarTime.AllDay -> start.date
-    is CalendarTime.Timed -> runCatching {
-        parseInstant(start.instant).atZone(zone).format(EDITOR_DATE_TIME)
-    }.getOrDefault("")
-}
-
-private fun CalendarTime.updatedFromEditor(value: String, zone: ZoneId = ZoneId.systemDefault()): CalendarTime = when (this) {
-    is CalendarTime.AllDay -> CalendarTime.AllDay(value)
-    is CalendarTime.Timed -> {
-        val originalInstant = instant
-        val updatedInstant = runCatching {
-            val local = when {
-                value.length == 10 -> LocalDate.parse(value).atTime(parseInstant(originalInstant).atZone(zone).toLocalTime())
-                else -> LocalDateTime.parse(value, EDITOR_DATE_TIME)
-            }
-            local.atZone(zone).toInstant().toString()
-        }.getOrNull() ?: originalInstant
-        CalendarTime.Timed(updatedInstant, timeZoneId)
-    }
-}
-
-private fun parseInstant(value: String): Instant = try {
-    Instant.parse(value)
-} catch (_: DateTimeParseException) {
-    OffsetDateTime.parse(value).toInstant()
-}
+/** Android time-picker conversion to wire instants without changing the shared draft identity or zone metadata. */
+fun CalendarMutationDraft.withTimedPickerValues(
+    start: LocalDateTime,
+    end: LocalDateTime?,
+    zone: ZoneId,
+): CalendarMutationDraft = copy(
+    allDay = false,
+    start = start.atZone(zone).toOffsetDateTime().toString(),
+    end = end?.atZone(zone)?.toOffsetDateTime()?.toString(),
+)
