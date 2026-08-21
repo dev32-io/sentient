@@ -1,184 +1,357 @@
-import Testing
 import Foundation
 import MobileData
+import Testing
 @testable import SentientApp
 
+@MainActor
 struct CalendarViewModelTests {
-    private func event(
-        id: String,
-        start: CalendarTime,
-        occurrenceId: String? = nil,
-        baseEventId: String? = nil
-    ) -> CalendarEvent {
-        CalendarEvent(
-            id: id,
-            scope: .household,
-            title: "Dinner",
-            description: nil,
-            start: start,
-            end: nil,
-            recurrence: nil,
-            exdates: nil,
-            exceptions: nil,
-            visibility: .everyone,
-            importance: .normal,
-            group: nil,
-            tags: [],
-            notification: nil,
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            occurrenceId: occurrenceId,
-            originalStart: nil,
-            baseEventId: baseEventId,
-            revision: 1,
-            recurring: occurrenceId != nil
-        )
-    }
-
-    @Test func listFoldAcceptsTimedAndAllDayRows() {
-        let timed = event(
-            id: "timed",
-            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
-        )
-        let allDay = event(id: "all-day", start: CalendarTime.AllDay(date: "2026-08-02"))
-        let page = CalendarEventPage(events: [timed, allDay], more: 0, nextCursor: nil)
-        let folded = foldCalendarList(
-            phase: .loading,
-            events: [],
-            result: SentientResultSuccess<CalendarEventPage>(data: page)
-        )
-
-        #expect(folded.phase == .ready)
-        #expect(folded.events.map { $0.id } == ["timed", "all-day"])
-    }
-
-    @Test func listFoldPreservesLastGoodRowsOnFailure() {
-        let previous = event(id: "previous", start: CalendarTime.AllDay(date: "2026-08-01"))
-        let error = SentientError.Unknown(userMessage: "Calendar unavailable", cause: nil)
-        let result = SentientResultFailure(error: error) as! SentientResult<CalendarEventPage>
-        let folded = foldCalendarList(phase: .ready, events: [previous], result: result)
-
-        #expect(folded.phase == .failed("Calendar unavailable"))
-        #expect(folded.events.map(\.id) == ["previous"])
-    }
-
-    @Test func crudMutationStateTransitionsAreExplicit() {
-        #expect(reduceCalendarMutation(.idle, .begin) == .saving)
-        #expect(reduceCalendarMutation(.saving, .success) == .idle)
-        #expect(reduceCalendarMutation(.saving, .failure("No connection")) == .failed("No connection"))
-    }
-
-    @Test @MainActor func crudCallsUseCasesAndAllDayUpdateUsesEditedDate() async {
-        let useCases = CalendarUseCaseSpy()
-        let viewModel = CalendarViewModel(useCases: useCases)
-        let original = event(
-            id: "occurrence-row",
-            start: CalendarTime.AllDay(date: "2026-08-01"),
-            occurrenceId: "occurrence-1",
-            baseEventId: "base-event-1"
-        )
-
-        await viewModel.create(title: " Picnic ", date: "2026-08-02")
-        #expect(useCases.created?.title == "Picnic")
-        #expect(useCases.created?.createdAt == "")
-        #expect(useCases.created?.updatedAt == "")
-
-        await viewModel.update(event: original, title: "Updated", date: "2026-08-04")
-        #expect(useCases.updatedID == "base-event-1")
-        #expect(useCases.updated?.title == "Updated")
-        if let updated = useCases.updated {
-            if case .allDay(let start) = onEnum(of: updated.start) {
-                #expect(start.date == "2026-08-04")
-            } else {
-                Issue.record("all-day update changed the event kind")
-            }
-        } else {
-            Issue.record("update use case was not called")
+    @Test func completeCalendarExperienceStateIteratesThroughSkie() async {
+        var views: [CalendarView] = []
+        for await state in calendarExperienceBridgeProbe() {
+            views.append(state.view)
+            #expect(state.projection != nil)
+            #expect(state.visibleInterval != nil)
+            #expect(state.selectedInterval != nil)
+            #expect(!state.authorizedOccurrences.isEmpty)
+            #expect(!state.facets.groups.isEmpty)
+            #expect(state.cachedWindow != nil)
+            #expect(state.persistedCachePreferences != nil)
+            #expect(state.error?.kind == .connection)
+            #expect(state.mutation.preview != nil)
+            #expect(state.mutation.editor?.draft.eventId == "bridge-event")
+            #expect(state.mutation.deleteConfirmation != nil)
+            #expect(state.mutation.conflict?.draft.originalStart == "2026-08-17T09:00:00-07:00")
+            #expect(state.mutation.outcome != nil)
+            #expect(state.mutation.error?.kind == .conflict)
         }
-
-        await viewModel.delete(event: original)
-        #expect(useCases.deletedID == "base-event-1")
+        #expect(views == [.day, .week, .month, .year])
     }
 
-    @Test @MainActor func updateReplacesTheOccurrenceRowWhenServerReturnsTheBaseEvent() async {
-        let useCases = CalendarUseCaseSpy()
-        let viewModel = CalendarViewModel(useCases: useCases)
-        let occurrence = event(
-            id: "occurrence-row",
-            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC"),
-            occurrenceId: "occurrence-1",
-            baseEventId: "base-event-1"
-        )
-        useCases.listed = [occurrence]
-        useCases.updateResult = event(
-            id: "base-event-1",
-            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
-        )
+    @Test func mapsCompleteSharedStateWithoutReconstructingProjection() async {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        let shared = makeState(view: .month, freshness: .cachedOffline, offline: .offline)
 
-        await viewModel.load()
-        await viewModel.update(id: occurrence.mutationID, event: occurrence)
+        await source.waitUntilStarted()
+        source.emit(shared)
+        await source.waitForEmissions(1)
 
-        #expect(viewModel.events.count == 1)
-        #expect(viewModel.events.first?.id == "base-event-1")
+        #expect(vm.state?.anchorDate == "2026-08-01")
+        #expect(vm.state?.projection === shared.projection)
+        #expect(vm.state?.facets === shared.facets)
+        #expect(vm.state?.occurrences.first === shared.authorizedOccurrences.first)
+        #expect(vm.state?.isOffline == true)
+        #expect(vm.state?.freshness == .cachedOffline)
+        #expect(vm.state?.month != nil)
+        #expect(vm.state?.day == nil)
     }
 
-    @Test func occurrenceRowsKeepRowIdentitySeparateFromMutationIdentity() {
-        let occurrence = event(
-            id: "recurring-1",
-            start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC"),
-            occurrenceId: "occurrence-1",
-            baseEventId: "recurring-1"
-        )
-
-        #expect(occurrence.rowID == "occurrence-1")
-        #expect(occurrence.mutationID == "recurring-1")
+    @Test func allSharedViewsAndSelectedDateRetentionAreRepresentable() {
+        for view in CalendarView.allCases {
+            let mapped = CalendarUiState(makeState(view: view))
+            #expect(mapped.view == view)
+            #expect(mapped.selectedDate == "2026-08-17")
+            switch view {
+            case .day: #expect(mapped.day != nil)
+            case .week: #expect(mapped.week != nil)
+            case .month: #expect(mapped.month != nil)
+            case .year: #expect(mapped.year != nil)
+            }
+        }
     }
 
-    @Test func startsRenderInTheRequestedDeviceTimezone() {
-        #expect(CalendarDisplayFormatter.startText(CalendarTime.AllDay(date: "2026-08-01")) == "2026-08-01")
-        let timed = CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
-        #expect(
-            CalendarDisplayFormatter.startText(timed, timeZone: TimeZone(identifier: "America/New_York")!)
-                == "2026-08-01 09:00"
-        )
+    @Test func cacheFirstThenRefreshStateKeepsSharedContent() async {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        let cached = makeState(freshness: .stale, loading: .idle)
+        let refreshing = makeState(freshness: .refreshing, loading: .refreshing)
+
+        await source.waitUntilStarted()
+        source.emit(cached)
+        source.emit(refreshing)
+        await source.waitForEmissions(2)
+
+        #expect(vm.state?.projection != nil)
+        #expect(vm.state?.isRefreshing == true)
+        #expect(vm.state?.content == .content)
     }
+
+    @Test func forwardsNavigationFilterAndRefreshIntentsExactly() async {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        let filters = makeFilters(text: "school")
+        let locale = makeLocale()
+
+        vm.today()
+        vm.previous()
+        vm.next()
+        vm.selectDate("2026-09-03")
+        vm.selectMonth(year: 2027, month: 2)
+        vm.selectView(.week)
+        vm.setFilters(filters)
+        vm.setLocale(locale)
+        vm.refresh()
+
+        #expect(source.intents.count == 9)
+        expectNavigate(source.intents[0], CalendarNavigationActionToday.self)
+        expectNavigate(source.intents[1], CalendarNavigationActionPrevious.self)
+        expectNavigate(source.intents[2], CalendarNavigationActionNext.self)
+        if case .navigate(let value) = onEnum(of: source.intents[3]),
+           case .selectDate(let action) = onEnum(of: value.action) {
+            #expect(action.date == "2026-09-03")
+        } else { Issue.record("select-date intent changed") }
+        if case .navigate(let value) = onEnum(of: source.intents[4]),
+           case .selectMonth(let action) = onEnum(of: value.action) {
+            #expect(action.year == 2027)
+            #expect(action.month == 2)
+        } else { Issue.record("select-month intent changed") }
+        if case .navigate(let value) = onEnum(of: source.intents[6]),
+           case .setFilters(let action) = onEnum(of: value.action) {
+            #expect(action.filters === filters)
+        } else { Issue.record("filter identity changed") }
+        if case .setLocale(let value) = onEnum(of: source.intents[7]) {
+            #expect(value.locale === locale)
+        } else { Issue.record("locale identity changed") }
+        if case .refresh = onEnum(of: source.intents[8]) {} else {
+            Issue.record("refresh intent changed")
+        }
+    }
+
+    @Test func searchForwardsAFilterCopyWithoutChangingOtherFacets() async {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        await source.waitUntilStarted()
+        source.emit(makeState())
+        await source.waitForEmissions(1)
+
+        vm.search("pickup")
+
+        guard case .navigate(let value) = onEnum(of: source.intents[0]),
+              case .setFilters(let action) = onEnum(of: value.action) else {
+            Issue.record("search was not forwarded as SetFilters")
+            return
+        }
+        #expect(action.filters.text == "pickup")
+        #expect(action.filters.scope == .all)
+        #expect(action.filters.groups == Set(["family"]))
+        #expect(action.filters.tags == Set(["school"]))
+        #expect(action.filters.importance == .important)
+    }
+
+    @Test func forwardsMutationIdentityScopeConflictAndAcknowledgementExactly() {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        let occurrence = makeOccurrence()
+        let draft = makeDraft()
+
+        vm.openPreview(occurrence)
+        vm.openEditor(occurrence: occurrence, draft: draft)
+        vm.add(draft)
+        vm.edit(occurrence, inputTimeZoneId: "America/Los_Angeles")
+        vm.updateDraft(draft)
+        vm.chooseMutationScope(.thisAndFollowing)
+        vm.save(draft)
+        vm.requestDelete()
+        vm.confirmDelete(scope: .thisOccurrence)
+        vm.rereadConflict()
+        vm.reviewConflict(draft)
+        vm.close()
+        vm.acknowledgeOutcome()
+
+        #expect(source.intents.count == 13)
+        if case .openPreview(let value) = onEnum(of: source.intents[0]) {
+            #expect(value.occurrence === occurrence)
+            #expect(value.occurrence.originalStart == "2026-08-17T09:00:00-07:00")
+        } else { Issue.record("preview identity changed") }
+        if case .openEditor(let value) = onEnum(of: source.intents[1]) {
+            #expect(value.occurrence === occurrence)
+            #expect(value.draft === draft)
+        } else { Issue.record("editor identity changed") }
+        if case .createDraft(let value) = onEnum(of: source.intents[2]) {
+            #expect(value.draft === draft)
+        } else { Issue.record("create draft identity changed") }
+        if case .editOccurrence(let value) = onEnum(of: source.intents[3]) {
+            #expect(value.occurrence === occurrence)
+            #expect(value.inputTimeZoneId == "America/Los_Angeles")
+        } else { Issue.record("edit identity changed") }
+        if case .updateDraft(let value) = onEnum(of: source.intents[4]) {
+            #expect(value.draft === draft)
+            #expect(value.draft.eventId == "event-42")
+            #expect(value.draft.occurrenceId == "occurrence-42")
+            #expect(value.draft.expectedRevision == 7)
+        } else { Issue.record("draft identity changed") }
+        if case .chooseMutationScope(let value) = onEnum(of: source.intents[5]) {
+            #expect(value.scope == .thisAndFollowing)
+        } else { Issue.record("mutation scope changed") }
+        if case .submit(let value) = onEnum(of: source.intents[6]) {
+            #expect(value.draft === draft)
+        } else { Issue.record("submit draft identity changed") }
+        if case .confirmDelete(let value) = onEnum(of: source.intents[8]) {
+            #expect(value.scope == .thisOccurrence)
+        } else { Issue.record("delete scope changed") }
+        if case .reviewConflict(let value) = onEnum(of: source.intents[10]) {
+            #expect(value.draft === draft)
+        } else { Issue.record("conflict draft changed") }
+        if case .cancel = onEnum(of: source.intents[11]) {} else { Issue.record("close changed") }
+        if case .acknowledgeOutcome = onEnum(of: source.intents[12]) {} else { Issue.record("ack changed") }
+    }
+
+    @Test func disposalCancelsCollectionAndRejectsStaleEmissions() async {
+        let source = CalendarExperienceSourceSpy()
+        let vm = CalendarViewModel(source: source)
+        await source.waitUntilStarted()
+        source.emit(makeState(view: .month))
+        await source.waitForEmissions(1)
+        #expect(vm.state?.view == .month)
+
+        vm.dispose()
+        await source.waitUntilCancelled()
+        #expect(source.collectionCancelled)
+        source.emit(makeState(view: .year))
+        #expect(vm.state?.view == .month)
+    }
+
+    @Test func nativeDateConversionDoesNotTouchSharedRawIdentity() {
+        let occurrence = makeOccurrence()
+        #expect(occurrence.originalStart == "2026-08-17T09:00:00-07:00")
+        #expect(occurrence.start == "2026-08-17T10:00:00-07:00")
+        let date = Date(timeIntervalSince1970: 0)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        #expect(CalendarNativeDateConversion.allDayValue(date, calendar: utc) == "1970-01-01")
+    }
+
+    private func expectNavigate<T>(_ intent: any CalendarExperienceIntent, _: T.Type) {
+        guard case .navigate(let value) = onEnum(of: intent) else {
+            Issue.record("expected navigate intent")
+            return
+        }
+        #expect(value.action is T)
+    }
+
 }
 
 @MainActor
-private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
-    var created: CalendarEvent?
-    var updatedID: String?
-    var updated: CalendarEvent?
-    var updateResult: CalendarEvent?
-    var listed: [CalendarEvent] = []
-    var deletedID: String?
+private final class CalendarExperienceSourceSpy: CalendarExperienceStateSource {
+    private let stream: AsyncStream<CalendarExperienceState>
+    private let continuation: AsyncStream<CalendarExperienceState>.Continuation
+    private(set) var intents: [any CalendarExperienceIntent] = []
+    private(set) var collectionCancelled = false
+    private var collectionStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var receivedCount = 0
+    private var receiptWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var cancelWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func listBoth(
-        timedFrom: CalendarTime.Timed,
-        timedTo: CalendarTime.Timed,
-        allDayFrom: CalendarTime.AllDay,
-        allDayTo: CalendarTime.AllDay,
-        scope: CalendarScope?,
-        group: String?,
-        tags: [String]?,
-        importance: Importance?
-    ) async throws -> SentientResult<CalendarEventPage> {
-        SentientResultSuccess(data: CalendarEventPage(events: listed, more: 0, nextCursor: nil))
+    init() {
+        var captured: AsyncStream<CalendarExperienceState>.Continuation!
+        stream = AsyncStream { captured = $0 }
+        continuation = captured
     }
 
-    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
-        created = event
-        return SentientResultSuccess(data: event)
+    func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async {
+        collectionStarted = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        await withTaskCancellationHandler {
+            for await state in stream {
+                receive(state)
+                receivedCount += 1
+                let ready = receiptWaiters.filter { $0.0 <= receivedCount }
+                receiptWaiters.removeAll { $0.0 <= receivedCount }
+                ready.forEach { $0.1.resume() }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.collectionCancelled = true
+                self.cancelWaiters.forEach { $0.resume() }
+                self.cancelWaiters.removeAll()
+            }
+        }
     }
 
-    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
-        updatedID = id
-        updated = event
-        return SentientResultSuccess(data: updateResult ?? event)
+    func dispatch(_ intent: any CalendarExperienceIntent) { intents.append(intent) }
+    func emit(_ state: CalendarExperienceState) { continuation.yield(state) }
+    func waitUntilStarted() async {
+        if collectionStarted { return }
+        await withCheckedContinuation { startWaiters.append($0) }
     }
+    func waitForEmissions(_ count: Int) async {
+        if receivedCount >= count { return }
+        await withCheckedContinuation { receiptWaiters.append((count, $0)) }
+    }
+    func waitUntilCancelled() async {
+        if collectionCancelled { return }
+        await withCheckedContinuation { cancelWaiters.append($0) }
+    }
+}
 
-    func delete(id: String) async throws -> SentientResult<KotlinUnit> {
-        deletedID = id
-        return SentientResultSuccess(data: KotlinUnit())
-    }
+private func makeLocale() -> CalendarLocale {
+    CalendarLocale(languageTag: "en-US", timeZoneId: "America/Los_Angeles", weekStart: .monday, hourCycle: .hour12)
+}
+
+private func makeFilters(text: String = "") -> CalendarFilters {
+    CalendarFilters(scope: .all, groups: Set(["family"]), tags: Set(["school"]), importance: .important, text: text)
+}
+
+private func makeOccurrence() -> EffectiveOccurrence {
+    EffectiveOccurrence(
+        eventId: "event-42", occurrenceId: "occurrence-42",
+        originalStart: "2026-08-17T09:00:00-07:00", recurring: true, revision: 7,
+        scope: .household, title: "School pickup", description: "Bring forms",
+        start: "2026-08-17T10:00:00-07:00", end: "2026-08-17T10:30:00-07:00",
+        visibility: .everyone, importance: .important, group: "family", tags: ["school"], recurrence: nil
+    )
+}
+
+private func makeDraft() -> CalendarMutationDraft {
+    CalendarMutationDraft(
+        title: "School pickup", description: "Bring forms", allDay: false,
+        start: "2026-08-17T10:00:00-07:00", end: "2026-08-17T10:30:00-07:00",
+        scope: .household, visibility: .everyone, importance: .important, group: "family", tags: ["school"],
+        recurrence: nil, eventId: "event-42", occurrenceId: "occurrence-42",
+        originalStart: "2026-08-17T09:00:00-07:00", expectedRevision: 7,
+        inputTimeZoneId: "America/Los_Angeles", recurring: true
+    )
+}
+
+private func makeState(
+    view: CalendarView = .month,
+    freshness: CalendarCacheFreshness = .fresh,
+    loading: CalendarLoadingPhase = .idle,
+    offline: CalendarOfflineState = .online
+) -> CalendarExperienceState {
+    let occurrence = makeOccurrence()
+    let locale = makeLocale()
+    let filters = makeFilters()
+    let projectionOccurrence = CalendarProjectionOccurrence(
+        eventId: occurrence.eventId, occurrenceId: occurrence.occurrenceId,
+        originalStart: occurrence.originalStart, recurring: occurrence.recurring,
+        recurrence: occurrence.recurrence, revision: occurrence.revision,
+        scope: occurrence.scope, title: occurrence.title, description: occurrence.description_,
+        start: occurrence.start, end: occurrence.end, visibility: occurrence.visibility,
+        importance: occurrence.importance, group: occurrence.group, tags: occurrence.tags,
+        persistedTimeZoneId: "America/Los_Angeles"
+    )
+    let projection = CalendarProjection().project(request: CalendarProjectionRequest(
+        occurrences: [projectionOccurrence], anchorDate: "2026-08-01", view: view,
+        selectedDate: "2026-08-17", todayDate: "2026-08-17", locale: locale, filters: filters
+    ))
+    return CalendarExperienceState(
+        anchorDate: "2026-08-01", view: view, selectedDate: "2026-08-17", filters: filters,
+        locale: locale, todayDate: "2026-08-17",
+        visibleInterval: projection.interval,
+        selectedInterval: CalendarDateInterval(startDate: "2026-08-17", endExclusive: "2026-08-18"),
+        authorizedOccurrences: [occurrence], projection: projection,
+        facets: CalendarFacetOptions(scopes: [.all, .household], groups: ["family"], tags: ["school"], importances: [.important]),
+        freshness: freshness, loading: CalendarLoadingState(phase: loading), offline: offline, error: nil,
+        hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
+        mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
+        mutation: CalendarMutationState(
+            phase: .previewing, preview: occurrence, editor: nil, deleteConfirmation: nil,
+            pendingRequest: nil, error: nil, conflict: nil, outcome: nil,
+            successorEventId: nil, affectedWindows: []
+        )
+    )
 }

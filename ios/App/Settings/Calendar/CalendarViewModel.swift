@@ -1,356 +1,244 @@
 import Foundation
 import MobileData
 
-/// Calendar page state. Calendar operations deliberately go through the shared
-/// use cases exposed by SettingsComponent; this VM owns only screen folding.
+/// The complete semantic state consumed by the native calendar surface.
+///
+/// Shared projections remain the source of truth: this value only gives SwiftUI
+/// stable names for the current shared state and never re-filters or re-projects
+/// occurrences.
+struct CalendarUiState {
+    enum Content {
+        case loading
+        case empty
+        case content
+        case unavailableOffline
+        case error
+    }
+
+    let anchorDate: String
+    let selectedDate: String
+    let todayDate: String
+    let view: CalendarView
+    let filters: CalendarFilters
+    let locale: CalendarLocale
+    let visibleInterval: CalendarDateInterval?
+    let selectedInterval: CalendarDateInterval?
+    let occurrences: [EffectiveOccurrence]
+    let projection: CalendarExperienceProjection?
+    let facets: CalendarFacetOptions
+    let freshness: CalendarCacheFreshness
+    let loading: CalendarLoadingState
+    let offline: CalendarOfflineState
+    let error: CalendarExperienceError?
+    let hasCompleteCache: Bool
+    let mutationAvailability: CalendarMutationAvailability
+    let mutation: CalendarMutationState
+    let content: Content
+
+    var day: CalendarDayProjection? { projection?.day }
+    var week: CalendarWeekProjection? { projection?.week }
+    var month: CalendarMonthProjection? { projection?.month }
+    var year: CalendarYearProjection? { projection?.year }
+    var visibleEvents: [CalendarProjectedEvent] { projection?.visibleEvents ?? [] }
+    var agenda: [CalendarAgendaSection] {
+        if let day { return day.agenda }
+        if let week { return week.agenda }
+        return []
+    }
+    var isRefreshing: Bool { loading.isRefreshing || freshness == .refreshing }
+    var isOffline: Bool { offline != .online }
+    var preview: EffectiveOccurrence? { mutation.preview }
+    var editor: CalendarMutationEditorState? { mutation.editor }
+    var deleteConfirmation: CalendarDeleteConfirmationState? { mutation.deleteConfirmation }
+    var conflict: CalendarConflictReviewState? { mutation.conflict }
+    var outcome: (any CalendarMutationOutcome)? { mutation.outcome }
+
+    init(_ state: CalendarExperienceState) {
+        anchorDate = state.anchorDate
+        selectedDate = state.selectedDate
+        todayDate = state.todayDate
+        view = state.view
+        filters = state.filters
+        locale = state.locale
+        visibleInterval = state.visibleInterval
+        selectedInterval = state.selectedInterval
+        occurrences = state.authorizedOccurrences
+        projection = state.projection
+        facets = state.facets
+        freshness = state.freshness
+        loading = state.loading
+        offline = state.offline
+        error = state.error
+        hasCompleteCache = state.hasCompleteCache
+        mutationAvailability = state.mutationAvailability
+        mutation = state.mutation
+
+        if state.isUnavailableOffline && state.projection == nil {
+            content = .unavailableOffline
+        } else if state.loading.isInitial && state.projection == nil {
+            content = .loading
+        } else if state.error != nil && state.projection == nil {
+            content = .error
+        } else if state.projection?.visibleEvents.isEmpty != false {
+            content = .empty
+        } else {
+            content = .content
+        }
+    }
+}
+
+/// A small collection seam keeps tests independent of repositories while the
+/// production implementation below proves and uses SKIE's AsyncSequence bridge.
 @MainActor
-protocol CalendarUseCaseOperations {
-    func listBoth(
-        timedFrom: CalendarTime.Timed,
-        timedTo: CalendarTime.Timed,
-        allDayFrom: CalendarTime.AllDay,
-        allDayTo: CalendarTime.AllDay,
-        scope: CalendarScope?,
-        group: String?,
-        tags: [String]?,
-        importance: Importance?
-    ) async throws -> SentientResult<CalendarEventPage>
-    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent>
-    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent>
-    func delete(id: String) async throws -> SentientResult<KotlinUnit>
+protocol CalendarExperienceStateSource: AnyObject {
+    func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async
+    func dispatch(_ intent: any CalendarExperienceIntent)
 }
 
 @MainActor
-private struct SettingsCalendarUseCases: CalendarUseCaseOperations {
-    let settings: SettingsComponent
+private final class SkieCalendarExperienceStateSource: CalendarExperienceStateSource {
+    private let experience: CalendarExperience
 
-    func listBoth(
-        timedFrom: CalendarTime.Timed,
-        timedTo: CalendarTime.Timed,
-        allDayFrom: CalendarTime.AllDay,
-        allDayTo: CalendarTime.AllDay,
-        scope: CalendarScope?,
-        group: String?,
-        tags: [String]?,
-        importance: Importance?
-    ) async throws -> SentientResult<CalendarEventPage> {
-        try await settings.listCalendar.listBoth(
-            timedFrom: timedFrom,
-            timedTo: timedTo,
-            allDayFrom: allDayFrom,
-            allDayTo: allDayTo,
-            scope: scope,
-            group: group,
-            tags: tags,
-            importance: importance
-        )
+    init(experience: CalendarExperience) {
+        self.experience = experience
     }
 
-    func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
-        try await settings.createCalendar.create(event: event)
+    func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async {
+        for await state in experience.state {
+            guard !Task.isCancelled else { return }
+            receive(state)
+        }
     }
 
-    func update(id: String, event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {
-        try await settings.updateCalendar.update(id: id, event: event)
-    }
-
-    func delete(id: String) async throws -> SentientResult<KotlinUnit> {
-        try await settings.deleteCalendar.delete(id: id)
+    func dispatch(_ intent: any CalendarExperienceIntent) {
+        experience.dispatch(intent: intent)
     }
 }
 
+/// Thin, route-scoped adapter over the authenticated session's shared calendar
+/// experience. The collection task is owned here; the experience is not.
 @MainActor
 @Observable
 final class CalendarViewModel {
-    enum Phase: Equatable { case loading, ready, failed(String) }
-    enum Mutation: Equatable { case idle, saving, failed(String) }
+    private(set) var state: CalendarUiState?
 
-    private(set) var phase: Phase = .loading
-    private(set) var events: [CalendarEvent] = []
-    private(set) var mutation: Mutation = .idle
-    var mutationError: String? {
-        if case .failed(let message) = mutation { return message }
-        return nil
+    private let source: any CalendarExperienceStateSource
+    // Swift deinitializers are nonisolated; Task cancellation itself is thread-safe.
+    private nonisolated(unsafe) var collectionTask: Task<Void, Never>?
+    private var collectionGeneration = 0
+
+    init(experience: CalendarExperience) {
+        source = SkieCalendarExperienceStateSource(experience: experience)
+        startCollecting()
     }
 
-    private let useCases: any CalendarUseCaseOperations
-    private let log = AppLog("settings", "calendar-vm")
-
-    init(settings: SettingsComponent) {
-        self.useCases = SettingsCalendarUseCases(settings: settings)
+    init(source: any CalendarExperienceStateSource) {
+        self.source = source
+        startCollecting()
     }
 
-    init(useCases: any CalendarUseCaseOperations) {
-        self.useCases = useCases
+    deinit {
+        collectionTask?.cancel()
     }
 
-    func load() async {
-        phase = .loading
-        let calendar = deviceCalendar()
-        let today = calendar.startOfDay(for: Date())
-        let end = calendar.date(byAdding: .year, value: 1, to: today) ?? today
-        let zone = TimeZone.current.identifier.isEmpty ? "UTC" : TimeZone.current.identifier
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        do {
-            // The REST/store contract accepts only one time kind per window.
-            // Fetch both kinds through the shared use case and fold its merged page.
-            let result = try await useCases.listBoth(
-                timedFrom: CalendarTime.Timed(instant: formatter.string(from: today), timeZoneId: zone),
-                timedTo: CalendarTime.Timed(
-                    instant: formatter.string(from: calendar.date(byAdding: .day, value: 1, to: end) ?? end),
-                    timeZoneId: zone
-                ),
-                allDayFrom: CalendarTime.AllDay(date: isoDate(today)),
-                allDayTo: CalendarTime.AllDay(date: isoDate(end)),
-                scope: nil, group: nil, tags: nil, importance: nil
-            )
-            fold(result)
-        } catch is CancellationError {
-        } catch {
-            phase = .failed("Couldn't load calendar.")
-            log.warn("load.threw")
-        }
+    func dispose() {
+        collectionGeneration += 1
+        collectionTask?.cancel()
+        collectionTask = nil
     }
 
-    func create(title: String, date: String) async {
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !date.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              mutation != .saving else { return }
-        let event = CalendarEvent(
-            id: UUID().uuidString,
-            scope: .household,
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            description: nil,
-            start: CalendarTime.AllDay(date: date.trimmingCharacters(in: .whitespacesAndNewlines)),
-            end: nil,
-            recurrence: nil,
-            exdates: nil,
-            exceptions: nil,
-            visibility: .everyone,
-            importance: .normal,
-            group: nil,
-            tags: [],
-            notification: nil,
-            createdAt: "",
-            updatedAt: "",
-            occurrenceId: nil,
-            originalStart: nil,
-            baseEventId: nil,
-            revision: 0,
-            recurring: false
-        )
-        await create(event)
-    }
-
-    /// Use-case-shaped create entry retained for callers that already have a full event.
-    func create(_ event: CalendarEvent) async {
-        guard mutation != .saving else { return }
-        await mutate { try await useCases.create(event: event) }
-    }
-
-    func update(event: CalendarEvent, title: String, date: String) async {
-        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !date.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              mutation != .saving else { return }
-        let edited = replacing(
-            event,
-            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-            start: event.editedStart(from: date.trimmingCharacters(in: .whitespacesAndNewlines))
-        )
-        await update(id: event.mutationID, event: edited)
-    }
-
-    /// Kept as the use-case-shaped entry point for callers that already built a patch.
-    func update(id: String, event: CalendarEvent) async {
-        guard mutation != .saving else { return }
-        await mutate(replacing: event) { try await useCases.update(id: id, event: event) }
-    }
-
-    func delete(event: CalendarEvent) async {
-        await delete(id: event.mutationID)
-    }
-
-    func delete(id: String) async {
-        guard mutation != .saving else { return }
-        mutation = reduceCalendarMutation(mutation, .begin)
-        do {
-            let result = try await useCases.delete(id: id)
-            switch onEnum(of: result) {
-            case .success:
-                events.removeAll { $0.mutationID == id }
-                mutation = reduceCalendarMutation(mutation, .success)
-            case .failure(let f): mutation = reduceCalendarMutation(mutation, .failure(f.error.userMessage))
-            case .loading: break
+    private func startCollecting() {
+        collectionGeneration += 1
+        let generation = collectionGeneration
+        collectionTask?.cancel()
+        collectionTask = Task { [weak self, source] in
+            await source.collect { [weak self] sharedState in
+                guard let self,
+                      !Task.isCancelled,
+                      self.collectionGeneration == generation else { return }
+                self.state = CalendarUiState(sharedState)
             }
-        } catch is CancellationError {
-        } catch { mutation = reduceCalendarMutation(mutation, .failure("Couldn't delete calendar event.")) }
-    }
-
-    private func mutate(replacing original: CalendarEvent? = nil, _ operation: () async throws -> SentientResult<CalendarEvent>) async {
-        mutation = reduceCalendarMutation(mutation, .begin)
-        do {
-            let result = try await operation()
-            switch onEnum(of: result) {
-            case .success(let s):
-                let rowID = s.data.rowID
-                let index = events.firstIndex { row in
-                    if let original {
-                        if row.rowID == original.rowID { return true }
-                        if let occurrenceId = original.occurrenceId, row.occurrenceId == occurrenceId { return true }
-                        if let baseEventId = original.baseEventId, row.baseEventId == baseEventId,
-                           (original.occurrenceId == nil || row.occurrenceId == original.occurrenceId) { return true }
-                    }
-                    return row.rowID == rowID
-                }
-                if let index { events[index] = s.data }
-                else { events.append(s.data) }
-                events.sort { $0.calendarSortText < $1.calendarSortText }
-                mutation = reduceCalendarMutation(mutation, .success)
-            case .failure(let f): mutation = reduceCalendarMutation(mutation, .failure(f.error.userMessage))
-            case .loading: break
-            }
-        } catch is CancellationError {
-        } catch { mutation = reduceCalendarMutation(mutation, .failure("Couldn't save calendar event.")) }
-    }
-
-    private func fold(_ result: SentientResult<CalendarEventPage>) {
-        let folded = foldCalendarList(phase: phase, events: events, result: result)
-        phase = folded.phase
-        events = folded.events
-    }
-
-    private func deviceCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .current
-        return calendar
-    }
-
-    private func isoDate(_ date: Date) -> String {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]
-        return f.string(from: date)
-    }
-}
-
-enum CalendarMutationAction {
-    case begin
-    case success
-    case failure(String)
-}
-
-/// Pure mutation state fold used by the VM and its unit tests.
-func reduceCalendarMutation(_ state: CalendarViewModel.Mutation, _ action: CalendarMutationAction) -> CalendarViewModel.Mutation {
-    switch action {
-    case .begin: return .saving
-    case .success: return .idle
-    case .failure(let message): return .failed(message)
-    }
-}
-
-struct CalendarListFold {
-    let phase: CalendarViewModel.Phase
-    let events: [CalendarEvent]
-}
-
-/// Pure list fold used by the VM and its unit tests.
-func foldCalendarList(
-    phase: CalendarViewModel.Phase,
-    events: [CalendarEvent],
-    result: SentientResult<CalendarEventPage>
-) -> CalendarListFold {
-    switch onEnum(of: result) {
-    case .success(let s): return CalendarListFold(phase: .ready, events: s.data.events)
-    case .failure(let f): return CalendarListFold(phase: .failed(f.error.userMessage), events: events)
-    case .loading: return CalendarListFold(phase: .loading, events: events)
-    }
-}
-
-/// Device-timezone formatting shared by the screen and deterministic unit tests.
-enum CalendarDisplayFormatter {
-    static func startText(_ start: CalendarTime, timeZone: TimeZone = .current) -> String {
-        switch onEnum(of: start) {
-        case .allDay(let value): return value.date
-        case .timed(let value):
-            guard let instant = parseInstant(value.instant) else { return "Invalid date" }
-            let formatter = DateFormatter()
-            formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = timeZone
-            formatter.dateFormat = "yyyy-MM-dd HH:mm"
-            return formatter.string(from: instant)
         }
     }
 
-    static func editorText(_ start: CalendarTime, timeZone: TimeZone = .current) -> String {
-        switch onEnum(of: start) {
-        case .allDay(let value): return value.date
-        case .timed(let value):
-            guard let instant = parseInstant(value.instant) else { return "" }
-            let formatter = DateFormatter()
-            formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = timeZone
-            formatter.dateFormat = "yyyy-MM-dd HH:mm"
-            return formatter.string(from: instant)
-        }
+    private func navigate(_ action: any CalendarNavigationAction) {
+        source.dispatch(CalendarExperienceIntentNavigate(action: action))
     }
 
-    private static func parseInstant(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value) ?? {
-            formatter.formatOptions = [.withInternetDateTime]
-            return formatter.date(from: value)
-        }()
+    func today() { navigate(CalendarNavigationActionToday()) }
+    func previous() { navigate(CalendarNavigationActionPrevious()) }
+    func next() { navigate(CalendarNavigationActionNext()) }
+    func selectDate(_ date: String) { navigate(CalendarNavigationActionSelectDate(date: date)) }
+    func selectMonth(year: Int32, month: Int32) {
+        navigate(CalendarNavigationActionSelectMonth(year: year, month: month))
     }
+    func selectView(_ view: CalendarView) { navigate(CalendarNavigationActionSelectView(view: view)) }
+    func setFilters(_ filters: CalendarFilters) {
+        navigate(CalendarNavigationActionSetFilters(filters: filters))
+    }
+    func search(_ text: String) {
+        guard let state else { return }
+        setFilters(state.filters.doCopy(
+            scope: state.filters.scope,
+            groups: state.filters.groups,
+            tags: state.filters.tags,
+            importance: state.filters.importance,
+            text: text
+        ))
+    }
+    func setLocale(_ locale: CalendarLocale) {
+        source.dispatch(CalendarExperienceIntentSetLocale(locale: locale))
+    }
+    func refresh() { source.dispatch(CalendarExperienceIntentRefresh()) }
+    func openPreview(_ occurrence: EffectiveOccurrence) {
+        source.dispatch(CalendarExperienceIntentOpenPreview(occurrence: occurrence))
+    }
+    func openEditor(occurrence: EffectiveOccurrence? = nil, draft: CalendarMutationDraft? = nil) {
+        source.dispatch(CalendarExperienceIntentOpenEditor(occurrence: occurrence, draft: draft))
+    }
+    func add(_ draft: CalendarMutationDraft? = nil) {
+        source.dispatch(CalendarExperienceIntentCreateDraft(draft: draft))
+    }
+    func edit(_ occurrence: EffectiveOccurrence, inputTimeZoneId: String? = nil) {
+        source.dispatch(CalendarExperienceIntentEditOccurrence(
+            occurrence: occurrence,
+            inputTimeZoneId: inputTimeZoneId
+        ))
+    }
+    func updateDraft(_ draft: CalendarMutationDraft) {
+        source.dispatch(CalendarExperienceIntentUpdateDraft(draft: draft))
+    }
+    func chooseMutationScope(_ scope: CalendarMutationScope) {
+        source.dispatch(CalendarExperienceIntentChooseMutationScope(scope: scope))
+    }
+    func save(_ draft: CalendarMutationDraft? = nil) {
+        source.dispatch(CalendarExperienceIntentSubmit(draft: draft))
+    }
+    func requestDelete() { source.dispatch(CalendarExperienceIntentRequestDelete()) }
+    func confirmDelete(scope: CalendarMutationScope? = nil) {
+        source.dispatch(CalendarExperienceIntentConfirmDelete(scope: scope))
+    }
+    func rereadConflict() { source.dispatch(CalendarExperienceIntentRereadConflict()) }
+    func reviewConflict(_ draft: CalendarMutationDraft) {
+        source.dispatch(CalendarExperienceIntentReviewConflict(draft: draft))
+    }
+    func close() { source.dispatch(CalendarExperienceIntentCancel()) }
+    func acknowledgeOutcome() { source.dispatch(CalendarExperienceIntentAcknowledgeOutcome()) }
 }
 
-extension CalendarEvent {
-    var rowID: String { occurrenceId ?? id }
-    var mutationID: String { baseEventId ?? id }
-    var calendarStartText: String { CalendarDisplayFormatter.startText(start) }
-    var calendarSortText: String { calendarStartText }
-
-    func editedStart(from value: String) -> CalendarTime {
-        switch onEnum(of: start) {
-        case .allDay: return CalendarTime.AllDay(date: value)
-        case .timed(let original):
-            // The editor accepts a local date or local date+time, but the event
-            // remains timed and keeps its event timezone id in either case.
-            let deviceCalendar = Calendar.current
-            let parser = DateFormatter()
-            parser.calendar = deviceCalendar
-            parser.locale = Locale(identifier: "en_US_POSIX")
-            parser.timeZone = .current
-            parser.dateFormat = value.count == 10 ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm"
-            let instant = parser.date(from: value)?.ISO8601Format() ?? original.instant
-            return CalendarTime.Timed(instant: instant, timeZoneId: original.timeZoneId)
-        }
+/// Native controls may convert between `Date` and wire values, but raw shared
+/// temporal identity is otherwise never normalized by the adapter.
+enum CalendarNativeDateConversion {
+    static func allDayValue(_ date: Date, calendar: Calendar = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
     }
-}
 
-private func replacing(_ event: CalendarEvent, title: String, start: CalendarTime) -> CalendarEvent {
-    CalendarEvent(
-        id: event.id,
-        scope: event.scope,
-        title: title,
-        description: event.description,
-        start: start,
-        end: event.end,
-        recurrence: event.recurrence,
-        exdates: event.exdates,
-        exceptions: event.exceptions,
-        visibility: event.visibility,
-        importance: event.importance,
-        group: event.group,
-        tags: event.tags,
-        notification: event.notification,
-        createdAt: event.createdAt,
-        updatedAt: event.updatedAt,
-        occurrenceId: event.occurrenceId,
-        originalStart: event.originalStart,
-        baseEventId: event.baseEventId,
-        revision: event.revision,
-        recurring: event.recurring
-    )
+    static func timedValue(_ date: Date) -> String {
+        date.ISO8601Format(.iso8601(timeZone: .current, includingFractionalSeconds: true))
+    }
 }
