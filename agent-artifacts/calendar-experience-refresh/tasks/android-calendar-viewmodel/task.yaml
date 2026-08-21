@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-viewmodel
 title: Make Android CalendarViewModel a thin shared-state adapter
-status: contribution_complete
+status: merged
 dependsOn:
   - android-calendar-database-session
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: 341387eef19ca4521c71ba16f8f2bd7c7fd54c02
   lastRunId: c403f359-32f3-43c1-8f9a-f3fdfdf7266a
   completedCommit: aed7d24c54af00d7ac938ad37f8c320238a13e05
+  mergedCommit: 3d28676fe3338a3e3e7fc4234b3afe25dd2d5432
