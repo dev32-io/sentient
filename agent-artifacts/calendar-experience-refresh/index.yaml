@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 22
+  revision: 23
 artifacts:
   - id: intent
     type: intent
@@ -50,6 +50,8 @@ tasks:
     path: tasks/mobile-calendar-read-coordinator/task.yaml
   - id: web-calendar-assembly
     path: tasks/web-calendar-assembly/task.yaml
+  - id: mobile-calendar-retention-offline
+    path: tasks/mobile-calendar-retention-offline/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -89,3 +91,6 @@ executionStages:
   - id: web-calendar-assembly
     tasks:
       - web-calendar-assembly
+  - id: mobile-calendar-retention-offline
+    tasks:
+      - mobile-calendar-retention-offline
