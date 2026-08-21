@@ -105,6 +105,7 @@ export interface CalendarControllerActions {
   readonly setAnchorDate: (date: string) => Promise<void>;
   readonly setSelectedDate: (date: string) => Promise<void>;
   readonly selectDate: (date: string) => Promise<void>;
+  readonly selectMonth: (year: number, month: number) => Promise<void>;
   readonly goToToday: () => Promise<void>;
   readonly previous: () => Promise<void>;
   readonly next: () => Promise<void>;
@@ -166,6 +167,15 @@ export type CalendarPageAggregationResult =
 
 const DEFAULT_MAX_PAGES = 10_000;
 const SAFE_CODE = /^[a-z][a-z0-9_-]{0,63}$/;
+const PERMISSION_ERROR_CODES = new Set([
+  "forbidden",
+  "missing_token",
+  "expired",
+  "signature_invalid",
+  "wrong_purpose",
+  "user_not_found",
+  "invalid_user_record",
+]);
 const KNOWN_ERROR_CODES = new Set([
   "invalid_time",
   "invalid_range",
@@ -274,6 +284,13 @@ function apiError(error: unknown): CalendarControllerError {
   if (!isRecord(error)) return controllerError("api-error");
   const status = typeof error.status === "number" ? error.status : 0;
   return controllerError(typeof error.code === "string" ? error.code : "api-error", status);
+}
+
+/** Authentication and authorization failures are non-disclosing. A cached
+ * interval must not remain renderable when the credential is no longer valid. */
+export function isCalendarPermissionError(error: CalendarControllerError | null | undefined): boolean {
+  if (!error) return false;
+  return error.status === 401 || error.status === 403 || PERMISSION_ERROR_CODES.has(error.code);
 }
 
 function cancelled(): CalendarPageAggregationResult {
@@ -474,6 +491,7 @@ export class CalendarController {
       setAnchorDate: (date) => this.setAnchorDate(date),
       setSelectedDate: (date) => this.setSelectedDate(date),
       selectDate: (date) => this.selectDate(date),
+      selectMonth: (year, month) => this.selectMonth(year, month),
       goToToday: () => this.goToToday(),
       previous: () => this.previous(),
       next: () => this.next(),
@@ -568,6 +586,22 @@ export class CalendarController {
       view: next.view,
       anchorDate: next.anchorDate,
       selectedDate: next.selectedDate,
+    }, this.preferences);
+    this.persistPreferences();
+    this.emit();
+    return this.refresh();
+  }
+
+  /** Year month selection is a single intent: move the anchor and enter Month. */
+  public selectMonth(year: number, month: number): Promise<void> {
+    if (this.disposed || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return Promise.resolve();
+    const date = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
+    if (this.preferences.view === "month" && this.preferences.anchorDate === date && this.preferences.selectedDate === date) return Promise.resolve();
+    this.preferences = validateCalendarPreferences({
+      ...this.preferences,
+      view: "month",
+      anchorDate: date,
+      selectedDate: date,
     }, this.preferences);
     this.persistPreferences();
     this.emit();
@@ -756,8 +790,15 @@ export class CalendarController {
     } else if (result.error.code === "cancelled") {
       return;
     } else {
-      // Keep the last complete set and its interval. A failed later page is
-      // never allowed to replace it with a partial aggregate or an empty set.
+      // Connectivity and contract failures retain the last complete set, but
+      // authentication/authorization failures are a privacy boundary: remove
+      // cached rows before emitting the error so a stale projection cannot
+      // disclose the previous principal's private events.
+      if (isCalendarPermissionError(result.error)) {
+        this.completeOccurrences = [];
+        this.completeInterval = null;
+        this.hasCompleteData = false;
+      }
       this.phase = "error";
       this.errorState = result.error;
     }

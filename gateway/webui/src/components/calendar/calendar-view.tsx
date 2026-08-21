@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { useCallback, useMemo, useState } from "preact/hooks";
+import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import { useAuth } from "../../hooks/use-auth.tsx";
 import {
   type CalendarApi,
@@ -42,6 +42,7 @@ import { projectCalendar } from "./calendar-projections.ts";
 import type { CalendarPreferenceStore } from "./calendar-preferences.ts";
 import type { CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
 import type { ProjectedCalendarOccurrence } from "./calendar-projection-types.ts";
+import { isCalendarPermissionError } from "./calendar-controller.ts";
 import { useCalendarController } from "./use-calendar-controller.tsx";
 import "./calendar-view.css";
 
@@ -311,6 +312,7 @@ export function CalendarView({
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [overflow, setOverflow] = useState<OverflowState | null>(null);
+  const overflowOriginRef = useRef<HTMLElement | null>(null);
   const [mutationNotice, setMutationNotice] = useState<string | null>(null);
   const [successorEventId, setSuccessorEventId] = useState<string | null>(null);
 
@@ -346,11 +348,13 @@ export function CalendarView({
   const timeZone = browserTimeZone();
   const weekStartsOn = suppliedWeekStartsOn ?? (localeWeekStart(locale) === 0 ? 0 : 1);
   const today = todayCalendarDate(safeNow(now), timeZone);
+  const permissionDenied = isCalendarPermissionError(controller.error);
+  const renderedOccurrences = permissionDenied ? [] : controller.filteredOccurrences;
   const richProjection = useMemo<CalendarCanvasSlotProps["projection"]>(() => {
-    if (controller.dataInterval === null) return null;
+    if (controller.dataInterval === null || permissionDenied) return null;
     try {
       return projectCalendar({
-        occurrences: controller.filteredOccurrences,
+        occurrences: renderedOccurrences,
         view: controller.view,
         anchorDate: controller.anchorDate as CalendarDate,
         selectedDate: controller.selectedDate as CalendarDate,
@@ -366,7 +370,7 @@ export function CalendarView({
       // remains the source of truth and its safe error surface is shown below.
       return null;
     }
-  }, [controller.anchorDate, controller.dataInterval, controller.filteredOccurrences, controller.selectedDate, controller.view, locale, timeZone, today, weekStartsOn]);
+  }, [controller.anchorDate, controller.dataInterval, permissionDenied, renderedOccurrences, controller.selectedDate, controller.view, locale, timeZone, today, weekStartsOn]);
 
   const openPreview = useCallback((occurrence: ProjectedCalendarOccurrence, anchor: HTMLElement | null = null): void => {
     setPreview({ occurrence, anchor });
@@ -384,6 +388,7 @@ export function CalendarView({
   }, []);
 
   const onOpenEvent = useCallback((occurrence: ProjectedCalendarOccurrence): void => {
+    overflowOriginRef.current = null;
     const active = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -391,12 +396,26 @@ export function CalendarView({
   }, [openPreview]);
 
   const onOpenOverflow = useCallback((date: CalendarDate, events: readonly ProjectedCalendarOccurrence[]): void => {
+    const active = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    // The dialog's event buttons are transient. Retain the mounted +N trigger
+    // (or the first deterministic overflow control in jsdom) as the stable
+    // preview origin before the dialog is unmounted.
+    overflowOriginRef.current = active?.matches("[data-calendar-overflow='true']")
+      ? active
+      : document.querySelector<HTMLElement>("[data-calendar-overflow='true']");
     setPreview(null);
     setOverflow({ date, events });
   }, []);
 
   const onOpenOverflowEvent = useCallback((occurrence: ProjectedCalendarOccurrence, anchor: HTMLElement): void => {
-    openPreview(occurrence, anchor);
+    const stableOrigin = overflowOriginRef.current?.isConnected
+      ? overflowOriginRef.current
+      : anchor.isConnected
+        ? anchor
+        : document.querySelector<HTMLElement>("[data-calendar-floating-view-bar] button");
+    openPreview(occurrence, stableOrigin);
   }, [openPreview]);
 
   const onCreate = useCallback((input: CalendarCreateInput) => stableApi.create(token, input), [stableApi, token]);
@@ -439,7 +458,7 @@ export function CalendarView({
   const authIsPending = auth.status === "boot" || auth.status === "authenticating";
   if (authIsPending && !suppliedToken) return loadingState();
   if (!token) return permissionState("signin");
-  if (errorCode === "forbidden") return permissionState("calendar");
+  if (permissionDenied) return permissionState("calendar");
 
   const previewEdit = preview && calendarCapabilityAllows(capabilities, "update", preview.occurrence.scope)
     ? openEditorFor
@@ -483,7 +502,7 @@ export function CalendarView({
         onToday={() => void controller.actions.goToToday()}
         onDateChange={(date) => void controller.actions.setAnchorDate(date)}
         onSelectDate={(date) => void controller.actions.selectDate(date)}
-        onSelectMonth={(year, month) => void controller.actions.setAnchorDate(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`)}
+        onSelectMonth={(year, month) => void controller.actions.selectMonth(year, month)}
         onOpenEvent={onOpenEvent}
         onOpenOverflow={onOpenOverflow}
         onAddEvent={controller.actions.openAddEvent}

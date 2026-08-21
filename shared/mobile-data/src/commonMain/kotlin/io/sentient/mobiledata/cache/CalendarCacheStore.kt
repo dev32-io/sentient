@@ -196,6 +196,13 @@ interface CalendarCacheStore {
         get() = currentNamespace.value
     val isClosed: Boolean
 
+    /**
+     * Optional synchronous pre-switch hook for session coordinators. The SQLDelight
+     * implementation invokes it before purging or selecting the successor so
+     * visible state and in-flight work can be invalidated in the same call.
+     */
+    fun registerNamespaceChangeListener(listener: (CalendarCacheNamespace) -> Unit): () -> Unit = {}
+
     /** Emits one coherent result for the selected complete window per committed transaction. */
     fun observeSnapshot(window: CalendarCacheWindow): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>>
 
@@ -215,12 +222,38 @@ interface CalendarCacheStore {
         freshness: CalendarCacheFreshness = CalendarCacheFreshness.FRESH,
     ): CalendarCacheWriteResult
 
+    /**
+     * Namespace-pinned replacement used by stale revalidation completions.
+     * Implementations must reject the write atomically when the active
+     * namespace has changed since the request started.
+     */
+    suspend fun replaceSnapshotForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        occurrences: List<EffectiveOccurrence>,
+        fetchedAt: Long,
+        lastAccessedAt: Long = fetchedAt,
+        freshness: CalendarCacheFreshness = CalendarCacheFreshness.FRESH,
+    ): CalendarCacheWriteResult {
+        if (currentNamespace.value != namespace) return invalidNamespaceWriteFailure()
+        return replaceSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
+    }
+
     fun observePreferences(): Flow<CalendarCacheReadResult<CalendarCachePreferences?>>
 
     fun preferencesFlow(): Flow<CalendarCacheReadResult<CalendarCachePreferences?>> = observePreferences()
 
     suspend fun readPreferences(): CalendarCacheReadResult<CalendarCachePreferences?>
     suspend fun writePreferences(preferences: CalendarCachePreferences): CalendarCacheWriteResult
+
+    /** Namespace-pinned preference write; stale session completions are rejected. */
+    suspend fun writePreferencesForNamespace(
+        namespace: CalendarCacheNamespace,
+        preferences: CalendarCachePreferences,
+    ): CalendarCacheWriteResult {
+        if (currentNamespace.value != namespace) return invalidNamespaceWriteFailure()
+        return writePreferences(preferences)
+    }
 
     suspend fun writePreferences(
         preferences: CalendarPreferences,
@@ -240,6 +273,16 @@ interface CalendarCacheStore {
         freshness: CalendarCacheFreshness,
     ): CalendarCacheWriteResult
 
+    /** Namespace-pinned freshness metadata write; stale jobs cannot touch a successor. */
+    suspend fun markFreshnessForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        freshness: CalendarCacheFreshness,
+    ): CalendarCacheWriteResult {
+        if (currentNamespace.value != namespace) return invalidNamespaceWriteFailure()
+        return markFreshness(window, freshness)
+    }
+
     suspend fun purgeNamespace(
         namespace: CalendarCacheNamespace = currentNamespace.value,
     ): CalendarCacheWriteResult
@@ -255,6 +298,11 @@ interface CalendarCacheStore {
 
     fun close()
 }
+
+private fun invalidNamespaceWriteFailure(): CalendarCacheWriteResult =
+    CalendarCacheResult.Failure(
+        CalendarCacheFailure(CalendarCacheFailureReason.INVALID_NAMESPACE),
+    )
 
 /**
  * SQLDelight implementation of [CalendarCacheStore].  It owns the supplied
@@ -285,6 +333,7 @@ class SqlDelightCalendarCacheStore private constructor(
     private val writeMutex = Mutex()
     private val namespaceState = MutableStateFlow(initialNamespace)
     private val openState = MutableStateFlow(true)
+    private var namespaceChangeListener: ((CalendarCacheNamespace) -> Unit)? = null
     private val json = Json {
         encodeDefaults = true
         explicitNulls = true
@@ -294,6 +343,13 @@ class SqlDelightCalendarCacheStore private constructor(
 
     override val currentNamespace: StateFlow<CalendarCacheNamespace> = namespaceState.asStateFlow()
     override val isClosed: Boolean get() = !openState.value
+
+    override fun registerNamespaceChangeListener(listener: (CalendarCacheNamespace) -> Unit): () -> Unit {
+        namespaceChangeListener = listener
+        return {
+            if (namespaceChangeListener === listener) namespaceChangeListener = null
+        }
+    }
 
     override fun observeSnapshot(window: CalendarCacheWindow): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> =
         selectedFlow { namespace -> observeSnapshotInNamespace(namespace, window) }
@@ -327,22 +383,60 @@ class SqlDelightCalendarCacheStore private constructor(
         freshness: CalendarCacheFreshness,
     ): CalendarCacheWriteResult = writeMutex.withLock {
         if (!openState.value) return@withLock closedFailure()
+        replaceSnapshotLocked(
+            namespace = namespaceState.value,
+            window = window,
+            occurrences = occurrences,
+            fetchedAt = fetchedAt,
+            lastAccessedAt = lastAccessedAt,
+            freshness = freshness,
+        )
+    }
 
+    override suspend fun replaceSnapshotForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        occurrences: List<EffectiveOccurrence>,
+        fetchedAt: Long,
+        lastAccessedAt: Long,
+        freshness: CalendarCacheFreshness,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        replaceSnapshotLocked(
+            namespace = namespace,
+            window = window,
+            occurrences = occurrences,
+            fetchedAt = fetchedAt,
+            lastAccessedAt = lastAccessedAt,
+            freshness = freshness,
+        )
+    }
+
+    /** Called only while [writeMutex] is held, so namespace validation and the
+     * complete transaction share one linearization point. */
+    private fun replaceSnapshotLocked(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        occurrences: List<EffectiveOccurrence>,
+        fetchedAt: Long,
+        lastAccessedAt: Long,
+        freshness: CalendarCacheFreshness,
+    ): CalendarCacheWriteResult {
         val encoded = try {
             val serialized = encodeOccurrences(occurrences)
             require(fetchedAt >= 0L)
             require(lastAccessedAt >= 0L)
             serialized
         } catch (_: InvalidSnapshotException) {
-            return@withLock invalidSnapshotFailure()
+            return invalidSnapshotFailure()
         } catch (_: IllegalArgumentException) {
-            return@withLock invalidSnapshotFailure()
+            return invalidSnapshotFailure()
         } catch (_: SerializationException) {
-            return@withLock invalidSnapshotFailure()
+            return invalidSnapshotFailure()
         }
 
-        try {
-            val namespace = namespaceState.value
+        return try {
             database.transaction {
                 // Remove the previous complete window and stage a new, incomplete
                 // marker. The marker is flipped only after every row is inserted.
@@ -447,37 +541,53 @@ class SqlDelightCalendarCacheStore private constructor(
     override suspend fun writePreferences(preferences: CalendarCachePreferences): CalendarCacheWriteResult =
         writeMutex.withLock {
             if (!openState.value) return@withLock closedFailure()
-            val normalized = try {
-                normalizePreferences(preferences)
-            } catch (_: InvalidPreferencesException) {
-                return@withLock invalidPreferencesFailure()
-            } catch (_: IllegalArgumentException) {
-                return@withLock invalidPreferencesFailure()
-            }
-            try {
-                val namespace = namespaceState.value
-                queries.upsertPreferences(
-                    account_id = namespace.accountId,
-                    backend_id = namespace.backendId,
-                    view_mode = viewWire(normalized.view),
-                    anchor_date = normalized.anchorDate,
-                    scopes_json = encodeList(ListSerializer(CalendarScope.serializer()), normalized.scopes),
-                    groups_json = encodeList(ListSerializer(String.serializer()), normalized.groups),
-                    tags_json = encodeList(ListSerializer(String.serializer()), normalized.tags),
-                    importance_json = encodeList(
-                        ListSerializer(Importance.serializer()),
-                        normalized.importance?.let(::listOf).orEmpty(),
-                    ),
-                    search_text = normalized.searchText,
-                    updated_at = normalized.updatedAt,
-                )
-                CalendarCacheResult.Success(Unit)
-            } catch (cancelled: KotlinCancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                databaseFailure()
-            }
+            writePreferencesLocked(namespaceState.value, preferences)
         }
+
+    override suspend fun writePreferencesForNamespace(
+        namespace: CalendarCacheNamespace,
+        preferences: CalendarCachePreferences,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        writePreferencesLocked(namespace, preferences)
+    }
+
+    /** Called only while [writeMutex] is held. */
+    private fun writePreferencesLocked(
+        namespace: CalendarCacheNamespace,
+        preferences: CalendarCachePreferences,
+    ): CalendarCacheWriteResult {
+        val normalized = try {
+            normalizePreferences(preferences)
+        } catch (_: InvalidPreferencesException) {
+            return invalidPreferencesFailure()
+        } catch (_: IllegalArgumentException) {
+            return invalidPreferencesFailure()
+        }
+        return try {
+            queries.upsertPreferences(
+                account_id = namespace.accountId,
+                backend_id = namespace.backendId,
+                view_mode = viewWire(normalized.view),
+                anchor_date = normalized.anchorDate,
+                scopes_json = encodeList(ListSerializer(CalendarScope.serializer()), normalized.scopes),
+                groups_json = encodeList(ListSerializer(String.serializer()), normalized.groups),
+                tags_json = encodeList(ListSerializer(String.serializer()), normalized.tags),
+                importance_json = encodeList(
+                    ListSerializer(Importance.serializer()),
+                    normalized.importance?.let(::listOf).orEmpty(),
+                ),
+                search_text = normalized.searchText,
+                updated_at = normalized.updatedAt,
+            )
+            CalendarCacheResult.Success(Unit)
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            databaseFailure()
+        }
+    }
 
     override suspend fun writePreferences(
         preferences: CalendarPreferences,
@@ -534,22 +644,38 @@ class SqlDelightCalendarCacheStore private constructor(
         freshness: CalendarCacheFreshness,
     ): CalendarCacheWriteResult = writeMutex.withLock {
         if (!openState.value) return@withLock closedFailure()
-        try {
-            val namespace = namespaceState.value
-            val affected = queries.setSnapshotFreshness(
-                freshness = freshness.wireValue,
-                account_id = namespace.accountId,
-                backend_id = namespace.backendId,
-                window_start = window.windowStart,
-                window_end = window.windowEnd,
-                timezone_input = window.timezoneInput,
-            ).value
-            if (affected == 0L) notFoundFailure() else CalendarCacheResult.Success(Unit)
-        } catch (cancelled: KotlinCancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            databaseFailure()
-        }
+        markFreshnessLocked(namespaceState.value, window, freshness)
+    }
+
+    override suspend fun markFreshnessForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        freshness: CalendarCacheFreshness,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        markFreshnessLocked(namespace, window, freshness)
+    }
+
+    /** Called only while [writeMutex] is held. */
+    private fun markFreshnessLocked(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        freshness: CalendarCacheFreshness,
+    ): CalendarCacheWriteResult = try {
+        val affected = queries.setSnapshotFreshness(
+            freshness = freshness.wireValue,
+            account_id = namespace.accountId,
+            backend_id = namespace.backendId,
+            window_start = window.windowStart,
+            window_end = window.windowEnd,
+            timezone_input = window.timezoneInput,
+        ).value
+        if (affected == 0L) notFoundFailure() else CalendarCacheResult.Success(Unit)
+    } catch (cancelled: KotlinCancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        databaseFailure()
     }
 
     override suspend fun purgeNamespace(namespace: CalendarCacheNamespace): CalendarCacheWriteResult =
@@ -572,6 +698,11 @@ class SqlDelightCalendarCacheStore private constructor(
         if (!openState.value) return@withLock closedFailure()
         val previous = namespaceState.value
         try {
+            if (previous != namespace) {
+                // Invalidate session-owned visible state before any predecessor
+                // purge or successor query can complete.
+                namespaceChangeListener?.invoke(namespace)
+            }
             if (purgePrevious) {
                 database.transaction { purgeNamespaceRows(previous) }
             }
@@ -589,6 +720,7 @@ class SqlDelightCalendarCacheStore private constructor(
         // Stop query collectors before closing the driver. A successor namespace
         // can therefore never receive a queued result from this store instance.
         openState.value = false
+        namespaceChangeListener = null
         val action = closeAction
         closeAction = null
         action?.invoke()

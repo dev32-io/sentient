@@ -69,7 +69,8 @@ describe("calendar E2E helpers", () => {
       expect(result.child.role).toBe("child");
       expect(result.paths.adult.privateCalendarDb).not.toBe(result.paths.child.privateCalendarDb);
       expect(result.paths.adult.householdCalendarDb).toBe(result.paths.child.householdCalendarDb);
-      expect(result.paths.adult.householdId).toBe("home");
+      expect(result.paths.adult.householdId).toMatch(/^calendar-e2e-/);
+      expect(result.paths.adult.householdId).not.toBe("home");
       expect(f.calls.slice(0, 2).map((call) => call.split(":")[1])).toEqual(["adult", "child"]);
     } finally {
       await rm(f.root, { recursive: true, force: true });
@@ -88,12 +89,16 @@ describe("calendar E2E helpers", () => {
         await mkdir(join(path, ".."), { recursive: true });
         await Bun.write(path, "sqlite placeholder");
       }
+      const fixedHomePath = join(f.deps.sharedDataRoot, "home", "calendar-v2", "calendar.db");
+      await mkdir(join(fixedHomePath, ".."), { recursive: true });
+      await Bun.write(fixedHomePath, "unrelated household data");
       const first = await cleanupCalendarE2E(f.deps, users);
       const second = await cleanupCalendarE2E(f.deps, users);
       expect(first.failures).toHaveLength(0);
       expect(second.failures).toHaveLength(0);
       await expect(stat(users.paths.adult.privateCalendarDb)).rejects.toThrow();
       await expect(stat(users.paths.adult.householdCalendarDb)).rejects.toThrow();
+      await expect(stat(fixedHomePath)).resolves.toBeTruthy();
     } finally {
       await rm(f.root, { recursive: true, force: true });
     }
@@ -119,7 +124,7 @@ describe("calendar E2E helpers", () => {
   it("uses a stable sanitized evidence directory and metadata-only evidence API", () => {
     expect(calendarE2EDirectory("run/one", "case secret")).toBe("qa/web/evidence/calendar-e2e/run_one/case_secret");
     expect(calendarE2EPaths("/tmp/users", "/tmp/shared", "u_abc12345").householdCalendarDb).toBe(
-      "/tmp/shared/home/calendar-v2/calendar.db",
+      "/tmp/shared/calendar-e2e-principal-u_abc12345/calendar-v2/calendar.db",
     );
   });
 

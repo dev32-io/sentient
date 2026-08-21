@@ -2,6 +2,7 @@ package io.sentient.mobiledata.calendar
 
 import io.sentient.mobiledata.cache.CalendarCacheFailureReason
 import io.sentient.mobiledata.cache.CalendarCacheFreshness
+import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCachePreferences
 import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheSnapshot
@@ -55,6 +56,7 @@ private data class EffectiveOccurrencePage(
 private sealed interface AggregationResult {
     data class Complete(val occurrences: List<EffectiveOccurrence>) : AggregationResult
     data class Failed(val error: CalendarExperienceError) : AggregationResult
+    data object Cancelled : AggregationResult
 }
 
 private data class CacheInputs(
@@ -104,7 +106,7 @@ class CalendarExperience(
 
     private var requestedWindow: CalendarCacheWindow = initialWindow ?: windowFor(
         presentation = initialState,
-        timezoneInput = initialWindow?.timezoneInput ?: io.sentient.mobilesdk.calendar.CALENDAR_WIRE_TIME_ZONE,
+        timezoneInput = initialWindow?.timezoneInput ?: initialLocale.timeZoneId,
     )
     private var activeWindow: CalendarCacheWindow = requestedWindow
     private var observationJob: Job? = null
@@ -113,7 +115,32 @@ class CalendarExperience(
     private var requestGeneration: Long = 0L
     private var preferenceWriteGeneration: Long = 0L
     private var preferenceWriteJob: Job? = null
+    private var namespaceGeneration: Long = 0L
+    private var observedNamespace: CalendarCacheNamespace = cacheStore.currentNamespace.value
+    private var namespaceJob: Job? = null
+    private var unregisterNamespaceListener: (() -> Unit)? = null
     private var closed: Boolean = false
+
+    init {
+        // The SQLDelight store invokes this hook before changing its selected
+        // namespace. Keeping the StateFlow collector as a fallback also makes
+        // custom/test stores safe when they only expose currentNamespace.
+        unregisterNamespaceListener = cacheStore.registerNamespaceChangeListener { namespace ->
+            if (!closed && namespace != observedNamespace) {
+                invalidateForNamespace(namespace, updateObservedNamespace = false)
+            }
+        }
+        namespaceJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // Namespace changes are session boundaries, not ordinary cache
+            // updates. The collector is started undispatched so custom stores
+            // invalidate before a successor cache emission can be applied.
+            // The explicit switchNamespace() seam below is synchronous too.
+            cacheStore.currentNamespace.collect { namespace ->
+                if (namespace == observedNamespace) return@collect
+                handleNamespaceChange(namespace)
+            }
+        }
+    }
 
     /** Compatibility constructor for callers that place the initial window before the coroutine scope. */
     constructor(
@@ -160,8 +187,11 @@ class CalendarExperience(
         markObservationStarted(window)
 
         val generation = requestGeneration
+        val namespace = cacheStore.currentNamespace.value
+        val namespaceEpoch = namespaceGeneration
+        observedNamespace = namespace
         observationJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            runObservation(window, generation)
+            runObservation(window, generation, namespace, namespaceEpoch)
         }
         return state
     }
@@ -226,7 +256,7 @@ class CalendarExperience(
         // changes can alter the visible interval and are the only intents that
         // start a new foreground window request.
         val requiresWindow = actionForWindow !is CalendarNavigationAction.SetFilters
-        val desiredWindow = windowFor(next, activeWindow.timezoneInput)
+        val desiredWindow = windowFor(next)
         if (requiresWindow && desiredWindow != activeWindow) observe(desiredWindow)
     }
 
@@ -253,6 +283,8 @@ class CalendarExperience(
         }
         refreshJob?.takeIf { it.isActive }?.let { return it }
         val generation = requestGeneration
+        val namespace = cacheStore.currentNamespace.value
+        val namespaceEpoch = namespaceGeneration
         // The foreground observation may still be loading its preference/cache
         // flows. Let that same job launch the first revalidation after its
         // cache-first emission instead of racing it with a second request.
@@ -262,7 +294,7 @@ class CalendarExperience(
         val window = activeWindow
         revalidationGeneration = generation
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            revalidate(window, generation)
+            revalidate(window, generation, namespace, namespaceEpoch)
         }
         refreshJob = job
         job.invokeOnCompletion {
@@ -284,11 +316,16 @@ class CalendarExperience(
         if (closed) return
         closed = true
         requestGeneration += 1L
+        namespaceGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
         preferenceWriteJob?.cancel()
+        namespaceJob?.cancel()
+        unregisterNamespaceListener?.invoke()
         observationJob = null
         refreshJob = null
+        namespaceJob = null
+        unregisterNamespaceListener = null
         revalidationGeneration = null
         preferenceWriteJob = null
         _state.value = initialState.copy(
@@ -306,18 +343,60 @@ class CalendarExperience(
         )
     }
 
+    /**
+     * Switch the authenticated cache namespace through the experience boundary.
+     * The visible state is cleared before the store can emit the successor
+     * namespace, and every old request is epoch-invalidated. Session owners
+     * should use this seam rather than switching the store behind the active
+     * experience; the namespace watcher below still protects direct store users.
+     */
+    suspend fun switchNamespace(
+        namespace: CalendarCacheNamespace,
+        purgePrevious: Boolean = true,
+    ): CalendarCacheResult<Unit> {
+        if (closed) {
+            return CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.CLOSED),
+            )
+        }
+        if (namespace == cacheStore.currentNamespace.value) return CalendarCacheResult.Success(Unit)
+
+        invalidateForNamespace(namespace)
+        val result = try {
+            cacheStore.switchNamespace(namespace, purgePrevious)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
+            )
+        }
+        if (result is CalendarCacheResult.Success && !closed && cacheStore.currentNamespace.value == namespace) {
+            observe(requestedWindow)
+        } else if (result is CalendarCacheResult.Failure && !closed && cacheStore.currentNamespace.value != namespace) {
+            // The old namespace remains safe to reload; do not leave the
+            // experience permanently blank after a failed switch attempt.
+            handleNamespaceChange(cacheStore.currentNamespace.value)
+        }
+        return result
+    }
+
     private suspend fun runObservation(
         requested: CalendarCacheWindow,
         generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
     ) {
         // Preferences are read before selecting the first window so a restored
         // Month/Week/Day/Year view is the first remote request, not a follow-up.
-        val preferenceRead = readPreferencesSafely()
+        val preferenceRead = readPreferencesSafely(namespace)
         val restored = when (preferenceRead) {
             is CalendarCacheResult.Success -> preferenceRead.value?.let(::validatePreferences)
             is CalendarCacheResult.Failure -> null
         }
-        if (!isCurrent(generation)) return
+        if (!isCurrent(generation, namespace, namespaceEpoch)) return
 
         if (preferenceRead is CalendarCacheResult.Failure) {
             updateError(cacheFailure(preferenceRead.error.reason))
@@ -337,16 +416,18 @@ class CalendarExperience(
             )
         } ?: requested
 
-        if (!isCurrent(generation)) return
+        if (!isCurrent(generation, namespace, namespaceEpoch)) return
         requestedWindow = selectedWindow
         activeWindow = selectedWindow
         if (restored != null) applyRestoredPreferences(restored, selectedWindow)
-        observeWindow(selectedWindow, generation, restored)
+        observeWindow(selectedWindow, generation, namespace, namespaceEpoch, restored)
     }
 
     private suspend fun observeWindow(
         window: CalendarCacheWindow,
         generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
         restored: CalendarCachePreferences?,
     ) = coroutineScope {
         val cacheReady = CompletableDeferred<Unit>()
@@ -354,6 +435,7 @@ class CalendarExperience(
         var hasSeenSnapshot = false
         var lastAppliedFetchedAt: Long? = null
         var latestPreferences: CalendarCachePreferences? = restored
+        var hasSeenPreferences = restored != null
 
         val collector = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
@@ -362,11 +444,12 @@ class CalendarExperience(
                     cacheStore.observePreferences(),
                 ) { snapshot, preferences -> CacheInputs(snapshot, preferences) }
                     .collect { inputs ->
-                        if (!isCurrent(generation)) return@collect
+                        if (!isCurrent(generation, namespace, namespaceEpoch)) return@collect
                         val snapshotResult = inputs.snapshot
                         val preferencesResult = inputs.preferences
 
                         if (preferencesResult is CalendarCacheResult.Success) {
+                            hasSeenPreferences = true
                             val normalized = preferencesResult.value?.let(::validatePreferences)
                             if (preferencesResult.value != null && normalized == null) {
                                 updateError(
@@ -386,7 +469,10 @@ class CalendarExperience(
 
                         if (snapshotResult is CalendarCacheResult.Success) {
                             hasSeenSnapshot = true
-                            if (snapshotResult.value != null) latestSnapshot = snapshotResult.value
+                            // A successful null is a real empty result for this
+                            // namespace/window, not permission to retain the
+                            // predecessor's snapshot in a local accumulator.
+                            latestSnapshot = snapshotResult.value
                         } else if (snapshotResult is CalendarCacheResult.Failure) {
                             updateError(cacheFailure(snapshotResult.error.reason))
                         }
@@ -397,6 +483,7 @@ class CalendarExperience(
                             window = window,
                             snapshot = latestSnapshot,
                             preferences = latestPreferences,
+                            hasSeenPreferences = hasSeenPreferences,
                             hasSeenSnapshot = hasSeenSnapshot,
                             snapshotChanged = snapshotChanged,
                         )
@@ -420,13 +507,13 @@ class CalendarExperience(
         }
 
         cacheReady.await()
-        if (!isCurrent(generation) || !isActive) return@coroutineScope
+        if (!isCurrent(generation, namespace, namespaceEpoch) || !isActive) return@coroutineScope
 
         // A cache emission is now visible (including a typed empty result) before
         // any network call begins. This is the cache-first ordering contract.
         revalidationGeneration = generation
         val refresh = launch(start = CoroutineStart.UNDISPATCHED) {
-            revalidate(window, generation)
+            revalidate(window, generation, namespace, namespaceEpoch)
         }
         refreshJob = refresh
         refresh.invokeOnCompletion {
@@ -441,8 +528,13 @@ class CalendarExperience(
         }
     }
 
-    private suspend fun revalidate(window: CalendarCacheWindow, generation: Long) {
-        if (!isCurrent(generation)) return
+    private suspend fun revalidate(
+        window: CalendarCacheWindow,
+        generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ) {
+        if (!isCurrent(generation, namespace, namespaceEpoch)) return
         val hasCachedContent = _state.value.hasCompleteCache
         val retainedCacheError = _state.value.error?.takeIf {
             !hasCachedContent && it.kind in setOf(
@@ -464,9 +556,10 @@ class CalendarExperience(
             ),
         )
 
-        when (val aggregation = aggregate(window)) {
+        when (val aggregation = aggregate(window, generation, namespace, namespaceEpoch)) {
+            AggregationResult.Cancelled -> return
             is AggregationResult.Failed -> {
-                if (!isCurrent(generation)) return
+                if (!isCurrent(generation, namespace, namespaceEpoch)) return
                 val currentError = _state.value.error
                 val hasCache = _state.value.hasCompleteCache
                 val connection = aggregation.error.kind == CalendarExperienceErrorKind.CONNECTION
@@ -481,7 +574,7 @@ class CalendarExperience(
                 } else {
                     CalendarFreshness.ERROR
                 }
-                if (hasCache) persistFreshness(window, resultingFreshness)
+                if (hasCache) persistFreshness(namespace, window, namespaceEpoch, resultingFreshness)
                 _state.value = _state.value.copy(
                     loading = CalendarLoadingState(),
                     freshness = resultingFreshness,
@@ -501,10 +594,11 @@ class CalendarExperience(
             }
 
             is AggregationResult.Complete -> {
-                if (!isCurrent(generation)) return
+                if (!isCurrent(generation, namespace, namespaceEpoch)) return
                 val fetchedAt = nowMillis().coerceAtLeast(0L)
                 val writeResult = try {
-                    cacheStore.replaceSnapshot(
+                    cacheStore.replaceSnapshotForNamespace(
+                        namespace = namespace,
                         window = window,
                         occurrences = aggregation.occurrences,
                         fetchedAt = fetchedAt,
@@ -525,7 +619,7 @@ class CalendarExperience(
 
                 when (writeResult) {
                     is CalendarCacheResult.Success -> {
-                        if (!isCurrent(generation)) return
+                        if (!isCurrent(generation, namespace, namespaceEpoch)) return
                         // The SQLDelight flow naturally emits this generation. We
                         // also apply it here so a lightweight injected test store
                         // that acknowledges writes before emitting still exposes a
@@ -533,7 +627,7 @@ class CalendarExperience(
                         applyCommittedData(window, aggregation.occurrences, fetchedAt)
                     }
                     is CalendarCacheResult.Failure -> {
-                        if (!isCurrent(generation)) return
+                        if (!isCurrent(generation, namespace, namespaceEpoch)) return
                         _state.value = _state.value.copy(
                             loading = CalendarLoadingState(),
                             freshness = CalendarFreshness.ERROR,
@@ -547,7 +641,12 @@ class CalendarExperience(
         }
     }
 
-    private suspend fun aggregate(window: CalendarCacheWindow): AggregationResult {
+    private suspend fun aggregate(
+        window: CalendarCacheWindow,
+        generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): AggregationResult {
         val byIdentity = LinkedHashMap<String, EffectiveOccurrence>()
         val occurrenceIds = HashMap<String, String>()
         val seenCursors = HashSet<String>()
@@ -555,6 +654,7 @@ class CalendarExperience(
         var pageCount = 0
 
         while (true) {
+            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             if (++pageCount > MAX_PAGES) {
                 return AggregationResult.Failed(contractError("Calendar pagination exceeded its safety bound."))
             }
@@ -583,12 +683,14 @@ class CalendarExperience(
                     ),
                 )
             }
+            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             val page = when (result) {
                 is SentientResult.Success -> result.data
                 is SentientResult.Failure -> return AggregationResult.Failed(repositoryError(result.error))
                 is SentientResult.Loading -> return AggregationResult.Failed(contractError("Calendar pagination did not return a settled page."))
             }
 
+            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             val converted = try {
                 convertPage(page)
             } catch (cancelled: CancellationException) {
@@ -706,13 +808,14 @@ class CalendarExperience(
         window: CalendarCacheWindow,
         snapshot: CalendarCacheSnapshot?,
         preferences: CalendarCachePreferences?,
+        hasSeenPreferences: Boolean,
         hasSeenSnapshot: Boolean,
         snapshotChanged: Boolean,
     ) {
         if (closed) return
         val current = _state.value
-        val occurrences = snapshot?.occurrences ?: current.authorizedOccurrences
-        val hasCache = snapshot != null || (current.hasCompleteCache && current.cachedWindow == window && hasSeenSnapshot)
+        val occurrences = if (hasSeenSnapshot) snapshot?.occurrences.orEmpty() else current.authorizedOccurrences
+        val hasCache = if (hasSeenSnapshot) snapshot != null else current.hasCompleteCache && current.cachedWindow == window
         val nextPresentation = preferences?.let(::presentationFor)
         val base = nextPresentation ?: current
         val projection = buildProjection(base, occurrences)
@@ -729,8 +832,8 @@ class CalendarExperience(
             projection = projection,
             facets = projection?.facets ?: emptyCalendarFacets(),
             hasCompleteCache = hasCache,
-            cachedWindow = snapshot?.window ?: current.cachedWindow,
-            persistedCachePreferences = preferences ?: current.persistedCachePreferences,
+            cachedWindow = if (hasCache) snapshot?.window ?: current.cachedWindow else null,
+            persistedCachePreferences = if (hasSeenPreferences) preferences else current.persistedCachePreferences,
             loading = if (snapshot != null && current.loading.phase == CalendarLoadingPhase.LOADING) CalendarLoadingState() else current.loading,
             freshness = if (snapshotChanged && snapshot != null) snapshot.freshness else current.freshness,
             error = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH) null else current.error,
@@ -792,10 +895,12 @@ class CalendarExperience(
     private fun persistPresentation(presentation: CalendarExperienceState) {
         val cachePreferences = presentation.toCachePreferences(nowMillis().coerceAtLeast(0L))
         val generation = ++preferenceWriteGeneration
+        val namespace = cacheStore.currentNamespace.value
+        val namespaceEpoch = namespaceGeneration
         preferenceWriteJob?.cancel()
         val writeJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val result = try {
-                cacheStore.writePreferences(cachePreferences)
+                cacheStore.writePreferencesForNamespace(namespace, cachePreferences)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (cancelled: KotlinCancellationException) {
@@ -805,7 +910,7 @@ class CalendarExperience(
                     io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
                 )
             }
-            if (closed || generation != preferenceWriteGeneration) return@launch
+            if (closed || generation != preferenceWriteGeneration || !isNamespaceCurrent(namespace, namespaceEpoch)) return@launch
             if (result is CalendarCacheResult.Failure) updateError(cacheFailure(result.error.reason))
             else _state.value = _state.value.copy(persistedCachePreferences = cachePreferences)
         }
@@ -844,13 +949,66 @@ class CalendarExperience(
         )
     }
 
+    /** Clear all predecessor-derived state before the successor namespace is
+     * allowed to start a cache read. */
+    private fun invalidateForNamespace(
+        namespace: CalendarCacheNamespace,
+        updateObservedNamespace: Boolean = true,
+    ) {
+        if (closed) return
+        if (updateObservedNamespace) observedNamespace = namespace
+        namespaceGeneration += 1L
+        requestGeneration += 1L
+        observationJob?.cancel()
+        refreshJob?.cancel()
+        preferenceWriteGeneration += 1L
+        preferenceWriteJob?.cancel()
+        observationJob = null
+        refreshJob = null
+        preferenceWriteJob = null
+        revalidationGeneration = null
+        activeWindow = requestedWindow
+        _state.value = initialState.copy(
+            visibleInterval = requestedWindow.toDateInterval(),
+            selectedInterval = selectedDateInterval(initialState.selectedDate),
+            freshness = CalendarFreshness.STALE,
+            loading = CalendarLoadingState(),
+            offline = CalendarOfflineState.UNAVAILABLE,
+            error = null,
+            hasCompleteCache = false,
+            cachedWindow = null,
+            authorizedOccurrences = emptyList(),
+            projection = null,
+            facets = emptyCalendarFacets(),
+            persistedCachePreferences = null,
+            mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.UNAVAILABLE),
+        )
+    }
+
+    private fun handleNamespaceChange(namespace: CalendarCacheNamespace) {
+        if (closed || namespace == observedNamespace) return
+        invalidateForNamespace(namespace)
+        // The store publishes the namespace before this callback runs. Starting
+        // here therefore observes only the new selected SQLDelight namespace.
+        if (!closed && cacheStore.currentNamespace.value == namespace) observe(requestedWindow)
+    }
+
     private fun updateError(error: CalendarExperienceError) {
         if (closed) return
         _state.value = _state.value.copy(error = error)
     }
 
-    private suspend fun readPreferencesSafely(): CalendarCacheResult<CalendarCachePreferences?> = try {
-        cacheStore.readPreferences()
+    private suspend fun readPreferencesSafely(
+        expectedNamespace: CalendarCacheNamespace,
+    ): CalendarCacheResult<CalendarCachePreferences?> = try {
+        val result = cacheStore.readPreferences()
+        if (cacheStore.currentNamespace.value != expectedNamespace) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.INVALID_NAMESPACE),
+            )
+        } else {
+            result
+        }
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (cancelled: KotlinCancellationException) {
@@ -991,9 +1149,15 @@ class CalendarExperience(
         }
     }
 
-    private suspend fun persistFreshness(window: CalendarCacheWindow, freshness: CalendarFreshness) {
+    private suspend fun persistFreshness(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        namespaceEpoch: Long,
+        freshness: CalendarFreshness,
+    ) {
+        if (!isNamespaceCurrent(namespace, namespaceEpoch)) return
         try {
-            cacheStore.markFreshness(window, freshness)
+            cacheStore.markFreshnessForNamespace(namespace, window, freshness)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (cancelled: KotlinCancellationException) {
@@ -1036,11 +1200,27 @@ class CalendarExperience(
         reason = reason,
     )
 
-    private fun isCurrent(generation: Long): Boolean = !closed && generation == requestGeneration && activeWindow == requestedWindow
+    private fun isCurrent(
+        generation: Long,
+        namespace: CalendarCacheNamespace = observedNamespace,
+        namespaceEpoch: Long = this.namespaceGeneration,
+    ): Boolean = !closed &&
+        generation == requestGeneration &&
+        this.namespaceGeneration == namespaceEpoch &&
+        activeWindow == requestedWindow &&
+        cacheStore.currentNamespace.value == namespace
 
-    private fun windowFor(presentation: CalendarExperienceState, timezoneInput: String): CalendarCacheWindow {
+    private fun isNamespaceCurrent(
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): Boolean = !closed && this.namespaceGeneration == namespaceEpoch && cacheStore.currentNamespace.value == namespace
+
+    private fun windowFor(presentation: CalendarExperienceState, timezoneInput: String? = null): CalendarCacheWindow {
         val interval = calendarVisibleInterval(presentation.view, presentation.anchorDate, presentation.locale)
-        return CalendarCacheWindow(interval.startDate, interval.endExclusive, timezoneInput)
+        val timezone = timezoneInput?.takeIf(String::isNotBlank)
+            ?: presentation.locale.timeZoneId.takeIf(String::isNotBlank)
+            ?: io.sentient.mobilesdk.calendar.CALENDAR_WIRE_TIME_ZONE
+        return CalendarCacheWindow(interval.startDate, interval.endExclusive, timezone)
     }
 
     private fun selectedDateInterval(date: String): CalendarDateInterval = CalendarDateInterval(

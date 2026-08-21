@@ -262,6 +262,33 @@ class CalendarCacheStoreTest {
     }
 
     @Test
+    fun `namespace pinned writes reject a predecessor completion after switch`() = runTest {
+        val fixture = Fixture()
+        try {
+            val original = timedOccurrence()
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.replaceSnapshot(fixture.window, listOf(original), fetchedAt = 1L),
+            )
+            val predecessor = fixture.store.currentNamespace.value
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.switchNamespace(CalendarCacheNamespace("account-b", "backend-a"), purgePrevious = true),
+            )
+
+            val result = fixture.store.replaceSnapshotForNamespace(
+                namespace = predecessor,
+                window = fixture.window,
+                occurrences = listOf(original.copy(eventId = "predecessor")),
+                fetchedAt = 2L,
+            )
+            val failure = assertIs<CalendarCacheResult.Failure>(result)
+            assertEquals(CalendarCacheFailureReason.INVALID_NAMESPACE, failure.error.reason)
+            assertNull(assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(fixture.store.readSnapshot(fixture.window)).value)
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `access and freshness metadata update without changing occurrences`() = runTest {
         val fixture = Fixture()
         try {

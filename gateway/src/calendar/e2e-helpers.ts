@@ -3,8 +3,6 @@ import { join, relative, resolve, sep } from "node:path";
 import type { CreateUserInput, UserProvisioner, UserSummary } from "../admin/user-provisioner.js";
 import { getLog } from "../logging/logger.js";
 
-/** The only household used by the calendar V2 E2E harness. */
-export const CALENDAR_E2E_HOUSEHOLD_ID = "home";
 /** Evidence is metadata-only; screenshots and traces are written by the harness. */
 export const CALENDAR_E2E_EVIDENCE_ROOT = "qa/web/evidence/calendar-e2e";
 
@@ -14,12 +12,15 @@ type UserCreateResult = Awaited<ReturnType<UserProvisioner["createUser"]>>;
 type UserDeleteResult = Awaited<ReturnType<UserProvisioner["deleteUser"]>>;
 
 export interface CalendarE2EPaths {
-  householdId: typeof CALENDAR_E2E_HOUSEHOLD_ID;
+  /** Run-owned namespace; never the production/local household name. */
+  householdId: string;
   privateCalendarDb: string;
   householdCalendarDb: string;
 }
 
 export interface DisposableCalendarUsers {
+  /** Unique ownership boundary used for path cleanup and fixture identity. */
+  runNamespace: string;
   adult: UserSummary;
   child: UserSummary;
   paths: { adult: CalendarE2EPaths; child: CalendarE2EPaths };
@@ -54,12 +55,17 @@ function safeChild(root: string, ...parts: string[]): string {
   return candidate;
 }
 
-/** Derive both stores without opening them. CalendarStore owns creation/migration. */
-export function calendarE2EPaths(userDataRoot: string, sharedDataRoot: string, userId: string): CalendarE2EPaths {
+/** Derive only run-owned stores without opening them. CalendarStore owns creation/migration. */
+export function calendarE2EPaths(
+  userDataRoot: string,
+  sharedDataRoot: string,
+  userId: string,
+  runNamespace = `calendar-e2e-principal-${userId}`,
+): CalendarE2EPaths {
   const privateRoot = safeChild(userDataRoot, userId);
-  const householdRoot = safeChild(sharedDataRoot, CALENDAR_E2E_HOUSEHOLD_ID);
+  const householdRoot = safeChild(sharedDataRoot, runNamespace);
   return {
-    householdId: CALENDAR_E2E_HOUSEHOLD_ID,
+    householdId: runNamespace,
     privateCalendarDb: safeChild(privateRoot, "calendar-v2", "calendar.db"),
     householdCalendarDb: safeChild(householdRoot, "calendar-v2", "calendar.db"),
   };
@@ -75,14 +81,19 @@ async function removeOne(path: string, deps: CalendarE2EHelperDeps, report: Cale
   }
 }
 
-/** Remove both private V2 databases and the shared V2 database. Safe to call repeatedly. */
+/** Remove only databases owned by this run. The fixed local household store is
+ * deliberately never touched; seeded household rows are deleted by ID. */
 export async function cleanupCalendarE2E(
   deps: CalendarE2EHelperDeps,
-  users?: Pick<DisposableCalendarUsers, "adult" | "child">,
+  users?: Pick<DisposableCalendarUsers, "adult" | "child" | "runNamespace">,
 ): Promise<CalendarCleanupReport> {
-  const ids = users ? [users.adult.userId, users.child.userId] : [];
-  const paths = ids.flatMap((id) => [calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, id).privateCalendarDb]);
-  paths.push(safeChild(deps.sharedDataRoot, CALENDAR_E2E_HOUSEHOLD_ID, "calendar-v2", "calendar.db"));
+  const paths = users
+    ? [
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace).privateCalendarDb,
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.child.userId, users.runNamespace).privateCalendarDb,
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace).householdCalendarDb,
+      ]
+    : [];
   const report: CalendarCleanupReport = { removed: [], failures: [] };
   for (const path of new Set(paths)) await removeOne(path, deps, report);
   return report;
@@ -121,21 +132,27 @@ export async function provisionCalendarE2E(
   await (deps.makeDirectory ?? (async (path: string) => mkdir(path, { recursive: true })))(deps.userDataRoot);
   await (deps.makeDirectory ?? (async (path: string) => mkdir(path, { recursive: true })))(deps.sharedDataRoot);
 
+  const runNamespace = fixtureNamespace();
   const adultResult: UserCreateResult = await deps.userProvisioner.createUser({ ...input.adult, role: "adult" });
   if (!adultResult.ok) throw new Error(`calendar E2E adult provisioning failed: ${adultResult.error}`);
   try {
     const childResult: UserCreateResult = await deps.userProvisioner.createUser({ ...input.child, role: "child" });
     if (!childResult.ok) throw new Error(`calendar E2E child provisioning failed: ${childResult.error}`);
     return {
+      runNamespace,
       adult: adultResult.value,
       child: childResult.value,
       paths: {
-        adult: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, adultResult.value.userId),
-        child: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, childResult.value.userId),
+        adult: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, adultResult.value.userId, runNamespace),
+        child: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, childResult.value.userId, runNamespace),
       },
     };
   } catch (error) {
-    await cleanupCalendarE2E(deps, { adult: adultResult.value, child: adultResult.value });
+    await cleanupCalendarE2E(deps, {
+      runNamespace,
+      adult: adultResult.value,
+      child: adultResult.value,
+    });
     await deleteUser(adultResult.value.userId, deps);
     throw error;
   }
@@ -363,7 +380,7 @@ export async function provisionLocalCalendarFixture(
     await teardownCalendarE2E(deps, users);
     throw new Error("calendar fixture principals must be unique");
   }
-  const runId = fixtureNamespace();
+  const runId = users.runNamespace;
   const seeded: Array<{ eventId: string; scope: "private" | "household" }> = [];
   const cases = new Map<CalendarFixtureCase, CalendarFixtureEventReference[]>();
   try {
@@ -425,13 +442,17 @@ export async function cleanupLocalCalendarFixture(
       },
 ): Promise<CalendarFixtureCleanupReport> {
   assertLocalCalendarFixtureTarget(deps.targetUrl, { targetEnvironment: deps.targetEnvironment });
-  const sanitizedUsers =
-    "users" in value
-      ? value.users
-      : {
-          adult: { userId: value.adultId } as DisposableCalendarUsers["adult"],
-          child: { userId: value.childId } as DisposableCalendarUsers["child"],
-        };
+  const sanitizedUsers: DisposableCalendarUsers = "users" in value
+    ? value.users
+    : {
+        runNamespace: value.runId,
+        adult: { userId: value.adultId } as DisposableCalendarUsers["adult"],
+        child: { userId: value.childId } as DisposableCalendarUsers["child"],
+        paths: {
+          adult: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.adultId, value.runId),
+          child: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.childId, value.runId),
+        },
+      };
   const seeded =
     "seeded" in value
       ? value.seeded
@@ -459,7 +480,7 @@ export async function withLocalCalendarFixture<T>(
     await teardownCalendarE2E(deps, users);
     throw new Error("calendar fixture principals must be unique");
   }
-  const runId = fixtureNamespace();
+  const runId = users.runNamespace;
   const seeded: Array<{ eventId: string; scope: "private" | "household" }> = [];
   const cases = new Map<CalendarFixtureCase, CalendarFixtureEventReference[]>();
   try {

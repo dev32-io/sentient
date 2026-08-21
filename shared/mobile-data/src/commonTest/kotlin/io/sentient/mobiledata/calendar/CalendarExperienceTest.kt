@@ -182,6 +182,65 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `namespace switch clears visible state and rejects a cancelled predecessor completion`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(
+            snapshot = snapshot(window, title = "old cached"),
+            preferences = CalendarCachePreferences(anchorDate = "2026-06-14"),
+        )
+        val oldRemoteGate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "old remote")), page(event(title = "new remote"))),
+            beforePage = { oldRemoteGate.await() },
+            swallowCancellation = true,
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            runCurrent()
+            assertEquals("old cached", experience.state.value.projection?.visibleEvents?.single()?.title)
+
+            val successor = CalendarCacheNamespace("account-b", "backend-b")
+            assertIs<CalendarCacheResult.Success<Unit>>(experience.switchNamespace(successor))
+            assertTrue(experience.state.value.authorizedOccurrences.isEmpty())
+            assertEquals(null, experience.state.value.projection)
+            assertEquals(null, experience.state.value.persistedCachePreferences)
+            assertTrue(!experience.state.value.hasCompleteCache)
+
+            oldRemoteGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals("new remote", experience.state.value.projection?.visibleEvents?.single()?.title)
+            assertEquals(successor, cache.currentNamespace.value)
+            assertTrue(cache.replacementNamespaces.all { it == successor })
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `timezone-only locale changes use a distinct cache identity and revalidate`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore()
+        val repository = FakeRepository(pages = listOf(page(event())))
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            val initialCalls = repository.calls
+
+            experience.setLocale(CalendarLocale(timeZoneId = "America/Los_Angeles"))
+            advanceUntilIdle()
+
+            assertTrue(repository.calls > initialCalls)
+            assertEquals("America/Los_Angeles", experience.visibleWindow.timezoneInput)
+            assertEquals("America/Los_Angeles", cache.snapshot?.window?.timezoneInput)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
     fun `persisted preferences are validated and restored before revalidation`() = runTest {
         val window = monthWindow()
         val cache = FakeCacheStore(
@@ -343,6 +402,7 @@ class CalendarExperienceTest {
     private class FakeRepository(
         private val pages: List<SentientResult<CalendarEventPage>>,
         private val beforePage: (suspend () -> Unit)? = null,
+        private val swallowCancellation: Boolean = false,
     ) : CalendarRepository {
         var calls: Int = 0
         var cancelled: Boolean = false
@@ -368,7 +428,7 @@ class CalendarExperienceTest {
                 beforePage?.invoke()
             } catch (cancelled: CancellationException) {
                 this.cancelled = true
-                throw cancelled
+                if (!swallowCancellation) throw cancelled
             }
             return pages.getOrElse(calls - 1) { pages.last() }
         }
@@ -383,12 +443,14 @@ class CalendarExperienceTest {
         snapshot: CalendarCacheSnapshot? = null,
         preferences: CalendarCachePreferences? = null,
     ) : CalendarCacheStore {
-        override val currentNamespace = MutableStateFlow(CalendarCacheNamespace("account", "backend")).asStateFlow()
+        private val namespaceState = MutableStateFlow(CalendarCacheNamespace("account", "backend"))
+        override val currentNamespace = namespaceState.asStateFlow()
         override val isClosed: Boolean = false
         private val snapshotState = MutableStateFlow<CalendarCacheReadResult<CalendarCacheSnapshot?>>(CalendarCacheResult.Success(snapshot))
         private val preferencesState = MutableStateFlow<CalendarCacheReadResult<CalendarCachePreferences?>>(CalendarCacheResult.Success(preferences))
         var snapshot: CalendarCacheSnapshot? = snapshot
         var replacements: Int = 0
+        val replacementNamespaces = mutableListOf<CalendarCacheNamespace>()
         val writtenPreferences = mutableListOf<CalendarCachePreferences>()
 
         override fun observeSnapshot(window: CalendarCacheWindow): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> = snapshotState
@@ -409,6 +471,7 @@ class CalendarExperienceTest {
             freshness: CalendarCacheFreshness,
         ): CalendarCacheResult<Unit> {
             replacements++
+            replacementNamespaces += namespaceState.value
             snapshot = CalendarCacheSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
             snapshotState.value = CalendarCacheResult.Success(snapshot)
             return CalendarCacheResult.Success(Unit)
@@ -442,7 +505,15 @@ class CalendarExperienceTest {
         override suspend fun markAccessed(window: CalendarCacheWindow, lastAccessedAt: Long) = CalendarCacheResult.Success(Unit)
         override suspend fun markFreshness(window: CalendarCacheWindow, freshness: CalendarCacheFreshness) = CalendarCacheResult.Success(Unit)
         override suspend fun purgeNamespace(namespace: CalendarCacheNamespace) = CalendarCacheResult.Success(Unit)
-        override suspend fun switchNamespace(namespace: CalendarCacheNamespace, purgePrevious: Boolean) = CalendarCacheResult.Success(Unit)
+        override suspend fun switchNamespace(namespace: CalendarCacheNamespace, purgePrevious: Boolean): CalendarCacheResult<Unit> {
+            namespaceState.value = namespace
+            // This fake owns one active query stream; switching it must not
+            // replay the predecessor's rows or preferences as successor data.
+            snapshot = null
+            snapshotState.value = CalendarCacheResult.Success(null)
+            preferencesState.value = CalendarCacheResult.Success(null)
+            return CalendarCacheResult.Success(Unit)
+        }
         override fun close() = Unit
     }
 }

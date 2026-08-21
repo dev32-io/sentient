@@ -161,6 +161,22 @@ describe("CalendarView", () => {
     expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy();
   });
 
+  it("restores overflow preview focus to the mounted overflow trigger", async () => {
+    const denseEvents = [9, 10, 11, 12].map((hour, index) =>
+      baseOccurrence(`dense-${index}`, `Dense ${index}`, `2026-08-21T${String(hour).padStart(2, "0")}:00:00.000Z`),
+    );
+    const api = apiFor(denseEvents);
+    render(<CalendarView api={api} {...routeOptions} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /more events on Friday, August 21, 2026/i })).toBeTruthy());
+    const overflow = screen.getByRole("button", { name: /more events on Friday, August 21, 2026/i });
+    fireEvent.click(overflow);
+    const overflowDialog = screen.getByRole("dialog", { name: /Events on Friday, August 21, 2026/i });
+    fireEvent.click(within(overflowDialog).getByRole("button", { name: /Dense 3/i }));
+    const preview = await screen.findByRole("dialog", { name: /Dense 3/i });
+    fireEvent.click(within(preview).getByRole("button", { name: "Close event details" }));
+    expect(document.activeElement).toBe(overflow);
+  });
+
   it("requires delete confirmation and carries recurring mutation scope", async () => {
     const api = apiFor();
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
@@ -183,6 +199,30 @@ describe("CalendarView", () => {
       expect.objectContaining({ operation: "delete", applyTo: "this_occurrence", originalStart: expect.any(String), expectedRevision: 3 }),
     );
     expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy();
+  });
+
+  it("changes a Year month selection into the Month controller view", async () => {
+    const api = apiFor();
+    const { container } = render(<CalendarView api={api} {...routeOptions} />);
+    await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="year"]')).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Select August 2026" }));
+    await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toContain("August");
+  });
+
+  it("clears cached events for expired authorization instead of showing a stale projection", async () => {
+    const api = apiFor();
+    const { container } = render(<CalendarView api={api} {...routeOptions} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Morning school/i })).toBeTruthy());
+
+    (api.list as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, error: { status: 401, code: "expired" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next period" }));
+    await waitFor(() => expect(screen.getByText("Calendar access unavailable")).toBeTruthy());
+    expect(screen.queryByText("Morning school")).toBeNull();
+    expect(container.querySelector("[data-calendar-route]" )).toBeNull();
   });
 
   it("keeps a safe permission presentation and disables editor controls without capabilities", async () => {
