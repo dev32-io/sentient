@@ -90,6 +90,8 @@ evaluations:
     path: evaluations/stage-mobile-calendar-policies-review/evaluation.yaml
   - id: stage-mobile-platform-sessions-review
     path: evaluations/stage-mobile-platform-sessions-review/evaluation.yaml
+  - id: stage-mobile-viewmodel-adapters-review
+    path: evaluations/stage-mobile-viewmodel-adapters-review/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:

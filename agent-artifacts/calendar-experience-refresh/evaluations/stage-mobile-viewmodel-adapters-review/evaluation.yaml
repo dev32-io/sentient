@@ -1,0 +1,32 @@
+schemaVersion: 1
+id: stage-mobile-viewmodel-adapters-review
+type: combined-review
+checkpoint: stage-review
+stageId: mobile-viewmodel-adapters
+scope:
+  workItem: calendar-experience-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Thin Android StateFlow and iOS SKIE AsyncSequence mapping with correct
+    cancellation
+  - A focused XCFramework/Swift test proves the complete nested
+    CalendarExperienceState bridges before SwiftUI components depend on it
+  - Exact intent/identity forwarding with raw offset-bearing recurrence anchors
+    and no native pagination/filter/cache/prefetch/mutation policy
+  - Every supported state from sentient-design/design/mobile/calendar.html and
+    sentient-design/components/mobile/sentient-mobile.js is representable
+    without prototype data
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
