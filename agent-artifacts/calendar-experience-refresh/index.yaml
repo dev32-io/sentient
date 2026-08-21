@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 2
+  revision: 3
 artifacts:
   - id: intent
     type: intent
@@ -15,6 +15,11 @@ artifacts:
   - id: calendar-experience-behavior
     type: spec
     path: specs/calendar-experience-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-experience-design
+    type: design
+    path: design/calendar-experience-design.md
     status: draft
     narrativeSchemaVersion: 2
 tasks: []
