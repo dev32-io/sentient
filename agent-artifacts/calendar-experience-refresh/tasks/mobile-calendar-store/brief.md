@@ -17,11 +17,11 @@ shared/mobile-data can atomically persist and observe complete authorized month 
 
 - 1. Wrap generated SQLDelight queries in a common CalendarCacheStore that exposes domain models/flows, not generated row classes.
 - 2. Implement atomic replacement only for a fully aggregated month window: write occurrences and complete marker together, update fetched/last-accessed metadata, and remove superseded rows without a partial observable state.
-- 3. Reconstruct Calendar V2 identity, recurrence, scope, visibility, all-day/timed, timezone, revision, and metadata values losslessly; treat decode failure as a typed cache failure and never expose partial content.
+- 3. Reconstruct Calendar V2 identity, recurrence, scope, visibility, all-day/timed, revision, metadata, and raw RFC3339 offset-bearing start/end/originalStart strings losslessly. The current V2 wire does not provide an IANA zone; do not synthesize one. Treat decode failure as a typed cache failure and never expose partial content.
 - 4. Expose observable snapshot and preference flows suitable for combining into StateFlow; query invalidation must naturally emit after one successful transaction.
 - 5. Persist and validate account/backend-scoped view, anchor, filters, and search preferences, retaining selected facets even when absent from the current interval.
 - 6. Implement transactional namespace purge/switch and close semantics. Session disposal must be able to cancel observation before purge/switch so stale private rows cannot emit to a successor session.
-- 7. Add store tests for complete replacement, rollback, observable emission count/order, decode failure, preference persistence, namespace isolation, purge, close, fetched/access metadata, and no content-bearing diagnostics.
+- 7. Add store tests for complete replacement, rollback, observable emission count/order, raw temporal round-trip, decode failure, preference persistence, namespace isolation, purge, close, fetched/access metadata, and no content-bearing diagnostics.
 
 ## Integration Expectation
 
