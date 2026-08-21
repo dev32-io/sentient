@@ -1,0 +1,8 @@
+reviewed_commit=6278c2fad5ab42e2040ecd5239da015c62d63f85
+bounded_repair_commit=0921bfb6a5705aba426870fcd735a09eb4618c45
+worktree=clean
+mobile_sdk_data_allTests=PASS
+mobile_data_xcframework=PASS
+git_diff_check=PASS
+source_closure=CAL-POL-001,002,003,004,005,007,009 addressed by current repair tests/source seams
+remaining_race=loadWindow lookup accepts an active inFlight registration without checking bookkeepingGeneration; cancelSharedRequests may remove/cancel registrations asynchronously when bookkeepingMutex.tryLock fails
