@@ -28,26 +28,21 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
   reviewedCommit: f0ec34fd414d59167f15056a6f1d05f5ef53dc37
-  managerPrompt: Resolve all six findings before approval. Make CalendarCacheStore
-    emit rows and metadata from one coherent replacement generation (no
-    cross-replacement combine window) and add a deterministic
-    concurrency/regression test. Define one shared typed CalendarWorkspace
-    canvas-slot contract and wire projections/actions through it without
-    shell/leaf shape drift. Ensure every narrow-view interactive canvas control
-    has at least a 44x44 effective target without causing horizontal overflow.
-    For edits, always use the event's immutable original scope for resource
-    lookup; do not present scope as editable unless Calendar V2 supports an
-    explicit scope-change command (retain create-time scope selection). Produce
-    the required exact-reference visual and scrollWidth evidence at 1440x1000,
-    1024x900, 768x900, and 390x844, including seven-column no-overflow and
-    collapsed controls. Also correct Week/Month/Year weekday placement and
-    labels to consistently honor locale and weekStartsOn, with focused tests.
-    Run all stage checks and return for automatic re-review.
+  managerPrompt: Resolve both remaining blockers. Produce side-by-side
+    exact-reference versus implementation evidence for Day, Week, Month, and
+    Year at every required viewport (1440x1000, 1024x900, 768x900, 390x844),
+    with labeled states and scrollWidth/clientWidth measurements proving no page
+    or calendar-canvas horizontal overflow. Complete CalendarWorkspace action
+    wiring so every supported slot-consumer shape forwards date, month, event,
+    overflow, and navigation actions to the canonical callbacks;
+    onAnchorDateChange-only consumers must not silently lose Day/Week/Month/Year
+    canvas interactions. Prefer one normalized internal action adapter and add
+    focused callback-routing tests. Rerun stage checks and return for re-review.
   fixerAgentId: baa80db0-6a7c-4fb4-94c3-979aa35cb9fc
 findings:
   - id: CAL-STORE-OBS-001
