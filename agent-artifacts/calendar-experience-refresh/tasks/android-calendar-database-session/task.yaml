@@ -1,0 +1,26 @@
+schemaVersion: 1
+id: android-calendar-database-session
+title: Wire the Android calendar database into authenticated session lifecycle
+status: draft
+dependsOn:
+  - mobile-sqldelight-foundation
+  - mobile-calendar-retention-offline
+  - mobile-calendar-mutations
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: android-calendar-database-session
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest
+    - source scripts/env.sh && ./gradlew :android:assembleDebug
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
