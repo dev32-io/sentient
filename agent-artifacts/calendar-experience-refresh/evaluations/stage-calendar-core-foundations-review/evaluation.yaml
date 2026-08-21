@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: stage-calendar-core-foundations-review
+type: combined-review
+checkpoint: stage-review
+stageId: calendar-core-foundations
+scope:
+  workItem: calendar-experience-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
+    run --filter @sentient/webui typecheck
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Pinned SQLDelight/Kotlin 2.3.10 compatibility, source-set-correct
+    dependencies, schema/migration/namespace correctness, and commonMain purity
+  - Deterministic Day/Week/Month/Year, raw temporal, filter, overflow, and
+    navigation contracts
+  - Explicit all-scope complete web pagination, account/backend preference
+    isolation, and calendar-view.tsx remaining untouched
+  - Exact reference vocabulary is checked directly against
+    sentient-design/HANDOFF.md, sentient-design/brand-spec.md,
+    sentient-design/design/web/calendar.html,
+    sentient-design/components/web/sentient-web.js,
+    sentient-design/design/mobile/calendar.html, and
+    sentient-design/components/mobile/sentient-mobile.js without importing
+    prototype data
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6

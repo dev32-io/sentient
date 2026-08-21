@@ -79,7 +79,9 @@ delivery:
   workingBranch: feature/calendar
   createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
   executionStartCommit: 2dd9449aed19afb112e0d49f109193a0f98492db
-evaluations: []
+evaluations:
+  - id: stage-calendar-core-foundations-review
+    path: evaluations/stage-calendar-core-foundations-review/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:
