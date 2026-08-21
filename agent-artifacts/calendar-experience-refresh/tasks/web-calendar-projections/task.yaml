@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-projections
 title: Build deterministic web calendar projections
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -26,3 +26,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-projections
   baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
   lastRunId: c09a0839-7ee6-48e7-aaf7-93412ac557fd
+  completedCommit: 10a8f1c25ed130a1487ffeb5582247ca917333c7
