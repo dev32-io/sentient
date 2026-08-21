@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 43
+  revision: 44
 artifacts:
   - id: intent
     type: intent
@@ -131,13 +131,24 @@ executionStages:
       - mobile-calendar-read-coordinator
       - web-calendar-assembly
     checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck && bun run --filter
+        @sentient/webui build
+      - source scripts/env.sh && bun qa/web/stack-integrity.ts
       - source scripts/env.sh && git diff --check
-    mode: sequential
+    mode: concurrent
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
-          decomposed
+        - Shared cache-first complete pagination, stale-while-revalidate,
+          coalescing, cancellation, and one coherent StateFlow
+        - Complete web route and V2 mutation integration
+        - Production web versus sentient-design/design/web/calendar.html and
+          sentient-design/components/web/sentient-web.js at all four exact
+          viewports
+        - Web CAL-UX-001..007, 013, and 014 local-stack visual/semantic evidence
+          with documented approved deviations
   - id: mobile-calendar-policies
     tasks:
       - mobile-calendar-retention-offline
