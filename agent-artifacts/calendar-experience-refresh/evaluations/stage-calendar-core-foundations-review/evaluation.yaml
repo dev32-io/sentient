@@ -28,19 +28,22 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
   reviewedCommit: d0c8e10ecaf7656a794d02a4cc9940339c52fcf3
-  managerPrompt: Resolve all four blocking findings. Restore calendar-view.tsx and
-    its existing test to the foundation-stage boundary unless an approved task
-    explicitly requires otherwise; implement Month date selection as a
-    transition to focused Day; preserve and locally apply supported alias-shaped
-    scope, group, and text filters rather than discarding them; and require a
-    normalized backend identity so preference namespaces cannot collapse across
-    distinct backends. Add or update focused regression tests for each
-    correction, run the stage checks, and return for automatic re-review.
+  managerPrompt: "Resolve the two remaining blocking findings. Restore
+    gateway/webui/src/components/calendar/calendar-view.tsx and
+    calendar-view.test.tsx exactly to the stage's pre-contribution boundary;
+    foundation code must not modify or adapt them. Remove the duplicated
+    temporal/editor helpers from that view boundary. In foundation APIs, never
+    reinterpret the compatibility timeZoneId as an event IANA zone: preserve raw
+    RFC3339 offset-bearing start/end/originalStart values and all-day date
+    identity, and expose an event timezone only when the Calendar V2 wire
+    actually supplies one. Add focused regression coverage for absence of
+    synthesized timezone data, rerun the stage checks, and return for
+    re-review."
   fixerAgentId: 8aa9488f-ca5f-460b-8fe0-e7a6b38a9cd5
 findings:
   - id: CAL-FOUND-001
