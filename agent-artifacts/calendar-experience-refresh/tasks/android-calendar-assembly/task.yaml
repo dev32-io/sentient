@@ -14,7 +14,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: android-calendar-assembly
+  stageId: native-calendar-assembly
   intermediateState: complete
 verification:
   timing: task
