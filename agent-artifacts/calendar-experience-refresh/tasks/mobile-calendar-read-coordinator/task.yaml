@@ -21,5 +21,6 @@ verification:
     - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     - source scripts/env.sh && ./gradlew
       :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && ./gradlew :android:assembleDebug
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
