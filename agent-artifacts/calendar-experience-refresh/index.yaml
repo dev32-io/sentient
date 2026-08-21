@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 78
+  revision: 79
 artifacts:
   - id: intent
     type: intent
@@ -253,23 +253,27 @@ executionStages:
     checks:
       - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
         :android:assembleDebug
-      - source scripts/env.sh && ./gradlew
-        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
-        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
-        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
       - source scripts/env.sh && git diff --check
     mode: concurrent
     review:
       tier: medium
       focus:
         - Leaf Compose/SwiftUI components are controlled and side-effect free
-        - "Exact sentient-design mobile geometry at 390x844 and 430x932: 58 top
-          bar, 16 inset, 44 targets, 46 view controls, 64 rows, 42 Month cells,
-          complete Year, 84% sheets"
-        - Horizontal filters, agenda rows, floating bar, overlays, focus,
-          Dynamic Type/font scale, safe areas, and reduced motion
+        - Exact mobile comparison uses sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js at logical
+          390x844 and 430x932
+        - Reference geometry includes 58 top bar, 16 inset, 44 targets, 46 view
+          controls, 64 rows, 42 Month cells, complete Year, 84% sheets, filters,
+          agenda, floating bar, focus, scaling, safe areas, and reduced motion
         - Prototype fixed data and member/color/place/reminder semantics are
-          absent
+          absent; semantic accessibility inspection is required but an actual
+          assistive-technology session is not a stage gate
   - id: calendar-delivery-completion
     tasks:
       - android-calendar-assembly
