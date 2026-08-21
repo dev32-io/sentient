@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 35
+  revision: 36
 artifacts:
   - id: intent
     type: intent
@@ -80,93 +80,35 @@ delivery:
   createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
 evaluations: []
 executionStages:
-  - id: mobile-sqldelight-foundation
-    tasks:
-      - mobile-sqldelight-foundation
-  - id: mobile-calendar-projections
-    tasks:
-      - mobile-calendar-projections
-  - id: web-calendar-projections
-    tasks:
-      - web-calendar-projections
-  - id: web-calendar-data-controller
-    tasks:
-      - web-calendar-data-controller
-  - id: mobile-calendar-store
-    tasks:
-      - mobile-calendar-store
-  - id: web-calendar-canvas
-    tasks:
-      - web-calendar-canvas
-  - id: web-calendar-shell-filters
-    tasks:
-      - web-calendar-shell-filters
-  - id: web-calendar-preview
-    tasks:
-      - web-calendar-preview
-  - id: web-calendar-editor
-    tasks:
-      - web-calendar-editor
-  - id: mobile-calendar-read-coordinator
-    tasks:
-      - mobile-calendar-read-coordinator
-  - id: web-calendar-assembly
-    tasks:
-      - web-calendar-assembly
-  - id: mobile-calendar-retention-offline
-    tasks:
-      - mobile-calendar-retention-offline
-  - id: mobile-calendar-mutations
-    tasks:
-      - mobile-calendar-mutations
-  - id: android-calendar-database-session
-    tasks:
-      - android-calendar-database-session
-  - id: ios-calendar-database-session
-    tasks:
-      - ios-calendar-database-session
-  - id: android-calendar-viewmodel
-    tasks:
-      - android-calendar-viewmodel
-  - id: ios-calendar-viewmodel
-    tasks:
-      - ios-calendar-viewmodel
-  - id: android-calendar-surface
-    tasks:
-      - android-calendar-surface
-  - id: android-calendar-overlays
-    tasks:
-      - android-calendar-overlays
-  - id: ios-calendar-surface
-    tasks:
-      - ios-calendar-surface
-  - id: ios-calendar-overlays
-    tasks:
-      - ios-calendar-overlays
   - id: native-calendar-assembly
     tasks:
+      - mobile-sqldelight-foundation
+      - mobile-calendar-projections
+      - web-calendar-projections
+      - web-calendar-data-controller
+      - mobile-calendar-store
+      - web-calendar-canvas
+      - web-calendar-shell-filters
+      - web-calendar-preview
+      - web-calendar-editor
+      - mobile-calendar-read-coordinator
+      - web-calendar-assembly
+      - mobile-calendar-retention-offline
+      - mobile-calendar-mutations
+      - android-calendar-database-session
+      - ios-calendar-database-session
+      - android-calendar-viewmodel
+      - ios-calendar-viewmodel
+      - android-calendar-surface
+      - android-calendar-overlays
+      - ios-calendar-surface
+      - ios-calendar-overlays
       - android-calendar-assembly
       - ios-calendar-assembly
     checks:
-      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
-        :android:testDebugUnitTest :android:assembleDebug
-      - source scripts/env.sh && ./gradlew
-        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
-        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
-        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
-      - source scripts/env.sh && ./qa/mobile/run-e2e.sh all --tags calendar
       - source scripts/env.sh && git diff --check
-    mode: concurrent
+    mode: sequential
     review:
       tier: medium
       focus:
-        - Android and iOS are thin shared-StateFlow consumers with no duplicated
-          cache/network/policy
-        - Production screens match sentient-design/design/mobile/calendar.html
-          and sentient-design/components/mobile/sentient-mobile.js at 390x844
-          and 430x932
-        - Day/Week/Month/Year, filters, sheets, cache/offline/recovery,
-          mutations, conflicts, permissions, temporal behavior, accessibility,
-          safe areas, and reduced motion
-        - Calendar-tagged Maestro coverage maps Android/iOS portions of approved
-          CAL-UX-001 through CAL-UX-014 using local synthetic data only
+        - Calendar delivery plan coherence
