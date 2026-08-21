@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-canvas
 title: Implement responsive web Day, Week, Month, and Year canvases
-status: blocked
+status: ready
 dependsOn:
   - web-calendar-projections
 execution:
