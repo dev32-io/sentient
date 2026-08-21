@@ -404,7 +404,8 @@ export function CalendarView({
     // preview origin before the dialog is unmounted.
     overflowOriginRef.current = active?.matches("[data-calendar-overflow='true']")
       ? active
-      : document.querySelector<HTMLElement>("[data-calendar-overflow='true']");
+      : document.querySelector<HTMLElement>("[data-calendar-overflow='true']")
+        ?? document.querySelector<HTMLElement>("[data-calendar-floating-view-bar] button");
     setPreview(null);
     setOverflow({ date, events });
   }, []);
@@ -412,9 +413,8 @@ export function CalendarView({
   const onOpenOverflowEvent = useCallback((occurrence: ProjectedCalendarOccurrence, anchor: HTMLElement): void => {
     const stableOrigin = overflowOriginRef.current?.isConnected
       ? overflowOriginRef.current
-      : anchor.isConnected
-        ? anchor
-        : document.querySelector<HTMLElement>("[data-calendar-floating-view-bar] button");
+      : document.querySelector<HTMLElement>("[data-calendar-floating-view-bar] button")
+        ?? (anchor.isConnected && !anchor.closest("[role='dialog']") ? anchor : null);
     openPreview(occurrence, stableOrigin);
   }, [openPreview]);
 
