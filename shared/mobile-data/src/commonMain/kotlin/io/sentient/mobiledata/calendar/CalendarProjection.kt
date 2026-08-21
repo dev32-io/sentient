@@ -502,7 +502,7 @@ internal fun calendarEventComparator(): Comparator<CalendarProjectedEvent> =
         .thenBy { it.actionIdentity.stableKey }
 
 private fun parseInstant(raw: String): Instant = try {
-    Instant.parse(raw)
+    parseCalendarInstant(raw)
 } catch (error: IllegalArgumentException) {
     throw IllegalArgumentException("Invalid timed calendar value: $raw", error)
 }

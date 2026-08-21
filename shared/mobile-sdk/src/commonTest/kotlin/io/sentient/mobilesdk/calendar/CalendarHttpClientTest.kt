@@ -163,6 +163,39 @@ class CalendarHttpClientTest {
     }
 
     @Test
+    fun thisOccurrence_update_omitsRecurrenceMemberEntirely() = runTest {
+        var body = ""
+        val engine = MockEngine { request ->
+            body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            respond(
+                "{\"version\":2,\"requestId\":\"r-occurrence\",\"body\":" + calendarFixture.getValue("mutation") + "}",
+                HttpStatusCode.OK,
+                CALENDAR_HEADERS,
+            )
+        }
+        val command = CalendarMutationCommand.update(
+            applyTo = CalendarMutationScope.THIS_OCCURRENCE,
+            changes = CalendarChanges(
+                title = "occurrence edit",
+                recurrence = CalendarPatch.Value(
+                    StructuredRecurrence(
+                        frequency = RecurrenceFrequency.DAILY,
+                        count = 2,
+                    ),
+                ),
+            ),
+            originalStart = "2026-08-10T09:00-04:00",
+            expectedRevision = 3,
+        )
+        assertIs<AuthResult.Success<CalendarMutationResult>>(
+            withContext(Dispatchers.Default) { client(engine).mutate("event-example", command) },
+        )
+        val json = Json.parseToJsonElement(body).jsonObject
+        assertFalse(json.getValue("changes").jsonObject.containsKey("recurrence"), body)
+        assertTrue(body.contains("this_occurrence"), body)
+    }
+
+    @Test
     fun calendarChanges_preserveOmissionReplacementAndExplicitClearOnWire() = runTest {
         val bodies = mutableListOf<String>()
         val engine = MockEngine { request ->

@@ -146,7 +146,7 @@ open class CalendarHttpClient(
         withTimeout(requestTimeoutMillis) {
             val response = httpClient.post("${eventUrl(eventId)}/mutations") {
                 bearer()
-                jsonBody(CalendarMutationCommand.serializer(), command)
+                jsonBody(CalendarMutationCommand.serializer(), command.forWire())
             }
             mapBody(response, CalendarMutationResult.serializer()) { it }
         }
@@ -202,6 +202,14 @@ open class CalendarHttpClient(
     open suspend fun deleteEvent(id: String): AuthResult<Unit> = delete(id)
 
     open suspend fun deleteEvent(event: CalendarEvent): AuthResult<Unit> = delete(event)
+
+    /** V2 forbids recurrence changes on a single effective occurrence. */
+    private fun CalendarMutationCommand.forWire(): CalendarMutationCommand =
+        if (applyTo == CalendarMutationScope.THIS_OCCURRENCE && changes != null) {
+            copy(changes = changes.copy(recurrence = CalendarPatch.Unchanged))
+        } else {
+            this
+        }
 
     private fun CalendarEvent.toChanges() = CalendarChanges(
         title = title,

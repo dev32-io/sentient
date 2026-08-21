@@ -110,6 +110,25 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `fast adjacent completions stay registered and coalesce duplicate prefetch calls`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached"))
+        val repository = FakeRepository(pages = listOf(page(event(title = "remote"))))
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            experience.prefetchAdjacent(window)
+            experience.prefetchAdjacent(window)
+            advanceUntilIdle()
+
+            val grouped = repository.windows.groupingBy { it }.eachCount()
+            assertTrue(grouped.values.all { it == 1 }, grouped.toString())
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
     fun `prefetch failure remains a sanitized diagnostic and does not fail visible data`() = runTest {
         val window = monthWindow()
         val failures = setOf(
@@ -163,7 +182,7 @@ class CalendarExperienceTest {
             advanceUntilIdle()
             assertTrue(!experience.state.value.hasCompleteCache)
             assertEquals(CalendarOfflineState.UNAVAILABLE, experience.state.value.offline)
-            assertEquals(CalendarFreshness.OFFLINE, experience.state.value.freshness)
+            assertEquals(CalendarFreshness.UNAVAILABLE_OFFLINE, experience.state.value.freshness)
             assertEquals(CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE, experience.state.value.error?.kind)
             assertTrue(experience.state.value.isUnavailableOffline)
 
@@ -190,6 +209,51 @@ class CalendarExperienceTest {
         experience.observe(window)
         advanceUntilIdle()
 
+        assertTrue(experience.isClosed)
+        assertTrue(experience.state.value.authorizedOccurrences.isEmpty())
+        assertEquals(null, cache.snapshotFor(window))
+    }
+
+    @Test
+    fun `forbidden refresh clears projection before purging inaccessible cache`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "private"))
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "must not remain visible"))),
+            forbiddenFailure = true,
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+
+            assertTrue(experience.state.value.authorizedOccurrences.isEmpty())
+            assertEquals(null, experience.state.value.projection)
+            assertEquals(CalendarExperienceErrorKind.FORBIDDEN, experience.state.value.error?.kind)
+            assertEquals(null, cache.snapshotFor(window))
+            assertTrue(experience.state.value.mutationAvailability.reason == CalendarMutationAvailabilityReason.AUTHORIZATION)
+            assertTrue(experience.refresh() == null)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `mutation auth failure purges cache and closes the expired boundary`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "private"))
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Failure(SentientError.Auth("expired", terminal = true)),
+        )
+        val experience = experience(repository, cache, window, this)
+        experience.observe(window)
+        advanceUntilIdle()
+        experience.editOccurrence(occurrence("auth-target", title = "draft target"))
+        experience.submitMutation()
+        advanceUntilIdle()
+
+        assertEquals(1, repository.mutationCalls)
         assertTrue(experience.isClosed)
         assertTrue(experience.state.value.authorizedOccurrences.isEmpty())
         assertEquals(null, cache.snapshotFor(window))
@@ -338,6 +402,40 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `cancelled mutation completion cannot enter successor namespace`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "old"))
+        val mutationGate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            beforeMutation = { mutationGate.await() },
+            swallowMutationCancellation = true,
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            experience.editOccurrence(occurrence("old-target", title = "draft target"))
+            experience.submitMutation()
+            runCurrent()
+
+            val successor = CalendarCacheNamespace("account-successor", "backend-successor")
+            assertIs<CalendarCacheResult.Success<Unit>>(experience.switchNamespace(successor))
+            assertTrue(experience.state.value.authorizedOccurrences.isEmpty() ||
+                experience.state.value.authorizedOccurrences.all { it.title != "old" })
+
+            mutationGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertTrue(repository.mutationCancelled)
+            assertTrue(experience.state.value.mutation.outcome == null)
+            assertTrue(cache.replacementNamespaces.dropWhile { it != successor }.all { it == successor })
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
     fun `timezone-only locale changes use a distinct cache identity and revalidate`() = runTest {
         val window = monthWindow()
         val cache = FakeCacheStore()
@@ -474,6 +572,39 @@ class CalendarExperienceTest {
                 result.command.originalStart,
             )
             assertEquals("2026-08-10T09:00:00-04:00", result.command.changes?.start)
+            if (scope == io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE) {
+                assertEquals(
+                    io.sentient.mobilesdk.calendar.CalendarPatch.Unchanged,
+                    result.command.changes?.recurrence,
+                )
+            }
+        }
+
+        val noSeconds = draft.copy(
+            start = "2026-08-10T09:00-04:00",
+            end = "2026-08-10T10:00-04:00",
+            originalStart = "2026-08-10T09:00-04:00",
+        )
+        val noSecondsUpdate = assertIs<CalendarCommandBuildResult.Success<CalendarMutationRequest.Update>>(
+            buildCalendarUpdateRequest(noSeconds, io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE),
+        ).value
+        assertEquals("2026-08-10T09:00-04:00", noSecondsUpdate.command.originalStart)
+        assertEquals("2026-08-10T09:00-04:00", noSecondsUpdate.command.changes?.start)
+        assertEquals(
+            io.sentient.mobilesdk.calendar.CalendarPatch.Value("2026-08-10T10:00-04:00"),
+            noSecondsUpdate.command.changes?.end,
+        )
+
+        for (scope in io.sentient.mobilesdk.calendar.CalendarMutationScope.entries) {
+            val delete = assertIs<CalendarCommandBuildResult.Success<CalendarMutationRequest.Delete>>(
+                buildCalendarDeleteRequest(draft, scope),
+            ).value
+            assertEquals(scope, delete.command.applyTo)
+            assertEquals(7, delete.command.expectedRevision)
+            assertEquals(
+                if (scope == io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES) null else draft.originalStart,
+                delete.command.originalStart,
+            )
         }
     }
 
@@ -546,8 +677,67 @@ class CalendarExperienceTest {
             advanceUntilIdle()
             assertEquals("Authoritative", experience.state.value.mutation.conflict?.authoritativeEvent?.title)
             assertEquals("Local draft", experience.state.value.mutation.draft?.title)
+            assertTrue(!experience.state.value.mutation.conflict!!.canSubmit)
+
+            val callsBeforeBlindSubmit = repository.mutationCalls
+            assertEquals(null, experience.submitMutation())
+            assertEquals(callsBeforeBlindSubmit, repository.mutationCalls)
+            assertTrue(!experience.state.value.mutation.conflict!!.canSubmit)
+
+            assertTrue(experience.reviewConflict(experience.state.value.mutation.draft!!))
+            assertEquals(9, experience.state.value.mutation.draft?.expectedRevision)
+            assertTrue(experience.state.value.mutation.conflict!!.canSubmit)
+            experience.submitMutation()
+            advanceUntilIdle()
+            assertEquals(callsBeforeBlindSubmit + 1, repository.mutationCalls)
+            assertEquals(9, repository.lastCommand?.expectedRevision)
         } finally {
             experience.close()
+        }
+    }
+
+    @Test
+    fun `typed permission and not-found failures retain the in-memory draft`() = runTest {
+        val window = monthWindow()
+        val forbiddenRepository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Failure(SentientError.Protocol("forbidden")),
+        )
+        val forbiddenExperience = experience(
+            forbiddenRepository,
+            FakeCacheStore(snapshot = snapshot(window)),
+            window,
+            this,
+        )
+        forbiddenExperience.observe(window)
+        advanceUntilIdle()
+        forbiddenExperience.editOccurrence(occurrence("permission", title = "keep permission draft"))
+        forbiddenExperience.submitMutation()
+        advanceUntilIdle()
+        assertEquals(CalendarMutationErrorKind.FORBIDDEN, forbiddenExperience.state.value.mutation.error?.kind)
+        assertEquals("keep permission draft", forbiddenExperience.state.value.mutation.draft?.title)
+        forbiddenExperience.close()
+
+        val notFoundRepository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Failure(SentientError.Protocol("not found")),
+        )
+        val notFoundExperience = experience(
+            notFoundRepository,
+            FakeCacheStore(snapshot = snapshot(window)),
+            window,
+            this,
+        )
+        try {
+            notFoundExperience.observe(window)
+            advanceUntilIdle()
+            notFoundExperience.editOccurrence(occurrence("missing", title = "keep not-found draft"))
+            notFoundExperience.submitMutation()
+            advanceUntilIdle()
+            assertEquals(CalendarMutationErrorKind.NOT_FOUND, notFoundExperience.state.value.mutation.error?.kind)
+            assertEquals("keep not-found draft", notFoundExperience.state.value.mutation.draft?.title)
+        } finally {
+            notFoundExperience.close()
         }
     }
 
@@ -572,6 +762,36 @@ class CalendarExperienceTest {
             assertEquals(callsBeforeMutation, repository.mutationCalls)
             assertEquals("remote", experience.state.value.projection?.visibleEvents?.single()?.title)
             assertTrue(experience.state.value.mutation.draft != null)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `create success exposes a typed outcome and refreshes through the shared path`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window))
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            createResult = SentientResult.Success(event(id = "created", title = "Created", revision = 2)),
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            experience.createDraft(
+                CalendarMutationDraft.create(
+                    start = "2026-06-20",
+                    title = "Created",
+                    scope = CalendarScope.PRIVATE,
+                ),
+            )
+            experience.submitMutation()
+            advanceUntilIdle()
+
+            assertEquals(1, repository.createCalls)
+            assertIs<CalendarMutationOutcome.Success>(experience.state.value.mutation.outcome)
+            assertEquals(null, experience.state.value.mutation.editor)
         } finally {
             experience.close()
         }
@@ -723,6 +943,10 @@ class CalendarExperienceTest {
         private val swallowCancellation: Boolean = false,
         private val failureWindows: Set<Pair<String, String>> = emptySet(),
         private val authFailure: Boolean = false,
+        private val forbiddenFailure: Boolean = false,
+        private val beforeMutation: (suspend () -> Unit)? = null,
+        private val swallowMutationCancellation: Boolean = false,
+        private val createResult: SentientResult<CalendarEvent>? = null,
         private val mutationResult: SentientResult<CalendarMutationResult> = SentientResult.Success(
             CalendarMutationResult(
                 io.sentient.mobilesdk.calendar.CalendarOperation.UPDATE,
@@ -737,9 +961,11 @@ class CalendarExperienceTest {
         var calls: Int = 0
         var cancelled: Boolean = false
         var offline: Boolean = false
+        var mutationCancelled: Boolean = false
         val scopes = mutableListOf<CalendarScope?>()
         val windows = mutableListOf<Pair<String, String>>()
         var mutationCalls: Int = 0
+        var createCalls: Int = 0
         var lastCommand: CalendarMutationCommand? = null
 
         override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) = getResult
@@ -777,6 +1003,9 @@ class CalendarExperienceTest {
             if (authFailure) {
                 return SentientResult.Failure(SentientError.Auth("expired", terminal = true))
             }
+            if (forbiddenFailure) {
+                return SentientResult.Failure(SentientError.Protocol("forbidden"))
+            }
             if (offline || key in failureWindows) {
                 return SentientResult.Failure(SentientError.Connection("offline"))
             }
@@ -784,10 +1013,19 @@ class CalendarExperienceTest {
         }
 
         override suspend fun create(event: CalendarEvent) = error("unused")
-        override suspend fun create(input: CalendarCreateInput) = error("unused")
+        override suspend fun create(input: CalendarCreateInput): SentientResult<CalendarEvent> {
+            createCalls++
+            return createResult ?: error("unused")
+        }
         override suspend fun mutate(eventId: String, command: CalendarMutationCommand): SentientResult<CalendarMutationResult> {
             mutationCalls++
             lastCommand = command
+            try {
+                beforeMutation?.invoke()
+            } catch (cancelled: CancellationException) {
+                mutationCancelled = true
+                if (!swallowMutationCancellation) throw cancelled
+            }
             return mutationResult
         }
     }

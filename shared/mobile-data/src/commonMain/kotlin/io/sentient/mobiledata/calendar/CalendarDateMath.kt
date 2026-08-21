@@ -1,6 +1,7 @@
 package io.sentient.mobiledata.calendar
 
 import io.sentient.mobilesdk.calendar.Weekday
+import kotlin.time.Instant
 
 internal data class DateParts(
     val year: Int,
@@ -11,6 +12,26 @@ internal data class DateParts(
 internal fun isCalendarDate(value: String): Boolean {
     if (!DATE_PATTERN.matches(value)) return false
     return runCatching { parseCalendarDate(value) }.isSuccess
+}
+
+/**
+ * Parses an offset-bearing RFC3339 value without changing the value retained
+ * on the wire. RFC3339 permits the seconds component to be omitted, while
+ * kotlinx.datetime's Instant parser requires it; validation normalizes only
+ * that parser input.
+ */
+internal fun parseCalendarInstant(value: String): Instant =
+    Instant.parse(value.normalizeCalendarInstantForParser())
+
+private fun String.normalizeCalendarInstantForParser(): String {
+    val match = RFC3339_OFFSET_VALUE.matchEntire(this) ?: return this
+    val minutePrefix = match.groupValues[1]
+    val seconds = match.groupValues[2].takeIf(String::isNotEmpty) ?: ":00"
+    val offset = match.groupValues[3].let { raw ->
+        if (raw.equals("Z", ignoreCase = true)) "Z"
+        else raw.replace(Regex("^([+-]\\d{2})(\\d{2})$"), "$1:$2")
+    }
+    return minutePrefix + seconds + offset
 }
 
 internal fun parseCalendarDate(value: String): DateParts {
@@ -132,3 +153,6 @@ private fun floorMod(value: Long, divisor: Long): Long {
 }
 
 private val DATE_PATTERN = Regex("^(\\d{4})-(\\d{2})-(\\d{2})$")
+private val RFC3339_OFFSET_VALUE = Regex(
+    "^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2})(:\\d{2}(?:\\.\\d+)?)?([Zz]|[+-]\\d{2}:?\\d{2})$",
+)

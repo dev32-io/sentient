@@ -86,6 +86,27 @@ class CalendarProjectionTest {
     }
 
     @Test
+    fun offset_timestamps_without_seconds_are_projected_and_preserved() {
+        val occurrence = occurrence(
+            id = "no-seconds",
+            title = "No seconds",
+            start = "2026-03-08T10:30-05:00",
+            originalStart = "2026-03-08T10:30-05:00",
+        )
+        val projection = projectCalendarOccurrences(
+            occurrences = listOf(occurrence),
+            state = CalendarExperienceState(
+                anchorDate = "2026-03-08",
+                view = CalendarView.DAY,
+                locale = CalendarLocale(timeZoneId = "UTC"),
+            ),
+        )
+        val event = assertNotNull(projection.day).events.single()
+        assertEquals("2026-03-08T10:30-05:00", event.start.rawValue)
+        assertEquals("2026-03-08T10:30-05:00", event.originalStart)
+    }
+
+    @Test
     fun all_day_occurrences_keep_date_identity_across_device_zones() {
         val occurrence = occurrence(
             id = "all-day",

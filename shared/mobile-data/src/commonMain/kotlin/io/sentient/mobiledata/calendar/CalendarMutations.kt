@@ -12,7 +12,6 @@ import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.calendar.StructuredRecurrence
 import io.sentient.mobilesdk.calendar.Visibility
-import kotlin.time.Instant
 
 /** The editor lifecycle is shared; native sheets only render this state. */
 enum class CalendarMutationEditorMode {
@@ -259,6 +258,8 @@ data class CalendarConflictReviewState(
 ) {
     val latestEvent: CalendarEvent? get() = authoritativeEvent
     val requiresReview: Boolean get() = !reviewed
+    /** Submission is allowed only after reread and explicit rebased review. */
+    val canSubmit: Boolean get() = authoritativeEvent != null && reviewed && !rereadInFlight
 }
 
 /** A typed request keeps the URL eventId adjacent to the body command. */
@@ -476,7 +477,10 @@ private object CalendarMutationRequestBuilder {
                 group = draft.group?.trim()?.takeIf(String::isNotEmpty)?.let(CalendarPatch<String>::Value)
                     ?: CalendarPatch.Clear,
                 tags = normalizeTags(draft.tags),
-                recurrence = draft.recurrence?.let(CalendarPatch<StructuredRecurrence>::Value) ?: CalendarPatch.Clear,
+                // Calendar V2 rejects recurrence in an occurrence-scoped
+                // update. Omit the member entirely; null is a clear operation
+                // and is therefore not equivalent to omission.
+                recurrence = recurrencePatch(draft, applyTo),
             ),
             scope = scope,
             originalStart = originalStart,
@@ -562,21 +566,30 @@ private fun originalStartFor(draft: CalendarMutationDraft, applyTo: CalendarMuta
     return draft.originalStart
 }
 
+private fun recurrencePatch(
+    draft: CalendarMutationDraft,
+    applyTo: CalendarMutationScope,
+): CalendarPatch<StructuredRecurrence> = if (applyTo == CalendarMutationScope.THIS_OCCURRENCE) {
+    CalendarPatch.Unchanged
+} else {
+    draft.recurrence?.let(CalendarPatch<StructuredRecurrence>::Value) ?: CalendarPatch.Clear
+}
+
 private fun validWireTime(value: String, allDay: Boolean): Boolean {
     if (allDay) return CalendarDates.isValid(value)
     if (CalendarDates.isValid(value)) return false
-    // Instant.parse validates the instant while leaving the original offset
-    // spelling untouched in the command. V2 requires an offset-bearing value;
-    // a local datetime without Z/offset is not accepted here.
+    // parseCalendarInstant accepts RFC3339's optional seconds component while
+    // retaining the original offset spelling in the command. V2 requires an
+    // offset-bearing value; a local datetime without Z/offset is not accepted.
     if (!value.contains('T')) return false
     if (!value.endsWith("Z", ignoreCase = true) && !value.contains(Regex("[+-]\\d{2}:?\\d{2}$"))) return false
-    return runCatching { Instant.parse(value) }.isSuccess
+    return runCatching { parseCalendarInstant(value) }.isSuccess
 }
 
 private fun compareWireTimes(start: String, end: String, allDay: Boolean): Int = if (allDay) {
     start.compareTo(end)
 } else {
-    Instant.parse(start).compareTo(Instant.parse(end))
+    parseCalendarInstant(start).compareTo(parseCalendarInstant(end))
 }
 
 private fun validateRecurrence(recurrence: StructuredRecurrence?) {

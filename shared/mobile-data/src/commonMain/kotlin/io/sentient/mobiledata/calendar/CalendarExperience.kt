@@ -36,13 +36,14 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.coroutines.cancellation.CancellationException as KotlinCancellationException
 import kotlin.time.Clock as KtClock
-import kotlin.time.Instant
 
 /** Intents accepted by the shared, session-scoped calendar experience. */
 sealed interface CalendarExperienceIntent {
@@ -83,6 +84,8 @@ sealed interface CalendarExperienceIntent {
 
     data object Cancel : CalendarExperienceIntent
     data object RereadConflict : CalendarExperienceIntent
+    /** Explicitly review a local draft rebased onto an authoritative reread. */
+    data class ReviewConflict(val draft: CalendarMutationDraft) : CalendarExperienceIntent
     data object AcknowledgeOutcome : CalendarExperienceIntent
 }
 
@@ -101,6 +104,7 @@ typealias ConfirmCalendarDeleteIntent = CalendarExperienceIntent.ConfirmDelete
 typealias SubmitCalendarMutationIntent = CalendarExperienceIntent.Submit
 typealias CancelCalendarMutationIntent = CalendarExperienceIntent.Cancel
 typealias RereadCalendarConflictIntent = CalendarExperienceIntent.RereadConflict
+typealias ReviewCalendarConflictIntent = CalendarExperienceIntent.ReviewConflict
 typealias AcknowledgeCalendarOutcomeIntent = CalendarExperienceIntent.AcknowledgeOutcome
 
 /** A page after the compatibility repository page has been converted losslessly. */
@@ -123,6 +127,23 @@ private data class CacheInputs(
 private data class CalendarWindowRequestKey(
     val namespace: CalendarCacheNamespace,
     val window: CalendarCacheWindow,
+)
+
+/** Captured session identity for mutation/reread continuations. */
+private data class MutationContinuationFence(
+    val namespace: CalendarCacheNamespace,
+    val namespaceGeneration: Long,
+    val mutationGeneration: Long,
+)
+
+private data class InFlightRequestRegistration(
+    val bookkeepingGeneration: Long,
+    val deferred: Deferred<WindowLoadResult>,
+)
+
+private data class BookkeepingJobRegistration(
+    val bookkeepingGeneration: Long,
+    val job: Job,
 )
 
 private sealed interface WindowLoadResult {
@@ -207,16 +228,20 @@ class CalendarExperience(
     private var preferenceWriteGeneration: Long = 0L
     private var preferenceWriteJob: Job? = null
     private var namespaceGeneration: Long = 0L
+    private var mutationGeneration: Long = 0L
     private var observedNamespace: CalendarCacheNamespace = cacheStore.currentNamespace.value
-    private val requestMutex = Mutex()
-    private val inFlightRequests = mutableMapOf<CalendarWindowRequestKey, Deferred<WindowLoadResult>>()
-    private val prefetchJobs = mutableMapOf<CalendarWindowRequestKey, Job>()
-    private val scheduledPrefetchKeys = mutableSetOf<CalendarWindowRequestKey>()
+    private var accessDisabled: Boolean = false
+    private var bookkeepingGeneration: Long = 0L
+    /** Protects all in-flight/prefetch/access bookkeeping and registration. */
+    private val bookkeepingMutex = Mutex()
+    private val inFlightRequests = mutableMapOf<CalendarWindowRequestKey, InFlightRequestRegistration>()
+    private val prefetchJobs = mutableMapOf<CalendarWindowRequestKey, BookkeepingJobRegistration>()
+    private val scheduledPrefetchKeys = mutableMapOf<CalendarWindowRequestKey, Long>()
     private val _prefetchDiagnostics = MutableStateFlow<List<CalendarPrefetchDiagnostic>>(emptyList())
     /** Sanitized failures from adjacent work; visible-window failures use [state]. */
     val prefetchDiagnostics: StateFlow<List<CalendarPrefetchDiagnostic>> = _prefetchDiagnostics.asStateFlow()
     val prefetchFailures: StateFlow<List<CalendarPrefetchDiagnostic>> get() = prefetchDiagnostics
-    private val accessWriteJobs = mutableMapOf<CalendarWindowRequestKey, Job>()
+    private val accessWriteJobs = mutableMapOf<CalendarWindowRequestKey, BookkeepingJobRegistration>()
     private var authExpiryJob: Job? = null
     private var namespaceJob: Job? = null
     private var unregisterNamespaceListener: (() -> Unit)? = null
@@ -275,7 +300,7 @@ class CalendarExperience(
      * obsolete foreground aggregation before starting its replacement.
      */
     fun observe(window: CalendarCacheWindow = requestedWindow): StateFlow<CalendarExperienceState> {
-        if (closed) return state
+        if (closed || accessDisabled) return state
         if (requestedWindow == window && observationJob?.isActive == true) return state
 
         val changingWindow = requestedWindow != window
@@ -331,6 +356,7 @@ class CalendarExperience(
             is CalendarExperienceIntent.Submit -> submitMutation(intent.draft)
             CalendarExperienceIntent.Cancel -> cancelMutation()
             CalendarExperienceIntent.RereadConflict -> rereadConflict()
+            is CalendarExperienceIntent.ReviewConflict -> reviewConflict(intent.draft)
             CalendarExperienceIntent.AcknowledgeOutcome -> acknowledgeOutcome()
         }
     }
@@ -338,6 +364,8 @@ class CalendarExperience(
     /** Source-compatible imperative seams for thin Android/iOS adapters. */
     fun openPreview(occurrence: EffectiveOccurrence) {
         if (closed) return
+        mutationGeneration += 1L
+        mutationJob?.cancel()
         _state.value = _state.value.copy(
             mutation = _state.value.mutation.copy(
                 phase = CalendarMutationPhase.PREVIEWING,
@@ -374,7 +402,7 @@ class CalendarExperience(
     }
 
     fun createDraft(draft: CalendarMutationDraft? = null) {
-        if (closed) return
+        if (closed || accessDisabled) return
         val base = draft ?: CalendarMutationDraft.create(
             start = _state.value.selectedDate,
             end = null,
@@ -392,7 +420,17 @@ class CalendarExperience(
     }
 
     fun editOccurrence(occurrence: EffectiveOccurrence, inputTimeZoneId: String? = null) {
-        if (closed) return
+        if (closed || accessDisabled) return
+        if (_state.value.mutation.conflict != null) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict_review_required",
+                    userMessage = "Review the latest event before opening it again.",
+                ),
+            )
+            return
+        }
         val target = CalendarMutationTarget.fromOccurrence(occurrence)
         if (target == null) {
             setMutationError(
@@ -418,7 +456,7 @@ class CalendarExperience(
     }
 
     fun updateDraft(draft: CalendarMutationDraft) {
-        if (closed) return
+        if (closed || accessDisabled) return
         val editor = _state.value.mutation.editor ?: return
         val retained = if (editor.target == null) {
             draft.copy(eventId = null, occurrenceId = null, originalStart = null, expectedRevision = null)
@@ -432,15 +470,23 @@ class CalendarExperience(
                 recurring = editor.target.recurring,
             )
         }
+        val mutation = _state.value.mutation
+        val conflict = mutation.conflict?.copy(
+            // Editing a stale draft is not an explicit review of a rebased
+            // draft, even when an authoritative event is already available.
+            draft = retained,
+            reviewed = false,
+        )
+        val inConflict = conflict != null
         val nextEditor = editor.copy(draft = retained)
         _state.value = _state.value.copy(
-            mutation = _state.value.mutation.copy(
-                phase = CalendarMutationPhase.EDITING,
+            mutation = mutation.copy(
+                phase = if (inConflict) CalendarMutationPhase.CONFLICT else CalendarMutationPhase.EDITING,
                 editor = nextEditor,
                 deleteConfirmation = null,
-                error = null,
-                conflict = null,
-                outcome = null,
+                error = if (inConflict) mutation.error else null,
+                conflict = conflict,
+                outcome = if (inConflict) mutation.outcome else null,
             ),
         )
     }
@@ -461,13 +507,19 @@ class CalendarExperience(
             )
             return
         }
+        val conflict = mutation.conflict
+        val blockedByConflict = conflict != null && !conflict.canSubmit
         _state.value = _state.value.copy(
             mutation = mutation.copy(
-                phase = if (mutation.deleteConfirmation != null) CalendarMutationPhase.DELETE_CONFIRMATION else CalendarMutationPhase.EDITING,
+                phase = when {
+                    blockedByConflict -> CalendarMutationPhase.CONFLICT
+                    mutation.deleteConfirmation != null -> CalendarMutationPhase.DELETE_CONFIRMATION
+                    else -> CalendarMutationPhase.EDITING
+                },
                 editor = editor.copy(selectedScope = scope),
                 deleteConfirmation = mutation.deleteConfirmation?.copy(selectedScope = scope),
-                error = null,
-                conflict = null,
+                error = if (blockedByConflict) mutation.error else null,
+                conflict = conflict,
             ),
         )
     }
@@ -520,6 +572,16 @@ class CalendarExperience(
             return null
         }
         val editor = mutation.editor ?: return null
+        if (mutation.conflict != null && !mutation.conflict.canSubmit) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict_review_required",
+                    userMessage = "Review the latest event before deleting again.",
+                ),
+            )
+            return null
+        }
         _state.value = _state.value.copy(
             mutation = mutation.copy(
                 editor = editor.copy(selectedScope = selected),
@@ -543,7 +605,19 @@ class CalendarExperience(
             return null
         }
         if (draft != null) updateDraft(draft)
-        val currentEditor = _state.value.mutation.editor ?: return null
+        val currentMutation = _state.value.mutation
+        val currentEditor = currentMutation.editor ?: return null
+        val conflict = currentMutation.conflict
+        if (conflict != null && !conflict.canSubmit) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict_review_required",
+                    userMessage = "Review the latest event before saving again.",
+                ),
+            )
+            return null
+        }
         val scope = currentEditor.selectedScope
         if (currentEditor.isEdit && scope == null) {
             setMutationError(
@@ -582,6 +656,7 @@ class CalendarExperience(
 
     fun cancelMutation() {
         if (closed || _state.value.mutation.isSubmitting) return
+        mutationGeneration += 1L
         mutationJob?.cancel()
         mutationJob = null
         _state.value = _state.value.copy(mutation = CalendarMutationState())
@@ -595,10 +670,11 @@ class CalendarExperience(
         val conflict = mutation.conflict
         if (conflict == null || conflict.rereadInFlight) return null
         val target = conflict.target
+        val fence = captureMutationFence()
         _state.value = _state.value.copy(
             mutation = mutation.copy(
                 phase = CalendarMutationPhase.CONFLICT,
-                conflict = conflict.copy(rereadInFlight = true),
+                conflict = conflict.copy(rereadInFlight = true, reviewed = false),
             ),
         )
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -615,32 +691,45 @@ class CalendarExperience(
             } catch (_: Throwable) {
                 SentientResult.Failure(SentientError.Connection("connection required"))
             }
-            if (closed) return@launch
+            if (!isMutationFenceCurrent(fence)) return@launch
             when (result) {
                 is SentientResult.Success -> {
                     val latest = result.data
                     val current = _state.value.mutation
                     val active = current.conflict ?: return@launch
+                    if (active.target != target || !active.rereadInFlight) return@launch
+                    // A reread only supplies authoritative material. The user
+                    // must explicitly review a draft rebased to this revision
+                    // before a write becomes submittable.
                     _state.value = _state.value.copy(
                         mutation = current.copy(
                             phase = CalendarMutationPhase.CONFLICT,
                             conflict = active.copy(
                                 rereadInFlight = false,
                                 authoritativeEvent = latest,
-                                reviewed = true,
+                                reviewed = false,
                             ),
-                            error = current.error,
                         ),
                     )
                 }
                 is SentientResult.Failure -> {
+                    if (result.error is SentientError.Auth) {
+                        scheduleAuthenticationExpiry(fence)
+                        return@launch
+                    }
+                    val mapped = mutationError(result.error)
+                    if (mapped.kind == CalendarMutationErrorKind.FORBIDDEN) {
+                        scheduleForbiddenPurge(fence.namespace, forbiddenMutationReadError())
+                        return@launch
+                    }
                     val current = _state.value.mutation
                     val active = current.conflict ?: return@launch
+                    if (active.target != target || !active.rereadInFlight) return@launch
                     _state.value = _state.value.copy(
                         mutation = current.copy(
                             phase = CalendarMutationPhase.CONFLICT,
                             conflict = active.copy(rereadInFlight = false),
-                            error = mutationError(result.error),
+                            error = mapped,
                         ),
                     )
                 }
@@ -652,7 +741,83 @@ class CalendarExperience(
         return job
     }
 
-    fun reviewConflict() = rereadConflict()
+    /**
+     * Explicitly rebase and review a draft against the authoritative reread.
+     * Identity and revision always come from the reread; editable values come
+     * from the draft supplied by the user surface.
+     */
+    fun reviewConflict(draft: CalendarMutationDraft): Boolean {
+        if (closed) return false
+        val mutation = _state.value.mutation
+        val conflict = mutation.conflict
+        val authoritative = conflict?.authoritativeEvent
+        val editor = mutation.editor
+        val latestTarget = authoritative?.let(CalendarMutationTarget::fromEvent)
+        if (conflict == null || authoritative == null || conflict.rereadInFlight || editor == null || latestTarget == null) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict_review_required",
+                    userMessage = "Read the latest event before reviewing this draft.",
+                ),
+            )
+            return false
+        }
+        val rebased = draft.copy(
+            eventId = latestTarget.eventId,
+            occurrenceId = latestTarget.occurrenceId,
+            originalStart = latestTarget.originalStart,
+            expectedRevision = latestTarget.expectedRevision,
+            scope = latestTarget.scope,
+            recurring = latestTarget.recurring,
+        )
+        val selectedScope = editor.selectedScope?.takeIf { it in applicableCalendarMutationScopes(authoritative) }
+            ?: applicableCalendarMutationScopes(authoritative).singleOrNull()
+        val nextEditor = editor.copy(
+            draft = rebased,
+            target = latestTarget,
+            applicableScopes = applicableCalendarMutationScopes(authoritative),
+            selectedScope = selectedScope,
+        )
+        mutationGeneration += 1L
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                phase = CalendarMutationPhase.EDITING,
+                editor = nextEditor,
+                deleteConfirmation = null,
+                pendingRequest = null,
+                error = null,
+                conflict = conflict.copy(
+                    target = latestTarget,
+                    draft = rebased,
+                    authoritativeEvent = authoritative,
+                    reviewed = true,
+                    rereadInFlight = false,
+                ),
+            ),
+        )
+        return true
+    }
+
+    /** Rebase the current local draft as an explicit review action. */
+    fun rebaseConflict(): Boolean {
+        val draft = _state.value.mutation.conflict?.draft ?: return false
+        return reviewConflict(draft)
+    }
+
+    /**
+     * Compatibility review action: first invocation rereads, while a later
+     * invocation with authoritative material performs the explicit rebase.
+     */
+    fun reviewConflict(): Job? {
+        val conflict = _state.value.mutation.conflict
+        return if (conflict?.authoritativeEvent != null && !conflict.rereadInFlight) {
+            rebaseConflict()
+            null
+        } else {
+            rereadConflict()
+        }
+    }
 
     fun acknowledgeOutcome() {
         if (closed) return
@@ -673,6 +838,8 @@ class CalendarExperience(
     fun onIntent(intent: CalendarExperienceIntent) = dispatch(intent)
 
     private fun setEditorState(editor: CalendarMutationEditorState) {
+        mutationGeneration += 1L
+        mutationJob?.cancel()
         val current = _state.value.mutation
         _state.value = _state.value.copy(
             mutation = current.copy(
@@ -694,18 +861,22 @@ class CalendarExperience(
         if (closed) return
         val current = _state.value.mutation
         val conflict = if (error.isConflict) {
-            val target = current.target
-            val draft = current.draft
-            if (target != null && draft != null) {
-                CalendarConflictReviewState(
-                    operation = current.pendingRequest?.operation
-                        ?: if (current.deleteConfirmation != null) CalendarMutationOperation.DELETE
-                        else if (current.editor?.isCreate == true) CalendarMutationOperation.CREATE else CalendarMutationOperation.UPDATE,
-                    target = target,
-                    draft = draft,
-                )
+            if (error.code == "conflict_review_required" && current.conflict != null) {
+                current.conflict.copy(reviewed = false)
             } else {
-                current.conflict
+                val target = current.target
+                val draft = current.draft
+                if (target != null && draft != null) {
+                    CalendarConflictReviewState(
+                        operation = current.pendingRequest?.operation
+                            ?: if (current.deleteConfirmation != null) CalendarMutationOperation.DELETE
+                            else if (current.editor?.isCreate == true) CalendarMutationOperation.CREATE else CalendarMutationOperation.UPDATE,
+                        target = target,
+                        draft = draft,
+                    )
+                } else {
+                    current.conflict
+                }
             }
         } else {
             current.conflict
@@ -737,6 +908,14 @@ class CalendarExperience(
 
     private fun mutationOfflineGate(): CalendarMutationError? {
         val current = _state.value
+        if (accessDisabled || current.mutationAvailability.reason == CalendarMutationAvailabilityReason.AUTHORIZATION) {
+            return CalendarMutationError(
+                kind = CalendarMutationErrorKind.AUTHORIZATION,
+                code = "authorization",
+                userMessage = "This calendar action is not permitted.",
+                recoverable = false,
+            )
+        }
         val unavailable = current.offline != CalendarOfflineState.ONLINE ||
             current.freshness.isUnavailableOffline ||
             current.freshness == CalendarFreshness.CACHED_OFFLINE ||
@@ -750,6 +929,17 @@ class CalendarExperience(
     }
 
     private fun submitDelete(draft: CalendarMutationDraft, scope: CalendarMutationScope): Job? {
+        val conflict = _state.value.mutation.conflict
+        if (conflict != null && !conflict.canSubmit) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict_review_required",
+                    userMessage = "Review the latest event before deleting again.",
+                ),
+            )
+            return null
+        }
         mutationOfflineGate()?.let {
             setMutationError(it)
             return null
@@ -778,6 +968,7 @@ class CalendarExperience(
             ),
         )
         mutationJob?.cancel()
+        val fence = captureMutationFence()
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             val result: MutationTransportResult = try {
                 when (request) {
@@ -804,7 +995,7 @@ class CalendarExperience(
                     ),
                 )
             }
-            if (closed) return@launch
+            if (!isMutationFenceCurrent(fence)) return@launch
             when (result) {
                 is MutationTransportResult.Failure -> {
                     setMutationError(result.error)
@@ -820,8 +1011,9 @@ class CalendarExperience(
                         draft = draft,
                         event = envelope.data,
                         mutation = null,
+                        fence = fence,
                     )
-                    is SentientResult.Failure -> setMutationError(mutationError(envelope.error))
+                    is SentientResult.Failure -> handleMutationFailure(fence, mutationError(envelope.error))
                     is SentientResult.Loading -> setMutationError(
                         CalendarMutationError(
                             CalendarMutationErrorKind.SERVER,
@@ -837,6 +1029,7 @@ class CalendarExperience(
                             draft = draft,
                             event = null,
                             mutation = envelope.data,
+                            fence = fence,
                         )
                     } else {
                         setMutationError(
@@ -847,7 +1040,7 @@ class CalendarExperience(
                             ),
                         )
                     }
-                    is SentientResult.Failure -> setMutationError(mutationError(envelope.error))
+                    is SentientResult.Failure -> handleMutationFailure(fence, mutationError(envelope.error))
                     is SentientResult.Loading -> setMutationError(
                         CalendarMutationError(
                             CalendarMutationErrorKind.SERVER,
@@ -889,12 +1082,14 @@ class CalendarExperience(
         draft: CalendarMutationDraft,
         event: CalendarEvent?,
         mutation: CalendarMutationResult?,
+        fence: MutationContinuationFence,
     ) {
-        if (closed) return
+        if (!isMutationFenceCurrent(fence)) return
         // The editor lifecycle ends on success. The outcome remains until the
         // native surface acknowledges it, while valid cached rows stay visible.
         val successor = mutation?.successorEventId?.takeIf(String::isNotBlank)
-        val affected = affectedWindowsForMutation()
+        val affected = affectedWindowsForMutation(fence) ?: return
+        if (!isMutationFenceCurrent(fence)) return
         val success = CalendarMutationSuccess(
             operation = operation,
             event = event,
@@ -916,10 +1111,13 @@ class CalendarExperience(
                 affectedWindows = affected,
             ),
         )
-        revalidateMutationWindows(affected)
+        revalidateMutationWindows(affected, fence)
     }
 
-    private suspend fun affectedWindowsForMutation(): List<CalendarCacheWindow> {
+    private suspend fun affectedWindowsForMutation(
+        fence: MutationContinuationFence,
+    ): List<CalendarCacheWindow>? {
+        if (!isMutationFenceCurrent(fence)) return null
         val windows = linkedSetOf(activeWindow)
         val metadata = try {
             cacheStore.readWindows()
@@ -932,25 +1130,31 @@ class CalendarExperience(
                 io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
             )
         }
-        if (metadata is CalendarCacheResult.Success && isNamespaceCurrent(observedNamespace, namespaceGeneration)) {
+        if (!isMutationFenceCurrent(fence)) return null
+        if (metadata is CalendarCacheResult.Success && isNamespaceCurrent(fence.namespace, fence.namespaceGeneration)) {
             windows += metadata.value.map { it.window }
         }
         return windows.toList()
     }
 
-    private fun revalidateMutationWindows(affectedWindows: List<CalendarCacheWindow>) {
-        if (closed) return
+    private fun revalidateMutationWindows(
+        affectedWindows: List<CalendarCacheWindow>,
+        fence: MutationContinuationFence,
+    ) {
+        if (!isMutationFenceCurrent(fence)) return
         // Use the normal foreground path so failures retain visible content and
         // the finalized cached/offline state remains the single write gate. A
         // mutation must not merely join a refresh that started before its write.
-        forceRevalidateAfterMutation()
+        forceRevalidateAfterMutation(fence)
+        if (!isMutationFenceCurrent(fence)) return
         mutationRefreshJob?.cancel()
-        val namespace = cacheStore.currentNamespace.value
-        val epoch = namespaceGeneration
+        val namespace = fence.namespace
+        val epoch = fence.namespaceGeneration
         val active = activeWindow
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            affectedWindows.filter { it != active && isNamespaceCurrent(namespace, epoch) }.forEach { window ->
-                when (loadWindow(window, namespace, epoch)) {
+            affectedWindows.forEach { window ->
+                if (window == active || !isMutationFenceCurrent(fence)) return@forEach
+                when (loadWindow(window, namespace, epoch, fence)) {
                     WindowLoadResult.Cancelled -> Unit
                     is WindowLoadResult.Complete,
                     is WindowLoadResult.Failed,
@@ -962,8 +1166,8 @@ class CalendarExperience(
         job.invokeOnCompletion { if (mutationRefreshJob === job) mutationRefreshJob = null }
     }
 
-    private fun forceRevalidateAfterMutation() {
-        if (closed) return
+    private fun forceRevalidateAfterMutation(fence: MutationContinuationFence) {
+        if (!isMutationFenceCurrent(fence) || accessDisabled) return
         if (observationJob?.isActive != true) {
             observe(requestedWindow)
             return
@@ -973,12 +1177,13 @@ class CalendarExperience(
         revalidationGeneration = null
         cancelPrefetchWork()
         cancelSharedRequests()
+        if (!isMutationFenceCurrent(fence)) return
         val generation = requestGeneration
-        val namespace = cacheStore.currentNamespace.value
-        val epoch = namespaceGeneration
+        val namespace = fence.namespace
+        val epoch = fence.namespaceGeneration
         revalidationGeneration = generation
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            revalidate(activeWindow, generation, namespace, epoch)
+            if (isMutationFenceCurrent(fence)) revalidate(activeWindow, generation, namespace, epoch)
         }
         refreshJob = job
         job.invokeOnCompletion { if (refreshJob === job) refreshJob = null }
@@ -1052,6 +1257,111 @@ class CalendarExperience(
         }
     }
 
+    private fun handleMutationFailure(
+        fence: MutationContinuationFence,
+        error: CalendarMutationError,
+    ) {
+        if (!isMutationFenceCurrent(fence)) return
+        if (error.kind == CalendarMutationErrorKind.AUTHORIZATION) {
+            scheduleAuthenticationExpiry(fence)
+        } else {
+            setMutationError(error)
+        }
+    }
+
+    private fun forbiddenMutationReadError() = CalendarExperienceError(
+        kind = CalendarExperienceErrorKind.FORBIDDEN,
+        userMessage = "This calendar event is no longer available.",
+        recoverable = false,
+    )
+
+    private fun captureMutationFence(): MutationContinuationFence {
+        mutationGeneration += 1L
+        return MutationContinuationFence(
+            namespace = cacheStore.currentNamespace.value,
+            namespaceGeneration = namespaceGeneration,
+            mutationGeneration = mutationGeneration,
+        )
+    }
+
+    private fun isMutationFenceCurrent(fence: MutationContinuationFence): Boolean =
+        !closed &&
+            mutationGeneration == fence.mutationGeneration &&
+            namespaceGeneration == fence.namespaceGeneration &&
+            cacheStore.currentNamespace.value == fence.namespace
+
+    /** Schedules auth teardown with registration before start. */
+    private fun scheduleAuthenticationExpiry(fence: MutationContinuationFence) {
+        if (!isMutationFenceCurrent(fence) || authExpiryJob?.let { !it.isCompleted } == true) return
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            if (isMutationFenceCurrent(fence)) expireAuthenticationInternal(cancelAuthExpiry = false)
+        }
+        authExpiryJob = job
+        job.invokeOnCompletion { if (authExpiryJob === job) authExpiryJob = null }
+        job.start()
+    }
+
+    private fun scheduleAuthenticationExpiry(
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ) {
+        if (!isNamespaceCurrent(namespace, namespaceEpoch) || authExpiryJob?.let { !it.isCompleted } == true) return
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            if (isNamespaceCurrent(namespace, namespaceEpoch)) {
+                expireAuthenticationInternal(cancelAuthExpiry = false)
+            }
+        }
+        authExpiryJob = job
+        job.invokeOnCompletion { if (authExpiryJob === job) authExpiryJob = null }
+        job.start()
+    }
+
+    private fun scheduleAuthenticationExpiry(
+        generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ) {
+        if (!isCurrent(generation, namespace, namespaceEpoch) || authExpiryJob?.let { !it.isCompleted } == true) return
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            if (isCurrent(generation, namespace, namespaceEpoch)) {
+                expireAuthenticationInternal(cancelAuthExpiry = false)
+            }
+        }
+        authExpiryJob = job
+        job.invokeOnCompletion { if (authExpiryJob === job) authExpiryJob = null }
+        job.start()
+    }
+
+    /** Clears state synchronously, then purges the forbidden namespace. */
+    private fun scheduleForbiddenPurge(
+        namespace: CalendarCacheNamespace,
+        error: CalendarExperienceError,
+    ) {
+        if (closed || !isNamespaceCurrent(namespace, namespaceGeneration)) return
+        accessDisabled = true
+        invalidateForNamespace(namespace)
+        _state.value = _state.value.copy(
+            freshness = CalendarFreshness.ERROR,
+            offline = CalendarOfflineState.ONLINE,
+            error = error,
+            mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.AUTHORIZATION),
+        )
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            purgeNamespaceSafely(namespace)
+        }
+    }
+
+    private suspend fun purgeNamespaceSafely(namespace: CalendarCacheNamespace): CalendarCacheResult<Unit> =
+        withContext(NonCancellable) {
+            try {
+                cacheStore.purgeNamespace(namespace)
+            } catch (_: Throwable) {
+                CalendarCacheResult.Failure(
+                    io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
+                )
+            }
+        }
+
     private sealed interface MutationTransportResult {
         data class Create(val result: SentientResult<CalendarEvent>) : MutationTransportResult
         data class Mutate(val result: SentientResult<CalendarMutationResult>) : MutationTransportResult
@@ -1115,7 +1425,7 @@ class CalendarExperience(
      * lifecycle owners; callers may ignore it when observation is long-lived.
      */
     fun refresh(): Job? {
-        if (closed) return null
+        if (closed || accessDisabled) return null
         preparePrefetchForRecovery()
         if (observationJob?.isActive != true) {
             observe(requestedWindow)
@@ -1161,17 +1471,27 @@ class CalendarExperience(
      * observation schedules the same work automatically.
      */
     fun prefetchAdjacent(window: CalendarCacheWindow = activeWindow): List<Job> {
-        if (closed) return emptyList()
+        if (closed || accessDisabled) return emptyList()
         preparePrefetchForRecovery()
-        return scheduleAdjacentPrefetch(
-            window = window,
-            namespace = cacheStore.currentNamespace.value,
-            namespaceEpoch = namespaceGeneration,
-        )
+        val coordinator = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            scheduleAdjacentPrefetch(
+                window = window,
+                namespace = cacheStore.currentNamespace.value,
+                namespaceEpoch = namespaceGeneration,
+            )
+        }
+        return listOf(coordinator)
     }
 
     val isPrefetching: Boolean
-        get() = prefetchJobs.values.any { it.isActive }
+        get() {
+            if (!bookkeepingMutex.tryLock()) return true
+            return try {
+                prefetchJobs.values.any { !it.job.isCompleted }
+            } finally {
+                bookkeepingMutex.unlock()
+            }
+        }
 
     /** Stop all foreground/cache work without closing a caller-owned session scope. */
     fun close() {
@@ -1179,13 +1499,13 @@ class CalendarExperience(
         closed = true
         requestGeneration += 1L
         namespaceGeneration += 1L
+        mutationGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
         mutationJob?.cancel()
         mutationRefreshJob?.cancel()
         preferenceWriteJob?.cancel()
-        accessWriteJobs.values.forEach { it.cancel() }
-        accessWriteJobs.clear()
+        cancelAccessWriteJobs()
         namespaceJob?.cancel()
         authExpiryJob?.cancel()
         cancelPrefetchWork()
@@ -1267,17 +1587,7 @@ class CalendarExperience(
             )
         }
         if (namespace == cacheStore.currentNamespace.value) invalidateForNamespace(namespace)
-        return try {
-            cacheStore.purgeNamespace(namespace)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (cancelled: KotlinCancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            CalendarCacheResult.Failure(
-                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
-            )
-        }
+        return purgeNamespaceSafely(namespace)
     }
 
     /**
@@ -1285,27 +1595,32 @@ class CalendarExperience(
      * successor auth root can therefore never observe the old cache or a
      * still-running adjacent request.
      */
-    suspend fun expireAuthentication(): CalendarCacheResult<Unit> {
+    suspend fun expireAuthentication(): CalendarCacheResult<Unit> =
+        expireAuthenticationInternal(cancelAuthExpiry = true)
+
+    private suspend fun expireAuthenticationInternal(
+        cancelAuthExpiry: Boolean,
+    ): CalendarCacheResult<Unit> {
         if (closed) {
             return CalendarCacheResult.Failure(
                 io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.CLOSED),
             )
         }
         val namespace = cacheStore.currentNamespace.value
-        invalidateForNamespace(namespace)
-        val result = try {
-            cacheStore.purgeNamespace(namespace)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (cancelled: KotlinCancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            CalendarCacheResult.Failure(
-                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
-            )
+        // invalidateForNamespace cancels the transport and collector first. It
+        // must not cancel the expiry continuation that is about to purge.
+        invalidateForNamespace(namespace, cancelAuthExpiry = cancelAuthExpiry)
+        val invalidatedEpoch = namespaceGeneration
+        val result = purgeNamespaceSafely(namespace)
+        // A successor namespace may have been selected while the old namespace
+        // was being purged. The old auth continuation must not close that
+        // successor experience or driver.
+        if (!closed && namespaceGeneration == invalidatedEpoch && cacheStore.currentNamespace.value == namespace) {
+            // Close even when the purge reports a database failure: an expired
+            // session must not retain an active experience boundary.
+            close()
+            cacheStore.close()
         }
-        close()
-        cacheStore.close()
         return result
     }
 
@@ -1515,15 +1830,14 @@ class CalendarExperience(
             is WindowLoadResult.Failed -> {
                 if (!isCurrent(generation, namespace, namespaceEpoch)) return
                 if (loaded.error.kind == CalendarExperienceErrorKind.AUTHORIZATION) {
-                    if (authExpiryJob?.isActive != true) {
-                        val expiry = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                            expireAuthentication()
-                        }
-                        authExpiryJob = expiry
-                        expiry.invokeOnCompletion {
-                            if (authExpiryJob === expiry) authExpiryJob = null
-                        }
-                    }
+                    scheduleAuthenticationExpiry(generation, namespace, namespaceEpoch)
+                    return
+                }
+                if (loaded.error.kind == CalendarExperienceErrorKind.FORBIDDEN) {
+                    // A forbidden refresh invalidates the old projection before
+                    // purging the namespace; cached private content is never a
+                    // fallback after an authorization boundary.
+                    scheduleForbiddenPurge(namespace, loaded.error)
                     return
                 }
                 val hasCache = _state.value.hasCompleteCache
@@ -1534,7 +1848,7 @@ class CalendarExperience(
                     loaded.error
                 }
                 val resultingFreshness = if (connection) {
-                    if (hasCache) CalendarFreshness.CACHED_OFFLINE else CalendarFreshness.OFFLINE
+                    if (hasCache) CalendarFreshness.CACHED_OFFLINE else CalendarFreshness.UNAVAILABLE_OFFLINE
                 } else {
                     CalendarFreshness.ERROR
                 }
@@ -1577,41 +1891,67 @@ class CalendarExperience(
         window: CalendarCacheWindow,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
+        continuationFence: MutationContinuationFence? = null,
     ): WindowLoadResult {
-        if (!isNamespaceCurrent(namespace, namespaceEpoch)) return WindowLoadResult.Cancelled
+        if (!isNamespaceCurrent(namespace, namespaceEpoch) ||
+            continuationFence != null && !isMutationFenceCurrent(continuationFence)
+        ) return WindowLoadResult.Cancelled
         val key = CalendarWindowRequestKey(namespace, window)
-        val request = requestMutex.withLock {
-            val existing = inFlightRequests[key]?.takeIf { it.isActive }
+        val registrationGeneration = bookkeepingGeneration
+        // Registration and the LAZY start are deliberately separate: a fast
+        // completion cannot occur before a coalescing entry is visible.
+        val request = bookkeepingMutex.withLock {
+            val existing = inFlightRequests[key]?.takeIf { !it.deferred.isCompleted }?.deferred
             if (existing != null) {
                 existing
             } else {
                 val created = scope.async(start = CoroutineStart.LAZY) {
-                    loadWindowUncoalesced(window, namespace, namespaceEpoch)
+                    loadWindowUncoalesced(window, namespace, namespaceEpoch, continuationFence)
                 }
-                inFlightRequests[key] = created
+                inFlightRequests[key] = InFlightRequestRegistration(registrationGeneration, created)
                 created.invokeOnCompletion {
-                    if (inFlightRequests[key] === created) inFlightRequests.remove(key)
+                    scope.launch {
+                        bookkeepingMutex.withLock {
+                            if (inFlightRequests[key]?.deferred === created) inFlightRequests.remove(key)
+                        }
+                    }
                 }
                 created
             }
         }
+        if (registrationGeneration != bookkeepingGeneration) {
+            bookkeepingMutex.withLock {
+                val entry = inFlightRequests[key]
+                if (entry?.deferred === request && entry.bookkeepingGeneration == registrationGeneration) {
+                    inFlightRequests.remove(key)
+                    request.cancel()
+                }
+            }
+            return WindowLoadResult.Cancelled
+        }
         request.start()
-        return request.await()
+        val result = request.await()
+        return if (continuationFence == null || isMutationFenceCurrent(continuationFence)) result
+        else WindowLoadResult.Cancelled
     }
 
     private suspend fun loadWindowUncoalesced(
         window: CalendarCacheWindow,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
+        continuationFence: MutationContinuationFence? = null,
     ): WindowLoadResult {
-        return when (val aggregation = aggregate(window, null, namespace, namespaceEpoch)) {
+        return when (val aggregation = aggregate(window, null, namespace, namespaceEpoch, continuationFence)) {
             AggregationResult.Cancelled -> WindowLoadResult.Cancelled
             is AggregationResult.Failed -> WindowLoadResult.Failed(aggregation.error)
             is AggregationResult.Complete -> {
-                if (!isNamespaceCurrent(namespace, namespaceEpoch)) return WindowLoadResult.Cancelled
+                if (!isNamespaceCurrent(namespace, namespaceEpoch) ||
+                    continuationFence != null && !isMutationFenceCurrent(continuationFence)
+                ) return WindowLoadResult.Cancelled
                 val fetchedAt = nowMillis().coerceAtLeast(0L)
                 val isViewedWindow = activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)
                 val lastAccessedAt = if (isViewedWindow) fetchedAt else previousAccessedAt(namespace, namespaceEpoch, window)
+                if (continuationFence != null && !isMutationFenceCurrent(continuationFence)) return WindowLoadResult.Cancelled
                 val protectedWindow = activeWindow.takeIf {
                     !closed && cacheStore.currentNamespace.value == namespace
                 } ?: window
@@ -1636,7 +1976,11 @@ class CalendarExperience(
                     )
                 }
                 when (writeResult) {
-                    is CalendarCacheResult.Success -> WindowLoadResult.Complete(aggregation.occurrences, fetchedAt)
+                    is CalendarCacheResult.Success -> if (continuationFence == null || isMutationFenceCurrent(continuationFence)) {
+                        WindowLoadResult.Complete(aggregation.occurrences, fetchedAt)
+                    } else {
+                        WindowLoadResult.Cancelled
+                    }
                     is CalendarCacheResult.Failure -> WindowLoadResult.Failed(cacheFailure(writeResult.error.reason))
                 }
             }
@@ -1648,6 +1992,7 @@ class CalendarExperience(
         generation: Long?,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
+        continuationFence: MutationContinuationFence? = null,
     ): AggregationResult {
         val byIdentity = LinkedHashMap<String, EffectiveOccurrence>()
         val occurrenceIds = HashMap<String, String>()
@@ -1656,7 +2001,9 @@ class CalendarExperience(
         var pageCount = 0
 
         while (true) {
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
+                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            ) return AggregationResult.Cancelled
             if (++pageCount > MAX_PAGES) {
                 return AggregationResult.Failed(contractError("Calendar pagination exceeded its safety bound."))
             }
@@ -1685,14 +2032,18 @@ class CalendarExperience(
                     ),
                 )
             }
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
+                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            ) return AggregationResult.Cancelled
             val page = when (result) {
                 is SentientResult.Success -> result.data
                 is SentientResult.Failure -> return AggregationResult.Failed(repositoryError(result.error))
                 is SentientResult.Loading -> return AggregationResult.Failed(contractError("Calendar pagination did not return a settled page."))
             }
 
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
+                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            ) return AggregationResult.Cancelled
             val converted = try {
                 convertPage(page)
             } catch (cancelled: CancellationException) {
@@ -1816,7 +2167,7 @@ class CalendarExperience(
     private fun validateTemporal(value: String) {
         if (CalendarDates.isValid(value)) return
         try {
-            Instant.parse(value)
+            parseCalendarInstant(value)
         } catch (_: IllegalArgumentException) {
             throw MalformedCalendarPageException()
         }
@@ -1877,7 +2228,7 @@ class CalendarExperience(
         _state.value = next
     }
 
-    private fun recordViewedWindow(
+    private suspend fun recordViewedWindow(
         snapshot: CalendarCacheSnapshot,
         generation: Long,
         namespace: CalendarCacheNamespace,
@@ -1887,8 +2238,8 @@ class CalendarExperience(
         val accessedAt = maxOf(nowMillis().coerceAtLeast(0L), snapshot.lastAccessedAt)
         if (accessedAt <= snapshot.lastAccessedAt) return
         val key = CalendarWindowRequestKey(namespace, snapshot.window)
-        accessWriteJobs[key]?.takeIf { it.isActive }?.let { return }
-        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        val registrationGeneration = bookkeepingGeneration
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 cacheStore.touchAndRetainForNamespace(
                     namespace = namespace,
@@ -1904,37 +2255,96 @@ class CalendarExperience(
                 // Metadata failure never removes already decoded visible data.
             }
         }
-        accessWriteJobs[key] = job
-        job.invokeOnCompletion {
-            if (accessWriteJobs[key] === job) accessWriteJobs.remove(key)
+        val registered = bookkeepingMutex.withLock {
+            val existing = accessWriteJobs[key]?.takeIf { !it.job.isCompleted }
+            if (existing != null) {
+                false
+            } else {
+                accessWriteJobs[key] = BookkeepingJobRegistration(registrationGeneration, job)
+                true
+            }
         }
+        if (!registered) {
+            job.cancel()
+            return
+        }
+        if (registrationGeneration != bookkeepingGeneration) {
+            bookkeepingMutex.withLock {
+                if (accessWriteJobs[key]?.job === job) accessWriteJobs.remove(key)
+            }
+            job.cancel()
+            return
+        }
+        job.invokeOnCompletion {
+            scope.launch {
+                bookkeepingMutex.withLock {
+                    if (accessWriteJobs[key]?.job === job) accessWriteJobs.remove(key)
+                }
+            }
+        }
+        // Registration precedes start so even an immediately completed touch
+        // cannot escape coalescing.
+        job.start()
     }
 
-    private fun scheduleAdjacentPrefetch(
+    private suspend fun scheduleAdjacentPrefetch(
         window: CalendarCacheWindow,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
     ): List<Job> {
-        if (closed || !isNamespaceCurrent(namespace, namespaceEpoch)) return emptyList()
+        if (closed || accessDisabled || !isNamespaceCurrent(namespace, namespaceEpoch)) return emptyList()
         val scheduled = mutableListOf<Job>()
-        adjacentMonthWindows(window).forEach { target ->
-            val key = CalendarWindowRequestKey(namespace, target)
-            if (key in scheduledPrefetchKeys || prefetchJobs[key]?.isActive == true) return@forEach
-            scheduledPrefetchKeys += key
-            val job = scope.launch(start = CoroutineStart.LAZY) {
-                when (val result = loadWindow(target, namespace, namespaceEpoch)) {
-                    WindowLoadResult.Cancelled -> Unit
-                    is WindowLoadResult.Complete -> clearPrefetchDiagnostic(key)
-                    is WindowLoadResult.Failed -> recordPrefetchFailure(key, target, result.error)
+        val registrationGeneration = bookkeepingGeneration
+        bookkeepingMutex.withLock {
+            adjacentMonthWindows(window).forEach { target ->
+                // The visible window is already owned by the foreground
+                // revalidation path; scheduling it again after a fast
+                // completion would defeat coalescing. Previous/next are the
+                // actual adjacent prefetches.
+                if (target == window) return@forEach
+                val key = CalendarWindowRequestKey(namespace, target)
+                if (key in scheduledPrefetchKeys || prefetchJobs[key]?.let { !it.job.isCompleted } == true) return@forEach
+                scheduledPrefetchKeys[key] = registrationGeneration
+                val job = scope.launch(start = CoroutineStart.LAZY) {
+                    when (val result = loadWindow(target, namespace, namespaceEpoch)) {
+                        WindowLoadResult.Cancelled -> Unit
+                        is WindowLoadResult.Complete -> clearPrefetchDiagnostic(key)
+                        is WindowLoadResult.Failed -> when (result.error.kind) {
+                            CalendarExperienceErrorKind.AUTHORIZATION -> scheduleAuthenticationExpiry(namespace, namespaceEpoch)
+                            CalendarExperienceErrorKind.FORBIDDEN -> scheduleForbiddenPurge(namespace, result.error)
+                            else -> recordPrefetchFailure(key, target, result.error)
+                        }
+                    }
                 }
+                // Put the job in the map before starting it. Fast completion
+                // therefore cannot create a second adjacent request.
+                prefetchJobs[key] = BookkeepingJobRegistration(registrationGeneration, job)
+                job.invokeOnCompletion {
+                    scope.launch {
+                        bookkeepingMutex.withLock {
+                            if (prefetchJobs[key]?.job === job) prefetchJobs.remove(key)
+                        }
+                    }
+                }
+                scheduled += job
             }
-            prefetchJobs[key] = job
-            job.invokeOnCompletion {
-                if (prefetchJobs[key] === job) prefetchJobs.remove(key)
-            }
-            job.start()
-            scheduled += job
         }
+        if (registrationGeneration != bookkeepingGeneration) {
+            bookkeepingMutex.withLock {
+                val obsolete = prefetchJobs.filterValues {
+                    it.bookkeepingGeneration == registrationGeneration && it.job in scheduled
+                }.keys.toList()
+                obsolete.forEach { prefetchJobs.remove(it) }
+                scheduledPrefetchKeys
+                    .filterValues { it == registrationGeneration }
+                    .keys
+                    .filter { it !in prefetchJobs }
+                    .forEach { scheduledPrefetchKeys.remove(it) }
+            }
+            scheduled.forEach { it.cancel() }
+            return emptyList()
+        }
+        scheduled.forEach { it.start() }
         return scheduled
     }
 
@@ -1972,21 +2382,122 @@ class CalendarExperience(
     }
 
     private fun preparePrefetchForRecovery() {
-        _prefetchDiagnostics.value.forEach { diagnostic ->
-            scheduledPrefetchKeys.remove(CalendarWindowRequestKey(cacheStore.currentNamespace.value, diagnostic.window))
+        val namespace = cacheStore.currentNamespace.value
+        if (bookkeepingMutex.tryLock()) {
+            try {
+                _prefetchDiagnostics.value.forEach { diagnostic ->
+                    scheduledPrefetchKeys.remove(CalendarWindowRequestKey(namespace, diagnostic.window))
+                }
+            } finally {
+                bookkeepingMutex.unlock()
+            }
+        } else {
+            scope.launch {
+                bookkeepingMutex.withLock {
+                    _prefetchDiagnostics.value.forEach { diagnostic ->
+                        scheduledPrefetchKeys.remove(CalendarWindowRequestKey(namespace, diagnostic.window))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelAccessWriteJobs() {
+        val cancellationGeneration = ++bookkeepingGeneration
+        if (bookkeepingMutex.tryLock()) {
+            val jobs = try {
+                val keys = accessWriteJobs.filterValues {
+                    it.bookkeepingGeneration < cancellationGeneration
+                }.keys.toList()
+                val selected = keys.mapNotNull { accessWriteJobs[it]?.job }
+                keys.forEach { accessWriteJobs.remove(it) }
+                selected
+            } finally {
+                bookkeepingMutex.unlock()
+            }
+            jobs.forEach { it.cancel() }
+        } else {
+            scope.launch {
+                val jobs = bookkeepingMutex.withLock {
+                    val keys = accessWriteJobs.filterValues {
+                        it.bookkeepingGeneration < cancellationGeneration
+                    }.keys.toList()
+                    val selected = keys.mapNotNull { accessWriteJobs[it]?.job }
+                    keys.forEach { accessWriteJobs.remove(it) }
+                    selected
+                }
+                jobs.forEach { it.cancel() }
+            }
         }
     }
 
     private fun cancelPrefetchWork() {
-        prefetchJobs.values.forEach { it.cancel() }
-        prefetchJobs.clear()
-        scheduledPrefetchKeys.clear()
+        val cancellationGeneration = ++bookkeepingGeneration
+        if (bookkeepingMutex.tryLock()) {
+            val jobs = try {
+                val keys = prefetchJobs.filterValues {
+                    it.bookkeepingGeneration < cancellationGeneration
+                }.keys.toList()
+                val selected = keys.mapNotNull { prefetchJobs[it]?.job }
+                keys.forEach { prefetchJobs.remove(it) }
+                scheduledPrefetchKeys
+                    .filterValues { it < cancellationGeneration }
+                    .keys
+                    .toList()
+                    .forEach { scheduledPrefetchKeys.remove(it) }
+                selected
+            } finally {
+                bookkeepingMutex.unlock()
+            }
+            jobs.forEach { it.cancel() }
+        } else {
+            scope.launch {
+                val jobs = bookkeepingMutex.withLock {
+                    val keys = prefetchJobs.filterValues {
+                        it.bookkeepingGeneration < cancellationGeneration
+                    }.keys.toList()
+                    val selected = keys.mapNotNull { prefetchJobs[it]?.job }
+                    keys.forEach { prefetchJobs.remove(it) }
+                    scheduledPrefetchKeys
+                        .filterValues { it < cancellationGeneration }
+                        .keys
+                        .toList()
+                        .forEach { scheduledPrefetchKeys.remove(it) }
+                    selected
+                }
+                jobs.forEach { it.cancel() }
+            }
+        }
         _prefetchDiagnostics.value = emptyList()
     }
 
     private fun cancelSharedRequests() {
-        inFlightRequests.values.forEach { it.cancel() }
-        inFlightRequests.clear()
+        val cancellationGeneration = ++bookkeepingGeneration
+        if (bookkeepingMutex.tryLock()) {
+            val requests = try {
+                val keys = inFlightRequests.filterValues {
+                    it.bookkeepingGeneration < cancellationGeneration
+                }.keys.toList()
+                val selected = keys.mapNotNull { inFlightRequests[it]?.deferred }
+                keys.forEach { inFlightRequests.remove(it) }
+                selected
+            } finally {
+                bookkeepingMutex.unlock()
+            }
+            requests.forEach { it.cancel() }
+        } else {
+            scope.launch {
+                val requests = bookkeepingMutex.withLock {
+                    val keys = inFlightRequests.filterValues {
+                        it.bookkeepingGeneration < cancellationGeneration
+                    }.keys.toList()
+                    val selected = keys.mapNotNull { inFlightRequests[it]?.deferred }
+                    keys.forEach { inFlightRequests.remove(it) }
+                    selected
+                }
+                requests.forEach { it.cancel() }
+            }
+        }
     }
 
     private fun adjacentMonthWindows(window: CalendarCacheWindow): List<CalendarCacheWindow> {
@@ -2129,20 +2640,22 @@ class CalendarExperience(
     private fun invalidateForNamespace(
         namespace: CalendarCacheNamespace,
         updateObservedNamespace: Boolean = true,
+        cancelAuthExpiry: Boolean = true,
     ) {
         if (closed) return
+        if (namespace != observedNamespace) accessDisabled = false
         if (updateObservedNamespace) observedNamespace = namespace
         namespaceGeneration += 1L
         requestGeneration += 1L
+        mutationGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
         mutationJob?.cancel()
         mutationRefreshJob?.cancel()
         preferenceWriteGeneration += 1L
         preferenceWriteJob?.cancel()
-        authExpiryJob?.cancel()
-        accessWriteJobs.values.forEach { it.cancel() }
-        accessWriteJobs.clear()
+        if (cancelAuthExpiry) authExpiryJob?.cancel()
+        cancelAccessWriteJobs()
         cancelPrefetchWork()
         cancelSharedRequests()
         observationJob = null
