@@ -28,6 +28,7 @@
 package io.sentient.mobiledata.di
 
 import io.ktor.client.HttpClient
+import io.sentient.mobiledata.calendar.CalendarExperience
 import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
 import io.sentient.mobiledata.data.settings.AccountRepository
@@ -76,6 +77,8 @@ class SettingsComponent(
     onTokenRefreshed: (String) -> Unit = {},
     /** Clear local session on logout. */
     onLoggedOut: () -> Unit = {},
+    /** Optional authenticated-session read experience; null keeps pre-driver callers source-compatible. */
+    calendarExperience: CalendarExperience? = null,
 ) {
     private val log = createLogger("data", "settings", "component")
 
@@ -96,6 +99,14 @@ class SettingsComponent(
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
     val calendarRepository: CalendarRepository = SdkCalendarRepository(calendarHttp)
+
+    /**
+     * Shared cache-first calendar seam. Platform session stages inject the
+     * driver-backed experience here; existing settings construction remains
+     * valid before those platform drivers exist.
+     */
+    val calendarExperience: CalendarExperience? = calendarExperience
+    val experience: CalendarExperience? get() = calendarExperience
 
     // ── Usecases (VM-facing) ──
     val applyProfileChange = ApplyProfileChangeUseCase(profileRepository, liveAudioPatch)

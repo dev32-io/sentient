@@ -30,8 +30,8 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
     is AuthError.Network -> SentientError.Connection(
         userMessage = "Network unavailable. Check your connection and try again.",
     )
-    is AuthError.Unknown -> SentientError.Unknown(
-        userMessage = "Something went wrong. Please try again.",
+    is AuthError.Unknown -> SentientError.Protocol(
+        userMessage = "The calendar returned an invalid response.",
     )
     is AuthError.Server -> if (status == 401) {
         // CalendarHttpClient's shared HTTP mapper represents 401 as Server;
@@ -40,6 +40,8 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
             userMessage = "Your session expired. Please sign in again.",
             terminal = true,
         )
+    } else if (status == 403) {
+        SentientError.Protocol(MSG_FORBIDDEN)
     } else when (calendarErrorCode(body)) {
         CalendarErrorCode.CONFLICT -> SentientError.Protocol(MSG_CONFLICT)
         CalendarErrorCode.RECURRENCE_CONFLICT -> SentientError.Protocol(MSG_RECURRENCE_CONFLICT)

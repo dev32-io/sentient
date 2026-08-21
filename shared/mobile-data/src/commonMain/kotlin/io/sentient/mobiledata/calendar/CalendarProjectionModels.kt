@@ -1,5 +1,7 @@
 package io.sentient.mobiledata.calendar
 
+import io.sentient.mobiledata.cache.CalendarCachePreferences
+import io.sentient.mobiledata.cache.CalendarCacheWindow
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import io.sentient.mobilesdk.calendar.Importance
@@ -379,10 +381,60 @@ data class CalendarExperienceState(
     val filters: CalendarFilters = CalendarFilters(),
     val locale: CalendarLocale = CalendarLocale(),
     val todayDate: String = anchorDate,
+    /** The half-open interval currently requested by the shared coordinator. */
+    val visibleInterval: CalendarDateInterval? = null,
+    /** The focused day as a half-open interval, when a selected date exists. */
+    val selectedInterval: CalendarDateInterval? = null,
+    /** Complete, unfiltered authorized data. Never the locally filtered subset. */
+    val authorizedOccurrences: List<EffectiveOccurrence> = emptyList(),
+    /** The pure local projection over [authorizedOccurrences]. */
+    val projection: CalendarExperienceProjection? = null,
+    /** Facets are derived from the complete authorized set, not filtered rows. */
+    val facets: CalendarFacetOptions = emptyCalendarFacets(),
+    val freshness: CalendarFreshness = CalendarFreshness.STALE,
+    val loading: CalendarLoadingState = CalendarLoadingState(),
+    val offline: CalendarOfflineState = CalendarOfflineState.ONLINE,
+    val error: CalendarExperienceError? = null,
+    val hasCompleteCache: Boolean = false,
+    /** The cache key that supplied [authorizedOccurrences], if any. */
+    val cachedWindow: CalendarCacheWindow? = null,
+    /** Validated persisted controls as decoded from the shared cache store. */
+    val persistedCachePreferences: CalendarCachePreferences? = null,
+    val mutationAvailability: CalendarMutationAvailability = CalendarMutationAvailability(),
 ) {
     val activeFacets: CalendarFilters get() = filters
 
-    fun toPreferences(): CalendarPreferences = CalendarPreferences(view, anchorDate, selectedDate, filters, locale)
+    /** A platform-neutral validated presentation preference view. */
+    val preferences: CalendarPreferences
+        get() = CalendarPreferences(view, anchorDate, selectedDate, filters, locale)
+
+    val validatedPreferences: CalendarPreferences get() = preferences
+    val persistedPreferences: CalendarCachePreferences? get() = persistedCachePreferences
+    val projections: CalendarExperienceProjection? get() = projection
+    val calendarProjection: CalendarExperienceProjection? get() = projection
+    val occurrences: List<EffectiveOccurrence> get() = authorizedOccurrences
+    val authorizedEvents: List<EffectiveOccurrence> get() = authorizedOccurrences
+    val visibleWindow: CalendarDateInterval? get() = visibleInterval
+    val selectedWindow: CalendarDateInterval? get() = selectedInterval
+    val freshnessState: CalendarFreshness get() = freshness
+    val loadingState: CalendarLoadingState get() = loading
+    val offlineState: CalendarOfflineState get() = offline
+    val failure: CalendarExperienceError? get() = error
+    val lastError: CalendarExperienceError? get() = error
+    val canMutate: Boolean get() = mutationAvailability.isAvailable
+    val isLoading: Boolean get() = loading.isLoading
+    val isRefreshing: Boolean get() = loading.isRefreshing
+    val isOffline: Boolean get() = offline != CalendarOfflineState.ONLINE
+    val isUnavailableOffline: Boolean get() = offline == CalendarOfflineState.UNAVAILABLE
+    val hasCachedContent: Boolean get() = hasCompleteCache
+    val data: CalendarExperienceProjection? get() = projection
+    val activeProjection: CalendarExperienceProjection? get() = projection
+    val filteredOccurrences: List<CalendarProjectionOccurrence>
+        get() = projection?.filteredOccurrences.orEmpty()
+    val visibleEvents: List<CalendarProjectedEvent>
+        get() = projection?.visibleEvents.orEmpty()
+
+    fun toPreferences(): CalendarPreferences = preferences
 
     fun toProjectionRequest(occurrences: List<CalendarProjectionOccurrence>): CalendarProjectionRequest =
         CalendarProjectionRequest(
