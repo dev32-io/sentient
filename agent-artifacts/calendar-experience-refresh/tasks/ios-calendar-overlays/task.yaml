@@ -17,10 +17,9 @@ verification:
   timing: task
   methods: []
   taskChecks:
-    - source scripts/env.sh && ./gradlew
-      :shared:mobile-data:assembleMobileDataDebugXCFramework
-    - source scripts/env.sh && xcodegen generate && xcodebuild test -project
+    - source scripts/env.sh && scripts/ios-setup.sh
+    - source scripts/env.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-      Simulator,name=iPhone 16'
+      Simulator,name=iPhone 16,OS=latest'
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
