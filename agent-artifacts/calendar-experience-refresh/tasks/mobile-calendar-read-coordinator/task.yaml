@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-read-coordinator
 title: Implement shared cache-first calendar observation and revalidation
-status: ready
+status: running
 dependsOn:
   - mobile-calendar-store
   - mobile-calendar-projections
@@ -24,3 +24,9 @@ verification:
     - source scripts/env.sh && ./gradlew :android:assembleDebug
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/mobile-calendar-read-coordinator
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-read-coordinator
+  baseCommit: 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
+  lastRunId: 6cf7d992-7563-4b62-9022-fc28b6fd0394
