@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: web-calendar-assembly
+title: Assemble and verify the complete web calendar workspace
+status: draft
+dependsOn:
+  - web-calendar-projections
+  - web-calendar-data-controller
+  - web-calendar-canvas
+  - web-calendar-shell-filters
+  - web-calendar-preview
+  - web-calendar-editor
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: web-calendar-assembly
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun run --filter @sentient/webui test:unit
+    - source scripts/env.sh && bun run --filter @sentient/webui typecheck
+    - source scripts/env.sh && bun run --filter @sentient/webui build
+    - source scripts/env.sh && bun qa/web/stack-integrity.ts
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
