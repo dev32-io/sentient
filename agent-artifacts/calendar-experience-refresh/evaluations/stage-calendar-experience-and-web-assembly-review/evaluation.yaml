@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-experience-and-web-assembly
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -30,8 +30,8 @@ criteria:
     cleanup, semantic/keyboard/focus evidence, and documented deviations without
     adding a separate browser-runner project or mandatory screen-reader gate
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 86f5879e-0009-41ed-af3b-4eba651d42c5
   reviewedCommit: a72f47256f8f96faf23bef415258bba52dfa72cb
@@ -52,6 +52,7 @@ loop:
     timezone identity in cache/revalidation identity, or invalidate/reload when
     it changes, with interval-regression coverage. Run all stage checks and
     return for automatic re-review.
+  fixerAgentId: 71a2fdd2-8048-46f5-8e41-fe2c19fdc64c
 findings:
   - id: CAL-REVIEW-001
     severity: critical
