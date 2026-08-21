@@ -25,11 +25,31 @@ criteria:
     and shared state supports sentient-design/design/mobile/calendar.html plus
     sentient-design/components/mobile/sentient-mobile.js without native policy
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 33ff9db1-089a-44a0-a985-efec5ab101c1
   reviewedCommit: 65ce4fe4a9de11bcffbf3a117f2176ba4b33f1a5
+  managerPrompt: "Resolve all eight findings; neither critical risk is acceptable.
+    A forbidden/auth-expired refresh must immediately become non-disclosing:
+    clear the visible private projection, invalidate work, and purge
+    inaccessible cached content according to the session policy. Fence every
+    mutation, conflict reread, recovery, and completion with the captured
+    namespace/session generation so stale continuations cannot mutate state or
+    the successor cache. Route mutation authentication failures through full
+    session invalidation—stop work, purge safely outside cancelled work, and
+    close/disable the expired experience boundary. For this_occurrence updates,
+    omit recurrence from the wire payload entirely rather than sending null or a
+    value. Accept and preserve valid RFC3339 offset timestamps whose seconds
+    component is omitted. Make conflict state non-submittable until an
+    authoritative reread succeeds and the user explicitly reviews a draft
+    rebased onto the returned revision; stale expectedRevision must never be
+    reused blindly. Synchronize in-flight/coalescing/prefetch bookkeeping so
+    fast completions cannot escape registration, duplicate requests, or defeat
+    cancellation. Add deterministic tests for every wire shape, forbidden/auth
+    purge, namespace-switch continuation, conflict/reread/revision, timestamp
+    form, and coalescing race. Run all stage checks and return for automatic
+    re-review."
 findings:
   - id: CAL-POL-001
     severity: critical
