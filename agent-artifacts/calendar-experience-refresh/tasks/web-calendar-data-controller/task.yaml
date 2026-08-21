@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-data-controller
 title: Implement complete web calendar loading and preference state
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -26,3 +26,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-data-controller
   baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
   lastRunId: 833b6b94-ba06-42bc-87e0-af60510b25e2
+  completedCommit: 723d4f50b2df6447a501b5766f451706ea42b681
