@@ -25,10 +25,13 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - All-day dates remain fixed while timed events render in device locale and preserve their persisted event-timezone recurrence anchor.
 - Accessibility includes semantic controls, keyboard and focus handling, screen-reader labels, Dynamic Type or font scaling, minimum touch targets, contrast, and reduced-motion compatibility.
 - On mobile, opening Calendar causes the shared KMP layer to load persisted preferences and cached visible-month data, emit available cache immediately, asynchronously revalidate remotely, and prefetch previous and next months without blocking the visible month.
+- Mobile calendar snapshots and preferences persist in a SQLDelight-backed KMP SQLite database owned by shared/mobile-data. Android and iOS provide only driver/path creation and authenticated lifecycle wiring; they do not implement separate cache or fetch policy.
+- Shared SQLDelight observable queries feed the mobile calendar StateFlow so atomic database updates naturally reach Android collectors and iOS SKIE async-sequence consumers.
 - Mobile retains up to twelve recently viewed months with bounded least-recently-used eviction. Cached months support offline navigation and filtering.
-- Mobile remote success atomically updates protected cache and naturally emits fresh shared state; network failure retains cached events and updates only freshness or offline metadata.
+- Mobile remote success atomically updates the SQLDelight cache only after complete pagination and naturally emits fresh shared state; network failure retains cached events and updates only freshness or offline metadata.
 - An uncached mobile month opened offline has a specific unavailable-offline state. Save and delete actions are unavailable offline with a clear connection-required explanation and no queued mutation.
-- Mobile cache and preferences are isolated by authenticated account and backend and cleared on logout or account/backend replacement.
+- Mobile database rows and preferences are isolated by authenticated account and backend and cleared on logout or account/backend replacement.
+- The mobile SQLite files use OS-protected app-private storage. Application-level SQLCipher encryption and cross-platform database-key management are not requirements of this story.
 - Calendar content, descriptions, facet values, search text, and mutation payloads never enter diagnostics; only sanitized identifiers, types, counts, sizes, freshness, and transitions may be logged.
 
 ## Acceptance Criteria
@@ -38,11 +41,12 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - **AC-003:** Combined reads explicitly request authorized scope all, enforce existing visibility rules, and aggregate all required pages deterministically.
 - **AC-004:** Create, edit, and delete use the current calendar V2 identity, scope, recurrence, revision, and mutation contracts and remain correct after refresh.
 - **AC-005:** Filter and view preferences survive reopening without crossing authenticated account or backend boundaries.
-- **AC-006:** Android and iOS render shared observable KMP state rather than separately coordinating cache and network calls.
-- **AC-007:** With a delayed remote response, mobile displays cached data first and later updates from the same shared stream without a blank loading replacement.
-- **AC-008:** With network unavailable, mobile supports cached navigation and filtering, clearly distinguishes uncached months, and never queues or implies a successful mutation.
-- **AC-009:** Logout and account switching make prior calendar events, facet names, counts, and preferences unavailable to the next user.
-- **AC-010:** All temporal, permission, conflict, privacy, and accessibility cases in the approved E2E matrix are user-observable on the real local stack.
+- **AC-006:** Android and iOS render shared observable KMP state rather than separately coordinating database, cache, filtering, network, or prefetch behavior.
+- **AC-007:** The KMP SQLDelight database persistently stores complete month snapshots and preferences, applies migrations, performs atomic replacement, and drives observable mobile state.
+- **AC-008:** With a delayed remote response, mobile displays SQLDelight-cached data first and later updates from the same shared stream without a blank loading replacement.
+- **AC-009:** With network unavailable, mobile supports cached navigation and filtering, clearly distinguishes uncached months, and never queues or implies a successful mutation.
+- **AC-010:** Logout and account switching make prior calendar events, facet names, counts, and preferences unavailable to the next user.
+- **AC-011:** All temporal, permission, conflict, privacy, database-lifecycle, and accessibility cases in the approved E2E matrix are user-observable on the real local stack.
 
 ## Domain Language
 
@@ -51,7 +55,8 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - Month view is the calendar grid; Agenda view is the visible month's chronological date-grouped event list.
 - Facet is one supported filter value: calendar scope, group, tag, or importance. Text search is a separate filter.
 - Persisted preference is account- and backend-scoped local state for view mode, filters, and relevant calendar selection; it is not server-owned event data.
-- Cached month is a protected, unfiltered authorized occurrence snapshot for one month that supports local filtering and offline display.
+- Cached month is a protected, unfiltered authorized occurrence snapshot stored in the shared KMP SQLDelight database for one month, supporting local filtering and offline display.
+- Calendar cache database is the SQLDelight-backed KMP SQLite store owned by shared/mobile-data. Shared code owns its schema, migrations, queries, cache policy, and observable state; native code supplies the platform driver and protected path.
 - Freshness describes whether displayed mobile data is fresh, refreshing, stale, or unavailable offline; loading must not erase valid cached data.
 - Event ID identifies a persisted event or series segment, occurrence ID identifies one expanded row, original start identifies a recurring slot, and revision supports optimistic conflict detection.
 - Mutation scope is this_occurrence, this_and_following, or entire_series and is distinct from calendar scope.
@@ -71,10 +76,10 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - An adult creates a complete timed household recurrence and later edits one occurrence, following occurrences, or the entire series.
 - Two clients edit from the same revision and the stale client reviews authoritative data instead of overwriting it.
 - A child opens the combined calendar without seeing adults-only content and receives a safe denial for a restricted mutation.
-- A returning mobile user sees cached data immediately while delayed remote revalidation updates it in place.
-- An offline mobile user navigates cached adjacent months, changes local filters, and encounters a clear unavailable state for an uncached month.
+- A returning mobile user sees a SQLDelight-cached month immediately while delayed remote revalidation atomically updates the shared database and observable UI state.
+- An offline mobile user navigates cached adjacent months, changes locally persisted filters, and encounters a clear unavailable state for an uncached month.
 - Connectivity returns while stale mobile data is visible; the shared layer revalidates and prefetches adjacent months without native fetch orchestration.
-- User A logs out after caching private events and user B cannot see any of A's events, facets, counts, or preferences.
+- User A logs out after caching private events and user B cannot see any of A's database rows, facets, counts, or preferences.
 - A user in another device timezone views and edits all-day and recurring timed events without moving the all-day date or losing the recurrence wall-clock anchor.
 
 ## Edge Cases
@@ -87,10 +92,11 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - A this_and_following mutation returns a successor event ID.
 - A stale expected revision conflicts after another client writes.
 - A child cannot observe an adults-only effective occurrence override.
-- Remote refresh fails after cached data has rendered.
+- Remote refresh fails after SQLDelight-cached data has rendered.
 - An offline user opens a month outside the bounded cache.
-- The twelve-month cache reaches capacity and evicts the least recently viewed month.
-- Logout, account replacement, backend change, or auth expiry occurs while cached content exists.
+- The twelve-month SQLDelight cache reaches capacity and evicts the least recently viewed month.
+- A database migration, decode, or atomic replacement fails without exposing partial content.
+- Logout, account replacement, backend change, or auth expiry occurs while cached database content exists.
 - A timed recurrence crosses daylight-saving time while an all-day event is viewed from another timezone.
 
 ## Out of Scope
@@ -102,4 +108,5 @@ Defines the user-visible web, Android, and iOS family calendar refresh over the 
 - Reminder delivery, scheduler records, notification implementation, or presenting Routines & reminders as a real source
 - Group or tag catalog management beyond metadata attached to events
 - Google Calendar synchronization
+- Application-level SQLCipher encryption and cross-platform database-key management
 - Full RFC 5545 recurrence beyond the existing supported contract
