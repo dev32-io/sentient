@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 48
+  revision: 49
 artifacts:
   - id: intent
     type: intent
@@ -197,6 +197,16 @@ executionStages:
     tasks:
       - android-calendar-viewmodel
       - ios-calendar-viewmodel
+    checks:
+      - source scripts/env.sh && git diff --check
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Temporary remaining topological sequence while later stages are
+          decomposed
+  - id: native-calendar-components
+    tasks:
       - android-calendar-surface
       - android-calendar-overlays
       - ios-calendar-surface
@@ -209,5 +219,5 @@ executionStages:
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
+        - Temporary remaining topological sequence while final assembly stage is
           decomposed
