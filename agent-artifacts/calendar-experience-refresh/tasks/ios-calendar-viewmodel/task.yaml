@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-viewmodel
 title: Make iOS CalendarViewModel a thin SKIE state adapter
-status: contribution_complete
+status: merged
 dependsOn:
   - ios-calendar-database-session
 execution:
@@ -30,3 +30,4 @@ runtime:
   baseCommit: 341387eef19ca4521c71ba16f8f2bd7c7fd54c02
   lastRunId: 8d221390-03ae-4ea6-839f-5f9bea717c92
   completedCommit: eb7671857a3dc2f17243611ece7928273e25110c
+  mergedCommit: 3d28676fe3338a3e3e7fc4234b3afe25dd2d5432
