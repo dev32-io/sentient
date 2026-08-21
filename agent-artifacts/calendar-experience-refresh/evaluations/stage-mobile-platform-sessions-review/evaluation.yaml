@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-platform-sessions
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 3
+attempt: 4
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -26,11 +26,11 @@ criteria:
   - No platform types in commonMain, native cache/policy duplication, SQLCipher,
     external storage, content-bearing paths, or diagnostics
 loop:
-  state: rereviewing
   iteration: 3
   maxIterations: 6
+  state: passed
   reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
-  reviewedCommit: a49b15dd2352d652132419c73b936d2f944368c7
+  reviewedCommit: 1d0c5114835889fd126b5599c6fe85b29fe8fc96
   managerPrompt: "Keep the accepted lifecycle-gate implementation and close the
     remaining proof gap with distinct platform-path tests, not renamed copies of
     one generic gate test. Add deterministic pre-publish barriers to the actual
@@ -48,19 +48,16 @@ loop:
 findings:
   - id: MPS-005
     severity: high
-    status: open
-    criterion: Manager-required deterministic platform barrier matrix for logout,
-      auth expiry, account switch, backend switch, and successor creation
-    location: shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/di/CalendarLifecycleGateTest.kt:18-86;
-      android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt:103-131;
-      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt:89-120
-    summary: The implementation race is fenced, but the required platform scenario
-      matrix is not present. Five differently named common tests execute the
-      same generic close operation; platform tests cover direct close only and
-      do not prove actual auth-expiry/account/backend paths or real successor
-      runtime exposure.
-    blocking: true
+    status: resolved
+    criterion: Manager-required deterministic platform-path publication-race matrix
+    location: android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt:112-328;
+      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt:93-265
+    summary: "Resolved: both platform suites independently exercise all five
+      required lifecycle scenarios with deterministic barriers and real
+      temporary SQLite drivers, proving close/purge, stale-publication
+      rejection, slot integrity, and successor-only exposure."
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-mobile-platform-sessions-review/manifest.yaml
