@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-preview
 title: Implement the accessible viewport-bound web event preview
-status: running
+status: contribution_complete
 dependsOn:
   - web-calendar-projections
 execution:
@@ -28,3 +28,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-preview
   baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
   lastRunId: f81c59a6-dc3e-45d8-bcbc-b80b10010fbb
+  completedCommit: 1899da65e9881dc184b71b7c3f39008b159b9897
