@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-retention-offline
 title: Add adjacent prefetch, bounded retention, and offline recovery
-status: ready
+status: running
 dependsOn:
   - mobile-calendar-read-coordinator
 execution:
@@ -22,3 +22,9 @@ verification:
       :shared:mobile-data:assembleMobileDataDebugXCFramework
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: a6012cbefedeae817a61bc83cd90d9658ccc8e95
+  lastRunId: 24b7ce0e-c845-442e-b5c1-fa3e48872965
