@@ -164,6 +164,20 @@ object CalendarProjection {
     }
 }
 
+/**
+ * Return the exact half-open interval rendered by the selected view.  The
+ * coordinator uses the same calculation as the pure projection so cache and
+ * network windows cannot drift from what native clients display.
+ */
+fun calendarVisibleInterval(
+    view: CalendarView,
+    anchorDate: String,
+    locale: CalendarLocale = CalendarLocale(),
+): CalendarDateInterval {
+    require(isCalendarDate(anchorDate)) { "Invalid anchor date: $anchorDate" }
+    return intervalFor(view, anchorDate, locale)
+}
+
 /** Direct adapter for the authoritative SDK effective-occurrence list. */
 fun projectCalendar(
     occurrences: Iterable<EffectiveOccurrence>,
