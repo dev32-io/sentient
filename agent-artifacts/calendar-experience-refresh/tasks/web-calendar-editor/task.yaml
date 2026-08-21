@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-editor
 title: Implement complete web calendar create, edit, and delete dialogs
-status: blocked
+status: ready
 dependsOn:
   - web-calendar-data-controller
 execution:
