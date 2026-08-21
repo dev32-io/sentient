@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-shell-filters
 title: Implement the responsive web calendar shell and filters
-status: ready
+status: running
 dependsOn:
   - web-calendar-data-controller
 execution:
@@ -22,3 +22,9 @@ verification:
     - source scripts/env.sh && bun run --filter @sentient/webui build
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/web-calendar-shell-filters
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-shell-filters
+  baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
+  lastRunId: 5694714d-029b-472c-b59f-67781643c0cd
