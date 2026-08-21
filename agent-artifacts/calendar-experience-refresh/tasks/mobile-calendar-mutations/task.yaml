@@ -4,6 +4,7 @@ title: Implement shared online calendar mutation intents and recovery
 status: draft
 dependsOn:
   - mobile-calendar-read-coordinator
+  - mobile-calendar-retention-offline
 execution:
   resourceClaims: []
   assignment:

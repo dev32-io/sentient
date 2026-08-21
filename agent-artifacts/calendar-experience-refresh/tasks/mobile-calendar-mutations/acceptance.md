@@ -6,8 +6,8 @@
 
 ## Acceptance
 
-- Every mutation carries exact V2 identity, scope, recurrence, originalStart, and expectedRevision data.
-- Offline actions cannot imply success or create durable mutation records.
+- Every mutation carries exact V2 identity, scope, recurrence, raw originalStart, and expectedRevision data.
+- Offline actions consume the finalized shared offline state and cannot imply success or create durable mutation records.
 - Conflicts preserve intent and require reread/review; permissions remain non-disclosing.
 - Success refreshes affected intervals without erasing valid cached content.
 
