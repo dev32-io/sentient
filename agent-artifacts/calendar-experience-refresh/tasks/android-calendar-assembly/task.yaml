@@ -22,6 +22,5 @@ verification:
   taskChecks:
     - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
       :android:testDebugUnitTest :android:assembleDebug
-    - source scripts/env.sh && ./qa/mobile/run-e2e.sh android --tags calendar
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.

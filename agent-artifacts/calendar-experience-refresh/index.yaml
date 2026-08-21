@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 65
+  revision: 66
 artifacts:
   - id: intent
     type: intent
