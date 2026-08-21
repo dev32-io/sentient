@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 47
+  revision: 48
 artifacts:
   - id: intent
     type: intent
@@ -176,13 +176,23 @@ executionStages:
       - android-calendar-database-session
       - ios-calendar-database-session
     checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+        :android:testDebugUnitTest :android:assembleDebug
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
+        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
+        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
       - source scripts/env.sh && git diff --check
-    mode: sequential
+    mode: concurrent
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
-          decomposed
+        - Android app-private AndroidSqliteDriver and iOS Application Support
+          NativeSqliteDriver/Data Protection
+        - Authenticated-session lifetime, cancellation-before-purge/switch,
+          close, and account/backend isolation
+        - No platform types in commonMain and no native cache/policy duplication
+        - No SQLCipher, external storage, content-bearing paths, or diagnostics
   - id: mobile-viewmodel-adapters
     tasks:
       - android-calendar-viewmodel
