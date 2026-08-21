@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 18
+  revision: 19
 artifacts:
   - id: intent
     type: intent
@@ -42,6 +42,8 @@ tasks:
     path: tasks/web-calendar-canvas/task.yaml
   - id: web-calendar-shell-filters
     path: tasks/web-calendar-shell-filters/task.yaml
+  - id: web-calendar-preview
+    path: tasks/web-calendar-preview/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
@@ -69,3 +71,6 @@ executionStages:
   - id: web-calendar-shell-filters
     tasks:
       - web-calendar-shell-filters
+  - id: web-calendar-preview
+    tasks:
+      - web-calendar-preview
