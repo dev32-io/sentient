@@ -44,6 +44,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
             // CalendarDatabase exposes SqlDriver through the common seam, so runtime is
             // API-visible. Coroutine query helpers remain an implementation dependency
             // until CalendarCacheStore defines its own domain-facing flow types.
