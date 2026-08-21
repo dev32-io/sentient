@@ -28,11 +28,19 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
   reviewedCommit: 040e1ddbdb05fa626a61f7966e2196f691114e9d
+  managerPrompt: Resolve all four blocking findings. Restore calendar-view.tsx and
+    its existing test to the foundation-stage boundary unless an approved task
+    explicitly requires otherwise; implement Month date selection as a
+    transition to focused Day; preserve and locally apply supported alias-shaped
+    scope, group, and text filters rather than discarding them; and require a
+    normalized backend identity so preference namespaces cannot collapse across
+    distinct backends. Add or update focused regression tests for each
+    correction, run the stage checks, and return for automatic re-review.
 findings:
   - id: CAL-FOUND-001
     severity: high
