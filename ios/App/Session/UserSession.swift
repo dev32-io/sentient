@@ -157,14 +157,28 @@ final class UserSession: ObservableObject {
 
     // ── Teardown ────────────────────────────────────────────────────────────────
 
-    /// Logout teardown: disconnect (clearSession=true) + cancel the session scope.
-    func shutdown() {
+    /// Compatibility teardown used when the authenticated host is released.
+    func shutdown() { closeCalendarBoundary(using: inner.close) }
+
+    /// Explicit root/settings logout production entry point.
+    func explicitLogout() { closeCalendarBoundary(using: inner.explicitLogout) }
+
+    /// Terminal authentication failure production entry point.
+    func authenticationExpired() { closeCalendarBoundary(using: inner.authenticationExpired) }
+
+    /// Account replacement production entry point before a successor host is created.
+    func accountReplaced() { closeCalendarBoundary(using: inner.accountReplaced) }
+
+    /// Backend replacement production entry point before a successor host is created.
+    func backendReplaced() { closeCalendarBoundary(using: inner.backendReplaced) }
+
+    private func closeCalendarBoundary(using close: () -> Void) {
         log.info("shutdown")
         calendarLifecycleTask?.cancel()
         calendarLifecycleTask = nil
         networkMonitor?.cancel()
         networkMonitor = nil
-        inner.close()
+        close()
         calendarAvailability = inner.calendarAvailability
         calendarExperience = inner.calendarExperience
         calendarNamespace = inner.calendarNamespace

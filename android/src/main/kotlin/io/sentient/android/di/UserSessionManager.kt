@@ -41,6 +41,7 @@ import io.sentient.android.update.buildUpdateDeps
 import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCacheStore
 import io.sentient.mobiledata.cache.createCalendarCacheStore
+import io.sentient.mobiledata.cache.db.CalendarDatabaseDriverFactory
 import io.sentient.mobiledata.cache.db.CalendarDatabaseHandle
 import io.sentient.mobiledata.cache.db.openCalendarDatabase
 import io.sentient.mobiledata.calendar.CalendarExperience
@@ -90,6 +91,9 @@ class UserSessionManager(
     private val authenticatedUserStore: AuthenticatedUserStore? = null,
     /** Deterministic lifecycle seam used by platform boundary tests; production leaves it empty. */
     private val beforeCalendarPublish: (suspend (CalendarExperience) -> Unit)? = null,
+    /** Production uses app-private storage; tests may supply an isolated app-private database. */
+    private val calendarDriverFactory: CalendarDatabaseDriverFactory =
+        AndroidCalendarDatabaseDriverFactory(appContext),
 ) {
     private val log = createLogger("android", "user-session")
 
@@ -271,6 +275,9 @@ class UserSessionManager(
     /** Shared experience for the current authenticated lifetime; null means typed unavailable. */
     fun calendarExperience(): CalendarExperience? = calendarBoundary?.experience
 
+    /** Terminal authentication failure follows the host's authenticated-session teardown path. */
+    fun onAuthenticationExpired() = performLocalLogout()
+
     /** Backend replacement is a logout boundary even when the setup screen owns the route. */
     fun onBackendReplaced() = performLocalLogout()
 
@@ -396,7 +403,7 @@ class UserSessionManager(
         var store: CalendarCacheStore? = null
         var transferred = false
         try {
-            val openedHandle = openCalendarDatabase(AndroidCalendarDatabaseDriverFactory(appContext))
+            val openedHandle = openCalendarDatabase(calendarDriverFactory)
             handle = openedHandle
             val openedStore = createCalendarCacheStore(
                 handle = openedHandle,

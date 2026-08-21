@@ -228,7 +228,7 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
             },
             onOpenSettings = { nav.navigate(Routes.SETTINGS) },
             onOpenCalendar = { navigateToCalendar { route -> nav.navigate(route) } },
-            onAuthExpired = { logoutTo(nav, userSession) },
+            onAuthExpired = { authenticationExpiredTo(nav, userSession) },
         )
     }
 }
@@ -236,5 +236,15 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
 /** Tear down the SDK session and route to login (clears the whole back stack). */
 internal fun logoutTo(nav: NavHostController, userSession: UserSessionManager) {
     userSession.performLocalLogout()
+    navigateToLogin(nav)
+}
+
+/** Authentication expiry has its own production lifecycle entry point. */
+internal fun authenticationExpiredTo(nav: NavHostController, userSession: UserSessionManager) {
+    userSession.onAuthenticationExpired()
+    navigateToLogin(nav)
+}
+
+private fun navigateToLogin(nav: NavHostController) {
     nav.navigate(Routes.LOGIN) { popUpTo(nav.graph.id) { inclusive = true } }
 }

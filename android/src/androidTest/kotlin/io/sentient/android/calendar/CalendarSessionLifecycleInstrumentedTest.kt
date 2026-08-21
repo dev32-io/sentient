@@ -9,8 +9,12 @@ import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.sentient.android.backend.BackendConfig
+import io.sentient.android.backend.BackendConfigHolder
+import io.sentient.android.backend.ConnectionSecurity
 import io.sentient.android.di.UserSessionManager
 import io.sentient.mobiledata.cache.CalendarCacheNamespace
+import io.sentient.mobiledata.cache.CalendarCachePreferences
 import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheWindow
 import io.sentient.mobiledata.cache.createCalendarCacheStore
@@ -37,9 +41,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -52,10 +59,12 @@ import kotlin.test.assertTrue
 class CalendarSessionLifecycleInstrumentedTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val databaseName = "calendar-test-${System.nanoTime()}.db"
+    private val scenarioDatabases = CopyOnWriteArrayList<String>()
 
     @After
     fun cleanup() {
         context.deleteDatabase(databaseName)
+        scenarioDatabases.forEach(context::deleteDatabase)
     }
 
     @Test
@@ -101,34 +110,47 @@ class CalendarSessionLifecycleInstrumentedTest {
     }
 
     @Test
-    fun sessionClose_at_publish_barrier_closes_late_unpublished_experience() {
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        var lateExperience: CalendarExperience? = null
-        val manager = UserSessionManager(
-            appContext = context,
-            beforeCalendarPublish = { experience ->
-                lateExperience = experience
-                entered.complete(Unit)
-                release.await()
-            },
-        )
-        try {
-            manager.component("barrier-user")
-            runBlocking {
-                withTimeout(2_000L) { entered.await() }
-                manager.shutdown()
-                release.complete(Unit)
-                withTimeout(2_000L) { manager.awaitCalendarLifecycle() }
-            }
-            assertNull(manager.calendarExperience())
-            assertTrue(lateExperience?.isClosed == true)
-            assertIs<CalendarSessionState.Unauthenticated>(manager.calendarSessionState.value)
-        } finally {
-            release.complete(Unit)
-            manager.shutdown()
+    fun explicitLogout_at_publish_barrier_rejects_predecessor_and_exposes_successor() =
+        exerciseManagerPublishRace("explicit-logout") { manager, successorUser ->
+            manager.performLocalLogout()
+            manager.beginAuthenticatedSession(successorUser)
+            manager.component()
         }
-    }
+
+    @Test
+    fun authenticationExpiry_at_publish_barrier_rejects_predecessor_and_exposes_successor() =
+        exerciseManagerPublishRace("auth-expiry") { manager, successorUser ->
+            manager.onAuthenticationExpired()
+            manager.beginAuthenticatedSession(successorUser)
+            manager.component()
+        }
+
+    @Test
+    fun accountReplacement_at_publish_barrier_rejects_predecessor_and_exposes_new_account() =
+        exerciseManagerPublishRace("account-replacement") { manager, successorUser ->
+            // component(explicitUserId) is the production account-replacement entry.
+            manager.component(successorUser)
+        }
+
+    @Test
+    fun backendReplacement_at_publish_barrier_rejects_predecessor_and_exposes_new_backend() =
+        exerciseManagerPublishRace(
+            scenario = "backend-replacement",
+            successorBackend = BACKEND_B,
+        ) { manager, successorUser ->
+            BackendConfigHolder.store.save(BACKEND_B)
+            manager.onBackendReplaced()
+            manager.beginAuthenticatedSession(successorUser)
+            manager.component()
+        }
+
+    @Test
+    fun successorCreation_after_logout_cannot_inherit_paused_predecessor() =
+        exerciseManagerPublishRace("successor-creation") { manager, successorUser ->
+            manager.shutdown()
+            manager.beginAuthenticatedSession(successorUser)
+            manager.component()
+        }
 
     @Test
     fun sessionScopedExperience_survives_route_reads_and_closes_before_successor() {
@@ -207,6 +229,100 @@ class CalendarSessionLifecycleInstrumentedTest {
         }
     }
 
+    private fun exerciseManagerPublishRace(
+        scenario: String,
+        successorBackend: BackendConfig = BACKEND_A,
+        replace: (UserSessionManager, String) -> Unit,
+    ) = runBlocking {
+        BackendConfigHolder.store.save(BACKEND_A)
+        val database = "calendar-$scenario-${System.nanoTime()}.db"
+        scenarioDatabases += database
+        val driverFactory = AndroidCalendarDatabaseDriverFactory(context, database)
+        val predecessorUser = "predecessor-$scenario"
+        val successorUser = "successor-$scenario"
+        val predecessorNamespace = calendarCacheNamespace(predecessorUser, BACKEND_A.toGatewayWsUrl())
+        val successorNamespace = calendarCacheNamespace(successorUser, successorBackend.toGatewayWsUrl())
+        val seed = createCalendarCacheStore(
+            openCalendarDatabase(driverFactory),
+            predecessorNamespace,
+            Dispatchers.IO,
+        )
+        assertIs<CalendarCacheResult.Success<Unit>>(
+            seed.writePreferences(CalendarCachePreferences(anchorDate = "2026-06-15")),
+        )
+        seed.close()
+
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val initialized = AtomicInteger(0)
+        val builtExperiences = CopyOnWriteArrayList<CalendarExperience>()
+        val availableNamespaces = CopyOnWriteArrayList<CalendarCacheNamespace>()
+        val manager = UserSessionManager(
+            appContext = context,
+            beforeCalendarPublish = { experience ->
+                builtExperiences += experience
+                if (initialized.incrementAndGet() == 1) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+            },
+            calendarDriverFactory = driverFactory,
+        )
+        val stateScope = CoroutineScope(Job() + Dispatchers.Default)
+        val stateCollector = stateScope.launch {
+            manager.calendarSessionState.collect { state ->
+                if (state is CalendarSessionState.Available) availableNamespaces += state.namespace
+            }
+        }
+        try {
+            manager.component(predecessorUser)
+            withTimeout(2_000L) { entered.await() }
+            assertNull(manager.calendarExperience())
+
+            replace(manager, successorUser)
+            release.complete(Unit)
+            withTimeout(4_000L) { manager.awaitCalendarLifecycle() }
+
+            val predecessorExperience = builtExperiences.first()
+            val successorExperience = manager.calendarExperience()
+            val state = assertIs<CalendarSessionState.Available>(manager.calendarSessionState.value)
+            assertTrue(predecessorExperience.isClosed)
+            assertTrue(successorExperience != null && !successorExperience.isClosed)
+            assertTrue(successorExperience !== predecessorExperience)
+            assertSame(successorExperience, manager.settingsComponent().calendarExperience)
+            assertEquals(successorNamespace, state.namespace)
+            withTimeout(1_000L) {
+                while (!availableNamespaces.contains(successorNamespace)) yield()
+            }
+            assertTrue(availableNamespaces.none { it == predecessorNamespace })
+            assertTrue(availableNamespaces.all { it == successorNamespace })
+        } finally {
+            release.complete(Unit)
+            manager.shutdown()
+            withTimeout(4_000L) { manager.awaitCalendarLifecycle() }
+            stateCollector.cancelAndJoin()
+        }
+
+        // The losing initializer owned a real AndroidSqliteDriver and purged its
+        // seeded namespace before closing. Reopen independently to prove no row
+        // or preference survived for a successor to inherit.
+        val reopened = openCalendarDatabase(driverFactory)
+        val queries = CalendarDatabase(reopened.driver).calendarDatabaseQueries
+        assertTrue(
+            queries.allSnapshotsForNamespace(
+                predecessorNamespace.accountId,
+                predecessorNamespace.backendId,
+            ).executeAsList().isEmpty(),
+        )
+        assertTrue(
+            queries.preferencesForNamespace(
+                predecessorNamespace.accountId,
+                predecessorNamespace.backendId,
+            ).executeAsList().isEmpty(),
+        )
+        reopened.close()
+    }
+
     private fun legacySchema(): SqlSchema<QueryResult.Value<Unit>> = object : SqlSchema<QueryResult.Value<Unit>> {
         override val version: Long = 1L
 
@@ -266,5 +382,10 @@ class CalendarSessionLifecycleInstrumentedTest {
             eventId: String,
             command: CalendarMutationCommand,
         ): SentientResult<CalendarMutationResult> = failure()
+    }
+
+    private companion object {
+        val BACKEND_A = BackendConfig("calendar-a.invalid", 8443, ConnectionSecurity.TLS_VALID)
+        val BACKEND_B = BackendConfig("calendar-b.invalid", 9443, ConnectionSecurity.TLS_VALID)
     }
 }

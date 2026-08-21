@@ -6,9 +6,11 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.native.NativeSqliteDriver
 import io.sentient.mobiledata.cache.db.CalendarDatabase
+import io.sentient.mobiledata.cache.db.CalendarDatabaseDriverFactory
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSThread
+import platform.Foundation.NSTemporaryDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -31,6 +33,8 @@ import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheWindow
 import io.sentient.mobiledata.cache.createCalendarCacheStore
 import kotlin.test.assertNull
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalForeignApi::class)
@@ -87,35 +91,27 @@ class IosCalendarDatabaseFactoryTest {
     }
 
     @Test
-    fun `session close at publish barrier closes late unpublished experience`() = runBlocking(Dispatchers.Default) {
-        val entered = CompletableDeferred<Unit>()
-        val release = CompletableDeferred<Unit>()
-        var lateExperience: CalendarExperience? = null
-        val session = IosUserSession(
-            gatewayWsUrl = "ws://localhost/api/v1/ws",
-            allowSelfSignedDevHost = true,
-            authenticatedUserId = "barrier-user",
-            capabilities = emptyList(),
-            devFaultsEnabled = false,
-            onLoggedOut = {},
-            beforeCalendarPublish = { experience ->
-                lateExperience = experience
-                entered.complete(Unit)
-                release.await()
-            },
-        )
-        try {
-            withTimeout(1_000L) { entered.await() }
-            session.close()
-            release.complete(Unit)
-            withTimeout(2_000L) { session.awaitCalendarLifecycle() }
-            assertNull(session.calendarExperience)
-            assertTrue(lateExperience?.isClosed == true)
-        } finally {
-            release.complete(Unit)
-            session.close()
-        }
-    }
+    fun `explicit logout at publish barrier rejects predecessor and exposes successor`() =
+        exerciseSessionPublishRace("explicit-logout") { it.explicitLogout() }
+
+    @Test
+    fun `authentication expiry at publish barrier rejects predecessor and exposes successor`() =
+        exerciseSessionPublishRace("auth-expiry") { it.authenticationExpired() }
+
+    @Test
+    fun `account replacement at publish barrier rejects predecessor and exposes new account`() =
+        exerciseSessionPublishRace("account-replacement") { it.accountReplaced() }
+
+    @Test
+    fun `backend replacement at publish barrier rejects predecessor and exposes new backend`() =
+        exerciseSessionPublishRace(
+            scenario = "backend-replacement",
+            successorGateway = IOS_GATEWAY_B,
+        ) { it.backendReplaced() }
+
+    @Test
+    fun `successor creation after owner release cannot inherit paused predecessor`() =
+        exerciseSessionPublishRace("successor-creation") { it.close() }
 
     @Test
     fun `session purge switch isolation and stale emission stay bounded off main`() = runBlocking(Dispatchers.Default) {
@@ -161,6 +157,115 @@ class IosCalendarDatabaseFactoryTest {
         }
     }
 
+    private fun exerciseSessionPublishRace(
+        scenario: String,
+        successorGateway: String = IOS_GATEWAY_A,
+        replace: (IosUserSession) -> Unit,
+    ): Unit = runBlocking(Dispatchers.Default) {
+        val fileManager = NSFileManager.defaultManager
+        val basePath = "${NSTemporaryDirectory()}sentient-calendar-$scenario-${kotlin.random.Random.nextLong()}"
+        check(fileManager.createDirectoryAtPath(basePath, true, null, null))
+        val driverFactory = TemporaryNativeCalendarDriverFactory(basePath)
+        val predecessorUser = "predecessor-$scenario"
+        val successorUser = "successor-$scenario"
+        val predecessorNamespace = iosCalendarNamespace(predecessorUser, IOS_GATEWAY_A)
+        val successorNamespace = iosCalendarNamespace(successorUser, successorGateway)
+        val seed = createCalendarCacheStore(
+            io.sentient.mobiledata.cache.db.openCalendarDatabase(driverFactory),
+            predecessorNamespace,
+            Dispatchers.Default,
+        )
+        assertIs<CalendarCacheResult.Success<Unit>>(
+            seed.writePreferences(CalendarCachePreferences(anchorDate = "2026-06-15")),
+        )
+        seed.close()
+
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val predecessorExperience = CompletableDeferred<CalendarExperience>()
+        val predecessor = IosUserSession(
+            gatewayWsUrl = IOS_GATEWAY_A,
+            allowSelfSignedDevHost = false,
+            authenticatedUserId = predecessorUser,
+            beforeCalendarPublish = { experience ->
+                predecessorExperience.complete(experience)
+                entered.complete(Unit)
+                release.await()
+            },
+            calendarDriverFactory = driverFactory,
+        )
+        var successor: IosUserSession? = null
+        try {
+            withTimeout(2_000L) { entered.await() }
+            assertNull(predecessor.calendarExperience)
+
+            replace(predecessor)
+            assertNull(predecessor.calendarExperience)
+            successor = IosUserSession(
+                gatewayWsUrl = successorGateway,
+                allowSelfSignedDevHost = false,
+                authenticatedUserId = successorUser,
+                calendarDriverFactory = driverFactory,
+            )
+            release.complete(Unit)
+            withTimeout(4_000L) { predecessor.awaitCalendarLifecycle() }
+            withTimeout(4_000L) { successor.awaitCalendarLifecycle() }
+
+            val losingExperience = predecessorExperience.await()
+            val successorExperience = successor.calendarExperience
+            assertTrue(losingExperience.isClosed)
+            assertNull(predecessor.calendarExperience)
+            assertNull(predecessor.settings.calendarExperience)
+            assertNull(predecessor.calendarNamespace)
+            assertEquals(IosCalendarUnavailableReason.CLOSED, predecessor.calendarAvailability.unavailableReason)
+            assertTrue(successorExperience != null && !successorExperience.isClosed)
+            assertNotSame(losingExperience, successorExperience)
+            assertSame(successorExperience, successor.settings.calendarExperience)
+            assertEquals(successorNamespace, successor.calendarNamespace)
+        } finally {
+            release.complete(Unit)
+            predecessor.close()
+            successor?.close()
+            withTimeout(4_000L) { predecessor.awaitCalendarLifecycle() }
+            successor?.let { withTimeout(4_000L) { it.awaitCalendarLifecycle() } }
+        }
+
+        val reopened = io.sentient.mobiledata.cache.db.openCalendarDatabase(driverFactory)
+        val queries = CalendarDatabase(reopened.driver).calendarDatabaseQueries
+        assertTrue(
+            queries.allSnapshotsForNamespace(
+                predecessorNamespace.accountId,
+                predecessorNamespace.backendId,
+            ).executeAsList().isEmpty(),
+        )
+        assertTrue(
+            queries.preferencesForNamespace(
+                predecessorNamespace.accountId,
+                predecessorNamespace.backendId,
+            ).executeAsList().isEmpty(),
+        )
+        reopened.close()
+        fileManager.removeItemAtPath(basePath, error = null)
+        Unit
+    }
+
+    private class TemporaryNativeCalendarDriverFactory(
+        private val basePath: String,
+    ) : CalendarDatabaseDriverFactory {
+        override fun create(): SqlDriver = NativeSqliteDriver(
+            schema = CalendarDatabase.Schema,
+            name = "calendar.sqlite",
+            onConfiguration = { configuration ->
+                configuration.copy(
+                    extendedConfig = configuration.extendedConfig.copy(
+                        basePath = basePath,
+                        foreignKeyConstraints = true,
+                    ),
+                )
+            },
+        )
+    }
+
     private fun legacySchema(): SqlSchema<QueryResult.Value<Unit>> = object : SqlSchema<QueryResult.Value<Unit>> {
         override val version: Long = 1L
 
@@ -191,5 +296,10 @@ class IosCalendarDatabaseFactoryTest {
             newVersion: Long,
             vararg callbacks: AfterVersion,
         ): QueryResult.Value<Unit> = QueryResult.Unit
+    }
+
+    private companion object {
+        const val IOS_GATEWAY_A = "wss://calendar-a.invalid:8443/api/v1/ws"
+        const val IOS_GATEWAY_B = "wss://calendar-b.invalid:9443/api/v1/ws"
     }
 }

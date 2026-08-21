@@ -16,6 +16,7 @@ import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheStore
 import io.sentient.mobiledata.cache.createCalendarCacheStore
+import io.sentient.mobiledata.cache.db.CalendarDatabaseDriverFactory
 import io.sentient.mobiledata.cache.db.CalendarDatabaseHandle
 import io.sentient.mobiledata.cache.db.openCalendarDatabase
 import io.sentient.mobiledata.calendar.CalendarExperience
@@ -123,6 +124,8 @@ class IosUserSession(
     onLoggedOut: () -> Unit = {},
     /** Deterministic lifecycle seam used by platform boundary tests; production leaves it empty. */
     private val beforeCalendarPublish: (suspend (CalendarExperience) -> Unit)? = null,
+    /** Production uses protected Application Support; tests may supply an isolated native database. */
+    private val calendarDriverFactory: CalendarDatabaseDriverFactory = IosCalendarDatabaseDriverFactory(),
 ) {
     private val log = createLogger("data", "ios-user-session")
     private val userId = authenticatedUserId.trim()
@@ -256,6 +259,18 @@ class IosUserSession(
         sdk.onForeground()
     }
 
+    /** Explicit settings/root logout entry point. */
+    fun explicitLogout() = close()
+
+    /** Terminal authentication failure entry point. */
+    fun authenticationExpired() = close()
+
+    /** Account replacement invalidates this authenticated owner before successor creation. */
+    fun accountReplaced() = close()
+
+    /** Backend replacement invalidates this authenticated owner before successor creation. */
+    fun backendReplaced() = close()
+
     /**
      * Non-blocking disposal boundary. The purge and NativeSqliteDriver close
      * run on the lifecycle queue's Default executor; MainActor callers only
@@ -331,7 +346,7 @@ class IosUserSession(
             var store: CalendarCacheStore? = null
             var transferred = false
             try {
-                val openedHandle = openCalendarDatabase(IosCalendarDatabaseDriverFactory())
+                val openedHandle = openCalendarDatabase(calendarDriverFactory)
                 handle = openedHandle
                 val openedStore = createCalendarCacheStore(
                     handle = openedHandle,

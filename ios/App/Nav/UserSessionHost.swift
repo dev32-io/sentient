@@ -97,7 +97,8 @@ struct UserSessionHost: View {
                     path.removeAll()
                 },
                 onOpenSettings: { path = [.settings] },
-                onLogout: logout
+                onLogout: logout,
+                onAuthenticationExpired: authenticationExpired
             )
             .id(chatIdentity)
             .navigationDestination(for: Route.self) { route in
@@ -132,7 +133,12 @@ struct UserSessionHost: View {
     /// Logout: tear down the SDK session, then clear the auth gate so RootView
     /// routes back to login (this view leaves the authed branch → @StateObject deinits).
     private func logout() {
-        userSession.shutdown()
+        userSession.explicitLogout()
+        onLogout()
+    }
+
+    private func authenticationExpired() {
+        userSession.authenticationExpired()
         onLogout()
     }
 
