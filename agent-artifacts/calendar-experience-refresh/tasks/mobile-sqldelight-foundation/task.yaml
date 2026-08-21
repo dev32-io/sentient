@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-sqldelight-foundation
 title: Establish the shared SQLDelight calendar database
-status: running
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
@@ -27,3 +27,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-sqldelight-foundation
   baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
   lastRunId: ba1edc2b-e119-458d-afd4-a9b868a3a24e
+  completedCommit: df317bd28fd8c9596d98b9ef098e3dc75e554106
