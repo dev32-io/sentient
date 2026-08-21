@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 74
+  revision: 75
 artifacts:
   - id: intent
     type: intent
@@ -145,23 +145,30 @@ executionStages:
       - web-calendar-assembly
     checks:
       - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+        :android:assembleDebug
       - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
         bun run --filter @sentient/webui typecheck && bun run --filter
         @sentient/webui build
-      - source scripts/env.sh && bun qa/web/stack-integrity.ts
       - source scripts/env.sh && git diff --check
     mode: concurrent
     review:
       tier: medium
       focus:
         - Shared cache-first complete pagination, stale-while-revalidate,
-          coalescing, cancellation, and one coherent StateFlow
-        - Complete web route and V2 mutation integration
-        - Production web versus sentient-design/design/web/calendar.html and
-          sentient-design/components/web/sentient-web.js at all four exact
-          viewports
-        - Web CAL-UX-001..007, 013, and 014 local-stack visual/semantic evidence
-          with documented approved deviations
+          coalescing, cancellation, one coherent StateFlow, source-compatible
+          SettingsComponent/factory exposure, and Android intermediate
+          compilation
+        - Complete web route, authenticated capability projection, Dialog
+          safety, exact V2 mutations, and deterministic local-only disposable
+          fixture/cleanup adapter
+        - Production web is compared by the final E2E agent through Playwright
+          MCP against sentient-design/design/web/calendar.html and
+          sentient-design/components/web/sentient-web.js at exactly 1440x1000,
+          1024x900, 768x900, and 390x844
+        - Web CAL-UX-001..007, 013, and 014 use unique synthetic data,
+          guaranteed cleanup, semantic/keyboard/focus evidence, and documented
+          deviations without adding a separate browser-runner project or
+          mandatory screen-reader gate
   - id: mobile-calendar-policies
     tasks:
       - mobile-calendar-retention-offline
