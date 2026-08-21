@@ -43,6 +43,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
             // SettingsComponent takes a Ktor HttpClient in its public constructor so the
             // connection scope can build the settings REST clients over the same engine the
             // platform configures (generous request timeout for the restart-blocking apply).
