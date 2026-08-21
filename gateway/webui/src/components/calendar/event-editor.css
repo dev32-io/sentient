@@ -1,0 +1,321 @@
+/* Calendar editor uses only the production Dusk tokens. */
+.calendar-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.calendar-editor__field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.calendar-editor__field--wide,
+.calendar-editor__recurrence,
+.calendar-editor__scope,
+.calendar-editor__error {
+  grid-column: 1 / -1;
+}
+
+.calendar-editor__textarea {
+  resize: vertical;
+  min-height: 88px;
+  line-height: var(--line-height-normal);
+}
+
+.calendar-editor__all-day {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elev);
+}
+
+.calendar-editor__check,
+.calendar-editor__weekday {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--color-ink-2);
+}
+
+.calendar-editor__check input,
+.calendar-editor__weekday input,
+.calendar-editor__scope-option input {
+  accent-color: var(--color-accent);
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.calendar-editor__date-grid,
+.calendar-editor__inline-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.calendar-editor__hint {
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.calendar-editor__recurrence {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-bg-elev) 72%, var(--color-paper));
+}
+
+.calendar-editor__input-with-suffix {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.calendar-editor__input-with-suffix .app-dialog__input {
+  min-width: 88px;
+}
+
+.calendar-editor__input-with-suffix > span {
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.calendar-editor__legend {
+  padding: 0;
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.calendar-editor__weekdays {
+  display: grid;
+  gap: var(--space-xs);
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.calendar-editor__weekday-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-xs);
+}
+
+.calendar-editor__weekday {
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-size: var(--font-size-xs);
+}
+
+.calendar-editor__weekday:has(input:checked) {
+  border-color: color-mix(in oklab, var(--color-accent) 65%, var(--color-line));
+  background: var(--color-accent-50);
+  color: var(--color-ink);
+}
+
+.calendar-editor__weekday input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.calendar-editor__scope {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elev);
+}
+
+.calendar-editor__scope-options {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.calendar-editor__scope-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  min-height: 48px;
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-2);
+  cursor: pointer;
+  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
+}
+
+.calendar-editor__scope-option:hover {
+  border-color: var(--color-line);
+  background: var(--color-paper);
+}
+
+.calendar-editor__scope-option:has(input:checked) {
+  border-color: color-mix(in oklab, var(--color-accent) 55%, var(--color-line));
+  background: var(--color-accent-50);
+  color: var(--color-ink);
+}
+
+.calendar-editor__scope-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.calendar-editor__scope-option strong {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.calendar-editor__scope-option small {
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.calendar-editor__error {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-md);
+  border: 1px solid color-mix(in oklab, var(--color-stop) 60%, var(--color-line));
+  border-radius: var(--radius-md);
+  background: color-mix(in oklab, var(--color-stop) 16%, var(--color-bg-elev));
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.calendar-editor__error p {
+  margin: 0;
+}
+
+.calendar-editor__conflict-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+}
+
+.calendar-editor__conflict-actions .app-dialog__btn {
+  min-height: 36px;
+  padding-inline: var(--space-md);
+}
+
+.calendar-editor__footer-layout {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: var(--space-sm);
+}
+
+.calendar-editor__footer-spacer {
+  flex: 1;
+}
+
+.calendar-editor__delete-button {
+  background: transparent;
+  border-color: color-mix(in oklab, var(--color-stop) 70%, var(--color-line));
+  color: var(--color-stop);
+}
+
+.calendar-editor__delete-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--color-stop) 16%, transparent);
+}
+
+.calendar-editor__latest {
+  display: grid;
+  gap: var(--space-xs);
+  grid-column: 1 / -1;
+  padding: var(--space-md);
+  border: 1px solid var(--color-sage);
+  border-radius: var(--radius-md);
+  background: var(--color-sage-soft);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+}
+
+.calendar-editor__latest > span:last-child {
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+}
+
+.calendar-editor__delete-target {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elev);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.calendar-editor__eyebrow {
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 620px) {
+  .calendar-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-editor__date-grid,
+  .calendar-editor__inline-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-editor__all-day {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .calendar-editor__weekday-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .calendar-editor__footer-layout {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .calendar-editor__footer-spacer {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar-editor__scope-option,
+  .calendar-editor__weekday {
+    transition: none;
+  }
+}
