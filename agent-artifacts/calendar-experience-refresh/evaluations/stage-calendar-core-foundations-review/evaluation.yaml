@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-core-foundations
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -28,8 +28,8 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
   reviewedCommit: 040e1ddbdb05fa626a61f7966e2196f691114e9d
@@ -41,6 +41,7 @@ loop:
     normalized backend identity so preference namespaces cannot collapse across
     distinct backends. Add or update focused regression tests for each
     correction, run the stage checks, and return for automatic re-review.
+  fixerAgentId: 8aa9488f-ca5f-460b-8fe0-e7a6b38a9cd5
 findings:
   - id: CAL-FOUND-001
     severity: high
