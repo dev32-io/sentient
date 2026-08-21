@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-core-foundations
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
   - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
@@ -28,11 +28,11 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: passed
   reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
-  reviewedCommit: d0c8e10ecaf7656a794d02a4cc9940339c52fcf3
+  reviewedCommit: 5af403be42a80b9f872f8ee72aa4bbc2a67dadd6
   managerPrompt: "Resolve the two remaining blocking findings. Restore
     gateway/webui/src/components/calendar/calendar-view.tsx and
     calendar-view.test.tsx exactly to the stage's pre-contribution boundary;
@@ -48,47 +48,43 @@ loop:
 findings:
   - id: CAL-FOUND-001
     severity: high
-    status: open
-    criterion: calendar-view.tsx remains untouched/restored until assembly
-    location: "Repair diff 1da5cd24..2ec71787:
-      gateway/webui/src/components/calendar/calendar-view.tsx and
-      calendar-view.test.tsx"
-    summary: Repair did not restore the existing calendar view files to the stage
-      boundary.
-    blocking: true
+    status: resolved
+    criterion: calendar-view.tsx boundary
+    location: gateway/webui/src/components/calendar/calendar-view.tsx and
+      calendar-view.test.tsx
+    summary: Approved shared-helper boundary restored.
+    blocking: false
   - id: CAL-FOUND-002
     severity: high
     status: resolved
-    criterion: Month date selection requests Day
-    location: gateway/webui/src/components/calendar/calendar-projections.ts:285-291;
-      calendar-controller.ts:553-575
-    summary: Month selection transition verified by regression test and probe.
+    criterion: Month-to-Day navigation
+    location: gateway/webui/src/components/calendar/calendar-controller.ts
+    summary: Verified resolved.
     blocking: false
   - id: CAL-FOUND-003
     severity: high
     status: resolved
-    criterion: Supported controller filters apply locally
-    location: gateway/webui/src/components/calendar/calendar-controller.ts:363-382
-    summary: Alias-shaped filters verified preserved and applied.
+    criterion: Alias-shaped filters
+    location: gateway/webui/src/components/calendar/calendar-controller.ts
+    summary: Verified resolved.
     blocking: false
   - id: CAL-FOUND-004
     severity: high
     status: resolved
-    criterion: Account/backend-scoped preference isolation
-    location: gateway/webui/src/components/calendar/calendar-controller.ts:392-396;
-      calendar-preferences.ts:172-201
-    summary: Missing identities fail closed and explicit identities isolate preferences.
+    criterion: Backend preference isolation
+    location: gateway/webui/src/components/calendar/calendar-preferences.ts
+    summary: Verified resolved.
     blocking: false
   - id: CAL-FOUND-005
     severity: high
-    status: open
-    criterion: Raw temporal/editor helper contract; compatibility timeZoneId is not
-      an IANA zone
-    location: gateway/webui/src/components/calendar/calendar-view.tsx:169-180
-    summary: Repair forwards compatibility timeZoneId as eventTimeZoneId and
-      duplicates shared temporal helpers.
-    blocking: true
+    status: resolved
+    criterion: Raw temporal contract
+    location: gateway/webui/src/services/calendar-api.ts and
+      gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: Verified resolved; no synthesized or inferred event timezone remains in
+      the repaired path.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-calendar-core-foundations-review/manifest.yaml

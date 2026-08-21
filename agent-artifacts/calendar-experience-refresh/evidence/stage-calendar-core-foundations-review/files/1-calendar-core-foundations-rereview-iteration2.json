@@ -1,0 +1,15 @@
+{
+  "reviewedCommit": "5af403be42a80b9f872f8ee72aa4bbc2a67dadd6",
+  "repairCommit": "30c85993b7a80393453571b630e8f9b34628beff",
+  "probes": {
+    "rawTemporalPreserved": true,
+    "viewMatchesPriorApprovedBoundary": true,
+    "viewUsesSharedTemporalHelpers": true
+  },
+  "checks": {
+    "mobileDataAllTests": "passed",
+    "webUnitTests": "174 passed",
+    "webTypecheck": "passed",
+    "gitDiffCheck": "passed"
+  }
+}
