@@ -25,31 +25,23 @@ criteria:
     and shared state supports sentient-design/design/mobile/calendar.html plus
     sentient-design/components/mobile/sentient-mobile.js without native policy
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 33ff9db1-089a-44a0-a985-efec5ab101c1
   reviewedCommit: 6278c2fad5ab42e2040ecd5239da015c62d63f85
-  managerPrompt: "Resolve all eight findings; neither critical risk is acceptable.
-    A forbidden/auth-expired refresh must immediately become non-disclosing:
-    clear the visible private projection, invalidate work, and purge
-    inaccessible cached content according to the session policy. Fence every
-    mutation, conflict reread, recovery, and completion with the captured
-    namespace/session generation so stale continuations cannot mutate state or
-    the successor cache. Route mutation authentication failures through full
-    session invalidation—stop work, purge safely outside cancelled work, and
-    close/disable the expired experience boundary. For this_occurrence updates,
-    omit recurrence from the wire payload entirely rather than sending null or a
-    value. Accept and preserve valid RFC3339 offset timestamps whose seconds
-    component is omitted. Make conflict state non-submittable until an
-    authoritative reread succeeds and the user explicitly reviews a draft
-    rebased onto the returned revision; stale expectedRevision must never be
-    reused blindly. Synchronize in-flight/coalescing/prefetch bookkeeping so
-    fast completions cannot escape registration, duplicate requests, or defeat
-    cancellation. Add deterministic tests for every wire shape, forbidden/auth
-    purge, namespace-switch continuation, conflict/reread/revision, timestamp
-    form, and coalescing race. Run all stage checks and return for automatic
-    re-review."
+  managerPrompt: "Resolve the remaining coalescing/cancellation blocker.
+    Cancellation and registry cleanup must be atomic with respect to new request
+    lookup: do not launch asynchronous cleanup that leaves a cancelled Deferred
+    reusable in the in-flight map. Under the same synchronization boundary,
+    mark/remove the exact request-generation entry before cancellation or
+    namespace-transition completion; completion/finally must compare entry
+    identity before removing so an older job cannot erase a newer replacement.
+    Lookup must never join a cancelled, completed-exceptionally,
+    stale-generation, or otherwise unusable entry. Add deterministic
+    interleaving tests for cancel→immediate same-key request, namespace
+    switch→same-key request, old-finally after new registration, and concurrent
+    coalescing. Rerun stage checks and return for re-review."
   fixerAgentId: dfc8fd7d-a5bd-496a-9d25-1f30f3a217e5
 findings:
   - id: CAL-POL-001
