@@ -1,6 +1,6 @@
 schemaVersion: 1
 evaluation: stage-calendar-store-and-web-components-review
-recordedAt: 2026-08-21T07:52:19Z
+recordedAt: 2026-08-21T07:57:31.299Z
 entries:
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
@@ -12,18 +12,20 @@ entries:
     command: source scripts/env.sh && bun run --filter @sentient/webui build
   - result: passed
     command: source scripts/env.sh && git diff --check
-  - result: 16 production entries cover Day/Week/Month/Year at all four required
-      viewports; narrow Month/Week have seven columns, no page or canvas horizontal
-      overflow, compact controls, and minimum 44x44 targets
+  - result: 16 production states complete; all page/canvas overflow checks pass;
+      narrow Month/Week have seven columns, compact controls, and 44x44 minimum
+      targets
     command: python3 generated responsive evidence matrix
-    description: Sanitized responsive evidence summary generated from the exact production capture matrix.
-    path: files/6-calendar-store-web-review-iteration1-evidence.json
-    checksum: sha256:e87158585a940565bcfb9c805df77ec1472eb2634281db01b5ceb6dae2ef20bd
-  - result: 16 labeled Day/Week/Month/Year side-by-side artifacts exist at every required viewport; each places exact reference left and implementation right
-    command: python3 generated labeled visual comparison matrix
-    description: Exact reference and production captures are paired without copying prototype data into production.
-    path: files/visual-comparison.md
+    path: files/6-calendar-store-web-review-iteration2-evidence.json
+    checksum: sha256:52096c16b11d1ad31d64914d580639222cc8f23ad3ba1c2bffba986296ba07cd
+  - result: 16 labeled Day/Week/Month/Year side-by-side artifacts exist at every
+      required viewport
+    command: find .../files -name 'comparison-*.png'
+    path: files/7-visual-comparison.md
     checksum: sha256:5724755b7c44b1f661ee74191c1b34a4c496851fb652b509c482c810a520148d
-  - result: CalendarWorkspace normalizes onDateChange and onAnchorDateChange into all canvas date/month fallback aliases; focused callback-routing tests cover anchor-only and compatibility aliases
-    command: bun run --filter @sentient/webui test:unit -- src/components/calendar/calendar-shell.test.tsx
-    path: gateway/webui/src/components/calendar/calendar-shell.test.tsx
+  - result: focused callback-routing tests pass, including anchor-only and
+      compatibility aliases
+    command: bun run --filter @sentient/webui test:unit --
+      src/components/calendar/calendar-shell.test.tsx
+    path: files/8-calendar-shell.test.tsx
+    checksum: sha256:33b2fa40c5830980cdbfdac93896086a4969ef963f291fbd9978b5922883bf5c

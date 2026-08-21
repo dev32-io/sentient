@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-store-and-web-components
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
   - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
@@ -28,11 +28,11 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: passed
   reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
-  reviewedCommit: f0ec34fd414d59167f15056a6f1d05f5ef53dc37
+  reviewedCommit: f41d4a96035b28b6982aacc675923513f36eaebe
   managerPrompt: Resolve both remaining blockers. Produce side-by-side
     exact-reference versus implementation evidence for Day, Week, Month, and
     Year at every required viewport (1440x1000, 1024x900, 768x900, 390x844),
@@ -51,29 +51,29 @@ findings:
     criterion: Atomic observable SQLDelight store
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/cache/CalendarCacheStore.kt:607-747
     summary: Single-query metadata/occurrence decoding and deterministic concurrency
-      coverage close the finding.
+      coverage remain intact.
     blocking: false
   - id: CAL-WEB-SLOT-001
     severity: high
     status: resolved
     criterion: Typed CalendarWorkspace canvas slot
     location: gateway/webui/src/components/calendar/calendar-canvas-types.ts:41-60;
-      calendar-shell.tsx:161-195,894-982
-    summary: Shared slot contract now carries projection, state, and callbacks.
+      calendar-shell.tsx:894-1104
+    summary: Shared slot contract remains unified.
     blocking: false
   - id: CAL-WEB-TARGET-001
     severity: high
     status: resolved
     criterion: Accessibility minimum effective targets
     location: gateway/webui/src/components/calendar/calendar-canvas.css:668-830
-    summary: Required narrow sizes measure 44x44 targets without horizontal overflow.
+    summary: Required narrow targets remain 44x44 without overflow.
     blocking: false
   - id: CAL-WEB-SCOPE-001
     severity: high
     status: resolved
     criterion: Complete V2 editor mutation scope
     location: gateway/webui/src/components/calendar/event-editor.tsx:492-562,608-615,1000-1021
-    summary: Edit scope is read-only and mutations use immutable source scope.
+    summary: Immutable source scope remains enforced.
     blocking: false
   - id: CAL-WEB-YEAR-LOCALE-001
     severity: medium
@@ -81,24 +81,25 @@ findings:
     criterion: Locale-aware four-view canvas
     location: gateway/webui/src/components/calendar/calendar-projections.ts:451-473;
       year-grid.tsx:18-131
-    summary: Locale/weekStartsOn placement and labels now have focused coverage.
+    summary: Locale/weekStartsOn handling remains covered.
     blocking: false
   - id: CAL-WEB-EVIDENCE-001
     severity: high
-    status: open
+    status: resolved
     criterion: Exact web comparison for Day/Week/Month/Year at all required viewports
     location: agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files/visual-comparison.md
-    summary: Only Month has side-by-side comparisons; Day, Week, and Year
-      side-by-side artifacts are absent.
-    blocking: true
+    summary: All 16 labeled side-by-side artifacts are present.
+    blocking: false
   - id: CAL-WEB-SLOT-002
     severity: high
-    status: open
+    status: resolved
     criterion: Canvas actions wired through the shared CalendarWorkspace slot
-    location: gateway/webui/src/components/calendar/calendar-shell.tsx:958-981
-    summary: onAnchorDateChange-only consumers lose canvas date/month callbacks.
-    blocking: true
+    location: gateway/webui/src/components/calendar/calendar-shell.tsx:894-1104;
+      calendar-shell.test.tsx:130-286
+    summary: Normalized adapter covers anchor-only and compatibility aliases with
+      focused tests.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-calendar-store-and-web-components-review/manifest.yaml
