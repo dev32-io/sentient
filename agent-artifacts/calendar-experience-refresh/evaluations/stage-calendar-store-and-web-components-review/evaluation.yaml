@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-store-and-web-components
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -28,8 +28,8 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 6
   reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
   reviewedCommit: f0ec34fd414d59167f15056a6f1d05f5ef53dc37
