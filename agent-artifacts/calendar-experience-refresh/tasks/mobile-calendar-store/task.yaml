@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-store
 title: Implement the observable shared calendar store
-status: ready
+status: running
 dependsOn:
   - mobile-sqldelight-foundation
 execution:
@@ -22,3 +22,9 @@ verification:
       :shared:mobile-data:assembleMobileDataDebugXCFramework
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/mobile-calendar-store
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-store
+  baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
+  lastRunId: e6a03b3f-9f57-4fe7-ba0b-474810573bab
