@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-store
 title: Implement the observable shared calendar store
-status: draft
+status: blocked
 dependsOn:
   - mobile-sqldelight-foundation
 execution:

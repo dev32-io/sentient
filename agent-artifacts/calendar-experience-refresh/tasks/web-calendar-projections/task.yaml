@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-projections
 title: Build deterministic web calendar projections
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

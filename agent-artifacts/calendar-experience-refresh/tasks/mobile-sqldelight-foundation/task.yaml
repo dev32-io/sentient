@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-sqldelight-foundation
 title: Establish the shared SQLDelight calendar database
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

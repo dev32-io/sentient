@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-assembly
 title: Assemble and verify the complete web calendar workspace
-status: draft
+status: blocked
 dependsOn:
   - web-calendar-projections
   - web-calendar-data-controller

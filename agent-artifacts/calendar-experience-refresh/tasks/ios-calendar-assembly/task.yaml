@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-assembly
 title: Assemble and verify the complete iOS calendar experience
-status: draft
+status: blocked
 dependsOn:
   - ios-calendar-database-session
   - ios-calendar-viewmodel

@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-data-controller
 title: Implement complete web calendar loading and preference state
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

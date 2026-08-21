@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-preview
 title: Implement the accessible viewport-bound web event preview
-status: draft
+status: blocked
 dependsOn:
   - web-calendar-projections
 execution:

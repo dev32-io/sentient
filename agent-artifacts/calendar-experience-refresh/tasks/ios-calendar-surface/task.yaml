@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-surface
 title: Build the iOS calendar views, filters, agenda, and floating controls
-status: draft
+status: blocked
 dependsOn:
   - ios-calendar-viewmodel
 execution:

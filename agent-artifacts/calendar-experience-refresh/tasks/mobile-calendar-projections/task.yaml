@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-projections
 title: Build shared mobile calendar projections and filter semantics
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []
