@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 49
+  revision: 50
 artifacts:
   - id: intent
     type: intent
@@ -198,13 +198,25 @@ executionStages:
       - android-calendar-viewmodel
       - ios-calendar-viewmodel
     checks:
+      - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+        :android:assembleDebug
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:assembleMobileDataDebugXCFramework && xcodegen
+        generate && xcodebuild test -project ios/SentientApp.xcodeproj -scheme
+        SentientApp -destination 'platform=iOS Simulator,name=iPhone 16'
       - source scripts/env.sh && git diff --check
-    mode: sequential
+    mode: concurrent
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
-          decomposed
+        - Thin Android StateFlow and iOS SKIE AsyncSequence mapping with correct
+          cancellation
+        - Exact intent/identity forwarding and no native
+          pagination/filter/cache/prefetch/mutation policy
+        - Every supported sentient-design mobile view/filter/overlay/freshness
+          state is representable
+        - Native date/time controls preserve shared all-day/timezone/recurrence
+          identity
   - id: native-calendar-components
     tasks:
       - android-calendar-surface
