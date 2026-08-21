@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-platform-sessions
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -26,11 +26,11 @@ criteria:
   - No platform types in commonMain, native cache/policy duplication, SQLCipher,
     external storage, content-bearing paths, or diagnostics
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
-  reviewedCommit: bfe0d35bfea7d10de8f89dace420e2172d2eb347
+  reviewedCommit: 43ffe303b02d8ffda10c525be9a7b7094a42db10
   managerPrompt: "Resolve all four blockers. Make calendar dependency resolution
     explicitly fail closed: when an authenticated session expects protected
     persistence and driver/path/migration setup fails, SettingsComponent must
@@ -55,45 +55,56 @@ loop:
 findings:
   - id: MPS-001
     severity: high
-    status: open
+    status: resolved
     criterion: Fail closed on protected database errors
-    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:190-210;
-      shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/SettingsComponent.kt:111-120
-    summary: Android database setup failure leaves SettingsComponent free to
-      construct SdkCalendarRepository, so the typed unavailable state does not
-      fail closed.
-    blocking: true
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/CalendarDependency.kt:45-80;
+      shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/di/CalendarDependencyTest.kt:14-50
+    summary: Protected session settings now use a disabled repository delegate until
+      database setup installs the shared experience; the fallback test proves
+      zero network calls.
+    blocking: false
   - id: MPS-002
     severity: high
-    status: open
+    status: resolved
     criterion: Required platform lifecycle boundary proof
-    location: android/src/test/kotlin/io/sentient/android/calendar/CalendarNamespaceTest.kt;
-      ios/Tests/CalendarSessionLifecycleTests.swift;
-      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt
-    summary: Required real Android driver/session lifecycle tests and iOS purge,
-      cancellation, isolation, and stale-emission tests are absent.
-    blocking: true
+    location: android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt;
+      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt;
+      ios/Tests/CalendarSessionLifecycleTests.swift
+    summary: The required real-driver Android instrumentation and iOS
+      driver/store/session lifecycle tests are present and pass.
+    blocking: false
   - id: MPS-003
     severity: high
-    status: open
+    status: resolved
     criterion: Sanitized structural diagnostics only
-    location: shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:158-163,260-264;
-      ios/App/Auth/AuthViewModel.swift:99,173;
-      ios/App/SDK/BackendSetupViewModel.swift:48,91;
-      shared/mobile-sdk/src/androidMain/kotlin/io/sentient/mobilesdk/transport/WebSocketEngine.android.kt:50-61
-    summary: Raw exception/input/backend URL strings can be emitted publicly; URL
-      credentials and arbitrary server/error content are not structurally
-      redacted.
-    blocking: true
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/log/LogSanitizer.kt;
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/log/LogSanitizerTest.kt;
+      shared/mobile-sdk/src/androidMain/kotlin/io/sentient/mobilesdk/transport/WebSocketEngine.android.kt;
+      shared/mobile-sdk/src/iosMain/kotlin/io/sentient/mobilesdk/transport/WebSocketEngine.ios.kt
+    summary: Transport and app diagnostics now use normalized endpoint identities,
+      structural error codes, and endpoint secret redaction tests pass.
+    blocking: false
   - id: MPS-004
     severity: high
-    status: open
+    status: resolved
     criterion: Database I/O stays off the UI thread
-    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:172,295-326;
-      shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:216-220,339-367
-    summary: Android runBlocking parks the caller during open/migration, and iOS
-      opens NativeSqliteDriver synchronously from the @MainActor session
-      initializer.
+    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:282-390;
+      shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:257-352
+    summary: Initialization and disposal are queued on background executors without
+      caller-blocking database setup; thread assertions pass.
+    blocking: false
+  - id: MPS-005
+    severity: high
+    status: open
+    criterion: Logout/account replacement must purge/close the predecessor and
+      prevent stale post-switch publication
+    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:313-323,551-570;
+      shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:262-303
+    summary: A close can clear/capture a null runtime after initialization passes
+      its final liveness check; initialization can then publish and transfer
+      that runtime after teardown is queued. The late driver/experience is not
+      owned by purge and can emit after logout; Android can expose it through
+      the shared manager to a successor session.
     blocking: true
 result:
   verdict: fail
