@@ -9,14 +9,26 @@ import {
 } from "./calendar-canvas-primitives.tsx";
 import type { CalendarYearMonthProjection } from "./calendar-projection-types.ts";
 import type { CalendarCanvasCallbacks, YearGridProps } from "./calendar-canvas-types.ts";
-import { calendarWeekday } from "./calendar-time.ts";
+import {
+  addCalendarDays,
+  calendarWeekday,
+  weekdayShortLabel,
+  weekStartDate,
+} from "./calendar-time.ts";
 
 function YearMonthSummary({
   month,
+  weekStartsOn,
+  locale,
   ...callbacks
-}: { readonly month: CalendarYearMonthProjection } & CalendarCanvasCallbacks): JSX.Element {
+}: {
+  readonly month: CalendarYearMonthProjection;
+  readonly weekStartsOn: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  readonly locale: string;
+} & CalendarCanvasCallbacks): JSX.Element {
   const firstDate = month.dates[0];
-  const leadingDays = firstDate === undefined ? 0 : calendarWeekday(firstDate);
+  const leadingDays = firstDate === undefined ? 0 : (calendarWeekday(firstDate) - weekStartsOn + 7) % 7;
+  const firstWeekDate = firstDate === undefined ? undefined : weekStartDate(firstDate, weekStartsOn);
   const monthId = `calendar-year-month-${month.year}-${month.month}`;
   return (
     <article
@@ -40,7 +52,10 @@ function YearMonthSummary({
         </span>
       </header>
       <div class="calendar-year-grid__weekdays" aria-hidden="true">
-        {Array.from({ length: 7 }, (_, index) => <span key={index}>{["S", "M", "T", "W", "T", "F", "S"][index]}</span>)}
+        {Array.from({ length: 7 }, (_, index) => {
+          const date = firstWeekDate === undefined ? undefined : addCalendarDays(firstWeekDate, index);
+          return <span key={index}>{date === undefined ? "" : weekdayShortLabel(date, locale)}</span>;
+        })}
       </div>
       <div class="calendar-year-grid__days" role="grid" aria-label={`${month.label} dates`}>
         {Array.from({ length: leadingDays }, (_, index) => (
@@ -108,7 +123,13 @@ export function YearGrid({
       {loading && <CalendarLoadingState refreshing={refreshing} />}
       <div class="calendar-year-grid__grid">
         {projection.months.map((month) => (
-          <YearMonthSummary key={`${month.year}-${month.month}`} month={month} {...callbacks} />
+          <YearMonthSummary
+            key={`${month.year}-${month.month}`}
+            month={month}
+            weekStartsOn={projection.weekStartsOn}
+            locale={projection.locale}
+            {...callbacks}
+          />
         ))}
       </div>
       {!hasEvents && <CalendarEmptyState label={emptyLabel} />}

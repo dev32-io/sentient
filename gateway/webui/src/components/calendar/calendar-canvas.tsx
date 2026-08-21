@@ -3,7 +3,7 @@ import {
   CalendarEmptyState,
   CalendarLoadingState,
 } from "./calendar-canvas-primitives.tsx";
-import type { CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
+import type { CalendarCanvasProps } from "./calendar-canvas-types.ts";
 import { DayView } from "./day-view.tsx";
 import { MonthGrid } from "./month-grid.tsx";
 import { WeekGrid } from "./week-grid.tsx";
@@ -22,7 +22,7 @@ export function CalendarCanvas({
   class: className,
   className: classNameAlias,
   ...callbacks
-}: CalendarCanvasSlotProps): JSX.Element {
+}: CalendarCanvasProps): JSX.Element {
   const resolvedClassName = ["calendar-canvas", className ?? classNameAlias].filter(Boolean).join(" ");
 
   if (!projection) {
@@ -67,7 +67,7 @@ export function CalendarCanvas({
 
 export const CalendarCanvasRenderer = CalendarCanvas;
 
-export type { CalendarCanvasSlot, CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
+export type { CalendarCanvasProps, CalendarCanvasSlot, CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
 export {
   AgendaRow,
   AgendaSection,

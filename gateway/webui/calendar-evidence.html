@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Calendar component evidence</title>
+    <style>
+      html, body, #evidence-root { margin: 0; min-height: 100%; }
+      body { min-width: 0; background: var(--color-bg); }
+      #evidence-root { min-height: 100vh; }
+      #evidence-metrics { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    </style>
+  </head>
+  <body>
+    <div id="evidence-root"></div>
+    <pre id="evidence-metrics" aria-hidden="true"></pre>
+    <script type="module">
+      import { h, render } from "preact";
+      import "/src/styles/tokens/index.css";
+      import { CalendarCanvas } from "/src/components/calendar/calendar-canvas.tsx";
+      import { CalendarWorkspace } from "/src/components/calendar/calendar-shell.tsx";
+      import { projectCalendar } from "/src/components/calendar/calendar-projections.ts";
+      import { measureCalendarResponsiveEvidence } from "/src/components/calendar/calendar-responsive-evidence.ts";
+
+      const views = ["day", "week", "month", "year"];
+      const params = new URLSearchParams(location.search);
+      const view = views.includes(params.get("view")) ? params.get("view") : "month";
+      const anchorDate = "2024-02-29";
+      const rows = [
+        { eventId: "e1", occurrenceId: "e1@2024-02-29", originalStart: "2024-02-29T08:00:00-05:00", recurring: false, revision: 1, scope: "private", title: "School drop-off", start: "2024-02-29T08:00:00-05:00", end: "2024-02-29T08:30:00-05:00", visibility: "everyone", importance: "normal", tags: ["family"] },
+        { eventId: "e2", occurrenceId: "e2@2024-02-29", originalStart: "2024-02-29T10:00:00-05:00", recurring: false, revision: 1, scope: "household", title: "Planning meeting", start: "2024-02-29T10:00:00-05:00", end: "2024-02-29T11:00:00-05:00", visibility: "everyone", importance: "important", tags: ["home"] },
+        { eventId: "e3", occurrenceId: "e3@2024-02-29", originalStart: "2024-02-29T12:00:00-05:00", recurring: false, revision: 1, scope: "private", title: "Dentist", start: "2024-02-29T12:00:00-05:00", end: "2024-02-29T13:00:00-05:00", visibility: "everyone", importance: "pinned", tags: ["health"] },
+        { eventId: "e4", occurrenceId: "e4@2024-02-29", originalStart: "2024-02-29T14:00:00-05:00", recurring: false, revision: 1, scope: "household", title: "Dinner", start: "2024-02-29T14:00:00-05:00", end: "2024-02-29T15:00:00-05:00", visibility: "everyone", importance: "normal", tags: ["family"] },
+      ];
+      const projection = projectCalendar({
+        occurrences: rows,
+        view,
+        anchorDate,
+        selectedDate: anchorDate,
+        locale: "en-US",
+        timeZone: "America/New_York",
+        weekStartsOn: 0,
+        today: anchorDate,
+        density: { maxVisibleEvents: 2, maxIndicators: 3 },
+      }).view;
+      const filterFacets = { scopes: ["private", "household", "all"], groups: ["family", "home"], tags: ["family", "health", "home"], importance: ["normal", "important", "pinned"] };
+      render(h(CalendarWorkspace, {
+        view,
+        anchorDate,
+        selectedDate: anchorDate,
+        projection,
+        facets: filterFacets,
+        resultCount: rows.length,
+        onSelectDate: () => undefined,
+        onOpenDay: () => undefined,
+        onOpenEvent: () => undefined,
+        onOpenOverflow: () => undefined,
+        onSelectMonth: () => undefined,
+        onViewChange: () => undefined,
+        onPrevious: () => undefined,
+        onNext: () => undefined,
+        onToday: () => undefined,
+        onAddEvent: () => undefined,
+        children: h(CalendarCanvas, {}),
+      }), document.getElementById("evidence-root"));
+
+      function collectMetrics() {
+        document.getElementById("evidence-metrics").textContent = JSON.stringify({
+          view,
+          ...measureCalendarResponsiveEvidence(document),
+        });
+        document.documentElement.dataset.evidenceReady = "true";
+      }
+      requestAnimationFrame(() => requestAnimationFrame(collectMetrics));
+    </script>
+  </body>
+</html>

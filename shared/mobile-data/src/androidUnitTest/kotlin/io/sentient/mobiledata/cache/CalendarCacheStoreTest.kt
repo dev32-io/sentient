@@ -66,6 +66,72 @@ class CalendarCacheStoreTest {
     }
 
     @Test
+    fun `concurrent replacements never pair metadata with another generation rows`() = runTest {
+        val fixture = Fixture()
+        try {
+            val initialReady = CompletableDeferred<Unit>()
+            val firstCommitted = CompletableDeferred<Unit>()
+            val observations = async(start = CoroutineStart.UNDISPATCHED) {
+                fixture.store.observeSnapshot(fixture.window)
+                    .onEach { result ->
+                        if (result is CalendarCacheResult.Success) {
+                            if (result.value == null) initialReady.complete(Unit) else firstCommitted.complete(Unit)
+                        }
+                    }
+                    .take(3)
+                    .toList()
+            }
+            initialReady.await()
+
+            // Start both callers before releasing either one. The first write
+            // is allowed to reach the observer before the second write starts;
+            // this removes scheduler-dependent coalescing while still testing
+            // concurrent callers against the same replacement window.
+            val firstRelease = CompletableDeferred<Unit>()
+            val secondRelease = CompletableDeferred<Unit>()
+            val firstWrite = async(start = CoroutineStart.UNDISPATCHED) {
+                firstRelease.await()
+                assertIs<CalendarCacheResult.Success<Unit>>(
+                    fixture.store.replaceSnapshot(
+                        fixture.window,
+                        listOf(timedOccurrence(eventId = "generation-101", occurrenceId = "occurrence-101")),
+                        fetchedAt = 101L,
+                        lastAccessedAt = 101L,
+                    ),
+                )
+            }
+            val secondWrite = async(start = CoroutineStart.UNDISPATCHED) {
+                secondRelease.await()
+                assertIs<CalendarCacheResult.Success<Unit>>(
+                    fixture.store.replaceSnapshot(
+                        fixture.window,
+                        listOf(timedOccurrence(eventId = "generation-202", occurrenceId = "occurrence-202")),
+                        fetchedAt = 202L,
+                        lastAccessedAt = 202L,
+                    ),
+                )
+            }
+            firstRelease.complete(Unit)
+            firstCommitted.await()
+            secondRelease.complete(Unit)
+            firstWrite.await()
+            secondWrite.await()
+
+            val committed = observations.await().drop(1).map { result ->
+                assertIs<CalendarCacheResult.Success<CalendarCacheSnapshot?>>(result).value
+                    ?: error("committed replacement was unexpectedly absent")
+            }
+            assertEquals(setOf(101L, 202L), committed.map { it.fetchedAt }.toSet())
+            committed.forEach { snapshot ->
+                assertEquals(1, snapshot.occurrences.size)
+                assertEquals("generation-${snapshot.fetchedAt}", snapshot.occurrences.single().eventId)
+            }
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `invalid replacement does not replace the previous complete snapshot`() = runTest {
         val fixture = Fixture()
         try {

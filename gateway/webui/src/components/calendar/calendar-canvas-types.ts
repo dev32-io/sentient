@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import type {
   CalendarDateCell,
   CalendarDayProjection,
@@ -9,6 +10,7 @@ import type {
   CalendarYearProjection,
   ProjectedCalendarOccurrence,
 } from "./calendar-projection-types.ts";
+import type { CalendarFilters as CalendarWorkspaceFilters, CalendarViewMode } from "./calendar-projections.ts";
 import type { CalendarDate } from "./calendar-time.ts";
 
 /**
@@ -30,11 +32,19 @@ export interface CalendarCanvasCallbacks {
 }
 
 /**
- * Public render-slot contract for CalendarWorkspace. It is deliberately
- * structural so the shell can pass the slot without importing canvas internals.
+ * The one public canvas-slot contract shared by CalendarWorkspace and every
+ * leaf canvas. The shell supplies the complete presentation snapshot and
+ * intent callbacks; leaves never reach a service or invent a second state
+ * shape. State fields are required even when a standalone canvas has no
+ * projection yet, so a function-valued slot always receives the same props.
  */
-export interface CalendarCanvasSlotProps extends CalendarCanvasCallbacks {
-  readonly projection?: CalendarViewProjection | null;
+export interface CalendarWorkspaceCanvasSlotProps extends CalendarCanvasCallbacks {
+  readonly view: CalendarViewMode;
+  readonly selectedView: CalendarViewMode;
+  readonly anchorDate: CalendarDate;
+  readonly selectedDate: CalendarDate;
+  readonly filters: CalendarWorkspaceFilters;
+  readonly projection: CalendarViewProjection | null;
   readonly loading?: boolean;
   readonly refreshing?: boolean;
   readonly emptyLabel?: string;
@@ -42,9 +52,12 @@ export interface CalendarCanvasSlotProps extends CalendarCanvasCallbacks {
   readonly className?: string;
 }
 
-export type CalendarCanvasSlot = (props: CalendarCanvasSlotProps) => import("preact").ComponentChildren;
-export type CalendarCanvasProps = CalendarCanvasSlotProps;
-export type CalendarWorkspaceCanvasSlotProps = CalendarCanvasSlotProps;
+export type CalendarCanvasSlotProps = CalendarWorkspaceCanvasSlotProps;
+export type CalendarCanvasSlot = (props: CalendarWorkspaceCanvasSlotProps) => ComponentChildren;
+export type CalendarCanvasRenderSlot = CalendarCanvasSlot;
+export type CalendarCanvasChild = ComponentChildren | CalendarCanvasSlot;
+/** Standalone convenience props; a slot invocation still uses the complete contract. */
+export type CalendarCanvasProps = Partial<CalendarWorkspaceCanvasSlotProps>;
 export type CalendarWorkspaceCanvasSlot = CalendarCanvasSlot;
 
 export interface CalendarCanvasRendererProps extends CalendarCanvasCallbacks {

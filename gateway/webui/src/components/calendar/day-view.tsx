@@ -39,7 +39,7 @@ export function DayView({
           onClick={() => invokeDateSelect(callbacks, projection.date)}
         >
           <span class="calendar-day-view__weekday" aria-hidden="true">{dateLabel.split(",")[0]}</span>
-          <strong aria-hidden="true">{formatAccessibleCalendarDate(projection.date).replace(/^[^,]+,\s*/, "")}</strong>
+          <strong aria-hidden="true">{formatAccessibleCalendarDate(projection.date, { locale: projection.locale }).replace(/^[^,]+,\s*/, "")}</strong>
         </button>
         <p class="calendar-day-view__note">
           {projection.isToday ? "Today" : projection.selected ? "Selected day" : "Focused agenda"}

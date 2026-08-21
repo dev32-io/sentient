@@ -4,6 +4,8 @@ import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
 import io.sentient.mobiledata.cache.db.CalendarDatabase
 import io.sentient.mobiledata.cache.db.CalendarDatabaseHandle
+import io.sentient.mobiledata.cache.db.Calendar_occurrence
+import io.sentient.mobiledata.cache.db.SnapshotWithOccurrencesForWindow
 import io.sentient.mobiledata.calendar.CalendarDates
 import io.sentient.mobiledata.calendar.CalendarFilters
 import io.sentient.mobiledata.calendar.CalendarPreferences
@@ -605,7 +607,7 @@ class SqlDelightCalendarCacheStore private constructor(
     private fun observeSnapshotInNamespace(
         namespace: CalendarCacheNamespace,
         window: CalendarCacheWindow,
-    ): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> = queries.occurrencesForWindow(
+    ): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> = queries.snapshotWithOccurrencesForWindow(
         namespace.accountId,
         namespace.backendId,
         window.windowStart,
@@ -648,43 +650,45 @@ class SqlDelightCalendarCacheStore private constructor(
     private fun readSnapshotInNamespace(
         namespace: CalendarCacheNamespace,
         window: CalendarCacheWindow,
-    ): CalendarCacheReadResult<CalendarCacheSnapshot?> {
-        val rows = queries.occurrencesForWindow(
+    ): CalendarCacheReadResult<CalendarCacheSnapshot?> = decodeSnapshot(
+        namespace,
+        window,
+        queries.snapshotWithOccurrencesForWindow(
             namespace.accountId,
             namespace.backendId,
             window.windowStart,
             window.windowEnd,
             window.timezoneInput,
-        ).executeAsList()
-        return decodeSnapshot(namespace, window, rows)
-    }
+        ).executeAsList(),
+    )
 
+    /**
+     * Decode one SQLDelight query result.  Metadata is repeated on each joined
+     * occurrence row, so a single query execution is the generation boundary
+     * for both parts of the observable snapshot.  An empty complete snapshot
+     * has one LEFT JOIN row with null occurrence columns.
+     */
     private fun decodeSnapshot(
         namespace: CalendarCacheNamespace,
         window: CalendarCacheWindow,
-        rows: List<io.sentient.mobiledata.cache.db.Calendar_occurrence>,
+        rows: List<SnapshotWithOccurrencesForWindow>,
     ): CalendarCacheReadResult<CalendarCacheSnapshot?> {
         return try {
-            val metadata = queries.snapshotForWindow(
-                namespace.accountId,
-                namespace.backendId,
-                window.windowStart,
-                window.windowEnd,
-                window.timezoneInput,
-            ).executeAsList().singleOrNull()
-                ?: return CalendarCacheResult.Success(null)
-            if (!metadata.is_complete) return CalendarCacheResult.Success(null)
+            val metadata = rows.firstOrNull() ?: return CalendarCacheResult.Success(null)
+            if (rows.any { !sameSnapshotMetadata(it, metadata) }) corrupt()
+            if (!metadata.snapshot_is_complete) return CalendarCacheResult.Success(null)
             validateSnapshotMetadata(namespace, window, metadata)
-            if (metadata.occurrence_count < 0L || metadata.occurrence_count > Int.MAX_VALUE) corrupt()
-            if (metadata.occurrence_count != rows.size.toLong()) corrupt()
-            val occurrences = rows.map(::decodeOccurrence)
+            if (metadata.snapshot_occurrence_count < 0L || metadata.snapshot_occurrence_count > Int.MAX_VALUE) corrupt()
+            val occurrenceRows = rows.mapNotNull(::occurrenceRow)
+            if (metadata.snapshot_occurrence_count != occurrenceRows.size.toLong()) corrupt()
+            val occurrences = occurrenceRows.map(::decodeOccurrence)
             CalendarCacheResult.Success(
                 CalendarCacheSnapshot(
                     window = window,
                     occurrences = occurrences,
-                    fetchedAt = metadata.fetched_at,
-                    lastAccessedAt = metadata.last_accessed_at,
-                    freshness = CalendarCacheFreshness.fromWire(metadata.freshness) ?: corrupt(),
+                    fetchedAt = metadata.snapshot_fetched_at,
+                    lastAccessedAt = metadata.snapshot_last_accessed_at,
+                    freshness = CalendarCacheFreshness.fromWire(metadata.snapshot_freshness) ?: corrupt(),
                 ),
             )
         } catch (_: DecodeFailure) {
@@ -694,6 +698,77 @@ class SqlDelightCalendarCacheStore private constructor(
         } catch (_: IllegalArgumentException) {
             decodeFailure()
         }
+    }
+
+    private fun sameSnapshotMetadata(
+        first: SnapshotWithOccurrencesForWindow,
+        other: SnapshotWithOccurrencesForWindow,
+    ): Boolean = first.snapshot_account_id == other.snapshot_account_id &&
+        first.snapshot_backend_id == other.snapshot_backend_id &&
+        first.snapshot_window_start == other.snapshot_window_start &&
+        first.snapshot_window_end == other.snapshot_window_end &&
+        first.snapshot_timezone_input == other.snapshot_timezone_input &&
+        first.snapshot_is_complete == other.snapshot_is_complete &&
+        first.snapshot_fetched_at == other.snapshot_fetched_at &&
+        first.snapshot_occurrence_count == other.snapshot_occurrence_count &&
+        first.snapshot_last_accessed_at == other.snapshot_last_accessed_at &&
+        first.snapshot_freshness == other.snapshot_freshness
+
+    private fun occurrenceRow(row: SnapshotWithOccurrencesForWindow): Calendar_occurrence? {
+        if (row.occurrence_account_id == null) {
+            if (
+                row.occurrence_backend_id != null ||
+                row.occurrence_window_start != null ||
+                row.occurrence_window_end != null ||
+                row.occurrence_timezone_input != null ||
+                row.occurrence_id != null ||
+                row.event_id != null ||
+                row.original_start != null ||
+                row.original_start_is_all_day != null ||
+                row.start_value != null ||
+                row.start_is_all_day != null ||
+                row.end_value != null ||
+                row.end_is_all_day != null ||
+                row.recurring != null ||
+                row.revision != null ||
+                row.scope != null ||
+                row.visibility != null ||
+                row.title != null ||
+                row.description != null ||
+                row.importance != null ||
+                row.group_name != null ||
+                row.tags_json != null ||
+                row.recurrence_json != null ||
+                row.payload_json != null
+            ) corrupt()
+            return null
+        }
+        return Calendar_occurrence(
+            account_id = row.occurrence_account_id,
+            backend_id = row.occurrence_backend_id ?: corrupt(),
+            window_start = row.occurrence_window_start ?: corrupt(),
+            window_end = row.occurrence_window_end ?: corrupt(),
+            timezone_input = row.occurrence_timezone_input ?: corrupt(),
+            occurrence_id = row.occurrence_id ?: corrupt(),
+            event_id = row.event_id ?: corrupt(),
+            original_start = row.original_start ?: corrupt(),
+            original_start_is_all_day = row.original_start_is_all_day ?: corrupt(),
+            start_value = row.start_value ?: corrupt(),
+            start_is_all_day = row.start_is_all_day ?: corrupt(),
+            end_value = row.end_value,
+            end_is_all_day = row.end_is_all_day,
+            recurring = row.recurring ?: corrupt(),
+            revision = row.revision ?: corrupt(),
+            scope = row.scope ?: corrupt(),
+            visibility = row.visibility ?: corrupt(),
+            title = row.title ?: corrupt(),
+            description = row.description,
+            importance = row.importance ?: corrupt(),
+            group_name = row.group_name,
+            tags_json = row.tags_json ?: corrupt(),
+            recurrence_json = row.recurrence_json,
+            payload_json = row.payload_json ?: corrupt(),
+        )
     }
 
     private fun decodePreferences(
@@ -761,17 +836,17 @@ class SqlDelightCalendarCacheStore private constructor(
     private fun validateSnapshotMetadata(
         namespace: CalendarCacheNamespace,
         window: CalendarCacheWindow,
-        row: io.sentient.mobiledata.cache.db.Calendar_month_snapshot,
+        row: SnapshotWithOccurrencesForWindow,
     ) {
         if (
-            row.account_id != namespace.accountId ||
-            row.backend_id != namespace.backendId ||
-            row.window_start != window.windowStart ||
-            row.window_end != window.windowEnd ||
-            row.timezone_input != window.timezoneInput ||
-            row.fetched_at < 0L ||
-            row.last_accessed_at < 0L ||
-            CalendarCacheFreshness.fromWire(row.freshness) == null
+            row.snapshot_account_id != namespace.accountId ||
+            row.snapshot_backend_id != namespace.backendId ||
+            row.snapshot_window_start != window.windowStart ||
+            row.snapshot_window_end != window.windowEnd ||
+            row.snapshot_timezone_input != window.timezoneInput ||
+            row.snapshot_fetched_at < 0L ||
+            row.snapshot_last_accessed_at < 0L ||
+            CalendarCacheFreshness.fromWire(row.snapshot_freshness) == null
         ) corrupt()
     }
 

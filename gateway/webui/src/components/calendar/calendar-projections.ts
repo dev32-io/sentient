@@ -346,6 +346,7 @@ function buildDayProjection(
     anchorDate: date,
     selectedDate,
     today,
+    locale: localeFromOptions(options),
     interval: { from: date, to: date },
     date,
     selected: date === selectedDate,
@@ -378,6 +379,7 @@ function buildWeekProjection(
     anchorDate: anchor,
     selectedDate,
     today,
+    locale: localeFromOptions(options),
     interval: { from, to: addCalendarDays(from, 6) },
     weekStartsOn,
     dates,
@@ -405,6 +407,7 @@ function buildMonthProjection(
     anchorDate: anchor,
     selectedDate,
     today: todayFromOptions(options, zoneFromOptions(options)),
+    locale: localeFromOptions(options),
     interval: { from, to },
     month: parts.month,
     year: parts.year,
@@ -457,13 +460,16 @@ function buildYearProjection(
   const months = Array.from({ length: 12 }, (_, index) =>
     yearMonth(parts.year, index + 1, projected, { ...options, selectedDate }),
   );
+  const weekStartsOn = options.weekStartsOn ?? (localeWeekStart(localeFromOptions(options)) as CalendarWeekdayIndex);
   return {
     kind: "year",
     view: "year",
     anchorDate: anchor,
     selectedDate,
     today,
+    locale: localeFromOptions(options),
     interval: { from: formatDate(parts.year, 1, 1), to: formatDate(parts.year, 12, 31) },
+    weekStartsOn,
     months,
   };
 }

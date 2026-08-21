@@ -205,6 +205,15 @@ function rawSourceTime(value: CalendarTime | undefined): string | undefined {
   return value === undefined ? undefined : rawCalendarTime(value);
 }
 
+function scopeLabel(scope: CalendarScope): string {
+  return scope === "household" ? "Household" : "Private";
+}
+
+function originalEventScope(event: CalendarEvent | CalendarOccurrence | null): CalendarScope | null {
+  if (!event || (event.scope !== "private" && event.scope !== "household")) return null;
+  return event.scope;
+}
+
 function datePart(value: string): string {
   return value.slice(0, 10);
 }
@@ -483,7 +492,8 @@ function buildUpdateCommand(
   mutationScope: CalendarMutationScope | undefined,
 ): { ok: true; eventId: string; command: Extract<CalendarMutationCommand, { operation: "update" }> } | { ok: false; code: string; message: string } {
   const eventId = eventIdOf(event);
-  if (!eventId) return { ok: false, code: "not_found", message: "This calendar event is no longer available." };
+  const scope = originalEventScope(event);
+  if (!eventId || scope === null) return { ok: false, code: "not_found", message: "This calendar event is no longer available." };
   if (eventIsRecurring(event) && mutationScope === undefined) {
     return { ok: false, code: "invalid_mutation_scope", message: "Choose which occurrences to update." };
   }
@@ -506,7 +516,9 @@ function buildUpdateCommand(
   const command: Extract<CalendarMutationCommand, { operation: "update" }> = {
     operation: "update",
     applyTo,
-    scope: draft.scope,
+    // Calendar V2 has no scope-change update. Always address the immutable
+    // resource scope from the original event, never the editable draft.
+    scope,
     changes,
   };
   if (applyTo !== "entire_series") {
@@ -525,8 +537,10 @@ function buildDeleteCommand(
   draft: CalendarEditorDraft,
   mutationScope: CalendarMutationScope | undefined,
 ): { ok: true; eventId: string; command: Extract<CalendarMutationCommand, { operation: "delete" }> } | { ok: false; code: string; message: string } {
+  void draft; // retained in the helper signature for source compatibility
   const eventId = eventIdOf(event);
-  if (!eventId) return { ok: false, code: "not_found", message: "This calendar event is no longer available." };
+  const scope = originalEventScope(event);
+  if (!eventId || scope === null) return { ok: false, code: "not_found", message: "This calendar event is no longer available." };
   if (eventIsRecurring(event) && mutationScope === undefined) {
     return { ok: false, code: "invalid_mutation_scope", message: "Choose which occurrences to delete." };
   }
@@ -534,7 +548,9 @@ function buildDeleteCommand(
   const command: Extract<CalendarMutationCommand, { operation: "delete" }> = {
     operation: "delete",
     applyTo,
-    scope: draft.scope,
+    // Delete likewise uses the original resource scope; scope changes are not
+    // a supported Calendar V2 mutation.
+    scope,
   };
   if (applyTo !== "entire_series") {
     const originalStart = rawSourceTime(originalStartOf(event));
@@ -592,7 +608,11 @@ function initialDraftFor(
   timeZoneId: string,
   supplied?: CalendarEditorInitialDraft,
 ): CalendarEditorDraft {
-  if (mode === "edit" && source) return draftFromEvent(source, timeZoneId, supplied);
+  if (mode === "edit" && source) {
+    // Scope is an immutable resource identity for edits. A create draft may
+    // choose it, but an edit draft never accepts a caller-provided replacement.
+    return { ...draftFromEvent(source, timeZoneId, supplied), scope: source.scope };
+  }
   return mergeDraft(defaultDraft(timeZoneId), supplied);
 }
 
@@ -670,10 +690,11 @@ export function EventEditor({
 
   const dirty = baseline.current !== editableDraftKey(draft);
   const saveAction = mode === "create" ? "create" : "update";
-  const canSave = calendarCapabilityAllows(capabilities, saveAction, draft.scope)
+  const resourceScope = mode === "edit" ? originalEventScope(source) : draft.scope;
+  const canSave = resourceScope !== null && calendarCapabilityAllows(capabilities, saveAction, resourceScope)
     && !busy
     && !(mode === "edit" && eventIsRecurring(source) && mutationScope === undefined);
-  const canDelete = mode === "edit" && calendarCapabilityAllows(capabilities, "delete", draft.scope) && !busy;
+  const canDelete = mode === "edit" && resourceScope !== null && calendarCapabilityAllows(capabilities, "delete", resourceScope) && !busy;
   const setDraftValue = (partial: Partial<CalendarEditorDraft>): void => {
     setDraft((current) => ({ ...current, ...partial }));
     setError(null);
@@ -784,7 +805,7 @@ export function EventEditor({
       validationFailure(null, { code: "validation", message: "Add a title before saving." });
       return;
     }
-    if (!calendarCapabilityAllows(capabilities, saveAction, draft.scope)) {
+    if (resourceScope === null || !calendarCapabilityAllows(capabilities, saveAction, resourceScope)) {
       validationFailure(null, { code: "forbidden", message: "This calendar action is not permitted." });
       return;
     }
@@ -807,7 +828,7 @@ export function EventEditor({
 
   const confirmDelete = async (scope: CalendarMutationScope): Promise<void> => {
     if (!source || busy) return;
-    if (!calendarCapabilityAllows(capabilities, "delete", draft.scope)) {
+    if (resourceScope === null || !calendarCapabilityAllows(capabilities, "delete", resourceScope)) {
       setError(typedError("forbidden", 0, "This calendar action is not permitted."));
       setDeleteOpen(false);
       return;
@@ -979,15 +1000,21 @@ export function EventEditor({
 
           <div class="calendar-editor__field">
             <label class="app-dialog__label" for={`${formId.current}-scope`}>Calendar</label>
-            <select
-              id={`${formId.current}-scope`}
-              class="app-dialog__input"
-              value={draft.scope}
-              onChange={(e) => setDraftValue({ scope: e.currentTarget.value as CalendarScope })}
-            >
-              <option value="private" disabled={!calendarCapabilityAllows(capabilities, saveAction, "private")}>Private</option>
-              <option value="household" disabled={!calendarCapabilityAllows(capabilities, saveAction, "household")}>Household</option>
-            </select>
+            {mode === "create" ? (
+              <select
+                id={`${formId.current}-scope`}
+                class="app-dialog__input"
+                value={draft.scope}
+                onChange={(e) => setDraftValue({ scope: e.currentTarget.value as CalendarScope })}
+              >
+                <option value="private" disabled={!calendarCapabilityAllows(capabilities, saveAction, "private")}>Private</option>
+                <option value="household" disabled={!calendarCapabilityAllows(capabilities, saveAction, "household")}>Household</option>
+              </select>
+            ) : (
+              <output id={`${formId.current}-scope`} class="app-dialog__input calendar-editor__readonly" aria-readonly="true">
+                {scopeLabel(draft.scope)}
+              </output>
+            )}
           </div>
 
           <div class="calendar-editor__field">

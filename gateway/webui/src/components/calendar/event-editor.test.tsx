@@ -115,6 +115,32 @@ describe("EventEditor", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps an edit calendar scope read-only and looks up mutations by original scope", async () => {
+    const mutate = vi.fn(async (_token: string, _eventId: string, _command: unknown) => ({
+      ok: true as const,
+      value: { operation: "update", appliedTo: "entire_series", eventId: "series-event", resultingRevision: 8 } satisfies CalendarMutationResult,
+    }));
+    const api = apiFixture({ mutate });
+    const event = { ...recurringOccurrence(), scope: "private" as const };
+    render(
+      <EventEditor
+        mode="edit"
+        event={event}
+        api={api}
+        token="token"
+        capabilities={{ canUpdate: true }}
+        initialDraft={{ scope: "household" }}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox", { name: "Calendar" })).toBeNull();
+    expect(screen.getByText("Private")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /Entire series/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    expect(mutate.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ scope: "private" }));
+  });
+
   it("sends every occurrence scope with the raw original start and revision", async () => {
     const mutate = vi.fn(async () => ({
       ok: true as const,

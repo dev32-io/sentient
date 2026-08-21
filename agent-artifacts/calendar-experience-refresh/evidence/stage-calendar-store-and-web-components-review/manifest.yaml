@@ -1,10 +1,10 @@
 schemaVersion: 1
 evaluation: stage-calendar-store-and-web-components-review
-recordedAt: 2026-08-21T07:11:03.889Z
+recordedAt: 2026-08-21T00:34:30-07:00
 entries:
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
-  - result: 28 test files passed; 215 tests passed
+  - result: 28 test files passed; 219 tests passed
     command: source scripts/env.sh && bun run --filter @sentient/webui test:unit
   - result: passed
     command: source scripts/env.sh && bun run --filter @sentient/webui typecheck
@@ -12,12 +12,9 @@ entries:
     command: source scripts/env.sh && bun run --filter @sentient/webui build
   - result: passed
     command: source scripts/env.sh && git diff --check
-      85f0f851c3803bc6d16e80d80c3132a76a2e1559
-      ae6359d4d2a2db86922ad0deb01e156e2713dc9c
-  - result: no matching visual evidence files
-    command: git diff --no-ext-diff --name-only
-      85f0f851c3803bc6d16e80d80c3132a76a2e1559
-      ae6359d4d2a2db86922ad0deb01e156e2713dc9c | grep -Ei
-      '\.(png|jpe?g|webp|pdf)$|screenshot|visual|evidence'
-  - result: no scrollWidth assertions
-    command: grep -R "scrollWidth" -n gateway/webui/src/components/calendar
+  - result: 4 reference PNGs, 16 production PNGs, and 4 side-by-side Month comparisons captured at exact viewports
+    command: Chrome DevTools Protocol capture of sentient-design/design/web/calendar.html and gateway/webui/calendar-evidence.html
+  - result: exact viewport and scrollWidth/target measurements recorded for Day, Week, Month, and Year
+    command: agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files/scroll-width-evidence.json
+  - result: comparison method and intentional prototype-fixture content difference recorded
+    command: agent-artifacts/calendar-experience-refresh/evidence/stage-calendar-store-and-web-components-review/files/visual-comparison.md

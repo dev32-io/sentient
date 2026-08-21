@@ -118,6 +118,59 @@ WHERE account_id = ?
   AND window_end = ?
   AND timezone_input = ?;
 
+-- One observable query returns the complete marker, metadata, and occurrences
+-- from the same SQLite read.  The LEFT JOIN keeps a committed empty window
+-- observable while still producing no occurrence row for its zero count.
+snapshotWithOccurrencesForWindow:
+SELECT
+  snapshot.account_id AS snapshot_account_id,
+  snapshot.backend_id AS snapshot_backend_id,
+  snapshot.window_start AS snapshot_window_start,
+  snapshot.window_end AS snapshot_window_end,
+  snapshot.timezone_input AS snapshot_timezone_input,
+  snapshot.is_complete AS snapshot_is_complete,
+  snapshot.fetched_at AS snapshot_fetched_at,
+  snapshot.occurrence_count AS snapshot_occurrence_count,
+  snapshot.last_accessed_at AS snapshot_last_accessed_at,
+  snapshot.freshness AS snapshot_freshness,
+  occurrence.account_id AS occurrence_account_id,
+  occurrence.backend_id AS occurrence_backend_id,
+  occurrence.window_start AS occurrence_window_start,
+  occurrence.window_end AS occurrence_window_end,
+  occurrence.timezone_input AS occurrence_timezone_input,
+  occurrence.occurrence_id AS occurrence_id,
+  occurrence.event_id AS event_id,
+  occurrence.original_start AS original_start,
+  occurrence.original_start_is_all_day AS original_start_is_all_day,
+  occurrence.start_value AS start_value,
+  occurrence.start_is_all_day AS start_is_all_day,
+  occurrence.end_value AS end_value,
+  occurrence.end_is_all_day AS end_is_all_day,
+  occurrence.recurring AS recurring,
+  occurrence.revision AS revision,
+  occurrence.scope AS scope,
+  occurrence.visibility AS visibility,
+  occurrence.title AS title,
+  occurrence.description AS description,
+  occurrence.importance AS importance,
+  occurrence.group_name AS group_name,
+  occurrence.tags_json AS tags_json,
+  occurrence.recurrence_json AS recurrence_json,
+  occurrence.payload_json AS payload_json
+FROM calendar_month_snapshot AS snapshot
+LEFT JOIN calendar_occurrence AS occurrence
+  ON occurrence.account_id = snapshot.account_id
+ AND occurrence.backend_id = snapshot.backend_id
+ AND occurrence.window_start = snapshot.window_start
+ AND occurrence.window_end = snapshot.window_end
+ AND occurrence.timezone_input = snapshot.timezone_input
+WHERE snapshot.account_id = ?
+  AND snapshot.backend_id = ?
+  AND snapshot.window_start = ?
+  AND snapshot.window_end = ?
+  AND snapshot.timezone_input = ?
+ORDER BY occurrence.start_value ASC, occurrence.occurrence_id ASC;
+
 occurrencesForWindow:
 SELECT calendar_occurrence.*
 FROM calendar_occurrence

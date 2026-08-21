@@ -13,8 +13,11 @@ import {
   clearCalendarFilters,
   normalizeCalendarShellFilters,
   removeCalendarFilter,
+  type CalendarCanvasRenderSlot,
   type CalendarFilters,
 } from "./calendar-shell.tsx";
+import { CalendarCanvas } from "./calendar-canvas.tsx";
+import { projectCalendar } from "./calendar-projections.ts";
 
 const facets = {
   scopes: ["private", "household", "all", "member"],
@@ -75,6 +78,36 @@ describe("CalendarWorkspace", () => {
     expect(screen.getByRole("status").textContent).toBe("4 events in Week view.");
     fireEvent.click(screen.getByRole("button", { name: "Month view" }));
     expect(onViewChange).toHaveBeenCalledWith("month");
+  });
+
+  it("wires the shared projection-and-actions contract into the leaf canvas slot", () => {
+    const onSelectDate = vi.fn();
+    const canvasSlot: CalendarCanvasRenderSlot = CalendarCanvas;
+    expect(canvasSlot).toBe(CalendarCanvas);
+    const projection = projectCalendar({
+      occurrences: [],
+      view: "month",
+      anchorDate: "2026-08-10",
+      selectedDate: "2026-08-10",
+      locale: "en-US",
+      weekStartsOn: 0,
+      today: "2026-08-10",
+    }).view;
+    const { container } = render(
+      <CalendarWorkspace
+        view="month"
+        anchorDate="2026-08-10"
+        selectedDate="2026-08-10"
+        projection={projection}
+        onSelectDate={onSelectDate}
+      >
+        <CalendarCanvas />
+      </CalendarWorkspace>,
+    );
+
+    expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy();
+    fireEvent.click(container.querySelector('[data-calendar-date="2026-08-09"] .calendar-day-cell__date') as HTMLButtonElement);
+    expect(onSelectDate).toHaveBeenCalledWith("2026-08-09");
   });
 
   it("keeps both roomy and compact controls on the same controlled filter state", () => {

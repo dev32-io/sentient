@@ -197,6 +197,7 @@ export interface CalendarDayProjection {
   readonly anchorDate: CalendarDate;
   readonly selectedDate: CalendarDate;
   readonly today: CalendarDate;
+  readonly locale: string;
   readonly interval: CalendarInterval;
   readonly date: CalendarDate;
   readonly selected: boolean;
@@ -213,6 +214,7 @@ export interface CalendarWeekProjection {
   readonly anchorDate: CalendarDate;
   readonly selectedDate: CalendarDate;
   readonly today: CalendarDate;
+  readonly locale: string;
   readonly interval: CalendarInterval;
   readonly weekStartsOn: CalendarWeekdayIndex;
   readonly dates: readonly CalendarDate[];
@@ -226,6 +228,7 @@ export interface CalendarMonthProjection {
   readonly anchorDate: CalendarDate;
   readonly selectedDate: CalendarDate;
   readonly today: CalendarDate;
+  readonly locale: string;
   readonly interval: CalendarInterval;
   readonly month: number;
   readonly year: number;
@@ -254,7 +257,9 @@ export interface CalendarYearProjection {
   readonly anchorDate: CalendarDate;
   readonly selectedDate: CalendarDate;
   readonly today: CalendarDate;
+  readonly locale: string;
   readonly interval: CalendarInterval;
+  readonly weekStartsOn: CalendarWeekdayIndex;
   readonly months: readonly CalendarYearMonthProjection[];
 }
 

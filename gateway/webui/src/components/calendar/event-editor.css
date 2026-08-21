@@ -89,6 +89,13 @@
   min-width: 88px;
 }
 
+.calendar-editor__readonly {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--color-ink-2);
+}
+
 .calendar-editor__input-with-suffix > span {
   color: var(--color-ink-3);
   font-size: var(--font-size-xs);

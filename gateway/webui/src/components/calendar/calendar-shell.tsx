@@ -1,8 +1,15 @@
+import { cloneElement, isValidElement } from "preact";
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { Icon } from "../common/icon.tsx";
 import type { CalendarImportance, CalendarReadScope } from "../../services/calendar-api.ts";
 import type { CalendarFacets, CalendarFilters, CalendarViewMode } from "./calendar-projections.ts";
+import type {
+  CalendarCanvasCallbacks,
+  CalendarCanvasChild,
+  CalendarCanvasRenderSlot,
+  CalendarCanvasSlotProps,
+} from "./calendar-canvas-types.ts";
 import {
   calendarIntervalFor,
   formatAccessibleCalendarDate,
@@ -76,22 +83,6 @@ export interface CalendarFilterOption {
   readonly value: string;
   readonly count?: number;
 }
-
-export interface CalendarCanvasSlotProps {
-  readonly view: CalendarViewMode;
-  readonly selectedView: CalendarViewMode;
-  readonly anchorDate: string;
-  readonly selectedDate: string;
-  readonly filters: CalendarFilters;
-}
-
-/**
- * A canvas is deliberately a slot rather than a calendar implementation
- * detail. A canvas task can render through this function without the shell
- * importing its day/week/month/year components.
- */
-export type CalendarCanvasRenderSlot = (props: CalendarCanvasSlotProps) => ComponentChildren;
-export type CalendarCanvasChild = ComponentChildren | CalendarCanvasRenderSlot;
 
 export type CalendarFilterChangeHandler = (filters: CalendarFilters) => void;
 
@@ -167,7 +158,20 @@ export interface ActiveCalendarFilter {
   readonly label: string;
 }
 
-export interface CalendarWorkspaceProps extends CalendarFilterControlsProps {
+export interface CalendarWorkspaceProps extends CalendarFilterControlsProps, Pick<
+  CalendarCanvasCallbacks,
+  | "onSelectDate"
+  | "onDateSelect"
+  | "onOpenDay"
+  | "onDaySelect"
+  | "onSelectMonth"
+  | "onMonthSelect"
+  | "onOpenEvent"
+  | "onEventSelect"
+  | "onEventClick"
+  | "onOpenOverflow"
+  | "onOverflow"
+> {
   /** The active canvas can be supplied as typed children. */
   readonly children?: CalendarCanvasChild;
   /** Explicit render-slot form for canvases that need shell state. */
@@ -185,6 +189,10 @@ export interface CalendarWorkspaceProps extends CalendarFilterControlsProps {
   readonly resultAnnouncement?: string;
   readonly announcement?: string;
   readonly loading?: boolean;
+  /** Complete rich projection supplied by the controller/route boundary. */
+  readonly projection?: CalendarCanvasSlotProps["projection"];
+  readonly refreshing?: boolean;
+  readonly emptyLabel?: string;
   readonly onViewChange?: (view: CalendarViewMode) => void;
   readonly onPrevious?: () => void;
   readonly onNext?: () => void;
@@ -885,6 +893,9 @@ export function FloatingViewBar({
 
 function renderCanvasSlot(slot: CalendarCanvasChild | undefined, props: CalendarCanvasSlotProps): ComponentChildren {
   if (typeof slot === "function") return slot(props);
+  // A component-valued child is still a slot: clone it with the same shared
+  // contract, while leaving static DOM children untouched.
+  if (isValidElement(slot) && typeof slot.type === "function") return cloneElement(slot, props);
   return slot;
 }
 
@@ -916,6 +927,20 @@ export function CalendarWorkspace({
   resultAnnouncement,
   announcement,
   loading = false,
+  projection,
+  refreshing = false,
+  emptyLabel,
+  onSelectDate,
+  onDateSelect,
+  onOpenDay,
+  onDaySelect,
+  onSelectMonth,
+  onMonthSelect,
+  onOpenEvent,
+  onEventSelect,
+  onEventClick,
+  onOpenOverflow,
+  onOverflow,
   onViewChange,
   onPrevious,
   onNext,
@@ -930,12 +955,30 @@ export function CalendarWorkspace({
   const anchorDate = suppliedAnchorDate && isCalendarDate(suppliedAnchorDate) ? suppliedAnchorDate : DEFAULT_DATE;
   const selectedDate = suppliedSelectedDate && isCalendarDate(suppliedSelectedDate) ? suppliedSelectedDate : anchorDate;
   const filters = filterState(selectedFilters ?? suppliedFilters);
+  const canvasDateSelect = onSelectDate ?? (onDateChange === undefined ? undefined : (date: CalendarDate) => onDateChange(date));
+  const canvasMonthSelect = onSelectMonth ?? onMonthSelect ?? (onDateChange === undefined
+    ? undefined
+    : (year: number, month: number) => onDateChange(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`));
   const canvasSlotProps: CalendarCanvasSlotProps = {
     view,
     selectedView: view,
     anchorDate,
     selectedDate,
     filters,
+    projection: projection ?? null,
+    loading,
+    refreshing,
+    ...(emptyLabel === undefined ? {} : { emptyLabel }),
+    ...(canvasDateSelect === undefined ? {} : { onSelectDate: canvasDateSelect }),
+    ...(onDateSelect === undefined ? {} : { onDateSelect }),
+    ...(onOpenDay === undefined ? {} : { onOpenDay }),
+    ...(onDaySelect === undefined ? {} : { onDaySelect }),
+    ...(canvasMonthSelect === undefined ? {} : { onSelectMonth: canvasMonthSelect }),
+    ...(onOpenEvent === undefined ? {} : { onOpenEvent }),
+    ...(onEventSelect === undefined ? {} : { onEventSelect }),
+    ...(onEventClick === undefined ? {} : { onEventClick }),
+    ...(onOpenOverflow === undefined ? {} : { onOpenOverflow }),
+    ...(onOverflow === undefined ? {} : { onOverflow }),
   };
   const slot = renderCanvas ?? canvas ?? children;
   const generatedAnnouncement = resultCount === undefined
@@ -1010,6 +1053,9 @@ export const CalendarFilterSummary = CalendarActiveFilterSummary;
 export const CalendarShell = CalendarWorkspace;
 
 export type {
+  CalendarCanvasChild,
+  CalendarCanvasRenderSlot,
+  CalendarCanvasSlotProps,
   CalendarFacets,
   CalendarFilters,
   CalendarViewMode,

@@ -8,14 +8,14 @@ import {
 import type { MonthGridProps } from "./calendar-canvas-types.ts";
 import { formatAccessibleCalendarDate } from "./calendar-time.ts";
 
-function monthLabel(year: number, month: number): string {
+function monthLabel(year: number, month: number, locale: string): string {
   const date = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01` as `${number}-${number}-${number}`;
   try {
-    return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(
+    return new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone: "UTC" }).format(
       new Date(`${date}T12:00:00.000Z`),
     );
   } catch {
-    return formatAccessibleCalendarDate(date);
+    return formatAccessibleCalendarDate(date, { locale });
   }
 }
 
@@ -33,14 +33,14 @@ export function MonthGrid({
       class="calendar-month-grid"
       data-calendar-view="month"
       data-calendar-canvas-view="month"
-      aria-label={`Month view for ${monthLabel(projection.year, projection.month)}`}
+      aria-label={`Month view for ${monthLabel(projection.year, projection.month, projection.locale)}`}
       aria-busy={loading}
     >
       {loading && <CalendarLoadingState refreshing={refreshing} />}
       <div class="calendar-month-grid__weekdays" role="row" aria-label="Weekdays">
         {firstWeek.map((cell) => (
           <div key={`weekday-${cell.date}`} class="calendar-month-grid__weekday" role="columnheader">
-            <span aria-hidden="true">{weekdayShortLabel(cell.date)}</span>
+            <span aria-hidden="true">{weekdayShortLabel(cell.date, projection.locale)}</span>
             <span class="calendar-canvas__sr-only">{cell.accessibleLabel}</span>
           </div>
         ))}

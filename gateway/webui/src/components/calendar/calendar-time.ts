@@ -426,3 +426,14 @@ export function calendarWeekday(value: CalendarDate): number {
 export function calendarDateToUtcMillis(value: CalendarDate): number {
   return dateAtUtcNoon(value).getTime();
 }
+
+/** Locale-aware weekday labels used by every multi-column calendar renderer. */
+export function weekdayShortLabel(value: CalendarDate, locale?: string): string {
+  try {
+    return new Intl.DateTimeFormat(locale ?? browserLocale(), { weekday: "short", timeZone: "UTC" }).format(
+      dateAtUtcNoon(value),
+    );
+  } catch {
+    return "";
+  }
+}

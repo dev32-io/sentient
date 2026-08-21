@@ -22,7 +22,7 @@ export function WeekGrid({
       <div class="calendar-week-grid__weekdays" role="row" aria-label="Weekdays">
         {projection.cells.map((cell) => (
           <div key={`weekday-${cell.date}`} class="calendar-week-grid__weekday" role="columnheader">
-            <span aria-hidden="true">{weekdayShortLabel(cell.date)}</span>
+            <span aria-hidden="true">{weekdayShortLabel(cell.date, projection.locale)}</span>
             <strong aria-hidden="true">{cell.day}</strong>
             <span class="calendar-canvas__sr-only">{cell.accessibleLabel}</span>
           </div>

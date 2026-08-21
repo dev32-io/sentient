@@ -7,6 +7,8 @@ import {
   projectYear,
 } from "./calendar-projections.ts";
 import { CalendarCanvas, DayView, MonthGrid, WeekGrid, YearGrid } from "./calendar-canvas.tsx";
+import type { CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
+import type { CalendarMonthProjection, CalendarWeekProjection } from "./calendar-projection-types.ts";
 
 function occurrence(overrides: Partial<CalendarOccurrenceV2> = {}): CalendarOccurrenceV2 {
   const start = overrides.start ?? "2024-02-29T09:00:00Z";
@@ -39,17 +41,33 @@ function projection(view: "day" | "week" | "month" | "year", rows: readonly Cale
   }).view;
 }
 
+function canvasProps(
+  view: "day" | "week" | "month" | "year",
+  projectionValue: CalendarCanvasSlotProps["projection"],
+  extras: Partial<CalendarCanvasSlotProps> = {},
+): CalendarCanvasSlotProps {
+  return {
+    view,
+    selectedView: view,
+    anchorDate: "2024-02-29",
+    selectedDate: "2024-02-29",
+    filters: { scopes: ["all"], groups: [], tags: [], importance: null, search: "" },
+    projection: projectionValue,
+    ...extras,
+  };
+}
+
 describe("CalendarCanvas", () => {
   it("satisfies the public projection-and-callback slot for all four views", () => {
     for (const view of ["day", "week", "month", "year"] as const) {
-      const result = render(<CalendarCanvas projection={projection(view)} />);
+      const result = render(<CalendarCanvas {...canvasProps(view, projection(view))} />);
       expect(result.container.querySelector(`[data-calendar-canvas-view="${view}"]`)).toBeTruthy();
       result.unmount();
     }
   });
 
   it("renders loading without requiring a private shell or network boundary", () => {
-    render(<CalendarCanvas projection={null} loading />);
+    render(<CalendarCanvas {...canvasProps("month", null, { loading: true })} />);
     expect(screen.getByRole("status").textContent).toContain("Loading calendar");
     expect(screen.getByRole("region", { name: "Calendar" }).getAttribute("aria-busy")).toBe("true");
   });
@@ -92,6 +110,49 @@ describe("CalendarCanvas", () => {
     expect(onSelectDate).toHaveBeenCalledWith("2024-02-25");
   });
 
+  it("places Week and Month weekdays from weekStartsOn and formats them with the projection locale", () => {
+    const usWeek = projectCalendar({
+      occurrences: [],
+      view: "week",
+      anchorDate: "2024-02-29",
+      locale: "en-US",
+      weekStartsOn: 0,
+      today: "2024-02-29",
+    }).view as CalendarWeekProjection;
+    const us = render(<WeekGrid projection={usWeek} />);
+    expect(usWeek.kind).toBe("week");
+    expect(usWeek.dates[0]).toBe("2024-02-25");
+    expect(us.container.querySelector(".calendar-week-grid__weekday")?.textContent).toContain("Sun");
+    us.unmount();
+
+    const gbMonth = projectCalendar({
+      occurrences: [],
+      view: "month",
+      anchorDate: "2024-02-29",
+      locale: "en-GB",
+      weekStartsOn: 1,
+      today: "2024-02-29",
+    }).view as CalendarMonthProjection;
+    const gb = render(<MonthGrid projection={gbMonth} />);
+    expect(gbMonth.kind).toBe("month");
+    expect(gbMonth.cells[0]?.date).toBe("2024-01-29");
+    expect(gb.container.querySelector(".calendar-month-grid__weekday")?.textContent).toContain("Mon");
+  });
+
+  it("uses locale-aware, weekStartsOn-aware weekday headers in every Year summary", () => {
+    const year = projectYear([], "2024-06-15", {
+      locale: "en-GB",
+      weekStartsOn: 1,
+      today: "2024-06-15",
+    });
+    const result = render(<YearGrid projection={year} />);
+    const labels = [...result.container.querySelectorAll(".calendar-year-grid__weekdays")]
+      .slice(0, 1)
+      .flatMap((row) => [...row.querySelectorAll("span")].map((span) => span.textContent));
+    expect(labels).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(result.container.querySelector('[data-calendar-year-date="2024-01-01"]')?.previousElementSibling).toBeNull();
+  });
+
   it("exposes dense overflow as a reachable action while retaining full event names", () => {
     const rows = [1, 2, 3, 4].map((index) =>
       occurrence({
@@ -104,8 +165,7 @@ describe("CalendarCanvas", () => {
     const onOpenOverflow = vi.fn();
     render(
       <CalendarCanvas
-        projection={projection("month", rows)}
-        onOpenOverflow={onOpenOverflow}
+        {...canvasProps("month", projection("month", rows), { onOpenOverflow })}
       />,
     );
     const overflow = screen.getByRole("button", { name: /more events on Thursday, February 29, 2024/i });
@@ -126,7 +186,7 @@ describe("CalendarCanvas", () => {
 
   it("keeps selected date buttons natively focusable and announces event names in dot mode", () => {
     const rows = [occurrence({ title: "Accessible dot event" })];
-    render(<CalendarCanvas projection={projection("month", rows)} />);
+    render(<CalendarCanvas {...canvasProps("month", projection("month", rows))} />);
     const dateButton = document.querySelector('[data-calendar-date="2024-02-29"] .calendar-day-cell__date') as HTMLButtonElement;
     dateButton.focus();
     expect(document.activeElement).toBe(dateButton);
