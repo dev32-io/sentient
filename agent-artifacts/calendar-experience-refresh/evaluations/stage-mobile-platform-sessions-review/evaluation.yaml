@@ -26,31 +26,26 @@ criteria:
   - No platform types in commonMain, native cache/policy duplication, SQLCipher,
     external storage, content-bearing paths, or diagnostics
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
   reviewedCommit: 43ffe303b02d8ffda10c525be9a7b7094a42db10
-  managerPrompt: "Resolve all four blockers. Make calendar dependency resolution
-    explicitly fail closed: when an authenticated session expects protected
-    persistence and driver/path/migration setup fails, SettingsComponent must
-    receive a typed unavailable/disabled calendar boundary and must not silently
-    construct SdkCalendarRepository or expose network-only calendar behavior;
-    preserve source compatibility only for callers that explicitly do not
-    request calendar persistence. Add the required real
-    AndroidSqliteDriver/session lifecycle proof and iOS driver/session tests for
-    open/migrate/reopen/close, cancellation-before-purge, bounded non-cancelled
-    purge, account/backend isolation, route survival, and no stale post-switch
-    emission. Replace raw exception, user input, backend URL,
-    localizedDescription, and arbitrary transport/server strings in public/log
-    diagnostics with structural typed codes and credential-free normalized
-    identities; add redaction tests for userinfo, query/fragment secrets, and
-    content-bearing failures. Move database directory/open/migration/purge/close
-    work off UI/MainActor: use suspend/background I/O on Android without
-    caller-blocking runBlocking, and an asynchronous off-main
-    initialization/disposal boundary on iOS that publishes typed state back to
-    MainActor. Add thread/executor assertions where practical, run every
-    declared stage check, and return for automatic re-review."
+  managerPrompt: Resolve the remaining teardown/publication race on both
+    platforms. Initialization must build into locally owned resources and
+    transfer ownership to the session only through one atomic,
+    generation-checked publish step under the same lifecycle synchronization
+    used by close/account replacement. Teardown must mark the generation
+    closed/replaced before capturing resources and must coordinate with any
+    in-progress initializer; if publish loses the race, the initializer itself
+    must purge/close its unpublished driver/experience and may not update shared
+    manager/session state. A successor session must never observe or inherit
+    predecessor resources. Avoid a separate final liveness check followed by an
+    unsynchronized assignment. Add deterministic barrier tests that pause
+    initialization immediately before publish, then exercise logout, auth
+    expiry, account switch, backend switch, and successor creation; prove the
+    late resource is closed, no stale state emits, and only the successor
+    runtime is exposed. Run all stage checks and return for re-review.
   fixerAgentId: 58385ebc-d5b2-4aca-a937-00eb688f0a3d
 findings:
   - id: MPS-001
