@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-database-session
 title: Wire the iOS calendar database into authenticated session lifecycle
-status: contribution_complete
+status: merged
 dependsOn:
   - mobile-sqldelight-foundation
   - mobile-calendar-retention-offline
@@ -32,3 +32,4 @@ runtime:
   baseCommit: b165853bcfc9fff538e775c141f30261b4d0eb47
   lastRunId: f317345d-a4cc-4452-a952-54d8e76e1d56
   completedCommit: 002c26133abb8b25e7b10a24de2605f9578cc23a
+  mergedCommit: 06bdaef5fb85875140186b0e68967b499a16db20
