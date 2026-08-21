@@ -11,7 +11,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: mobile-platform-sessions
+  stageId: mobile-viewmodel-adapters
   intermediateState: complete
 verification:
   timing: task
