@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-platform-sessions
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -26,11 +26,11 @@ criteria:
   - No platform types in commonMain, native cache/policy duplication, SQLCipher,
     external storage, content-bearing paths, or diagnostics
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
-  reviewedCommit: 43ffe303b02d8ffda10c525be9a7b7094a42db10
+  reviewedCommit: a49b15dd2352d652132419c73b936d2f944368c7
   managerPrompt: Resolve the remaining teardown/publication race on both
     platforms. Initialization must build into locally owned resources and
     transfer ownership to the session only through one atomic,
@@ -48,58 +48,19 @@ loop:
     runtime is exposed. Run all stage checks and return for re-review.
   fixerAgentId: 58385ebc-d5b2-4aca-a937-00eb688f0a3d
 findings:
-  - id: MPS-001
-    severity: high
-    status: resolved
-    criterion: Fail closed on protected database errors
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/CalendarDependency.kt:45-80;
-      shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/di/CalendarDependencyTest.kt:14-50
-    summary: Protected session settings now use a disabled repository delegate until
-      database setup installs the shared experience; the fallback test proves
-      zero network calls.
-    blocking: false
-  - id: MPS-002
-    severity: high
-    status: resolved
-    criterion: Required platform lifecycle boundary proof
-    location: android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt;
-      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt;
-      ios/Tests/CalendarSessionLifecycleTests.swift
-    summary: The required real-driver Android instrumentation and iOS
-      driver/store/session lifecycle tests are present and pass.
-    blocking: false
-  - id: MPS-003
-    severity: high
-    status: resolved
-    criterion: Sanitized structural diagnostics only
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/log/LogSanitizer.kt;
-      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/log/LogSanitizerTest.kt;
-      shared/mobile-sdk/src/androidMain/kotlin/io/sentient/mobilesdk/transport/WebSocketEngine.android.kt;
-      shared/mobile-sdk/src/iosMain/kotlin/io/sentient/mobilesdk/transport/WebSocketEngine.ios.kt
-    summary: Transport and app diagnostics now use normalized endpoint identities,
-      structural error codes, and endpoint secret redaction tests pass.
-    blocking: false
-  - id: MPS-004
-    severity: high
-    status: resolved
-    criterion: Database I/O stays off the UI thread
-    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:282-390;
-      shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:257-352
-    summary: Initialization and disposal are queued on background executors without
-      caller-blocking database setup; thread assertions pass.
-    blocking: false
   - id: MPS-005
     severity: high
     status: open
-    criterion: Logout/account replacement must purge/close the predecessor and
-      prevent stale post-switch publication
-    location: android/src/main/kotlin/io/sentient/android/di/UserSessionManager.kt:313-323,551-570;
-      shared/mobile-data/src/iosMain/kotlin/io/sentient/mobiledata/di/IosUserSession.ios.kt:262-303
-    summary: A close can clear/capture a null runtime after initialization passes
-      its final liveness check; initialization can then publish and transfer
-      that runtime after teardown is queued. The late driver/experience is not
-      owned by purge and can emit after logout; Android can expose it through
-      the shared manager to a successor session.
+    criterion: Manager-required deterministic platform barrier matrix for logout,
+      auth expiry, account switch, backend switch, and successor creation
+    location: shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/di/CalendarLifecycleGateTest.kt:18-86;
+      android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt:103-131;
+      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt:89-120
+    summary: The implementation race is fenced, but the required platform scenario
+      matrix is not present. Five differently named common tests execute the
+      same generic close operation; platform tests cover direct close only and
+      do not prove actual auth-expiry/account/backend paths or real successor
+      runtime exposure.
     blocking: true
 result:
   verdict: fail

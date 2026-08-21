@@ -1,33 +1,34 @@
 schemaVersion: 1
 evaluation: stage-mobile-platform-sessions-review
-recordedAt: 2026-08-21T19:40:15.888Z
+recordedAt: 2026-08-21T22:48:31.258Z
 entries:
-  - result: PASS; BUILD SUCCESSFUL
+  - result: PASS
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
-      :android:testDebugUnitTest :android:assembleDebug --console=plain
-    description: Declared Android/shared stage check
-    path: files/1-stage-mobile-platform-sessions-review-iteration1-evidence.txt
-    checksum: sha256:4121227aa4a9333b3f6c874c90f4703f75700e73b6c6c819c5d0300ef5d0e5ee
-  - result: PASS; project and XCFramework setup completed
+      :android:testDebugUnitTest :android:assembleDebug --rerun-tasks
+      --console=plain
+    description: Declared Android/shared stage gate, forced rerun
+    path: files/1-stage-mobile-platform-sessions-review-iteration2-evidence.txt
+    checksum: sha256:21f88617a6008d0774b0d3439c2d1f522e99751c3a307cd70712c11074651e97
+  - result: PASS; 4 tests
+    command: source scripts/env.sh && ./gradlew :android:connectedDebugAndroidTest
+      --rerun-tasks --console=plain
+    description: Android real-driver and direct-close barrier instrumentation
+    path: files/2-stage-mobile-platform-sessions-review-iteration2-evidence.txt
+    checksum: sha256:21f88617a6008d0774b0d3439c2d1f522e99751c3a307cd70712c11074651e97
+  - result: PASS
     command: source scripts/env.sh && scripts/ios-setup.sh
-    description: Declared iOS setup check
-    path: files/2-stage-mobile-platform-sessions-review-iteration1-evidence.txt
-    checksum: sha256:4121227aa4a9333b3f6c874c90f4703f75700e73b6c6c819c5d0300ef5d0e5ee
-  - result: PASS; 82 tests
+    description: Declared iOS setup gate
+    path: files/3-stage-mobile-platform-sessions-review-iteration2-evidence.txt
+    checksum: sha256:21f88617a6008d0774b0d3439c2d1f522e99751c3a307cd70712c11074651e97
+  - result: PASS; 82/82 tests
     command: source scripts/env.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-      Simulator,name=iPhone 16,OS=latest'
-    description: Declared iOS simulator test check
-    path: files/3-stage-mobile-platform-sessions-review-iteration1-evidence.txt
-    checksum: sha256:4121227aa4a9333b3f6c874c90f4703f75700e73b6c6c819c5d0300ef5d0e5ee
-  - result: PASS; 3 instrumentation tests
-    command: source scripts/env.sh && ./gradlew :android:connectedDebugAndroidTest
-      --console=plain
-    description: Additional real AndroidSqliteDriver lifecycle proof
-    path: files/4-stage-mobile-platform-sessions-review-iteration1-evidence.txt
-    checksum: sha256:4121227aa4a9333b3f6c874c90f4703f75700e73b6c6c819c5d0300ef5d0e5ee
+      Simulator,name=iPhone 16,OS=latest' -quiet
+    description: Declared iOS simulator gate
+    path: files/4-stage-mobile-platform-sessions-review-iteration2-evidence.txt
+    checksum: sha256:21f88617a6008d0774b0d3439c2d1f522e99751c3a307cd70712c11074651e97
   - result: PASS; worktree clean
     command: source scripts/env.sh && git diff --check
-    description: Declared cleanliness check
-    path: files/5-stage-mobile-platform-sessions-review-iteration1-evidence.txt
-    checksum: sha256:4121227aa4a9333b3f6c874c90f4703f75700e73b6c6c819c5d0300ef5d0e5ee
+    description: Declared diff check
+    path: files/5-stage-mobile-platform-sessions-review-iteration2-evidence.txt
+    checksum: sha256:21f88617a6008d0774b0d3439c2d1f522e99751c3a307cd70712c11074651e97
