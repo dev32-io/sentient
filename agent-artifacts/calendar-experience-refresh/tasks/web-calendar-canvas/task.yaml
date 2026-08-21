@@ -1,0 +1,24 @@
+schemaVersion: 1
+id: web-calendar-canvas
+title: Implement responsive web Day, Week, Month, and Year canvases
+status: draft
+dependsOn:
+  - web-calendar-projections
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: web-calendar-canvas
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun run --filter @sentient/webui test:unit
+    - source scripts/env.sh && bun run --filter @sentient/webui typecheck
+    - source scripts/env.sh && bun run --filter @sentient/webui build
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
