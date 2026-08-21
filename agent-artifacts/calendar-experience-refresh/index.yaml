@@ -84,6 +84,8 @@ evaluations:
     path: evaluations/stage-calendar-core-foundations-review/evaluation.yaml
   - id: stage-calendar-store-and-web-components-review
     path: evaluations/stage-calendar-store-and-web-components-review/evaluation.yaml
+  - id: stage-calendar-experience-and-web-assembly-review
+    path: evaluations/stage-calendar-experience-and-web-assembly-review/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:
