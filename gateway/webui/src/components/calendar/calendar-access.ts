@@ -107,3 +107,58 @@ export function calendarCapabilityAllows(
 }
 
 export const canUseCalendarCapability = calendarCapabilityAllows;
+
+/**
+ * Project the non-content authorization signal carried by the authenticated
+ * session into the editor's narrow capability shape. The calendar route never
+ * derives write access from events, facets, counts, or a failed request.
+ *
+ * A role is safe presentation data supplied by the auth boundary. When a
+ * caller supplies an explicit capability projection, it wins; an unknown or
+ * absent role remains conservative and produces no writable capability.
+ */
+export function projectCalendarCapabilities(
+  user:
+    | {
+        readonly role?: unknown;
+        readonly isAdmin?: unknown;
+        readonly calendarCapabilities?: unknown;
+      }
+    | null
+    | undefined,
+): CalendarAccessCapabilities | undefined {
+  if (!user) return undefined;
+
+  if (
+    user.calendarCapabilities &&
+    typeof user.calendarCapabilities === "object" &&
+    !Array.isArray(user.calendarCapabilities)
+  ) {
+    return user.calendarCapabilities as CalendarAccessCapabilities;
+  }
+
+  const role = user.role;
+  const canWrite = role === "admin" || role === "adult" || role === "child";
+  if (role === "admin" || role === "adult" || role === "child" || role === "guest") {
+    return {
+      canCreate: canWrite,
+      canUpdate: canWrite,
+      canDelete: canWrite,
+      private: { create: canWrite, update: canWrite, delete: canWrite },
+      household: { create: canWrite, update: canWrite, delete: canWrite },
+    };
+  }
+
+  // `isAdmin` is retained only as an explicit legacy auth projection. A
+  // false value is not widened into adult/child write access.
+  if (user.isAdmin === true) {
+    return {
+      canCreate: true,
+      canUpdate: true,
+      canDelete: true,
+      private: { create: true, update: true, delete: true },
+      household: { create: true, update: true, delete: true },
+    };
+  }
+  return undefined;
+}

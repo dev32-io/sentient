@@ -701,8 +701,12 @@ export function EventEditor({
     setConflict(false);
   };
 
-  const closeEditor = (): void => {
-    if (busy) return;
+  const closeEditor = (force = false): void => {
+    // A successful mutation clears busy immediately before the callbacks
+    // below, but the closure still contains the previous render's `busy`
+    // value. Success is an approved close path and must not leave a hidden
+    // nested confirmation dialog mounted behind inert background content.
+    if (busy && !force) return;
     onCancel?.();
     onClose?.();
     onOpenChange?.(false);
@@ -795,7 +799,7 @@ export function EventEditor({
     };
     onOutcome?.(outcome);
     onSuccess?.(value, request);
-    closeEditor();
+    closeEditor(true);
   };
 
   const submit = async (e: Event): Promise<void> => {
