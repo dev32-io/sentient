@@ -1,19 +1,24 @@
 schemaVersion: 1
 evaluation: stage-calendar-experience-and-web-assembly-review
-recordedAt: 2026-08-21T08:37:40.402Z
+recordedAt: 2026-08-21T09:11:10.309Z
 entries:
-  - result: "PASS: 28 test files, 225 tests"
-    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit
-  - result: "PASS: typecheck and production build; build emitted only a chunk-size
+  - result: "PASS: 28 files, 228 tests; typecheck and build pass; only chunk-size
       warning"
-    command: source scripts/env.sh && bun run --filter @sentient/webui typecheck &&
-      bun run --filter @sentient/webui build
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+      bun run --filter @sentient/webui typecheck && bun run --filter
+      @sentient/webui build
   - result: "PASS: BUILD SUCCESSFUL"
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
       :android:assembleDebug
+  - result: "PASS: BUILD SUCCESSFUL; 30 tasks executed"
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:testDebugUnitTest --rerun-tasks --console=plain
   - result: "PASS: no output"
     command: source scripts/env.sh && git diff --check
-  - result: 22 bounded files changed; implementation includes shared
-      CalendarExperience, web route assembly, and local fixture adapter
-    command: git diff --stat 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
-      a72f47256f8f96faf23bef415258bba52dfa72cb
+  - result: Sanitized metadata-only review manifest for the reviewed commit, repair
+      commits, and check outcomes.
+    command: cat /tmp/calendar-experience-rereview.ORFXR8/manifest.txt
+    description: Fresh evidence stored outside the repository; contains no
+      credentials, tokens, user content, or raw logs.
+    path: files/5-manifest.txt
+    checksum: sha256:436fc82532aca0bce0b4ef327c36ebef862699141515c18ef085ae485030bcef
