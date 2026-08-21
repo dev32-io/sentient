@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 41
+  revision: 42
 artifacts:
   - id: intent
     type: intent
@@ -110,13 +110,22 @@ executionStages:
       - web-calendar-preview
       - web-calendar-editor
     checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck && bun run --filter
+        @sentient/webui build
       - source scripts/env.sh && git diff --check
-    mode: sequential
+    mode: concurrent
     review:
       tier: medium
       focus:
-        - Temporary remaining topological sequence while later stages are
-          decomposed
+        - Atomic observable SQLDelight store and namespace/purge behavior
+        - Web leaf components remain isolated and controlled for safe concurrent
+          integration
+        - Exact web reference comparison at 1440x1000, 1024x900, 768x900, and
+          390x844
+        - Seven-column no-overflow correction, viewport-safe preview, complete
+          V2 editor, focus, accessibility, and reduced motion
   - id: calendar-experience-and-web-assembly
     tasks:
       - mobile-calendar-read-coordinator
