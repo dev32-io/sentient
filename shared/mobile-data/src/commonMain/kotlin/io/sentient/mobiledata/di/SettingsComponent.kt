@@ -22,13 +22,14 @@
 //   - onLoggedOut   — clear local session on logout (shut the connection scope +
 //                     drop the token). Bind to UserSessionManager.shutdown / equivalent.
 //
-// NOTE: not yet constructed by android/ or ios/ — P3 wires it. This file only
-// establishes the exact constructor contract those layers bind to.
+// Android and iOS platform session owners may inject the optional experience
+// factory; callers that do not own a database remain source-compatible.
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
 import io.ktor.client.HttpClient
 import io.sentient.mobiledata.calendar.CalendarExperience
+import io.sentient.mobiledata.calendar.CalendarExperienceFactory
 import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.data.calendar.SdkCalendarRepository
 import io.sentient.mobiledata.data.settings.AccountRepository
@@ -79,6 +80,8 @@ class SettingsComponent(
     onLoggedOut: () -> Unit = {},
     /** Optional authenticated-session read experience; null keeps pre-driver callers source-compatible. */
     calendarExperience: CalendarExperience? = null,
+    /** Creates the experience after this component has built its single calendar repository. */
+    calendarExperienceFactory: CalendarExperienceFactory? = null,
 ) {
     private val log = createLogger("data", "settings", "component")
 
@@ -105,7 +108,8 @@ class SettingsComponent(
      * driver-backed experience here; existing settings construction remains
      * valid before those platform drivers exist.
      */
-    val calendarExperience: CalendarExperience? = calendarExperience
+    val calendarExperience: CalendarExperience? =
+        calendarExperience ?: calendarExperienceFactory?.create(calendarRepository)
     val experience: CalendarExperience? get() = calendarExperience
 
     // ── Usecases (VM-facing) ──

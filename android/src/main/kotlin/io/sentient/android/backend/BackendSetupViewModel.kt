@@ -77,7 +77,8 @@ class BackendSetupViewModel(
         if (s.host.isBlank()) { _state.update { it.copy(error = "Enter a host or IP.") }; return }
         if (port == null || port !in 1..65535) { _state.update { it.copy(error = "Port must be 1–65535.") }; return }
         val candidate = BackendConfig(s.host, port, s.security)
-        log.info("save.probe", mapOf("host" to s.host, "port" to port, "security" to s.security.name))
+        // Do not echo the host: custom input may contain sensitive user-info.
+        log.info("save.probe", mapOf("port" to port, "security" to s.security.name))
         _state.update { it.copy(saving = true, error = null) }
         viewModelScope.launch {
             when (val r = probe(candidate)) {

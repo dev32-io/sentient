@@ -17,10 +17,12 @@
 package io.sentient.android.di
 
 import io.sentient.android.auth.AuthViewModel
+import io.sentient.android.sdk.AuthenticatedUserHolder
 import io.sentient.android.backend.BackendSetupViewModel
 import io.sentient.android.chat.ChatViewModel
 import io.sentient.android.history.HistoryViewModel
 import io.sentient.android.presence.PresenceCoordinator
+import io.sentient.android.sdk.AppDependencies
 import io.sentient.android.settings.SettingsRootViewModel
 import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountViewModel
@@ -40,6 +42,7 @@ import io.sentient.android.settings.voice.VoicePreviewPlayer
 import io.sentient.android.settings.voice.VoiceRecorder
 import io.sentient.android.settings.voice.VoiceViewModel
 import io.sentient.android.update.UpdateViewModel
+import io.sentient.mobiledata.calendar.CalendarExperience
 import io.sentient.mobiledata.di.SettingsComponent
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
@@ -47,7 +50,13 @@ import org.koin.dsl.module
 
 val appModule = module {
     single { PresenceCoordinator() }
-    single { UserSessionManager(appContext = androidContext(), presence = get()) }
+    single {
+        UserSessionManager(
+            appContext = androidContext(),
+            presence = get(),
+            authenticatedUserStore = AuthenticatedUserHolder.store,
+        )
+    }
 
     // ONE shared update state holder: the force-update gate (AppNavHost), the Settings
     // update footer, and the foreground-trigger all observe the SAME UpdateViewModel. It
@@ -62,6 +71,8 @@ val appModule = module {
     // The connection-scoped SettingsComponent, re-resolved from UserSessionManager each
     // call (see header). Settings VM factories pull their usecases off it.
     factory { get<UserSessionManager>().settingsComponent() }
+    /** The same session-owned experience is reused by every calendar route/ViewModel. */
+    factory<CalendarExperience?> { get<UserSessionManager>().calendarExperience() }
 
     // sessionId comes from the chat route (null = new chat). A switch is a navigation
     // that recreates this VM → clean per-conversation state. The ChatComponent is
@@ -72,9 +83,19 @@ val appModule = module {
     }
     viewModel { HistoryViewModel(get()) }
 
-    viewModel { AuthViewModel() }
+    viewModel {
+        val userSession = get<UserSessionManager>()
+        AuthViewModel(onAuthenticated = { userSession.beginAuthenticatedSession(it.userId) })
+    }
     viewModel { SettingsViewModel() }
-    viewModel { BackendSetupViewModel() }
+    viewModel {
+        BackendSetupViewModel(
+            onApplied = {
+                AppDependencies.invalidateAuthClient()
+                get<UserSessionManager>().onBackendReplaced()
+            },
+        )
+    }
 
     // ── Settings routes ──
     // Root list gate: the single combine usecase resolved off the SettingsComponent.

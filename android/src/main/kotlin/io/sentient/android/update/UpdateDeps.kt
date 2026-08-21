@@ -36,7 +36,9 @@ fun buildUpdateDeps(
     installedVersionName: String,
 ): UpdateDeps {
     val hostRoot = deriveHostRoot(gatewayWsUrl)
-    log.info("build", mapOf("host" to hostRoot))
+    // The configured URL may contain sensitive user-info; do not echo the host
+    // root into durable diagnostics.
+    log.info("build", mapOf("configured" to true))
     return UpdateDeps(
         checker = UpdateChecker(
             hostRootUrl = hostRoot,
