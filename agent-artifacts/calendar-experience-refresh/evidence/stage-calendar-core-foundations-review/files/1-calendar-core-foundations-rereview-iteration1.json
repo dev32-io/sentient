@@ -1,0 +1,30 @@
+{
+  "reviewedCommit": "d0c8e10ecaf7656a794d02a4cc9940339c52fcf3",
+  "repairCommit": "2ec71787e4fcb3a1ec685d189d13f22433a8c409",
+  "priorFindings": {
+    "CAL-FOUND-001_calendarViewBoundary": "open",
+    "CAL-FOUND-002_monthSelection": "closed-by-probe",
+    "CAL-FOUND-003_filterAliases": "closed-by-probe",
+    "CAL-FOUND-004_backendNamespace": "closed-by-probe"
+  },
+  "probes": {
+    "monthSelectionView": "day",
+    "aliasScope": "private",
+    "aliasGroup": "review-group",
+    "aliasSearch": "review-text",
+    "missingBackendPreferenceNamespace": null,
+    "storedPreferencesWithoutBackend": 0,
+    "normalizedBackend": "https://example.test/calendar"
+  },
+  "repairBoundary": {
+    "calendarViewFilesChangedByRepair": true,
+    "compatibilityTimeZoneForwardedAsEventTimeZone": true,
+    "temporalHelpersDuplicatedInCalendarView": true
+  },
+  "checks": {
+    "mobileDataAllTests": "passed",
+    "webUnitTests": "172 passed",
+    "webTypecheck": "passed",
+    "gitDiffCheck": "passed"
+  }
+}
