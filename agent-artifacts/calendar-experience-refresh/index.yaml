@@ -88,6 +88,8 @@ evaluations:
     path: evaluations/stage-calendar-experience-and-web-assembly-review/evaluation.yaml
   - id: stage-mobile-calendar-policies-review
     path: evaluations/stage-mobile-calendar-policies-review/evaluation.yaml
+  - id: stage-mobile-platform-sessions-review
+    path: evaluations/stage-mobile-platform-sessions-review/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:

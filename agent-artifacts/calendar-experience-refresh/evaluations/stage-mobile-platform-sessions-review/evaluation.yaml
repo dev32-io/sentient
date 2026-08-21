@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: stage-mobile-platform-sessions-review
+type: combined-review
+checkpoint: stage-review
+stageId: mobile-platform-sessions
+scope:
+  workItem: calendar-experience-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    :android:testDebugUnitTest :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Explicit AuthUser.userId plus normalized backend identity reaches both
+    session boundaries before namespace derivation
+  - Android app-private AndroidSqliteDriver and iOS Application Support
+    NativeSqliteDriver/Data Protection
+  - Authenticated-session lifetime, cancellation-before-purge, non-cancelled
+    bounded purge/switch, close, and account/backend isolation
+  - No platform types in commonMain, native cache/policy duplication, SQLCipher,
+    external storage, content-bearing paths, or diagnostics
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
