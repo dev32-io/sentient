@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-store-and-web-components
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
   - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
@@ -28,6 +28,59 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
+  reviewedCommit: ae6359d4d2a2db86922ad0deb01e156e2713dc9c
+findings:
+  - id: CAL-STORE-OBS-001
+    severity: high
+    status: open
+    criterion: Atomic observable SQLDelight store
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/cache/CalendarCacheStore.kt:605-689
+    summary: Snapshot flow can combine rows and metadata from different replacements.
+    blocking: true
+  - id: CAL-WEB-SLOT-001
+    severity: high
+    status: open
+    criterion: Typed CalendarWorkspace canvas slot
+    location: gateway/webui/src/components/calendar/calendar-shell.tsx:80-94,933-940;
+      calendar-canvas-types.ts:36-48
+    summary: Shell and leaf canvas expose incompatible slot contracts and no
+      projection wiring.
+    blocking: true
+  - id: CAL-WEB-TARGET-001
+    severity: high
+    status: open
+    criterion: Accessibility minimum effective targets
+    location: gateway/webui/src/components/calendar/calendar-canvas.css:463-476,738-777
+    summary: Narrow canvas controls are below the required 44px effective target.
+    blocking: true
+  - id: CAL-WEB-SCOPE-001
+    severity: high
+    status: open
+    criterion: Complete V2 editor mutation scope
+    location: gateway/webui/src/components/calendar/event-editor.tsx:480-520,523-547,980-990
+    summary: Editable scope is used as lookup scope despite no V2 scope-change command.
+    blocking: true
+  - id: CAL-WEB-EVIDENCE-001
+    severity: high
+    status: open
+    criterion: Exact web comparison and responsive proof
+    location: Reviewed commit tree and gateway/webui/src/components/calendar tests
+    summary: Required visual and scrollWidth evidence is absent.
+    blocking: true
+  - id: CAL-WEB-YEAR-LOCALE-001
+    severity: medium
+    status: open
+    criterion: Locale-aware four-view canvas
+    location: gateway/webui/src/components/calendar/year-grid.tsx:18-43;
+      week-grid.tsx:18-24; month-grid.tsx:22-30
+    summary: Weekday placement and labels ignore locale/weekStartsOn in several
+      canvas renderers.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-calendar-store-and-web-components-review/manifest.yaml

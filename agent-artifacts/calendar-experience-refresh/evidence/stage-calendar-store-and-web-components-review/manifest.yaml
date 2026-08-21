@@ -1,0 +1,23 @@
+schemaVersion: 1
+evaluation: stage-calendar-store-and-web-components-review
+recordedAt: 2026-08-21T07:11:03.889Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - result: 28 test files passed; 215 tests passed
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit
+  - result: passed
+    command: source scripts/env.sh && bun run --filter @sentient/webui typecheck
+  - result: built successfully
+    command: source scripts/env.sh && bun run --filter @sentient/webui build
+  - result: passed
+    command: source scripts/env.sh && git diff --check
+      85f0f851c3803bc6d16e80d80c3132a76a2e1559
+      ae6359d4d2a2db86922ad0deb01e156e2713dc9c
+  - result: no matching visual evidence files
+    command: git diff --no-ext-diff --name-only
+      85f0f851c3803bc6d16e80d80c3132a76a2e1559
+      ae6359d4d2a2db86922ad0deb01e156e2713dc9c | grep -Ei
+      '\.(png|jpe?g|webp|pdf)$|screenshot|visual|evidence'
+  - result: no scrollWidth assertions
+    command: grep -R "scrollWidth" -n gateway/webui/src/components/calendar
