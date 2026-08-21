@@ -1,0 +1,22 @@
+schemaVersion: 1
+evaluation: stage-calendar-core-foundations-review
+recordedAt: 2026-08-21T06:06:38.122Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - result: BUILD SUCCESSFUL; iosArm64 and iosSimulatorArm64 framework links completed
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+  - result: 169 unit tests passed; typecheck exited 0
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+      bun run --filter @sentient/webui typecheck
+  - result: passed with no output
+    command: source scripts/env.sh && git diff --check
+      57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
+      040e1ddbdb05fa626a61f7966e2196f691114e9d
+  - result: Sanitized probes show Month date selection remains in month view,
+      alias-shaped controller filters are ignored, and calendar-view.tsx plus
+      its test are in the bounded diff.
+    description: Fresh runtime and changed-path evidence.
+    path: files/5-calendar-core-foundations-review-evidence.json
+    checksum: sha256:fa8bdb1a68db981be129ed909b0304aede2ad0fa05712c4bccd7e8a244b7b3a8

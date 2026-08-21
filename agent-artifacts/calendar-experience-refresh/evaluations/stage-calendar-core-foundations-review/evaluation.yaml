@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-core-foundations
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
   - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
@@ -28,6 +28,46 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js without importing
     prototype data
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
+  reviewedCommit: 040e1ddbdb05fa626a61f7966e2196f691114e9d
+findings:
+  - id: CAL-FOUND-001
+    severity: high
+    status: open
+    criterion: calendar-view.tsx remains untouched until assembly
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:5-8,57-114
+    summary: Existing calendar-view.tsx and its test are modified within the
+      foundation stage.
+    blocking: true
+  - id: CAL-FOUND-002
+    severity: high
+    status: open
+    criterion: Month date selection requests Day
+    location: gateway/webui/src/components/calendar/calendar-projections.ts:285-288;
+      gateway/webui/src/components/calendar/calendar-controller.ts:459-469
+    summary: Month date selection remains in Month instead of transitioning to
+      focused Day.
+    blocking: true
+  - id: CAL-FOUND-003
+    severity: high
+    status: open
+    criterion: Supported controller filters apply locally
+    location: gateway/webui/src/components/calendar/calendar-controller.ts:360-366;
+      gateway/webui/src/components/calendar/calendar-preferences.ts:108-128
+    summary: Alias-shaped scope, group, and text filters are silently discarded.
+    blocking: true
+  - id: CAL-FOUND-004
+    severity: high
+    status: open
+    criterion: Account/backend-scoped preference isolation
+    location: gateway/webui/src/components/calendar/calendar-controller.ts:376-386,622-630
+    summary: Optional backend identity can collapse distinct backends into one
+      preference namespace.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-calendar-core-foundations-review/manifest.yaml

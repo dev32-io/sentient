@@ -2,7 +2,7 @@ schemaVersion: 1
 id: calendar-experience-refresh
 kind: story
 title: Cross-platform family calendar experience
-phase: execution
+phase: evaluation
 state: active
 planning:
   revision: 80
