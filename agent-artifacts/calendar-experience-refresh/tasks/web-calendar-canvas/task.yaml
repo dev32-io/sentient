@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-canvas
 title: Implement responsive web Day, Week, Month, and Year canvases
-status: ready
+status: running
 dependsOn:
   - web-calendar-projections
 execution:
@@ -22,3 +22,9 @@ verification:
     - source scripts/env.sh && bun run --filter @sentient/webui build
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/web-calendar-canvas
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-canvas
+  baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
+  lastRunId: 53c34ae3-bd0b-4650-94a1-ca8112fddd19
