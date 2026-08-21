@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-read-coordinator
 title: Implement shared cache-first calendar observation and revalidation
-status: contribution_complete
+status: merged
 dependsOn:
   - mobile-calendar-store
   - mobile-calendar-projections
@@ -31,3 +31,4 @@ runtime:
   baseCommit: 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
   lastRunId: 6cf7d992-7563-4b62-9022-fc28b6fd0394
   completedCommit: bfab9d5dafc7a922ff1f8a0c9f94bfd45fc283f4
+  mergedCommit: 088acf38187cfcd82e2f7b65914f722102f5983d
