@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-calendar-policies
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
     :shared:mobile-data:allTests
@@ -25,11 +25,11 @@ criteria:
     and shared state supports sentient-design/design/mobile/calendar.html plus
     sentient-design/components/mobile/sentient-mobile.js without native policy
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: passed
   reviewerAgentId: 33ff9db1-089a-44a0-a985-efec5ab101c1
-  reviewedCommit: 6278c2fad5ab42e2040ecd5239da015c62d63f85
+  reviewedCommit: f953e6e625aca1859e02fcddfec04fa3c663ba8e
   managerPrompt: "Resolve the remaining coalescing/cancellation blocker.
     Cancellation and registry cleanup must be atomic with respect to new request
     lookup: do not launch asynchronous cleanup that leaves a cancelled Deferred
@@ -50,7 +50,7 @@ findings:
     criterion: Forbidden refresh purge/isolation
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:1335-1358,
       1830-1842
-    summary: Repair clears visible state and purges the forbidden namespace.
+    summary: Forbidden refresh clears visible state and purges its namespace.
     blocking: false
   - id: CAL-POL-002
     severity: critical
@@ -58,8 +58,8 @@ findings:
     criterion: Namespace continuation fencing
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:1278-1291,
       694-724, 1083-1187
-    summary: Mutation/reread/revalidation continuations use namespace and mutation
-      fences.
+    summary: Mutation and reread continuations are fenced by namespace and mutation
+      generation.
     blocking: false
   - id: CAL-POL-003
     severity: high
@@ -67,7 +67,7 @@ findings:
     criterion: Auth expiry purge and close
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:1293-1333,
       1595-1625
-    summary: Auth failures route through purge and close.
+    summary: Auth failures route through invalidation, purge, and close.
     blocking: false
   - id: CAL-POL-004
     severity: high
@@ -75,14 +75,14 @@ findings:
     criterion: Occurrence update wire shape
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarMutations.kt:477-485;
       shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt:207-212
-    summary: Occurrence updates omit recurrence, including at the SDK wire boundary.
+    summary: Occurrence updates omit recurrence at both builder and SDK wire boundaries.
     blocking: false
   - id: CAL-POL-005
     severity: high
     status: resolved
     criterion: Optional-seconds RFC3339 offsets
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarDateMath.kt:23-41
-    summary: Parser accepts optional seconds while raw wire values remain unchanged.
+    summary: Optional seconds are accepted while raw wire spelling is preserved.
     blocking: false
   - id: CAL-POL-007
     severity: high
@@ -93,22 +93,22 @@ findings:
     blocking: false
   - id: CAL-POL-008
     severity: high
-    status: open
+    status: resolved
     criterion: Synchronized coalescing and cancellation
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:1900-1935,
-      2474-2503
-    summary: Asynchronous cancellation cleanup permits stale in-flight registration
-      reuse.
-    blocking: true
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:143-158,
+      1914-1990, 2518-2554
+    summary: Atomic request registry prevents stale reuse and old completion removal
+      of replacements.
+    blocking: false
   - id: CAL-POL-009
     severity: low
     status: resolved
     criterion: Deterministic mutation wire/permission/isolation tests
-    location: shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/calendar/CalendarExperienceTest.kt:113-825;
-      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt:165-200
-    summary: Repair adds coverage for the prior listed seams.
+    location: shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/calendar/CalendarExperienceTest.kt:366-490
+    summary: Repair coverage includes the required interleavings and prior mutation
+      seams.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-mobile-calendar-policies-review/manifest.yaml

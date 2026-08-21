@@ -1,12 +1,12 @@
 schemaVersion: 1
 evaluation: stage-mobile-calendar-policies-review
-recordedAt: 2026-08-21T10:46:36.469Z
+recordedAt: 2026-08-21T11:06:43.572Z
 entries:
-  - result: Reviewed commit and bounded repair identified; worktree clean; all
-      required stage checks PASS.
+  - result: Reviewed commit f953e6e625aca1859e02fcddfec04fa3c663ba8e; bounded repair
+      verified; worktree clean; all required checks PASS.
     description: Sanitized re-review evidence summary.
-    path: files/1-pi-stage-mobile-calendar-policies-review-iteration1.txt
-    checksum: sha256:d39a6960ee29be33d3ab360bf6362ff592b56b0fc27aedadc41bba684b23e250
+    path: files/1-pi-stage-mobile-calendar-policies-review-iteration2.txt
+    checksum: sha256:6cacbc3d35a053258d4988c2b1ac0bba77f0fe9d41c3f65c376bcb3fe815350d
   - result: PASS
     command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
       :shared:mobile-data:allTests --console=plain
