@@ -28,11 +28,26 @@ criteria:
     preview, Dialog inert/safe dismissal, complete V2 editor, focus, semantics,
     and reduced motion
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 859b5d12-4f87-4f1c-92f3-1c44f6bc66d7
   reviewedCommit: ae6359d4d2a2db86922ad0deb01e156e2713dc9c
+  managerPrompt: Resolve all six findings before approval. Make CalendarCacheStore
+    emit rows and metadata from one coherent replacement generation (no
+    cross-replacement combine window) and add a deterministic
+    concurrency/regression test. Define one shared typed CalendarWorkspace
+    canvas-slot contract and wire projections/actions through it without
+    shell/leaf shape drift. Ensure every narrow-view interactive canvas control
+    has at least a 44x44 effective target without causing horizontal overflow.
+    For edits, always use the event's immutable original scope for resource
+    lookup; do not present scope as editable unless Calendar V2 supports an
+    explicit scope-change command (retain create-time scope selection). Produce
+    the required exact-reference visual and scrollWidth evidence at 1440x1000,
+    1024x900, 768x900, and 390x844, including seven-column no-overflow and
+    collapsed controls. Also correct Week/Month/Year weekday placement and
+    labels to consistently honor locale and weekStartsOn, with focused tests.
+    Run all stage checks and return for automatic re-review.
 findings:
   - id: CAL-STORE-OBS-001
     severity: high
