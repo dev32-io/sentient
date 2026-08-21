@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-store
 title: Implement the observable shared calendar store
-status: running
+status: contribution_complete
 dependsOn:
   - mobile-sqldelight-foundation
 execution:
@@ -28,3 +28,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-store
   baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
   lastRunId: e6a03b3f-9f57-4fe7-ba0b-474810573bab
+  completedCommit: 170ffa259a5699f382127421f908a2cf570eafdb
