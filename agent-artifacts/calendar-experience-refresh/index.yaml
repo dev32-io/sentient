@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 44
+  revision: 45
 artifacts:
   - id: intent
     type: intent
@@ -153,6 +153,16 @@ executionStages:
     tasks:
       - mobile-calendar-retention-offline
       - mobile-calendar-mutations
+    checks:
+      - source scripts/env.sh && git diff --check
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Temporary remaining topological sequence while later stages are
+          decomposed
+  - id: mobile-platform-sessions
+    tasks:
       - android-calendar-database-session
       - ios-calendar-database-session
       - android-calendar-viewmodel

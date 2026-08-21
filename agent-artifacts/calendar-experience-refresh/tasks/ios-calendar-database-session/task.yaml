@@ -13,7 +13,7 @@ execution:
     tier: medium
     rationale: Default medium routing for a bounded contribution.
 assembly:
-  stageId: mobile-calendar-policies
+  stageId: mobile-platform-sessions
   intermediateState: complete
 verification:
   timing: task
