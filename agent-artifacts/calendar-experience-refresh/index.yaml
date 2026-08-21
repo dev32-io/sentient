@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 11
+  revision: 12
 artifacts:
   - id: intent
     type: intent
@@ -27,9 +27,15 @@ artifacts:
     path: e2e-matrix/calendar-experience-e2e.md
     status: approved
     narrativeSchemaVersion: 2
-tasks: []
+tasks:
+  - id: mobile-sqldelight-foundation
+    path: tasks/mobile-sqldelight-foundation/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/calendar
   createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
 evaluations: []
+executionStages:
+  - id: mobile-sqldelight-foundation
+    tasks:
+      - mobile-sqldelight-foundation

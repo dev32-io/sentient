@@ -1,0 +1,23 @@
+schemaVersion: 1
+id: mobile-sqldelight-foundation
+title: Establish the shared SQLDelight calendar database
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: mobile-sqldelight-foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    - source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
