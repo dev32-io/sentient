@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-shell-filters
 title: Implement the responsive web calendar shell and filters
-status: contribution_complete
+status: merged
 dependsOn:
   - web-calendar-data-controller
 execution:
@@ -29,3 +29,4 @@ runtime:
   baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
   lastRunId: 5694714d-029b-472c-b59f-67781643c0cd
   completedCommit: ae36beb7563e13b6f340d2cc951809fb4e61167d
+  mergedCommit: de2bd60ca0a7d9598915a2d9584eee551c2a4d2f
