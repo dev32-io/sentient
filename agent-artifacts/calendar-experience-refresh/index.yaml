@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 72
+  revision: 73
 artifacts:
   - id: intent
     type: intent
@@ -95,13 +95,20 @@ executionStages:
     review:
       tier: medium
       focus:
-        - SQLDelight schema/migration/namespace correctness and commonMain purity
-        - Deterministic Day/Week/Month/Year, temporal, filter, overflow, and
+        - Pinned SQLDelight/Kotlin 2.3.10 compatibility, source-set-correct
+          dependencies, schema/migration/namespace correctness, and commonMain
+          purity
+        - Deterministic Day/Week/Month/Year, raw temporal, filter, overflow, and
           navigation contracts
-        - Explicit all-scope complete web pagination and account/backend
-          preference isolation
-        - Exact sentient-design paths are used only as interaction/visual
-          vocabulary and prototype data is not imported
+        - Explicit all-scope complete web pagination, account/backend preference
+          isolation, and calendar-view.tsx remaining untouched
+        - Exact reference vocabulary is checked directly against
+          sentient-design/HANDOFF.md, sentient-design/brand-spec.md,
+          sentient-design/design/web/calendar.html,
+          sentient-design/components/web/sentient-web.js,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js without importing
+          prototype data
   - id: calendar-store-and-web-components
     tasks:
       - mobile-calendar-store
