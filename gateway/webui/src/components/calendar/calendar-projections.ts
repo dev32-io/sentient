@@ -1,12 +1,11 @@
+import type { CalendarImportance, CalendarOccurrence, CalendarReadScope } from "../../services/calendar-api.ts";
 import { projectCalendarDensity } from "./calendar-density.ts";
-import { deriveCalendarProjection } from "./calendar-filters.ts";
+import { deriveCalendarProjection as deriveRichCalendarProjection } from "./calendar-filters.ts";
 import { compareProjectedCalendarOccurrences, projectCalendarOccurrences } from "./calendar-occurrence.ts";
 import type {
   CalendarDateCell,
   CalendarDayProjection,
   CalendarFilteredProjection,
-  CalendarFilters,
-  CalendarInterval,
   CalendarMonthProjection,
   CalendarNavigationState,
   CalendarOccurrenceInput,
@@ -14,12 +13,14 @@ import type {
   CalendarProjectionRequest,
   CalendarProjectionResult,
   CalendarView,
-  CalendarViewProjection,
   CalendarWeekProjection,
   CalendarWeekdayIndex,
   CalendarYearMonthProjection,
   CalendarYearProjection,
   ProjectedCalendarOccurrence,
+  CalendarFilters as RichCalendarFilters,
+  CalendarInterval as RichCalendarInterval,
+  CalendarViewProjection as RichCalendarViewProjection,
 } from "./calendar-projection-types.ts";
 import {
   type CalendarDate,
@@ -195,7 +196,7 @@ function intervalForView(
   view: CalendarView,
   anchorDate: CalendarDate,
   weekStartsOn: CalendarWeekdayIndex,
-): CalendarInterval {
+): RichCalendarInterval {
   if (view === "day") return { from: anchorDate, to: anchorDate };
   if (view === "week") {
     const from = weekStartDate(anchorDate, weekStartsOn);
@@ -223,7 +224,7 @@ export function calendarVisibleInterval(
   viewOrState: CalendarView | CalendarNavigationState,
   anchorDate?: CalendarDate,
   options: Pick<CalendarProjectionOptions, "locale" | "weekStartsOn"> = {},
-): CalendarInterval {
+): RichCalendarInterval {
   const view = typeof viewOrState === "string" ? viewOrState : viewOrState.view;
   const anchor = validDate(
     typeof viewOrState === "string" ? (anchorDate ?? todayCalendarDate()) : viewOrState.anchorDate,
@@ -517,7 +518,7 @@ export function projectCalendarView(
   view: CalendarView,
   anchorDate: CalendarDate,
   options: CalendarProjectionOptions = {},
-): CalendarViewProjection {
+): RichCalendarViewProjection {
   const projectedOccurrences = materializeRows(rows, options);
   if (view === "day") return buildDayProjection(projectedOccurrences, anchorDate, options);
   if (view === "week") return buildWeekProjection(projectedOccurrences, anchorDate, options);
@@ -526,7 +527,7 @@ export function projectCalendarView(
 }
 
 export function projectCalendar(request: CalendarProjectionRequest): CalendarProjectionResult {
-  const filtered: CalendarFilteredProjection = deriveCalendarProjection(
+  const filtered: CalendarFilteredProjection = deriveRichCalendarProjection(
     request.occurrences,
     request.filters ?? {},
     request,
@@ -548,7 +549,7 @@ export function projectCalendar(request: CalendarProjectionRequest): CalendarPro
 export function projectCalendarState(
   occurrences: readonly CalendarOccurrenceInput[],
   state: CalendarNavigationState,
-  filters: CalendarFilters = {},
+  filters: RichCalendarFilters = {},
   options: CalendarProjectionOptions = {},
 ): CalendarProjectionResult {
   return projectCalendar({
@@ -564,7 +565,7 @@ export function projectCalendarState(
 export const projectCalendarFromState = projectCalendarState;
 
 export interface PositionalCalendarProjectionOptions extends CalendarProjectionOptions {
-  readonly filters?: CalendarFilters;
+  readonly filters?: RichCalendarFilters;
 }
 
 /** Convenience positional seam for controller/canvas callers. */
@@ -619,3 +620,222 @@ export const dayProjection = projectDayFromOccurrences;
 export const weekProjection = projectWeekFromOccurrences;
 export const monthProjection = projectMonthFromOccurrences;
 export const yearProjection = projectYearFromOccurrences;
+
+// The controller contribution consumes a deliberately smaller, source-row
+// projection seam. Keep it alongside the rich canvas projection above so both
+// callers share date/filter behavior without making the controller own canvas
+// density or localized event presentation.
+export type CalendarViewMode = CalendarView;
+
+export interface CalendarInterval {
+  readonly from: string;
+  readonly to: string;
+}
+
+export interface CalendarFilters {
+  readonly scope?: CalendarReadScope;
+  readonly scopes?: readonly CalendarReadScope[];
+  readonly group?: string;
+  readonly groups?: readonly string[];
+  readonly tags?: readonly string[];
+  readonly importance?: CalendarImportance | readonly CalendarImportance[] | null;
+  readonly importanceValues?: readonly CalendarImportance[];
+  readonly text?: string;
+  readonly query?: string;
+  readonly search?: string;
+}
+
+export interface CalendarFacets {
+  readonly scopes: readonly CalendarReadScope[];
+  readonly groups: readonly string[];
+  readonly tags: readonly string[];
+  readonly importance: readonly CalendarImportance[];
+}
+
+export interface CalendarViewProjection {
+  readonly view: CalendarViewMode;
+  readonly interval: CalendarInterval;
+  readonly occurrences: readonly CalendarOccurrence[];
+  readonly filteredOccurrences: readonly CalendarOccurrence[];
+  readonly count: number;
+}
+
+export interface CalendarDerivedProjection {
+  readonly filteredOccurrences: readonly CalendarOccurrence[];
+  readonly facets: CalendarFacets;
+  readonly projection: CalendarViewProjection;
+}
+
+const CONTROLLER_IMPORTANCE_ORDER: readonly CalendarImportance[] = ["normal", "important", "pinned"];
+const CONTROLLER_SCOPE_ORDER: readonly CalendarReadScope[] = ["private", "household", "all"];
+
+function controllerScopes(filters: CalendarFilters): readonly CalendarReadScope[] {
+  const values = filters.scopes ?? (filters.scope === undefined ? [] : [filters.scope]);
+  return [...new Set(values)].filter(
+    (value): value is CalendarReadScope => value === "private" || value === "household" || value === "all",
+  );
+}
+
+function controllerGroups(filters: CalendarFilters): readonly string[] {
+  return [...new Set(filters.groups ?? (filters.group === undefined ? [] : [filters.group]))].filter(
+    (value) => value.length > 0,
+  );
+}
+
+function controllerImportance(filters: CalendarFilters): readonly CalendarImportance[] {
+  const source =
+    filters.importanceValues ??
+    (filters.importance === undefined || filters.importance === null
+      ? []
+      : Array.isArray(filters.importance)
+        ? filters.importance
+        : [filters.importance]);
+  return [...new Set(source)].filter((value): value is CalendarImportance =>
+    CONTROLLER_IMPORTANCE_ORDER.includes(value),
+  );
+}
+
+function controllerSearch(filters: CalendarFilters): string {
+  return (filters.search ?? filters.text ?? filters.query ?? "").trim().toLocaleLowerCase();
+}
+
+/** Adapter for the controller's preference-shaped filters to the rich filter model. */
+function richFilters(filters: CalendarFilters): RichCalendarFilters {
+  const importance = filters.importance === null ? undefined : filters.importance;
+  const text = filters.text ?? filters.query ?? filters.search;
+  return {
+    ...(filters.scope !== undefined ? { scope: filters.scope } : {}),
+    ...(filters.scopes !== undefined ? { scopes: filters.scopes } : {}),
+    ...(filters.group !== undefined ? { group: filters.group } : {}),
+    ...(filters.groups !== undefined ? { groups: filters.groups } : {}),
+    ...(filters.tags !== undefined ? { tags: filters.tags } : {}),
+    ...(importance !== undefined ? { importance } : {}),
+    ...(filters.importanceValues !== undefined ? { importanceValues: filters.importanceValues } : {}),
+    ...(text !== undefined ? { text } : {}),
+  };
+}
+
+function controllerText(event: CalendarOccurrence): string {
+  return `${event.title}\u0000${event.description ?? ""}`.toLocaleLowerCase();
+}
+
+/** Filter only the complete authorized source rows; this never fetches a subset. */
+export function filterCalendarOccurrences(
+  occurrences: readonly CalendarOccurrence[],
+  filters: CalendarFilters = {},
+): CalendarOccurrence[] {
+  const scopes = controllerScopes(filters);
+  const hasAllScope = scopes.length === 0 || scopes.includes("all");
+  const groups = new Set(controllerGroups(filters));
+  const tags = new Set(filters.tags ?? []);
+  const importance = controllerImportance(filters);
+  const search = controllerSearch(filters);
+  return occurrences.filter((event) => {
+    if (!hasAllScope && !scopes.includes(event.scope)) return false;
+    if (groups.size > 0 && (event.group === undefined || !groups.has(event.group))) return false;
+    if (tags.size > 0 && !(filters.tags ?? []).every((tag) => event.tags.includes(tag))) return false;
+    if (importance.length > 0 && !importance.includes(event.importance)) return false;
+    if (search && !controllerText(event).includes(search)) return false;
+    return true;
+  });
+}
+
+/** Derive facet values from complete authorized rows, retaining selected empty values. */
+export function deriveCalendarFacets(
+  occurrences: readonly CalendarOccurrence[],
+  filters: CalendarFilters = {},
+): CalendarFacets {
+  const scopes = new Set<CalendarReadScope>(["all", ...controllerScopes(filters)]);
+  const groups = new Set(controllerGroups(filters));
+  const tags = new Set(filters.tags ?? []);
+  const importance = new Set<CalendarImportance>(controllerImportance(filters));
+  for (const event of occurrences) {
+    scopes.add(event.scope);
+    if (event.group) groups.add(event.group);
+    for (const tag of event.tags) tags.add(tag);
+    importance.add(event.importance);
+  }
+  return {
+    scopes: CONTROLLER_SCOPE_ORDER.filter((scope) => scopes.has(scope)),
+    groups: [...groups].sort((a, b) => a.localeCompare(b)),
+    tags: [...tags].sort((a, b) => a.localeCompare(b)),
+    importance: CONTROLLER_IMPORTANCE_ORDER.filter((value) => importance.has(value)),
+  };
+}
+
+export function calendarIntervalFor(
+  view: CalendarViewMode,
+  anchorDate: string,
+  weekStartsOn: 0 | 1 = 1,
+): CalendarInterval {
+  const safeAnchor = (isCalendarDate(anchorDate) ? anchorDate : "1970-01-01") as CalendarDate;
+  if (view === "day") return { from: safeAnchor, to: safeAnchor };
+  if (view === "year") return { from: `${safeAnchor.slice(0, 4)}-01-01`, to: `${safeAnchor.slice(0, 4)}-12-31` };
+
+  const normalizedWeekStart = weekStartsOn === 0 ? 0 : 1;
+  if (view === "week") {
+    const from = weekStartDate(safeAnchor, normalizedWeekStart as CalendarWeekdayIndex);
+    return { from, to: addCalendarDays(from, 6) };
+  }
+
+  // Month data covers the six-week canvas window, including outside-month cells.
+  const first = startOfCalendarMonth(safeAnchor);
+  const from = weekStartDate(first, normalizedWeekStart as CalendarWeekdayIndex);
+  return { from, to: addCalendarDays(from, 41) };
+}
+
+export function stepCalendarAnchor(view: CalendarViewMode, anchorDate: string, direction: -1 | 1): string {
+  const safeAnchor = (isCalendarDate(anchorDate) ? anchorDate : "1970-01-01") as CalendarDate;
+  if (view === "day") return addCalendarDays(safeAnchor, direction);
+  if (view === "week") return addCalendarDays(safeAnchor, direction * 7);
+  if (view === "month") return addCalendarMonths(safeAnchor, direction);
+  return addCalendarYears(safeAnchor, direction);
+}
+
+export function projectCalendarInterval(
+  view: CalendarViewMode,
+  interval: CalendarInterval,
+  occurrences: readonly CalendarOccurrence[],
+  filteredOccurrences: readonly CalendarOccurrence[],
+): CalendarViewProjection {
+  return { view, interval, occurrences, filteredOccurrences, count: filteredOccurrences.length };
+}
+
+export function deriveCalendarProjection(
+  occurrences: readonly CalendarOccurrenceInput[],
+  filters?: CalendarFilters | RichCalendarFilters,
+  options?: CalendarProjectionOptions,
+): CalendarFilteredProjection;
+export function deriveCalendarProjection(
+  view: CalendarViewMode,
+  interval: CalendarInterval,
+  occurrences: readonly CalendarOccurrence[],
+  filters?: CalendarFilters,
+): CalendarDerivedProjection;
+export function deriveCalendarProjection(
+  first: CalendarViewMode | readonly CalendarOccurrenceInput[],
+  second: CalendarFilters | RichCalendarFilters | CalendarInterval = {},
+  third: CalendarProjectionOptions | readonly CalendarOccurrence[] = {},
+  fourth: CalendarFilters = {},
+): CalendarFilteredProjection | CalendarDerivedProjection {
+  if (typeof first === "string") {
+    const interval = second as CalendarInterval;
+    const occurrences = third as readonly CalendarOccurrence[];
+    const filteredOccurrences = filterCalendarOccurrences(occurrences, fourth);
+    return {
+      filteredOccurrences,
+      facets: deriveCalendarFacets(occurrences, fourth),
+      projection: projectCalendarInterval(first, interval, occurrences, filteredOccurrences),
+    };
+  }
+  return deriveRichCalendarProjection(
+    first,
+    richFilters((second ?? {}) as CalendarFilters),
+    (third ?? {}) as CalendarProjectionOptions,
+  );
+}
+
+export const applyCalendarFilters = filterCalendarOccurrences;
+export const deriveCalendarFacetOptions = deriveCalendarFacets;
+export const getCalendarVisibleInterval = calendarIntervalFor;
+export const stepCalendarDate = stepCalendarAnchor;
