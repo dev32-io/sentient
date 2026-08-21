@@ -1,0 +1,22 @@
+schemaVersion: 1
+evaluation: stage-mobile-calendar-policies-review
+recordedAt: 2026-08-21T10:14:01.030Z
+entries:
+  - result: Reviewed commit 65ce4fe4a9de11bcffbf3a117f2176ba4b33f1a5; clean
+      worktree; stage tests, XCFramework assembly, and diff check all PASS.
+    description: Sanitized stage verification summary.
+    path: files/1-pi-stage-mobile-calendar-policies-65ce4fe4.txt
+    checksum: sha256:ae33e68f78517191e61b71ff3c4b36485cddf05e291049337f8ea9ad77f92308
+  - result: V2 permits optional seconds; Kotlin Instant.parse rejects HH:mm offset
+      values and accepts HH:mm:ss values.
+    description: Sanitized temporal compatibility probe.
+    path: files/2-pi-calendar-temporal-check.txt
+    checksum: sha256:f12e51cf6fc2e6869e0246db5496b22d5a446c12d3c53a8f8de9dc1c0d843472
+  - result: PASS
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+      :shared:mobile-data:allTests
+  - result: PASS
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+  - result: PASS
+    command: source scripts/env.sh && git diff --check

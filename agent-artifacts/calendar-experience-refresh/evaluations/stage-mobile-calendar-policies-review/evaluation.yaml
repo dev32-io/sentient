@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-calendar-policies
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
     :shared:mobile-data:allTests
@@ -25,6 +25,75 @@ criteria:
     and shared state supports sentient-design/design/mobile/calendar.html plus
     sentient-design/components/mobile/sentient-mobile.js without native policy
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 33ff9db1-089a-44a0-a985-efec5ab101c1
+  reviewedCommit: 65ce4fe4a9de11bcffbf3a117f2176ba4b33f1a5
+findings:
+  - id: CAL-POL-001
+    severity: critical
+    status: open
+    criterion: Explicit offline/security state and isolation
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:1513-1557
+    summary: Forbidden refresh retains cached private projection and occurrences.
+    blocking: true
+  - id: CAL-POL-002
+    severity: critical
+    status: open
+    criterion: Namespace transitions cannot leak old account/backend content
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:604-650,
+      768-864, 2127-2170
+    summary: Mutation/conflict continuations have no namespace generation fence.
+    blocking: true
+  - id: CAL-POL-003
+    severity: high
+    status: open
+    criterion: Auth expiry purge and close
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:780-850,
+      987-1002
+    summary: Mutation Auth failures do not purge/close the expired session cache.
+    blocking: true
+  - id: CAL-POL-004
+    severity: high
+    status: open
+    criterion: Exact V2 recurrence mutation semantics
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarMutations.kt:467-480
+    summary: this_occurrence updates send forbidden recurrence=null/value fields.
+    blocking: true
+  - id: CAL-POL-005
+    severity: high
+    status: open
+    criterion: Raw offset-bearing temporal semantics
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarMutations.kt:565-579
+    summary: Valid offset timestamps without seconds are rejected.
+    blocking: true
+  - id: CAL-POL-007
+    severity: high
+    status: open
+    criterion: Conflict reread/review and stale revision handling
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:420-445,
+      592-650
+    summary: Conflict flow permits blind stale resubmission and cannot adopt
+      authoritative revision.
+    blocking: true
+  - id: CAL-POL-008
+    severity: high
+    status: open
+    criterion: Nonblocking prefetch and request coalescing
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:211-219,
+      1583-1594, 1888-1934, 1980-1989
+    summary: Unsynchronized bookkeeping and fast-completion path defeat
+      coalescing/cancellation.
+    blocking: true
+  - id: CAL-POL-009
+    severity: low
+    status: open
+    criterion: Required deterministic mutation test coverage
+    location: shared/mobile-data/src/commonTest/kotlin/io/sentient/mobiledata/calendar/CalendarExperienceTest.kt:424-785
+    summary: Critical mutation wire, permission, and isolation seams lack tests.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-mobile-calendar-policies-review/manifest.yaml
