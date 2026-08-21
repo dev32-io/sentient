@@ -1,0 +1,34 @@
+schemaVersion: 1
+evaluation: stage-mobile-platform-sessions-review
+recordedAt: 2026-08-21T18:35:41.705Z
+entries:
+  - result: PASS; BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug --rerun-tasks
+      --console=plain
+    description: Sanitized check summary
+    path: files/1-stage-mobile-platform-sessions-review-bfe0d35-evidence.txt
+    checksum: sha256:8e7fd3aa9778333a2fd4f9df27bf72c587f985ce82f81e511c17ad03a6452c59
+  - result: PASS; XCFramework/project generated
+    command: source scripts/env.sh && scripts/ios-setup.sh
+    description: Sanitized check summary
+    path: files/2-stage-mobile-platform-sessions-review-bfe0d35-evidence.txt
+    checksum: sha256:8e7fd3aa9778333a2fd4f9df27bf72c587f985ce82f81e511c17ad03a6452c59
+  - result: PASS; 81 tests
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    description: Sanitized check summary
+    path: files/3-stage-mobile-platform-sessions-review-bfe0d35-evidence.txt
+    checksum: sha256:8e7fd3aa9778333a2fd4f9df27bf72c587f985ce82f81e511c17ad03a6452c59
+  - result: PASS; no output
+    command: source scripts/env.sh && git diff --check
+    description: Sanitized check summary
+    path: files/4-stage-mobile-platform-sessions-review-bfe0d35-evidence.txt
+    checksum: sha256:8e7fd3aa9778333a2fd4f9df27bf72c587f985ce82f81e511c17ad03a6452c59
+  - result: No commonMain platform-type matches; no
+      SQLCipher/external-storage/calendar native cache matches; worktree clean
+    command: sanitized static inspection
+    description: Boundary inspection summary
+    path: files/5-stage-mobile-platform-sessions-review-bfe0d35-evidence.txt
+    checksum: sha256:8e7fd3aa9778333a2fd4f9df27bf72c587f985ce82f81e511c17ad03a6452c59

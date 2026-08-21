@@ -1,0 +1,16 @@
+stage: stage-mobile-platform-sessions-review
+work_item: calendar-experience-refresh
+reviewed_commit: bfe0d35bfea7d10de8f89dace420e2172d2eb347
+stage_implementation_base: b165853bcfc9fff538e775c141f30261b4d0eb47
+mode: initial exhaustive review
+
+checks:
+- source scripts/env.sh && ./gradlew :shared:mobile-data:allTests :android:testDebugUnitTest :android:assembleDebug --rerun-tasks --console=plain: PASS
+- source scripts/env.sh && scripts/ios-setup.sh: PASS
+- source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest': PASS (81 tests)
+- source scripts/env.sh && git diff --check: PASS
+
+sanitized_static_inspection:
+- commonMain platform-type scan: no matches
+- SQLCipher/external-storage/calendar UserDefaults or SharedPreferences cache scan: no matches
+- worktree status: clean
