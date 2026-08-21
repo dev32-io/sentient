@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 75
+  revision: 76
 artifacts:
   - id: intent
     type: intent
@@ -183,14 +183,17 @@ executionStages:
     review:
       tier: medium
       focus:
-        - Nonblocking adjacent prefetch, transactional twelve-month LRU, offline
-          states, recovery, and isolation
-        - Exact V2 create/edit/delete recurrence, revision, conflict,
-          permission, and temporal semantics
+        - Nonblocking adjacent prefetch, transactional twelve-month LRU,
+          explicit cached/unavailable offline states, recovery, and isolation
+        - mobile-calendar-mutations follows and depends on the finalized
+          retention/offline state in this sequential stage
+        - Exact V2 create/edit/delete recurrence, revision, raw offset-bearing
+          originalStart, conflict, permission, and temporal semantics
         - Offline writes produce no optimistic success, queue row, or hidden
-          retry
-        - Shared state fully supports exact mobile reference
-          preview/editor/freshness flows without native policy
+          retry, and shared state supports
+          sentient-design/design/mobile/calendar.html plus
+          sentient-design/components/mobile/sentient-mobile.js without native
+          policy
   - id: mobile-platform-sessions
     tasks:
       - android-calendar-database-session
