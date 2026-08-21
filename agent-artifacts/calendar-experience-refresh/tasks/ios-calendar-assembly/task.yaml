@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: ios-calendar-assembly
+title: Assemble and verify the complete iOS calendar experience
+status: draft
+dependsOn:
+  - ios-calendar-database-session
+  - ios-calendar-viewmodel
+  - ios-calendar-surface
+  - ios-calendar-overlays
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: ios-calendar-assembly
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && xcodegen generate && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+    - source scripts/env.sh && ./qa/mobile/run-e2e.sh ios --tags calendar
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
