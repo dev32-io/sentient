@@ -94,6 +94,8 @@ evaluations:
     path: evaluations/stage-mobile-viewmodel-adapters-review/evaluation.yaml
   - id: stage-native-calendar-components-review
     path: evaluations/stage-native-calendar-components-review/evaluation.yaml
+  - id: stage-calendar-delivery-completion-review
+    path: evaluations/stage-calendar-delivery-completion-review/evaluation.yaml
 executionStages:
   - id: calendar-core-foundations
     tasks:
