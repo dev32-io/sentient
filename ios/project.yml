@@ -67,6 +67,8 @@ targets:
     dependencies:
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
+      # SQLDelight's native driver cinterop links against the system SQLite.
+      - sdk: libsqlite3.tbd
       - package: MarkdownUI
         product: MarkdownUI
 
@@ -82,6 +84,7 @@ targets:
       - target: SentientApp
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
+      - sdk: libsqlite3.tbd
 
 schemes:
   SentientApp:

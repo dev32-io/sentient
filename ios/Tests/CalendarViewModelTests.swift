@@ -28,7 +28,10 @@ struct CalendarViewModelTests {
             createdAt: "2026-01-01T00:00:00.000Z",
             updatedAt: "2026-01-01T00:00:00.000Z",
             occurrenceId: occurrenceId,
-            baseEventId: baseEventId
+            originalStart: nil,
+            baseEventId: baseEventId,
+            revision: 1,
+            recurring: occurrenceId != nil
         )
     }
 
@@ -38,7 +41,7 @@ struct CalendarViewModelTests {
             start: CalendarTime.Timed(instant: "2026-08-01T13:00:00.000Z", timeZoneId: "UTC")
         )
         let allDay = event(id: "all-day", start: CalendarTime.AllDay(date: "2026-08-02"))
-        let page = CalendarEventPage(events: [timed, allDay], more: 0)
+        let page = CalendarEventPage(events: [timed, allDay], more: 0, nextCursor: nil)
         let folded = foldCalendarList(
             phase: .loading,
             events: [],
@@ -46,7 +49,7 @@ struct CalendarViewModelTests {
         )
 
         #expect(folded.phase == .ready)
-        #expect(folded.events.map(\.id) == ["timed", "all-day"])
+        #expect(folded.events.map { $0.id } == ["timed", "all-day"])
     }
 
     @Test func listFoldPreservesLastGoodRowsOnFailure() {
@@ -160,7 +163,7 @@ private final class CalendarUseCaseSpy: CalendarUseCaseOperations {
         tags: [String]?,
         importance: Importance?
     ) async throws -> SentientResult<CalendarEventPage> {
-        SentientResultSuccess(data: CalendarEventPage(events: listed, more: 0))
+        SentientResultSuccess(data: CalendarEventPage(events: listed, more: 0, nextCursor: nil))
     }
 
     func create(event: CalendarEvent) async throws -> SentientResult<CalendarEvent> {

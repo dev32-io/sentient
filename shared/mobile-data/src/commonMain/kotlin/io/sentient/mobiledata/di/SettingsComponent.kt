@@ -23,7 +23,8 @@
 //                     drop the token). Bind to UserSessionManager.shutdown / equivalent.
 //
 // Android and iOS platform session owners may inject the optional experience
-// factory; callers that do not own a database remain source-compatible.
+// factory and/or session-owned repository; callers that do not own a database
+// remain source-compatible.
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
@@ -82,6 +83,13 @@ class SettingsComponent(
     calendarExperience: CalendarExperience? = null,
     /** Creates the experience after this component has built its single calendar repository. */
     calendarExperienceFactory: CalendarExperienceFactory? = null,
+    /**
+     * Optional session-owned repository. The iOS session supplies the same
+     * stateless repository used to build [calendarExperience], avoiding a
+     * second calendar transport wrapper while preserving source compatibility
+     * for callers that let this component build its own repository.
+     */
+    injectedCalendarRepository: CalendarRepository? = null,
 ) {
     private val log = createLogger("data", "settings", "component")
 
@@ -94,14 +102,14 @@ class SettingsComponent(
     private val servicesVersionsHttp = ServicesVersionsHttpClient(httpClient, gatewayWsUrl, token)
     private val adminHttp = AdminHttpClient(httpClient, gatewayWsUrl, token)
     private val authClient = AuthClient(gatewayWsUrl, httpClient)
-    private val calendarHttp = CalendarHttpClient(httpClient, gatewayWsUrl, token)
 
     // ── Stateless repos ──
     val profileRepository: ProfileRepository = SdkProfileRepository(profileHttp, profileEditHttp, providersHttp)
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
-    val calendarRepository: CalendarRepository = SdkCalendarRepository(calendarHttp)
+    val calendarRepository: CalendarRepository = injectedCalendarRepository
+        ?: SdkCalendarRepository(CalendarHttpClient(httpClient, gatewayWsUrl, token))
 
     /**
      * Shared cache-first calendar seam. Platform session stages inject the

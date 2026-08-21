@@ -135,7 +135,10 @@ final class CalendarViewModel {
             createdAt: "",
             updatedAt: "",
             occurrenceId: nil,
-            baseEventId: nil
+            originalStart: nil,
+            baseEventId: nil,
+            revision: 0,
+            recurring: false
         )
         await create(event)
     }
@@ -345,6 +348,9 @@ private func replacing(_ event: CalendarEvent, title: String, start: CalendarTim
         createdAt: event.createdAt,
         updatedAt: event.updatedAt,
         occurrenceId: event.occurrenceId,
-        baseEventId: event.baseEventId
+        originalStart: event.originalStart,
+        baseEventId: event.baseEventId,
+        revision: event.revision,
+        recurring: event.recurring
     )
 }

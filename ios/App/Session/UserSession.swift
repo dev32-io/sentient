@@ -36,10 +36,19 @@ final class UserSession: ObservableObject {
 
     /// The settings slice of this connection scope (built beside `component` inside
     /// the KMP `IosUserSession`). Per-screen settings ViewModels resolve their
-    /// usecases from here — `settings.observeSettingsAccess`, `settings.voices`,
-    /// `settings.applyProfileChange`, `settings.account`,
-    /// `settings.admin` — never the SDK or a repository directly.
+    /// usecases from here — never the SDK or a repository directly.
     var settings: SettingsComponent { inner.settings }
+
+    /// One session-owned calendar experience. Route recreation never rebuilds
+    /// this object because it is held above the authenticated NavigationStack.
+    var calendarExperience: CalendarExperience? { inner.calendarExperience }
+
+    /// Typed fail-closed state for protected calendar storage/open failures.
+    var calendarAvailability: IosCalendarAvailability { inner.calendarAvailability }
+
+    /// Namespace is derived from the explicit authenticated userId and backend
+    /// identity; it is not derived from display name or token text.
+    var calendarNamespace: CalendarCacheNamespace? { inner.calendarNamespace }
 
     /// Build the User session from a resolved backend (gateway URL + dev-TLS
     /// posture). FaultHooks are armed in debug builds (no adb-equivalent arming
@@ -52,11 +61,17 @@ final class UserSession: ObservableObject {
     init(
         gatewayWsUrl: String,
         allowSelfSignedDevHost: Bool,
+        authenticatedUserId: String,
         onLoggedOut: @escaping @MainActor () -> Void = {}
     ) {
+        // AccountUseCases can invoke this callback without the explicit root
+        // logout button. Close the same session before clearing auth state so a
+        // successor login cannot race the predecessor's namespace purge.
+        var closeSession: (() -> Void)?
         self.inner = createUserSession(
             gatewayWsUrl: gatewayWsUrl,
             allowSelfSignedDevHost: allowSelfSignedDevHost,
+            authenticatedUserId: authenticatedUserId,
             capabilities: [],
             devFaultsEnabled: {
                 #if DEBUG
@@ -65,7 +80,12 @@ final class UserSession: ObservableObject {
                 return false
                 #endif
             }(),
-            onLoggedOut: { Task { @MainActor in onLoggedOut() } }
+            onLoggedOut: {
+                Task { @MainActor in
+                    closeSession?()
+                    onLoggedOut()
+                }
+            }
         )
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.
@@ -80,6 +100,7 @@ final class UserSession: ObservableObject {
         })
         monitor.start()
         self.networkMonitor = monitor
+        closeSession = { [weak self] in self?.shutdown() }
     }
 
     /// Build a thin per-conversation ChatViewModel over the shared ChatComponent.
@@ -119,6 +140,14 @@ final class UserSession: ObservableObject {
         log.info("shutdown")
         networkMonitor?.cancel()
         networkMonitor = nil
+        inner.close()
+    }
+
+    /// Auth-expiry/account callbacks can remove the host from the SwiftUI tree
+    /// without first reaching the explicit logout button. Keep the KMP boundary
+    /// fail-closed if that is the final owner release.
+    deinit {
+        networkMonitor?.cancel()
         inner.close()
     }
 }
