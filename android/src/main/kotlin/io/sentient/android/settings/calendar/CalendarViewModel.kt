@@ -76,7 +76,7 @@ class CalendarViewModel(
         mutate {
             val start = event.start.updatedFromEditor(date.trim())
             updateCalendar.update(
-                event.persistedId,
+                event.mutationId,
                 event.copy(title = title.trim(), start = start),
             )
         }
@@ -84,7 +84,7 @@ class CalendarViewModel(
 
     fun delete(event: CalendarEvent) {
         if (_ui.value.saving) return
-        mutate { deleteCalendar.delete(event.persistedId) }
+        mutate { deleteCalendar.delete(event.mutationId) }
     }
 
     private fun mutate(operation: suspend () -> SentientResult<Any>) {
@@ -117,8 +117,17 @@ internal fun CalendarUiState.foldList(result: SentientResult<CalendarEventPage>)
 /** Stable row identity; occurrence rows must not collide with their base event. */
 internal val CalendarEvent.rowId: String get() = occurrenceId ?: id
 
-/** The persisted resource id used by update/delete, including recurring rows. */
-internal val CalendarEvent.mutationId: String get() = persistedId
+/**
+ * The resource id used by the legacy platform mutation adapter.
+ *
+ * V2 occurrence rows already carry the recurring event id in [eventId]. When a
+ * compatibility caller still supplies [baseEventId], prefer it only for an
+ * occurrence row; [occurrenceId] and [originalStart] remain on the copied
+ * payload as independent occurrence metadata.
+ */
+@Suppress("DEPRECATION")
+internal val CalendarEvent.mutationId: String
+    get() = if (occurrenceId != null) baseEventId ?: persistedId else persistedId
 
 /** Formats a start in the device timezone, never by printing the UTC wire instant. */
 internal fun formatCalendarStart(start: CalendarTime, zone: ZoneId = ZoneId.systemDefault()): String = when (start) {
