@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-database-session
 title: Wire the Android calendar database into authenticated session lifecycle
-status: blocked
+status: ready
 dependsOn:
   - mobile-sqldelight-foundation
   - mobile-calendar-retention-offline
