@@ -38,10 +38,9 @@ enum class CalendarMutationAvailabilityReason {
 }
 
 /**
- * Read coordination does not perform mutations yet, but exposes the one
- * capability gate native clients need to render their controls.  Mutation
- * tasks can refine the individual permissions without changing the read
- * StateFlow shape.
+ * Shared read/mutation availability gate. Cached-offline and unavailable-offline
+ * states disable writes without creating a durable mutation queue; role-specific
+ * authorization remains a typed repository outcome.
  */
 data class CalendarMutationAvailability(
     val canCreate: Boolean = true,

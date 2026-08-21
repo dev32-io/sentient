@@ -461,6 +461,8 @@ data class CalendarEvent(
     @Deprecated("Use eventId; V2 does not expose baseEventId")
     val baseEventId: String? = null,
     val revision: Int = 0,
+    /** Effective-occurrence marker from V2; never inferred from occurrenceId. */
+    val recurring: Boolean = false,
 ) {
     val eventId: String get() = id
     val persistedId: String get() = eventId
@@ -508,6 +510,7 @@ internal fun CalendarEventV2.toCompatibility(): CalendarEvent = CalendarEvent(
     group = group,
     tags = tags,
     revision = revision,
+    recurring = false,
 )
 
 internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent = CalendarEvent(
@@ -525,4 +528,5 @@ internal fun EffectiveOccurrence.toCompatibility(): CalendarEvent = CalendarEven
     occurrenceId = occurrenceId,
     originalStart = originalStart.toCalendarTime(),
     revision = revision,
+    recurring = recurring,
 )

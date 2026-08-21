@@ -12,6 +12,8 @@ import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.calendar.CalendarEvent
 import io.sentient.mobilesdk.calendar.CalendarEventPage
+import io.sentient.mobilesdk.calendar.CalendarMutationResult
+import io.sentient.mobilesdk.calendar.CalendarMutationScope
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import io.sentient.mobilesdk.result.SentientError
@@ -42,15 +44,64 @@ import kotlin.coroutines.cancellation.CancellationException as KotlinCancellatio
 import kotlin.time.Clock as KtClock
 import kotlin.time.Instant
 
-/** Intents accepted by the shared, session-scoped calendar read coordinator. */
+/** Intents accepted by the shared, session-scoped calendar experience. */
 sealed interface CalendarExperienceIntent {
     data class Observe(val window: CalendarCacheWindow) : CalendarExperienceIntent
     data class Navigate(val action: CalendarNavigationAction) : CalendarExperienceIntent
     data class SetLocale(val locale: CalendarLocale) : CalendarExperienceIntent
     data object Refresh : CalendarExperienceIntent
+
+    /** Open the effective occurrence preview sheet. */
+    data class OpenPreview(val occurrence: EffectiveOccurrence) : CalendarExperienceIntent
+
+    /** Open an editor for an occurrence, or a create editor when it is null. */
+    data class OpenEditor(
+        val occurrence: EffectiveOccurrence? = null,
+        val draft: CalendarMutationDraft? = null,
+    ) : CalendarExperienceIntent
+
+    /** Start a new in-memory editor lifecycle. */
+    data class CreateDraft(val draft: CalendarMutationDraft? = null) : CalendarExperienceIntent
+
+    /** Edit one effective occurrence without losing its V2 identity. */
+    data class EditOccurrence(
+        val occurrence: EffectiveOccurrence,
+        val inputTimeZoneId: String? = null,
+    ) : CalendarExperienceIntent
+
+    /** Replace editable fields while retaining the immutable target identity. */
+    data class UpdateDraft(val draft: CalendarMutationDraft) : CalendarExperienceIntent
+
+    data class ChooseMutationScope(val scope: CalendarMutationScope) : CalendarExperienceIntent
+
+    /** Open the explicit delete confirmation sheet; it never writes by itself. */
+    data object RequestDelete : CalendarExperienceIntent
+    data class ConfirmDelete(val scope: CalendarMutationScope? = null) : CalendarExperienceIntent
+
+    /** Submit the current editor draft, or an explicit replacement draft. */
+    data class Submit(val draft: CalendarMutationDraft? = null) : CalendarExperienceIntent
+
+    data object Cancel : CalendarExperienceIntent
+    data object RereadConflict : CalendarExperienceIntent
+    data object AcknowledgeOutcome : CalendarExperienceIntent
 }
 
+/** Mutation-only naming retained as an ergonomic alias for native adapters. */
+typealias CalendarMutationIntent = CalendarExperienceIntent
 typealias CalendarReadIntent = CalendarExperienceIntent
+
+typealias OpenCalendarPreviewIntent = CalendarExperienceIntent.OpenPreview
+typealias OpenCalendarEditorIntent = CalendarExperienceIntent.OpenEditor
+typealias CreateCalendarDraftIntent = CalendarExperienceIntent.CreateDraft
+typealias EditCalendarOccurrenceIntent = CalendarExperienceIntent.EditOccurrence
+typealias UpdateCalendarDraftIntent = CalendarExperienceIntent.UpdateDraft
+typealias ChooseCalendarMutationScopeIntent = CalendarExperienceIntent.ChooseMutationScope
+typealias RequestCalendarDeleteIntent = CalendarExperienceIntent.RequestDelete
+typealias ConfirmCalendarDeleteIntent = CalendarExperienceIntent.ConfirmDelete
+typealias SubmitCalendarMutationIntent = CalendarExperienceIntent.Submit
+typealias CancelCalendarMutationIntent = CalendarExperienceIntent.Cancel
+typealias RereadCalendarConflictIntent = CalendarExperienceIntent.RereadConflict
+typealias AcknowledgeCalendarOutcomeIntent = CalendarExperienceIntent.AcknowledgeOutcome
 
 /** A page after the compatibility repository page has been converted losslessly. */
 private data class EffectiveOccurrencePage(
@@ -149,6 +200,8 @@ class CalendarExperience(
     private var activeWindow: CalendarCacheWindow = requestedWindow
     private var observationJob: Job? = null
     private var refreshJob: Job? = null
+    private var mutationJob: Job? = null
+    private var mutationRefreshJob: Job? = null
     private var revalidationGeneration: Long? = null
     private var requestGeneration: Long = 0L
     private var preferenceWriteGeneration: Long = 0L
@@ -267,11 +320,743 @@ class CalendarExperience(
             is CalendarExperienceIntent.Navigate -> dispatch(intent.action)
             is CalendarExperienceIntent.SetLocale -> dispatch(CalendarNavigationAction.SetLocale(intent.locale))
             CalendarExperienceIntent.Refresh -> refresh()
+            is CalendarExperienceIntent.OpenPreview -> openPreview(intent.occurrence)
+            is CalendarExperienceIntent.OpenEditor -> openEditor(intent.occurrence, intent.draft)
+            is CalendarExperienceIntent.CreateDraft -> createDraft(intent.draft)
+            is CalendarExperienceIntent.EditOccurrence -> editOccurrence(intent.occurrence, intent.inputTimeZoneId)
+            is CalendarExperienceIntent.UpdateDraft -> updateDraft(intent.draft)
+            is CalendarExperienceIntent.ChooseMutationScope -> chooseMutationScope(intent.scope)
+            CalendarExperienceIntent.RequestDelete -> requestDelete()
+            is CalendarExperienceIntent.ConfirmDelete -> confirmDelete(intent.scope)
+            is CalendarExperienceIntent.Submit -> submitMutation(intent.draft)
+            CalendarExperienceIntent.Cancel -> cancelMutation()
+            CalendarExperienceIntent.RereadConflict -> rereadConflict()
+            CalendarExperienceIntent.AcknowledgeOutcome -> acknowledgeOutcome()
         }
     }
 
+    /** Source-compatible imperative seams for thin Android/iOS adapters. */
+    fun openPreview(occurrence: EffectiveOccurrence) {
+        if (closed) return
+        _state.value = _state.value.copy(
+            mutation = _state.value.mutation.copy(
+                phase = CalendarMutationPhase.PREVIEWING,
+                preview = occurrence,
+                editor = null,
+                deleteConfirmation = null,
+                pendingRequest = null,
+                error = null,
+                conflict = null,
+                outcome = null,
+                successorEventId = null,
+                affectedWindows = emptyList(),
+            ),
+        )
+    }
+
+    fun closePreview() {
+        if (closed) return
+        val mutation = _state.value.mutation
+        if (mutation.editor != null || mutation.isSubmitting) return
+        _state.value = _state.value.copy(mutation = mutation.copy(phase = CalendarMutationPhase.IDLE, preview = null))
+    }
+
+    fun openEditor(
+        occurrence: EffectiveOccurrence? = null,
+        draft: CalendarMutationDraft? = null,
+    ) {
+        if (occurrence == null) {
+            createDraft(draft)
+        } else {
+            editOccurrence(occurrence, draft?.inputTimeZoneId)
+            if (draft != null && _state.value.mutation.editor != null) updateDraft(draft)
+        }
+    }
+
+    fun createDraft(draft: CalendarMutationDraft? = null) {
+        if (closed) return
+        val base = draft ?: CalendarMutationDraft.create(
+            start = _state.value.selectedDate,
+            end = null,
+            allDay = true,
+            scope = CalendarScope.PRIVATE,
+        )
+        val editor = CalendarMutationEditorState(
+            mode = CalendarMutationEditorMode.CREATE,
+            draft = base.copy(eventId = null, occurrenceId = null, originalStart = null, expectedRevision = null),
+            target = null,
+            applicableScopes = listOf(CalendarMutationScope.ENTIRE_SERIES),
+            selectedScope = CalendarMutationScope.ENTIRE_SERIES,
+        )
+        setEditorState(editor)
+    }
+
+    fun editOccurrence(occurrence: EffectiveOccurrence, inputTimeZoneId: String? = null) {
+        if (closed) return
+        val target = CalendarMutationTarget.fromOccurrence(occurrence)
+        if (target == null) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.NOT_FOUND,
+                    code = "not_found",
+                    userMessage = "This calendar event is no longer available.",
+                ),
+            )
+            return
+        }
+        val scopes = applicableCalendarMutationScopes(occurrence)
+        val editor = CalendarMutationEditorState(
+            mode = CalendarMutationEditorMode.EDIT,
+            draft = CalendarMutationDraft.fromOccurrence(occurrence, inputTimeZoneId),
+            target = target,
+            applicableScopes = scopes,
+            // A recurring row must make the user choose. A non-recurring row
+            // has one applicable scope and is safe to address as a whole.
+            selectedScope = scopes.singleOrNull(),
+        )
+        setEditorState(editor)
+    }
+
+    fun updateDraft(draft: CalendarMutationDraft) {
+        if (closed) return
+        val editor = _state.value.mutation.editor ?: return
+        val retained = if (editor.target == null) {
+            draft.copy(eventId = null, occurrenceId = null, originalStart = null, expectedRevision = null)
+        } else {
+            draft.copy(
+                eventId = editor.target.eventId,
+                occurrenceId = editor.target.occurrenceId,
+                originalStart = editor.target.originalStart,
+                expectedRevision = editor.target.expectedRevision,
+                scope = editor.target.scope,
+                recurring = editor.target.recurring,
+            )
+        }
+        val nextEditor = editor.copy(draft = retained)
+        _state.value = _state.value.copy(
+            mutation = _state.value.mutation.copy(
+                phase = CalendarMutationPhase.EDITING,
+                editor = nextEditor,
+                deleteConfirmation = null,
+                error = null,
+                conflict = null,
+                outcome = null,
+            ),
+        )
+    }
+
+    fun setDraft(draft: CalendarMutationDraft) = updateDraft(draft)
+
+    fun chooseMutationScope(scope: CalendarMutationScope) {
+        if (closed) return
+        val mutation = _state.value.mutation
+        val editor = mutation.editor
+        if (editor == null || scope !in editor.applicableScopes) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.VALIDATION,
+                    code = "invalid_mutation_scope",
+                    userMessage = "Choose an applicable recurrence scope.",
+                ),
+            )
+            return
+        }
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                phase = if (mutation.deleteConfirmation != null) CalendarMutationPhase.DELETE_CONFIRMATION else CalendarMutationPhase.EDITING,
+                editor = editor.copy(selectedScope = scope),
+                deleteConfirmation = mutation.deleteConfirmation?.copy(selectedScope = scope),
+                error = null,
+                conflict = null,
+            ),
+        )
+    }
+
+    fun selectMutationScope(scope: CalendarMutationScope) = chooseMutationScope(scope)
+
+    fun requestDelete() {
+        if (closed) return
+        val mutation = _state.value.mutation
+        val editor = mutation.editor
+        val target = editor?.target
+        if (editor == null || target == null || editor.mode != CalendarMutationEditorMode.EDIT) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.NOT_FOUND,
+                    code = "not_found",
+                    userMessage = "This calendar event is no longer available.",
+                ),
+            )
+            return
+        }
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                phase = CalendarMutationPhase.DELETE_CONFIRMATION,
+                deleteConfirmation = CalendarDeleteConfirmationState(
+                    target = target,
+                    applicableScopes = editor.applicableScopes,
+                    selectedScope = editor.selectedScope,
+                ),
+                error = null,
+            ),
+        )
+    }
+
+    fun openDeleteConfirmation() = requestDelete()
+
+    fun confirmDelete(scope: CalendarMutationScope? = null): Job? {
+        if (closed) return null
+        val mutation = _state.value.mutation
+        val confirmation = mutation.deleteConfirmation
+        val selected = scope ?: confirmation?.selectedScope
+        if (confirmation == null || selected == null || selected !in confirmation.applicableScopes) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.VALIDATION,
+                    code = "invalid_mutation_scope",
+                    userMessage = "Choose an applicable recurrence scope before deleting.",
+                ),
+            )
+            return null
+        }
+        val editor = mutation.editor ?: return null
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                editor = editor.copy(selectedScope = selected),
+                deleteConfirmation = confirmation.copy(selectedScope = selected),
+            ),
+        )
+        return submitDelete(editor.draft, selected)
+    }
+
+    fun submitMutation(draft: CalendarMutationDraft? = null): Job? {
+        if (closed) return null
+        val editor = _state.value.mutation.editor
+        if (editor == null || editor.mode != CalendarMutationEditorMode.CREATE && editor.mode != CalendarMutationEditorMode.EDIT) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONTRACT,
+                    code = "no_editor",
+                    userMessage = "Open the calendar editor before saving.",
+                ),
+            )
+            return null
+        }
+        if (draft != null) updateDraft(draft)
+        val currentEditor = _state.value.mutation.editor ?: return null
+        val scope = currentEditor.selectedScope
+        if (currentEditor.isEdit && scope == null) {
+            setMutationError(
+                CalendarMutationError(
+                    kind = CalendarMutationErrorKind.VALIDATION,
+                    code = "invalid_mutation_scope",
+                    userMessage = "Choose an applicable recurrence scope before saving.",
+                ),
+            )
+            return null
+        }
+        mutationOfflineGate()?.let {
+            setMutationError(it)
+            return null
+        }
+        val request = when (currentEditor.mode) {
+            CalendarMutationEditorMode.CREATE -> when (val built = buildCalendarCreateInput(currentEditor.draft)) {
+                is CalendarCommandBuildResult.Success -> CalendarMutationRequest.Create(built.value)
+                is CalendarCommandBuildResult.Failure -> {
+                    setMutationError(built.error)
+                    return null
+                }
+            }
+            CalendarMutationEditorMode.EDIT -> when (val built = buildCalendarUpdateRequest(currentEditor.draft, scope!!)) {
+                is CalendarCommandBuildResult.Success -> built.value
+                is CalendarCommandBuildResult.Failure -> {
+                    setMutationError(built.error)
+                    return null
+                }
+            }
+        }
+        return submitRequest(request, currentEditor.draft)
+    }
+
+    fun submit() = submitMutation()
+
+    fun cancelMutation() {
+        if (closed || _state.value.mutation.isSubmitting) return
+        mutationJob?.cancel()
+        mutationJob = null
+        _state.value = _state.value.copy(mutation = CalendarMutationState())
+    }
+
+    fun cancel() = cancelMutation()
+
+    fun rereadConflict(): Job? {
+        if (closed) return null
+        val mutation = _state.value.mutation
+        val conflict = mutation.conflict
+        if (conflict == null || conflict.rereadInFlight) return null
+        val target = conflict.target
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                phase = CalendarMutationPhase.CONFLICT,
+                conflict = conflict.copy(rereadInFlight = true),
+            ),
+        )
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val result = try {
+                repository.get(
+                    id = target.eventId,
+                    originalStart = target.originalStart,
+                    scope = target.scope,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (cancelled: KotlinCancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                SentientResult.Failure(SentientError.Connection("connection required"))
+            }
+            if (closed) return@launch
+            when (result) {
+                is SentientResult.Success -> {
+                    val latest = result.data
+                    val current = _state.value.mutation
+                    val active = current.conflict ?: return@launch
+                    _state.value = _state.value.copy(
+                        mutation = current.copy(
+                            phase = CalendarMutationPhase.CONFLICT,
+                            conflict = active.copy(
+                                rereadInFlight = false,
+                                authoritativeEvent = latest,
+                                reviewed = true,
+                            ),
+                            error = current.error,
+                        ),
+                    )
+                }
+                is SentientResult.Failure -> {
+                    val current = _state.value.mutation
+                    val active = current.conflict ?: return@launch
+                    _state.value = _state.value.copy(
+                        mutation = current.copy(
+                            phase = CalendarMutationPhase.CONFLICT,
+                            conflict = active.copy(rereadInFlight = false),
+                            error = mutationError(result.error),
+                        ),
+                    )
+                }
+                is SentientResult.Loading -> Unit
+            }
+        }
+        mutationJob = job
+        job.invokeOnCompletion { if (mutationJob === job) mutationJob = null }
+        return job
+    }
+
+    fun reviewConflict() = rereadConflict()
+
+    fun acknowledgeOutcome() {
+        if (closed) return
+        val mutation = _state.value.mutation
+        _state.value = _state.value.copy(
+            mutation = mutation.copy(
+                phase = if (mutation.editor == null) CalendarMutationPhase.IDLE else mutation.phase,
+                outcome = null,
+                successorEventId = null,
+                affectedWindows = emptyList(),
+            ),
+        )
+    }
+
+    fun acknowledge() = acknowledgeOutcome()
+
     fun send(intent: CalendarExperienceIntent) = dispatch(intent)
     fun onIntent(intent: CalendarExperienceIntent) = dispatch(intent)
+
+    private fun setEditorState(editor: CalendarMutationEditorState) {
+        val current = _state.value.mutation
+        _state.value = _state.value.copy(
+            mutation = current.copy(
+                phase = CalendarMutationPhase.EDITING,
+                preview = null,
+                editor = editor,
+                deleteConfirmation = null,
+                pendingRequest = null,
+                error = null,
+                conflict = null,
+                outcome = null,
+                successorEventId = null,
+                affectedWindows = emptyList(),
+            ),
+        )
+    }
+
+    private fun setMutationError(error: CalendarMutationError) {
+        if (closed) return
+        val current = _state.value.mutation
+        val conflict = if (error.isConflict) {
+            val target = current.target
+            val draft = current.draft
+            if (target != null && draft != null) {
+                CalendarConflictReviewState(
+                    operation = current.pendingRequest?.operation
+                        ?: if (current.deleteConfirmation != null) CalendarMutationOperation.DELETE
+                        else if (current.editor?.isCreate == true) CalendarMutationOperation.CREATE else CalendarMutationOperation.UPDATE,
+                    target = target,
+                    draft = draft,
+                )
+            } else {
+                current.conflict
+            }
+        } else {
+            current.conflict
+        }
+        val operation = current.pendingRequest?.operation
+            ?: if (current.deleteConfirmation != null) CalendarMutationOperation.DELETE
+            else if (current.editor?.isCreate == true) CalendarMutationOperation.CREATE else CalendarMutationOperation.UPDATE
+        val failureOutcome = if (current.editor != null || current.pendingRequest != null) {
+            CalendarMutationOutcome.Failure(operation, error, current.draft, current.pendingRequest)
+        } else {
+            current.outcome
+        }
+        _state.value = _state.value.copy(
+            mutation = current.copy(
+                phase = when {
+                    error.isConflict -> CalendarMutationPhase.CONFLICT
+                    error.code == "invalid_mutation_scope" && current.deleteConfirmation != null -> CalendarMutationPhase.DELETE_CONFIRMATION
+                    current.editor != null -> CalendarMutationPhase.EDITING
+                    else -> current.phase
+                },
+                error = error,
+                conflict = conflict,
+                outcome = failureOutcome,
+                pendingRequest = if (error.isConflict) current.pendingRequest else null,
+                deleteConfirmation = if (error.code == "invalid_mutation_scope") current.deleteConfirmation else null,
+            ),
+        )
+    }
+
+    private fun mutationOfflineGate(): CalendarMutationError? {
+        val current = _state.value
+        val unavailable = current.offline != CalendarOfflineState.ONLINE ||
+            current.freshness.isUnavailableOffline ||
+            current.freshness == CalendarFreshness.CACHED_OFFLINE ||
+            current.mutationAvailability.reason == CalendarMutationAvailabilityReason.OFFLINE
+        if (!unavailable) return null
+        return CalendarMutationError(
+            kind = CalendarMutationErrorKind.CONNECTION,
+            code = "connection_required",
+            userMessage = "Connect to save or delete calendar events.",
+        )
+    }
+
+    private fun submitDelete(draft: CalendarMutationDraft, scope: CalendarMutationScope): Job? {
+        mutationOfflineGate()?.let {
+            setMutationError(it)
+            return null
+        }
+        val built = buildCalendarDeleteRequest(draft, scope)
+        val request = when (built) {
+            is CalendarCommandBuildResult.Success -> built.value
+            is CalendarCommandBuildResult.Failure -> {
+                setMutationError(built.error)
+                return null
+            }
+        }
+        return submitRequest(request, draft)
+    }
+
+    private fun submitRequest(request: CalendarMutationRequest, draft: CalendarMutationDraft): Job {
+        val current = _state.value.mutation
+        _state.value = _state.value.copy(
+            mutation = current.copy(
+                phase = CalendarMutationPhase.SUBMITTING,
+                pendingRequest = request,
+                error = null,
+                conflict = null,
+                outcome = null,
+                deleteConfirmation = null,
+            ),
+        )
+        mutationJob?.cancel()
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            val result: MutationTransportResult = try {
+                when (request) {
+                    is CalendarMutationRequest.Create -> MutationTransportResult.Create(
+                        repository.create(request.input),
+                    )
+                    is CalendarMutationRequest.Update -> MutationTransportResult.Mutate(
+                        repository.mutate(request.eventId, request.command),
+                    )
+                    is CalendarMutationRequest.Delete -> MutationTransportResult.Mutate(
+                        repository.mutate(request.eventId, request.command),
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (cancelled: KotlinCancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                MutationTransportResult.Failure(
+                    CalendarMutationError(
+                        kind = CalendarMutationErrorKind.SERVER,
+                        code = "server_error",
+                        userMessage = "The calendar could not complete that action. Your draft is still here.",
+                    ),
+                )
+            }
+            if (closed) return@launch
+            when (result) {
+                is MutationTransportResult.Failure -> {
+                    setMutationError(result.error)
+                    _state.value = _state.value.copy(
+                        mutation = _state.value.mutation.copy(
+                            pendingRequest = if (result.error.isConflict) request else null,
+                        ),
+                    )
+                }
+                is MutationTransportResult.Create -> when (val envelope = result.result) {
+                    is SentientResult.Success -> completeMutation(
+                        operation = CalendarMutationOperation.CREATE,
+                        draft = draft,
+                        event = envelope.data,
+                        mutation = null,
+                    )
+                    is SentientResult.Failure -> setMutationError(mutationError(envelope.error))
+                    is SentientResult.Loading -> setMutationError(
+                        CalendarMutationError(
+                            CalendarMutationErrorKind.SERVER,
+                            "The calendar could not complete that action. Your draft is still here.",
+                            code = "unsettled_result",
+                        ),
+                    )
+                }
+                is MutationTransportResult.Mutate -> when (val envelope = result.result) {
+                    is SentientResult.Success -> if (validMutationResult(envelope.data, request)) {
+                        completeMutation(
+                            operation = request.operation,
+                            draft = draft,
+                            event = null,
+                            mutation = envelope.data,
+                        )
+                    } else {
+                        setMutationError(
+                            CalendarMutationError(
+                                CalendarMutationErrorKind.CONTRACT,
+                                "The calendar returned an invalid mutation result. Your draft is still here.",
+                                code = "invalid_result",
+                            ),
+                        )
+                    }
+                    is SentientResult.Failure -> setMutationError(mutationError(envelope.error))
+                    is SentientResult.Loading -> setMutationError(
+                        CalendarMutationError(
+                            CalendarMutationErrorKind.SERVER,
+                            "The calendar could not complete that action. Your draft is still here.",
+                            code = "unsettled_result",
+                        ),
+                    )
+                }
+            }
+        }
+        mutationJob = job
+        job.invokeOnCompletion { if (mutationJob === job) mutationJob = null }
+        return job
+    }
+
+    private fun validMutationResult(
+        result: CalendarMutationResult,
+        request: CalendarMutationRequest,
+    ): Boolean {
+        val expectedOperation = when (request.operation) {
+            CalendarMutationOperation.UPDATE -> io.sentient.mobilesdk.calendar.CalendarOperation.UPDATE
+            CalendarMutationOperation.DELETE -> io.sentient.mobilesdk.calendar.CalendarOperation.DELETE
+            CalendarMutationOperation.CREATE -> return false
+        }
+        val command = when (request) {
+            is CalendarMutationRequest.Update -> request.command
+            is CalendarMutationRequest.Delete -> request.command
+            is CalendarMutationRequest.Create -> return false
+        }
+        return result.operation == expectedOperation &&
+            result.appliedTo == command.applyTo &&
+            result.eventId.isNotBlank() &&
+            result.resultingRevision?.let { it >= 0 } != false &&
+            result.successorEventId?.isNotBlank() != false
+    }
+
+    private suspend fun completeMutation(
+        operation: CalendarMutationOperation,
+        draft: CalendarMutationDraft,
+        event: CalendarEvent?,
+        mutation: CalendarMutationResult?,
+    ) {
+        if (closed) return
+        // The editor lifecycle ends on success. The outcome remains until the
+        // native surface acknowledges it, while valid cached rows stay visible.
+        val successor = mutation?.successorEventId?.takeIf(String::isNotBlank)
+        val affected = affectedWindowsForMutation()
+        val success = CalendarMutationSuccess(
+            operation = operation,
+            event = event,
+            mutation = mutation,
+            successorEventId = successor,
+            affectedWindows = affected,
+        )
+        _state.value = _state.value.copy(
+            mutation = _state.value.mutation.copy(
+                phase = CalendarMutationPhase.OUTCOME,
+                preview = null,
+                editor = null,
+                deleteConfirmation = null,
+                pendingRequest = null,
+                error = null,
+                conflict = null,
+                outcome = CalendarMutationOutcome.Success(operation, success),
+                successorEventId = successor,
+                affectedWindows = affected,
+            ),
+        )
+        revalidateMutationWindows(affected)
+    }
+
+    private suspend fun affectedWindowsForMutation(): List<CalendarCacheWindow> {
+        val windows = linkedSetOf(activeWindow)
+        val metadata = try {
+            cacheStore.readWindows()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
+            )
+        }
+        if (metadata is CalendarCacheResult.Success && isNamespaceCurrent(observedNamespace, namespaceGeneration)) {
+            windows += metadata.value.map { it.window }
+        }
+        return windows.toList()
+    }
+
+    private fun revalidateMutationWindows(affectedWindows: List<CalendarCacheWindow>) {
+        if (closed) return
+        // Use the normal foreground path so failures retain visible content and
+        // the finalized cached/offline state remains the single write gate. A
+        // mutation must not merely join a refresh that started before its write.
+        forceRevalidateAfterMutation()
+        mutationRefreshJob?.cancel()
+        val namespace = cacheStore.currentNamespace.value
+        val epoch = namespaceGeneration
+        val active = activeWindow
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            affectedWindows.filter { it != active && isNamespaceCurrent(namespace, epoch) }.forEach { window ->
+                when (loadWindow(window, namespace, epoch)) {
+                    WindowLoadResult.Cancelled -> Unit
+                    is WindowLoadResult.Complete,
+                    is WindowLoadResult.Failed,
+                    -> Unit
+                }
+            }
+        }
+        mutationRefreshJob = job
+        job.invokeOnCompletion { if (mutationRefreshJob === job) mutationRefreshJob = null }
+    }
+
+    private fun forceRevalidateAfterMutation() {
+        if (closed) return
+        if (observationJob?.isActive != true) {
+            observe(requestedWindow)
+            return
+        }
+        refreshJob?.cancel()
+        refreshJob = null
+        revalidationGeneration = null
+        cancelPrefetchWork()
+        cancelSharedRequests()
+        val generation = requestGeneration
+        val namespace = cacheStore.currentNamespace.value
+        val epoch = namespaceGeneration
+        revalidationGeneration = generation
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            revalidate(activeWindow, generation, namespace, epoch)
+        }
+        refreshJob = job
+        job.invokeOnCompletion { if (refreshJob === job) refreshJob = null }
+    }
+
+    private fun mutationError(error: SentientError): CalendarMutationError {
+        val message = error.userMessage.lowercase()
+        return when (error) {
+            is SentientError.Connection,
+            is SentientError.Timeout,
+            -> CalendarMutationError(
+                kind = CalendarMutationErrorKind.CONNECTION,
+                code = "connection",
+                userMessage = "Connect to save or delete calendar events.",
+            )
+            is SentientError.Auth -> CalendarMutationError(
+                kind = CalendarMutationErrorKind.AUTHORIZATION,
+                code = "authorization",
+                userMessage = "This calendar action is not permitted.",
+                recoverable = false,
+            )
+            is SentientError.Protocol -> when {
+                ("recurrence" in message || "recurring" in message) && ("conflict" in message || "changed" in message || "could not" in message) -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.RECURRENCE_CONFLICT,
+                    code = "recurrence_conflict",
+                    userMessage = "This recurring event changed. Review the latest version before saving.",
+                )
+                "conflict" in message || "changed" in message || "revision" in message -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.CONFLICT,
+                    code = "conflict",
+                    userMessage = "This event changed. Review the latest version before saving.",
+                )
+                "forbidden" in message || "permission" in message || "not permitted" in message -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.FORBIDDEN,
+                    code = "forbidden",
+                    userMessage = "This calendar action is not permitted.",
+                )
+                "not found" in message || "no longer available" in message || "occurrence_not_found" in message -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.NOT_FOUND,
+                    code = "not_found",
+                    userMessage = "This calendar event is no longer available.",
+                )
+                "invalid response" in message -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.SERVER,
+                    code = "malformed",
+                    userMessage = "The calendar could not complete that action. Your draft is still here.",
+                )
+                "invalid" in message || "range" in message || "scope" in message || "recurrence" in message -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.VALIDATION,
+                    code = "validation",
+                    userMessage = "Check the event details and try again.",
+                )
+                else -> CalendarMutationError(
+                    kind = CalendarMutationErrorKind.SERVER,
+                    code = "server_error",
+                    userMessage = "The calendar could not complete that action. Your draft is still here.",
+                )
+            }
+            is SentientError.Cycle -> CalendarMutationError(
+                CalendarMutationErrorKind.SERVER,
+                "The calendar could not complete that action. Your draft is still here.",
+                code = "server_error",
+            )
+            is SentientError.Outbox,
+            is SentientError.Unknown,
+            -> CalendarMutationError(
+                CalendarMutationErrorKind.SERVER,
+                "The calendar could not complete that action. Your draft is still here.",
+                code = "server_error",
+            )
+        }
+    }
+
+    private sealed interface MutationTransportResult {
+        data class Create(val result: SentientResult<CalendarEvent>) : MutationTransportResult
+        data class Mutate(val result: SentientResult<CalendarMutationResult>) : MutationTransportResult
+        data class Failure(val error: CalendarMutationError) : MutationTransportResult
+    }
 
     fun dispatch(action: CalendarNavigationAction) {
         if (closed) return
@@ -396,6 +1181,8 @@ class CalendarExperience(
         namespaceGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
+        mutationJob?.cancel()
+        mutationRefreshJob?.cancel()
         preferenceWriteJob?.cancel()
         accessWriteJobs.values.forEach { it.cancel() }
         accessWriteJobs.clear()
@@ -406,6 +1193,8 @@ class CalendarExperience(
         unregisterNamespaceListener?.invoke()
         observationJob = null
         refreshJob = null
+        mutationJob = null
+        mutationRefreshJob = null
         namespaceJob = null
         unregisterNamespaceListener = null
         revalidationGeneration = null
@@ -424,6 +1213,7 @@ class CalendarExperience(
             loading = CalendarLoadingState(),
             persistedCachePreferences = null,
             mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.UNAVAILABLE),
+            mutation = CalendarMutationState(),
         )
     }
 
@@ -1007,7 +1797,8 @@ class CalendarExperience(
             eventId = eventId,
             occurrenceId = occurrenceId,
             originalStart = originalStart,
-            recurring = event.recurrence != null || event.occurrenceId != null || event.originalStart != null,
+            recurring = event.recurring || event.recurrence != null ||
+                event.originalStart?.toWireValue()?.let { it != start } == true,
             revision = event.revision,
             scope = event.scope,
             title = event.title,
@@ -1345,6 +2136,8 @@ class CalendarExperience(
         requestGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
+        mutationJob?.cancel()
+        mutationRefreshJob?.cancel()
         preferenceWriteGeneration += 1L
         preferenceWriteJob?.cancel()
         authExpiryJob?.cancel()
@@ -1354,6 +2147,8 @@ class CalendarExperience(
         cancelSharedRequests()
         observationJob = null
         refreshJob = null
+        mutationJob = null
+        mutationRefreshJob = null
         preferenceWriteJob = null
         revalidationGeneration = null
         activeWindow = requestedWindow
@@ -1371,6 +2166,7 @@ class CalendarExperience(
             facets = emptyCalendarFacets(),
             persistedCachePreferences = null,
             mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.UNAVAILABLE),
+            mutation = CalendarMutationState(),
         )
     }
 

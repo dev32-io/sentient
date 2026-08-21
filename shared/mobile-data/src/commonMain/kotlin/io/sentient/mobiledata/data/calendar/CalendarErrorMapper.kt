@@ -10,6 +10,7 @@ private const val MSG_CONFLICT = "This calendar event changed. Refresh and try a
 private const val MSG_RECURRENCE_CONFLICT = "This recurring event could not be changed. Refresh and try again."
 private const val MSG_FORBIDDEN = "You do not have permission to change this calendar event."
 private const val MSG_NOT_FOUND = "Calendar event not found."
+private const val MSG_VALIDATION = "The calendar request is invalid."
 private const val MSG_CALENDAR_SERVER = "The calendar rejected the request. Please try again."
 
 /**
@@ -49,6 +50,12 @@ private fun AuthError.toCalendarSentientError(): SentientError = when (this) {
         CalendarErrorCode.NOT_FOUND,
         CalendarErrorCode.OCCURRENCE_NOT_FOUND,
         -> SentientError.Protocol(MSG_NOT_FOUND)
+        CalendarErrorCode.INVALID_TIME,
+        CalendarErrorCode.INVALID_RANGE,
+        CalendarErrorCode.INVALID_SCOPE,
+        CalendarErrorCode.INVALID_MUTATION_SCOPE,
+        CalendarErrorCode.MALFORMED,
+        -> SentientError.Protocol(MSG_VALIDATION)
         else -> SentientError.Protocol(MSG_CALENDAR_SERVER)
     }
 }
@@ -62,6 +69,11 @@ private fun calendarErrorCode(body: String): CalendarErrorCode? {
         compact.contains("\"code\":\"forbidden\"") -> CalendarErrorCode.FORBIDDEN
         compact.contains("\"code\":\"occurrence_not_found\"") -> CalendarErrorCode.OCCURRENCE_NOT_FOUND
         compact.contains("\"code\":\"not_found\"") -> CalendarErrorCode.NOT_FOUND
+        compact.contains("\"code\":\"invalid_time\"") -> CalendarErrorCode.INVALID_TIME
+        compact.contains("\"code\":\"invalid_range\"") -> CalendarErrorCode.INVALID_RANGE
+        compact.contains("\"code\":\"invalid_scope\"") -> CalendarErrorCode.INVALID_SCOPE
+        compact.contains("\"code\":\"invalid_mutation_scope\"") -> CalendarErrorCode.INVALID_MUTATION_SCOPE
+        compact.contains("\"code\":\"malformed\"") -> CalendarErrorCode.MALFORMED
         else -> null
     }
 }

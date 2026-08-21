@@ -401,6 +401,8 @@ data class CalendarExperienceState(
     /** Validated persisted controls as decoded from the shared cache store. */
     val persistedCachePreferences: CalendarCachePreferences? = null,
     val mutationAvailability: CalendarMutationAvailability = CalendarMutationAvailability(),
+    /** Shared preview/editor/delete/conflict state; drafts are never persisted. */
+    val mutation: CalendarMutationState = CalendarMutationState(),
 ) {
     val activeFacets: CalendarFilters get() = filters
 
@@ -422,6 +424,11 @@ data class CalendarExperienceState(
     val failure: CalendarExperienceError? get() = error
     val lastError: CalendarExperienceError? get() = error
     val canMutate: Boolean get() = mutationAvailability.isAvailable
+    val mutationState: CalendarMutationState get() = mutation
+    val editorState: CalendarMutationEditorState? get() = mutation.editor
+    val mutationDraft: CalendarMutationDraft? get() = mutation.draft
+    val mutationError: CalendarMutationError? get() = mutation.error
+    val mutationOutcome: CalendarMutationOutcome? get() = mutation.outcome
     val isLoading: Boolean get() = loading.isLoading
     val isRefreshing: Boolean get() = loading.isRefreshing || freshness == CalendarFreshness.REFRESHING
     val isFresh: Boolean get() = freshness == CalendarFreshness.FRESH
@@ -479,7 +486,7 @@ fun CalendarEvent.toCalendarProjectionOccurrence(): CalendarProjectionOccurrence
         eventId = eventId,
         occurrenceId = occurrenceId ?: eventId,
         originalStart = originalStart?.toWireValue(),
-        recurring = recurrence != null || occurrenceId != null,
+        recurring = recurring || recurrence != null,
         recurrence = recurrence,
         revision = revision,
         scope = scope,

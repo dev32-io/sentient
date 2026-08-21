@@ -425,6 +425,205 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `mutation builder preserves complete V2 fields and raw timed anchors`() {
+        val recurrence = io.sentient.mobilesdk.calendar.StructuredRecurrence(
+            frequency = io.sentient.mobilesdk.calendar.RecurrenceFrequency.WEEKLY,
+            interval = 2,
+            weekdays = listOf(io.sentient.mobilesdk.calendar.Weekday.MONDAY, io.sentient.mobilesdk.calendar.Weekday.WEDNESDAY),
+            count = 6,
+        )
+        val draft = CalendarMutationDraft(
+            title = "Timed event",
+            description = "Details",
+            allDay = false,
+            start = "2026-08-10T09:00:00-04:00",
+            end = "2026-08-10T10:00:00-04:00",
+            scope = CalendarScope.HOUSEHOLD,
+            visibility = Visibility.ADULTS,
+            importance = Importance.PINNED,
+            group = "family",
+            tags = listOf("school", "family"),
+            recurrence = recurrence,
+            eventId = "event-1",
+            occurrenceId = "event-1@2026-08-10T09:00:00-04:00",
+            originalStart = "2026-08-10T09:00:00-04:00",
+            expectedRevision = 7,
+            inputTimeZoneId = "America/Toronto",
+        )
+
+        val create = assertIs<CalendarCommandBuildResult.Success<io.sentient.mobilesdk.calendar.CalendarCreateInput>>(
+            buildCalendarCreateInput(draft.copy(eventId = null, occurrenceId = null, originalStart = null, expectedRevision = null)),
+        ).value
+        assertEquals("2026-08-10T09:00:00-04:00", create.start)
+        assertEquals("2026-08-10T10:00:00-04:00", create.end)
+        assertEquals(CalendarScope.HOUSEHOLD, create.scope)
+        assertEquals(Visibility.ADULTS, create.visibility)
+        assertEquals(Importance.PINNED, create.importance)
+        assertEquals(recurrence, create.recurrence)
+
+        for (scope in io.sentient.mobilesdk.calendar.CalendarMutationScope.entries) {
+            val result = assertIs<CalendarCommandBuildResult.Success<CalendarMutationRequest.Update>>(
+                buildCalendarUpdateRequest(draft, scope),
+            ).value
+            assertEquals("event-1", result.eventId)
+            assertEquals(scope, result.command.applyTo)
+            assertEquals(7, result.command.expectedRevision)
+            assertEquals(CalendarScope.HOUSEHOLD, result.command.scope)
+            assertEquals(
+                if (scope == io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES) null else draft.originalStart,
+                result.command.originalStart,
+            )
+            assertEquals("2026-08-10T09:00:00-04:00", result.command.changes?.start)
+        }
+    }
+
+    @Test
+    fun `recurring delete requires explicit confirmation and scope`() = runTest {
+        val window = monthWindow()
+        val recurring = occurrence("recurring", title = "Series").copy(
+            recurring = true,
+            originalStart = "2026-06-14",
+            recurrence = io.sentient.mobilesdk.calendar.StructuredRecurrence(
+                frequency = io.sentient.mobilesdk.calendar.RecurrenceFrequency.DAILY,
+                count = 3,
+            ),
+        )
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Success(
+                CalendarMutationResult(
+                    io.sentient.mobilesdk.calendar.CalendarOperation.DELETE,
+                    io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE,
+                    eventId = recurring.eventId,
+                ),
+            ),
+        )
+        val experience = experience(repository, FakeCacheStore(snapshot = snapshot(window)), window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            experience.editOccurrence(recurring)
+            assertEquals(null, experience.state.value.mutation.mutationScope)
+            experience.requestDelete()
+            assertTrue(experience.state.value.mutation.isDeleteConfirmationOpen)
+            experience.confirmDelete()
+            assertEquals(CalendarMutationErrorKind.VALIDATION, experience.state.value.mutation.error?.kind)
+            assertEquals(0, repository.mutationCalls)
+
+            experience.confirmDelete(io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE)
+            advanceUntilIdle()
+            assertEquals(1, repository.mutationCalls)
+            assertEquals(io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_OCCURRENCE, repository.lastCommand?.applyTo)
+            assertEquals("2026-06-14", repository.lastCommand?.originalStart)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `conflict preserves draft and reread exposes authoritative event`() = runTest {
+        val window = monthWindow()
+        val current = occurrence("conflict", title = "Local")
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Failure(SentientError.Protocol("This calendar event changed. Refresh and try again.")),
+            getResult = SentientResult.Success(event(id = "conflict", title = "Authoritative", revision = 9)),
+        )
+        val experience = experience(repository, FakeCacheStore(snapshot = snapshot(window)), window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            experience.editOccurrence(current)
+            val draft = experience.state.value.mutation.draft!!.copy(title = "Local draft")
+            experience.updateDraft(draft)
+            experience.submitMutation()
+            advanceUntilIdle()
+
+            assertEquals(CalendarMutationErrorKind.CONFLICT, experience.state.value.mutation.error?.kind)
+            assertEquals("Local draft", experience.state.value.mutation.draft?.title)
+            assertTrue(experience.state.value.mutation.hasConflict)
+            experience.rereadConflict()
+            advanceUntilIdle()
+            assertEquals("Authoritative", experience.state.value.mutation.conflict?.authoritativeEvent?.title)
+            assertEquals("Local draft", experience.state.value.mutation.draft?.title)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `offline save is rejected without calling repository or changing cached content`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached"))
+        val repository = FakeRepository(pages = listOf(page(event(title = "remote"))))
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            repository.offline = true
+            experience.refresh()
+            advanceUntilIdle()
+            val callsBeforeMutation = repository.mutationCalls
+            experience.createDraft(CalendarMutationDraft.create(start = "2026-06-20", allDay = true))
+            experience.submitMutation()
+            advanceUntilIdle()
+
+            assertEquals(CalendarMutationErrorKind.CONNECTION, experience.state.value.mutation.error?.kind)
+            assertEquals(callsBeforeMutation, repository.mutationCalls)
+            assertEquals("remote", experience.state.value.projection?.visibleEvents?.single()?.title)
+            assertTrue(experience.state.value.mutation.draft != null)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `successful mutation exposes successor and revalidates without clearing the editor source data`() = runTest {
+        val window = monthWindow()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            mutationResult = SentientResult.Success(
+                CalendarMutationResult(
+                    io.sentient.mobilesdk.calendar.CalendarOperation.UPDATE,
+                    io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_AND_FOLLOWING,
+                    eventId = "event-successor",
+                    successorEventId = "successor-event",
+                    resultingRevision = 8,
+                ),
+            ),
+        )
+        val experience = experience(repository, FakeCacheStore(snapshot = snapshot(window)), window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            val source = occurrence("successor", title = "Before").copy(
+                recurring = true,
+                originalStart = "2026-06-14T09:00:00-04:00",
+                start = "2026-06-14T09:00:00-04:00",
+                end = "2026-06-14T10:00:00-04:00",
+                recurrence = io.sentient.mobilesdk.calendar.StructuredRecurrence(
+                    frequency = io.sentient.mobilesdk.calendar.RecurrenceFrequency.WEEKLY,
+                    weekdays = listOf(io.sentient.mobilesdk.calendar.Weekday.MONDAY),
+                    count = 4,
+                ),
+            )
+            experience.editOccurrence(source)
+            experience.chooseMutationScope(io.sentient.mobilesdk.calendar.CalendarMutationScope.THIS_AND_FOLLOWING)
+            experience.updateDraft(experience.state.value.mutation.draft!!.copy(title = "After"))
+            experience.submitMutation()
+            advanceUntilIdle()
+
+            assertEquals("successor-event", experience.state.value.mutation.successorEventId)
+            assertIs<CalendarMutationOutcome.Success>(experience.state.value.mutation.outcome)
+            assertTrue(repository.calls > 0)
+            assertTrue(experience.state.value.authorizedOccurrences.isNotEmpty())
+            assertEquals(null, experience.state.value.mutation.draft)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
     fun `source compatible SettingsComponent can inject the optional experience`() = runTest {
         val cache = FakeCacheStore()
         val experience = experience(
@@ -524,6 +723,14 @@ class CalendarExperienceTest {
         private val swallowCancellation: Boolean = false,
         private val failureWindows: Set<Pair<String, String>> = emptySet(),
         private val authFailure: Boolean = false,
+        private val mutationResult: SentientResult<CalendarMutationResult> = SentientResult.Success(
+            CalendarMutationResult(
+                io.sentient.mobilesdk.calendar.CalendarOperation.UPDATE,
+                io.sentient.mobilesdk.calendar.CalendarMutationScope.ENTIRE_SERIES,
+                eventId = "event",
+            ),
+        ),
+        private val getResult: SentientResult<CalendarEvent> = SentientResult.Failure(SentientError.Unknown("unused")),
     ) : CalendarRepository {
         private val pageIndexes = mutableMapOf<Pair<String, String>, Int>()
         private val cancelledWindows = mutableSetOf<Pair<String, String>>()
@@ -532,9 +739,10 @@ class CalendarExperienceTest {
         var offline: Boolean = false
         val scopes = mutableListOf<CalendarScope?>()
         val windows = mutableListOf<Pair<String, String>>()
+        var mutationCalls: Int = 0
+        var lastCommand: CalendarMutationCommand? = null
 
-        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) =
-            SentientResult.Failure(SentientError.Unknown("unused"))
+        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) = getResult
 
         override suspend fun list(
             from: String,
@@ -577,8 +785,11 @@ class CalendarExperienceTest {
 
         override suspend fun create(event: CalendarEvent) = error("unused")
         override suspend fun create(input: CalendarCreateInput) = error("unused")
-        override suspend fun mutate(eventId: String, command: CalendarMutationCommand): SentientResult<CalendarMutationResult> =
-            error("unused")
+        override suspend fun mutate(eventId: String, command: CalendarMutationCommand): SentientResult<CalendarMutationResult> {
+            mutationCalls++
+            lastCommand = command
+            return mutationResult
+        }
     }
 
     private class FakeCacheStore(

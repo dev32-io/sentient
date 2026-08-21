@@ -26,7 +26,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.system.measureTimeMillis
+import kotlin.time.measureTime
 
 private val CALENDAR_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
 private val calendarFixture = Json.parseToJsonElement(CalendarGoldenFixture.JSON).jsonObject
@@ -59,6 +59,7 @@ class CalendarHttpClientTest {
         assertEquals("event-example", event.id)
         assertEquals("event-example@2026-08-10T09:00-04:00", event.occurrenceId)
         assertEquals(3, event.revision)
+        assertTrue(event.recurring)
         assertEquals("2026-08-10T09:00-04:00", event.start.toWireValue())
     }
 
@@ -299,9 +300,9 @@ class CalendarHttpClientTest {
             respond("{}", HttpStatusCode.OK, CALENDAR_HEADERS)
         }
         lateinit var result: AuthResult<CalendarEvent>
-        val elapsedMillis = measureTimeMillis {
+        val elapsedMillis = measureTime {
             result = withContext(Dispatchers.Default) { client(engine, requestTimeoutMillis).get("event-example") }
-        }
+        }.inWholeMilliseconds
         assertIs<AuthResult.Failure>(result)
         assertTrue(elapsedMillis < 1_000L, "request took ${elapsedMillis}ms")
     }
