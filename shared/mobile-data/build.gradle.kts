@@ -44,10 +44,11 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:mobile-sdk"))
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
-            // CalendarDatabase exposes SqlDriver through the common seam, so runtime is
-            // API-visible. Coroutine query helpers remain an implementation dependency
-            // until CalendarCacheStore defines its own domain-facing flow types.
+            // CalendarDatabaseDriverFactory exposes the platform-neutral SqlDriver seam,
+            // so runtime is API-visible. CalendarCacheStore owns domain-facing flows;
+            // coroutine query helpers remain implementation-only.
             api(libs.sqldelight.runtime)
             implementation(libs.sqldelight.coroutines.extensions)
             // SettingsComponent takes a Ktor HttpClient in its public constructor so the
