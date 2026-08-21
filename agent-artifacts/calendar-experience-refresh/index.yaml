@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 73
+  revision: 74
 artifacts:
   - id: intent
     type: intent
@@ -126,13 +126,19 @@ executionStages:
     review:
       tier: medium
       focus:
-        - Atomic observable SQLDelight store and namespace/purge behavior
-        - Web leaf components remain isolated and controlled for safe concurrent
-          integration
-        - Exact web reference comparison at 1440x1000, 1024x900, 768x900, and
-          390x844
-        - Seven-column no-overflow correction, viewport-safe preview, complete
-          V2 editor, focus, accessibility, and reduced motion
+        - Atomic observable SQLDelight store, raw RFC3339 temporal round-trip,
+          and namespace/purge behavior
+        - Web leaf components remain isolated through a typed CalendarWorkspace
+          canvas slot, component-scoped CSS, shared calendar-time helpers, and
+          explicit draft/capability ownership
+        - Exact web comparison uses sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/web/calendar.html, and
+          sentient-design/components/web/sentient-web.js at 1440x1000, 1024x900,
+          768x900, and 390x844
+        - 900px sidebar collapse, seven-column no-overflow correction,
+          viewport-safe preview, Dialog inert/safe dismissal, complete V2
+          editor, focus, semantics, and reduced motion
   - id: calendar-experience-and-web-assembly
     tasks:
       - mobile-calendar-read-coordinator
