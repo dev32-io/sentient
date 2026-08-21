@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-mutations
 title: Implement shared online calendar mutation intents and recovery
-status: contribution_complete
+status: merged
 dependsOn:
   - mobile-calendar-read-coordinator
   - mobile-calendar-retention-offline
@@ -31,3 +31,4 @@ runtime:
   baseCommit: ed29754eaaca9fa3794fc454f6ceef4b06f4817e
   lastRunId: 3cdec244-5430-4340-afbe-661bc9441457
   completedCommit: fe966c44a0b13a3a0780308528b54f97eb5e6488
+  mergedCommit: 3e14667cd8fdd8d3c641635729592d0c20d46687
