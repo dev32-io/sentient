@@ -132,6 +132,74 @@ describe("CalendarController", () => {
     controller.dispose();
   });
 
+  it("enters focused Day when a Month date is selected", async () => {
+    const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [] } })));
+    const controller = createCalendarController({ ...options, api });
+    await controller.ready;
+
+    await controller.actions.selectDate("2026-08-20");
+
+    expect(controller.state.selectedView).toBe("day");
+    expect(controller.state.anchorDate).toBe("2026-08-20");
+    expect(controller.state.selectedDate).toBe("2026-08-20");
+    expect(controller.state.visibleInterval).toEqual({ from: "2026-08-20", to: "2026-08-20" });
+    expect((api.list as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toMatchObject({
+      from: "2026-08-20",
+      to: "2026-08-20",
+      scope: "all",
+    });
+    controller.dispose();
+  });
+
+  it("preserves alias-shaped scope, group, and text filters for local intersection", async () => {
+    const privateEvent = { ...occurrence("private", "Dentist appointment"), group: "health", description: "Annual dentist visit" };
+    const householdEvent = { ...occurrence("household", "Dentist school meeting"), scope: "household" as const, group: "school" };
+    const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [privateEvent, householdEvent] } })));
+    const controller = createCalendarController({ ...options, api });
+    await controller.ready;
+
+    controller.setFilters({ scope: "private", group: "health", text: "dentist" });
+
+    expect(controller.state.selectedFilters).toMatchObject({
+      scopes: ["private"],
+      groups: ["health"],
+      search: "dentist",
+    });
+    expect(controller.state.filteredOccurrences.map((event) => event.occurrenceId)).toEqual(["private"]);
+    controller.dispose();
+  });
+
+  it("does not persist preferences without a normalized backend identity", async () => {
+    const store = createMemoryCalendarPreferenceStore();
+    const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [] } })));
+    const { backendId: _backendId, ...withoutBackend } = options;
+    const controller = createCalendarController({
+      ...withoutBackend,
+      api,
+      preferenceStore: store,
+    });
+    await controller.ready;
+    await controller.setView("week");
+
+    expect(controller.preferenceNamespace).toBeNull();
+    expect(store.values.size).toBe(0);
+    controller.dispose();
+  });
+
+  it("keeps preferences isolated across explicit backend identities", async () => {
+    const store = createMemoryCalendarPreferenceStore();
+    const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [] } })));
+    const first = createCalendarController({ ...options, api, backendId: "backend-a", preferenceStore: store });
+    await first.ready;
+    await first.setView("week");
+    first.dispose();
+
+    const second = createCalendarController({ ...options, api, backendId: "backend-b", preferenceStore: store });
+    await second.ready;
+    expect(second.state.selectedView).toBe("month");
+    second.dispose();
+  });
+
   it("retains the previous complete content and exposes typed stale status after refresh failure", async () => {
     const api = apiFor(vi.fn()
       .mockResolvedValueOnce({ ok: true as const, value: { events: [occurrence("one")] } })

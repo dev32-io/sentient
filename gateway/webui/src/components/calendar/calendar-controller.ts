@@ -4,11 +4,13 @@ import type {
   CalendarListOptions,
   CalendarOccurrence,
 } from "../../services/calendar-api.ts";
+import type { CalendarDate } from "./calendar-time.ts";
 import {
   calendarPreferenceNamespace,
   createCalendarPreferenceStore,
   defaultCalendarPreferences,
   isCalendarDate,
+  normalizeCalendarBackendIdentity,
   type CalendarPreferenceStore,
   type CalendarPreferences,
   type CalendarViewMode,
@@ -19,6 +21,7 @@ import {
   deriveCalendarFacets,
   filterCalendarOccurrences,
   projectCalendarInterval,
+  selectCalendarDate as selectProjectedCalendarDate,
   stepCalendarAnchor,
   type CalendarFacets,
   type CalendarFilters,
@@ -357,12 +360,25 @@ function filtersFromPreferences(preferences: CalendarPreferences): CalendarFilte
   };
 }
 
+function canonicalFilterInput(value: Partial<CalendarFilters> | undefined): Record<string, unknown> {
+  if (!value) return {};
+  const result: Record<string, unknown> = { ...value };
+  if (value.scopes !== undefined) result.scopes = value.scopes;
+  else if (value.scope !== undefined) result.scopes = [value.scope];
+  if (value.groups !== undefined) result.groups = value.groups;
+  else if (value.group !== undefined) result.groups = [value.group];
+  if (value.search !== undefined) result.search = value.search;
+  else if (value.text !== undefined) result.search = value.text;
+  else if (value.query !== undefined) result.search = value.query;
+  return result;
+}
+
 function safeFilters(
   fallback: CalendarPreferences,
   value: Partial<CalendarFilters> | undefined,
 ): CalendarPreferences {
   if (!value) return fallback;
-  return validateCalendarPreferences({ ...fallback, ...value }, fallback);
+  return validateCalendarPreferences({ ...fallback, ...canonicalFilterInput(value) }, fallback);
 }
 
 function intervalKey(interval: CalendarInterval): string {
@@ -373,16 +389,10 @@ function viewLabel(view: CalendarViewMode): string {
   return view.charAt(0).toUpperCase() + view.slice(1);
 }
 
-function initialBackendId(options: CalendarControllerOptions): string {
-  if (options.backendId?.trim()) return options.backendId.trim();
-  if (options.backendUrl?.trim()) return options.backendUrl.trim();
-  if (options.baseUrl?.trim()) return options.baseUrl.trim();
-  try {
-    if (typeof globalThis.location !== "undefined" && globalThis.location.origin) return globalThis.location.origin;
-  } catch {
-    // Non-browser consumers can supply an explicit backend identity.
-  }
-  return "default-backend";
+function initialBackendId(options: CalendarControllerOptions): string | null {
+  return normalizeCalendarBackendIdentity(options.backendId)
+    ?? normalizeCalendarBackendIdentity(options.backendUrl)
+    ?? normalizeCalendarBackendIdentity(options.baseUrl);
 }
 
 function initialAccountId(options: CalendarControllerOptions): string {
@@ -404,7 +414,7 @@ export class CalendarController {
   private api: CalendarApi;
   private token: string;
   private accountId: string;
-  private backendId: string;
+  private backendId: string | null;
   private namespace: string | null;
   private readonly preferenceStore: CalendarPreferenceStore;
   private readonly now: () => Date;
@@ -433,7 +443,9 @@ export class CalendarController {
     this.token = options.token;
     this.accountId = initialAccountId(options);
     this.backendId = initialBackendId(options);
-    this.namespace = calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
+    this.namespace = this.backendId === null
+      ? null
+      : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
     this.preferenceStore = options.preferenceStore ?? createCalendarPreferenceStore();
     this.now = options.now ?? (() => new Date());
     this.weekStartsOn = options.weekStartsOn ?? 1;
@@ -446,7 +458,7 @@ export class CalendarController {
       ...(options.initialView !== undefined ? { view: options.initialView } : {}),
       ...(options.initialAnchorDate !== undefined ? { anchorDate: options.initialAnchorDate } : {}),
       ...(options.initialDate !== undefined ? { selectedDate: options.initialDate, anchorDate: options.initialDate } : {}),
-      ...(options.initialFilters ?? {}),
+      ...canonicalFilterInput(options.initialFilters),
     }, fallback);
     this.preparePreferenceRead();
     this.phase = this.token ? "loading" : "idle";
@@ -461,7 +473,7 @@ export class CalendarController {
       setSelectedView: (view) => this.setView(view),
       setAnchorDate: (date) => this.setAnchorDate(date),
       setSelectedDate: (date) => this.setSelectedDate(date),
-      selectDate: (date) => this.setSelectedDate(date),
+      selectDate: (date) => this.selectDate(date),
       goToToday: () => this.goToToday(),
       previous: () => this.previous(),
       next: () => this.next(),
@@ -536,6 +548,30 @@ export class CalendarController {
     this.persistPreferences();
     this.emit();
     return Promise.resolve();
+  }
+
+  /** Select a canvas date, entering the focused Day agenda from Month. */
+  public selectDate(date: string): Promise<void> {
+    if (this.disposed || !isCalendarDate(date)) return Promise.resolve();
+    const next = selectProjectedCalendarDate({
+      view: this.preferences.view,
+      anchorDate: this.preferences.anchorDate as CalendarDate,
+      selectedDate: this.preferences.selectedDate as CalendarDate,
+    }, date as CalendarDate);
+    if (
+      this.preferences.view === next.view &&
+      this.preferences.anchorDate === next.anchorDate &&
+      this.preferences.selectedDate === next.selectedDate
+    ) return Promise.resolve();
+    this.preferences = validateCalendarPreferences({
+      ...this.preferences,
+      view: next.view,
+      anchorDate: next.anchorDate,
+      selectedDate: next.selectedDate,
+    }, this.preferences);
+    this.persistPreferences();
+    this.emit();
+    return this.refresh();
   }
 
   public goToToday(): Promise<void> {
@@ -620,14 +656,12 @@ export class CalendarController {
     this.api = input.api ?? this.api;
     this.token = input.token;
     this.accountId = input.accountId?.trim() || input.userId?.trim() || "";
-    this.backendId = input.backendId?.trim() || input.backendUrl?.trim() || input.baseUrl?.trim() || (() => {
-      try {
-        return typeof globalThis.location !== "undefined" && globalThis.location.origin ? globalThis.location.origin : "default-backend";
-      } catch {
-        return "default-backend";
-      }
-    })();
-    this.namespace = calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
+    this.backendId = normalizeCalendarBackendIdentity(input.backendId)
+      ?? normalizeCalendarBackendIdentity(input.backendUrl)
+      ?? normalizeCalendarBackendIdentity(input.baseUrl);
+    this.namespace = this.backendId === null
+      ? null
+      : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
     this.completeOccurrences = [];
     this.completeInterval = null;
     this.hasCompleteData = false;

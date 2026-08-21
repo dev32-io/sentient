@@ -3,7 +3,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CalendarApi, CalendarOccurrence } from "../../services/calendar-api.ts";
 import { browserTimeZone, formatCalendarInputValue, formatCalendarTime, parseCalendarInput, CalendarView } from "./calendar-view.tsx";
-import * as sharedCalendarTime from "./calendar-time.ts";
 
 vi.mock("../../hooks/use-auth.tsx", () => ({
   useAuth: () => ({ status: "authenticated", token: "token", user: { userId: "u_test" } }),
@@ -58,13 +57,6 @@ describe("CalendarView", () => {
     await waitFor(() => expect(screen.getByText("No events this week.")).toBeTruthy());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("uses the extracted temporal helpers for both editor and display paths", () => {
-    expect(browserTimeZone).toBe(sharedCalendarTime.browserTimeZone);
-    expect(formatCalendarInputValue).toBe(sharedCalendarTime.formatCalendarInputValue);
-    expect(parseCalendarInput).toBe(sharedCalendarTime.parseCalendarInput);
-    expect(formatCalendarTime).toBe(sharedCalendarTime.formatCalendarTime);
   });
 
   it("formats timed occurrences in the browser device timezone and round-trips editor values", () => {

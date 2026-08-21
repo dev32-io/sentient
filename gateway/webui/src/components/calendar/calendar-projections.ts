@@ -284,7 +284,11 @@ export const goToToday = todayCalendar;
 
 export function selectCalendarDate(state: CalendarNavigationState, date: CalendarDate): CalendarNavigationState {
   const selectedDate = validDate(date);
-  return { ...state, anchorDate: selectedDate, selectedDate };
+  // A Month cell is a navigation target for the focused Day agenda. Week
+  // selection keeps the seven-column view active; the other views retain their
+  // explicit view until their dedicated navigation action is used.
+  const view = state.view === "month" ? "day" : state.view;
+  return { ...state, view, anchorDate: selectedDate, selectedDate };
 }
 
 export function selectCalendarMonth(state: CalendarNavigationState, date: CalendarDate): CalendarNavigationState {

@@ -104,6 +104,10 @@ function cleanDate(value: unknown, fallback: string): string {
 /**
  * Return a validated preference snapshot. Invalid fields fall back one field at
  * a time so a bad persisted search does not discard a valid view or anchor.
+ *
+ * The controller also exposes singular/text/query aliases for compact filter
+ * callers. Accept them here as well so restoring or initializing from that
+ * shape cannot silently discard a supported selection.
  */
 export function validateCalendarPreferences(value: unknown, fallback: CalendarPreferences): CalendarPreferences {
   const raw = isRecord(value) ? value : {};
@@ -112,16 +116,31 @@ export function validateCalendarPreferences(value: unknown, fallback: CalendarPr
   const importance = raw.importance === null || raw.importance === undefined || isImportance(raw.importance)
     ? (raw.importance === undefined ? fallback.importance : raw.importance)
     : fallback.importance;
-  const search = typeof raw.search === "string" && raw.search.length <= MAX_SEARCH_LENGTH
-    ? raw.search.trim()
+  const scopeValue = raw.scopes !== undefined
+    ? raw.scopes
+    : raw.scope === undefined
+      ? undefined
+      : [raw.scope];
+  const groupValue = raw.groups !== undefined
+    ? raw.groups
+    : raw.group === undefined
+      ? undefined
+      : [raw.group];
+  const searchValue = raw.search !== undefined
+    ? raw.search
+    : raw.text !== undefined
+      ? raw.text
+      : raw.query;
+  const search = typeof searchValue === "string" && searchValue.length <= MAX_SEARCH_LENGTH
+    ? searchValue.trim()
     : fallback.search;
   return {
     version: 1,
     view: isView(raw.view) ? raw.view : fallback.view,
     anchorDate,
     selectedDate,
-    scopes: raw.scopes === undefined ? [...fallback.scopes] : cleanScopes(raw.scopes, fallback.scopes),
-    groups: raw.groups === undefined ? [...fallback.groups] : cleanValues(raw.groups, MAX_FILTER_VALUE_LENGTH),
+    scopes: scopeValue === undefined ? [...fallback.scopes] : cleanScopes(scopeValue, fallback.scopes),
+    groups: groupValue === undefined ? [...fallback.groups] : cleanValues(groupValue, MAX_FILTER_VALUE_LENGTH),
     tags: raw.tags === undefined ? [...fallback.tags] : cleanValues(raw.tags, MAX_FILTER_VALUE_LENGTH),
     importance,
     search,
@@ -145,12 +164,38 @@ export function defaultCalendarPreferences(anchorDate: string): CalendarPreferen
 }
 
 /**
- * Namespace derivation is length-delimited and encoded as one storage segment,
- * preventing account/backend delimiter collisions and cross-backend reuse.
+ * Normalize a stable backend identity before it is used as a preference key.
+ * URL spellings that address the same endpoint share a namespace, while an
+ * absent identity remains absent rather than falling back to a process-wide
+ * default that could mix injected backends.
  */
+export function normalizeCalendarBackendIdentity(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      parsed.username = "";
+      parsed.password = "";
+      parsed.hostname = parsed.hostname.toLowerCase();
+      if ((parsed.protocol === "http:" && parsed.port === "80") || (parsed.protocol === "https:" && parsed.port === "443")) {
+        parsed.port = "";
+      }
+      parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+      parsed.hash = "";
+      return parsed.toString();
+    }
+  } catch {
+    // Logical backend ids do not need URL parsing; trimming is their
+    // normalization boundary.
+  }
+  return trimmed;
+}
+
 export function calendarPreferenceNamespace(input: CalendarPreferenceNamespace): string | null {
   const accountId = input.accountId.trim();
-  const backendId = input.backendId.trim();
+  const backendId = normalizeCalendarBackendIdentity(input.backendId);
   if (!accountId || !backendId) return null;
   try {
     return `account=${encodeURIComponent(accountId)}&backend=${encodeURIComponent(backendId)}`;

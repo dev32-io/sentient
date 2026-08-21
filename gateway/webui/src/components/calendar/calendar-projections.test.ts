@@ -154,6 +154,11 @@ describe("calendar projections", () => {
       anchorDate: "2023-12-31",
       selectedDate: "2024-01-15",
     });
+    expect(selectCalendarDate({ ...state, view: "month" }, "2024-02-05")).toMatchObject({
+      view: "day",
+      anchorDate: "2024-02-05",
+      selectedDate: "2024-02-05",
+    });
     expect(selectCalendarDate({ ...state, view: "week" }, "2024-02-05")).toMatchObject({
       view: "week",
       anchorDate: "2024-02-05",
