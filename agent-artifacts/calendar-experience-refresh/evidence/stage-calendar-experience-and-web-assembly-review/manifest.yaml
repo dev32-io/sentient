@@ -1,0 +1,19 @@
+schemaVersion: 1
+evaluation: stage-calendar-experience-and-web-assembly-review
+recordedAt: 2026-08-21T08:37:40.402Z
+entries:
+  - result: "PASS: 28 test files, 225 tests"
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit
+  - result: "PASS: typecheck and production build; build emitted only a chunk-size
+      warning"
+    command: source scripts/env.sh && bun run --filter @sentient/webui typecheck &&
+      bun run --filter @sentient/webui build
+  - result: "PASS: BUILD SUCCESSFUL"
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:assembleDebug
+  - result: "PASS: no output"
+    command: source scripts/env.sh && git diff --check
+  - result: 22 bounded files changed; implementation includes shared
+      CalendarExperience, web route assembly, and local fixture adapter
+    command: git diff --stat 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
+      a72f47256f8f96faf23bef415258bba52dfa72cb

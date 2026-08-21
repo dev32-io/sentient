@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-experience-and-web-assembly
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:assembleDebug
@@ -30,6 +30,66 @@ criteria:
     cleanup, semantic/keyboard/focus evidence, and documented deviations without
     adding a separate browser-runner project or mandatory screen-reader gate
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 86f5879e-0009-41ed-af3b-4eba651d42c5
+  reviewedCommit: a72f47256f8f96faf23bef415258bba52dfa72cb
+findings:
+  - id: CAL-REVIEW-001
+    severity: critical
+    status: open
+    criterion: AC-013; authenticated-session namespace isolation
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:387-390,
+      506-513, 714-715
+    summary: Namespace changes do not clear prior snapshot/preferences or invalidate
+      in-flight revalidation, allowing prior-account occurrences to be displayed
+      or committed into the newly active cache namespace.
+    blocking: true
+  - id: CAL-REVIEW-002
+    severity: high
+    status: open
+    criterion: Web unauthorized/non-disclosing permission state
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:437-442, 453-461
+    summary: Only forbidden is rendered as permission; 401 codes such as expired
+      retain and display CalendarController cached private occurrences behind a
+      stale notice.
+    blocking: true
+  - id: CAL-REVIEW-003
+    severity: high
+    status: open
+    criterion: AC-001; intentional Year month navigation
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:480-486
+    summary: Year month selection only changes the anchor date and never changes the
+      controller view to Month.
+    blocking: true
+  - id: CAL-REVIEW-004
+    severity: high
+    status: open
+    criterion: Disposable fixture cleanup isolation
+    location: gateway/src/calendar/e2e-helpers.ts:58-65, 399-447, 487-489
+    summary: Fixture cleanup deletes the fixed shared home calendar database, so
+      concurrent runs or unrelated local household data are not isolated.
+    blocking: false
+  - id: CAL-REVIEW-005
+    severity: low
+    status: open
+    criterion: Predictable overflow preview focus restoration
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:393-400
+    summary: The overflow dialog is unmounted while its button is retained as
+      preview origin; closing the preview cannot restore focus to the detached
+      origin.
+    blocking: false
+  - id: CAL-REVIEW-006
+    severity: low
+    status: open
+    criterion: Timezone-aware cache identity
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:105-108,
+      225-230, 1041-1043
+    summary: Timezone-only locale changes reuse the previous cache key and can skip
+      revalidation for a newly projected device-local interval.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-calendar-experience-and-web-assembly-review/manifest.yaml
