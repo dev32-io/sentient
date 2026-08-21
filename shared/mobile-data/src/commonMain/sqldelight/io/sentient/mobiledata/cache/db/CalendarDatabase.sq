@@ -233,7 +233,8 @@ WHERE account_id = ?
   AND backend_id = ?
   AND window_start = ?
   AND window_end = ?
-  AND timezone_input = ?;
+  AND timezone_input = ?
+  AND is_complete = 1;
 
 setSnapshotFreshness:
 UPDATE calendar_month_snapshot

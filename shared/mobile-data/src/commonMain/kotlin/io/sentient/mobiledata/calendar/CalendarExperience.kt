@@ -19,9 +19,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,8 +31,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlin.coroutines.cancellation.CancellationException as KotlinCancellationException
@@ -62,6 +67,39 @@ private sealed interface AggregationResult {
 private data class CacheInputs(
     val snapshot: CalendarCacheResult<CalendarCacheSnapshot?>,
     val preferences: CalendarCacheResult<CalendarCachePreferences?>,
+)
+
+private data class CalendarWindowRequestKey(
+    val namespace: CalendarCacheNamespace,
+    val window: CalendarCacheWindow,
+)
+
+private sealed interface WindowLoadResult {
+    data class Complete(
+        val occurrences: List<EffectiveOccurrence>,
+        val fetchedAt: Long,
+    ) : WindowLoadResult
+
+    data class Failed(val error: CalendarExperienceError) : WindowLoadResult
+    data object Cancelled : WindowLoadResult
+}
+
+/** Only structural, non-content information is retained for failed prefetches. */
+enum class CalendarPrefetchFailureKind {
+    CONNECTION,
+    AUTHORIZATION,
+    FORBIDDEN,
+    MALFORMED,
+    DECODE,
+    CONTRACT,
+    DATABASE,
+    UNKNOWN,
+}
+
+data class CalendarPrefetchDiagnostic(
+    val window: CalendarCacheWindow,
+    val kind: CalendarPrefetchFailureKind,
+    val recordedAt: Long,
 )
 
 /**
@@ -117,6 +155,16 @@ class CalendarExperience(
     private var preferenceWriteJob: Job? = null
     private var namespaceGeneration: Long = 0L
     private var observedNamespace: CalendarCacheNamespace = cacheStore.currentNamespace.value
+    private val requestMutex = Mutex()
+    private val inFlightRequests = mutableMapOf<CalendarWindowRequestKey, Deferred<WindowLoadResult>>()
+    private val prefetchJobs = mutableMapOf<CalendarWindowRequestKey, Job>()
+    private val scheduledPrefetchKeys = mutableSetOf<CalendarWindowRequestKey>()
+    private val _prefetchDiagnostics = MutableStateFlow<List<CalendarPrefetchDiagnostic>>(emptyList())
+    /** Sanitized failures from adjacent work; visible-window failures use [state]. */
+    val prefetchDiagnostics: StateFlow<List<CalendarPrefetchDiagnostic>> = _prefetchDiagnostics.asStateFlow()
+    val prefetchFailures: StateFlow<List<CalendarPrefetchDiagnostic>> get() = prefetchDiagnostics
+    private val accessWriteJobs = mutableMapOf<CalendarWindowRequestKey, Job>()
+    private var authExpiryJob: Job? = null
     private var namespaceJob: Job? = null
     private var unregisterNamespaceListener: (() -> Unit)? = null
     private var closed: Boolean = false
@@ -177,6 +225,11 @@ class CalendarExperience(
         if (closed) return state
         if (requestedWindow == window && observationJob?.isActive == true) return state
 
+        val changingWindow = requestedWindow != window
+        if (changingWindow) {
+            cancelPrefetchWork()
+            cancelSharedRequests()
+        }
         requestedWindow = window
         activeWindow = window
         requestGeneration += 1L
@@ -278,6 +331,7 @@ class CalendarExperience(
      */
     fun refresh(): Job? {
         if (closed) return null
+        preparePrefetchForRecovery()
         if (observationJob?.isActive != true) {
             observe(requestedWindow)
         }
@@ -311,6 +365,29 @@ class CalendarExperience(
     fun refreshNow(): Job? = refresh()
     fun revalidate(window: CalendarCacheWindow): Job? = refresh(window)
 
+    /** Connectivity is deliberately a caller signal; revalidation remains shared. */
+    fun onConnectivityRecovered(): Job? = refresh()
+    fun connectivityRecovered(): Job? = onConnectivityRecovered()
+    fun recoverFromOffline(): Job? = onConnectivityRecovered()
+
+    /**
+     * Schedules the current calendar month and its adjacent months. This is a
+     * convenience seam for deterministic tests and lifecycle adapters; normal
+     * observation schedules the same work automatically.
+     */
+    fun prefetchAdjacent(window: CalendarCacheWindow = activeWindow): List<Job> {
+        if (closed) return emptyList()
+        preparePrefetchForRecovery()
+        return scheduleAdjacentPrefetch(
+            window = window,
+            namespace = cacheStore.currentNamespace.value,
+            namespaceEpoch = namespaceGeneration,
+        )
+    }
+
+    val isPrefetching: Boolean
+        get() = prefetchJobs.values.any { it.isActive }
+
     /** Stop all foreground/cache work without closing a caller-owned session scope. */
     fun close() {
         if (closed) return
@@ -320,7 +397,12 @@ class CalendarExperience(
         observationJob?.cancel()
         refreshJob?.cancel()
         preferenceWriteJob?.cancel()
+        accessWriteJobs.values.forEach { it.cancel() }
+        accessWriteJobs.clear()
         namespaceJob?.cancel()
+        authExpiryJob?.cancel()
+        cancelPrefetchWork()
+        cancelSharedRequests()
         unregisterNamespaceListener?.invoke()
         observationJob = null
         refreshJob = null
@@ -328,6 +410,8 @@ class CalendarExperience(
         unregisterNamespaceListener = null
         revalidationGeneration = null
         preferenceWriteJob = null
+        authExpiryJob = null
+        _prefetchDiagnostics.value = emptyList()
         _state.value = initialState.copy(
             freshness = CalendarFreshness.STALE,
             offline = CalendarOfflineState.UNAVAILABLE,
@@ -380,6 +464,74 @@ class CalendarExperience(
             // experience permanently blank after a failed switch attempt.
             handleNamespaceChange(cacheStore.currentNamespace.value)
         }
+        return result
+    }
+
+    /** Purges through the experience boundary so active work is cancelled first. */
+    suspend fun purgeNamespace(
+        namespace: CalendarCacheNamespace = cacheStore.currentNamespace.value,
+    ): CalendarCacheResult<Unit> {
+        if (closed) {
+            return CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.CLOSED),
+            )
+        }
+        if (namespace == cacheStore.currentNamespace.value) invalidateForNamespace(namespace)
+        return try {
+            cacheStore.purgeNamespace(namespace)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
+            )
+        }
+    }
+
+    /**
+     * Auth expiry is a private-data boundary, not merely a visible error. The
+     * successor auth root can therefore never observe the old cache or a
+     * still-running adjacent request.
+     */
+    suspend fun expireAuthentication(): CalendarCacheResult<Unit> {
+        if (closed) {
+            return CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.CLOSED),
+            )
+        }
+        val namespace = cacheStore.currentNamespace.value
+        invalidateForNamespace(namespace)
+        val result = try {
+            cacheStore.purgeNamespace(namespace)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
+            )
+        }
+        close()
+        cacheStore.close()
+        return result
+    }
+
+    suspend fun onAuthenticationExpired(): CalendarCacheResult<Unit> = expireAuthentication()
+
+    /** Authenticated-session teardown: cancel, purge, then close the driver. */
+    suspend fun disposeAndPurge(): CalendarCacheResult<Unit> {
+        val result = if (closed) {
+            CalendarCacheResult.Failure(
+                io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.CLOSED),
+            )
+        } else {
+            purgeNamespace()
+        }
+        close()
+        cacheStore.close()
         return result
     }
 
@@ -487,6 +639,14 @@ class CalendarExperience(
                             hasSeenSnapshot = hasSeenSnapshot,
                             snapshotChanged = snapshotChanged,
                         )
+                        if (snapshotChanged && latestSnapshot != null) {
+                            recordViewedWindow(
+                                snapshot = latestSnapshot!!,
+                                generation = generation,
+                                namespace = namespace,
+                                namespaceEpoch = namespaceEpoch,
+                            )
+                        }
                         cacheReady.complete(Unit)
                     }
             } catch (cancelled: CancellationException) {
@@ -519,6 +679,10 @@ class CalendarExperience(
         refresh.invokeOnCompletion {
             if (refreshJob === refresh) refreshJob = null
         }
+        // Adjacent work is deliberately launched after the visible cache
+        // emission and foreground request have started. It never participates
+        // in the visible loading state or its failure path.
+        scheduleAdjacentPrefetch(window, namespace, namespaceEpoch)
 
         try {
             awaitCancellation()
@@ -556,19 +720,29 @@ class CalendarExperience(
             ),
         )
 
-        when (val aggregation = aggregate(window, generation, namespace, namespaceEpoch)) {
-            AggregationResult.Cancelled -> return
-            is AggregationResult.Failed -> {
+        when (val loaded = loadWindow(window, namespace, namespaceEpoch)) {
+            WindowLoadResult.Cancelled -> return
+            is WindowLoadResult.Failed -> {
                 if (!isCurrent(generation, namespace, namespaceEpoch)) return
-                val currentError = _state.value.error
+                if (loaded.error.kind == CalendarExperienceErrorKind.AUTHORIZATION) {
+                    if (authExpiryJob?.isActive != true) {
+                        val expiry = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                            expireAuthentication()
+                        }
+                        authExpiryJob = expiry
+                        expiry.invokeOnCompletion {
+                            if (authExpiryJob === expiry) authExpiryJob = null
+                        }
+                    }
+                    return
+                }
                 val hasCache = _state.value.hasCompleteCache
-                val connection = aggregation.error.kind == CalendarExperienceErrorKind.CONNECTION
-                val resultingError = if (
-                    connection && !hasCache && currentError?.kind in setOf(
-                        CalendarExperienceErrorKind.DECODE,
-                        CalendarExperienceErrorKind.DATABASE,
-                    )
-                ) currentError else aggregation.error
+                val connection = loaded.error.kind == CalendarExperienceErrorKind.CONNECTION
+                val resultingError = if (connection && !hasCache) {
+                    unavailableOfflineError()
+                } else {
+                    loaded.error
+                }
                 val resultingFreshness = if (connection) {
                     if (hasCache) CalendarFreshness.CACHED_OFFLINE else CalendarFreshness.OFFLINE
                 } else {
@@ -586,24 +760,81 @@ class CalendarExperience(
                     error = resultingError,
                     mutationAvailability = unavailableMutationAvailability(
                         if (connection) CalendarMutationAvailabilityReason.OFFLINE
-                        else if (aggregation.error.kind == CalendarExperienceErrorKind.AUTHORIZATION || aggregation.error.kind == CalendarExperienceErrorKind.FORBIDDEN) {
+                        else if (loaded.error.kind == CalendarExperienceErrorKind.AUTHORIZATION || loaded.error.kind == CalendarExperienceErrorKind.FORBIDDEN) {
                             CalendarMutationAvailabilityReason.AUTHORIZATION
                         } else CalendarMutationAvailabilityReason.ERROR,
                     ),
                 )
             }
 
-            is AggregationResult.Complete -> {
+            is WindowLoadResult.Complete -> {
                 if (!isCurrent(generation, namespace, namespaceEpoch)) return
+                // The SQLDelight flow naturally emits this generation. We also
+                // apply it here so lightweight injected stores that acknowledge
+                // writes before emitting expose a complete value immediately.
+                applyCommittedData(window, loaded.occurrences, loaded.fetchedAt)
+                scheduleAdjacentPrefetch(window, namespace, namespaceEpoch)
+            }
+        }
+    }
+
+    /**
+     * One shared load owns pagination and the complete-page replacement. Both
+     * foreground revalidation and adjacent prefetch await this entry so an
+     * equivalent request cannot issue a second remote read or a second commit.
+     */
+    private suspend fun loadWindow(
+        window: CalendarCacheWindow,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): WindowLoadResult {
+        if (!isNamespaceCurrent(namespace, namespaceEpoch)) return WindowLoadResult.Cancelled
+        val key = CalendarWindowRequestKey(namespace, window)
+        val request = requestMutex.withLock {
+            val existing = inFlightRequests[key]?.takeIf { it.isActive }
+            if (existing != null) {
+                existing
+            } else {
+                val created = scope.async(start = CoroutineStart.LAZY) {
+                    loadWindowUncoalesced(window, namespace, namespaceEpoch)
+                }
+                inFlightRequests[key] = created
+                created.invokeOnCompletion {
+                    if (inFlightRequests[key] === created) inFlightRequests.remove(key)
+                }
+                created
+            }
+        }
+        request.start()
+        return request.await()
+    }
+
+    private suspend fun loadWindowUncoalesced(
+        window: CalendarCacheWindow,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): WindowLoadResult {
+        return when (val aggregation = aggregate(window, null, namespace, namespaceEpoch)) {
+            AggregationResult.Cancelled -> WindowLoadResult.Cancelled
+            is AggregationResult.Failed -> WindowLoadResult.Failed(aggregation.error)
+            is AggregationResult.Complete -> {
+                if (!isNamespaceCurrent(namespace, namespaceEpoch)) return WindowLoadResult.Cancelled
                 val fetchedAt = nowMillis().coerceAtLeast(0L)
+                val isViewedWindow = activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)
+                val lastAccessedAt = if (isViewedWindow) fetchedAt else previousAccessedAt(namespace, namespaceEpoch, window)
+                val protectedWindow = activeWindow.takeIf {
+                    !closed && cacheStore.currentNamespace.value == namespace
+                } ?: window
                 val writeResult = try {
-                    cacheStore.replaceSnapshotForNamespace(
+                    cacheStore.replaceSnapshotAndRetainForNamespace(
                         namespace = namespace,
                         window = window,
                         occurrences = aggregation.occurrences,
                         fetchedAt = fetchedAt,
-                        lastAccessedAt = fetchedAt,
+                        lastAccessedAt = lastAccessedAt,
                         freshness = CalendarCacheFreshness.FRESH,
+                        activeWindow = protectedWindow,
+                        maxWindows = io.sentient.mobiledata.cache.CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -611,31 +842,12 @@ class CalendarExperience(
                     throw cancelled
                 } catch (_: Throwable) {
                     CalendarCacheResult.Failure(
-                        io.sentient.mobiledata.cache.CalendarCacheFailure(
-                            CalendarCacheFailureReason.DATABASE,
-                        ),
+                        io.sentient.mobiledata.cache.CalendarCacheFailure(CalendarCacheFailureReason.DATABASE),
                     )
                 }
-
                 when (writeResult) {
-                    is CalendarCacheResult.Success -> {
-                        if (!isCurrent(generation, namespace, namespaceEpoch)) return
-                        // The SQLDelight flow naturally emits this generation. We
-                        // also apply it here so a lightweight injected test store
-                        // that acknowledges writes before emitting still exposes a
-                        // complete fresh StateFlow value, never a first-page value.
-                        applyCommittedData(window, aggregation.occurrences, fetchedAt)
-                    }
-                    is CalendarCacheResult.Failure -> {
-                        if (!isCurrent(generation, namespace, namespaceEpoch)) return
-                        _state.value = _state.value.copy(
-                            loading = CalendarLoadingState(),
-                            freshness = CalendarFreshness.ERROR,
-                            offline = CalendarOfflineState.ONLINE,
-                            error = cacheFailure(writeResult.error.reason),
-                            mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.ERROR),
-                        )
-                    }
+                    is CalendarCacheResult.Success -> WindowLoadResult.Complete(aggregation.occurrences, fetchedAt)
+                    is CalendarCacheResult.Failure -> WindowLoadResult.Failed(cacheFailure(writeResult.error.reason))
                 }
             }
         }
@@ -643,7 +855,7 @@ class CalendarExperience(
 
     private suspend fun aggregate(
         window: CalendarCacheWindow,
-        generation: Long,
+        generation: Long?,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
     ): AggregationResult {
@@ -654,7 +866,7 @@ class CalendarExperience(
         var pageCount = 0
 
         while (true) {
-            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             if (++pageCount > MAX_PAGES) {
                 return AggregationResult.Failed(contractError("Calendar pagination exceeded its safety bound."))
             }
@@ -683,14 +895,14 @@ class CalendarExperience(
                     ),
                 )
             }
-            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             val page = when (result) {
                 is SentientResult.Success -> result.data
                 is SentientResult.Failure -> return AggregationResult.Failed(repositoryError(result.error))
                 is SentientResult.Loading -> return AggregationResult.Failed(contractError("Calendar pagination did not return a settled page."))
             }
 
-            if (!isCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
+            if (!isRequestCurrent(generation, namespace, namespaceEpoch)) return AggregationResult.Cancelled
             val converted = try {
                 convertPage(page)
             } catch (cancelled: CancellationException) {
@@ -750,6 +962,24 @@ class CalendarExperience(
                     .thenBy { it.occurrenceId },
             ),
         )
+    }
+
+    private suspend fun previousAccessedAt(
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+        window: CalendarCacheWindow,
+    ): Long = try {
+        if (!isNamespaceCurrent(namespace, namespaceEpoch)) return 0L
+        when (val existing = cacheStore.readSnapshot(window)) {
+            is CalendarCacheResult.Success -> existing.value?.lastAccessedAt ?: 0L
+            is CalendarCacheResult.Failure -> 0L
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (cancelled: KotlinCancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        0L
     }
 
     private fun convertPage(page: CalendarEventPage): EffectiveOccurrencePage {
@@ -818,6 +1048,7 @@ class CalendarExperience(
         val hasCache = if (hasSeenSnapshot) snapshot != null else current.hasCompleteCache && current.cachedWindow == window
         val nextPresentation = preferences?.let(::presentationFor)
         val base = nextPresentation ?: current
+        val snapshotIsOffline = snapshot?.freshness == CalendarFreshness.CACHED_OFFLINE || snapshot?.freshness?.isUnavailableOffline == true
         val projection = buildProjection(base, occurrences)
         val next = current.copy(
             anchorDate = base.anchorDate,
@@ -837,14 +1068,167 @@ class CalendarExperience(
             loading = if (snapshot != null && current.loading.phase == CalendarLoadingPhase.LOADING) CalendarLoadingState() else current.loading,
             freshness = if (snapshotChanged && snapshot != null) snapshot.freshness else current.freshness,
             error = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH) null else current.error,
-            offline = if (snapshotChanged && snapshot != null) CalendarOfflineState.ONLINE else current.offline,
+            offline = if (snapshotChanged && snapshot != null) {
+                if (snapshotIsOffline) CalendarOfflineState.OFFLINE else CalendarOfflineState.ONLINE
+            } else {
+                current.offline
+            },
             mutationAvailability = if (snapshot != null && snapshotChanged && current.error == null) {
-                CalendarMutationAvailability()
+                if (snapshotIsOffline) {
+                    unavailableMutationAvailability(CalendarMutationAvailabilityReason.OFFLINE)
+                } else {
+                    CalendarMutationAvailability()
+                }
             } else {
                 current.mutationAvailability
             },
         )
         _state.value = next
+    }
+
+    private fun recordViewedWindow(
+        snapshot: CalendarCacheSnapshot,
+        generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ) {
+        if (!isCurrent(generation, namespace, namespaceEpoch)) return
+        val accessedAt = maxOf(nowMillis().coerceAtLeast(0L), snapshot.lastAccessedAt)
+        if (accessedAt <= snapshot.lastAccessedAt) return
+        val key = CalendarWindowRequestKey(namespace, snapshot.window)
+        accessWriteJobs[key]?.takeIf { it.isActive }?.let { return }
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                cacheStore.touchAndRetainForNamespace(
+                    namespace = namespace,
+                    window = snapshot.window,
+                    lastAccessedAt = accessedAt,
+                    maxWindows = io.sentient.mobiledata.cache.CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (cancelled: KotlinCancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Metadata failure never removes already decoded visible data.
+            }
+        }
+        accessWriteJobs[key] = job
+        job.invokeOnCompletion {
+            if (accessWriteJobs[key] === job) accessWriteJobs.remove(key)
+        }
+    }
+
+    private fun scheduleAdjacentPrefetch(
+        window: CalendarCacheWindow,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): List<Job> {
+        if (closed || !isNamespaceCurrent(namespace, namespaceEpoch)) return emptyList()
+        val scheduled = mutableListOf<Job>()
+        adjacentMonthWindows(window).forEach { target ->
+            val key = CalendarWindowRequestKey(namespace, target)
+            if (key in scheduledPrefetchKeys || prefetchJobs[key]?.isActive == true) return@forEach
+            scheduledPrefetchKeys += key
+            val job = scope.launch(start = CoroutineStart.LAZY) {
+                when (val result = loadWindow(target, namespace, namespaceEpoch)) {
+                    WindowLoadResult.Cancelled -> Unit
+                    is WindowLoadResult.Complete -> clearPrefetchDiagnostic(key)
+                    is WindowLoadResult.Failed -> recordPrefetchFailure(key, target, result.error)
+                }
+            }
+            prefetchJobs[key] = job
+            job.invokeOnCompletion {
+                if (prefetchJobs[key] === job) prefetchJobs.remove(key)
+            }
+            job.start()
+            scheduled += job
+        }
+        return scheduled
+    }
+
+    private fun recordPrefetchFailure(
+        key: CalendarWindowRequestKey,
+        window: CalendarCacheWindow,
+        error: CalendarExperienceError,
+    ) {
+        if (closed || !isNamespaceCurrent(key.namespace, namespaceGeneration)) return
+        val kind = when (error.kind) {
+            CalendarExperienceErrorKind.CONNECTION,
+            CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE,
+            -> CalendarPrefetchFailureKind.CONNECTION
+            CalendarExperienceErrorKind.AUTHORIZATION -> CalendarPrefetchFailureKind.AUTHORIZATION
+            CalendarExperienceErrorKind.FORBIDDEN -> CalendarPrefetchFailureKind.FORBIDDEN
+            CalendarExperienceErrorKind.MALFORMED -> CalendarPrefetchFailureKind.MALFORMED
+            CalendarExperienceErrorKind.DECODE -> CalendarPrefetchFailureKind.DECODE
+            CalendarExperienceErrorKind.CONTRACT -> CalendarPrefetchFailureKind.CONTRACT
+            CalendarExperienceErrorKind.CACHE,
+            CalendarExperienceErrorKind.DATABASE,
+            -> CalendarPrefetchFailureKind.DATABASE
+            CalendarExperienceErrorKind.UNKNOWN -> CalendarPrefetchFailureKind.UNKNOWN
+        }
+        val diagnostic = CalendarPrefetchDiagnostic(window, kind, nowMillis().coerceAtLeast(0L))
+        _prefetchDiagnostics.update { diagnostics ->
+            diagnostics.filterNot { it.window == window }
+                .takeLast(MAX_PREFETCH_DIAGNOSTICS - 1) + diagnostic
+        }
+    }
+
+    private fun clearPrefetchDiagnostic(key: CalendarWindowRequestKey) {
+        _prefetchDiagnostics.update { diagnostics ->
+            diagnostics.filterNot { it.window == key.window }
+        }
+    }
+
+    private fun preparePrefetchForRecovery() {
+        _prefetchDiagnostics.value.forEach { diagnostic ->
+            scheduledPrefetchKeys.remove(CalendarWindowRequestKey(cacheStore.currentNamespace.value, diagnostic.window))
+        }
+    }
+
+    private fun cancelPrefetchWork() {
+        prefetchJobs.values.forEach { it.cancel() }
+        prefetchJobs.clear()
+        scheduledPrefetchKeys.clear()
+        _prefetchDiagnostics.value = emptyList()
+    }
+
+    private fun cancelSharedRequests() {
+        inFlightRequests.values.forEach { it.cancel() }
+        inFlightRequests.clear()
+    }
+
+    private fun adjacentMonthWindows(window: CalendarCacheWindow): List<CalendarCacheWindow> {
+        val start = parseCalendarDate(window.windowStart)
+        val currentMonth = formatCalendarDate(DateParts(start.year, start.month, 1))
+        val isMonthBoundaryWindow = window.windowStart == currentMonth &&
+            window.windowEnd == addCalendarMonthsClamped(currentMonth, 1)
+        if (isMonthBoundaryWindow) {
+            return (-1..1).map { offset ->
+                val monthStart = addCalendarMonthsClamped(currentMonth, offset)
+                CalendarCacheWindow(
+                    windowStart = monthStart,
+                    windowEnd = addCalendarMonthsClamped(monthStart, 1),
+                    timezoneInput = window.timezoneInput,
+                )
+            }
+        }
+
+        // Projection windows for a normal Month view are locale-aware six-row
+        // grids rather than first-of-month boundaries. Reusing that shape keeps
+        // an adjacent prefetch usable when navigation later requests the grid
+        // for the neighboring anchor.
+        val anchor = _state.value.anchorDate.takeIf(CalendarDates::isValid) ?: currentMonth
+        val locale = _state.value.locale
+        return (-1..1).map { offset ->
+            val anchorForMonth = addCalendarMonthsClamped(anchor, offset)
+            val interval = calendarVisibleInterval(CalendarView.MONTH, anchorForMonth, locale)
+            CalendarCacheWindow(
+                windowStart = interval.startDate,
+                windowEnd = interval.endExclusive,
+                timezoneInput = window.timezoneInput,
+            )
+        }
     }
 
     private fun applyCommittedData(
@@ -943,7 +1327,7 @@ class CalendarExperience(
             loading = CalendarLoadingState(
                 if (sameCachedWindow) CalendarLoadingPhase.REFRESHING else CalendarLoadingPhase.LOADING,
             ),
-            freshness = if (sameCachedWindow) CalendarFreshness.REFRESHING else current.freshness,
+            freshness = if (sameCachedWindow) CalendarFreshness.REFRESHING else CalendarFreshness.STALE,
             error = null,
             offline = CalendarOfflineState.ONLINE,
         )
@@ -963,6 +1347,11 @@ class CalendarExperience(
         refreshJob?.cancel()
         preferenceWriteGeneration += 1L
         preferenceWriteJob?.cancel()
+        authExpiryJob?.cancel()
+        accessWriteJobs.values.forEach { it.cancel() }
+        accessWriteJobs.clear()
+        cancelPrefetchWork()
+        cancelSharedRequests()
         observationJob = null
         refreshJob = null
         preferenceWriteJob = null
@@ -1181,12 +1570,18 @@ class CalendarExperience(
         -> contractError("The calendar cache key is invalid.")
         CalendarCacheFailureReason.CLOSED,
         CalendarCacheFailureReason.DATABASE,
+        CalendarCacheFailureReason.INVALID_RETENTION,
         CalendarCacheFailureReason.NOT_FOUND,
         -> CalendarExperienceError(
             kind = CalendarExperienceErrorKind.DATABASE,
             userMessage = "Calendar cache is unavailable.",
         )
     }
+
+    private fun unavailableOfflineError() = CalendarExperienceError(
+        kind = CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE,
+        userMessage = "This calendar interval is unavailable offline. Connect to load it.",
+    )
 
     private fun contractError(message: String) = CalendarExperienceError(
         kind = CalendarExperienceErrorKind.CONTRACT,
@@ -1199,6 +1594,16 @@ class CalendarExperience(
         canDelete = false,
         reason = reason,
     )
+
+    private fun isRequestCurrent(
+        generation: Long?,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+    ): Boolean = if (generation == null) {
+        isNamespaceCurrent(namespace, namespaceEpoch)
+    } else {
+        isCurrent(generation, namespace, namespaceEpoch)
+    }
 
     private fun isCurrent(
         generation: Long,
@@ -1235,6 +1640,7 @@ class CalendarExperience(
 
     private companion object {
         const val MAX_PAGES = 10_000
+        const val MAX_PREFETCH_DIAGNOSTICS = 16
         const val MAX_FILTER_VALUE_LENGTH = 256
         const val MAX_FILTER_VALUES = 128
         const val MAX_SEARCH_LENGTH = 512

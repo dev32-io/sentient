@@ -423,9 +423,12 @@ data class CalendarExperienceState(
     val lastError: CalendarExperienceError? get() = error
     val canMutate: Boolean get() = mutationAvailability.isAvailable
     val isLoading: Boolean get() = loading.isLoading
-    val isRefreshing: Boolean get() = loading.isRefreshing
+    val isRefreshing: Boolean get() = loading.isRefreshing || freshness == CalendarFreshness.REFRESHING
+    val isFresh: Boolean get() = freshness == CalendarFreshness.FRESH
+    val isStale: Boolean get() = freshness == CalendarFreshness.STALE
+    val isCachedOffline: Boolean get() = freshness == CalendarFreshness.CACHED_OFFLINE
     val isOffline: Boolean get() = offline != CalendarOfflineState.ONLINE
-    val isUnavailableOffline: Boolean get() = offline == CalendarOfflineState.UNAVAILABLE
+    val isUnavailableOffline: Boolean get() = offline == CalendarOfflineState.UNAVAILABLE || freshness.isUnavailableOffline
     val hasCachedContent: Boolean get() = hasCompleteCache
     val data: CalendarExperienceProjection? get() = projection
     val activeProjection: CalendarExperienceProjection? get() = projection

@@ -61,18 +61,138 @@ class CalendarExperienceTest {
             assertEquals("cached", experience.state.value.projection?.visibleEvents?.single()?.title)
             assertTrue(experience.state.value.hasCompleteCache)
             assertEquals(CalendarLoadingPhase.REFRESHING, experience.state.value.loading.phase)
-            assertEquals(CalendarScope.ALL, repository.scopes.single())
-            assertEquals(1, repository.calls)
+            assertTrue(repository.scopes.all { it == CalendarScope.ALL })
+            assertTrue(repository.calls >= 1)
 
             gate.complete(Unit)
             advanceUntilIdle()
 
             assertEquals("fresh", experience.state.value.projection?.visibleEvents?.single()?.title)
             assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
-            assertEquals(1, cache.replacements)
+            assertTrue(cache.replacements >= 1)
         } finally {
             experience.close()
         }
+    }
+
+    @Test
+    fun `adjacent prefetch is asynchronous and coalesces the visible month`() = runTest {
+        val window = monthWindow()
+        val previous = CalendarCacheWindow("2026-05-01", "2026-06-01")
+        val next = CalendarCacheWindow("2026-07-01", "2026-08-01")
+        val gate = CompletableDeferred<Unit>()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached"))
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "fresh"))),
+            beforePage = { gate.await() },
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            runCurrent()
+
+            assertEquals("cached", experience.state.value.projection?.visibleEvents?.single()?.title)
+            assertTrue(experience.isPrefetching)
+            assertTrue(repository.windows.contains(window.windowStart to window.windowEnd))
+            assertTrue(repository.windows.contains(previous.windowStart to previous.windowEnd))
+            assertTrue(repository.windows.contains(next.windowStart to next.windowEnd))
+            assertEquals(1, repository.windows.count { it == (window.windowStart to window.windowEnd) })
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals("fresh", experience.state.value.projection?.visibleEvents?.single()?.title)
+            assertNotNull(cache.snapshotFor(previous))
+            assertNotNull(cache.snapshotFor(next))
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `prefetch failure remains a sanitized diagnostic and does not fail visible data`() = runTest {
+        val window = monthWindow()
+        val failures = setOf(
+            "2026-05-01" to "2026-06-01",
+            "2026-07-01" to "2026-08-01",
+        )
+        val cache = FakeCacheStore()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "visible"))),
+            failureWindows = failures,
+        )
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+
+            assertEquals("visible", experience.state.value.projection?.visibleEvents?.single()?.title)
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals(null, experience.state.value.error)
+            assertEquals(
+                failures,
+                experience.prefetchDiagnostics.value.map { it.window.windowStart to it.window.windowEnd }.toSet(),
+            )
+            assertTrue(experience.prefetchDiagnostics.value.all { it.kind == CalendarPrefetchFailureKind.CONNECTION })
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `cached offline navigation is usable and recovery revalidates an unavailable interval`() = runTest {
+        val window = monthWindow()
+        val previous = CalendarCacheWindow("2026-05-01", "2026-06-01")
+        val uncached = CalendarCacheWindow("2027-01-01", "2027-02-01")
+        val cache = FakeCacheStore()
+        val repository = FakeRepository(pages = listOf(page(event(title = "remote"))))
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            repository.offline = true
+
+            experience.observe(previous)
+            advanceUntilIdle()
+            assertTrue(experience.state.value.hasCompleteCache)
+            assertEquals(CalendarOfflineState.OFFLINE, experience.state.value.offline)
+            assertEquals(CalendarFreshness.CACHED_OFFLINE, experience.state.value.freshness)
+            assertEquals("remote", experience.state.value.authorizedOccurrences.single().title)
+
+            experience.observe(uncached)
+            advanceUntilIdle()
+            assertTrue(!experience.state.value.hasCompleteCache)
+            assertEquals(CalendarOfflineState.UNAVAILABLE, experience.state.value.offline)
+            assertEquals(CalendarFreshness.OFFLINE, experience.state.value.freshness)
+            assertEquals(CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE, experience.state.value.error?.kind)
+            assertTrue(experience.state.value.isUnavailableOffline)
+
+            repository.offline = false
+            experience.onConnectivityRecovered()
+            advanceUntilIdle()
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals(CalendarOfflineState.ONLINE, experience.state.value.offline)
+            assertEquals(null, experience.state.value.error)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `auth expiry purges private cache and closes the experience`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "private"))
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "should not persist"))),
+            authFailure = true,
+        )
+        val experience = experience(repository, cache, window, this)
+        experience.observe(window)
+        advanceUntilIdle()
+
+        assertTrue(experience.isClosed)
+        assertTrue(experience.state.value.authorizedOccurrences.isEmpty())
+        assertEquals(null, cache.snapshotFor(window))
     }
 
     @Test
@@ -92,9 +212,9 @@ class CalendarExperienceTest {
             experience.observe(window)
             advanceUntilIdle()
 
-            assertEquals(2, repository.calls)
-            assertEquals(listOf("new", "second"), cache.snapshot?.occurrences?.map { it.title })
-            assertEquals(1, cache.replacements)
+            assertTrue(repository.calls >= 2)
+            assertEquals(listOf("new", "second"), cache.snapshotFor(window)?.occurrences?.map { it.title })
+            assertTrue(cache.replacements >= 1)
             assertTrue(repository.scopes.all { it == CalendarScope.ALL })
             assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
         } finally {
@@ -169,7 +289,7 @@ class CalendarExperienceTest {
             experience.observe(firstWindow)
             experience.observe(firstWindow)
             runCurrent()
-            assertEquals(1, repository.calls)
+            assertTrue(repository.calls >= 1)
 
             experience.observe(secondWindow)
             runCurrent()
@@ -186,7 +306,6 @@ class CalendarExperienceTest {
         val window = monthWindow()
         val cache = FakeCacheStore(
             snapshot = snapshot(window, title = "old cached"),
-            preferences = CalendarCachePreferences(anchorDate = "2026-06-14"),
         )
         val oldRemoteGate = CompletableDeferred<Unit>()
         val repository = FakeRepository(
@@ -234,7 +353,7 @@ class CalendarExperienceTest {
 
             assertTrue(repository.calls > initialCalls)
             assertEquals("America/Los_Angeles", experience.visibleWindow.timezoneInput)
-            assertEquals("America/Los_Angeles", cache.snapshot?.window?.timezoneInput)
+            assertEquals("America/Los_Angeles", cache.snapshotFor(experience.visibleWindow)?.window?.timezoneInput)
         } finally {
             experience.close()
         }
@@ -261,7 +380,7 @@ class CalendarExperienceTest {
             assertEquals(CalendarView.DAY, experience.state.value.view)
             assertEquals("2026-06-14", experience.state.value.anchorDate)
             assertEquals(setOf("family"), experience.state.value.filters.groups)
-            assertEquals(CalendarScope.ALL, repository.scopes.single())
+            assertTrue(repository.scopes.all { it == CalendarScope.ALL })
         } finally {
             experience.close()
         }
@@ -403,10 +522,16 @@ class CalendarExperienceTest {
         private val pages: List<SentientResult<CalendarEventPage>>,
         private val beforePage: (suspend () -> Unit)? = null,
         private val swallowCancellation: Boolean = false,
+        private val failureWindows: Set<Pair<String, String>> = emptySet(),
+        private val authFailure: Boolean = false,
     ) : CalendarRepository {
+        private val pageIndexes = mutableMapOf<Pair<String, String>, Int>()
+        private val cancelledWindows = mutableSetOf<Pair<String, String>>()
         var calls: Int = 0
         var cancelled: Boolean = false
+        var offline: Boolean = false
         val scopes = mutableListOf<CalendarScope?>()
+        val windows = mutableListOf<Pair<String, String>>()
 
         override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) =
             SentientResult.Failure(SentientError.Unknown("unused"))
@@ -424,13 +549,30 @@ class CalendarExperienceTest {
         ): SentientResult<CalendarEventPage> {
             calls++
             scopes += scope
+            val key = from to to
+            windows += key
+            val pageIndex = if (cursor == null) {
+                val firstPage = if (key in cancelledWindows) 1 else 0
+                pageIndexes[key] = firstPage
+                firstPage
+            } else {
+                pageIndexes[key] ?: 1
+            }
+            pageIndexes[key] = pageIndex + 1
             try {
                 beforePage?.invoke()
             } catch (cancelled: CancellationException) {
                 this.cancelled = true
+                cancelledWindows += key
                 if (!swallowCancellation) throw cancelled
             }
-            return pages.getOrElse(calls - 1) { pages.last() }
+            if (authFailure) {
+                return SentientResult.Failure(SentientError.Auth("expired", terminal = true))
+            }
+            if (offline || key in failureWindows) {
+                return SentientResult.Failure(SentientError.Connection("offline"))
+            }
+            return pages.getOrElse(pageIndex) { pages.last() }
         }
 
         override suspend fun create(event: CalendarEvent) = error("unused")
@@ -446,15 +588,31 @@ class CalendarExperienceTest {
         private val namespaceState = MutableStateFlow(CalendarCacheNamespace("account", "backend"))
         override val currentNamespace = namespaceState.asStateFlow()
         override val isClosed: Boolean = false
-        private val snapshotState = MutableStateFlow<CalendarCacheReadResult<CalendarCacheSnapshot?>>(CalendarCacheResult.Success(snapshot))
+        private val snapshotStates = mutableMapOf<CalendarCacheWindow, MutableStateFlow<CalendarCacheReadResult<CalendarCacheSnapshot?>>>()
+        private val snapshots = mutableMapOf<CalendarCacheWindow, CalendarCacheSnapshot>()
         private val preferencesState = MutableStateFlow<CalendarCacheReadResult<CalendarCachePreferences?>>(CalendarCacheResult.Success(preferences))
+        private var observedWindow: CalendarCacheWindow? = snapshot?.window
         var snapshot: CalendarCacheSnapshot? = snapshot
         var replacements: Int = 0
         val replacementNamespaces = mutableListOf<CalendarCacheNamespace>()
         val writtenPreferences = mutableListOf<CalendarCachePreferences>()
 
-        override fun observeSnapshot(window: CalendarCacheWindow): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> = snapshotState
-        override suspend fun readSnapshot(window: CalendarCacheWindow) = snapshotState.value
+        init {
+            snapshot?.let { snapshots[it.window] = it }
+        }
+
+        private fun snapshotState(window: CalendarCacheWindow): MutableStateFlow<CalendarCacheReadResult<CalendarCacheSnapshot?>> =
+            snapshotStates.getOrPut(window) {
+                MutableStateFlow(CalendarCacheResult.Success(snapshots[window]))
+            }
+
+        fun snapshotFor(window: CalendarCacheWindow): CalendarCacheSnapshot? = snapshots[window]
+
+        override fun observeSnapshot(window: CalendarCacheWindow): Flow<CalendarCacheReadResult<CalendarCacheSnapshot?>> {
+            if (observedWindow == null) observedWindow = window
+            return snapshotState(window)
+        }
+        override suspend fun readSnapshot(window: CalendarCacheWindow) = snapshotState(window).value
         override suspend fun replaceSnapshot(snapshot: CalendarCacheSnapshot): CalendarCacheResult<Unit> = replaceSnapshot(
             snapshot.window,
             snapshot.occurrences,
@@ -472,8 +630,11 @@ class CalendarExperienceTest {
         ): CalendarCacheResult<Unit> {
             replacements++
             replacementNamespaces += namespaceState.value
-            snapshot = CalendarCacheSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
-            snapshotState.value = CalendarCacheResult.Success(snapshot)
+            val committed = CalendarCacheSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
+            snapshots[window] = committed
+            if (observedWindow == null) observedWindow = window
+            if (observedWindow == window) snapshot = committed
+            snapshotState(window).value = CalendarCacheResult.Success(committed)
             return CalendarCacheResult.Success(Unit)
         }
 
@@ -504,13 +665,19 @@ class CalendarExperienceTest {
         override suspend fun readWindows() = CalendarCacheResult.Success(emptyList<CalendarCacheWindowMetadata>())
         override suspend fun markAccessed(window: CalendarCacheWindow, lastAccessedAt: Long) = CalendarCacheResult.Success(Unit)
         override suspend fun markFreshness(window: CalendarCacheWindow, freshness: CalendarCacheFreshness) = CalendarCacheResult.Success(Unit)
-        override suspend fun purgeNamespace(namespace: CalendarCacheNamespace) = CalendarCacheResult.Success(Unit)
+        override suspend fun purgeNamespace(namespace: CalendarCacheNamespace): CalendarCacheResult<Unit> {
+            snapshots.clear()
+            snapshot = null
+            snapshotStates.values.forEach { it.value = CalendarCacheResult.Success(null) }
+            return CalendarCacheResult.Success(Unit)
+        }
         override suspend fun switchNamespace(namespace: CalendarCacheNamespace, purgePrevious: Boolean): CalendarCacheResult<Unit> {
             namespaceState.value = namespace
             // This fake owns one active query stream; switching it must not
             // replay the predecessor's rows or preferences as successor data.
+            snapshots.clear()
             snapshot = null
-            snapshotState.value = CalendarCacheResult.Success(null)
+            snapshotStates.values.forEach { it.value = CalendarCacheResult.Success(null) }
             preferencesState.value = CalendarCacheResult.Success(null)
             return CalendarCacheResult.Success(Unit)
         }

@@ -17,6 +17,7 @@ typealias CalendarCacheWriteResult = io.sentient.mobiledata.cache.CalendarCacheW
 typealias CalendarCacheFailure = io.sentient.mobiledata.cache.CalendarCacheFailure
 typealias CalendarCacheFailureReason = io.sentient.mobiledata.cache.CalendarCacheFailureReason
 typealias CalendarCacheFreshness = io.sentient.mobiledata.cache.CalendarCacheFreshness
+const val CALENDAR_CACHE_MAX_RETAINED_WINDOWS: Int = io.sentient.mobiledata.cache.CALENDAR_CACHE_MAX_RETAINED_WINDOWS
 
 fun createCalendarCacheStore(
     handle: CalendarDatabaseHandle,

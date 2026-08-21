@@ -56,6 +56,8 @@ data class CalendarMutationAvailability(
 enum class CalendarExperienceErrorKind {
     CACHE,
     CONNECTION,
+    /** The requested interval is not cached and cannot be loaded offline. */
+    UNAVAILABLE_OFFLINE,
     AUTHORIZATION,
     FORBIDDEN,
     MALFORMED,
@@ -76,7 +78,8 @@ data class CalendarExperienceError(
 ) {
     val message: String get() = userMessage
     val category: CalendarExperienceErrorKind get() = kind
-    val isOffline: Boolean get() = kind == CalendarExperienceErrorKind.CONNECTION
+    val isOffline: Boolean get() = kind == CalendarExperienceErrorKind.CONNECTION || kind == CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE
+    val isUnavailableOffline: Boolean get() = kind == CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE
 }
 
 typealias CalendarReadError = CalendarExperienceError

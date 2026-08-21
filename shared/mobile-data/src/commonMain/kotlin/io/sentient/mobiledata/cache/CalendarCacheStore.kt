@@ -40,6 +40,9 @@ import kotlinx.serialization.json.Json
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException as KotlinCancellationException
 
+/** The maximum number of complete windows retained for one namespace. */
+const val CALENDAR_CACHE_MAX_RETAINED_WINDOWS: Int = 12
+
 /** The authenticated account/backend key used by every cache operation. */
 data class CalendarCacheNamespace(
     val accountId: String,
@@ -77,10 +80,15 @@ enum class CalendarCacheFreshness(val wireValue: String) {
     FRESH("fresh"),
     STALE("stale"),
     REFRESHING("refreshing"),
+    /** Legacy name retained for persisted callers; uncached offline uses the explicit state below. */
     OFFLINE("offline"),
     CACHED_OFFLINE("cached_offline"),
+    UNAVAILABLE_OFFLINE("unavailable_offline"),
     ERROR("error"),
     ;
+
+    val isUnavailableOffline: Boolean
+        get() = this == OFFLINE || this == UNAVAILABLE_OFFLINE
 
     companion object {
         fun fromWire(value: String): CalendarCacheFreshness? = entries.firstOrNull { it.wireValue == value }
@@ -165,6 +173,7 @@ enum class CalendarCacheFailureReason {
     INVALID_WINDOW,
     INVALID_SNAPSHOT,
     INVALID_PREFERENCES,
+    INVALID_RETENTION,
     NOT_FOUND,
 }
 
@@ -239,6 +248,83 @@ interface CalendarCacheStore {
         return replaceSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
     }
 
+    /**
+     * Replaces a complete window and evicts old complete windows as one cache
+     * operation. SQLDelight implementations override this so replacement,
+     * active-window protection, and retention share one transaction. The
+     * default keeps lightweight test stores source-compatible while retaining
+     * the same observable contract.
+     */
+    suspend fun replaceSnapshotAndRetainForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        occurrences: List<EffectiveOccurrence>,
+        fetchedAt: Long,
+        lastAccessedAt: Long = fetchedAt,
+        freshness: CalendarCacheFreshness = CalendarCacheFreshness.FRESH,
+        activeWindow: CalendarCacheWindow? = window,
+        maxWindows: Int = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+    ): CalendarCacheWriteResult {
+        val replacement = replaceSnapshotForNamespace(
+            namespace = namespace,
+            window = window,
+            occurrences = occurrences,
+            fetchedAt = fetchedAt,
+            lastAccessedAt = lastAccessedAt,
+            freshness = freshness,
+        )
+        if (replacement is CalendarCacheResult.Failure) return replacement
+        return retainRecentWindowsForNamespace(namespace, activeWindow, maxWindows)
+    }
+
+    /** Retains the most recently accessed complete windows in the active namespace. */
+    suspend fun retainRecentWindows(
+        activeWindow: CalendarCacheWindow? = null,
+        maxWindows: Int = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+    ): CalendarCacheWriteResult = if (maxWindows < 1) {
+        invalidRetentionFailure()
+    } else {
+        CalendarCacheResult.Success(Unit)
+    }
+
+    /** Namespace-pinned retention operation used by stale background work. */
+    suspend fun retainRecentWindowsForNamespace(
+        namespace: CalendarCacheNamespace,
+        activeWindow: CalendarCacheWindow? = null,
+        maxWindows: Int = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+    ): CalendarCacheWriteResult {
+        if (currentNamespace.value != namespace) return invalidNamespaceWriteFailure()
+        return retainRecentWindows(activeWindow, maxWindows)
+    }
+
+    /** Compatibility name for callers that describe retention as eviction. */
+    suspend fun evictLeastRecentlyViewed(
+        activeWindow: CalendarCacheWindow? = null,
+        maxWindows: Int = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+    ): CalendarCacheWriteResult = retainRecentWindows(activeWindow, maxWindows)
+
+    /** Namespace-pinned access update used by the foreground observation. */
+    suspend fun markAccessedForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        lastAccessedAt: Long,
+    ): CalendarCacheWriteResult {
+        if (currentNamespace.value != namespace) return invalidNamespaceWriteFailure()
+        return markAccessed(window, lastAccessedAt)
+    }
+
+    /** Touches the viewed window and evicts old windows atomically when supported. */
+    suspend fun touchAndRetainForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        lastAccessedAt: Long,
+        maxWindows: Int = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+    ): CalendarCacheWriteResult {
+        val touched = markAccessedForNamespace(namespace, window, lastAccessedAt)
+        if (touched is CalendarCacheResult.Failure) return touched
+        return retainRecentWindowsForNamespace(namespace, window, maxWindows)
+    }
+
     fun observePreferences(): Flow<CalendarCacheReadResult<CalendarCachePreferences?>>
 
     fun preferencesFlow(): Flow<CalendarCacheReadResult<CalendarCachePreferences?>> = observePreferences()
@@ -302,6 +388,11 @@ interface CalendarCacheStore {
 private fun invalidNamespaceWriteFailure(): CalendarCacheWriteResult =
     CalendarCacheResult.Failure(
         CalendarCacheFailure(CalendarCacheFailureReason.INVALID_NAMESPACE),
+    )
+
+private fun invalidRetentionFailure(): CalendarCacheWriteResult =
+    CalendarCacheResult.Failure(
+        CalendarCacheFailure(CalendarCacheFailureReason.INVALID_RETENTION),
     )
 
 /**
@@ -390,6 +481,8 @@ class SqlDelightCalendarCacheStore private constructor(
             fetchedAt = fetchedAt,
             lastAccessedAt = lastAccessedAt,
             freshness = freshness,
+            activeWindow = window,
+            maxWindows = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
         )
     }
 
@@ -410,6 +503,32 @@ class SqlDelightCalendarCacheStore private constructor(
             fetchedAt = fetchedAt,
             lastAccessedAt = lastAccessedAt,
             freshness = freshness,
+            activeWindow = window,
+            maxWindows = CALENDAR_CACHE_MAX_RETAINED_WINDOWS,
+        )
+    }
+
+    override suspend fun replaceSnapshotAndRetainForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        occurrences: List<EffectiveOccurrence>,
+        fetchedAt: Long,
+        lastAccessedAt: Long,
+        freshness: CalendarCacheFreshness,
+        activeWindow: CalendarCacheWindow?,
+        maxWindows: Int,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        replaceSnapshotLocked(
+            namespace = namespace,
+            window = window,
+            occurrences = occurrences,
+            fetchedAt = fetchedAt,
+            lastAccessedAt = lastAccessedAt,
+            freshness = freshness,
+            activeWindow = activeWindow,
+            maxWindows = maxWindows,
         )
     }
 
@@ -422,7 +541,10 @@ class SqlDelightCalendarCacheStore private constructor(
         fetchedAt: Long,
         lastAccessedAt: Long,
         freshness: CalendarCacheFreshness,
+        activeWindow: CalendarCacheWindow?,
+        maxWindows: Int,
     ): CalendarCacheWriteResult {
+        if (maxWindows < 1) return invalidRetentionFailure()
         val encoded = try {
             val serialized = encodeOccurrences(occurrences)
             require(fetchedAt >= 0L)
@@ -508,12 +630,140 @@ class SqlDelightCalendarCacheStore private constructor(
                     window_end = window.windowEnd,
                     timezone_input = window.timezoneInput,
                 )
+                evictLeastRecentlyViewedLocked(namespace, activeWindow, maxWindows)
             }
             CalendarCacheResult.Success(Unit)
         } catch (cancelled: KotlinCancellationException) {
             throw cancelled
         } catch (_: Throwable) {
             databaseFailure()
+        }
+    }
+
+    override suspend fun retainRecentWindows(
+        activeWindow: CalendarCacheWindow?,
+        maxWindows: Int,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (maxWindows < 1) return@withLock invalidRetentionFailure()
+        try {
+            database.transaction {
+                evictLeastRecentlyViewedLocked(namespaceState.value, activeWindow, maxWindows)
+            }
+            CalendarCacheResult.Success(Unit)
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            databaseFailure()
+        }
+    }
+
+    override suspend fun retainRecentWindowsForNamespace(
+        namespace: CalendarCacheNamespace,
+        activeWindow: CalendarCacheWindow?,
+        maxWindows: Int,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        if (maxWindows < 1) return@withLock invalidRetentionFailure()
+        try {
+            database.transaction {
+                evictLeastRecentlyViewedLocked(namespace, activeWindow, maxWindows)
+            }
+            CalendarCacheResult.Success(Unit)
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            databaseFailure()
+        }
+    }
+
+    override suspend fun markAccessedForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        lastAccessedAt: Long,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        markAccessedLocked(namespace, window, lastAccessedAt)
+    }
+
+    override suspend fun touchAndRetainForNamespace(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        lastAccessedAt: Long,
+        maxWindows: Int,
+    ): CalendarCacheWriteResult = writeMutex.withLock {
+        if (!openState.value) return@withLock closedFailure()
+        if (namespace != namespaceState.value) return@withLock invalidNamespaceWriteFailure()
+        if (maxWindows < 1 || lastAccessedAt < 0L) {
+            return@withLock if (maxWindows < 1) invalidRetentionFailure() else invalidSnapshotFailure()
+        }
+        try {
+            database.transaction {
+                val affected = queries.touchSnapshot(
+                    last_accessed_at = lastAccessedAt,
+                    account_id = namespace.accountId,
+                    backend_id = namespace.backendId,
+                    window_start = window.windowStart,
+                    window_end = window.windowEnd,
+                    timezone_input = window.timezoneInput,
+                ).value
+                if (affected == 0L) throw SnapshotNotFoundException()
+                evictLeastRecentlyViewedLocked(namespace, window, maxWindows)
+            }
+            CalendarCacheResult.Success(Unit)
+        } catch (cancelled: KotlinCancellationException) {
+            throw cancelled
+        } catch (_: SnapshotNotFoundException) {
+            notFoundFailure()
+        } catch (_: Throwable) {
+            databaseFailure()
+        }
+    }
+
+    /** Called while a write transaction is held. The query is ordered by LRU
+     * metadata, so tie-breaking remains deterministic across drivers. */
+    private fun evictLeastRecentlyViewedLocked(
+        namespace: CalendarCacheNamespace,
+        activeWindow: CalendarCacheWindow?,
+        maxWindows: Int,
+    ) {
+        require(maxWindows >= 1)
+        val complete = queries.allSnapshotsForNamespace(
+            namespace.accountId,
+            namespace.backendId,
+        ).executeAsList()
+            .filter { it.is_complete }
+            .sortedWith(
+                compareBy<io.sentient.mobiledata.cache.db.Calendar_month_snapshot> { it.last_accessed_at }
+                    .thenBy { it.window_start }
+                    .thenBy { it.window_end }
+                    .thenBy { it.timezone_input },
+            )
+        val excess = complete.size - maxWindows
+        if (excess <= 0) return
+        val candidates = complete.filterNot { row ->
+            activeWindow != null &&
+                row.window_start == activeWindow.windowStart &&
+                row.window_end == activeWindow.windowEnd &&
+                row.timezone_input == activeWindow.timezoneInput
+        }
+        candidates.take(excess).forEach { row ->
+            queries.deleteOccurrencesForWindow(
+                row.account_id,
+                row.backend_id,
+                row.window_start,
+                row.window_end,
+                row.timezone_input,
+            )
+            queries.deleteSnapshot(
+                row.account_id,
+                row.backend_id,
+                row.window_start,
+                row.window_end,
+                row.timezone_input,
+            )
         }
     }
 
@@ -620,9 +870,17 @@ class SqlDelightCalendarCacheStore private constructor(
         lastAccessedAt: Long,
     ): CalendarCacheWriteResult = writeMutex.withLock {
         if (!openState.value) return@withLock closedFailure()
-        if (lastAccessedAt < 0L) return@withLock invalidSnapshotFailure()
-        try {
-            val namespace = namespaceState.value
+        markAccessedLocked(namespaceState.value, window, lastAccessedAt)
+    }
+
+    /** Called only while [writeMutex] is held. */
+    private fun markAccessedLocked(
+        namespace: CalendarCacheNamespace,
+        window: CalendarCacheWindow,
+        lastAccessedAt: Long,
+    ): CalendarCacheWriteResult {
+        if (lastAccessedAt < 0L) return invalidSnapshotFailure()
+        return try {
             val affected = queries.touchSnapshot(
                 last_accessed_at = lastAccessedAt,
                 account_id = namespace.accountId,
@@ -1088,6 +1346,7 @@ class SqlDelightCalendarCacheStore private constructor(
 
     private class InvalidSnapshotException : Exception()
     private class InvalidPreferencesException : Exception()
+    private class SnapshotNotFoundException : Exception()
     private class DecodeFailure : Exception()
 
     private fun corrupt(): Nothing = throw DecodeFailure()

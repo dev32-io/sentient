@@ -305,6 +305,85 @@ class CalendarCacheStoreTest {
     }
 
     @Test
+    fun `retention evicts oldest complete windows but protects active window`() = runTest {
+        val fixture = Fixture()
+        try {
+            val namespace = fixture.store.currentNamespace.value
+            val windows = (0..12).map(::retentionWindow)
+            windows.forEachIndexed { index, window ->
+                assertIs<CalendarCacheResult.Success<Unit>>(
+                    fixture.store.replaceSnapshotAndRetainForNamespace(
+                        namespace = namespace,
+                        window = window,
+                        occurrences = listOf(timedOccurrence(eventId = "event-$index", occurrenceId = "occurrence-$index")),
+                        fetchedAt = (index + 1).toLong(),
+                        lastAccessedAt = (index + 1).toLong(),
+                        activeWindow = window,
+                        maxWindows = 20,
+                    ),
+                )
+            }
+
+            // Make the oldest row the active row. It must not be selected as
+            // the eviction victim merely because it is protected by the read.
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.retainRecentWindowsForNamespace(
+                    namespace = namespace,
+                    activeWindow = windows.first(),
+                    maxWindows = 12,
+                ),
+            )
+
+            val retained = assertIs<CalendarCacheResult.Success<List<CalendarCacheWindowMetadata>>>(fixture.store.readWindows()).value
+            assertEquals(12, retained.size)
+            assertTrue(retained.any { it.window == windows.first() })
+            assertTrue(retained.none { it.window == windows[1] })
+            assertEquals(
+                (setOf(windows.first()) + windows.drop(2)).toSet(),
+                retained.map { it.window }.toSet(),
+            )
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `view access updates lru metadata before eviction`() = runTest {
+        val fixture = Fixture()
+        try {
+            val namespace = fixture.store.currentNamespace.value
+            val windows = (0..12).map(::retentionWindow)
+            windows.forEachIndexed { index, window ->
+                assertIs<CalendarCacheResult.Success<Unit>>(
+                    fixture.store.replaceSnapshotAndRetainForNamespace(
+                        namespace = namespace,
+                        window = window,
+                        occurrences = listOf(timedOccurrence(eventId = "event-$index", occurrenceId = "occurrence-$index")),
+                        fetchedAt = (index + 1).toLong(),
+                        lastAccessedAt = (index + 1).toLong(),
+                        activeWindow = window,
+                        maxWindows = 20,
+                    ),
+                )
+            }
+            assertIs<CalendarCacheResult.Success<Unit>>(
+                fixture.store.touchAndRetainForNamespace(
+                    namespace = namespace,
+                    window = windows.first(),
+                    lastAccessedAt = 100L,
+                    maxWindows = 12,
+                ),
+            )
+            val retained = assertIs<CalendarCacheResult.Success<List<CalendarCacheWindowMetadata>>>(fixture.store.readWindows()).value
+            assertEquals(12, retained.size)
+            assertTrue(retained.any { it.window == windows.first() && it.lastAccessedAt == 100L })
+            assertTrue(retained.none { it.window == windows[1] })
+        } finally {
+            fixture.close()
+        }
+    }
+
+    @Test
     fun `corrupt payload is a typed failure without partial content`() = runTest {
         val fixture = Fixture()
         try {
@@ -360,6 +439,18 @@ class CalendarCacheStoreTest {
             store.close()
             // The store owns the handle; this is only a safety net for a failed open.
         }
+    }
+
+    private fun retentionWindow(index: Int): CalendarCacheWindow {
+        val year = 2026 + index / 12
+        val month = index % 12 + 1
+        val nextYear = if (month == 12) year + 1 else year
+        val nextMonth = if (month == 12) 1 else month + 1
+        return CalendarCacheWindow(
+            windowStart = "%04d-%02d-01".format(year, month),
+            windowEnd = "%04d-%02d-01".format(nextYear, nextMonth),
+            timezoneInput = "America/Los_Angeles",
+        )
     }
 
     private fun timedOccurrence(
