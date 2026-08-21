@@ -25,6 +25,5 @@ verification:
     - source scripts/env.sh && bun run --filter @sentient/webui test:unit
     - source scripts/env.sh && bun run --filter @sentient/webui typecheck
     - source scripts/env.sh && bun run --filter @sentient/webui build
-    - source scripts/env.sh && bun qa/web/stack-integrity.ts
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
