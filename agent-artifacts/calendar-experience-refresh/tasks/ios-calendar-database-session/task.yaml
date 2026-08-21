@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-database-session
 title: Wire the iOS calendar database into authenticated session lifecycle
-status: ready
+status: running
 dependsOn:
   - mobile-sqldelight-foundation
   - mobile-calendar-retention-offline
@@ -25,3 +25,9 @@ verification:
       Simulator,name=iPhone 16,OS=latest'
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/ios-calendar-database-session
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-database-session
+  baseCommit: b165853bcfc9fff538e775c141f30261b4d0eb47
+  lastRunId: f317345d-a4cc-4452-a952-54d8e76e1d56
