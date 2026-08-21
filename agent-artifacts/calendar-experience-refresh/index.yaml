@@ -5,7 +5,7 @@ title: Cross-platform family calendar experience
 phase: planning
 state: active
 planning:
-  revision: 39
+  revision: 40
 artifacts:
   - id: intent
     type: intent
@@ -87,13 +87,21 @@ executionStages:
       - web-calendar-projections
       - web-calendar-data-controller
     checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck
       - source scripts/env.sh && git diff --check
-    mode: sequential
+    mode: concurrent
     review:
       tier: medium
       focus:
-        - Temporary complete topological task sequence while execution stages
-          are decomposed
+        - SQLDelight schema/migration/namespace correctness and commonMain purity
+        - Deterministic Day/Week/Month/Year, temporal, filter, overflow, and
+          navigation contracts
+        - Explicit all-scope complete web pagination and account/backend
+          preference isolation
+        - Exact sentient-design paths are used only as interaction/visual
+          vocabulary and prototype data is not imported
   - id: calendar-store-and-web-components
     tasks:
       - mobile-calendar-store
