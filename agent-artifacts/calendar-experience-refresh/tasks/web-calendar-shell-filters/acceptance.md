@@ -7,12 +7,13 @@
 ## Acceptance
 
 - Roomy widths present the sidebar/canvas/floating-bar hierarchy of the exact reference.
-- At 768px and 390px Add Event and every active filter remain reachable after sidebar collapse without a generic mobile substitution.
+- The typed canvas slot allows concurrent canvas implementation without a private coupling.
+- At the 900px breakpoint, 768px and 390px retain reachable Add Event and filters without a generic mobile substitution, while 1024px remains roomy.
 - Roomy and compact controls mutate the same state and every supported facet remains removable.
-- All controls meet keyboard, focus, target-size, announcement, and reduced-motion requirements.
+- Component-scoped CSS uses production tokens and all controls meet keyboard, focus, target-size, announcement, and reduced-motion requirements.
 
 ## Boundary Proof
 
-- Vitest component tests cover state continuity, supported filters, collapsed reachability, focus, labels, and reduced motion.
+- Vitest component tests cover canvas-slot composition, exact breakpoint/state continuity, supported filters, collapsed reachability, focus, labels, and reduced motion.
 - Side-by-side screenshots use `sentient-design/design/web/calendar.html` at all four required viewports.
 - Semantic evidence confirms Add Event, filter entry, active filters, and all four view controls remain reachable at 390x844.
