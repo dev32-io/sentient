@@ -204,7 +204,9 @@ private struct PanelPreviewHost: View {
     // Preview uses a stub component (never connects — seeding happens in onAppear).
     @StateObject private var model = HistoryViewModel(
         component: createUserSession(gatewayWsUrl: "ws://localhost/api/v1/ws",
-                                     allowSelfSignedDevHost: true, capabilities: [],
+                                     allowSelfSignedDevHost: true,
+                                     authenticatedUserId: "preview-user",
+                                     capabilities: [],
                                      devFaultsEnabled: true, onLoggedOut: {}).component
     )
     let seed: [SessionRow]

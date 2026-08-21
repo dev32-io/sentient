@@ -2,29 +2,34 @@
 // LoginView — the avatar-grid → PIN-pad login flow.
 //
 // Owns a login-scoped @StateObject AuthViewModel (UI state only). AppConfig drives
-// login-vs-chat; LoginView passes the chat-scoped session's connect() into the
-// model so a successful login → token save → connect(). Navigation to
-// chat is event-driven in RootView off the SDK status, not modelled here.
-//
-// pickUser shows the avatar grid; enterPin shows the selected name + PinPad +
-// the `login-error` text on a bad PIN. Users load once via .task. A Back button
-// in the PIN phase returns to the grid (one back target per the nav rule).
+// login-vs-chat; the authenticated server userId is passed to the app/session
+// boundary explicitly after a successful response.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
 struct LoginView: View {
-    /// Called to start the SDK connection after a successful login + token save.
+    /// Called after the server returns AuthUser.userId and the token is saved.
+    let onAuthenticatedUser: (String) -> Void
+    /// Legacy connect hook retained as the session-start trigger.
     let onConnect: () -> Void
     /// Called when the user taps the gear to open backend setup.
     var onOpenBackendSetup: () -> Void
 
     @StateObject private var model: AuthViewModel
 
-    init(onConnect: @escaping () -> Void, onOpenBackendSetup: @escaping () -> Void = {}) {
+    init(
+        onAuthenticatedUser: @escaping (String) -> Void = { _ in },
+        onConnect: @escaping () -> Void = {},
+        onOpenBackendSetup: @escaping () -> Void = {}
+    ) {
+        self.onAuthenticatedUser = onAuthenticatedUser
         self.onConnect = onConnect
         self.onOpenBackendSetup = onOpenBackendSetup
-        _model = StateObject(wrappedValue: AuthViewModel(connect: onConnect))
+        _model = StateObject(wrappedValue: AuthViewModel(
+            connect: onConnect,
+            onAuthenticatedUser: onAuthenticatedUser,
+        ))
     }
 
     var body: some View {
@@ -44,6 +49,8 @@ struct LoginView: View {
             .task { await model.loadUsers() }
     }
 
+    // ── Avatar grid / PIN entry ────────────────────────────────────────────────
+
     @ViewBuilder
     private var phaseContent: some View {
         switch model.phase {
@@ -51,8 +58,6 @@ struct LoginView: View {
         case .enterPin: pinEntry
         }
     }
-
-    // ── Avatar grid ───────────────────────────────────────────────────────────
 
     private var userGrid: some View {
         VStack(spacing: Space.xl) {
@@ -73,8 +78,6 @@ struct LoginView: View {
         }
     }
 
-    // ── PIN entry ───────────────────────────────────────────────────────────────
-
     private var pinEntry: some View {
         VStack(spacing: Space.xl) {
             Text(model.selectedUser?.displayName ?? "")
@@ -92,9 +95,8 @@ struct LoginView: View {
         }
     }
 
-    /// Top-leading nav bar — only in the PIN phase. Lives at the top of the
-    /// screen (overlay), not inside the vertically-centered PIN stack, so it
-    /// reads as a nav bar rather than floating mid-screen.
+    /// Top-leading nav bar — only in the PIN phase. It remains outside the
+    /// vertically-centered PIN stack so it behaves as a navigation affordance.
     @ViewBuilder
     private var backBar: some View {
         if model.phase == .enterPin {

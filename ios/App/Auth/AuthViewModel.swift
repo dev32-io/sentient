@@ -50,6 +50,9 @@ final class AuthViewModel: ObservableObject {
     private let tokenStore: SecureTokenStore
     private let displayNameStore: DisplayNameStore
     private let connect: () -> Void
+    /// Receives only the server-authenticated AuthUser.userId. Never pass a
+    /// display name or derive identity from the token.
+    private let onAuthenticatedUser: (String) -> Void
     private let log = AppLog("auth", "model")
 
     /// - Parameters:
@@ -63,11 +66,13 @@ final class AuthViewModel: ObservableObject {
     ///     torn down. NOT a secret — never touches the token path.
     init(
         connect: @escaping () -> Void,
+        onAuthenticatedUser: @escaping (String) -> Void = { _ in },
         authClient: AuthClient = AuthViewModel.makeAuthClient(),
         tokenStore: SecureTokenStore = createTokenStore(),
         displayNameStore: DisplayNameStore = DisplayNameStore()
     ) {
         self.connect = connect
+        self.onAuthenticatedUser = onAuthenticatedUser
         self.authClient = authClient
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
@@ -127,7 +132,7 @@ final class AuthViewModel: ObservableObject {
     private func submit() {
         guard let user = selectedUser else { return }
         let attemptPin = pin // PIN intentionally not logged
-        log.info("login.start userId=\(user.userId)")
+        log.info("login.start")
         isSubmitting = true
         error = nil
         Task { await self.performLogin(user: user, pin: attemptPin) }
@@ -138,16 +143,28 @@ final class AuthViewModel: ObservableObject {
             let result = try await authClient.login(userId: user.userId, pin: pin)
             switch onEnum(of: result) {
             case .success(let success):
-                log.info("login.ok userId=\(user.userId)")
-                if let token = success.value?.token { tokenStore.save(token: token) }
-                // Persist the display name for the post-login chat / history
-                // headers (this model is torn down after login). Display name,
-                // not a secret — kept out of the token path.
-                displayNameStore.save(user.displayName)
+                guard let response = success.value,
+                      !response.token.isEmpty,
+                      !response.user.userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    log.warn("login.invalid-success")
+                    isSubmitting = false
+                    self.pin = ""
+                    self.error = "Something went wrong. Please try again."
+                    return
+                }
+                // The namespace identity comes from the authenticated response,
+                // not the pre-login display list and never the token text.
+                let authenticatedUserId = response.user.userId
+                log.info("login.ok")
+                tokenStore.save(token: response.token)
+                // Persist the server-authoritative display name for headers; it
+                // is separate from the identity used by the calendar namespace.
+                displayNameStore.save(response.user.displayName)
+                onAuthenticatedUser(authenticatedUserId)
                 isSubmitting = false
                 connect()
             case .failure(let failure):
-                log.warn("login.failed userId=\(user.userId)")
+                log.warn("login.failed")
                 isSubmitting = false
                 self.pin = ""
                 error = message(for: failure.error)

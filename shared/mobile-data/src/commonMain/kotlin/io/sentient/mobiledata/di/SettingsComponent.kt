@@ -22,8 +22,9 @@
 //   - onLoggedOut   — clear local session on logout (shut the connection scope +
 //                     drop the token). Bind to UserSessionManager.shutdown / equivalent.
 //
-// NOTE: not yet constructed by android/ or ios/ — P3 wires it. This file only
-// establishes the exact constructor contract those layers bind to.
+// iOS binds the optional calendar experience and its shared repository from
+// IosUserSession; callers that predate the protected driver may leave both
+// optional constructor seams unset.
 // ---------------------------------------------------------------------------
 package io.sentient.mobiledata.di
 
@@ -79,6 +80,13 @@ class SettingsComponent(
     onLoggedOut: () -> Unit = {},
     /** Optional authenticated-session read experience; null keeps pre-driver callers source-compatible. */
     calendarExperience: CalendarExperience? = null,
+    /**
+     * Optional session-owned repository. The iOS session supplies the same
+     * stateless repository used to build [calendarExperience], avoiding a
+     * second calendar transport wrapper while preserving source compatibility
+     * for callers that let this component build its own repository.
+     */
+    injectedCalendarRepository: CalendarRepository? = null,
 ) {
     private val log = createLogger("data", "settings", "component")
 
@@ -91,14 +99,14 @@ class SettingsComponent(
     private val servicesVersionsHttp = ServicesVersionsHttpClient(httpClient, gatewayWsUrl, token)
     private val adminHttp = AdminHttpClient(httpClient, gatewayWsUrl, token)
     private val authClient = AuthClient(gatewayWsUrl, httpClient)
-    private val calendarHttp = CalendarHttpClient(httpClient, gatewayWsUrl, token)
 
     // ── Stateless repos ──
     val profileRepository: ProfileRepository = SdkProfileRepository(profileHttp, profileEditHttp, providersHttp)
     val voicesRepository: VoicesRepository = SdkVoicesRepository(voicesHttp, fishHttp, servicesVersionsHttp)
     val accountRepository: AccountRepository = SdkAccountRepository(authClient, token)
     val adminRepository: AdminRepository = SdkAdminRepository(adminHttp)
-    val calendarRepository: CalendarRepository = SdkCalendarRepository(calendarHttp)
+    val calendarRepository: CalendarRepository = injectedCalendarRepository
+        ?: SdkCalendarRepository(CalendarHttpClient(httpClient, gatewayWsUrl, token))
 
     /**
      * Shared cache-first calendar seam. Platform session stages inject the

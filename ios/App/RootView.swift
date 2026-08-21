@@ -7,8 +7,8 @@
 // (without clearing the persisted config); after save, the override is cleared
 // and the auth gate resumes normal routing.
 //
-// The auth gate keys on appConfig.hasToken (a reactive proxy for token presence:
-// set when login saves a display name, cleared on logout). Gating on transport
+// The auth gate keys on appConfig.hasToken (token + display name + explicit
+// server-authenticated userId), cleared on logout. Gating on transport
 // status would unmount ChatView on every WS drop and fall back to login, hiding
 // the in-chat connection-lost banner. hasToken is set on first login and
 // PRESERVED across drops / idle-disconnect / reconnect, cleared only on logout
@@ -49,7 +49,8 @@ struct RootView: View {
                 UpdateGate(appConfig: appConfig)
             } else {
                 LoginView(
-                    onConnect: { appConfig.didLogin() },
+                    onAuthenticatedUser: { appConfig.didLogin(authenticatedUserId: $0) },
+                    onConnect: {},
                     onOpenBackendSetup: { showSetupOverride = true }
                 )
             }

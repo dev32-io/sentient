@@ -64,6 +64,10 @@ struct UserSessionHost: View {
         _userSession = StateObject(wrappedValue: UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
             allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
+            // This branch is mounted only when AppConfig has a persisted,
+            // explicit server-authenticated identity. An empty value is a
+            // fail-closed guard for an impossible stale view transition.
+            authenticatedUserId: appConfig.authenticatedUserId ?? "",
             // Settings Account-logout hook (KMP AccountUseCases): drop token →
             // RootView routes to login. Root "Log out" stays the danger-row wiring below.
             onLoggedOut: { appConfig.logout() }
