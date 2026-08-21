@@ -106,11 +106,13 @@ export interface CalendarFilterControlsProps {
 export interface CalendarFilterSidebarProps extends CalendarFilterControlsProps {
   readonly onAddEvent?: () => void;
   readonly addEventLabel?: string;
+  readonly addEventDisabled?: boolean;
 }
 
 export interface CalendarCompactControlsProps extends CalendarFilterControlsProps {
   readonly onAddEvent?: () => void;
   readonly addEventLabel?: string;
+  readonly addEventDisabled?: boolean;
   readonly filterLabel?: string;
   /** Controlled popover state. Omit to use the component's local open state. */
   readonly open?: boolean;
@@ -201,6 +203,7 @@ export interface CalendarWorkspaceProps extends CalendarFilterControlsProps, Pic
   readonly onAnchorDateChange?: (date: string) => void;
   readonly onAddEvent?: () => void;
   readonly addEventLabel?: string;
+  readonly addEventDisabled?: boolean;
   readonly className?: string;
 }
 
@@ -658,11 +661,12 @@ export function CalendarActiveFilterSummary({
 export function CalendarFilterSidebar({
   onAddEvent,
   addEventLabel = "Add event",
+  addEventDisabled = false,
   ...props
 }: CalendarFilterSidebarProps): JSX.Element {
   return (
     <aside class="calendar-filter-sidebar" data-calendar-filter-sidebar aria-label="Calendar filters">
-      <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()}>
+      <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
         <Icon name="plus" size={16} />
         <span>{addEventLabel}</span>
       </button>
@@ -680,6 +684,7 @@ let compactPopoverSequence = 0;
 export function CalendarCompactControls({
   onAddEvent,
   addEventLabel = "Add event",
+  addEventDisabled = false,
   filterLabel = "Filters",
   open,
   defaultOpen = false,
@@ -738,7 +743,7 @@ export function CalendarCompactControls({
   return (
     <section class="calendar-compact-controls" data-calendar-compact-controls aria-label="Compact calendar controls">
       <div class="calendar-compact-controls__row">
-        <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()}>
+        <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
           <Icon name="plus" size={16} />
           <span>{addEventLabel}</span>
         </button>
@@ -1021,6 +1026,7 @@ export function CalendarWorkspace({
   onAnchorDateChange,
   onAddEvent,
   addEventLabel = "Add event",
+  addEventDisabled = false,
   className = "",
 }: CalendarWorkspaceProps): JSX.Element {
   const view = selectedView ?? suppliedView ?? "month";
@@ -1086,6 +1092,7 @@ export function CalendarWorkspace({
         {...filterProps}
         {...(onAddEvent === undefined ? {} : { onAddEvent })}
         addEventLabel={addEventLabel}
+        addEventDisabled={addEventDisabled}
       />
       <main class="calendar-workspace__main" aria-labelledby="calendar-period-title">
         <DateNavigation
@@ -1103,6 +1110,7 @@ export function CalendarWorkspace({
             {...filterProps}
             {...(onAddEvent === undefined ? {} : { onAddEvent })}
             addEventLabel={addEventLabel}
+            addEventDisabled={addEventDisabled}
           />
         </div>
         <div class="calendar-workspace__canvas" data-calendar-canvas-slot aria-label="Calendar canvas">
