@@ -26,11 +26,31 @@ criteria:
   - No platform types in commonMain, native cache/policy duplication, SQLCipher,
     external storage, content-bearing paths, or diagnostics
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
   reviewedCommit: bfe0d35bfea7d10de8f89dace420e2172d2eb347
+  managerPrompt: "Resolve all four blockers. Make calendar dependency resolution
+    explicitly fail closed: when an authenticated session expects protected
+    persistence and driver/path/migration setup fails, SettingsComponent must
+    receive a typed unavailable/disabled calendar boundary and must not silently
+    construct SdkCalendarRepository or expose network-only calendar behavior;
+    preserve source compatibility only for callers that explicitly do not
+    request calendar persistence. Add the required real
+    AndroidSqliteDriver/session lifecycle proof and iOS driver/session tests for
+    open/migrate/reopen/close, cancellation-before-purge, bounded non-cancelled
+    purge, account/backend isolation, route survival, and no stale post-switch
+    emission. Replace raw exception, user input, backend URL,
+    localizedDescription, and arbitrary transport/server strings in public/log
+    diagnostics with structural typed codes and credential-free normalized
+    identities; add redaction tests for userinfo, query/fragment secrets, and
+    content-bearing failures. Move database directory/open/migration/purge/close
+    work off UI/MainActor: use suspend/background I/O on Android without
+    caller-blocking runBlocking, and an asynchronous off-main
+    initialization/disposal boundary on iOS that publishes typed state back to
+    MainActor. Add thread/executor assertions where practical, run every
+    declared stage check, and return for automatic re-review."
 findings:
   - id: MPS-001
     severity: high
