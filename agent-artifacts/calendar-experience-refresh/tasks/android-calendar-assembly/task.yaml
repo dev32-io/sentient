@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: android-calendar-assembly
+title: Assemble and verify the complete Android calendar experience
+status: draft
+dependsOn:
+  - android-calendar-database-session
+  - android-calendar-viewmodel
+  - android-calendar-surface
+  - android-calendar-overlays
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: android-calendar-assembly
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug
+    - source scripts/env.sh && ./qa/mobile/run-e2e.sh android --tags calendar
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
