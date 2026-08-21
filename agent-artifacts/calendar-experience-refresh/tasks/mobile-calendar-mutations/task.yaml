@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: mobile-calendar-mutations
 title: Implement shared online calendar mutation intents and recovery
-status: blocked
+status: ready
 dependsOn:
   - mobile-calendar-read-coordinator
   - mobile-calendar-retention-offline
