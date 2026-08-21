@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: stage-native-calendar-components-review
+type: combined-review
+checkpoint: stage-review
+stageId: native-calendar-components
+scope:
+  workItem: calendar-experience-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Leaf Compose/SwiftUI components are controlled and side-effect free
+  - Exact mobile comparison uses sentient-design/HANDOFF.md,
+    sentient-design/brand-spec.md, sentient-design/design/mobile/calendar.html,
+    and sentient-design/components/mobile/sentient-mobile.js at logical 390x844
+    and 430x932
+  - Reference geometry includes 58 top bar, 16 inset, 44 targets, 46 view
+    controls, 64 rows, 42 Month cells, complete Year, 84% sheets, filters,
+    agenda, floating bar, focus, scaling, safe areas, and reduced motion
+  - Prototype fixed data and member/color/place/reminder semantics are absent;
+    semantic accessibility inspection is required but an actual
+    assistive-technology session is not a stage gate
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
