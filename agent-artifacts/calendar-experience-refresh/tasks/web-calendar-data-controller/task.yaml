@@ -1,0 +1,22 @@
+schemaVersion: 1
+id: web-calendar-data-controller
+title: Implement complete web calendar loading and preference state
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: web-calendar-data-controller
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun run --filter @sentient/webui test:unit
+    - source scripts/env.sh && bun run --filter @sentient/webui typecheck
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
