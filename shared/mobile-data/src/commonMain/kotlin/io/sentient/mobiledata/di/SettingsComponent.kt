@@ -69,6 +69,11 @@ import io.sentient.mobilesdk.settings.VoicesHttpClient
  * Settings slice of the connection scope. Constructor-injects everything; exposes
  * the repos (for the rare direct read) and the per-concern usecases the VMs resolve.
  */
+class PreparedCalendarExperience(
+    val repository: CalendarRepository,
+    val experience: CalendarExperience,
+)
+
 class SettingsComponent(
     httpClient: HttpClient,
     gatewayWsUrl: String,
@@ -138,21 +143,40 @@ class SettingsComponent(
         get() = protectedCalendarDependency?.state?.value
 
     /**
-     * Completes protected setup after the platform has opened the database.
-     * The repository is created only after setup succeeds and uses this
-     * component's one settings HTTP client.
+     * Builds protected-session resources without publishing them. The caller
+     * owns the returned pair until [installPreparedCalendarExperience] succeeds.
      */
-    fun installCalendarExperience(factory: CalendarExperienceFactory): CalendarExperience? {
-        val dependency = protectedCalendarDependency ?: return null
+    fun prepareCalendarExperience(factory: CalendarExperienceFactory): PreparedCalendarExperience? {
+        if (protectedCalendarDependency == null) return null
         val repository = SdkCalendarRepository(
             CalendarHttpClient(settingsHttpClient, settingsGatewayWsUrl, settingsToken),
         )
-        val experience = factory.create(repository)
-        if (!dependency.install(repository, experience)) {
-            experience.close()
-            return null
-        }
-        return experience
+        return PreparedCalendarExperience(
+            repository = repository,
+            experience = factory.create(repository),
+        )
+    }
+
+    /**
+     * Publishes already-prepared resources at the dependency boundary. The
+     * callback runs after the dependency state becomes Available, while the
+     * platform session's lifecycle critical section is still held. This keeps
+     * the dependency and platform state transitions ordered as one publish.
+     */
+    fun installPreparedCalendarExperience(
+        prepared: PreparedCalendarExperience,
+        onInstalled: () -> Unit = {},
+    ): Boolean {
+        val dependency = protectedCalendarDependency ?: return false
+        if (dependency.install(prepared.repository, prepared.experience, onInstalled)) return true
+        prepared.experience.close()
+        return false
+    }
+
+    /** Compatibility helper for explicit legacy/session callers. */
+    fun installCalendarExperience(factory: CalendarExperienceFactory): CalendarExperience? {
+        val prepared = prepareCalendarExperience(factory) ?: return null
+        return if (installPreparedCalendarExperience(prepared)) prepared.experience else null
     }
 
     // ── Usecases (VM-facing) ──

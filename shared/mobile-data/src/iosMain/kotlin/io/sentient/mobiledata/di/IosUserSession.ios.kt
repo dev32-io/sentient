@@ -121,6 +121,8 @@ class IosUserSession(
     devFaultsEnabled: Boolean = false,
     /** Clear-local-session hook for settings Account logout. */
     onLoggedOut: () -> Unit = {},
+    /** Deterministic lifecycle seam used by platform boundary tests; production leaves it empty. */
+    private val beforeCalendarPublish: (suspend (CalendarExperience) -> Unit)? = null,
 ) {
     private val log = createLogger("data", "ios-user-session")
     private val userId = authenticatedUserId.trim()
@@ -128,8 +130,7 @@ class IosUserSession(
 
     @Volatile
     private var closed = false
-    @Volatile
-    private var calendarRuntime: IosCalendarRuntime? = null
+    private val calendarLifecycleGate = CalendarLifecycleGate<IosCalendarRuntime>()
     @Volatile
     private var calendarDisposalJob: Deferred<Unit>? = null
 
@@ -209,8 +210,9 @@ class IosUserSession(
     )
 
     /** Background initialization is queued after any predecessor teardown. */
+    private val calendarInitializationGeneration: Long = calendarLifecycleGate.begin()
     private val calendarInitializationJob: Deferred<Unit> = IosCalendarLifecycleQueue.enqueue {
-        initializeCalendar()
+        initializeCalendar(calendarInitializationGeneration)
     }
 
     /** Explicit identity retained by this authenticated boundary. */
@@ -226,7 +228,7 @@ class IosUserSession(
 
     /** Namespace is published only after the protected runtime is installed. */
     val calendarNamespace: CalendarCacheNamespace?
-        get() = calendarRuntime?.namespace
+        get() = calendarDependency.experience?.let { calendarLifecycleGate.active()?.namespace }
 
     /** Background connect: UI is usable immediately; reconnect is owned by the SDK. */
     fun open() {
@@ -262,9 +264,12 @@ class IosUserSession(
     fun close() {
         if (closed) return
         closed = true
-        calendarDependency.disable(CalendarDependencyUnavailableReason.CLOSED)
-        val runtimeAtClose = calendarRuntime
-        calendarRuntime = null
+        // Invalidate the generation before capturing the active runtime. The
+        // initializer's publish step uses this same gate, so a paused local
+        // runtime can only be rejected and self-disposed.
+        val runtimeAtClose = calendarLifecycleGate.close {
+            calendarDependency.disable(CalendarDependencyUnavailableReason.CLOSED)
+        }
         calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
             disposeRuntime(runtimeAtClose)
             calendarScope.cancel()
@@ -281,31 +286,46 @@ class IosUserSession(
         calendarDisposalJob?.await() ?: calendarInitializationJob.await()
     }
 
-    private suspend fun initializeCalendar() {
+    private suspend fun initializeCalendar(generation: Long) {
         val namespace = initialCalendarNamespace ?: return
-        if (closed) return
-        val runtime = buildCalendarRuntime(namespace) ?: return
+        val runtime = buildCalendarRuntime(namespace, generation) ?: return
         var transferred = false
         try {
-            if (closed) return
-            val experience = settings.installCalendarExperience(runtime.factory)
+            // The protected driver/store/experience remain local until this
+            // single generation-checked publish. A barrier can pause here
+            // without making the runtime visible to Settings or the session.
+            val prepared = settings.prepareCalendarExperience(runtime.factory)
                 ?: throw IllegalStateException()
-            runtime.experience = experience
-            if (closed) return
-            calendarRuntime = runtime
-            transferred = true
+            runtime.experience = prepared.experience
+            beforeCalendarPublish?.invoke(prepared.experience)
+            transferred = calendarLifecycleGate.publish(generation, runtime) {
+                settings.installPreparedCalendarExperience(prepared)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
-            calendarDependency.disable(CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
+            disableCalendarIfCurrent(generation, CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
         } finally {
             if (!transferred) {
+                // A rejected publish still owns this local driver/experience.
                 runtime.disposeAndPurge()
             }
         }
     }
 
-    private suspend fun buildCalendarRuntime(namespace: CalendarCacheNamespace): IosCalendarRuntime? =
+    private fun disableCalendarIfCurrent(
+        generation: Long,
+        reason: CalendarDependencyUnavailableReason,
+    ) {
+        calendarLifecycleGate.ifCurrent(generation) {
+            calendarDependency.disable(reason)
+        }
+    }
+
+    private suspend fun buildCalendarRuntime(
+        namespace: CalendarCacheNamespace,
+        generation: Long,
+    ): IosCalendarRuntime? =
         withContext(Dispatchers.Default) {
             var handle: CalendarDatabaseHandle? = null
             var store: CalendarCacheStore? = null
@@ -338,10 +358,10 @@ class IosUserSession(
                     experienceScope = experienceScope,
                 )
             } catch (failure: IosCalendarDatabaseFailure) {
-                calendarDependency.disable(failure.reason.toDependencyReason())
+                disableCalendarIfCurrent(generation, failure.reason.toDependencyReason())
                 null
             } catch (_: Throwable) {
-                calendarDependency.disable(CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
+                disableCalendarIfCurrent(generation, CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
                 null
             } finally {
                 if (!transferred) {

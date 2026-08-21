@@ -47,6 +47,7 @@ import io.sentient.mobiledata.calendar.CalendarExperience
 import io.sentient.mobiledata.calendar.CalendarExperienceFactory
 import io.sentient.mobiledata.calendar.DefaultCalendarExperienceFactory
 import io.sentient.mobiledata.di.CalendarDependencyBoundary
+import io.sentient.mobiledata.di.CalendarLifecycleGate
 import io.sentient.mobiledata.di.ChatComponent
 import io.sentient.mobiledata.di.SettingsComponent
 import io.sentient.mobiledata.result.SentientResult
@@ -87,6 +88,8 @@ class UserSessionManager(
     private val presence: PresenceCoordinator? = null,
     /** Injected by production Koin; nullable keeps the Android boundary testable without Application startup. */
     private val authenticatedUserStore: AuthenticatedUserStore? = null,
+    /** Deterministic lifecycle seam used by platform boundary tests; production leaves it empty. */
+    private val beforeCalendarPublish: (suspend (CalendarExperience) -> Unit)? = null,
 ) {
     private val log = createLogger("android", "user-session")
 
@@ -97,12 +100,11 @@ class UserSessionManager(
     private var updateDeps: UpdateDeps? = null
     private var authenticatedUserId: String? = null
     private var activeBackendIdentity: String? = null
+    private val calendarLifecycleGate = CalendarLifecycleGate<CalendarRuntime>()
     @Volatile
-    private var calendarRuntime: CalendarRuntime? = null
     private var calendarBoundary: CalendarDependencyBoundary? = null
     private var calendarInitializationJob: kotlinx.coroutines.Job? = null
     private var calendarLifecycleTail: kotlinx.coroutines.Job? = null
-    private var calendarGeneration: Long = 0L
     /** Dedicated I/O lifetime; it is never cancelled by the authenticated session scope. */
     private val calendarLifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -180,12 +182,12 @@ class UserSessionManager(
         // construct a network-only calendar repository while the protected driver
         // is opening or after setup fails.
         val newCalendarBoundary = CalendarDependencyBoundary.initializing()
-        calendarBoundary = newCalendarBoundary
-        _calendarSessionState.value = CalendarSessionState.Unavailable(
-            CalendarSessionUnavailableReason.INITIALIZING,
-        )
-        calendarGeneration += 1L
-        val newCalendarGeneration = calendarGeneration
+        val newCalendarGeneration = calendarLifecycleGate.begin {
+            calendarBoundary = newCalendarBoundary
+            _calendarSessionState.value = CalendarSessionState.Unavailable(
+                CalendarSessionUnavailableReason.INITIALIZING,
+            )
+        }
         // `loadAudioPreferences` reads `settingsComponent`, assigned a few lines below:
         // the lambda only runs from `connect()`, by which time it is set. Seeds the chat
         // TTS toggle from the stored profile instead of the SDK's default.
@@ -207,7 +209,7 @@ class UserSessionManager(
             calendarDependency = newCalendarBoundary,
         )
         settingsComponent = newSettingsComponent
-        calendarInitializationJob = enqueueCalendarOperation {
+        val initializationJob = enqueueCalendarOperation {
             initializeCalendarRuntime(
                 userId = userId,
                 backend = resolvedBackend,
@@ -215,6 +217,12 @@ class UserSessionManager(
                 dependency = newCalendarBoundary,
                 generation = newCalendarGeneration,
             )
+        }
+        if (!calendarLifecycleGate.ifCurrent(newCalendarGeneration) {
+                calendarInitializationJob = initializationJob
+            }
+        ) {
+            initializationJob.cancel()
         }
 
         // DEBUG-only: expose the live SDK to DebugFaultReceiver so Maestro can arm
@@ -261,7 +269,7 @@ class UserSessionManager(
     }
 
     /** Shared experience for the current authenticated lifetime; null means typed unavailable. */
-    fun calendarExperience(): CalendarExperience? = calendarRuntime?.experience
+    fun calendarExperience(): CalendarExperience? = calendarBoundary?.experience
 
     /** Backend replacement is a logout boundary even when the setup screen owns the route. */
     fun onBackendReplaced() = performLocalLogout()
@@ -310,37 +318,54 @@ class UserSessionManager(
         if (runtime == null) return
         var transferred = false
         try {
-            if (!isCurrentCalendarSession(generation, dependency)) return
-            val experience = settings.installCalendarExperience(runtime.factory)
+            // Everything up to this point is locally owned. In particular, the
+            // experience is not installed in SettingsComponent while the barrier
+            // is paused, so logout can invalidate this generation safely.
+            val prepared = settings.prepareCalendarExperience(runtime.factory)
                 ?: throw IllegalStateException()
-            runtime.experience = experience
-            if (!isCurrentCalendarSession(generation, dependency)) return
-            calendarRuntime = runtime
-            _calendarSessionState.value = CalendarSessionState.Available(
-                namespace = runtime.namespace,
-                experience = experience,
-            )
-            transferred = true
+            runtime.experience = prepared.experience
+            beforeCalendarPublish?.invoke(prepared.experience)
+            transferred = calendarLifecycleGate.publish(generation, runtime) {
+                if (calendarBoundary !== dependency) {
+                    false
+                } else {
+                    settings.installPreparedCalendarExperience(prepared) {
+                        _calendarSessionState.value = CalendarSessionState.Available(
+                            namespace = runtime.namespace,
+                            experience = prepared.experience,
+                        )
+                    }
+                }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
-            if (isCurrentCalendarSession(generation, dependency)) {
-                dependency.disable(io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.STORE_OPEN_FAILED)
-                _calendarSessionState.value = CalendarSessionState.Unavailable(
-                    CalendarSessionUnavailableReason.DATABASE_OPEN,
-                )
-            }
+            markCalendarUnavailableIfCurrent(
+                generation = generation,
+                dependency = dependency,
+                dependencyReason = io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.STORE_OPEN_FAILED,
+                sessionReason = CalendarSessionUnavailableReason.DATABASE_OPEN,
+            )
         } finally {
+            // A failed generation retains ownership here. It must purge/close
+            // even when close() already queued a teardown for a null active slot.
             if (!transferred) runtime.closeAndPurge()
         }
     }
 
-    private fun isCurrentCalendarSession(
+    private fun markCalendarUnavailableIfCurrent(
         generation: Long,
         dependency: CalendarDependencyBoundary,
-    ): Boolean = calendarGeneration == generation &&
-        calendarBoundary === dependency &&
-        chatComponent != null
+        dependencyReason: io.sentient.mobiledata.di.CalendarDependencyUnavailableReason,
+        sessionReason: CalendarSessionUnavailableReason,
+    ) {
+        calendarLifecycleGate.ifCurrent(generation) {
+            if (calendarBoundary === dependency) {
+                dependency.disable(dependencyReason)
+                _calendarSessionState.value = CalendarSessionState.Unavailable(sessionReason)
+            }
+        }
+    }
 
     /**
      * Opens the Android database only after an explicit identity and backend
@@ -358,14 +383,12 @@ class UserSessionManager(
             calendarCacheNamespace(userId, backend.gatewayWsUrl)
         } catch (failure: Throwable) {
             if (failure is CancellationException) throw failure
-            if (isCurrentCalendarSession(generation, dependency)) {
-                dependency.disable(
-                    io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.INVALID_BACKEND_IDENTITY,
-                )
-                _calendarSessionState.value = CalendarSessionState.Unavailable(
-                    CalendarSessionUnavailableReason.BACKEND_IDENTITY_INVALID,
-                )
-            }
+            markCalendarUnavailableIfCurrent(
+                generation = generation,
+                dependency = dependency,
+                dependencyReason = io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.INVALID_BACKEND_IDENTITY,
+                sessionReason = CalendarSessionUnavailableReason.BACKEND_IDENTITY_INVALID,
+            )
             return@withContext null
         }
 
@@ -395,14 +418,12 @@ class UserSessionManager(
             )
         } catch (failure: Throwable) {
             if (failure is CancellationException) throw failure
-            if (isCurrentCalendarSession(generation, dependency)) {
-                dependency.disable(
-                    io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.DATABASE_OPEN,
-                )
-                _calendarSessionState.value = CalendarSessionState.Unavailable(
-                    CalendarSessionUnavailableReason.DATABASE_OPEN,
-                )
-            }
+            markCalendarUnavailableIfCurrent(
+                generation = generation,
+                dependency = dependency,
+                dependencyReason = io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.DATABASE_OPEN,
+                sessionReason = CalendarSessionUnavailableReason.DATABASE_OPEN,
+            )
             null
         } finally {
             if (!transferred) {
@@ -554,15 +575,18 @@ class UserSessionManager(
         networkObserver?.stop()
         networkObserver = null
 
-        calendarGeneration += 1L
-        calendarInitializationJob?.cancel()
-        calendarInitializationJob = null
-        calendarBoundary?.disable(
-            io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.CLOSED,
-        )
-        calendarBoundary = null
-        val oldCalendarRuntime = calendarRuntime
-        calendarRuntime = null
+        // The gate invalidates the generation and captures the active runtime in
+        // one critical section. An initializer paused before publish therefore
+        // cannot publish after this point; it retains and closes its local runtime.
+        val oldCalendarRuntime = calendarLifecycleGate.close {
+            calendarInitializationJob?.cancel()
+            calendarInitializationJob = null
+            calendarBoundary?.disable(
+                io.sentient.mobiledata.di.CalendarDependencyUnavailableReason.CLOSED,
+            )
+            calendarBoundary = null
+            _calendarSessionState.value = CalendarSessionState.Unauthenticated
+        }
         // Teardown is queued after any cancelled/opening operation and runs on
         // the dedicated I/O scope. Logout therefore never parks the UI caller.
         calendarLifecycleTail = enqueueCalendarOperation {
@@ -578,7 +602,6 @@ class UserSessionManager(
         scope = null
         authenticatedUserId = null
         activeBackendIdentity = null
-        _calendarSessionState.value = CalendarSessionState.Unauthenticated
         // Drop the update deps so a re-login rebuilds them against the current backend.
         updateDeps = null
     }

@@ -9,6 +9,7 @@ import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.sentient.android.di.UserSessionManager
 import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCacheResult
 import io.sentient.mobiledata.cache.CalendarCacheWindow
@@ -26,6 +27,7 @@ import io.sentient.mobilesdk.calendar.CalendarMutationResult
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.Importance
 import io.sentient.mobilesdk.result.SentientError
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -95,6 +97,36 @@ class CalendarSessionLifecycleInstrumentedTest {
         assertEquals(1, reopenedRows.size)
         assertEquals(42L, reopenedRows.single().fetched_at)
         reopened.close()
+        }
+    }
+
+    @Test
+    fun sessionClose_at_publish_barrier_closes_late_unpublished_experience() {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var lateExperience: CalendarExperience? = null
+        val manager = UserSessionManager(
+            appContext = context,
+            beforeCalendarPublish = { experience ->
+                lateExperience = experience
+                entered.complete(Unit)
+                release.await()
+            },
+        )
+        try {
+            manager.component("barrier-user")
+            runBlocking {
+                withTimeout(2_000L) { entered.await() }
+                manager.shutdown()
+                release.complete(Unit)
+                withTimeout(2_000L) { manager.awaitCalendarLifecycle() }
+            }
+            assertNull(manager.calendarExperience())
+            assertTrue(lateExperience?.isClosed == true)
+            assertIs<CalendarSessionState.Unauthenticated>(manager.calendarSessionState.value)
+        } finally {
+            release.complete(Unit)
+            manager.shutdown()
         }
     }
 

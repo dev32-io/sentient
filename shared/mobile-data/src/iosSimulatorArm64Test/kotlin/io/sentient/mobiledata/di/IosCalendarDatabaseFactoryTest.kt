@@ -12,6 +12,8 @@ import platform.Foundation.NSThread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import io.sentient.mobiledata.calendar.CalendarExperience
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,6 +84,37 @@ class IosCalendarDatabaseFactoryTest {
                 .isNotEmpty(),
         )
         reopened.close()
+    }
+
+    @Test
+    fun `session close at publish barrier closes late unpublished experience`() = runBlocking(Dispatchers.Default) {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var lateExperience: CalendarExperience? = null
+        val session = IosUserSession(
+            gatewayWsUrl = "ws://localhost/api/v1/ws",
+            allowSelfSignedDevHost = true,
+            authenticatedUserId = "barrier-user",
+            capabilities = emptyList(),
+            devFaultsEnabled = false,
+            onLoggedOut = {},
+            beforeCalendarPublish = { experience ->
+                lateExperience = experience
+                entered.complete(Unit)
+                release.await()
+            },
+        )
+        try {
+            withTimeout(1_000L) { entered.await() }
+            session.close()
+            release.complete(Unit)
+            withTimeout(2_000L) { session.awaitCalendarLifecycle() }
+            assertNull(session.calendarExperience)
+            assertTrue(lateExperience?.isClosed == true)
+        } finally {
+            release.complete(Unit)
+            session.close()
+        }
     }
 
     @Test

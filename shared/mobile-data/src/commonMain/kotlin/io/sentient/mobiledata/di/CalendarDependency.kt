@@ -47,7 +47,8 @@ class CalendarDependencyBoundary private constructor(
 ) {
     private val unavailableRepository = DisabledCalendarRepository()
     private val delegate = DelegatingCalendarRepository(unavailableRepository)
-    private val closed = AtomicReference(initialReason == CalendarDependencyUnavailableReason.CLOSED)
+    private val lifecycleLock = CalendarLifecycleLock()
+    private var closed = initialReason == CalendarDependencyUnavailableReason.CLOSED
     private val _state = MutableStateFlow<CalendarDependencyState>(
         CalendarDependencyState.Unavailable(initialReason),
     )
@@ -59,22 +60,23 @@ class CalendarDependencyBoundary private constructor(
         get() = (_state.value as? CalendarDependencyState.Available)?.experience
 
     /** Install the database-backed repository and experience at the boundary. */
-    fun install(repository: CalendarRepository, experience: CalendarExperience): Boolean {
+    fun install(
+        repository: CalendarRepository,
+        experience: CalendarExperience,
+        onInstalled: () -> Unit = {},
+    ): Boolean = lifecycleLock.withLock {
         // Close is a terminal session fence. An initializer racing disposal may
         // finish opening a driver, but it must not republish that resource.
-        if (closed.load()) return false
+        if (closed) return@withLock false
         delegate.replace(repository)
-        if (closed.load()) {
-            delegate.replace(unavailableRepository)
-            return false
-        }
         _state.value = CalendarDependencyState.Available(experience)
-        return true
+        onInstalled()
+        true
     }
 
     /** Disable the dependency and make subsequent use-case calls fail closed. */
-    fun disable(reason: CalendarDependencyUnavailableReason) {
-        if (reason == CalendarDependencyUnavailableReason.CLOSED) closed.store(true)
+    fun disable(reason: CalendarDependencyUnavailableReason) = lifecycleLock.withLock {
+        if (reason == CalendarDependencyUnavailableReason.CLOSED) closed = true
         delegate.replace(unavailableRepository)
         _state.value = CalendarDependencyState.Unavailable(reason)
     }
