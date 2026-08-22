@@ -10,36 +10,39 @@ attempt: 3
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: fixing
   iteration: 2
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
-  managerPrompt: "Preserve verified repairs and resolve the five remaining
-    blockers without weakening the matrix. (1) Trace Android stopApp/launchApp
-    activation order: persisted shared preferences must load before any
-    native/default view/date intent can overwrite them; expose readiness only
-    after the restored projection is applied and add a process-recreation test
-    for Month/date/filter restoration. (2) Ensure the Android editor action area
-    is always reachable above the safe area/IME—scrollable content with a stable
-    or pinned footer—and expose `calendar-editor-save` even when disabled, with
-    shared validation state explaining enablement; authorized valid create/edit
-    drafts must enable it. (3) Capture the exact web recurring-create request
-    and typed invalid-time response, then correct draft normalization/wire
-    mapping for start/end, recurrence anchor, original offset, and scope so a
-    valid recurring create succeeds while invalid drafts remain protected. (4)
-    Separate cache-prime fixture readiness from product recovery: prove initial
-    revalidation reaches up-to-date, persist a known adjacent/current sentinel,
-    arm unavailability, mutate a recovery sentinel while unavailable, restore
-    one connectivity edge, and verify shared coalesced revalidation publishes
-    the update without blanking; repair shared/platform signaling if that
-    deterministic sequence fails. (5) Diagnose iOS before changing Calendar UI:
-    use the explicitly selected iOS simulator, capture the accessibility
-    hierarchy and session/auth state at the composer-readiness failure, fix the
-    iOS login/startup flow or production session publication as indicated, then
-    prove calendar-surface and the native matrix are reachable on the fresh
-    build. Continue to use file—not directory—evidence paths when recording
-    results. Run focused regressions and all 14 cases again with cleanup."
+  managerPrompt: "Preserve all verified repairs and resolve the three remaining
+    blockers, plus unblock deterministic matrix setup. (1) For Android
+    restoration, instrument the actual SQLDelight preference row and activation
+    sequence before stopApp and after process restart. Persist the final
+    view/date/filter transactionally, reconstruct CalendarExperience with the
+    same authenticated namespace, load preferences before publishing
+    shared-ready, and prevent projection-context/default intents from
+    overwriting the restored Month state. Add a real database close/reopen plus
+    ViewModel recreation test and make the flow wait for restored-state
+    readiness rather than a generic ready marker. (2) For recovery, trace the
+    complete all-scope paginated request/coalescer lifecycle and freshness
+    reducer. A request must settle out of REFRESHING on success, typed failure,
+    cancellation, namespace change, or supersession; a recovery edge
+    during/after a stale request must schedule exactly one usable revalidation
+    and publish the updated sentinel without blanking cached rows. Add
+    deterministic integration tests for cache-prime completion, reconnect while
+    refreshing, old-request completion after recovery, and refreshed occurrence
+    publication. (3) Make the iOS editor footer truly IME-safe: expose a stable
+    `calendar-editor-save` above the keyboard via safe-area inset/pinned action
+    layout, provide reliable keyboard dismissal/Done behavior, keep content
+    scrollable, and prove Save can be found and activated while the title field
+    is focused at both exact mobile profiles. (4) Make the approved local
+    fixture adapter directly invokable by the E2E agent through existing
+    local-only controls—without a new runner—so unique adult/child principals,
+    facets, recurrence/conflict/cache/recovery/temporal sentinels, and cleanup
+    are available for every remaining matrix case. Continue recording only file
+    evidence paths. Run focused regressions and all 14 cases sequentially
+    again."
   fixerAgentId: 7abeb8da-2940-4616-980e-ed5a711ad7be
 findings:
   - id: E2E-MAJOR-001
