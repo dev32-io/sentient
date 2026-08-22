@@ -4,15 +4,15 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
   managerPrompt: "Preserve verified repairs and resolve the five remaining
@@ -47,49 +47,56 @@ findings:
     status: open
     criterion: E2E-001/E2E-002
     location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt
-    summary: Android shared readiness and pre-relaunch view/date actions pass, but
-      relaunch still does not expose the persisted Month state.
+    summary: Android shared-ready gating and pre-relaunch actions pass, but process
+      recreation still does not expose the persisted Month state.
     blocking: true
   - id: E2E-MAJOR-002
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-004/E2E-005/E2E-006/E2E-013
     location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarOverlays.kt
-    summary: Android preview Edit is repaired, but calendar-editor-save remains
-      absent from the visible editor sheet.
-    blocking: true
+    summary: Android preview Edit and pinned Save action are reachable; timed create
+      reaches outcome.
+    blocking: false
   - id: E2E-MAJOR-003
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-004
     location: gateway/webui/src/components/calendar/event-editor.tsx
-    summary: Web all-day creation is repaired, but recurring creation still fails
-      with invalid-time while retaining the draft.
-    blocking: true
+    summary: Valid web recurring creation succeeds while invalid temporal drafts
+      remain protected.
+    blocking: false
   - id: E2E-MAJOR-004
     severity: high
     status: open
     criterion: E2E-008/E2E-009/E2E-011
     location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt
-    summary: Cached adjacent offline navigation passes, but cache-prime freshness
-      and reconnect refreshed-occurrence assertions still fail.
+    summary: Cache prime remains stuck refreshing and reconnect does not publish the
+      expected refreshed occurrence.
     blocking: true
   - id: E2E-MAJOR-005
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-001..E2E-014
     location: ios/App/Settings/Calendar/CalendarScreen.swift
-    summary: The fresh iOS build installs, but the direct flow fails before composer
-      readiness and never reaches calendar-surface.
-    blocking: true
+    summary: The fresh iOS build/login reaches calendar-surface and completes
+      four-view navigation.
+    blocking: false
   - id: E2E-MAJOR-006
     severity: high
     status: resolved
     criterion: E2E-004/E2E-005
     location: gateway/webui/src/components/calendar/calendar-view.tsx
-    summary: Web Add, preview close, and editor cancel restore stable originating
-      controls rather than BODY or unnamed focus.
+    summary: Web overlay close paths continue restoring originating controls.
     blocking: false
+  - id: E2E-MAJOR-007
+    severity: high
+    status: open
+    criterion: E2E-004; native editor action area above IME
+    location: ios/App/Settings/Calendar/CalendarOverlays.swift
+    summary: iOS editor Save is not accessible while the title keyboard is active,
+      so timed creation cannot complete.
+    blocking: true
 result:
   verdict: fail
   report: report.md

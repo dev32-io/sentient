@@ -1,23 +1,23 @@
 schemaVersion: 1
 evaluation: final-e2e
-recordedAt: 2026-08-22T03:52:33.105Z
+recordedAt: 2026-08-22T04:45:45.203Z
 entries:
-  - result: 90704ece85fe3d10ffa35757168189ea96582d6f
+  - result: 7c0823df813d1828249bbb2e2b57d025abb02be0
     command: git rev-parse HEAD
     description: Reviewed repair commit.
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :android:assembleDebug
-    description: Fresh Android repair build.
-  - result: BUILD SUCCEEDED; simulator flow still failed before composer/calendar
-      readiness.
+      :android:testDebugUnitTest :shared:mobile-data:testDebugUnitTest
+    description: Fresh Android and shared focused checks.
+  - result: BUILD SUCCEEDED; iOS reached calendar-surface and completed four-view
+      navigation.
     command: scripts/ios-setup.sh && xcodebuild -project ios/SentientApp.xcodeproj
       -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
       16,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO
-    description: Fresh iOS build result.
-  - result: All 14 cases reported once; cleanup reports
-      seededExistingUserEventsDeleted=10, androidNetworkRestored=true,
-      androidDisplayRestored=true, productCodeModified=false.
-    command: cat /tmp/calendar-e2e-r1/case-results.json
+    description: Fresh iOS build and navigation result.
+  - result: All 14 cases reported once; cleanup reports seededR2EventsDeleted=1,
+      androidNetworkRestored=true, productCodeModified=false.
+    command: cat /tmp/calendar-e2e-r2/case-results.json
     description: Sanitized matrix evidence.
     path: files/4-case-results.json
-    checksum: sha256:d6ef0b0edda03dd75374ac1e0cb15d20bdb58716f30ec53d287e0eee27b2d323
+    checksum: sha256:342aac5ab06938b465c734949c126f034380b4b823ac1d43fed941c5067c0101
