@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-surface
 title: Build the Android calendar views, filters, agenda, and floating controls
-status: ready
+status: running
 dependsOn:
   - android-calendar-viewmodel
 execution:
@@ -21,3 +21,9 @@ verification:
     - source scripts/env.sh && ./gradlew :android:assembleDebug
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/android-calendar-surface
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/android-calendar-surface
+  baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
+  lastRunId: a67bcedd-564b-4416-b604-01d7e88f494b
