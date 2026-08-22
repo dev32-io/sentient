@@ -4,17 +4,17 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 4
+attempt: 5
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: rereviewing
   iteration: 4
   maxIterations: 6
+  state: passed
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
-  reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
+  reviewedCommit: 96874ddc6889184d641e3b6417baeffba50b815d
   managerPrompt: "Preserve every resolved finding and repair only E2E-MAJOR-004.
     Reproduce the exact provision→prime→offline→deferred-seed→reconnect sequence
     with one unique sentinel and trace it structurally across boundaries:
@@ -41,38 +41,37 @@ findings:
     status: resolved
     criterion: E2E-001/E2E-002
     location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarViewModel.kt
-    summary: Persisted Month/date state restores after Android process recreation.
+    summary: Persisted Month/date restoration remains resolved.
     blocking: false
   - id: E2E-MAJOR-002
     severity: high
     status: resolved
     criterion: E2E-004/E2E-005/E2E-006/E2E-013
     location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarOverlays.kt
-    summary: Android preview Edit and pinned Save action are reachable and timed
-      create reaches outcome.
+    summary: Android preview/Edit and Save reachability remain resolved.
     blocking: false
   - id: E2E-MAJOR-003
     severity: high
     status: resolved
     criterion: E2E-004
     location: gateway/webui/src/components/calendar/event-editor.tsx
-    summary: Valid web recurring creation succeeds while invalid temporal drafts
-      remain protected.
+    summary: Web recurring creation and temporal validation remain resolved.
     blocking: false
   - id: E2E-MAJOR-004
     severity: high
-    status: open
+    status: resolved
     criterion: E2E-008/E2E-011
-    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt
-    summary: Reconnection does not publish the directly seeded recovery occurrence
-      after cached offline state; recovery acceptance remains unmet.
-    blocking: true
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt;
+      android/src/main/kotlin/io/sentient/android/presence/NetworkChangeObserver.kt
+    summary: Direct deferred-seed reconnect now publishes the recovery occurrence
+      and settles freshness correctly.
+    blocking: false
   - id: E2E-MAJOR-005
     severity: high
     status: resolved
     criterion: E2E-001..E2E-014
     location: ios/App/Settings/Calendar/CalendarScreen.swift
-    summary: The current iOS build/login reaches Calendar and completes four-view
+    summary: Current iOS build/login reaches Calendar and completes four-view
       navigation.
     blocking: false
   - id: E2E-MAJOR-006
@@ -80,17 +79,16 @@ findings:
     status: resolved
     criterion: E2E-004/E2E-005
     location: gateway/webui/src/components/calendar/calendar-view.tsx
-    summary: Web overlay close paths restore originating controls.
+    summary: Web overlay close paths remain resolved.
     blocking: false
   - id: E2E-MAJOR-007
     severity: high
     status: resolved
     criterion: E2E-004; native editor action area above IME
     location: ios/App/Settings/Calendar/CalendarOverlays.swift
-    summary: iOS Save is visible and activatable while the title keyboard remains
-      active, and outcome/close completes.
+    summary: iOS Save remains reachable above the active keyboard.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/final-e2e/manifest.yaml
