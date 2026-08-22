@@ -1,0 +1,14 @@
+schemaVersion: 1
+evaluation: final-e2e
+recordedAt: 2026-08-22T03:03:38.374Z
+entries:
+  - result: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
+    command: git rev-parse HEAD
+    description: Reviewed commit.
+  - result: All 14 case results recorded exactly once; cleanup reports
+      disposableUsersRemaining=0, androidDisplayRestored=true,
+      productCodeModified=false.
+    command: cat /tmp/calendar-e2e-20260822-0225/case-results.json
+    description: Sanitized final E2E matrix evidence.
+    path: files/2-case-results.json
+    checksum: sha256:87fd161b421edffa7bade8d87ff7a4e05bb5fbb8c68fdbc78a746204b2bdc592
