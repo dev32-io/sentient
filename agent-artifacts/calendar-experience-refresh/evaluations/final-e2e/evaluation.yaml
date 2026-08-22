@@ -10,9 +10,9 @@ attempt: 5
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: fixing
   iteration: 4
   maxIterations: 6
-  state: fixing
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: 96874ddc6889184d641e3b6417baeffba50b815d
   managerPrompt: "Preserve every resolved finding and repair only E2E-MAJOR-004.
