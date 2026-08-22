@@ -1,23 +1,30 @@
 schemaVersion: 1
 evaluation: final-e2e
-recordedAt: 2026-08-22T04:45:45.203Z
+recordedAt: 2026-08-22T07:42:06.535Z
 entries:
-  - result: 7c0823df813d1828249bbb2e2b57d025abb02be0
+  - result: 44e7330b857db26215614e8b505f81d1e3bdb5f3
     command: git rev-parse HEAD
     description: Reviewed repair commit.
+  - result: Provision, deferred recovery seed, and cleanup all returned rc=0;
+      Android and iOS state files were removed.
+    command: bun run calendar:fixture provision/seed-recovery/cleanup --target
+      https://localhost:8888
+    description: Direct local-only fixture adapter evidence.
+    path: files/004-2-calendar-e2e-r3-fixture-provision.out
+    checksum: sha256:c485b637948681bf13f15e8a121c7c5533a5e36d219cdcfb4003e6a68c8a30c8
   - result: BUILD SUCCESSFUL
-    command: source scripts/env.sh && ./gradlew :android:assembleDebug
-      :android:testDebugUnitTest :shared:mobile-data:testDebugUnitTest
-    description: Fresh Android and shared focused checks.
-  - result: BUILD SUCCEEDED; iOS reached calendar-surface and completed four-view
-      navigation.
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:testDebugUnitTest :android:testDebugUnitTest
+    description: Focused shared recovery and Android regressions.
+  - result: BUILD SUCCEEDED; current iOS Save action and four-view navigation flows
+      passed.
     command: scripts/ios-setup.sh && xcodebuild -project ios/SentientApp.xcodeproj
       -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
       16,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO
-    description: Fresh iOS build and navigation result.
-  - result: All 14 cases reported once; cleanup reports seededR2EventsDeleted=1,
-      androidNetworkRestored=true, productCodeModified=false.
-    command: cat /tmp/calendar-e2e-r2/case-results.json
+    description: Fresh iOS build and runtime result.
+  - result: All 14 cases recorded once; Android/iOS fixture cleanup succeeded,
+      Android network was restored, and productCodeModified=false.
+    command: cat /tmp/calendar-e2e-r3/case-results.json
     description: Sanitized matrix evidence.
-    path: files/4-case-results.json
-    checksum: sha256:342aac5ab06938b465c734949c126f034380b4b823ac1d43fed941c5067c0101
+    path: files/004-5-case-results.json
+    checksum: sha256:1db70aaea3a759f2ab8050b0fdf106b00d57332deec176ce461e1ebe9044d630
