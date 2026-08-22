@@ -155,13 +155,37 @@ describe("calendar E2E helpers", () => {
       await withLocalCalendarFixture(deps, input, async (value) => {
         expect(value.adultId).toMatch(/^u_/);
         expect(value.childId).toMatch(/^u_/);
-        expect(value.eventIds).toHaveLength(10);
+        expect(value.eventIds).toHaveLength(13);
         expect(value.cases["dense-day"]).toHaveLength(4);
+        expect(value.cases.cache).toHaveLength(1);
+        expect(value.cases.recovery).toHaveLength(1);
+        expect(value.cases.temporal).toHaveLength(1);
         expect(JSON.stringify(value)).not.toContain("synthetic calendar evidence event");
         expect(JSON.stringify(value)).not.toContain("description");
       });
-      expect(deleted).toHaveLength(10);
+      expect(deleted).toHaveLength(13);
       expect(f.calls.filter((call) => call.startsWith("delete:")).length).toBe(2);
+    } finally {
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("can defer the recovery sentinel until after cache prime", async () => {
+    const f = await fixture();
+    const deleted: string[] = [];
+    let seededCount = 0;
+    const deps = {
+      ...f.deps,
+      targetUrl: "http://localhost:8799",
+      seedEvent: async () => ({ eventId: `event-${++seededCount}` }),
+      deleteEvent: async (_principalId: string, eventId: string) => { deleted.push(eventId); },
+    };
+    try {
+      const value = await provisionLocalCalendarFixture(deps, input, { deferredCases: ["recovery"] });
+      expect(value.eventIds).toHaveLength(12);
+      expect(value.cases.recovery).toHaveLength(0);
+      await cleanupLocalCalendarFixture(deps, value);
+      expect(deleted).toHaveLength(12);
     } finally {
       await rm(f.root, { recursive: true, force: true });
     }
@@ -184,7 +208,7 @@ describe("calendar E2E helpers", () => {
       const report = await cleanupLocalCalendarFixture(deps, value);
       expect(report.eventFailures).toHaveLength(0);
       expect(report.userAndDatabase.failures).toHaveLength(0);
-      expect(deleted).toHaveLength(10);
+      expect(deleted).toHaveLength(13);
     } finally {
       await rm(f.root, { recursive: true, force: true });
     }

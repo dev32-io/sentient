@@ -43,6 +43,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -661,6 +662,48 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `reconnect while refreshing supersedes old request and publishes one usable sentinel`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached-sentinel"))
+        val repository = RecoveryRaceRepository()
+        val experience = experience(repository, cache, window, this)
+        val visibleCounts = mutableListOf<Int>()
+        val collector = launch { experience.state.collect { visibleCounts += it.authorizedOccurrences.size } }
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals(CalendarLoadingPhase.IDLE, experience.state.value.loading.phase)
+            assertEquals("prime-sentinel", experience.state.value.authorizedOccurrences.single().title)
+
+            repository.armStaleRequest = true
+            experience.refresh()
+            runCurrent()
+            repository.staleEntered.await()
+            assertEquals(CalendarFreshness.REFRESHING, experience.state.value.freshness)
+
+            val callsBeforeRecovery = repository.currentWindowCalls
+            val firstRecovery = experience.onConnectivityRecovered()
+            val duplicateRecovery = experience.onConnectivityRecovered()
+            assertSame(firstRecovery, duplicateRecovery)
+            advanceUntilIdle()
+
+            assertTrue(repository.staleCancelled)
+            assertEquals(callsBeforeRecovery + 1, repository.currentWindowCalls)
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals(CalendarLoadingPhase.IDLE, experience.state.value.loading.phase)
+            assertEquals("recovery-sentinel", experience.state.value.authorizedOccurrences.single().title)
+            assertEquals("recovery-sentinel", cache.snapshotFor(window)?.occurrences?.single()?.title)
+            assertTrue(cache.replacementTitles.drop(3).none { it == "old-stale-sentinel" })
+            val firstVisible = visibleCounts.indexOfFirst { it > 0 }
+            assertTrue(firstVisible >= 0 && visibleCounts.drop(firstVisible).all { it > 0 })
+        } finally {
+            collector.cancel()
+            experience.close()
+        }
+    }
+
+    @Test
     fun `persisted preferences are validated and restored before revalidation`() = runTest {
         val window = monthWindow()
         val cache = FakeCacheStore(
@@ -1238,6 +1281,45 @@ class CalendarExperienceTest {
         group = group,
     )
 
+    private inner class RecoveryRaceRepository : CalendarRepository {
+        var armStaleRequest = false
+        var staleCancelled = false
+        var currentWindowCalls = 0
+        val staleEntered = CompletableDeferred<Unit>()
+        private var staleClaimed = false
+
+        override suspend fun list(
+            from: String,
+            to: String,
+            scope: CalendarScope?,
+            group: String?,
+            tags: List<String>?,
+            importance: Importance?,
+            cursor: String?,
+            query: String?,
+            limit: Int?,
+        ): SentientResult<CalendarEventPage> {
+            if (from == "2026-06-01" && to == "2026-07-01") currentWindowCalls++
+            if (armStaleRequest && !staleClaimed && from == "2026-06-01" && to == "2026-07-01") {
+                staleClaimed = true
+                staleEntered.complete(Unit)
+                try {
+                    CompletableDeferred<Unit>().await()
+                } catch (_: CancellationException) {
+                    staleCancelled = true
+                    return page(event(title = "old-stale-sentinel"))
+                }
+            }
+            return page(event(title = if (armStaleRequest) "recovery-sentinel" else "prime-sentinel"))
+        }
+
+        override suspend fun get(id: String, originalStart: String?, scope: CalendarScope?) =
+            SentientResult.Failure(SentientError.Unknown("unused"))
+        override suspend fun create(event: CalendarEvent) = error("unused")
+        override suspend fun create(input: CalendarCreateInput) = error("unused")
+        override suspend fun mutate(eventId: String, command: CalendarMutationCommand) = error("unused")
+    }
+
     private class FakeRepository(
         private val pages: List<SentientResult<CalendarEventPage>>,
         private val beforePage: (suspend () -> Unit)? = null,
@@ -1347,6 +1429,7 @@ class CalendarExperienceTest {
         var snapshot: CalendarCacheSnapshot? = snapshot
         var replacements: Int = 0
         val replacementNamespaces = mutableListOf<CalendarCacheNamespace>()
+        val replacementTitles = mutableListOf<String?>()
         val writtenPreferences = mutableListOf<CalendarCachePreferences>()
 
         init {
@@ -1382,6 +1465,7 @@ class CalendarExperienceTest {
         ): CalendarCacheResult<Unit> {
             replacements++
             replacementNamespaces += namespaceState.value
+            replacementTitles += occurrences.singleOrNull()?.title
             val committed = CalendarCacheSnapshot(window, occurrences, fetchedAt, lastAccessedAt, freshness)
             snapshots[window] = committed
             if (observedWindow == null) observedWindow = window

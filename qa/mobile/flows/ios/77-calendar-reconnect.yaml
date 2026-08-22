@@ -4,10 +4,14 @@ tags: [helper, fault-armed]
 # Restore the unavailable native network path before invoking. Calendar remains
 # open from 75; this flow must not launch, login, navigate, or tap Retry.
 - assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
-- extendedWaitUntil:
-    visible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- scrollUntilVisible:
+    element: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+    direction: DOWN
     timeout: 20000
-- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- scrollUntilVisible:
+    element: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+    direction: UP
+    timeout: 20000
 - assertNotVisible: { id: "calendar-freshness-offline" }
 - assertNotVisible: { id: "calendar-freshness-stale" }
 - assertNotVisible: { id: "calendar-freshness-refreshing" }

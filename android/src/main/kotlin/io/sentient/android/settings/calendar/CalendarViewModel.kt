@@ -83,6 +83,8 @@ data class CalendarUiState(
     val hasCompleteCache: Boolean,
     /** Native intents stay gated until shared persisted presentation has been projected. */
     val presentationReady: Boolean = false,
+    /** Actual SQLDelight preference row matches the activated view/date/filter controls. */
+    val restoredPresentationReady: Boolean = false,
     val contentState: CalendarContentState,
     val error: CalendarExperienceError?,
     val mutationAvailability: CalendarMutationAvailability,
@@ -262,6 +264,7 @@ internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
         loading = loading,
         hasCompleteCache = hasCompleteCache,
         presentationReady = presentationReady,
+        restoredPresentationReady = persistedPresentationActive,
         contentState = contentState,
         error = error,
         mutationAvailability = mutationAvailability,

@@ -147,9 +147,6 @@ fun CalendarScaffold(
                         bottom = CalendarSurfaceLayout.SCROLL_BOTTOM_CLEARANCE_DP.dp,
                     ),
                 ) {
-                    if (state.presentationReady) {
-                        item { Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.SHARED_READY)) }
-                    }
                     item {
                         CalendarHeading(
                             title = title,
@@ -193,6 +190,12 @@ fun CalendarScaffold(
                     }
                     item { Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars)) }
                 }
+            }
+            if (state.presentationReady) {
+                Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.SHARED_READY))
+            }
+            if (state.restoredPresentationReady) {
+                Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.RESTORED_READY))
             }
             FloatingViewBar(
                 selected = state.view,

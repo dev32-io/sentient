@@ -38,10 +38,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException as KotlinCancellationException
@@ -140,6 +142,7 @@ private data class MutationContinuationFence(
 
 private data class InFlightRequestRegistration(
     val bookkeepingGeneration: Long,
+    val requestId: Long,
     val deferred: Deferred<WindowLoadResult>,
 )
 
@@ -252,6 +255,11 @@ class CalendarExperience(
     private val inFlightRequests = AtomicReference(
         InFlightRequestRegistry(generation = 0L, entries = emptyMap()),
     )
+    private val requestIdSequence = AtomicLong(0L)
+    private val foregroundAttemptSequence = AtomicLong(0L)
+    private var recoveryJob: Job? = null
+    private var connectivityEpoch: Long = 0L
+    private var recoveredConnectivityEpoch: Long = -1L
     private val prefetchJobs = mutableMapOf<CalendarWindowRequestKey, BookkeepingJobRegistration>()
     private val scheduledPrefetchKeys = mutableMapOf<CalendarWindowRequestKey, Long>()
     private val _prefetchDiagnostics = MutableStateFlow<List<CalendarPrefetchDiagnostic>>(emptyList())
@@ -1199,8 +1207,9 @@ class CalendarExperience(
         val namespace = fence.namespace
         val epoch = fence.namespaceGeneration
         revalidationGeneration = generation
+        val attempt = nextSequence(foregroundAttemptSequence)
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            if (isMutationFenceCurrent(fence)) revalidate(activeWindow, generation, namespace, epoch)
+            if (isMutationFenceCurrent(fence)) revalidate(activeWindow, generation, namespace, epoch, attempt)
         }
         refreshJob = job
         job.invokeOnCompletion { if (refreshJob === job) refreshJob = null }
@@ -1459,8 +1468,9 @@ class CalendarExperience(
         }
         val window = activeWindow
         revalidationGeneration = generation
+        val attempt = nextSequence(foregroundAttemptSequence)
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            revalidate(window, generation, namespace, namespaceEpoch)
+            revalidate(window, generation, namespace, namespaceEpoch, attempt)
         }
         refreshJob = job
         job.invokeOnCompletion {
@@ -1478,22 +1488,70 @@ class CalendarExperience(
     fun revalidate(window: CalendarCacheWindow): Job? = refresh(window)
 
     /** Connectivity is deliberately a caller signal; revalidation remains shared. */
+    fun onConnectivityUnavailable() {
+        if (closed || accessDisabled) return
+        connectivityEpoch += 1L
+        recoveredConnectivityEpoch = -1L
+    }
+
     fun onConnectivityRecovered(): Job? {
         if (closed || accessDisabled) return null
+        recoveryJob?.takeIf { it.isActive }?.let { return it }
+        if (recoveredConnectivityEpoch == connectivityEpoch) return null
+        recoveredConnectivityEpoch = connectivityEpoch
+        val current = _state.value
+        if (current.freshness == CalendarFreshness.FRESH && current.offline == CalendarOfflineState.ONLINE) {
+            return null
+        }
         val namespace = cacheStore.currentNamespace.value
         val namespaceEpoch = namespaceGeneration
-        return scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            // Linearize the recovery edge with prefetch bookkeeping. Clearing in
-            // a best-effort side job could race the foreground completion and
-            // suppress the adjacent recovery publication for this sole edge.
-            bookkeepingMutex.withLock {
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // A recovery edge supersedes an in-flight stale attempt. Detach its
+            // registry entries first, then wait for its foreground/prefetch
+            // owners to finish before publishing exactly one replacement.
+            val stalePrefetch = bookkeepingMutex.withLock {
+                val keys = prefetchJobs.keys.filter { it.namespace == namespace }
+                val jobs = keys.mapNotNull { prefetchJobs.remove(it)?.job }
                 scheduledPrefetchKeys.keys
                     .filter { it.namespace == namespace }
                     .forEach { scheduledPrefetchKeys.remove(it) }
+                jobs
             }
+            cancelSharedRequests()
+            val staleRefresh = refreshJob
+            // Allocate the replacement attempt before cancellation settlement;
+            // the old attempt can therefore never demote the new one.
+            nextSequence(foregroundAttemptSequence)
+            staleRefresh?.cancel()
+            stalePrefetch.forEach { it.cancel() }
+            staleRefresh?.join()
+            stalePrefetch.forEach { it.join() }
             if (!isNamespaceCurrent(namespace, namespaceEpoch)) return@launch
-            refresh()?.join()
+            refreshJob = null
+            // Cache observation is already active; mark its initial phase as
+            // consumed so refresh() starts the recovery attempt rather than
+            // joining the long-lived observation job.
+            revalidationGeneration = requestGeneration
+            repeat(MAX_RECOVERY_ATTEMPTS) {
+                refresh()?.join()
+                if (!isNamespaceCurrent(namespace, namespaceEpoch) || _state.value.freshness == CalendarFreshness.FRESH) {
+                    return@launch
+                }
+                val connectionFailure = _state.value.error?.kind in setOf(
+                    CalendarExperienceErrorKind.CONNECTION,
+                    CalendarExperienceErrorKind.UNAVAILABLE_OFFLINE,
+                )
+                if (!connectionFailure) return@launch
+                // One validated callback can precede emulator/LAN TLS route
+                // readiness. A bounded retry belongs to this recovery cycle;
+                // duplicate recovery edges still coalesce on recoveryJob.
+                refreshJob = null
+                revalidationGeneration = requestGeneration
+            }
         }
+        recoveryJob = job
+        job.invokeOnCompletion { if (recoveryJob === job) recoveryJob = null }
+        return job
     }
     fun connectivityRecovered(): Job? = onConnectivityRecovered()
     fun recoverFromOffline(): Job? = onConnectivityRecovered()
@@ -1535,6 +1593,7 @@ class CalendarExperience(
         mutationGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
+        recoveryJob?.cancel()
         mutationJob?.cancel()
         mutationRefreshJob?.cancel()
         preferenceWriteJob?.cancel()
@@ -1546,6 +1605,7 @@ class CalendarExperience(
         unregisterNamespaceListener?.invoke()
         observationJob = null
         refreshJob = null
+        recoveryJob = null
         mutationJob = null
         mutationRefreshJob = null
         namespaceJob = null
@@ -1811,8 +1871,9 @@ class CalendarExperience(
         // A cache emission is now visible (including a typed empty result) before
         // any network call begins. This is the cache-first ordering contract.
         revalidationGeneration = generation
+        val attempt = nextSequence(foregroundAttemptSequence)
         val refresh = launch(start = CoroutineStart.UNDISPATCHED) {
-            revalidate(window, generation, namespace, namespaceEpoch)
+            revalidate(window, generation, namespace, namespaceEpoch, attempt)
         }
         refreshJob = refresh
         refresh.invokeOnCompletion {
@@ -1836,6 +1897,7 @@ class CalendarExperience(
         generation: Long,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
+        attempt: Long,
     ) {
         if (!isCurrent(generation, namespace, namespaceEpoch)) return
         val hasCachedContent = _state.value.hasCompleteCache
@@ -1861,7 +1923,8 @@ class CalendarExperience(
             ),
         )
 
-        when (val loaded = loadWindow(window, namespace, namespaceEpoch)) {
+        try {
+            when (val loaded = loadWindow(window, namespace, namespaceEpoch)) {
             WindowLoadResult.Cancelled -> return
             is WindowLoadResult.Failed -> {
                 if (!isCurrent(generation, namespace, namespaceEpoch)) return
@@ -1916,6 +1979,9 @@ class CalendarExperience(
                 scheduleAdjacentPrefetch(window, namespace, namespaceEpoch)
             }
         }
+        } finally {
+            settleForegroundAttempt(generation, namespace, namespaceEpoch, attempt)
+        }
     }
 
     /**
@@ -1967,11 +2033,12 @@ class CalendarExperience(
 
             // Keep the new Deferred lazy until its exact entry is installed.
             // If cancellation wins the CAS, this object is never reusable.
+            val requestId = nextSequence(requestIdSequence)
             val created = scope.async(start = CoroutineStart.LAZY) {
-                loadWindowUncoalesced(window, namespace, namespaceEpoch, continuationFence)
+                loadWindowUncoalesced(key, requestId, window, namespace, namespaceEpoch, continuationFence)
             }
             val nextEntries = registry.entries.toMutableMap()
-            nextEntries[key] = InFlightRequestRegistration(registry.generation, created)
+            nextEntries[key] = InFlightRequestRegistration(registry.generation, requestId, created)
             val next = InFlightRequestRegistry(registry.generation, nextEntries.toMap())
             if (inFlightRequests.compareAndSet(registry, next)) {
                 // Remove/cancel the predecessor only after the replacement is
@@ -2002,22 +2069,26 @@ class CalendarExperience(
     }
 
     private suspend fun loadWindowUncoalesced(
+        key: CalendarWindowRequestKey,
+        requestId: Long,
         window: CalendarCacheWindow,
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
         continuationFence: MutationContinuationFence? = null,
     ): WindowLoadResult {
-        return when (val aggregation = aggregate(window, null, namespace, namespaceEpoch, continuationFence)) {
+        return when (val aggregation = aggregate(window, null, namespace, namespaceEpoch, continuationFence, key, requestId)) {
             AggregationResult.Cancelled -> WindowLoadResult.Cancelled
             is AggregationResult.Failed -> WindowLoadResult.Failed(aggregation.error)
             is AggregationResult.Complete -> {
-                if (!isNamespaceCurrent(namespace, namespaceEpoch) ||
+                if (!isLoadRequestCurrent(key, requestId, namespaceEpoch) ||
                     continuationFence != null && !isMutationFenceCurrent(continuationFence)
                 ) return WindowLoadResult.Cancelled
                 val fetchedAt = nowMillis().coerceAtLeast(0L)
                 val isViewedWindow = activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)
                 val lastAccessedAt = if (isViewedWindow) fetchedAt else previousAccessedAt(namespace, namespaceEpoch, window)
-                if (continuationFence != null && !isMutationFenceCurrent(continuationFence)) return WindowLoadResult.Cancelled
+                if (!isLoadRequestCurrent(key, requestId, namespaceEpoch) ||
+                    continuationFence != null && !isMutationFenceCurrent(continuationFence)
+                ) return WindowLoadResult.Cancelled
                 val protectedWindow = activeWindow.takeIf {
                     !closed && cacheStore.currentNamespace.value == namespace
                 } ?: window
@@ -2042,7 +2113,18 @@ class CalendarExperience(
                     )
                 }
                 when (writeResult) {
-                    is CalendarCacheResult.Success -> if (continuationFence == null || isMutationFenceCurrent(continuationFence)) {
+                    is CalendarCacheResult.Success -> if (
+                        isLoadRequestCurrent(key, requestId, namespaceEpoch) &&
+                        (continuationFence == null || isMutationFenceCurrent(continuationFence))
+                    ) {
+                        // Publish the active committed generation at the store
+                        // transaction boundary. A coalesced caller can be
+                        // superseded immediately after this return; waiting for
+                        // that caller to reduce the result left the UI stuck in
+                        // REFRESHING even though SQLDelight was already fresh.
+                        if (activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)) {
+                            applyCommittedData(window, aggregation.occurrences, fetchedAt)
+                        }
                         WindowLoadResult.Complete(aggregation.occurrences, fetchedAt)
                     } else {
                         WindowLoadResult.Cancelled
@@ -2059,6 +2141,8 @@ class CalendarExperience(
         namespace: CalendarCacheNamespace,
         namespaceEpoch: Long,
         continuationFence: MutationContinuationFence? = null,
+        requestKey: CalendarWindowRequestKey? = null,
+        requestId: Long? = null,
     ): AggregationResult {
         val byIdentity = LinkedHashMap<String, EffectiveOccurrence>()
         val occurrenceIds = HashMap<String, String>()
@@ -2067,14 +2151,17 @@ class CalendarExperience(
         var pageCount = 0
 
         while (true) {
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
-                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            if (!isAggregationCurrent(
+                    generation, namespace, namespaceEpoch, continuationFence, requestKey, requestId,
+                )
             ) return AggregationResult.Cancelled
             if (++pageCount > MAX_PAGES) {
                 return AggregationResult.Failed(contractError("Calendar pagination exceeded its safety bound."))
             }
 
-            val result = try {
+            // Dispatch away from the coordinator before entering a platform
+            // engine: DNS/TLS setup can block before its first suspension.
+            val pageRequest = scope.async(start = CoroutineStart.DEFAULT) {
                 repository.list(
                     from = window.windowStart,
                     to = window.windowEnd,
@@ -2086,9 +2173,23 @@ class CalendarExperience(
                     query = null,
                     limit = null,
                 )
+            }
+            val result = try {
+                withTimeoutOrNull(PAGE_REQUEST_TIMEOUT_MILLIS) { pageRequest.await() }
+                    ?: run {
+                        pageRequest.cancel()
+                        return AggregationResult.Failed(
+                            CalendarExperienceError(
+                                kind = CalendarExperienceErrorKind.CONNECTION,
+                                userMessage = "Network unavailable. Cached calendar data is still shown.",
+                            ),
+                        )
+                    }
             } catch (cancelled: CancellationException) {
+                pageRequest.cancel()
                 throw cancelled
             } catch (cancelled: KotlinCancellationException) {
+                pageRequest.cancel()
                 throw cancelled
             } catch (_: Throwable) {
                 return AggregationResult.Failed(
@@ -2098,8 +2199,9 @@ class CalendarExperience(
                     ),
                 )
             }
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
-                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            if (!isAggregationCurrent(
+                    generation, namespace, namespaceEpoch, continuationFence, requestKey, requestId,
+                )
             ) return AggregationResult.Cancelled
             val page = when (result) {
                 is SentientResult.Success -> result.data
@@ -2107,8 +2209,9 @@ class CalendarExperience(
                 is SentientResult.Loading -> return AggregationResult.Failed(contractError("Calendar pagination did not return a settled page."))
             }
 
-            if (!isRequestCurrent(generation, namespace, namespaceEpoch) ||
-                continuationFence != null && !isMutationFenceCurrent(continuationFence)
+            if (!isAggregationCurrent(
+                    generation, namespace, namespaceEpoch, continuationFence, requestKey, requestId,
+                )
             ) return AggregationResult.Cancelled
             val converted = try {
                 convertPage(page)
@@ -2726,6 +2829,7 @@ class CalendarExperience(
         mutationGeneration += 1L
         observationJob?.cancel()
         refreshJob?.cancel()
+        recoveryJob?.cancel()
         mutationJob?.cancel()
         mutationRefreshJob?.cancel()
         preferenceWriteGeneration += 1L
@@ -2736,6 +2840,7 @@ class CalendarExperience(
         cancelSharedRequests()
         observationJob = null
         refreshJob = null
+        recoveryJob = null
         mutationJob = null
         mutationRefreshJob = null
         preferenceWriteJob = null
@@ -2991,6 +3096,53 @@ class CalendarExperience(
         isCurrent(generation, namespace, namespaceEpoch)
     }
 
+    private fun isLoadRequestCurrent(
+        key: CalendarWindowRequestKey,
+        requestId: Long,
+        namespaceEpoch: Long,
+    ): Boolean = isNamespaceCurrent(key.namespace, namespaceEpoch) &&
+        inFlightRequests.load().entries[key]?.requestId == requestId
+
+    private fun isAggregationCurrent(
+        generation: Long?,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+        continuationFence: MutationContinuationFence?,
+        requestKey: CalendarWindowRequestKey?,
+        requestId: Long?,
+    ): Boolean = isRequestCurrent(generation, namespace, namespaceEpoch) &&
+        (requestKey == null || requestId == null || isLoadRequestCurrent(requestKey, requestId, namespaceEpoch)) &&
+        (continuationFence == null || isMutationFenceCurrent(continuationFence))
+
+    private fun nextSequence(sequence: AtomicLong): Long {
+        while (true) {
+            val current = sequence.load()
+            val next = current + 1L
+            if (sequence.compareAndSet(current, next)) return next
+        }
+    }
+
+    private fun settleForegroundAttempt(
+        generation: Long,
+        namespace: CalendarCacheNamespace,
+        namespaceEpoch: Long,
+        attempt: Long,
+    ) {
+        if (!isCurrent(generation, namespace, namespaceEpoch) ||
+            foregroundAttemptSequence.load() != attempt
+        ) return
+        val current = _state.value
+        if (!current.loading.isLoading && current.freshness != CalendarFreshness.REFRESHING) return
+        val hasCache = current.hasCompleteCache
+        _state.value = current.copy(
+            loading = CalendarLoadingState(),
+            freshness = if (hasCache) CalendarFreshness.STALE else CalendarFreshness.ERROR,
+            offline = CalendarOfflineState.ONLINE,
+            mutationAvailability = if (hasCache) CalendarMutationAvailability() else
+                unavailableMutationAvailability(CalendarMutationAvailabilityReason.ERROR),
+        )
+    }
+
     private fun isCurrent(
         generation: Long,
         namespace: CalendarCacheNamespace = observedNamespace,
@@ -3032,6 +3184,8 @@ class CalendarExperience(
 
     private companion object {
         const val MAX_PAGES = 10_000
+        const val PAGE_REQUEST_TIMEOUT_MILLIS = 8_000L
+        const val MAX_RECOVERY_ATTEMPTS = 2
         const val MAX_PREFETCH_DIAGNOSTICS = 16
         const val MAX_FILTER_VALUE_LENGTH = 256
         const val MAX_FILTER_VALUES = 128

@@ -197,6 +197,9 @@ export type CalendarFixtureCase =
   | "dense-day"
   | "conflict"
   | "visibility"
+  | "cache"
+  | "recovery"
+  | "temporal"
   | "timezone";
 
 export interface CalendarFixtureEvent {
@@ -302,11 +305,14 @@ function fixtureCases(
     "dense-day": cases.get("dense-day") ?? [],
     conflict: cases.get("conflict") ?? [],
     visibility: cases.get("visibility") ?? [],
+    cache: cases.get("cache") ?? [],
+    recovery: cases.get("recovery") ?? [],
+    temporal: cases.get("temporal") ?? [],
     timezone: cases.get("timezone") ?? [],
   };
 }
 
-function fixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
+export function calendarFixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
   const day = "2026-08-24";
   const timed = (
     caseName: CalendarFixtureCase,
@@ -317,8 +323,8 @@ function fixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
     scope,
     title: `${namespace}-${caseName}`,
     description: "synthetic calendar evidence event",
-    start: `${day}T${String(hour).padStart(2, "0")}:00:00Z`,
-    end: `${day}T${String(hour + 1).padStart(2, "0")}:00:00Z`,
+    start: `${day}T${String(hour).padStart(2, "0")}:00:00${scope === "household" ? "-07:00" : "Z"}`,
+    end: `${day}T${String(hour + 1).padStart(2, "0")}:00:00${scope === "household" ? "-07:00" : "Z"}`,
     visibility: "everyone",
     importance: "normal",
     group: "evidence",
@@ -342,8 +348,8 @@ function fixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
       scope: "household",
       title: `${namespace}-recurring`,
       description: "synthetic calendar evidence event",
-      start: `${day}T10:00:00Z`,
-      end: `${day}T11:00:00Z`,
+      start: `${day}T10:00:00-07:00`,
+      end: `${day}T11:00:00-07:00`,
       visibility: "everyone",
       importance: "normal",
       group: "evidence",
@@ -353,17 +359,40 @@ function fixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
     timed("conflict", 12),
     { ...timed("visibility", 13, "household"), visibility: "adults", importance: "pinned" },
     {
+      ...timed("cache", 0, "household"),
+      start: "2026-08-22T00:00:00-07:00",
+      end: "2026-08-22T01:00:00-07:00",
+    },
+    {
+      ...timed("recovery", 1, "household"),
+      start: "2026-08-22T01:00:00-07:00",
+      end: "2026-08-22T02:00:00-07:00",
+    },
+    {
+      case: "temporal",
+      scope: "household",
+      title: `${namespace}-temporal`,
+      description: "synthetic calendar evidence event",
+      start: "2026-11-01T01:30:00-07:00",
+      end: "2026-11-01T01:30:00-08:00",
+      visibility: "everyone",
+      importance: "important",
+      group: "evidence",
+      tags: ["calendar-evidence", "temporal"],
+      eventTimeZoneId: "America/Los_Angeles",
+    },
+    {
       case: "timezone",
       scope: "private",
       title: `${namespace}-timezone`,
       description: "synthetic calendar evidence event",
-      start: `${day}T15:00:00-04:00`,
-      end: `${day}T16:00:00-04:00`,
+      start: `${day}T15:00:00-07:00`,
+      end: `${day}T16:00:00-07:00`,
       visibility: "everyone",
       importance: "normal",
       group: "evidence",
       tags: ["calendar-evidence", "timezone"],
-      eventTimeZoneId: "America/Toronto",
+      eventTimeZoneId: "America/Los_Angeles",
     },
     ...[14, 15, 16, 17].map((hour) => timed("dense-day", hour, hour % 2 === 0 ? "private" : "household")),
   ];
@@ -373,6 +402,7 @@ function fixtureEvents(namespace: string): readonly CalendarFixtureEvent[] {
 export async function provisionLocalCalendarFixture(
   deps: CalendarFixtureHelperDeps,
   input: DisposableCalendarInput,
+  options: { readonly deferredCases?: readonly CalendarFixtureCase[] } = {},
 ): Promise<DisposableCalendarFixture> {
   assertLocalCalendarFixtureTarget(deps.targetUrl, { targetEnvironment: deps.targetEnvironment });
   const users = await provisionCalendarE2E(deps, input);
@@ -386,7 +416,8 @@ export async function provisionLocalCalendarFixture(
   try {
     const adultId = fixtureId(users.adult.userId, "adult id");
     const childId = fixtureId(users.child.userId, "child id");
-    for (const event of fixtureEvents(runId)) {
+    for (const event of calendarFixtureEvents(runId)) {
+      if (options.deferredCases?.includes(event.case)) continue;
       const principalId = users.adult.userId;
       const result = await deps.seedEvent(principalId, event);
       const eventId = fixtureId(result?.eventId, "event id");
@@ -486,7 +517,7 @@ export async function withLocalCalendarFixture<T>(
   try {
     const adultId = fixtureId(users.adult.userId, "adult id");
     const childId = fixtureId(users.child.userId, "child id");
-    for (const event of fixtureEvents(runId)) {
+    for (const event of calendarFixtureEvents(runId)) {
       const result = await deps.seedEvent(users.adult.userId, event);
       const eventId = fixtureId(result?.eventId, "event id");
       const occurrenceIds = (result.occurrenceIds ?? []).map((id) => fixtureId(id, "occurrence id"));

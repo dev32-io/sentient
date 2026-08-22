@@ -13,6 +13,7 @@ import io.sentient.android.backend.BackendConfig
 import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.ConnectionSecurity
 import io.sentient.android.di.UserSessionManager
+import io.sentient.android.settings.calendar.CalendarViewModel
 import io.sentient.mobiledata.cache.CalendarCacheNamespace
 import io.sentient.mobiledata.cache.CalendarCachePreferences
 import io.sentient.mobiledata.cache.CalendarCacheResult
@@ -21,6 +22,8 @@ import io.sentient.mobiledata.cache.createCalendarCacheStore
 import io.sentient.mobiledata.cache.db.CalendarDatabase
 import io.sentient.mobiledata.cache.db.openCalendarDatabase
 import io.sentient.mobiledata.calendar.CalendarExperience
+import io.sentient.mobiledata.calendar.CalendarFilters
+import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobiledata.data.calendar.CalendarRepository
 import io.sentient.mobiledata.result.SentientResult
 import io.sentient.mobilesdk.calendar.CalendarCreateInput
@@ -106,6 +109,66 @@ class CalendarSessionLifecycleInstrumentedTest {
         assertEquals(1, reopenedRows.size)
         assertEquals(42L, reopenedRows.single().fetched_at)
         reopened.close()
+        }
+    }
+
+    @Test
+    fun realDatabase_closeReopen_andViewModelRecreation_activatePersistedMonthRow() {
+        runBlocking(Dispatchers.IO) {
+            val namespace = CalendarCacheNamespace("restore-account", "restore-backend")
+            val preferences = CalendarCachePreferences(
+                view = CalendarView.MONTH,
+                anchorDate = "2026-08-24",
+                scopes = listOf(CalendarScope.HOUSEHOLD),
+                groups = listOf("family"),
+                tags = listOf("school"),
+                importance = Importance.PINNED,
+                searchText = "sentinel",
+                updatedAt = 99L,
+            )
+            val first = openCalendarDatabase(AndroidCalendarDatabaseDriverFactory(context, databaseName))
+            val firstStore = createCalendarCacheStore(first, namespace, Dispatchers.IO)
+            assertIs<CalendarCacheResult.Success<Unit>>(firstStore.writePreferences(preferences))
+            val rowBeforeClose = CalendarDatabase(first.driver).calendarDatabaseQueries
+                .preferencesForNamespace(namespace.accountId, namespace.backendId)
+                .executeAsOne()
+            assertEquals("month", rowBeforeClose.view_mode)
+            assertEquals("2026-08-24", rowBeforeClose.anchor_date)
+            firstStore.close()
+
+            val reopened = openCalendarDatabase(AndroidCalendarDatabaseDriverFactory(context, databaseName))
+            val reopenedStore = createCalendarCacheStore(reopened, namespace, Dispatchers.IO)
+            val restoredRow = assertIs<CalendarCacheResult.Success<CalendarCachePreferences?>>(reopenedStore.readPreferences()).value
+            assertEquals(preferences, restoredRow)
+            val experience = CalendarExperience(
+                repository = NoopCalendarRepository(),
+                cacheStore = reopenedStore,
+                scope = CoroutineScope(Job() + Dispatchers.IO),
+                initialAnchorDate = "1970-01-01",
+            )
+            val recreatedViewModel = CalendarViewModel(experience)
+            try {
+                withTimeout(2_000L) {
+                    while (!recreatedViewModel.ui.value.restoredPresentationReady) yield()
+                }
+                val state = recreatedViewModel.ui.value
+                assertEquals(CalendarView.MONTH, state.view)
+                assertEquals("2026-08-24", state.anchorDate)
+                assertEquals("2026-08-24", state.selectedDate)
+                assertEquals(
+                    CalendarFilters(
+                        scope = CalendarScope.HOUSEHOLD,
+                        groups = setOf("family"),
+                        tags = setOf("school"),
+                        importance = Importance.PINNED,
+                        text = "sentinel",
+                    ),
+                    state.filters,
+                )
+            } finally {
+                experience.close()
+                reopenedStore.close()
+            }
         }
     }
 

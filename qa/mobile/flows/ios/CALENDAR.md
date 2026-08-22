@@ -4,7 +4,7 @@ These flows are reusable Maestro steps for the final CAL-UX agent. They do not a
 
 ## Safety and fixture lifecycle
 
-Run only against the real local stack. Wrap the complete sequential iOS run in `withLocalCalendarFixture(...)` from `gateway/src/calendar/e2e-helpers.ts`, using a cryptographically unique run namespace and explicit loopback/local target. Keep the disposable iOS adult/child principals exclusive to this run; never share either mutable principal with Android. The fixture callback must finish before cleanup, and cleanup must remain in the adapter's `finally` path. Never point these flows or fixture mutations at production.
+Run only against the real local stack. Invoke `bun run calendar:fixture provision --target https://localhost:8888 --state /tmp/calendar-ios-fixture.json` with `CALENDAR_E2E_ADMIN_USER_ID`, `CALENDAR_E2E_ADMIN_PIN`, `CALENDAR_E2E_ADULT_PIN`, and `CALENDAR_E2E_CHILD_PIN` supplied through the environment. The local-only command refuses non-loopback targets and writes IDs only. Invoke `calendar:fixture seed-recovery` after cache prime, and always invoke `calendar:fixture cleanup` from the outer cleanup trap. Keep the disposable iOS adult/child principals exclusive to this run; never share either mutable principal with Android or point the control at production.
 
 Provide only the relevant disposable fixture values through Maestro environment variables (`CALENDAR_EVENT_TITLE`, `CALENDAR_UPDATED_EVENT_TITLE`, `CALENDAR_FILTER_TEXT`, `CALENDAR_ADULT_ONLY_TITLE`, and `CALENDAR_FIRST_ACCOUNT_TITLE`). Do not put credentials, event content, or mutation payloads in logs or committed evidence.
 

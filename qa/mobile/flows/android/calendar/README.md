@@ -11,7 +11,17 @@ These are reusable direct Maestro steps for the final E2E agent, not additions t
 
 ## Fixture and network boundary
 
-Use `withLocalCalendarFixture` from `gateway/src/calendar/e2e-helpers.ts`. Every invocation creates a unique namespace and guarantees reverse-order event and principal/database cleanup in `finally`. Pass only a loopback local target (or HTTPS loopback with `targetEnvironment: "local"`). Never target production and never reuse the principal for iOS. Derive the content-free `calendar-event-<sha256-prefix>` resource IDs from fixture identities for Maestro environment variables: concatenate the length-prefixed `eventId`, `occurrenceId`, `originalStart`, and uppercase scope name exactly as shared `stableKey` does, SHA-256 it, and use the first 12 bytes as lowercase hex. Do not write titles, payloads, credentials, descriptions, or search text to evidence/log files.
+Invoke the approved adapter directly through existing local REST controls (this is a fixture command, not a runner):
+
+```sh
+CALENDAR_E2E_ADMIN_USER_ID=... CALENDAR_E2E_ADMIN_PIN=... \
+CALENDAR_E2E_ADULT_PIN=... CALENDAR_E2E_CHILD_PIN=... \
+bun run calendar:fixture provision --target https://localhost:8888 --state /tmp/calendar-android-fixture.json
+# Run direct Maestro files sequentially, then always:
+bun run calendar:fixture cleanup --target https://localhost:8888 --state /tmp/calendar-android-fixture.json
+```
+
+It refuses non-loopback targets, creates a unique adult/child plus facet, recurrence, conflict, cache/recovery, and temporal sentinels through authenticated APIs, and writes only sanitized IDs to the named file. Cleanup deletes events before principals. Never reuse the principal for iOS. Derive the content-free `calendar-event-<sha256-prefix>` resource IDs from fixture identities for Maestro environment variables: concatenate the length-prefixed `eventId`, `occurrenceId`, `originalStart`, and uppercase scope name exactly as shared `stableKey` does, SHA-256 it, and use the first 12 bytes as lowercase hex. Do not write titles, payloads, credentials, descriptions, or search text to evidence/log files.
 
 The direct agent owns this sequence:
 
@@ -20,7 +30,7 @@ The direct agent owns this sequence:
 3. Invoke the relevant YAML file directly with Maestro.
 4. For cached/uncached offline and reconnect cases, invoke the existing emulator control directly (`adb shell cmd connectivity airplane-mode enable|disable`) between the paired flows and wait for the state-specific `calendar-freshness-*` identifiers. Do not add sleeps or a runner phase.
 5. Run account/child phases sequentially, logging out before changing disposable principals.
-6. Always restore emulator settings and allow `withLocalCalendarFixture` cleanup to finish, even after an assertion failure.
+6. Always restore emulator settings and invoke `calendar:fixture cleanup`, even after an assertion failure.
 
 `00-open.yaml` is the reusable navigation step. The inventory covers every mobile checkpoint CAL-UX-001..014:
 

@@ -12,6 +12,7 @@ package io.sentient.android.presence
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import io.sentient.mobilesdk.log.createLogger
@@ -20,18 +21,25 @@ class NetworkChangeObserver(
     appContext: Context,
     private val onChange: () -> Unit,
     private val onConnectivityRecovered: () -> Unit = {},
+    private val onConnectivityUnavailable: () -> Unit = {},
 ) {
     private val log = createLogger("android", "net-change")
     private val cm =
         appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     private val main = Handler(Looper.getMainLooper())
     private var activeNetwork: Network? = cm?.activeNetwork
-    private val recoveryEdge = ConnectivityRecoveryEdge(activeNetwork != null)
+    private val recoveryEdge = ConnectivityRecoveryEdge(
+        activeNetwork?.let { network -> cm?.getNetworkCapabilities(network).isUsableInternet() } ?: false,
+    )
     @Volatile private var started = false
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             dispatch(markAvailable(network))
+        }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            dispatch(markCapabilities(network, capabilities))
         }
 
         override fun onLost(network: Network) {
@@ -43,18 +51,35 @@ class NetworkChangeObserver(
     private fun markAvailable(network: Network): ConnectivityTransition {
         val pathChanged = activeNetwork != network
         activeNetwork = network
-        val availability = recoveryEdge.update(available = true)
-        return ConnectivityTransition(
-            changed = pathChanged || availability.changed,
-            recovered = availability.recovered,
-        )
+        // onAvailable precedes validated capabilities. Reconnect the socket for
+        // a path change, but do not publish Calendar recovery until the path is
+        // actually usable by the HTTPS all-scope request.
+        return ConnectivityTransition(changed = pathChanged, recovered = false)
+    }
+
+    @Synchronized
+    private fun markCapabilities(network: Network, capabilities: NetworkCapabilities): ConnectivityTransition {
+        if (activeNetwork != network || !capabilities.isUsableInternet()) {
+            // Validation can flap while one available network is settling. Only
+            // an actual onLost transition arms another recovery edge.
+            return ConnectivityTransition(changed = false, recovered = false)
+        }
+        return recoveryEdge.update(available = true)
     }
 
     @Synchronized
     private fun markLost(network: Network): ConnectivityTransition {
         if (activeNetwork != network) return ConnectivityTransition(changed = false, recovered = false)
+        val replacement = cm?.activeNetwork
+        if (replacement != null && replacement != network) {
+            // Cellular→Wi-Fi/VPN replacement is one recovery cycle, not a new
+            // unavailable edge after the first usable request has committed.
+            activeNetwork = replacement
+            return ConnectivityTransition(changed = true, recovered = false)
+        }
         activeNetwork = null
-        return recoveryEdge.update(available = false)
+        val transition = recoveryEdge.update(available = false)
+        return transition.copy(unavailable = transition.changed)
     }
 
     private fun dispatch(transition: ConnectivityTransition) {
@@ -63,6 +88,7 @@ class NetworkChangeObserver(
         main.post {
             if (!started) return@post
             onChange()
+            if (transition.unavailable) onConnectivityUnavailable()
             if (transition.recovered) onConnectivityRecovered()
         }
     }
@@ -91,9 +117,14 @@ class NetworkChangeObserver(
     }
 }
 
+private fun NetworkCapabilities?.isUsableInternet(): Boolean = this != null &&
+    hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+    hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
 internal data class ConnectivityTransition(
     val changed: Boolean,
     val recovered: Boolean,
+    val unavailable: Boolean = false,
 )
 
 /** Serial availability reducer used by the platform callback; duplicates never signal recovery. */

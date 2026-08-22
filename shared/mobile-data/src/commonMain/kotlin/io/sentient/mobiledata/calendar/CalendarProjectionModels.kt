@@ -416,6 +416,25 @@ data class CalendarExperienceState(
 
     val validatedPreferences: CalendarPreferences get() = preferences
     val persistedPreferences: CalendarCachePreferences? get() = persistedCachePreferences
+    /** True only when the activated controls exactly match the observed SQLDelight row. */
+    val persistedPresentationActive: Boolean
+        get() {
+            val persisted = persistedCachePreferences ?: return false
+            val persistedScope = when {
+                persisted.scopes.contains(CalendarScope.PRIVATE) && !persisted.scopes.contains(CalendarScope.HOUSEHOLD) -> CalendarScope.PRIVATE
+                persisted.scopes.contains(CalendarScope.HOUSEHOLD) && !persisted.scopes.contains(CalendarScope.PRIVATE) -> CalendarScope.HOUSEHOLD
+                else -> CalendarScope.ALL
+            }
+            return presentationReady &&
+                persisted.view == view &&
+                persisted.anchorDate == anchorDate &&
+                selectedDate == anchorDate &&
+                persistedScope == filters.scope &&
+                persisted.groups.toSet() == filters.groups &&
+                persisted.tags.toSet() == filters.tags &&
+                persisted.importance == filters.importance &&
+                persisted.searchText == filters.text
+        }
     val projections: CalendarExperienceProjection? get() = projection
     val calendarProjection: CalendarExperienceProjection? get() = projection
     val occurrences: List<EffectiveOccurrence> get() = authorizedOccurrences

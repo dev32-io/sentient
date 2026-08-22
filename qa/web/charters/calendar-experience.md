@@ -24,15 +24,19 @@ scripts/stack.sh up
 scripts/stack.sh status
 ```
 
-Create a unique run namespace through the local-only calendar fixture adapter. The adapter must be called with an explicit `http://localhost`, `http://127.0.0.1`, or `http://[::1]` target and the authenticated local REST callbacks. The canonical local stack may use `https://localhost/` only when the fixture dependency also carries `targetEnvironment: "local"`; otherwise HTTPS, production, and non-loopback targets are refused. The adapter returns only adult/child/event/occurrence IDs.
+Create a unique run namespace through the directly invokable local-only adapter. It uses existing authenticated REST controls and returns only adult/child/event/occurrence IDs:
 
-Always wrap the evidence run so cleanup is guaranteed, including assertion and MCP failures:
-
-```ts
-await withLocalCalendarFixture(localDeps, disposableInput, async (fixture) => {
-  // Playwright MCP evidence for CAL-UX-001..007, 013, and 014.
-});
+```sh
+CALENDAR_E2E_ADMIN_USER_ID=... CALENDAR_E2E_ADMIN_PIN=... \
+CALENDAR_E2E_ADULT_PIN=... CALENDAR_E2E_CHILD_PIN=... \
+bun run calendar:fixture provision --target https://localhost:8888 --state /tmp/calendar-web-fixture.json
+# After cache prime when recovery evidence needs a newly published sentinel:
+bun run calendar:fixture seed-recovery --target https://localhost:8888 --state /tmp/calendar-web-fixture.json
+# Guaranteed final step:
+bun run calendar:fixture cleanup --target https://localhost:8888 --state /tmp/calendar-web-fixture.json
 ```
+
+HTTPS requires the explicit local-only command and non-loopback targets are refused before credentials are read.
 
 The final cleanup order is event IDs (reverse seed order), both calendar databases, then both disposable users. Do not print event content, descriptions, filter text, credentials, or mutation payloads. Stop the local stack after the run:
 

@@ -286,6 +286,11 @@ class UserSessionManager(
                 }
             },
             onConnectivityRecovered = recoveryFence::signalIfActive,
+            onConnectivityUnavailable = {
+                calendarLifecycleGate.ifCurrent(newCalendarGeneration) {
+                    calendarBoundary?.experience?.onConnectivityUnavailable()
+                }
+            },
         ).also { it.start() }
 
         return component
