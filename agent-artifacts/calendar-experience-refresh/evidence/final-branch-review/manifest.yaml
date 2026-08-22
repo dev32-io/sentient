@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-22T10:09:58.396Z
+entries:
+  - result: All static/unit/build checks passed; matrix count is 2 pass, 12 blocked.
+    description: Sanitized fresh verification summary
+    path: files/001-1-calendar-final-branch-review-evidence.txt
+    checksum: sha256:3f05695e8f2f0f1fcec6b38596e8b1133ec25e2492d639b98cb7e8314752ac65
+  - result: E2E-001/002 pass; E2E-003..014 blocked.
+    description: Individual final E2E case outcomes
+    path: files/001-2-005-6-case-results.json
+    checksum: sha256:5ede912d56cd0ea12d536f5147a83a1d9c17ab7dd6b5e3779ea7dc0d3cad6399
+  - result: Checkpoint marked passed despite instruction to rerun the complete
+      14-case matrix.
+    description: Required checkpoint state and manager instruction
+    path: files/001-3-evaluation.yaml
+    checksum: sha256:7e61931e0a43a0b4de6c0ead15e7e7da4f39e6a6908c63764eb1efe5f899efc5
+  - result: Records iOS recovery gap and multiple blocked subflows.
+    description: Final E2E report
+    path: files/001-4-report.md
+    checksum: sha256:7b0631bf57b841a00dcbfcc837a57696d27b983a03bb4de93c78c4effe22ee7e
