@@ -32,31 +32,27 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
   reviewedCommit: 444d2a1e3cc89794fc68c70212dbaace15d6f129
-  managerPrompt: Resolve all four findings. On iOS, observe the current device
-    locale, first-weekday setting, and time-zone identifier and forward changes
-    into the shared CalendarExperience projection context on open and whenever
-    system settings change; this device time zone is projection context only and
-    must never be synthesized as an event IANA zone. Make shared state expose
-    the authoritative Month agenda slice and have both native surfaces render
-    the exact four-day mobile-runtime behavior without native date-window policy
-    or divergent truncation. Complete the checked-in direct Maestro flow
-    inventory and documentation so Android and iOS can drive every applicable
-    CAL-UX-001..014 mobile case—views/navigation, filters,
-    CRUD/recurrence/conflict/permissions, cache/offline/recovery, isolation,
-    temporal correctness, accessibility semantics, reduced motion, safe areas,
-    and exact logical profiles—using unique disposable fixture namespaces and
-    guaranteed cleanup. Reuse existing direct gateway/fault controls, invoke
-    fault-armed cases explicitly outside the ordinary tag runner, run Android
-    then iOS sequentially, and do not add or extend a qa/mobile runner or
-    require an actual assistive-technology session. Add a polite iOS
-    accessibility announcement when freshness transitions back to up-to-date,
-    suppressing noisy initial/duplicate announcements. Add focused tests, run
-    all stage checks, and return for automatic re-review.
+  managerPrompt: "Resolve the remaining Maestro proof blocker. Replace the
+    undefined iOS timezone/DST selector with a production accessibility
+    identifier or stable visible assertion that actually exists in the assembled
+    app, and validate every referenced selector in the affected flows. Make
+    cache-first and reconnect scenarios behaviorally observable rather than
+    documentary: seed unique fixture data online, load it, explicitly invoke the
+    existing direct fault/network control, relaunch or revisit while
+    unavailable, assert cached events remain visible with the correct
+    offline/stale state and writes remain gated, restore connectivity, assert
+    automatic revalidation reaches up-to-date without blanking content, and
+    verify any recovery fixture change appears. Ensure teardown always restores
+    fault/network state and deletes only the run-owned fixture namespace. Apply
+    equivalent platform-appropriate proof on Android and iOS where the matrix
+    requires it, without altering qa/mobile runner behavior. Add flow
+    syntax/selector validation where available, run all stage checks, and return
+    for automatic re-review."
   fixerAgentId: f3e6d81e-bc4a-4b96-a0c1-5fb175494a0c
 findings:
   - id: CAL-DELIVERY-001
