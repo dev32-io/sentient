@@ -32,27 +32,27 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
+  state: fixing
   iteration: 2
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
   reviewedCommit: 952f4734788b56d48ee2e236cbafdcb1b78f7791
-  managerPrompt: "Resolve the remaining Maestro proof blocker. Replace the
-    undefined iOS timezone/DST selector with a production accessibility
-    identifier or stable visible assertion that actually exists in the assembled
-    app, and validate every referenced selector in the affected flows. Make
-    cache-first and reconnect scenarios behaviorally observable rather than
-    documentary: seed unique fixture data online, load it, explicitly invoke the
-    existing direct fault/network control, relaunch or revisit while
-    unavailable, assert cached events remain visible with the correct
-    offline/stale state and writes remain gated, restore connectivity, assert
-    automatic revalidation reaches up-to-date without blanking content, and
-    verify any recovery fixture change appears. Ensure teardown always restores
-    fault/network state and deletes only the run-owned fixture namespace. Apply
-    equivalent platform-appropriate proof on Android and iOS where the matrix
-    requires it, without altering qa/mobile runner behavior. Add flow
-    syntax/selector validation where available, run all stage checks, and return
-    for automatic re-review."
+  managerPrompt: "Resolve both blockers. Add session-scoped production
+    connectivity-edge adapters on Android and iOS using the repository's
+    platform network-monitor seam (or the narrow native equivalent): forward
+    only unavailable→available transitions as a shared CalendarExperience
+    recovery intent, keep revalidation/coalescing policy entirely in shared KMP,
+    make signaling idempotent, stop monitoring with session disposal, and fence
+    old-session callbacks. Add deterministic platform/shared tests proving
+    cached content remains visible offline and one recovery edge automatically
+    revalidates without a manual refresh or duplicate request. Remove the
+    persistent visible fresh-status row from iOS; normal up-to-date composition
+    must match the authoritative mobile reference. Keep freshness recovery as a
+    polite accessibility announcement and prove recovery in Maestro by the
+    offline/stale indicator disappearing plus refreshed fixture content
+    appearing. For timezone/DST, attach stable identifiers to existing
+    event/date/time content or assert its rendered labels—do not add permanent
+    diagnostic chrome. Run all stage checks and return for automatic re-review."
   fixerAgentId: f3e6d81e-bc4a-4b96-a0c1-5fb175494a0c
 findings:
   - id: CAL-DELIVERY-002
