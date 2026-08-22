@@ -1,0 +1,149 @@
+schemaVersion: 1
+id: final-e2e
+type: e2e
+checkpoint: final-e2e
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 3
+methods:
+  - Execute every case in the approved E2E matrix exactly.
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 053547a1-6333-4d57-84d4-25c46911452a
+  reviewedCommit: 7f8be724f49e239a4c58c10f52213613a2853edd
+  managerPrompt: >-
+    Address the four real final-E2E defects. CAL-E2E-005 is a matrix-wording
+    issue (the covering query correctly yields 10; the web week view correctly
+    shows the current week's 2 — the persisted E2E-002 matrix says "10 in the
+    week view," which is the stale wording flagged at planning time). Do NOT
+    change the week view for CAL-E2E-005; leave the covering-query behavior
+    as-is (it matches AC-005). I will accept CAL-E2E-005 as residual risk at the
+    approve.
+
+
+    CAL-E2E-001 (CRITICAL, privacy) — Native calendar tool definitions omit JSON
+    `properties`, so a live adults-only agent create lost visibility=adults and
+    persisted as everyone, exposing the event to the child path. In
+    gateway/src/bootstrap/product-tools/calendar-provider.ts, each tool's
+    `parameters` passed to `runner(...)` is `{ type: "object", required: [...]
+    }` with NO `properties` object, so the model never sends
+    visibility/importance/group/tags/etc. Fix: add a concrete `properties`
+    object to the parameters schema for calendar_create, calendar_update,
+    calendar_list, calendar_search, calendar_get, and calendar_delete, declaring
+    every field with its type/enum (title:string, description:string,
+    start:object {kind,instant,timeZoneId}|{kind,date}, end:object same,
+    recurrence:object {rrule,rule}, visibility:enum[everyone,adults],
+    importance:enum[normal,important,pinned], group:string, tags:array[string],
+    scope:enum[private,household], notificationPolicy:object, id:string,
+    from/to/group/tags/importance for list/search). The create/update schemas
+    MUST declare visibility so the agent can send visibility=adults. Keep
+    `required` as today. Verify: an agent create with visibility=adults persists
+    as adults (hidden from child path) — add/extend a provider test asserting
+    the create parameters schema declares visibility and that a
+    visibility=adults create reaches the store with visibility=adults.
+
+
+    CAL-E2E-002 (high) — Recurring events with timeZoneId=household are created
+    but list/expansion returns 422 invalid because the "household" sentinel is
+    not resolved to an IANA zone. Fix: resolve the "household" timeZoneId
+    sentinel to the configured household IANA zone (resolveTimeZone().zone()
+    from gateway/src/context/message-time) before recurrence expansion / store
+    listing — in expand-recurrence (or the store list path that calls it), when
+    an event's timed start timeZoneId equals the "household" sentinel,
+    substitute resolveTimeZone().zone() for the Intl expansion zone. Do not
+    change the stored value (keep "household" as the stored sentinel); resolve
+    only at expansion time. Verify: a recurring event with timeZoneId=household
+    lists/expands without 422 and produces correct occurrences in the household
+    zone.
+
+
+    CAL-E2E-003 (high) — Over-budget nudge trimming removes weekly
+    important/pinned entries before today entries; the live capped nudge
+    retained no important weekly items. The design requires: drop
+    overflow/non-important (normal) weekly first, KEEP today AND
+    important/pinned weekly. In gateway/src/calendar/nudge.ts, the trim loop
+    (around line 115) drops weeklyItems (which are the important/pinned weekly)
+    before today — that inverts the design. Fix: the nudge must retain today AND
+    important/pinned weekly items; only non-important (normal) weekly items
+    (droppedNormal) are dropped as overflow. Do not drop important/pinned weekly
+    before today; prefer keeping all mandatory (today + important/pinned) items
+    and only trim normal-weekly overflow. If today + important/pinned exceed the
+    hard cap, drop the oldest mandatory item only as a last resort (today's tail
+    before important/pinned is NOT the design intent — re-check the design's
+    "keeping today plus important or pinned"). The live capped nudge must retain
+    important/pinned weekly items. Add/extend a nudge test: a tight cap with
+    today + important/pinned + normal weekly retains today AND important/pinned,
+    drops only normal weekly.
+
+
+    CAL-E2E-004 (high) — Recreated default CalendarApi identity causes an
+    effect/render/request loop (218 calendar REST requests in one session). In
+    gateway/webui/src/components/calendar/calendar-view.tsx, `CalendarView({ api
+    = createCalendarApi(), ... })` re-evaluates the default
+    `createCalendarApi()` on EVERY render, so `api` is a new identity each
+    render → `refresh` (useCallback dep on api) changes each render →
+    `useEffect([refresh])` re-fires each render → re-fetch loop. Fix: make the
+    api identity stable — e.g. `const stableApi = useMemo(() => api ??
+    createCalendarApi(), [api]);` and use `stableApi` in refresh and the CRUD
+    handlers (so refresh depends on a stable api). Do not recreate the
+    CalendarApi on every render. Verify with a render-count/fetch-count test
+    that mounting CalendarView issues the list fetch a bounded number of times
+    (not one per render), and that re-renders do not re-trigger fetches.
+
+
+    Constraints: keep `cd gateway && bun run typecheck`, `cd gateway && bun test
+    src/calendar/nudge src/bootstrap/product-tools/calendar-provider
+    src/api/handlers/calendar`, and `cd gateway/webui && bun run test:unit &&
+    bun run typecheck` green. Do not regress prior stages or the resolved
+    stage-8 findings. Reuse resolveTimeZone() from message-time and the existing
+    wire/types.
+  fixerAgentId: 6f285787-beb8-444a-b4cf-e16818583200
+findings:
+  - id: CAL-E2E-001
+    severity: critical
+    status: resolved
+    criterion: AC-003 / E2E-003
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts
+    summary: Tool field schemas now expose visibility and the live adults-only
+      create preserved the field; child surfaces omitted the event.
+    blocking: false
+  - id: CAL-E2E-002
+    severity: high
+    status: resolved
+    criterion: AC-006 / E2E-007
+    location: gateway/src/calendar/expand-recurrence.ts
+    summary: Household timezone sentinel recurrence now lists and expands
+      successfully without 422.
+    blocking: false
+  - id: CAL-E2E-003
+    severity: high
+    status: resolved
+    criterion: E2E-005
+    location: gateway/src/calendar/nudge.ts
+    summary: Nudge trimming now preserves important weekly entries and uses normal
+      overflow first, with mandatory trimming only as a last resort.
+    blocking: false
+  - id: CAL-E2E-004
+    severity: high
+    status: resolved
+    criterion: E2E-008
+    location: gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: CalendarApi identity is stable; fresh route observation showed no
+      repeated fetch loop.
+    blocking: false
+  - id: CAL-E2E-005
+    severity: high
+    status: accepted
+    criterion: E2E-002
+    location: gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: Accepted residual matrix wording mismatch; not reopened per manager
+      guidance.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/final-e2e/manifest.yaml

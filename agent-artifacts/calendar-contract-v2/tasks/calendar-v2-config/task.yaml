@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: calendar-v2-config
+title: Add operator-controlled calendar V2 safety limits
+status: merged
+dependsOn:
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-2-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd shared/config && bun test
+      src/schemas/orchestrator-config.test.ts
+    - source scripts/env.sh && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-config
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-config
+  baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
+  lastRunId: 5bdfd44d-1da4-4c99-be0c-73024cfd0822
+  completedCommit: 752b976030c384850bc74339ce51dc2aebecceec
+  mergedCommit: e63648f3407946ea89239aba854a81f37c75587b

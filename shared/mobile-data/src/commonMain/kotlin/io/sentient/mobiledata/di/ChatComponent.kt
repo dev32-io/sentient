@@ -18,6 +18,7 @@ import io.sentient.mobilesdk.protocol.AudioPreferencesPatch
 import io.sentient.mobilesdk.protocol.SdkEvent
 import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,6 +64,9 @@ open class ChatComponent(
      *  needed, so it skips a dedicated repository. Consumed by the chat VMs' keep-screen-on
      *  derivation (Continuous ⇒ hands-free, no touch keeping the device awake). */
     val talkMode: StateFlow<TalkMode> get() = sdk.talkMode
+
+    /** Native-facing aggregate mic signal; PCM remains inside the SDK uplink path. */
+    val micLevels: StateFlow<MicLevelEnvelope> get() = sdk.micLevels
 
     /**
      * One-shot notice stream: emits [Unit] whenever the SDK fires [SdkEvent.ReopenFailed]

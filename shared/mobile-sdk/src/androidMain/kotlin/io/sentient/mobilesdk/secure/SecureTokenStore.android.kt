@@ -80,7 +80,7 @@ class AndroidSecureTokenStore(context: Context) : SecureTokenStore {
                 .apply()
             log.info("save-ok", mapOf("ciphertextBytes" to ciphertext.size, "ivBytes" to iv.size))
         } catch (e: Exception) {
-            log.warn("save-failed", mapOf("reason" to (e.message ?: e::class.simpleName ?: "unknown")))
+            log.warn("save-failed", mapOf("code" to "operation-failure"))
         }
     }
 
@@ -98,7 +98,7 @@ class AndroidSecureTokenStore(context: Context) : SecureTokenStore {
             log.info("load-ok", mapOf("tokenLength" to plain.length))
             plain
         } catch (e: Exception) {
-            log.warn("load-failed", mapOf("reason" to (e.message ?: e::class.simpleName ?: "unknown")))
+            log.warn("load-failed", mapOf("code" to "operation-failure"))
             null
         }
     }
@@ -112,7 +112,7 @@ class AndroidSecureTokenStore(context: Context) : SecureTokenStore {
                 .apply()
             log.info("clear-ok")
         } catch (e: Exception) {
-            log.warn("clear-failed", mapOf("reason" to (e.message ?: e::class.simpleName ?: "unknown")))
+            log.warn("clear-failed", mapOf("code" to "operation-failure"))
         }
     }
 

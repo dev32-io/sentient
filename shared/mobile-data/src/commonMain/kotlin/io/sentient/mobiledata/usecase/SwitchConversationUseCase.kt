@@ -13,11 +13,17 @@ class SwitchConversationUseCase(private val sessions: SessionsRepository) {
 
     operator fun invoke(sessionId: String?) {
         if (sessionId == null) {
-            log.info("new-chat fire-and-forget")
+            log.info("switch-null compatibility path")
             sessions.newChatFireAndForget()
         } else {
             log.info("switch fire-and-forget", mapOf("sessionId" to sessionId))
             sessions.switchToFireAndForget(sessionId)
         }
+    }
+
+    /** Mobile route entry: explicitly unbind the old conversation. */
+    fun startFreshChat() {
+        log.info("fresh-chat fire-and-forget")
+        sessions.startFreshChatFireAndForget()
     }
 }

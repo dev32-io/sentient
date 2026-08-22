@@ -43,6 +43,9 @@ struct UserSessionHost: View {
     /// rebuild → a clean nil-route VM, even when already on a new chat.
     @State private var newChatEpoch = 0
     @State private var path: [Route] = []
+    /// Identity/data passed to the child editor; the Fish results route remains
+    /// the owner of catalog/filter/paging state underneath it.
+    @State private var fishEditorEntry: FishVoiceEntry?
 
     /// Root ChatView identity: the conversation id when one is selected (history),
     /// else a per-new-chat nonce so each "+" rebuilds a fresh nil-route VM.
@@ -61,6 +64,10 @@ struct UserSessionHost: View {
         _userSession = StateObject(wrappedValue: UserSession(
             gatewayWsUrl: appConfig.gatewayWsUrl,
             allowSelfSignedDevHost: appConfig.allowSelfSignedDevHost,
+            // This branch is mounted only when AppConfig has a persisted,
+            // explicit server-authenticated identity. An empty value is a
+            // fail-closed guard for an impossible stale view transition.
+            authenticatedUserId: appConfig.authenticatedUserId ?? "",
             // Settings Account-logout hook (KMP AccountUseCases): drop token →
             // RootView routes to login. Root "Log out" stays the danger-row wiring below.
             onLoggedOut: { appConfig.logout() }
@@ -90,7 +97,8 @@ struct UserSessionHost: View {
                     path.removeAll()
                 },
                 onOpenSettings: { path = [.settings] },
-                onLogout: logout
+                onLogout: logout,
+                onAuthenticationExpired: authenticationExpired
             )
             .id(chatIdentity)
             .navigationDestination(for: Route.self) { route in
@@ -125,7 +133,12 @@ struct UserSessionHost: View {
     /// Logout: tear down the SDK session, then clear the auth gate so RootView
     /// routes back to login (this view leaves the authed branch → @StateObject deinits).
     private func logout() {
-        userSession.shutdown()
+        userSession.explicitLogout()
+        onLogout()
+    }
+
+    private func authenticationExpired() {
+        userSession.authenticationExpired()
         onLogout()
     }
 
@@ -150,6 +163,8 @@ struct UserSessionHost: View {
             )
         case .settingsMemory:
             MemoryScreen(settings: settings, onBack: popRoute)
+        case .settingsCalendar:
+            CalendarSessionRoute(userSession: userSession, onBack: popRoute)
         case .settingsPersonalities:
             PersonalitiesScreen(settings: settings, onBack: popRoute)
         case .settingsVoice:
@@ -157,7 +172,20 @@ struct UserSessionHost: View {
         case .settingsVoiceAdd:
             VoiceAddScreen(settings: settings, onBack: popRoute)
         case .settingsVoiceFish:
-            VoiceFishScreen(settings: settings, onBack: popRoute)
+            VoiceFishScreen(
+                settings: settings,
+                onBack: popRoute,
+                onOpenEditor: { entry in
+                    fishEditorEntry = entry
+                    path.append(.settingsVoiceFishEditor(entry.id))
+                }
+            )
+        case .settingsVoiceFishEditor:
+            if let entry = fishEditorEntry {
+                VoiceFishScreen(settings: settings, onBack: popRoute, editorEntry: entry)
+            } else {
+                EmptyView()
+            }
         case .settingsAudio:
             AudioScreen(settings: settings, onBack: popRoute)
         case .settingsModel:

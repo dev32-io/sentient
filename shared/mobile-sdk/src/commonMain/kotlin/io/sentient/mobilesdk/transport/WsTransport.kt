@@ -122,13 +122,14 @@ class WsTransport(
             is WsIncoming.Text -> routeText(frame.data)
             is WsIncoming.Binary -> routeBinary(frame.data)
             is WsIncoming.Closed -> {
-                log.info("recv-closed", mapOf("code" to frame.code, "reason" to frame.reason))
-                signalChannel.send(TransportSignal.Closed(frame.code, frame.reason))
+                val reason = structuralCloseReason(frame.code)
+                log.info("recv-closed", mapOf("code" to frame.code, "reasonCode" to reason))
+                signalChannel.send(TransportSignal.Closed(frame.code, reason))
                 closeChannels()
             }
             is WsIncoming.Failure -> {
-                log.warn("recv-failure", mapOf("error" to frame.error))
-                signalChannel.send(TransportSignal.Failure(frame.error))
+                log.warn("recv-failure", mapOf("code" to frame.code.name))
+                signalChannel.send(TransportSignal.Failure(frame.code))
                 closeChannels()
             }
         }
@@ -178,9 +179,9 @@ class WsTransport(
                 val (seq, epoch) = WireJson.peelSeqEpoch(effectiveRaw)
                 eventChannel.send(WsEvent.Control(msg, seq, epoch))
             },
-            onFailure = { err ->
-                log.warn("decode-failed", mapOf("reason" to (err.message ?: "parse error"), "frameLen" to effectiveRaw.length))
-                onProtocolError?.invoke(SentientError.Protocol("decode failed", cause = err))
+            onFailure = {
+                log.warn("decode-failed", mapOf("code" to "malformed-frame", "frameLen" to effectiveRaw.length))
+                onProtocolError?.invoke(SentientError.Protocol("decode failed"))
                 // Skip the malformed frame; pump continues.
             },
         )

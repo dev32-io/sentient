@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Invoke on an uncached fixture namespace while the native network path is unavailable.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-unavailable" }
+    timeout: 15000
+- assertVisible: { text: "This date range is not available offline." }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+# Direct sanitized store inspection must show no mutation/queue row.
+- takeScreenshot: "calendar-uncached-offline"

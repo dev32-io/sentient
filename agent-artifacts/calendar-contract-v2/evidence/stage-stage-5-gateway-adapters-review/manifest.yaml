@@ -1,0 +1,14 @@
+schemaVersion: 1
+evaluation: stage-stage-5-gateway-adapters-review
+recordedAt: 2026-08-20T04:00:47.559Z
+entries:
+  - result: pass
+    command: source scripts/env.sh && cd gateway && bun test
+      src/bootstrap/product-tools/calendar-provider.test.ts
+      src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+      src/calendar/calendar-mutations.test.ts
+    description: Focused Stage 5 gateway adapter and query/mutation regressions
+      verified by independent re-review.
+  - result: pass
+    command: source scripts/env.sh && cd gateway && bun run typecheck
+    description: Gateway typecheck verified by independent re-review.

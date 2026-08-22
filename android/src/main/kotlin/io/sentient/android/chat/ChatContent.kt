@@ -63,10 +63,12 @@ import io.sentient.android.chat.message.HistoryLoadingSpinner
 import io.sentient.android.chat.message.LoadingAffordance
 import io.sentient.android.chat.message.MessageList
 import io.sentient.android.chat.message.loadingAffordance
+import io.sentient.mobilesdk.voice.talk.TalkMode
 import io.sentient.mobilesdk.connectors.CognitionState
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.sdk.VoiceMode
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 
 /**
  * Pure composable: state in, callbacks out. No SDK / repo references.
@@ -94,6 +96,8 @@ import io.sentient.mobilesdk.transport.SdkStatus
 fun ChatContent(
     uiState: ChatUiState,
     connection: ConnectionState,
+    talkMode: TalkMode,
+    micLevels: MicLevelEnvelope = MicLevelEnvelope.silence(),
     onSend: (String) -> Unit,
     onMicPress: () -> Unit,
     onMicRelease: () -> Unit,
@@ -193,7 +197,8 @@ fun ChatContent(
             Composer(
                 canSend = connection.status == SdkStatus.READY,
                 ttsEnabled = connection.prefs.ttsEnabled,
-                micActive = voiceActive,
+                talkMode = talkMode,
+                micLevels = micLevels,
                 canInterrupt = canInterrupt,
                 tasks = uiState.model.tasks,
                 onSend = onSend,

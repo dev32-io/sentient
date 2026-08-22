@@ -11,6 +11,7 @@
     "dev": "bash scripts/stack.sh up",
     "stack:down": "bash scripts/stack.sh down",
     "stack:status": "bash scripts/stack.sh status",
+    "calendar:fixture": "bun gateway/src/calendar/e2e-fixture-control.ts",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",

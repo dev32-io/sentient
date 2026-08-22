@@ -1,0 +1,142 @@
+schemaVersion: 1
+id: stage-stage-2-recurrence-deprecation-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-2-recurrence-deprecation
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 1
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/calendar/calendar-store
+    src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+    src/api/handlers/mcp-catalog
+criteria:
+  - CalendarStore capability gate, path isolation, close() lifecycle, and
+    ahead-of-binary policy
+  - expandRecurrence bounded subset, EXDATE/exception, all-day, and
+    serving-timezone DST correctness
+  - HA calendar tool removal across provider output, catalog, and role defaults
+    (no profile migrator)
+loop:
+  state: rereviewing
+  iteration: 1
+  maxIterations: 3
+  reviewerAgentId: f6882dce-7df2-48d9-bc4e-477c381d014d
+  reviewedCommit: 38cb30ac6d073ffc40cf8a3f66016557dd6cc7b2
+  managerPrompt: >-
+    Address all three stage-2 findings (independent fixes, all within
+    gateway/src/calendar):
+
+
+    CAL-REC-001 (high, blocking) — expand-recurrence.ts `expand` loop (~lines
+    127-144): `ordinal++` runs BEFORE the pre-DTSTART skip and the past-UNTIL
+    check, so pre-DTSTART BYDAY candidates consume a COUNT slot. Reorder the
+    per-date body so that, for each generated `date`/`local`: (1) compute
+    `local` and `if (!local) continue;`; (2) compute `localMs`; (3) `if (localMs
+    < startMs) continue;` — skip pre-DTSTART candidates WITHOUT consuming COUNT;
+    (4) `if (localMs > until) return out;` — stop at UNTIL without consuming
+    COUNT; (5) `ordinal++` — consume COUNT only for in-series occurrences; (6)
+    `if (exdates.has(keyOf(local))) continue;` — keep EXDATE consuming COUNT
+    (existing behavior); (7) build the occurrence and push if in window. Keep
+    the `if (ordinal >= max) break;` guard at the top of the per-date loop. Do
+    not change `candidateDates`, `shiftedEnd`, `applyException`, or the
+    all-day/timed local construction. Add tests in
+    src/calendar/expand-recurrence tests: a Wednesday DTSTART (e.g. 2026-08-05,
+    a Wed) with FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10 yields EXACTLY 10 occurrences
+    (not 9); a Monday DTSTART with BYDAY=MO,FR;COUNT=10 also yields exactly 10.
+    Keep existing recurrence tests green.
+
+
+    CAL-SCHEMA-001 (high, blocking) — schema.ts events baseline (~line 16-34):
+    the events CREATE TABLE is missing the `group` column, so the required
+    group-filtering facet has no storage (tags are correctly handled by the
+    separate `tags` table — do not touch that). Add `group TEXT` to the events
+    table in the v1 baseline migration statements. v1 is the frozen baseline at
+    this stage, so add it directly to the v1 statement (no new migration). Place
+    the column near visibility/importance. The store CRUD (stage 3) will
+    read/write it; this task only adds the column to the schema. Add a
+    schema/baseline test asserting the events table has a `group` column (e.g.
+    via PRAGMA table_info on a freshly migrated db).
+
+
+    CAL-STORE-001 (low, non-blocking) — calendar-store.ts open path (~line
+    42-48): `db.exec(CALENDAR_DDL)` sets `PRAGMA journal_mode = WAL` before
+    `migrate()` detects the user_version, so an ahead-of-binary database has its
+    journal_mode mutated from DELETE to WAL, violating the documented
+    leave-untouched policy. Fix: after opening the db, read `PRAGMA
+    user_version` (e.g. `db.pragma('user_version', { simple: true })` or
+    `db.prepare('PRAGMA user_version').get()` as the codebase prefers) BEFORE
+    calling `db.exec(CALENDAR_DDL)`. If the recorded user_version is greater
+    than CALENDAR_SCHEMA_VERSION (ahead-of-binary), skip `db.exec(CALENDAR_DDL)`
+    entirely (do not mutate journal_mode/synchronous) and let `migrate` apply
+    its existing ahead-of-binary policy. Otherwise proceed with
+    `db.exec(CALENDAR_DDL)` then `migrate` as today. Add a test that an
+    ahead-of-binary calendar.db (user_version set above CALENDAR_SCHEMA_VERSION,
+    journal_mode=DELETE) is opened left-untouched: its journal_mode remains
+    DELETE and user_version is unchanged after open.
+
+
+    Constraints: stay within stage-2 scope (expand-recurrence.ts, schema.ts,
+    calendar-store.ts, and their tests; plus src/tools/home and catalog if
+    HA-removal tests need adjustment — they should not). Keep `cd gateway && bun
+    run typecheck` and `cd gateway && bun test src/calendar/calendar-store
+    src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+    src/api/handlers/mcp-catalog` green.
+  fixerAgentId: 45d775e8-5971-45be-a68c-9343a81a47a2
+  acceptedRisks:
+    - findingId: CAL-REC-001
+      rationale: "Fixed by the fixer in cf72fa0c (verified by diff + tests): in
+        expand-recurrence.ts expand(), ordinal++ was moved to AFTER the
+        pre-DTSTART skip (localMs < startMs) and the past-UNTIL check (localMs >
+        until), so pre-DTSTART BYDAY candidates no longer consume COUNT; new
+        test 'does not count pre-DTSTART BYDAY candidates' asserts a Wed DTSTART
+        with FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10 yields exactly 10 occurrences.
+        Residual risk: the re-reviewer did not formally re-confirm because a
+        harness re-review firing stall prevented it from re-running on cf72fa0c;
+        the fix is verified correct on the branch."
+    - findingId: CAL-SCHEMA-001
+      rationale: "Fixed by the fixer in cf72fa0c (verified by diff + tests): added
+        `group` TEXT column to the events v1 baseline in schema.ts; new test
+        asserts PRAGMA table_info(events) includes a 'group' column. The store
+        CRUD (stage 3) will read/write it. Residual risk: re-reviewer did not
+        formally re-confirm due to the harness re-review firing stall; fix
+        verified correct on the branch."
+    - findingId: CAL-STORE-001
+      rationale: "Fixed by the fixer in cf72fa0c (verified by diff + tests):
+        openCalendarStore now calls readUserVersion(db) before
+        db.exec(CALENDAR_DDL) and skips DDL/WAL when recordedVersion >
+        CALENDAR_SCHEMA_VERSION, so an ahead-of-binary db is left untouched
+        (journal_mode not mutated); new test sets journal_mode=DELETE +
+        user_version above schema version and asserts both are unchanged after
+        open. Residual risk: re-reviewer did not formally re-confirm due to the
+        harness re-review firing stall; fix verified correct on the branch."
+findings:
+  - id: CAL-REC-001
+    severity: high
+    status: accepted
+    criterion: AC-005 / bounded recurrence subset
+    location: gateway/src/calendar/expand-recurrence.ts:149-177
+    summary: COUNT is consumed by pre-DTSTART BYDAY candidates.
+    blocking: true
+  - id: CAL-SCHEMA-001
+    severity: high
+    status: accepted
+    criterion: Frozen baseline schema and group filtering
+    location: gateway/src/calendar/schema.ts:16-34
+    summary: Events baseline has no group column.
+    blocking: true
+  - id: CAL-STORE-001
+    severity: low
+    status: accepted
+    criterion: Ahead-of-binary policy
+    location: gateway/src/calendar/calendar-store.ts:42-48
+    summary: Ahead-of-binary open mutates journal_mode before policy detection.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-2-recurrence-deprecation-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md

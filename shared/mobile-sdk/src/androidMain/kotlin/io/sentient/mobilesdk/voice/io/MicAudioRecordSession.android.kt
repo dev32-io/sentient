@@ -55,7 +55,7 @@ internal fun openMicAudioRecord(
     val bufferBytes = maxOf(minBuffer, frameSamples * BYTES_PER_PCM16_SAMPLE * BUFFER_SIZE_MULTIPLIER)
     val record = runCatching { buildRecord(captureRate, bufferBytes, source) }
         .getOrElse { e ->
-            log.error("record-construct-failed", mapOf("cause" to (e.message ?: "unknown")))
+            log.error("record-construct-failed", mapOf("code" to "operation-failure"))
             return Acquisition.Failed("construct-exception")
         }
     if (record.state != AudioRecord.STATE_INITIALIZED) {

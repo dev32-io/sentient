@@ -1,0 +1,42 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, views, preferences]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { text: "Today" }
+- takeScreenshot: "calendar-day"
+- tapOn: { id: "calendar-view-week" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_WEEK_DATE}" }
+- takeScreenshot: "calendar-week"
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_MONTH_DATE}" }
+- assertVisible: { id: "calendar-view-day" }
+- tapOn: { id: "calendar-view-year" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- scrollUntilVisible:
+    element: { id: "calendar-month-${CALENDAR_YEAR_MONTH}" }
+    direction: DOWN
+- tapOn: { id: "calendar-month-${CALENDAR_YEAR_MONTH}" }
+- assertVisible: { id: "calendar-view-month" }
+- takeScreenshot: "calendar-year-selection"
+# This marker means the activated controls exactly match the observed
+# SQLDelight preference row, not merely that the shared coordinator started.
+- extendedWaitUntil:
+    visible: { id: "calendar-restored-ready" }
+    timeout: 10000
+- stopApp
+# A process restart returns to the authenticated chat root; reopen Calendar,
+# then wait for the persisted-row activation marker rather than generic startup.
+- runFlow: "00-open.yaml"
+- extendedWaitUntil:
+    visible: { id: "calendar-restored-ready" }
+    timeout: 10000
+- assertVisible: { id: "calendar-view-month" }
+- assertVisible: { id: "calendar-date-${CALENDAR_MONTH_DATE}" }

@@ -1,0 +1,24 @@
+schemaVersion: 1
+defaultProfile: gateway
+profiles:
+  gateway:
+    shell: /bin/bash
+    bootstrap: source scripts/env.sh
+  web:
+    shell: /bin/bash
+    bootstrap: source scripts/env.sh
+  gradle:
+    shell: /bin/bash
+    bootstrap: source scripts/env.sh
+    requiredEnvironment:
+      - JAVA_HOME
+  android:
+    shell: /bin/bash
+    bootstrap: source scripts/env.sh
+    requiredEnvironment:
+      - JAVA_HOME
+  ios:
+    shell: /bin/bash
+    bootstrap: source scripts/env.sh && ./scripts/ios-setup.sh
+    requiredEnvironment:
+      - JAVA_HOME

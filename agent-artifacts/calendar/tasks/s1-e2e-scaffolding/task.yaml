@@ -1,0 +1,29 @@
+schemaVersion: 1
+id: s1-e2e-scaffolding
+title: "Calendar E2E scaffolding: disposable users, calendar cleanup, evidence
+  capture"
+status: merged
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-1-foundation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/e2e-helpers
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s1-e2e-scaffolding
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-e2e-scaffolding
+  baseCommit: e8e8d5f241a9a29da1a2a82e179b2fb264f9b591
+  lastRunId: 06dc890c-cc0c-4517-bce7-74d77259105d
+  completedCommit: 4b313fecd496cc0c3b197a7b6f16fd60dd8b963d
+  mergedCommit: f639a39869e2f19e144767a10ba18e019f6fc0a2

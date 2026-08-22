@@ -1,0 +1,22 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-add" }
+- tapOn: { id: "calendar-editor-title" }
+- eraseText
+- inputText: "${CALENDAR_RECURRING_TITLE}"
+- hideKeyboard
+- scrollUntilVisible:
+    element: { text: "Repeats" }
+    direction: DOWN
+- tapOn: { text: "Repeats" }
+- assertVisible: { text: "Weekly" }
+- scrollUntilVisible:
+    element: { id: "calendar-editor-save" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { text: "Done" }

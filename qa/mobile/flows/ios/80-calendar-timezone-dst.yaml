@@ -1,0 +1,25 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-view-day" }
+- assertVisible: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- assertVisible: { id: "${CALENDAR_ALL_DAY_EVENT_TAG}" }
+- tapOn: { id: "calendar-view-week" }
+- assertVisible: { id: "calendar-date-${CALENDAR_WEEK_DATE}" }
+- tapOn: { id: "calendar-view-month" }
+- assertVisible: { id: "calendar-month-42-cells" }
+- tapOn: { id: "calendar-view-year" }
+- assertVisible: { id: "calendar-year-month-1" }
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- takeScreenshot: "calendar-timezone-preview"
+- tapOn: { id: "calendar-preview-edit" }
+- assertVisible: { id: "calendar-editor-start" }
+- assertVisible: { text: "Time zone:.*" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+# Direct REST reread verifies unchanged event IANA zone and originalStart.

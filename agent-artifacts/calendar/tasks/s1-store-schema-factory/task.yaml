@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: s1-store-schema-factory
+title: CalendarStore schema, migration ladder, factory skeleton, and close() lifecycle
+status: merged
+dependsOn:
+  - s1-resource-classes
+  - s1-domain-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-2-recurrence-deprecation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/calendar-store
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s1-store-schema-factory
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s1-store-schema-factory
+  baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
+  lastRunId: 7bec34a8-891f-410f-8be1-ab8c07794e02
+  completedCommit: 144851568a0c2d19165c31299abe89830e1dbae7
+  mergedCommit: 8bb2e4244179250292c05a96b55a2ca664cf7148

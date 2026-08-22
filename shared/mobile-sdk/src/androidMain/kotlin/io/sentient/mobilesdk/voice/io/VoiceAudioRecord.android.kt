@@ -45,6 +45,7 @@ internal class VoiceAudioRecord(
     private val context: Context,
     private val trySend: (ShortArray) -> Boolean,
     private val onFatalRead: () -> Unit,
+    private val meter: MicLevelMeter,
 ) {
     private val log = createLogger("voice", "engine", "android")
 
@@ -86,16 +87,20 @@ internal class VoiceAudioRecord(
         record = null
         val thread = readerThread
         readerThread = null
-        if (r == null) return
+        if (r == null) {
+            meter.reset()
+            return
+        }
+        meter.reset()
         log.info("record-stop", mapOf("captured" to capturedCount, "dropped" to droppedCount))
         // record.stop() + thread.join() + record.release() all block — Dispatchers.IO
         // (canonical blocking-call dispatcher, NOT Default's CPU-bound pool).
         withContext(Dispatchers.IO) {
             runCatching { r.stop() } // unblocks the in-flight read()
-                .onFailure { log.warn("stop-record-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+                .onFailure { log.warn("stop-record-failed", mapOf("code" to "operation-failure")) }
             joinReader(thread)
             runCatching { r.release() }
-                .onFailure { log.warn("release-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+                .onFailure { log.warn("release-failed", mapOf("code" to "operation-failure")) }
         }
     }
 
@@ -133,6 +138,9 @@ internal class VoiceAudioRecord(
 
     /** trySend the frame; on a full buffer drop the NEWEST + count it (throttled WARN). */
     private fun emitFrame(frame: ShortArray) {
+        // Metering is isolated from delivery: a visualization failure can never
+        // backpressure or suppress the uplink frame.
+        runCatching { meter.accept(frame) }
         val count = capturedCount
         val trace = count <= CAPTURE_TRACE_FIRST || count % CAPTURE_TRACE_EVERY == 0L
         if (trySend(frame)) {
@@ -168,7 +176,7 @@ internal class VoiceAudioRecord(
     private fun joinReader(thread: Thread?) {
         if (thread == null) return
         runCatching { thread.join(READER_JOIN_TIMEOUT_MS) }
-            .onFailure { log.warn("join-interrupted", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("join-interrupted", mapOf("code" to "operation-failure")) }
         if (thread.isAlive) {
             log.warn("reader-still-alive", mapOf("afterMs" to READER_JOIN_TIMEOUT_MS))
             thread.interrupt()

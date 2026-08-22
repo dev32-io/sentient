@@ -1,0 +1,17 @@
+schemaVersion: 1
+evaluation: stage-stage-1-contracts-review
+recordedAt: 2026-08-20T02:07:20.490Z
+entries:
+  - result: 8 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
+    description: Focused V2 contract tests pass.
+    path: files/1-types.test.ts
+    checksum: sha256:7b9d68b81cb90cebf5591b22fc878d52ff4163851a1590cb4c36f96a7b9df860
+  - result: tsc --noEmit completed successfully
+    command: source scripts/env.sh && cd gateway && bun run typecheck
+    description: Gateway typecheck passes.
+    path: files/2-types.ts
+    checksum: sha256:1e486014790e07278d998c9fe303990f094b3aae856c91b19b852a541cf50e0c
+  - result: clean
+    command: git diff --check cecd4ede^ bf7a8ebe873fa9730a4db6f3ef7084b7c9aee63f
+    description: Bounded repair diff has no whitespace errors.

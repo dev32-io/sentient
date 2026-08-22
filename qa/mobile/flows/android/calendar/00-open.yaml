@@ -1,0 +1,19 @@
+appId: io.dev32.sentient.debug
+---
+- launchApp
+- runFlow:
+    when: { visible: { id: "login-backend-setup" } }
+    file: "../_helpers/login.yaml"
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "calendar-open" }
+    timeout: 5000
+- tapOn: { id: "calendar-open" }
+- extendedWaitUntil:
+    visible: { id: "calendar-screen" }
+    timeout: 10000
+- extendedWaitUntil:
+    visible: { id: "calendar-shared-ready" }
+    timeout: 20000
+- assertVisible: { id: "calendar-add" }
+- assertVisible: { id: "calendar-view-bar" }

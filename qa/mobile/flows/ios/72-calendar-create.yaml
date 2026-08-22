@@ -1,0 +1,19 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-add" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- tapOn: { id: "calendar-editor-title" }
+- eraseText
+- inputText: "${CALENDAR_EVENT_TITLE}"
+# Save is pinned in the keyboard-safe footer and must remain discoverable and
+# activatable while the title field still owns focus at both exact profiles.
+- assertVisible: { id: "calendar-editor-save" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { text: "Done" }
+- assertNotVisible: { id: "calendar-editor-sheet" }

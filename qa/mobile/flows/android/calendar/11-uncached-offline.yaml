@@ -1,0 +1,15 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, uncached-offline]
+---
+# Invoke on a date outside the primed cache while the direct network control is
+# observably offline. Inspect the sanitized shared store afterward: no mutation
+# or queue row may exist.
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-unavailable" }
+    timeout: 15000
+- assertVisible: { id: "calendar-retry" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- takeScreenshot: "calendar-uncached-offline"

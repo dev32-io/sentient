@@ -13,6 +13,20 @@ package io.sentient.android.settings.icons
 
 import androidx.compose.ui.graphics.vector.ImageVector
 
+private var _calendar: ImageVector? = null
+
+/** calendar outline — Calendar category icon. */
+val SettingsIcons.Calendar: ImageVector
+    get() {
+        _calendar?.let { return it }
+        val built = strokeIcon(
+            name = "Calendar",
+            pathData = "M4 4h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M16 2v4 M8 2v4 M2 10h20",
+        )
+        _calendar = built
+        return built
+    }
+
 private var _userCircle: ImageVector? = null
 
 /** user-circle.tsx — Account category icon. */

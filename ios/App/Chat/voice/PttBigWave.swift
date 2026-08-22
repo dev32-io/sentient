@@ -12,14 +12,14 @@ import Foundation
 import SwiftUI
 
 struct PttBigWave: View {
+    let levels: [Float]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if reduceMotion {
-                bars { _ in PttWaveLayout.staticScale }
-            } else {
-                animatedBars
+            bars { i in
+                let level = i < levels.count ? max(0, min(1, levels[i])) : 0
+                return 0.35 + 0.65 * Double(level)
             }
         }
         .frame(height: PttWaveLayout.laneHeight)
@@ -85,7 +85,7 @@ private enum PttWaveLayout {
 }
 
 #Preview("Animated") {
-    PttBigWave()
+    PttBigWave(levels: Array(repeating: 0, count: 32))
         .padding()
         .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: 12))
         .padding()

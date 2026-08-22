@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: s8-android
+title: Android calendar Compose screen, nav, and ViewModel
+status: merged
+dependsOn:
+  - s7-mobile-data
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-8-mobile-platform
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./gradlew :android:app:testDebugUnitTest --tests '*Calendar*'
+    - ./gradlew :android:app:compileDebugKotlin
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s8-android
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s8-android
+  baseCommit: d70ef21e45d1dffc606492ec07470cf6ed856cac
+  lastRunId: 40b6cc87-19ea-47a4-a32a-d7d42da07d9c
+  completedCommit: 2841b2982c6b8444edb807acb1537e6ced94e31a
+  mergedCommit: 2c6a939aa363fdfebcd2e0e5a85f4402bd626629

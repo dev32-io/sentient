@@ -17,7 +17,7 @@
 // the open + post-mutation re-query is the refresh path (D-A4 plan fallback).
 //
 // testTags: history-search, history-row-<sessionId>, history-new-chat,
-//           settings-open (in HistoryAccountHeader). The history-open trigger
+//           settings-open, calendar-open (in HistoryAccountHeader). The history-open trigger
 //           lives in the chat top bar (see ChatContent).
 // ---------------------------------------------------------------------------
 package io.sentient.android.history
@@ -64,6 +64,8 @@ import io.sentient.mobilesdk.design.Colors
 import kotlinx.coroutines.launch
 
 private const val EMPTY_DEFAULT = "No past chats yet."
+/** Stable Maestro/uiautomator contract for the drawer calendar action. */
+internal const val CALENDAR_DRAWER_TEST_TAG = "calendar-open"
 private val HISTORY_SPINNER_SIZE = 24.dp
 private val HISTORY_SPINNER_STROKE = 2.dp
 
@@ -76,6 +78,7 @@ private data class PendingTarget(val id: String, val title: String)
  * read one stable clock per composition pass.
  *
  * [onOpenSettings] is called when the user taps the gear in the account header.
+ * [onOpenCalendar] is called by the calendar entry beside the gear.
  * [userName] is the logged-in display name supplied by the host from
  * DisplayNameStore (set at login, cleared on logout), defaulting to "You" only as
  * a fallback. [household] stays "" until the gateway exposes per-profile metadata
@@ -89,6 +92,7 @@ fun HistoryDrawer(
     onSelectSession: (String) -> Unit,
     onNewChat: () -> Unit,
     onOpenSettings: () -> Unit = {},
+    onOpenCalendar: () -> Unit = {},
     userName: String = "You",
     household: String = "",
     content: @Composable () -> Unit,
@@ -111,6 +115,12 @@ fun HistoryDrawer(
                     userName = userName,
                     household = household,
                     onOpenSettings = onOpenSettings,
+                    onOpenCalendar = {
+                        scope.launch {
+                            drawerState.close()
+                            onOpenCalendar()
+                        }
+                    },
                     onQuery = viewModel::setQuery,
                     onRetry = viewModel::refresh,
                     // Select / new-chat are NAVIGATIONS owned by the host: close the
@@ -139,6 +149,7 @@ private fun HistoryContent(
     userName: String,
     household: String,
     onOpenSettings: () -> Unit,
+    onOpenCalendar: () -> Unit,
     onQuery: (String) -> Unit,
     onRetry: () -> Unit,
     onSwitch: (String) -> Unit,
@@ -161,6 +172,7 @@ private fun HistoryContent(
                 name = userName,
                 household = household,
                 onSettings = onOpenSettings,
+                onCalendar = onOpenCalendar,
             )
             SearchPill(
                 query = state.query,

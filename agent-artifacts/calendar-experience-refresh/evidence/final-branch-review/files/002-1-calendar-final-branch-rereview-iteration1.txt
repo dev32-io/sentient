@@ -1,0 +1,11 @@
+reviewedCommit=2edea20cc2c7ee3e94be281765080abaf08d7595
+repairBase=85d1c756445fd7825a9ed181508de41691dee602
+repairDiffCheck=pass
+gatewayFixtureTests=8_pass
+gatewayTypecheck=pass
+androidUnitAndAssemble=pass
+iosTests=108_pass
+maestroStaticValidation=392_selectors_47_flows
+finalMatrix=2_pass_12_blocked
+nativeCommittedScreenshots=0
+finalE2eRiskAcceptance=empty

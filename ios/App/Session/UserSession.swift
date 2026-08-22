@@ -22,13 +22,34 @@ import Foundation
 import MobileData
 
 @MainActor
+final class SessionConnectivityRecoveryFence {
+    private var active = true
+
+    func forwardPathChange(
+        available: Bool,
+        recovered: Bool,
+        onChange: () -> Void,
+        onUnavailable: () -> Void,
+        onRecovery: () -> Void
+    ) {
+        guard active else { return }
+        onChange()
+        if !available { onUnavailable() }
+        if recovered { onRecovery() }
+    }
+
+    func close() { active = false }
+}
+
+@MainActor
 final class UserSession: ObservableObject {
     /// The KMP User-scope holder: SDK + ChatComponent + session scope.
     private let inner: IosUserSession
     private let log = AppLog("user-session")
     /// Persistent network-path observer: a path change (VPN→WiFi, etc.) re-checks the
     /// socket so a queued send is never stranded on a dead-but-"READY" connection.
-    private var networkMonitor: NetworkPathMonitor?
+    private var networkMonitor: (any NetworkPathMonitoring)?
+    private let calendarRecoveryFence = SessionConnectivityRecoveryFence()
 
     /// The shared usecase layer for this login. Chat + history VMs resolve their
     /// usecases / passthroughs from here — never the SDK directly.
@@ -36,10 +57,35 @@ final class UserSession: ObservableObject {
 
     /// The settings slice of this connection scope (built beside `component` inside
     /// the KMP `IosUserSession`). Per-screen settings ViewModels resolve their
-    /// usecases from here — `settings.observeSettingsAccess`, `settings.voices`,
-    /// `settings.applyProfileChange`, `settings.account`,
-    /// `settings.admin` — never the SDK or a repository directly.
+    /// usecases from here — never the SDK or a repository directly.
     var settings: SettingsComponent { inner.settings }
+
+    /// One session-owned calendar experience. Route recreation never rebuilds
+    /// this object because it is held above the authenticated NavigationStack.
+    @Published private(set) var calendarExperience: CalendarExperience?
+
+    /// Typed fail-closed state for protected calendar storage/open failures.
+    @Published private(set) var calendarAvailability: IosCalendarAvailability
+
+    /// Namespace is derived from the explicit authenticated userId and backend
+    /// identity; it is not derived from display name or token text.
+    @Published private(set) var calendarNamespace: CalendarCacheNamespace?
+
+    private var calendarLifecycleTask: Task<Void, Never>?
+
+    /// Awaits background calendar open/disposal without blocking MainActor and
+    /// publishes the typed result back to this MainActor-owned object.
+    func awaitCalendarLifecycle() async {
+        do {
+            try await inner.awaitCalendarLifecycle()
+        } catch {
+            log.warn("calendar.lifecycle-await code=background-failure")
+        }
+        guard !Task.isCancelled else { return }
+        calendarAvailability = inner.calendarAvailability
+        calendarExperience = inner.calendarExperience
+        calendarNamespace = inner.calendarNamespace
+    }
 
     /// Build the User session from a resolved backend (gateway URL + dev-TLS
     /// posture). FaultHooks are armed in debug builds (no adb-equivalent arming
@@ -52,11 +98,24 @@ final class UserSession: ObservableObject {
     init(
         gatewayWsUrl: String,
         allowSelfSignedDevHost: Bool,
-        onLoggedOut: @escaping @MainActor () -> Void = {}
+        authenticatedUserId: String,
+        onLoggedOut: @escaping @MainActor () -> Void = {},
+        networkMonitorFactory: NetworkPathMonitorFactory = .live,
+        calendarUnavailableSignal: @escaping (CalendarExperience) -> Void = {
+            $0.onConnectivityUnavailable()
+        },
+        calendarRecoverySignal: @escaping (CalendarExperience) -> Void = {
+            _ = $0.onConnectivityRecovered()
+        }
     ) {
+        // AccountUseCases can invoke this callback without the explicit root
+        // logout button. Close the same session before clearing auth state so a
+        // successor login cannot race the predecessor's namespace purge.
+        var closeSession: (() -> Void)?
         self.inner = createUserSession(
             gatewayWsUrl: gatewayWsUrl,
             allowSelfSignedDevHost: allowSelfSignedDevHost,
+            authenticatedUserId: authenticatedUserId,
             capabilities: [],
             devFaultsEnabled: {
                 #if DEBUG
@@ -65,21 +124,48 @@ final class UserSession: ObservableObject {
                 return false
                 #endif
             }(),
-            onLoggedOut: { Task { @MainActor in onLoggedOut() } }
+            onLoggedOut: {
+                Task { @MainActor in
+                    closeSession?()
+                    onLoggedOut()
+                }
+            }
         )
+        self.calendarAvailability = inner.calendarAvailability
+        self.calendarExperience = inner.calendarExperience
+        self.calendarNamespace = inner.calendarNamespace
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.
         inner.open()
-        // Start the network-path observer: on a path change, verify the socket.
-        let monitor = NetworkPathMonitor(onChange: { [weak self] in
+        // Verify chat on each real path transition. Only unavailable→available
+        // forwards the shared calendar recovery intent; shared KMP owns policy.
+        let monitor = networkMonitorFactory.make { [weak self] available, recovered in
             Task { @MainActor in
                 guard let self else { return }
-                self.log.info("network-changed → ensureConnected")
-                self.component.ensureConnected()
+                self.calendarRecoveryFence.forwardPathChange(
+                    available: available,
+                    recovered: recovered,
+                    onChange: {
+                        self.log.info("network-changed → ensureConnected")
+                        self.component.ensureConnected()
+                    },
+                    onUnavailable: {
+                        guard let experience = self.calendarExperience else { return }
+                        calendarUnavailableSignal(experience)
+                    },
+                    onRecovery: {
+                        guard let experience = self.calendarExperience else { return }
+                        calendarRecoverySignal(experience)
+                    }
+                )
             }
-        })
+        }
         monitor.start()
         self.networkMonitor = monitor
+        self.calendarLifecycleTask = Task { [weak self] in
+            await self?.awaitCalendarLifecycle()
+        }
+        closeSession = { [weak self] in self?.shutdown() }
     }
 
     /// Build a thin per-conversation ChatViewModel over the shared ChatComponent.
@@ -114,11 +200,40 @@ final class UserSession: ObservableObject {
 
     // ── Teardown ────────────────────────────────────────────────────────────────
 
-    /// Logout teardown: disconnect (clearSession=true) + cancel the session scope.
-    func shutdown() {
+    /// Compatibility teardown used when the authenticated host is released.
+    func shutdown() { closeCalendarBoundary(using: inner.close) }
+
+    /// Explicit root/settings logout production entry point.
+    func explicitLogout() { closeCalendarBoundary(using: inner.explicitLogout) }
+
+    /// Terminal authentication failure production entry point.
+    func authenticationExpired() { closeCalendarBoundary(using: inner.authenticationExpired) }
+
+    /// Account replacement production entry point before a successor host is created.
+    func accountReplaced() { closeCalendarBoundary(using: inner.accountReplaced) }
+
+    /// Backend replacement production entry point before a successor host is created.
+    func backendReplaced() { closeCalendarBoundary(using: inner.backendReplaced) }
+
+    private func closeCalendarBoundary(using close: () -> Void) {
         log.info("shutdown")
+        calendarLifecycleTask?.cancel()
+        calendarLifecycleTask = nil
+        calendarRecoveryFence.close()
         networkMonitor?.cancel()
         networkMonitor = nil
+        close()
+        calendarAvailability = inner.calendarAvailability
+        calendarExperience = inner.calendarExperience
+        calendarNamespace = inner.calendarNamespace
+    }
+
+    /// Auth-expiry/account callbacks can remove the host from the SwiftUI tree
+    /// without first reaching the explicit logout button. Keep the KMP boundary
+    /// fail-closed if that is the final owner release.
+    deinit {
+        calendarLifecycleTask?.cancel()
+        networkMonitor?.cancel()
         inner.close()
     }
 }

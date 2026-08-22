@@ -1,0 +1,9 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+# Leaves the fixture editor open. The direct agent advances this event's revision
+# with the existing local fixture control before invoking 74b.
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "${CALENDAR_CONFLICT_EVENT_TAG}" }
+- tapOn: { id: "calendar-preview-edit" }
+- assertVisible: { id: "calendar-editor-sheet" }

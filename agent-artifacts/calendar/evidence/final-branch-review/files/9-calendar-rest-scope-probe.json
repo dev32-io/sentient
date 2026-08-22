@@ -1,0 +1,23 @@
+{
+  "status": 200,
+  "body": {
+    "version": 1,
+    "requestId": "6882b1f1-8390-40de-8ca6-6837cde71273",
+    "body": {
+      "id": "shared",
+      "scope": "household",
+      "title": "changed",
+      "start": {
+        "kind": "all-day",
+        "date": "2026-08-05"
+      },
+      "visibility": "everyone",
+      "importance": "normal",
+      "tags": [],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  },
+  "privateUpdates": 0,
+  "householdUpdates": 1
+}

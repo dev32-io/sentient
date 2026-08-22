@@ -1,0 +1,408 @@
+{
+  "method": "Chrome DevTools Protocol Emulation.setDeviceMetricsOverride + measureCalendarResponsiveEvidence(document)",
+  "reference": "sentient-design/design/web/calendar.html",
+  "production": "gateway/webui/calendar-evidence.html using CalendarWorkspace + CalendarCanvas",
+  "target": "document and body scrollWidth <= viewport width; canvas scrollWidth <= clientWidth; seven columns for Week/Month; every rendered narrow canvas control >= 44x44",
+  "viewports": [
+    {
+      "view": "day",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "documentClientWidth": 1440,
+      "canvasScrollWidth": 1133,
+      "canvasClientWidth": 1133,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 4,
+      "minimumInteractiveTarget": {
+        "width": 1035.671875,
+        "height": 28
+      },
+      "evidenceFile": "production-day-1440x1000.json"
+    },
+    {
+      "view": "day",
+      "viewport": {
+        "width": 1024,
+        "height": 900
+      },
+      "documentScrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "documentClientWidth": 1024,
+      "canvasScrollWidth": 735,
+      "canvasClientWidth": 735,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 4,
+      "minimumInteractiveTarget": {
+        "width": 637.984375,
+        "height": 28
+      },
+      "evidenceFile": "production-day-1024x900.json"
+    },
+    {
+      "view": "day",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "documentScrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "documentClientWidth": 768,
+      "canvasScrollWidth": 732,
+      "canvasClientWidth": 732,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 4,
+      "minimumInteractiveTarget": {
+        "width": 635.015625,
+        "height": 44
+      },
+      "evidenceFile": "production-day-768x900.json"
+    },
+    {
+      "view": "day",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "documentClientWidth": 390,
+      "canvasScrollWidth": 366,
+      "canvasClientWidth": 366,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 4,
+      "minimumInteractiveTarget": {
+        "width": 285.828125,
+        "height": 44
+      },
+      "evidenceFile": "production-day-390x844.json"
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "documentClientWidth": 1440,
+      "canvasScrollWidth": 1133,
+      "canvasClientWidth": 1133,
+      "gridScrollWidth": 1133,
+      "gridClientWidth": 1133,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 10,
+      "minimumInteractiveTarget": {
+        "width": 27,
+        "height": 27
+      },
+      "evidenceFile": "production-week-1440x1000.json"
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 1024,
+        "height": 900
+      },
+      "documentScrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "documentClientWidth": 1024,
+      "canvasScrollWidth": 735,
+      "canvasClientWidth": 735,
+      "gridScrollWidth": 735,
+      "gridClientWidth": 735,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 10,
+      "minimumInteractiveTarget": {
+        "width": 27,
+        "height": 27
+      },
+      "evidenceFile": "production-week-1024x900.json"
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "documentScrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "documentClientWidth": 768,
+      "canvasScrollWidth": 732,
+      "canvasClientWidth": 732,
+      "gridScrollWidth": 732,
+      "gridClientWidth": 732,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 10,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-week-768x900.json"
+    },
+    {
+      "view": "week",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "documentClientWidth": 390,
+      "canvasScrollWidth": 366,
+      "canvasClientWidth": 366,
+      "gridScrollWidth": 366,
+      "gridClientWidth": 366,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 10,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-week-390x844.json"
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "documentClientWidth": 1440,
+      "canvasScrollWidth": 1133,
+      "canvasClientWidth": 1133,
+      "gridScrollWidth": 1133,
+      "gridClientWidth": 1133,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 45,
+      "minimumInteractiveTarget": {
+        "width": 27,
+        "height": 27
+      },
+      "evidenceFile": "production-month-1440x1000.json"
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 1024,
+        "height": 900
+      },
+      "documentScrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "documentClientWidth": 1024,
+      "canvasScrollWidth": 735,
+      "canvasClientWidth": 735,
+      "gridScrollWidth": 735,
+      "gridClientWidth": 735,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 45,
+      "minimumInteractiveTarget": {
+        "width": 27,
+        "height": 27
+      },
+      "evidenceFile": "production-month-1024x900.json"
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "documentScrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "documentClientWidth": 768,
+      "canvasScrollWidth": 732,
+      "canvasClientWidth": 732,
+      "gridScrollWidth": 732,
+      "gridClientWidth": 732,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 45,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-month-768x900.json"
+    },
+    {
+      "view": "month",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "documentClientWidth": 390,
+      "canvasScrollWidth": 366,
+      "canvasClientWidth": 366,
+      "gridScrollWidth": 366,
+      "gridClientWidth": 366,
+      "sevenColumns": true,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 45,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-month-390x844.json"
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "documentScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "documentClientWidth": 1440,
+      "canvasScrollWidth": 1133,
+      "canvasClientWidth": 1133,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 378,
+      "minimumInteractiveTarget": {
+        "width": 36.90625,
+        "height": 28
+      },
+      "evidenceFile": "production-year-1440x1000.json"
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 1024,
+        "height": 900
+      },
+      "documentScrollWidth": 1024,
+      "bodyScrollWidth": 1024,
+      "documentClientWidth": 1024,
+      "canvasScrollWidth": 735,
+      "canvasClientWidth": 735,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": false,
+      "sidebarRendered": true,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 378,
+      "minimumInteractiveTarget": {
+        "width": 22.703125,
+        "height": 28
+      },
+      "evidenceFile": "production-year-1024x900.json"
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "documentScrollWidth": 768,
+      "bodyScrollWidth": 768,
+      "documentClientWidth": 768,
+      "canvasScrollWidth": 732,
+      "canvasClientWidth": 732,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 378,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-year-768x900.json"
+    },
+    {
+      "view": "year",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "documentScrollWidth": 390,
+      "bodyScrollWidth": 390,
+      "documentClientWidth": 390,
+      "canvasScrollWidth": 366,
+      "canvasClientWidth": 366,
+      "gridScrollWidth": null,
+      "gridClientWidth": null,
+      "sevenColumns": false,
+      "noHorizontalOverflow": true,
+      "compactControlsRendered": true,
+      "sidebarRendered": false,
+      "interactiveTargetMinimumCss": 44,
+      "interactiveTargetCount": 378,
+      "minimumInteractiveTarget": {
+        "width": 44,
+        "height": 44
+      },
+      "evidenceFile": "production-year-390x844.json"
+    }
+  ]
+}

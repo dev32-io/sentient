@@ -1,0 +1,29 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { text: "Today" }
+- takeScreenshot: "calendar-day"
+- tapOn: { id: "calendar-view-week" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_WEEK_DATE}" }
+- takeScreenshot: "calendar-week"
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_MONTH_DATE}" }
+- assertVisible: { id: "calendar-view-day" }
+- tapOn: { id: "calendar-view-year" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- scrollUntilVisible:
+    element: { id: "calendar-year-month-${CALENDAR_YEAR_MONTH_NUMBER}" }
+    direction: DOWN
+    timeout: 10000
+- tapOn: { id: "calendar-year-month-${CALENDAR_YEAR_MONTH_NUMBER}" }
+- assertVisible: { id: "calendar-view-month" }
+- takeScreenshot: "calendar-year-selection"

@@ -1,0 +1,76 @@
+{
+  "validCreateSchema": true,
+  "validCreateEnvelope": false,
+  "invalidAllDayAccepted": true,
+  "invalidUntilParseOk": true,
+  "searchNoWindow": [],
+  "searchImportance": [
+    {
+      "id": "all-important:2026-08-05",
+      "baseEventId": "all-important",
+      "occurrenceId": "all-important:2026-08-05",
+      "occurrenceStart": {
+        "kind": "all-day",
+        "date": "2026-08-05"
+      },
+      "scope": "private",
+      "title": "match",
+      "start": {
+        "kind": "all-day",
+        "date": "2026-08-05"
+      },
+      "exdates": [],
+      "exceptions": [],
+      "visibility": "everyone",
+      "importance": "important",
+      "tags": [],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "all-normal:2026-08-06",
+      "baseEventId": "all-normal",
+      "occurrenceId": "all-normal:2026-08-06",
+      "occurrenceStart": {
+        "kind": "all-day",
+        "date": "2026-08-06"
+      },
+      "scope": "private",
+      "title": "match",
+      "start": {
+        "kind": "all-day",
+        "date": "2026-08-06"
+      },
+      "exdates": [],
+      "exceptions": [],
+      "visibility": "everyone",
+      "importance": "normal",
+      "tags": [],
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z"
+    }
+  ],
+  "configMaxOccurrences": 10,
+  "abortedUpdateCalls": 1,
+  "abortedUpdateResult": {
+    "id": "bounded",
+    "scope": "private",
+    "title": "bounded",
+    "start": {
+      "kind": "all-day",
+      "date": "2026-01-01"
+    },
+    "recurrence": {
+      "rrule": "FREQ=DAILY;COUNT=10",
+      "rule": {
+        "freq": "DAILY",
+        "count": 10
+      }
+    },
+    "visibility": "everyone",
+    "importance": "normal",
+    "tags": [],
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  }
+}

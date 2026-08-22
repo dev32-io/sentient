@@ -1,0 +1,2 @@
+mobile_status=0
+BUILD SUCCESSFUL in 5s

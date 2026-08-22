@@ -1,0 +1,26 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+# Invoke with current and adjacent months primed and the native network path
+# observably unavailable.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 15000
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { text: "Next period" }
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- tapOn: { id: "calendar-view-week" }
+- tapOn: { text: "Previous period" }
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "${CALENDAR_FILTER_TEXT}"
+- hideKeyboard
+- assertVisible: { id: "calendar-freshness-offline" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- takeScreenshot: "calendar-cached-offline"

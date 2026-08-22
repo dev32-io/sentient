@@ -35,6 +35,14 @@ export function createHostTimeZoneProvider(): TimeZoneProvider {
   return { zone: () => zone };
 }
 
+let resolvedTimeZone: TimeZoneProvider | null = null;
+
+/** Resolve the process-wide household timezone provider once. */
+export function resolveTimeZone(): TimeZoneProvider {
+  resolvedTimeZone ??= createHostTimeZoneProvider();
+  return resolvedTimeZone;
+}
+
 const STAMP_FIELDS = {
   year: "numeric",
   month: "2-digit",

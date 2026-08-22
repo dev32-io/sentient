@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: web-calendar-projections
+title: Build deterministic web calendar projections
+status: merged
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-core-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun run --filter @sentient/webui test:unit
+    - source scripts/env.sh && bun run --filter @sentient/webui typecheck
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/web-calendar-projections
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-projections
+  baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
+  lastRunId: c09a0839-7ee6-48e7-aaf7-93412ac557fd
+  completedCommit: 10a8f1c25ed130a1487ffeb5582247ca917333c7
+  mergedCommit: e1d558d3faee580aa36c5c000dac0fea77375c25

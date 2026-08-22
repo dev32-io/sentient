@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: android-calendar-assembly
+title: Assemble and verify the complete Android calendar experience
+status: merged
+dependsOn:
+  - android-calendar-database-session
+  - android-calendar-viewmodel
+  - android-calendar-surface
+  - android-calendar-overlays
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-delivery-completion
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/android-calendar-assembly
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/android-calendar-assembly
+  baseCommit: b087110223892e6dfd531f8820f9dd90bf2eb7e3
+  lastRunId: 517950f2-4e5d-4b72-8b1e-bf204c80d985
+  completedCommit: 3bb9a3e4cc171c19edb13727e132531c05f9beb1
+  mergedCommit: 2117a039d77f033a256d7245bb3dbcbbc684bf0f

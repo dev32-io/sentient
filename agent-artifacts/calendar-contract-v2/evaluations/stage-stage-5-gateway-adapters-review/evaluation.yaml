@@ -1,0 +1,55 @@
+schemaVersion: 1
+id: stage-stage-5-gateway-adapters-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-5-gateway-adapters
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/bootstrap/product-tools/calendar-provider.test.ts
+    src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+    src/calendar/calendar-mutations.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - All six tool schemas, stable tiers, pre-PDP household gate, actionable
+    errors, and proactive caps
+  - REST V2 route replacement, paging, authentication, error mapping, and handle
+    closure
+  - Tool and REST adapters share domain behavior without loopback or hidden-data
+    leakage
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 323e2cb3-81c3-4167-ab7e-cd58ac964b2f
+  reviewedCommit: 3062b4f0fb87b0a10d5db91e6219f667e03f90d4
+  managerPrompt: Repair STAGE5-001 by separating REST paging from model-tool
+    completeness and serialization limits. REST mode must sort the complete
+    bounded aggregate, apply the validated cursor, return at most
+    query.page_size events, and emit nextCursor whenever additional bounded
+    events remain; it must not apply output.max_result_chars to the full
+    aggregate or return 413 merely because multiple pages are needed. Tool mode
+    must continue to reject any continuation and enforce output.max_result_chars
+    before broker truncation. Preserve max_occurrences, malformed-cursor
+    rejection, all-scope complete-or-error behavior, and HTTP safety boundaries.
+    Add a regression where the bounded aggregate exceeds max_result_chars but
+    each REST page is valid and traversable, plus the paired tool
+    result_too_large assertion, then rerun all stage-5 checks.
+  fixerAgentId: e255524d-0ebe-49b4-9967-de89db23dace
+findings:
+  - id: STAGE5-001
+    severity: high
+    status: resolved
+    criterion: REST V2 paging and proactive model-output limits remain boundary-specific
+    location: gateway/src/calendar/calendar-query.ts:432-449
+    summary: REST paging no longer applies the model result-character cap; tool-only
+      completeness and serialization enforcement remains intact.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-5-gateway-adapters-review/manifest.yaml

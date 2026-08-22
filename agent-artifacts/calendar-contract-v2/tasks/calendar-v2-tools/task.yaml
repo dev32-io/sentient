@@ -1,0 +1,37 @@
+schemaVersion: 1
+id: calendar-v2-tools
+title: Replace all six model-facing calendar tool adapters
+status: merged
+dependsOn:
+  - calendar-v2-query
+  - calendar-v2-occurrence-mutations
+  - calendar-v2-following-update
+  - calendar-v2-following-delete
+  - calendar-v2-config
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-5-gateway-adapters
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/bootstrap/product-tools/calendar-provider.test.ts
+      src/calendar/calendar-query.test.ts
+      src/calendar/calendar-mutations.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-tools
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-tools
+  baseCommit: b9ddfec0746dd72b119b783df148aff5921eb642
+  lastRunId: e1d47f33-2fb6-45c3-8bb1-a0cd5cc2c56e
+  completedCommit: 8e35ff29f6127fca67c708b47a975fe80cc5d631
+  mergedCommit: 91ff9d2946073296b30e83a2a3d4ad2b71908504

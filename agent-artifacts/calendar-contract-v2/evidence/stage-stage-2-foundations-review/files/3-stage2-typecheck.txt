@@ -1,0 +1,10 @@
+$ bun run --filter '*' typecheck
+@sentient/audio-prefs typecheck: Exited with code 0
+@sentient/tls typecheck: Exited with code 0
+@sentient/wizard typecheck: Exited with code 0
+@sentient/protocol typecheck: Exited with code 0
+@sentient/testing typecheck: Exited with code 0
+@sentient/config typecheck: Exited with code 0
+@sentient/web-sdk typecheck: Exited with code 0
+@sentient/webui typecheck: Exited with code 0
+@sentient/gateway typecheck: Exited with code 0

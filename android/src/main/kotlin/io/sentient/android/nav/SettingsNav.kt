@@ -24,6 +24,7 @@ import io.sentient.android.settings.SettingsViewModel
 import io.sentient.android.settings.account.AccountScreen
 import io.sentient.android.settings.advanced.AdvancedScreen
 import io.sentient.android.settings.audio.AudioScreen
+import io.sentient.android.settings.calendar.CalendarScreen
 import io.sentient.android.settings.diagnostics.DiagnosticsScreen
 import io.sentient.android.settings.members.MembersScreen
 import io.sentient.android.settings.memory.MemoryScreen
@@ -44,10 +45,12 @@ import org.koin.compose.koinInject
 fun NavGraphBuilder.settingsDestinations(nav: NavHostController) {
     settingsRootDestination(nav)
     memoryDestination(nav)
+    calendarDestination(nav)
     personalitiesDestination(nav)
     voiceDestination(nav)
     voiceAddDestination(nav)
     voiceFishDestination(nav)
+    voiceFishEditorDestination(nav)
     audioDestination(nav)
     modelDestination(nav)
     toolsDestination(nav)
@@ -87,6 +90,12 @@ private fun NavGraphBuilder.settingsRootDestination(nav: NavHostController) {
 private fun NavGraphBuilder.memoryDestination(nav: NavHostController) {
     composable(Routes.SETTINGS_MEMORY) {
         MemoryScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
+    }
+}
+
+private fun NavGraphBuilder.calendarDestination(nav: NavHostController) {
+    composable(Routes.SETTINGS_CALENDAR) {
+        CalendarScreen(vm = koinViewModel(), onBack = { nav.popBackStack() })
     }
 }
 
@@ -139,7 +148,26 @@ private fun NavGraphBuilder.voiceFishDestination(nav: NavHostController) {
         FishCloneScreen(
             vm = koinViewModel(),
             onBack = { nav.popBackStack() },
-            onDone = { markVoiceListDirty(nav); nav.popBackStack() },
+            onDone = { markVoiceListDirty(nav); nav.popBackStack(Routes.SETTINGS_VOICE, false) },
+            onOpenEditor = { nav.navigate(Routes.SETTINGS_VOICE_FISH_EDITOR) },
+        )
+    }
+}
+
+/**
+ * The editor is a real entry above the results entry. It deliberately resolves
+ * the VM from the results entry's ViewModelStoreOwner: the catalog and its
+ * filters therefore stay alive underneath this child instead of being copied
+ * or reloaded when the editor is opened.
+ */
+private fun NavGraphBuilder.voiceFishEditorDestination(nav: NavHostController) {
+    composable(Routes.SETTINGS_VOICE_FISH_EDITOR) {
+        val resultsEntry = nav.getBackStackEntry(Routes.SETTINGS_VOICE_FISH)
+        FishCloneScreen(
+            vm = koinViewModel(viewModelStoreOwner = resultsEntry),
+            editorOnly = true,
+            onBack = { nav.popBackStack() },
+            onDone = { markVoiceListDirty(nav); nav.popBackStack(Routes.SETTINGS_VOICE, false) },
         )
     }
 }

@@ -1,0 +1,17 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-conflict-sheet" }
+    timeout: 10000
+- tapOn: { text: "Reread event" }
+- extendedWaitUntil:
+    visible: { text: "Review my changes" }
+    timeout: 10000
+- tapOn: { text: "Review my changes" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- takeScreenshot: "calendar-conflict"

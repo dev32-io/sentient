@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: mobile-calendar-read-coordinator
+title: Implement shared cache-first calendar observation and revalidation
+status: merged
+dependsOn:
+  - mobile-calendar-store
+  - mobile-calendar-projections
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-experience-and-web-assembly
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    - source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && ./gradlew :android:assembleDebug
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/mobile-calendar-read-coordinator
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-read-coordinator
+  baseCommit: 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
+  lastRunId: 6cf7d992-7563-4b62-9022-fc28b6fd0394
+  completedCommit: bfab9d5dafc7a922ff1f8a0c9f94bfd45fc283f4
+  mergedCommit: 088acf38187cfcd82e2f7b65914f722102f5983d

@@ -363,6 +363,8 @@ export interface SessionRuntimeDeps {
    * `SessionRuntimeRequest.onWorkSettled`. Absent for a headless harness.
    */
   onWorkSettled?: (() => void) | undefined;
+  /** Closes composition-root-owned session resources after runtime teardown. */
+  onDispose?: (() => void) | undefined;
 }
 
 interface InFlightTurn {
@@ -1264,6 +1266,7 @@ export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
     // the handle closed on the next line.
     auxiliaryController.abort();
     store.close();
+    deps.onDispose?.();
   }
 
   return {

@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: s3-store-reads
+title: CalendarStore get/list/filter with visibility and event-tz recurrence expansion
+status: merged
+dependsOn:
+  - s3-store-writes
+  - s2-expand-recurrence
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-3-store-crud
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/calendar-store
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: 9a9d59ac9e3356346950a80c69291b0bfdd0c15b
+  lastRunId: c695cc5a-88a4-4d79-8900-7cee60fd8881
+  completedCommit: ddb64b09e17183aca124627b3903b42f7acf401d
+  mergedCommit: 820f28a87cc3a4d89ff649a7333e3bbe27416155

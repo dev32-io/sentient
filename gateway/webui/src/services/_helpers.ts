@@ -27,15 +27,15 @@ export function jsonHeaders(extra?: Record<string, string>): Record<string, stri
 }
 
 function errorFromResponse(body: unknown, status: number): ApiHttpError {
-  if (
-    typeof body === "object" &&
-    body !== null &&
-    "error" in body &&
-    typeof (body as Record<string, unknown>).error === "string"
-  ) {
-    const code = (body as Record<string, unknown>).error as string;
+  if (typeof body !== "object" || body === null || !("error" in body)) return { status, code: "unknown-error" };
+  const rawError = (body as Record<string, unknown>).error;
+  if (typeof rawError === "string") {
     const rawReason = (body as Record<string, unknown>).reason;
-    return typeof rawReason === "string" ? { status, code, reason: rawReason } : { status, code };
+    return typeof rawReason === "string" ? { status, code: rawError, reason: rawReason } : { status, code: rawError };
+  }
+  if (typeof rawError === "object" && rawError !== null && "code" in rawError && typeof rawError.code === "string") {
+    const message = "message" in rawError && typeof rawError.message === "string" ? rawError.message : undefined;
+    return message !== undefined ? { status, code: rawError.code, reason: message } : { status, code: rawError.code };
   }
   return { status, code: "unknown-error" };
 }

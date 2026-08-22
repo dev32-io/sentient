@@ -20,9 +20,14 @@ import { migrateWebToolsEnabled } from "../admin/web-tools-migrator.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
+import { createCalendarQueryService } from "../calendar/calendar-query.js";
+import { openCalendarPersistence } from "../calendar/calendar-store.js";
+import type { CalendarPersistence } from "../calendar/calendar-store.js";
+import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
+import type { CalendarConfig } from "../calendar/types.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
-import { type TimeZoneProvider, createHostTimeZoneProvider } from "../context/message-time.js";
+import { resolveTimeZone } from "../context/message-time.js";
 import { createSessionBlockRenderer } from "../context/session-block.js";
 import { createSituationBlockRenderer } from "../context/situation-block.js";
 import {
@@ -123,25 +128,6 @@ const log = getLog(["sentient", "bootstrap", "phase-services"]);
 // `loadCompactionSummarizerPrompt` already has, and its lines DO reach the log.
 let systemPrompt: string | null = null;
 
-/**
- * One provider for the process: the zone is a property of where the household
- * is, not of a session, and resolving it per session would re-log it per
- * socket. Swapped for a location-derived provider when the app learns where the
- * house actually is — see context/message-time.ts.
- *
- * LAZY, for the same reason `resolveSystemPrompt` below is: the resolver logs
- * which zone it picked, and at module-init time the file sink does not exist
- * yet, so a module-scope call writes that line to nowhere. Built on first use
- * instead, by which point the sink is up and an operator can actually confirm
- * from the log which zone the gateway is stamping in.
- */
-let hostTimeZone: TimeZoneProvider | null = null;
-
-function resolveTimeZone(): TimeZoneProvider {
-  hostTimeZone ??= createHostTimeZoneProvider();
-  return hostTimeZone;
-}
-
 function resolveSystemPrompt(): string {
   if (systemPrompt !== null) return systemPrompt;
   systemPrompt = loadSystemPrompt({});
@@ -210,6 +196,17 @@ function composeMemoryPrompt(
 /** The per-session memory wiring the composition root attaches: the memory
  *  tools (merged into the broker's `native` map) and the prompt-augment seam
  *  (appends the memory block after the skill index). Null when memory is off. */
+export interface SessionCalendar {
+  readonly tools: NativeToolRunner[];
+  /** Capability-held V2 persistence handles owned by this session. */
+  readonly privateStore: CalendarPersistence;
+  readonly householdStore: CalendarPersistence;
+  /** Composed once at session construction; calendar writes cannot mutate the
+   * cache-stable system prompt of an existing session. */
+  readonly nudge: string | null;
+  close(): void;
+}
+
 export interface SessionMemory {
   readonly tools: NativeToolRunner[];
   /** Appends the memory block after `skillPrompt` and emits
@@ -327,6 +324,146 @@ function wireScopeIndex(
  * to both scopes. Exported so the composition seam is unit-testable without
  * standing up the whole orchestrator.
  */
+export function resolveCalendarConfig(
+  orchestratorCfg: OrchestratorConfig,
+  householdTimeZone = resolveTimeZone().zone(),
+): CalendarConfig {
+  if (orchestratorCfg.calendar.output.max_result_chars >= orchestratorCfg.tools.max_tool_result_chars) {
+    throw new Error(
+      "orchestrator.calendar.output.max_result_chars must be strictly below orchestrator.tools.max_tool_result_chars",
+    );
+  }
+  const configured = orchestratorCfg.calendar.default_event_tz_id;
+  return Object.freeze({
+    query: Object.freeze({
+      maxDays: orchestratorCfg.calendar.query.max_days,
+      maxOccurrences: orchestratorCfg.calendar.query.max_occurrences,
+      pageSize: orchestratorCfg.calendar.query.page_size,
+    }),
+    input: Object.freeze({
+      maxTitleChars: orchestratorCfg.calendar.input.max_title_chars,
+      maxDescriptionChars: orchestratorCfg.calendar.input.max_description_chars,
+      maxQueryChars: orchestratorCfg.calendar.input.max_query_chars,
+      maxGroupChars: orchestratorCfg.calendar.input.max_group_chars,
+      maxTagChars: orchestratorCfg.calendar.input.max_tag_chars,
+      maxTags: orchestratorCfg.calendar.input.max_tags,
+    }),
+    output: Object.freeze({ maxResultChars: orchestratorCfg.calendar.output.max_result_chars }),
+    recurrence: Object.freeze({
+      maxOccurrences: orchestratorCfg.calendar.recurrence.max_occurrences,
+      maxDays: orchestratorCfg.calendar.recurrence.max_days,
+    }),
+    nudge: Object.freeze({ maxPerDay: orchestratorCfg.calendar.nudge.max_per_day }),
+    defaultEventTimeZoneId: configured === "household" ? householdTimeZone : configured,
+  });
+}
+
+export function buildSessionCalendar(
+  orchestratorCfg: OrchestratorConfig,
+  accessManager: AccessManager,
+  principal: UserPrincipal,
+  resolvedConfig?: CalendarConfig,
+  householdTimeZone?: string,
+): SessionCalendar | null {
+  if (!orchestratorCfg.calendar.enabled) return null;
+
+  // The process-level composition root normally supplies both values. Keeping
+  // the fallback makes this seam useful to focused bootstrap tests while still
+  // resolving the household sentinel exactly once for one build.
+  const householdZone = householdTimeZone ?? resolveTimeZone().zone();
+  const calendarCfg = resolvedConfig ?? resolveCalendarConfig(orchestratorCfg, householdZone);
+  const privateCap = accessManager.grant(principal, "calendar-private");
+  const householdCap = accessManager.grant(principal, "calendar-household");
+  let privateStore: CalendarPersistence | undefined;
+  let householdStore: CalendarPersistence | undefined;
+  try {
+    // One fresh V2 handle per scope. The query service and all three adapters
+    // share these handles; no compatibility facade or ambient principal is
+    // introduced at the session boundary.
+    privateStore = openCalendarPersistence(privateCap, calendarCfg);
+    householdStore = openCalendarPersistence(householdCap, calendarCfg);
+    const queryService = createCalendarQueryService({
+      private: privateStore,
+      household: householdStore,
+      role: principal.role,
+      config: calendarCfg,
+      householdTimeZone: householdZone,
+    });
+    const tools = composeProductToolProviders(undefined, {
+      calendar: {
+        privatePersistence: privateStore,
+        householdPersistence: householdStore,
+        calendarConfig: calendarCfg,
+        queryService,
+        privateCap,
+        householdCap,
+      },
+    });
+    const nudgeBudget = {
+      maxChars: 4000,
+      maxLines: Math.max(1, orchestratorCfg.calendar.nudge.max_per_day + 4),
+    };
+    const nudgeNow = Date.now();
+    const privateNudge = composeCalendarNudge(
+      queryService,
+      principal.role,
+      householdZone,
+      nudgeNow,
+      nudgeBudget,
+      "private",
+    );
+    const householdNudge = composeCalendarNudge(
+      queryService,
+      principal.role,
+      householdZone,
+      nudgeNow,
+      nudgeBudget,
+      "household",
+    );
+    const nudge = capCalendarNudge(
+      [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n") || null,
+      nudgeBudget,
+    );
+    const privateHandle = privateStore;
+    const householdHandle = householdStore;
+    let closed = false;
+    return {
+      privateStore: privateHandle,
+      householdStore: householdHandle,
+      tools: [...tools.values()],
+      nudge: nudge || null,
+      close: () => {
+        if (closed) return;
+        closed = true;
+        try {
+          privateHandle.close();
+        } catch {
+          /* best effort */
+        }
+        try {
+          householdHandle.close();
+        } catch {
+          /* best effort */
+        }
+      },
+    };
+  } catch (error) {
+    // Construction can fail after either handle has been opened (including
+    // provider validation and nudge projection). Never leak the first handle.
+    try {
+      privateStore?.close();
+    } catch {
+      /* best effort */
+    }
+    try {
+      householdStore?.close();
+    } catch {
+      /* best effort */
+    }
+    throw error;
+  }
+}
+
 export function buildSessionMemory(
   orchestratorCfg: OrchestratorConfig,
   accessManager: AccessManager,
@@ -495,6 +632,9 @@ export interface PhaseServicesInput {
 }
 
 export interface PhaseServicesOutput {
+  /** Resolved V2 calendar limits and concrete household timezone for REST and sessions. */
+  readonly calendarConfig: CalendarConfig | undefined;
+  readonly calendarHouseholdTimeZone: string | undefined;
   readonly stt: SttService | null;
   readonly tts: TtsService | null;
   readonly tls: GatewayTlsMaterial | undefined;
@@ -552,6 +692,12 @@ export interface PhaseServicesOutput {
 
 export async function runPhaseServices(input: PhaseServicesInput): Promise<PhaseServicesOutput> {
   const { cfg, auth, secretsStore } = input;
+  // Resolve this once at the app composition root. Sessions and REST receive
+  // the same concrete value rather than independently resolving the sentinel.
+  const calendarHouseholdTimeZone = resolveTimeZone().zone();
+  const calendarConfig = cfg.orchestrator
+    ? resolveCalendarConfig(cfg.orchestrator, calendarHouseholdTimeZone)
+    : undefined;
 
   const stt = cfg.stt ? createSttService(cfg) : null;
   const tts = createTtsService({ cfg });
@@ -582,7 +728,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     delegatedNativeTools,
     startDreamScheduler,
     stopDreamScheduler,
-  } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth);
+  } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth, calendarConfig, calendarHouseholdTimeZone);
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -679,6 +825,8 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
   });
 
   return {
+    calendarConfig,
+    calendarHouseholdTimeZone,
     stt,
     tts,
     tls,
@@ -779,6 +927,10 @@ export async function buildOrchestratorServices(
    *  harness can build the orchestrator without an auth service; the block
    *  then renders without those two lines. */
   auth?: AuthService | null,
+  /** Resolved once by runPhaseServices so REST and sessions share the same
+   *  immutable calendar settings. Optional for direct test harnesses. */
+  calendarConfig?: CalendarConfig,
+  calendarHouseholdTimeZone?: string,
 ): Promise<OrchestratorServices> {
   // `sharedDataRoot` is optional (T24 activates the household scope); when the
   // operator leaves `access.shared_data_root` unset the AccessManager derives it
@@ -952,8 +1104,13 @@ export async function buildOrchestratorServices(
     timeoutMs: orchestratorCfg.delegation.hermes_timeout_ms,
   });
 
+  const sessionCalendarHouseholdTimeZone = calendarHouseholdTimeZone ?? resolveTimeZone().zone();
+  const sessionCalendarConfig =
+    calendarConfig ?? resolveCalendarConfig(orchestratorCfg, sessionCalendarHouseholdTimeZone);
   const createSessionRuntime = buildCreateSessionRuntime({
     orchestratorCfg,
+    calendarConfig: sessionCalendarConfig,
+    calendarHouseholdTimeZone: sessionCalendarHouseholdTimeZone,
     accessManager,
     provider,
     mcpClient,
@@ -1305,6 +1462,8 @@ function safeUrlHost(url: string): string {
 
 interface CreateSessionRuntimeFactoryDeps {
   orchestratorCfg: OrchestratorConfig;
+  calendarConfig: CalendarConfig;
+  calendarHouseholdTimeZone: string;
   accessManager: AccessManager;
   provider: UserModelProvider | null;
   mcpClient: McpClient;
@@ -1351,7 +1510,17 @@ interface CreateSessionRuntimeFactoryDeps {
  *  fail the whole gateway boot (that check lives HERE, at the point of
  *  actual use, not in `buildOrchestratorServices` above). */
 function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): CreateSessionRuntime {
-  const { orchestratorCfg, accessManager, provider, mcpClient, mcpCatalog, delegationGuard, hermesRunner } = deps;
+  const {
+    orchestratorCfg,
+    calendarConfig,
+    calendarHouseholdTimeZone,
+    accessManager,
+    provider,
+    mcpClient,
+    mcpCatalog,
+    delegationGuard,
+    hermesRunner,
+  } = deps;
   const {
     delegatedExternalTool,
     profileStore,
@@ -1513,6 +1682,13 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       dbFileName,
     );
     const spark = sessionMemory?.spark ?? null;
+    const sessionCalendar = buildSessionCalendar(
+      orchestratorCfg,
+      accessManager,
+      principal,
+      calendarConfig,
+      calendarHouseholdTimeZone,
+    );
 
     // The single `native` namespace map the broker resolves under
     // `NATIVE_TOOL_SERVER_KEY`: the skill tools plus (when memory is on) the
@@ -1521,6 +1697,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // `buildSessionMemory` hands back an ARRAY of runners.
     const nativeTools = new Map(skillTools);
     for (const runner of sessionMemory?.tools ?? []) nativeTools.set(runner.definition.name, runner);
+    for (const runner of sessionCalendar?.tools ?? []) nativeTools.set(runner.definition.name, runner);
     // Product providers are composed once per authenticated session. Web
     // receives a dedicated user capability and operator-owned limits; Home
     // and Music receive only their app-owned credential-bearing adapters.
@@ -1744,7 +1921,8 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
     // session's build, never mutating this one's cache-stable prefix). A child
     // principal never sees `@adults`-tagged content. Private scope only in S1.
     // Null `sessionMemory` (master switch off) leaves the skill prompt as-is.
-    const sessionSystemPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
+    const memoryPrompt = sessionMemory ? sessionMemory.augmentPrompt(skillPrompt) : skillPrompt;
+    const sessionSystemPrompt = sessionCalendar?.nudge ? `${memoryPrompt}\n\n${sessionCalendar.nudge}` : memoryPrompt;
 
     const runtime = buildSessionRuntime({
       principal,
@@ -1823,6 +2001,7 @@ function buildCreateSessionRuntime(deps: CreateSessionRuntimeFactoryDeps): Creat
       // closure above. Null when the deep-memory app is not wired.
       spark,
       onWorkSettled,
+      onDispose: () => sessionCalendar?.close(),
     });
     // Fills the slot `onDelegationProgress` above closed over — see that
     // comment for why this is safe despite running after the broker (and its

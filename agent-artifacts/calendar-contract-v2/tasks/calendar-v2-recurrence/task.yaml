@@ -1,0 +1,32 @@
+schemaVersion: 1
+id: calendar-v2-recurrence
+title: Implement effective occurrences and recurrence split arithmetic
+status: merged
+dependsOn:
+  - calendar-v2-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-2-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/calendar/expand-recurrence.test.ts
+      src/calendar/recurrence-splitter.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-recurrence
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-recurrence
+  baseCommit: 49c71459bbb10b760e2a1b1c60178b69806d7ade
+  lastRunId: dc2067e1-dd07-46cb-a6fa-48483c417cb2
+  completedCommit: 5b7e3ffbaa8f3255770560bec8dcd88040a7da52
+  mergedCommit: e63648f3407946ea89239aba854a81f37c75587b

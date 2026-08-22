@@ -1,0 +1,37 @@
+schemaVersion: 1
+evaluation: stage-mobile-platform-sessions-review
+recordedAt: 2026-08-21T23:02:48.084Z
+entries:
+  - result: PASS
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug --rerun-tasks
+      --console=plain
+    description: Declared shared/Android gate; forced rerun, including 138 iOS
+      simulator KMP tests, 152 shared Android unit tests, and 105 Android app
+      unit tests.
+    path: files/1-stage-mobile-platform-sessions-review-iteration3-evidence.txt
+    checksum: sha256:8fd00f9c167f28119a764efb8ada48b65dbf945a8efd999a937e96af268c7248
+  - result: PASS; 8/8
+    command: source scripts/env.sh && ./gradlew :android:connectedDebugAndroidTest
+      --rerun-tasks --console=plain
+    description: Additional real-driver Android instrumentation including five
+      platform publication-race scenarios.
+    path: files/2-stage-mobile-platform-sessions-review-iteration3-evidence.txt
+    checksum: sha256:8fd00f9c167f28119a764efb8ada48b65dbf945a8efd999a937e96af268c7248
+  - result: PASS
+    command: source scripts/env.sh && scripts/ios-setup.sh
+    description: Declared iOS setup gate.
+    path: files/3-stage-mobile-platform-sessions-review-iteration3-evidence.txt
+    checksum: sha256:8fd00f9c167f28119a764efb8ada48b65dbf945a8efd999a937e96af268c7248
+  - result: PASS; 82/82
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest' -quiet
+    description: Declared iOS simulator application tests.
+    path: files/4-stage-mobile-platform-sessions-review-iteration3-evidence.txt
+    checksum: sha256:8fd00f9c167f28119a764efb8ada48b65dbf945a8efd999a937e96af268c7248
+  - result: PASS; worktree clean
+    command: source scripts/env.sh && git diff --check
+    description: Declared diff check.
+    path: files/5-stage-mobile-platform-sessions-review-iteration3-evidence.txt
+    checksum: sha256:8fd00f9c167f28119a764efb8ada48b65dbf945a8efd999a937e96af268c7248

@@ -1,0 +1,59 @@
+schemaVersion: 1
+id: stage-mobile-viewmodel-adapters-review
+type: combined-review
+checkpoint: stage-review
+stageId: mobile-viewmodel-adapters
+scope:
+  workItem: calendar-experience-refresh
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Thin Android StateFlow and iOS SKIE AsyncSequence mapping with correct
+    cancellation
+  - A focused XCFramework/Swift test proves the complete nested
+    CalendarExperienceState bridges before SwiftUI components depend on it
+  - Exact intent/identity forwarding with raw offset-bearing recurrence anchors
+    and no native pagination/filter/cache/prefetch/mutation policy
+  - Every supported state from sentient-design/design/mobile/calendar.html and
+    sentient-design/components/mobile/sentient-mobile.js is representable
+    without prototype data
+loop:
+  iteration: 1
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: 19a95521-14d0-45fe-bf6c-cf8d750d16c7
+  reviewedCommit: 73745a9c7b747780004aedf23ea2d71ff6a1edf7
+  managerPrompt: Resolve MVA-001. When the iOS calendar adapter opens, explicitly
+    activate/start the session-scoped CalendarExperience cache observation and
+    revalidation path before or atomically with SKIE state collection; merely
+    iterating an unstarted StateFlow is insufficient. Make activation idempotent
+    across SwiftUI/ViewModel recreation, keep the authenticated experience alive
+    when the route collector cancels, and avoid introducing native
+    fetch/pagination policy. Add focused Swift/XCFramework tests proving
+    calendar open invokes the shared activation contract exactly as intended,
+    cached state can arrive first, revalidation follows, route recreation does
+    not duplicate work, and disposal cancels only the owned collector. Run all
+    stage checks and return for automatic re-review.
+  fixerAgentId: dc383fb1-0b06-4c82-877f-11cb428e9eb0
+findings:
+  - id: MVA-002
+    severity: low
+    status: open
+    criterion: Repair test Swift concurrency compatibility
+    location: ios/Tests/CalendarViewModelTests.swift:367-379
+    summary: Repair-added test uses a mutable captured continuation that becomes an
+      error in Swift 6 mode.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-mobile-viewmodel-adapters-review/manifest.yaml

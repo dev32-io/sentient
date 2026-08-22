@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "${CALENDAR_RECURRING_DELETE_EVENT_TAG}" }
+- tapOn: { id: "calendar-preview-edit" }
+- scrollUntilVisible:
+    element: { id: "calendar-editor-delete" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-delete" }
+- tapOn: { id: "calendar-scope-entire_series" }
+- tapOn: { id: "calendar-confirmation-delete" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+# Direct fixture reread verifies every series segment is absent.

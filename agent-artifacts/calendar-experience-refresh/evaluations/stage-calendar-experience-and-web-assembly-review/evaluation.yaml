@@ -1,0 +1,114 @@
+schemaVersion: 1
+id: stage-calendar-experience-and-web-assembly-review
+type: combined-review
+checkpoint: stage-review
+stageId: calendar-experience-and-web-assembly
+scope:
+  workItem: calendar-experience-refresh
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    :android:assembleDebug
+  - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
+    run --filter @sentient/webui typecheck && bun run --filter @sentient/webui
+    build
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Shared cache-first complete pagination, stale-while-revalidate, coalescing,
+    cancellation, one coherent StateFlow, source-compatible
+    SettingsComponent/factory exposure, and Android intermediate compilation
+  - Complete web route, authenticated capability projection, Dialog safety,
+    exact V2 mutations, and deterministic local-only disposable fixture/cleanup
+    adapter
+  - Production web is compared by the final E2E agent through Playwright MCP
+    against sentient-design/design/web/calendar.html and
+    sentient-design/components/web/sentient-web.js at exactly 1440x1000,
+    1024x900, 768x900, and 390x844
+  - Web CAL-UX-001..007, 013, and 014 use unique synthetic data, guaranteed
+    cleanup, semantic/keyboard/focus evidence, and documented deviations without
+    adding a separate browser-runner project or mandatory screen-reader gate
+loop:
+  iteration: 1
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: 86f5879e-0009-41ed-af3b-4eba651d42c5
+  reviewedCommit: de9c9d5c1b3543e1523ee755417c0ca567825187
+  managerPrompt: Resolve all six findings; do not accept the critical isolation
+    risk. On account/backend namespace change, synchronously remove prior
+    snapshot/preferences from visible state, cancel or epoch-invalidate all
+    in-flight reads/prefetch/revalidation, open/load only the new namespace, and
+    reject stale completions so prior rows cannot display or be committed under
+    the successor namespace; add deterministic switch-during-revalidation tests.
+    Treat all unauthenticated/expired/forbidden web states as non-disclosing
+    permission states and remove cached private occurrences from the rendered
+    projection. Make Year month selection intentionally update both anchor and
+    controller view to Month. Redesign local fixture ownership around a unique
+    run/principal namespace and cleanup only rows/resources created by that
+    run—never delete a fixed shared home database or unrelated local household
+    data. Restore overflow-preview focus to a stable mounted trigger or
+    deterministic fallback rather than a detached dialog button. Include
+    timezone identity in cache/revalidation identity, or invalidate/reload when
+    it changes, with interval-regression coverage. Run all stage checks and
+    return for automatic re-review.
+  fixerAgentId: 71a2fdd2-8048-46f5-8e41-fe2c19fdc64c
+findings:
+  - id: CAL-REVIEW-001
+    severity: critical
+    status: resolved
+    criterion: AC-013; authenticated-session namespace isolation
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:124-141,
+      347-383, 952-994
+    summary: Synchronous namespace invalidation, epoch checks, and namespace-pinned
+      atomic writes prevent predecessor state or completions crossing
+      namespaces.
+    blocking: false
+  - id: CAL-REVIEW-002
+    severity: high
+    status: resolved
+    criterion: Web unauthorized/non-disclosing permission state
+    location: gateway/webui/src/components/calendar/calendar-controller.ts:289-294,
+      793-805; gateway/webui/src/components/calendar/calendar-view.tsx:351-355,
+      456-461
+    summary: 401/403/authentication failures clear cached occurrences and render a
+      non-disclosing permission state.
+    blocking: false
+  - id: CAL-REVIEW-003
+    severity: high
+    status: resolved
+    criterion: AC-001; intentional Year month navigation
+    location: gateway/webui/src/components/calendar/calendar-controller.ts:595-608;
+      gateway/webui/src/components/calendar/calendar-view.tsx:505
+    summary: Year month selection now sets Month view and the selected anchor
+      through one controller intent.
+    blocking: false
+  - id: CAL-REVIEW-004
+    severity: high
+    status: resolved
+    criterion: Disposable fixture cleanup isolation
+    location: gateway/src/calendar/e2e-helpers.ts:58-99, 372-414, 438-511
+    summary: Fixture ownership is unique and cleanup deletes seeded rows plus
+      run-owned databases/users without deleting fixed shared home storage.
+    blocking: false
+  - id: CAL-REVIEW-005
+    severity: low
+    status: resolved
+    criterion: Predictable overflow preview focus restoration
+    location: gateway/webui/src/components/calendar/calendar-view.tsx:398-418
+    summary: Overflow preview focus restoration uses a mounted trigger or
+      deterministic mounted view-bar fallback.
+    blocking: false
+  - id: CAL-REVIEW-006
+    severity: low
+    status: resolved
+    criterion: Timezone-aware cache identity
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/calendar/CalendarExperience.kt:107-110,
+      256, 1218-1223
+    summary: Locale-derived timezone changes create a distinct window identity and
+      trigger revalidation.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-calendar-experience-and-web-assembly-review/manifest.yaml

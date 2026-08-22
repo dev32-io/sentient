@@ -97,9 +97,9 @@ class AuthClient(
                 contentType(ContentType.Application.Json)
                 setBody(LoginRequest(userId = userId, pin = pin))
             }
-            log.info("login.result", mapOf("userId" to userId, "status" to response.status.value))
+            log.info("login.result", mapOf("userIdLength" to userId.length, "status" to response.status.value))
             if (response.status == HttpStatusCode.Unauthorized) {
-                log.warn("login.rejected", mapOf("userId" to userId, "reason" to "invalid-credentials"))
+                log.warn("login.rejected", mapOf("userIdLength" to userId.length, "code" to "invalid-credentials"))
                 return@safeCall AuthResult.Failure(AuthError.InvalidCredentials)
             }
             mapResponse(response) { it.body<AuthResponse>() }
@@ -202,19 +202,19 @@ class AuthClient(
     ): AuthResult<T> {
         if (!response.status.value.toString().startsWith("2")) {
             val body = runCatching { response.bodyAsText() }.getOrDefault("")
-            log.warn("http.error", mapOf("status" to response.status.value))
+            log.warn("http.error", mapOf("status" to response.status.value, "code" to "server-response"))
             return AuthResult.Failure(AuthError.Server(status = response.status.value, body = body))
         }
         return runCatching { AuthResult.Success(parse(response)) }
-            .getOrElse { e ->
-                log.warn("parse.error", mapOf("cause" to (e.message ?: "unknown")))
-                AuthResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
+            .getOrElse {
+                log.warn("parse.error", mapOf("code" to "decode-failure"))
+                AuthResult.Failure(AuthError.Unknown(cause = "decode-failure"))
             }
     }
 
     private suspend fun <T> safeCall(block: suspend () -> AuthResult<T>): AuthResult<T> =
-        runCatching { block() }.getOrElse { e ->
-            log.warn("network.error", mapOf("cause" to (e.message ?: "unknown")))
-            AuthResult.Failure(AuthError.Network(cause = e.message ?: "network error"))
+        runCatching { block() }.getOrElse {
+            log.warn("network.error", mapOf("code" to "transport-failure"))
+            AuthResult.Failure(AuthError.Network(cause = "transport-failure"))
         }
 }

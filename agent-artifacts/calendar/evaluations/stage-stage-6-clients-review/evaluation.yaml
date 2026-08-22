@@ -1,0 +1,97 @@
+schemaVersion: 1
+id: stage-stage-6-clients-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-6-clients
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 3
+methods:
+  - cd gateway/webui && bun run test:unit && bun run typecheck
+  - ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+    ./gradlew :shared:mobile-sdk:compileDebugKotlin
+criteria:
+  - Web calendar REST client and view over /api/v1/calendar matching golden
+    fixtures
+  - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and serving-tz
+    representation
+loop:
+  iteration: 2
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: aa452454-8260-4533-ae90-fbc8e8b5968a
+  reviewedCommit: d8f0f8fd1f21fb538231de54405d040d5bbeea78
+  managerPrompt: >-
+    Address the remaining CAL-002 gap (high, blocking). CAL-001 is resolved. The
+    fix is TEST-ONLY in gateway/src/api/handlers/calendar.test.ts — do not
+    change production code.
+
+
+    The current "preserves occurrence identity and expanded times in list wire
+    responses" test uses a stub store returning a single Occurrence. The
+    manager-directed acceptance requires a RECURRING-event list response
+    containing N entries with distinct occurrenceId values and expanded
+    per-occurrence starts (not the base DTSTART). The existing "returns the base
+    event shape from GET, not occurrence fields" test already covers GET
+    base-shape — keep it.
+
+
+    Add a new test (or replace the single-occurrence test) that proves the
+    N-recurring-entries contract end-to-end through a REAL store:
+
+    - Use openCalendarStore with a temp directory (mkdtempSync, cleaned up in
+    afterEach/afterAll) and wire it via authenticatedDeps' openStore (return the
+    same store for both private and household, or just private).
+
+    - Create a recurring event via the store (or via the REST POST endpoint)
+    with a bounded recurrence, e.g. FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10 and a timed
+    start (e.g. 2026-08-05T14:00:00.000Z, America/Toronto — a Wednesday) — use
+    the same recurrence shape the store/expand path already handles (rule must
+    agree with rrule).
+
+    - Call the handler list endpoint GET /api/v1/calendar/events?from=...&to=...
+    over a covering window (e.g. 2026-08-01 to 2026-10-31) with a bearer token.
+
+    - Assert the response is 200 and the body.events array has EXACTLY 10
+    entries.
+
+    - Assert the 10 entries have DISTINCT occurrenceId values (e.g. a Set of
+    occurrenceId has size 10) and that each entry's start is the EXPANDED
+    per-occurrence start (the starts differ across entries and are not all equal
+    to the base DTSTART). Assert each entry carries baseEventId equal to the
+    created event's id, and occurrenceStart/occurrenceEnd where applicable.
+
+    - Assert the list entries are occurrence-shaped (have
+    occurrenceId/baseEventId/occurrenceStart), confirming the list wire is
+    occurrence-aware.
+
+
+    Keep the test deterministic and fast (real SQLite is fine). Do not weaken
+    the existing tests (bearer rejection, single-occurrence identity, GET
+    base-shape, close-on-failure).
+
+
+    Constraints: test-only (calendar.test.ts). Keep `cd gateway && bun run
+    typecheck` and `cd gateway && bun test src/api/handlers/calendar` green.
+  fixerAgentId: 38280f8d-bec3-41c3-8a3a-2cdd9b977f53
+findings:
+  - id: CAL-001
+    severity: high
+    status: resolved
+    criterion: Recurring occurrence wire fidelity
+    location: gateway/src/api/handlers/calendar.ts:120-127,244-254
+    summary: Expanded occurrence identity and times are preserved through REST.
+    blocking: false
+  - id: CAL-002
+    severity: high
+    status: resolved
+    criterion: REST handler boundary proof for recurring occurrences and base GET shape
+    location: gateway/src/api/handlers/calendar.test.ts:85-125
+    summary: Real-store test now proves the N-recurring-entry response contract.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-6-clients-review/manifest.yaml

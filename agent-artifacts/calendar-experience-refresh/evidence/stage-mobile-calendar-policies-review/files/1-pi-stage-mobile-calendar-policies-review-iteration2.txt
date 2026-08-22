@@ -1,0 +1,8 @@
+reviewed_commit=f953e6e625aca1859e02fcddfec04fa3c663ba8e
+repair_commit=7e3a0539
+bounded_diff=atomic in-flight request registry and deterministic interleaving tests
+worktree=clean
+mobile_sdk_data_allTests=PASS
+mobile_data_xcframework=PASS
+git_diff_check=PASS
+prior_open_CAL-POL-008=verified resolved: AtomicReference CAS registry removes entries before cancellation; lookup rejects stale/inactive entries; identity-checked completion cannot erase replacement

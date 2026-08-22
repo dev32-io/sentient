@@ -1,0 +1,18 @@
+schemaVersion: 1
+evaluation: stage-stage-6-bootstrap-review
+recordedAt: 2026-08-20T04:18:09.259Z
+entries:
+  - result: 84 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test
+      src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+      src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+  - result: All workspace typecheck targets passed
+    command: source scripts/env.sh && bun run typecheck
+  - result: pass
+    command: git diff --check 529ddee04b74f825aa207b3bf634cd43133ddfbd..HEAD
+  - result: "Repaired low-limit regression: query.maxDays=1 with a valid
+      household-today event produced a non-null nudge."
+    command: bun /tmp/calendar-bootstrap-review.ts
+    description: Sanitized synthetic runtime evidence.
+    path: files/4-calendar-bootstrap-review-nudge-repaired.txt
+    checksum: sha256:1d1d94079e0bf7610f347329b89550b8ce252e938651603f205f3919800078f5

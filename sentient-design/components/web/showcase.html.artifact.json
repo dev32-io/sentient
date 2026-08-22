@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "components/web/showcase.html",
+  "entry": "components/web/showcase.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-08-20T16:58:35.237Z",
+  "updatedAt": "2026-08-20T16:58:35.237Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

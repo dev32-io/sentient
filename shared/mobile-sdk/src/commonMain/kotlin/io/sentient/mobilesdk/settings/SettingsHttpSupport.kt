@@ -23,7 +23,9 @@ import io.ktor.http.isSuccess
 import io.sentient.mobilesdk.auth.AuthError
 import io.sentient.mobilesdk.auth.AuthResult
 import io.sentient.mobilesdk.log.Log
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.serialization.json.Json
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * JSON used for REQUEST bodies. `explicitNulls = false` guarantees that a
@@ -48,20 +50,38 @@ internal suspend fun <T> mapSettingsResponse(
     parse: suspend (HttpResponse) -> T,
 ): AuthResult<T> {
     if (!response.status.isSuccess()) {
-        val body = runCatching { response.bodyAsText() }.getOrDefault("")
+        val body = try {
+            response.bodyAsText()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            ""
+        }
         log.warn("http.error", mapOf("status" to response.status.value))
         return AuthResult.Failure(AuthError.Server(status = response.status.value, body = body))
     }
-    return runCatching { AuthResult.Success(parse(response)) }
-        .getOrElse { e ->
-            log.warn("parse.error", mapOf("cause" to (e.message ?: "unknown")))
-            AuthResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
-        }
+    return try {
+        AuthResult.Success(parse(response))
+    } catch (e: CancellationException) {
+        // Parsing may suspend while consuming the response body. Cancellation
+        // is control flow, never a malformed response or AuthError.Unknown.
+        throw e
+    } catch (e: Throwable) {
+        log.warn("parse.error", mapOf("type" to "decode"))
+        AuthResult.Failure(AuthError.Unknown(cause = "decode-failure"))
+    }
 }
 
 /** Wraps a client call so a transport failure becomes AuthError.Network, never a throw. */
 internal suspend fun <T> safeSettingsCall(log: Log, block: suspend () -> AuthResult<T>): AuthResult<T> =
-    runCatching { block() }.getOrElse { e ->
-        log.warn("network.error", mapOf("cause" to (e.message ?: "unknown")))
-        AuthResult.Failure(AuthError.Network(cause = e.message ?: "network error"))
+    try {
+        block()
+    } catch (e: TimeoutCancellationException) {
+        log.warn("network.timeout", mapOf("type" to "timeout"))
+        AuthResult.Failure(AuthError.Network(cause = "request timeout"))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        log.warn("network.error", mapOf("type" to "transport"))
+        AuthResult.Failure(AuthError.Network(cause = "transport-failure"))
     }

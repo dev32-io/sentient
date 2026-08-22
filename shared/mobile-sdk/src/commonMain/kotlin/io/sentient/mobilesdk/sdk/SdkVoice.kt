@@ -52,6 +52,7 @@ import io.sentient.mobilesdk.audio.opus.OpusUplinkEncoder
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.voice.VoiceUplinkPipeline
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.io.VoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
@@ -106,6 +107,10 @@ class SdkVoice(
     val audioState: StateFlow<VoiceAudioState> =
         voiceAudio?.state
             ?: MutableStateFlow(VoiceAudioState(Phase.Idle, micActive = false, playbackActive = false))
+
+    /** Aggregate mic energy for native waveform rendering; never exposes PCM. */
+    val micLevels: StateFlow<MicLevelEnvelope> =
+        voiceAudio?.micLevels ?: MutableStateFlow(MicLevelEnvelope.silence())
 
     // Null on the text-only path (no VoiceAudio): Start/Stop only fire the control
     // callbacks so the wire still carries audio.start/audio.end with no uplink frames.
@@ -348,7 +353,7 @@ class SdkVoice(
             c.ack?.complete(c.playback)
         }.onFailure { err ->
             if (err is CancellationException) { c.ack?.complete(false); throw err }
-            log.warn("command-failed", mapOf("cmd" to "Configure", "error" to (err.message ?: "unknown")))
+            log.warn("command-failed", mapOf("cmd" to "Configure", "code" to "voice-command-failure"))
             c.ack?.complete(false)
         }
     }

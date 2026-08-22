@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# CALENDAR_* login variables identify this run's disposable child principal.
+- runFlow: _calendar/open-calendar.yaml
+- assertNotVisible: { text: "${CALENDAR_ADULT_ONLY_TITLE}" }
+- assertNotVisible: { text: "${CALENDAR_RESTRICTED_FACET}" }
+- tapOn: { id: "${CALENDAR_CHILD_MUTATION_EVENT_TAG}" }
+- tapOn: { id: "calendar-preview-edit", optional: true }
+- tapOn: { id: "calendar-editor-save", optional: true }
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- assertNotVisible: { text: "${CALENDAR_ADULT_ONLY_TITLE}" }
+- takeScreenshot: "calendar-child-authorized-only"

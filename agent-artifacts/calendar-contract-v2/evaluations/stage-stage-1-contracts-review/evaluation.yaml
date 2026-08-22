@@ -1,0 +1,38 @@
+schemaVersion: 1
+id: stage-stage-1-contracts-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-1-contracts
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 3
+methods:
+  - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Exact V2 tool/REST fields and strict schema behavior
+  - Calendar scope versus mutation scope and stable occurrence identity
+  - Golden fixture completeness with no V1 compatibility parsing
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 2c9df5c8-893e-43de-9697-2bb1bc887bcb
+  reviewedCommit: bf7a8ebe873fa9730a4db6f3ef7084b7c9aee63f
+  managerPrompt: "Address all six review findings before re-review. Specifically:
+    add the bounded search query field to the authoritative shared query input;
+    restore documented create defaults for visibility, importance, and tags;
+    allow calendar_get to select an occurrence by originalStart; include
+    CalendarOccurrenceProjection in the response schema; require
+    resultingRevision for mutation results where a record survives while keeping
+    it absent for deletion; make wire RRULE parsing strict and add a populated
+    V1 list fixture rejection test. Preserve the clean V2-only contract and
+    rerun the stage checks."
+  fixerAgentId: 9fa68091-94a2-4940-a985-981097920ba1
+findings: []
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-1-contracts-review/manifest.yaml

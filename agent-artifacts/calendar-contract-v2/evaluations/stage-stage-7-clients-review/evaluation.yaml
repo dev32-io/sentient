@@ -1,0 +1,69 @@
+schemaVersion: 1
+id: stage-stage-7-clients-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-7-clients
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && cd gateway/webui && bun run test:unit --
+    src/services/calendar-api.test.ts
+    src/components/calendar/calendar-view.test.tsx
+  - source scripts/env.sh && cd gateway/webui && bun run typecheck
+  - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+    --tests '*Calendar*' --tests '*PrivacyGuard*'
+  - source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+criteria:
+  - Exact REST V2 parity across web and KMP
+  - No PATCH/DELETE or V1 wire fallback
+  - Source-level whole-series adapters preserve untouched UI compilation
+  - Calendar payload and token privacy in client diagnostics
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 76324f5f-1898-4883-bf7d-81cb576d44a4
+  reviewedCommit: 0611481e7dcdf3fea3f215fbc5c75288bf4de6d2
+  managerPrompt: "Repair both client findings and add exact-wire regressions. KMP
+    update changes must represent three states for every nullable-clearable
+    field—omitted/no change, concrete replacement, and explicit JSON null
+    clear—independently of the shared Json explicitNulls=false setting.
+    Introduce a typed tri-state patch representation and/or a CalendarChanges
+    custom serializer that emits null keys only for explicit clears while
+    preserving omission for unchanged description/end/group/recurrence; keep
+    empty-array tag clearing and exact gateway field names. Verify every clear
+    and omission against the golden gateway command, including whole-series
+    convenience adapters, and ensure web/KMP parity. Also preserve coroutine
+    cancellation throughout response parsing: never convert
+    CancellationException into AuthError.Unknown; rethrow it before generic
+    error mapping and add a test that cancellation raised during parser
+    execution propagates. Rerun all Stage 7 web, KMP calendar/privacy, and
+    compile checks."
+  fixerAgentId: b24777b7-d4c3-4293-945f-80f07ce14b18
+findings:
+  - id: CAL-V2-KMP-NULL-CHANGES
+    severity: high
+    status: resolved
+    criterion: KMP mutation supports V2 event-local update semantics and exact
+      web/KMP wire parity, including explicit clears.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:203-346;
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt:167-232
+    summary: Tri-state patch encoding and exact-wire regressions close the
+      explicit-clear defect.
+    blocking: false
+  - id: CAL-V2-KMP-CANCEL-PARSE
+    severity: low
+    status: resolved
+    criterion: CalendarHttpClient preserves cancellation behavior.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/settings/SettingsHttpSupport.kt:52-73;
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt:264-276
+    summary: Cancellation is rethrown during response parsing and covered by
+      regression test.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-7-clients-review/manifest.yaml

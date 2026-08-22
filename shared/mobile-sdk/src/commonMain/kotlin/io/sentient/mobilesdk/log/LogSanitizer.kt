@@ -7,6 +7,7 @@ package io.sentient.mobilesdk.log
  *   PASETO v4.local.* and v4.public.* — session auth tokens
  *   Bearer <token>                    — HTTP Authorization header values
  *   sak_<key>                         — sentient-auth service-auth keys
+ *   WebSocket/HTTP endpoints           — userinfo, query, fragment, and paths redacted
  *
  * Preview truncation caps at MAX_PREVIEW chars to avoid raw buffer dumps in logs.
  */
@@ -14,8 +15,10 @@ package io.sentient.mobilesdk.log
 private val PASETO = Regex("""v4\.(local|public)\.\S+""")
 private val BEARER = Regex("""(?i)bearer\s+[A-Za-z0-9._\-]+""")
 private val SENTIENT_AUTH_KEY = Regex("""sak_[A-Za-z0-9_\-]{10,}""")
+private val ENDPOINT = Regex("""(?i)\b(?:https?|wss?)://[^\s]+""")
 
 private const val REDACTED = "[redacted]"
+private const val ENDPOINT_REDACTED = "[redacted-endpoint]"
 
 /** Maximum string preview length before truncation. */
 const val MAX_PREVIEW = 120
@@ -28,6 +31,7 @@ fun sanitizeLog(s: String): String =
     s.replace(PASETO, REDACTED)
         .replace(BEARER, REDACTED)
         .replace(SENTIENT_AUTH_KEY, REDACTED)
+        .replace(ENDPOINT, ENDPOINT_REDACTED)
 
 /**
  * Truncates [s] to [MAX_PREVIEW] chars, appending an ellipsis if cut.

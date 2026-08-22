@@ -1,0 +1,23 @@
+schemaVersion: 1
+evaluation: stage-calendar-delivery-completion-review
+recordedAt: 2026-08-22T02:20:14.004Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug
+    path: files/1-calendar-rereview3-android.log
+    checksum: sha256:c90cfb4add5a2e6c98da52003ebf8f9cbdb559f4ca90efccdc1ba66c153aefad
+  - result: BUILD SUCCESSFUL; project generated
+    command: source scripts/env.sh && scripts/ios-setup.sh
+    path: files/2-calendar-rereview3-ios-setup.log
+    checksum: sha256:c93ec5d6f66839a0621d7602292bdbb6dccccbda34db8debda9e9ffad8574086
+  - result: TEST SUCCEEDED; 107 tests passed
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    path: files/3-calendar-rereview3-xcode.log
+    checksum: sha256:c3354287c6a7ff33e0cbd0aad268abd09456b587c30abb1a9962d9d245da0a3f
+  - result: 378 selectors across 47 Maestro flows validated
+    command: qa/mobile/validate-calendar-flows.rb
+  - result: Clean
+    command: source scripts/env.sh && git diff --check

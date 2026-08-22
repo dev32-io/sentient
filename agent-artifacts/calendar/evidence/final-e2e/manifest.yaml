@@ -1,0 +1,16 @@
+schemaVersion: 1
+evaluation: final-e2e
+recordedAt: 2026-08-18T23:28:56.497Z
+entries:
+  - result: Sanitized fresh closure evidence for the four repaired defects, checks,
+      and cleanup.
+    command: cat /tmp/calendar-e2e-rereview-20260818/evidence-summary.json
+  - result: Passed.
+    command: cd gateway && bun run typecheck
+  - result: 13 passed, 0 failed.
+    command: cd gateway && bun test src/calendar/nudge
+      src/bootstrap/product-tools/calendar-provider src/api/handlers/calendar
+  - result: 143 unit tests passed; typecheck passed.
+    command: cd gateway/webui && bun run test:unit && bun run typecheck
+  - result: Reviewed branch clean; evaluated product code was not modified.
+    command: git status --short --branch && git diff --check

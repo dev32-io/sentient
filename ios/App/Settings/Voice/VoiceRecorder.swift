@@ -54,7 +54,7 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate, @unchecked Sendabl
         } catch let error as VoiceRecorderError {
             throw error
         } catch {
-            log.warn("record.start.failed reason=\(error.localizedDescription)")
+            log.warn("record.start.failed code=audio-session")
             throw VoiceRecorderError.recorderFailed
         }
     }
@@ -92,7 +92,7 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate, @unchecked Sendabl
             try session.setCategory(.record, mode: .default)
             try session.setActive(true)
         } catch {
-            log.warn("session.activate.failed reason=\(error.localizedDescription)")
+            log.warn("session.activate.failed code=audio-session")
             throw VoiceRecorderError.sessionFailed
         }
     }
@@ -101,7 +101,7 @@ final class VoiceRecorder: NSObject, AVAudioRecorderDelegate, @unchecked Sendabl
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
-            log.warn("session.deactivate.failed reason=\(error.localizedDescription)")
+            log.warn("session.deactivate.failed code=audio-session")
         }
     }
 

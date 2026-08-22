@@ -45,7 +45,7 @@ final class BackendSetupViewModel: ObservableObject {
             port: portInt,
             security: security
         )
-        log.info("save.probe host=\(candidate.host) port=\(portInt) security=\(security.rawValue)")
+        log.info("save.probe hostLength=\(candidate.host.count) port=\(portInt) security=\(security.rawValue)")
         isSaving = true
         error = nil
         Task { await probeThenApply(candidate) }
@@ -88,7 +88,7 @@ final class BackendSetupViewModel: ObservableObject {
                 return false
             }
         } catch {
-            log.warn("save.probe.threw: \(error)")
+            log.warn("save.probe.threw code=transport")
             return false
         }
     }

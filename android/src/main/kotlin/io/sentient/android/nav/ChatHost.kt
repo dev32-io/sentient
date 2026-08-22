@@ -55,6 +55,7 @@ private const val REASON_TEARDOWN = "teardown"
  * @param onSelectSession Navigate to chat(id) for an existing conversation.
  * @param onNewChat       Navigate to chat(null) for a new conversation.
  * @param onOpenSettings  Navigate to the settings destination.
+ * @param onOpenCalendar  Navigate to the calendar destination from the drawer.
  * @param onAuthExpired   Terminal auth failure — host tears down + routes to login.
  */
 @Composable
@@ -64,6 +65,7 @@ internal fun ChatHost(
     onSelectSession: (String) -> Unit,
     onNewChat: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenCalendar: () -> Unit,
     onAuthExpired: () -> Unit,
 ) {
     // koinViewModel inside a NavHost composable resolves the NavBackStackEntry as the
@@ -89,6 +91,7 @@ internal fun ChatHost(
     // Keep-screen-on (S8): the VM owns the pure boolean; this screen is the ONLY place
     // that touches the platform flag, so every clear path lives in one auditable spot.
     val talkMode by chatVm.talkMode.collectAsStateWithLifecycle()
+    val micLevels by chatVm.micLevels.collectAsStateWithLifecycle()
     val keepScreenOn by chatVm.keepScreenOn.collectAsStateWithLifecycle()
     val activity by rememberUpdatedState(LocalActivity.current)
     // Carries the last reason a true→false condition was seen so the OFF log line still
@@ -140,11 +143,14 @@ internal fun ChatHost(
         onSelectSession = onSelectSession,
         onNewChat = onNewChat,
         onOpenSettings = onOpenSettings,
+        onOpenCalendar = onOpenCalendar,
         userName = userName,
     ) {
         ChatContent(
             uiState = chatUi,
             connection = connection,
+            talkMode = talkMode,
+            micLevels = micLevels,
             userName = userName,
             onSend = chatVm::send,
             onRetry = chatVm::retry,

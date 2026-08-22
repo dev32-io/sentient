@@ -47,6 +47,22 @@ afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
 
 function testConfig(): OrchestratorConfig {
   return {
+    calendar: {
+      enabled: true,
+      query: { max_days: 30, max_occurrences: 25, page_size: 10 },
+      input: {
+        max_title_chars: 64,
+        max_description_chars: 256,
+        max_query_chars: 64,
+        max_group_chars: 32,
+        max_tag_chars: 16,
+        max_tags: 4,
+      },
+      output: { max_result_chars: 4000 },
+      recurrence: { max_occurrences: 1000, max_days: 366 },
+      nudge: { max_per_day: 10 },
+      default_event_tz_id: "household",
+    },
     provider: {
       base_url: "http://localhost:0",
       model: "test-model",

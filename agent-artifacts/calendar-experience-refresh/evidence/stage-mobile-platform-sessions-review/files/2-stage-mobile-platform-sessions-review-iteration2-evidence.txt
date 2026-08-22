@@ -1,0 +1,19 @@
+stage: stage-mobile-platform-sessions-review
+work_item: calendar-experience-refresh
+reviewed_commit: a49b15dd2352d652132419c73b936d2f944368c7
+repair_commit: fa8775f7bac30ba6064f0b7540b8872518a3ec0d
+mode: closure-focused re-review
+
+checks:
+- shared/mobile-data allTests + Android unit/build gate, forced rerun: PASS
+- Android connected instrumentation, forced rerun: PASS (4 tests)
+- iOS setup: PASS
+- iOS simulator xcodebuild tests: PASS (82/82)
+- git diff --check: PASS
+- worktree: clean
+
+repair inspection:
+- Android and iOS now prepare resources locally and use CalendarLifecycleGate.publish for generation-checked ownership transfer.
+- close invalidates generation and captures the active runtime under the same gate.
+- platform barrier tests cover direct UserSessionManager.shutdown and IosUserSession.close.
+- the five named logout/auth-expiry/account-switch/backend-switch/successor common tests all invoke the same generic gate.close helper; they do not invoke the Android/iOS session boundary paths, and only the generic successor object is asserted.

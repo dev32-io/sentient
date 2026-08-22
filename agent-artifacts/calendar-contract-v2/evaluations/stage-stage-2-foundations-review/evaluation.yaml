@@ -1,0 +1,71 @@
+schemaVersion: 1
+id: stage-stage-2-foundations-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-2-foundations
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 3
+methods:
+  - source scripts/env.sh && cd gateway && bun test src/calendar/types.test.ts
+    src/calendar/calendar-temporal.test.ts
+    src/calendar/expand-recurrence.test.ts
+    src/calendar/recurrence-splitter.test.ts src/calendar/calendar-store.test.ts
+    src/calendar/e2e-helpers.test.ts
+  - source scripts/env.sh && cd shared/config && bun test
+    src/schemas/orchestrator-config.test.ts
+  - source scripts/env.sh && bun run typecheck
+criteria:
+  - Temporal and recurrence correctness including DST and generated-slot identity
+  - Fresh V2 storage isolation, capability gates, revision CAS, and rollback
+    primitives
+  - Operator limits remain bounded below the generic result cap
+  - Parallel contributions have non-overlapping source ownership and coherent
+    contracts
+loop:
+  iteration: 2
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 8499d0ae-39c9-4efe-983d-b772621ba086
+  reviewedCommit: d4672279ad258d1cff1e70f4e3efecaa25cf260d
+  managerPrompt: "Repair the two remaining blocking findings without regressing
+    the first repair set. Weekly recurrence must retain RFC-style
+    Monday-anchored week periods (WKST=MO): sort BYDAY within that anchored
+    week, exclude pre-DTSTART slots only from the first period, and advance
+    eligible periods by INTERVAL whole anchored weeks so INTERVAL>1 never emits
+    skipped-week slots. Remove every ambient host-timezone fallback from
+    structured date-period UNTIL normalization; require and thread the resolved
+    household/event timezone through expansion and all-day successor split
+    paths, with typed failure if absent. Add focused regressions for an
+    INTERVAL=2 multi-BYDAY DTSTART not on Monday and for all-day structured
+    UNTIL split/expansion under a non-UTC household timezone, then rerun all
+    stage-2 checks."
+  fixerAgentId: a9c17bbc-21f7-4b19-9004-4a69b5d24568
+  acceptedRisks:
+    - findingId: F4
+      rationale: This is a temporary composition gap, not a remaining
+        foundation-algorithm defect. The reviewed plan explicitly assigns
+        resolution of the household sentinel and threading the concrete timezone
+        through REST/session factories to task calendar-v2-bootstrap in stage 6.
+        Accepting it here avoids pulling later composition work into the
+        foundation stage while preserving a blocking verification obligation for
+        stage 6 and final E2E. No ambient fallback is accepted.
+findings:
+  - id: F4
+    severity: high
+    status: accepted
+    criterion: Resolved household/event timezone is threaded through every
+      recurrence expansion and all-day split path.
+    location: gateway/src/api/handlers/calendar.ts:22-38,96-102;
+      gateway/src/calendar/calendar-store.ts:439-446,506-508
+    summary: Default server calendar handling still passes the unresolved household
+      sentinel, so all-day recurring reads fail after the repair removed ambient
+      fallback.
+    blocking: true
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-2-foundations-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md

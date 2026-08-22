@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+tags: [helper, fault-armed]
+---
+# The native network path is unavailable. Relaunch and revisit Calendar to prove cached content
+# appears with offline state and without a blank loading replacement.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- takeScreenshot: "calendar-cache-first-offline"

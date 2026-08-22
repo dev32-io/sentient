@@ -14,12 +14,12 @@
 // trigger). The User session that was running is torn down when the authed
 // branch exits (hasToken=false → UserSessionHost leaves the tree).
 //
-// hasToken — the reactive nav gate for RootView (mirrors Android's displayName
-// != null guard). The display name is saved at login and cleared at logout,
-// acting as a reactive proxy for token presence. A WS drop does NOT clear it,
-// so a drop keeps the user on chat WITH the connection-lost banner.
+// hasToken — the reactive nav gate for RootView. It requires the token, display
+// name, and explicit server-authenticated userId retained at login; the display
+// name is presentation-only and never supplies the calendar identity. A WS drop
+// does NOT clear it, so a drop keeps the user on chat WITH the connection-lost banner.
 //
-// logout() clears only the token and display name. The UserSession teardown is
+// logout() clears the token, display name, and authenticated identity. The UserSession teardown is
 // driven separately by UserSessionHost.logout() (userSession.shutdown()); the
 // hasToken=false flip is what makes RootView recompose to the login screen.
 // ---------------------------------------------------------------------------
@@ -39,13 +39,16 @@ final class AppConfig: ObservableObject {
     /// observes this to re-show the splash on every backend swap.
     @Published private(set) var configGeneration: Int = 0
 
-    /// True when a login token + display name are persisted. The reactive nav
-    /// gate for login-vs-chat in RootView; mirrors Android's displayName != null.
+    /// True when the token, display name, and explicit authenticated userId are
+    /// persisted. The reactive login-vs-chat gate for RootView.
     @Published private(set) var hasToken: Bool
 
     private let configStore = BackendConfigStore()
     let tokenStore: SecureTokenStore
     let displayNameStore: DisplayNameStore
+    /// Explicit server-authenticated identity used to build the calendar namespace.
+    /// This is not derived from the display name or token contents.
+    private let identityStore: AuthenticatedIdentityStore
     private let log = AppLog("app", "config")
 
     // ── Resolved backend (kept for session construction) ─────────────────────
@@ -55,10 +58,12 @@ final class AppConfig: ObservableObject {
 
     init(
         tokenStore: SecureTokenStore = createTokenStore(),
-        displayNameStore: DisplayNameStore = DisplayNameStore()
+        displayNameStore: DisplayNameStore = DisplayNameStore(),
+        identityStore: AuthenticatedIdentityStore = AuthenticatedIdentityStore()
     ) {
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
+        self.identityStore = identityStore
 
         // Resolve backend from persisted override → build-time default.
         switch Self.resolve(BackendConfigStore()) {
@@ -72,8 +77,17 @@ final class AppConfig: ObservableObject {
             log.info("init unconfigured")
         }
 
-        // hasToken: present when display name is stored (cleared on logout).
-        self.hasToken = displayNameStore.load() != nil
+        // A persisted token without the explicit authenticated identity cannot
+        // safely open a calendar namespace. Fail closed and require login again.
+        let hasStoredSession = tokenStore.load() != nil &&
+            displayNameStore.load() != nil &&
+            identityStore.load() != nil
+        self.hasToken = hasStoredSession
+        if !hasStoredSession {
+            tokenStore.clear()
+            displayNameStore.clear()
+            identityStore.clear()
+        }
         if isConfigured { configGeneration += 1 }
     }
 
@@ -91,10 +105,11 @@ final class AppConfig: ObservableObject {
     /// backend), bumps configGeneration to re-show the splash. The in-flight
     /// session is torn down by ChatView's disappear path, not here.
     func reconfigure(_ config: BackendConfig) {
-        log.info("reconfigure host=\(config.host) port=\(config.port)")
+        log.info("reconfigure hostLength=\(config.host.count) port=\(config.port)")
         configStore.save(config)
         tokenStore.clear()
         displayNameStore.clear()
+        identityStore.clear()
         gatewayWsUrl = config.gatewayWsURL
         allowSelfSignedDevHost = config.allowSelfSigned
         isConfigured = true
@@ -105,19 +120,27 @@ final class AppConfig: ObservableObject {
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
-    /// Mark a successful login: update the reactive hasToken gate so RootView
-    /// transitions to the chat screen. The token itself is written by AuthViewModel
-    /// directly to tokenStore before calling this; we just need to flip the gate.
-    func didLogin() {
-        hasToken = displayNameStore.load() != nil
-        log.info("didLogin hasToken=\(hasToken) name=\(displayName)")
+    /// Mark a successful login with the server-authenticated identity. The
+    /// identity is persisted before the authenticated root mounts, so every
+    /// IosUserSession receives it explicitly.
+    func didLogin(authenticatedUserId: String) {
+        identityStore.save(authenticatedUserId)
+        hasToken = tokenStore.load() != nil &&
+            displayNameStore.load() != nil &&
+            identityStore.load() != nil
+        log.info("didLogin hasToken=\(hasToken)")
     }
+
+    /// The current explicit server identity, or nil when the auth boundary is
+    /// not safe to construct.
+    var authenticatedUserId: String? { identityStore.load() }
 
     /// Clear token and display name (nav to login is event-driven in RootView).
     func logout() {
         log.info("logout")
         tokenStore.clear()
         displayNameStore.clear()
+        identityStore.clear()
         hasToken = false
     }
 

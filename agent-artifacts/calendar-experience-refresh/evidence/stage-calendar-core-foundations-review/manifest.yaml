@@ -1,0 +1,14 @@
+schemaVersion: 1
+evaluation: stage-calendar-core-foundations-review
+recordedAt: 2026-08-21T06:26:57.091Z
+entries:
+  - result: Sanitized direct raw-temporal probe and boundary/helper checks passed.
+    path: files/1-calendar-core-foundations-rereview-iteration2.json
+    checksum: sha256:bbfc2af9fc1356b3bd5c939b034dc54e3fc6f29ec9f257c6b096c8311da5d879
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - result: 174 unit tests passed; typecheck exited 0
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+      bun run --filter @sentient/webui typecheck
+  - result: passed with no output
+    command: source scripts/env.sh && git diff --check

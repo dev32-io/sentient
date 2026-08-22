@@ -1,0 +1,51 @@
+schemaVersion: 1
+id: stage-stage-6-bootstrap-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-6-bootstrap
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+    src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+  - source scripts/env.sh && bun run typecheck
+criteria:
+  - Immutable principal-to-capability authority and shared resolved configuration
+  - Session/REST lifecycle and close behavior
+  - Nudge security and bounds remain unchanged
+  - No automatic destructive reset or production mutation
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: c218381b-bef3-4d9a-95bf-ec4cd6dd8790
+  reviewedCommit: a59794963a0e8de7be557bf3aea596ebad3d772b
+  managerPrompt: Repair STAGE6-001 without bypassing operator limits. Replace the
+    fixed ±10-day nudge query with the smallest normalized window that
+    represents the configured household-local current day (normally one date
+    period), and let the query/recurrence seam perform any internal candidate
+    handling needed for timezone offsets. Do not silently widen, disable maxDays
+    validation, or fall back to host/UTC time. Preserve existing nudge caps,
+    role visibility, prompt-cache behavior, and content-free diagnostics. Add
+    regressions with query.maxDays=1, non-UTC household zones at UTC date
+    boundaries/DST, timed and all-day events on household today, and
+    adjacent-day exclusions; rerun every stage-6 check.
+  fixerAgentId: 8a0ad946-25c6-480f-b3c4-53b9b70d8eb7
+findings:
+  - id: STAGE6-001
+    severity: high
+    status: resolved
+    criterion: Nudge retains its existing product behavior while using a bounded
+      effective-occurrence seam
+    location: gateway/src/calendar/nudge.ts; gateway/src/bootstrap/phase-services.ts
+    summary: Fixed ±10-day nudge query replaced with one household-local date
+      period; low-limit and timezone regressions pass.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-6-bootstrap-review/manifest.yaml

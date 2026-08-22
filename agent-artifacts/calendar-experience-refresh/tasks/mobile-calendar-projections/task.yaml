@@ -1,0 +1,29 @@
+schemaVersion: 1
+id: mobile-calendar-projections
+title: Build shared mobile calendar projections and filter semantics
+status: merged
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-core-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/mobile-calendar-projections
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-projections
+  baseCommit: 57e24fb8c9f3f23a2fc037848c9a8a2ab85d10ec
+  lastRunId: acb7c6af-44b8-49c5-8f12-1a3d0ff1bde5
+  completedCommit: 391875f79d2266a229391c53ce3609341115d2c6
+  mergedCommit: e1d558d3faee580aa36c5c000dac0fea77375c25

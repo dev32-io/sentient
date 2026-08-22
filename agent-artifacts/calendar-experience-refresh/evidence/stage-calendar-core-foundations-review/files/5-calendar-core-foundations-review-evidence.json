@@ -1,0 +1,4 @@
+{"monthDateSelection":{"view":"month","anchorDate":"2026-01-02","selectedDate":"2026-01-02"},"filterAlias":{"selectedFilters":{"scopes":["all"],"groups":[],"tags":[],"importance":null,"search":""},"count":1}}
+---changed-calendar-view---
+gateway/webui/src/components/calendar/calendar-view.test.tsx
+gateway/webui/src/components/calendar/calendar-view.tsx

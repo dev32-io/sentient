@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: s4-rest-api
+title: Calendar REST API over the shared CalendarStore
+status: merged
+dependsOn:
+  - s3-store-reads
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-4-rest-and-provider
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/api/handlers/calendar
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s4-rest-api
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s4-rest-api
+  baseCommit: 6d816e9529a29699598c78a20f7a7c4ef4a64253
+  lastRunId: 0fdb4416-c319-42d2-a2b3-19ffe3bb166b
+  completedCommit: 94808b6ab18399e0630b70a305ac7c70c5b8d841
+  mergedCommit: 90ba12adbad48696c019a277e627da5904787c1d

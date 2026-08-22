@@ -1,0 +1,26 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, timezone, dst, visuals, reduced-motion]
+---
+# Set the fixture timezone/DST case, exact emulator profile, font scale, and
+# animator scales before invoking. Direct REST reread verifies raw temporal data.
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-view-day" }
+- assertVisible: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- assertVisible: { id: "${CALENDAR_ALL_DAY_EVENT_TAG}" }
+- takeScreenshot: "calendar-temporal-day"
+- tapOn: { id: "calendar-view-week" }
+- assertVisible: { id: "calendar-canvas" }
+- tapOn: { id: "calendar-view-month" }
+- assertVisible: { id: "calendar-canvas" }
+- tapOn: { id: "calendar-view-year" }
+- assertVisible: { id: "calendar-canvas" }
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- takeScreenshot: "calendar-editor-accessibility"

@@ -34,6 +34,7 @@ final class ChatViewModel: ObservableObject {
     /// Talk mode (Idle | Hold | Continuous), owned by the SDK's TalkModeController. Exposed
     /// for the keep-screen-on derivation below (and its reason logging in ChatView).
     @Published private(set) var talkMode: TalkMode = .idle
+    @Published private(set) var micLevels: [Float] = Array(repeating: 0, count: 32)
 
     /// Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
     /// audibly speaking`. Reuses the EXACT `connection.isSpeaking` signal that drives the
@@ -63,6 +64,7 @@ final class ChatViewModel: ObservableObject {
     private var chatTask: Task<Void, Never>?
     private var connectionTask: Task<Void, Never>?
     private var talkModeTask: Task<Void, Never>?
+    private var micLevelsTask: Task<Void, Never>?
     private var coldReplaceTask: Task<Void, Never>?
     private var sweepTask: Task<Void, Never>?
     private var reopenFailedTask: Task<Void, Never>?
@@ -85,17 +87,19 @@ final class ChatViewModel: ObservableObject {
         self.component = component
         log.info("init sessionId=\(sessionId ?? "<new>")")
 
-        // Make the route's conversation active (null = new chat). Fire-and-forget:
-        // the usecase fires the session command and returns Unit (non-suspend,
-        // non-throwing) — the gateway buffers the next user.message behind the
-        // pending mint, so the UI never blocks on a session round-trip. The flush
-        // gate + observeChat collect below pick up whatever conversation this
-        // resolves to.
-        component.switchConversation.invoke(sessionId: sessionId)
+        // A null route entry is a cold/new-chat boundary, not an implicit reattach.
+        // Explicit preparation is fire-and-forget, so the composer is usable while
+        // the gateway prepares the draft/attachment for the first queued message.
+        if let sessionId {
+            component.switchConversation.invoke(sessionId: sessionId)
+        } else {
+            component.switchConversation.startFreshChat()
+        }
 
         startChatCollecting()
         startConnectionCollecting()
         startTalkModeCollecting()
+        startMicLevelsCollecting()
         startColdReplaceCollecting()
         startPeriodicSweep()
         startReopenFailedCollecting()
@@ -276,6 +280,15 @@ final class ChatViewModel: ObservableObject {
 
     // ── Talk-mode stream collection (S8 keep-screen-on) ───────────────────────
 
+    private func startMicLevelsCollecting() {
+        micLevelsTask = Task { [weak self] in
+            guard let self else { return }
+            for await envelope in self.component.micLevels {
+                self.micLevels = envelope.values.map(\.floatValue)
+            }
+        }
+    }
+
     private func startTalkModeCollecting() {
         talkModeTask = Task { [weak self] in
             guard let self else { return }
@@ -418,6 +431,7 @@ final class ChatViewModel: ObservableObject {
         chatTask?.cancel()
         connectionTask?.cancel()
         talkModeTask?.cancel()
+        micLevelsTask?.cancel()
         coldReplaceTask?.cancel()
         sweepTask?.cancel()
         reopenFailedTask?.cancel()

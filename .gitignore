@@ -101,4 +101,7 @@ fastlane/README.md
 
 #Pi/PiBox
 /.pibox/
+!/.pibox/
+/.pibox/*
+!/.pibox/verification.yaml
 /.worktree/

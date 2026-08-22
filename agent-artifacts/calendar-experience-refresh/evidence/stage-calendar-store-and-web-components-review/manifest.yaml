@@ -1,0 +1,31 @@
+schemaVersion: 1
+evaluation: stage-calendar-store-and-web-components-review
+recordedAt: 2026-08-21T07:57:31.299Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - result: 28 test files passed; 221 tests passed
+    command: source scripts/env.sh && bun run --filter @sentient/webui test:unit
+  - result: passed
+    command: source scripts/env.sh && bun run --filter @sentient/webui typecheck
+  - result: built successfully
+    command: source scripts/env.sh && bun run --filter @sentient/webui build
+  - result: passed
+    command: source scripts/env.sh && git diff --check
+  - result: 16 production states complete; all page/canvas overflow checks pass;
+      narrow Month/Week have seven columns, compact controls, and 44x44 minimum
+      targets
+    command: python3 generated responsive evidence matrix
+    path: files/6-calendar-store-web-review-iteration2-evidence.json
+    checksum: sha256:52096c16b11d1ad31d64914d580639222cc8f23ad3ba1c2bffba986296ba07cd
+  - result: 16 labeled Day/Week/Month/Year side-by-side artifacts exist at every
+      required viewport
+    command: find .../files -name 'comparison-*.png'
+    path: files/7-visual-comparison.md
+    checksum: sha256:5724755b7c44b1f661ee74191c1b34a4c496851fb652b509c482c810a520148d
+  - result: focused callback-routing tests pass, including anchor-only and
+      compatibility aliases
+    command: bun run --filter @sentient/webui test:unit --
+      src/components/calendar/calendar-shell.test.tsx
+    path: files/8-calendar-shell.test.tsx
+    checksum: sha256:33b2fa40c5830980cdbfdac93896086a4969ef963f291fbd9978b5922883bf5c

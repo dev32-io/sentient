@@ -1,0 +1,53 @@
+schemaVersion: 1
+id: stage-stage-7-mobile-data-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-7-mobile-data
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 2
+methods:
+  - ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
+    ./gradlew :shared:mobile-data:compileDebugKotlin
+criteria:
+  - Stateless repository passthrough and explicit exported use-case interfaces
+    for platform ViewModels
+  - DI wiring exposes calendar to platform screens without restart-mutation
+    assumptions
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 514b4f53-0de0-4eda-98b3-fd971329245e
+  reviewedCommit: 8eec2d1fa3bbaf4951e87418e5b692b789a6c774
+  managerPrompt: |-
+    Address S7-MD-001 (high, blocking) in shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt (plus its test). The residual non-blocking test-coverage gap (list/create/update/delete mapping) is deferred — leave it.
+
+    Bug: CalendarHttpClient injects the SettingsComponent's single shared HttpClient, whose request timeout is deliberately generous (~60-120s, for restart-blocking profile mutations). CalendarHttpClient sets no per-request timeout, so calendar CRUD inherits that restart timeout, violating the stage-7 requirement that calendar CRUD not inherit restart-mutation assumptions.
+
+    Fix: bound each calendar CRUD call (get, list, create, update, delete) to a SHORT calendar-specific timeout so it does NOT inherit the shared client's generous timeout. Do this self-contained within CalendarHttpClient — do NOT modify the shared HttpClient config (it lives outside stage-7 scope and its generous timeout is intentional for profile mutations).
+
+    Preferred mechanism: wrap each operation's body in `kotlinx.coroutines.withTimeout(requestTimeoutMillis) { ... }` inside the existing `safeSettingsCall(log) { ... }` block. Add a constructor parameter `requestTimeoutMillis: Long = 15_000` (15s — calendar CRUD is quick, not restart-blocking) with a sensible default so SettingsComponent wiring needs no change. Apply the same bounded timeout to get/list/create/update/delete (and the *Event aliases which delegate, so no duplicate wrapping needed).
+
+    Alternatively, if you install ktor's `HttpTimeout` plugin per-request via `timeout { requestTimeoutMillis = requestTimeoutMillis }` in each HttpRequestBuilder, that's acceptable too — but only if the shared client already has HttpTimeout installed; if not, prefer `withTimeout` to avoid touching the shared client config. Pick ONE mechanism and apply it consistently.
+
+    Add a test in shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClientTest.kt: using a MockEngine whose responder delays the response beyond the bounded timeout (e.g. `delay(requestTimeoutMillis + 5_000)` or responds never), assert that a calendar CRUD call (e.g. `get`) completes within roughly the bounded timeout and surfaces a timeout/cancellation failure (AuthResult.Failure or a thrown TimeoutCancellationException mapped by safeSettingsCall) — proving calendar CRUD does NOT wait on the shared client's generous timeout. Keep the existing golden-fidelity tests green.
+
+    Constraints: stay within CalendarHttpClient.kt and its test (SettingsComponent wiring should not need to change if the timeout has a default). Keep `./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*'` and `./gradlew :shared:mobile-sdk:compileDebugKotlin` green (JAVA_HOME is set). Do not weaken existing tests. Do not change wire shapes.
+  fixerAgentId: 1d07f8db-294d-49d2-aec7-f07e11dd50d5
+findings:
+  - id: S7-MD-001
+    severity: high
+    status: resolved
+    criterion: Calendar CRUD is not a profile/restart mutation; do not inherit
+      long-timeout restart assumptions.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarHttpClient.kt
+    summary: Calendar CRUD is now bounded by a calendar-specific timeout and no
+      longer inherits the shared restart timeout.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-7-mobile-data-review/manifest.yaml

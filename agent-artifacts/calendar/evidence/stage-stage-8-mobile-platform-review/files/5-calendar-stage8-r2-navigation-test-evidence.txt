@@ -1,0 +1,17 @@
+Android calendar test navigation references:
+5:import io.sentient.android.nav.navigateToCalendar
+128:        navigateToCalendar { destination = it }
+Android production navigation references:
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:2:// HistoryDrawer — the Android History drawer (D-A4). A Material3
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:81: * [onOpenCalendar] is called by the calendar entry beside the gear.
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:88:fun HistoryDrawer(
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:95:    onOpenCalendar: () -> Unit = {},
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:112:                HistoryContent(
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:118:                    onOpenCalendar = {
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:121:                            onOpenCalendar()
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:146:private fun HistoryContent(
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:152:    onOpenCalendar: () -> Unit,
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:175:                onCalendar = onOpenCalendar,
+android/src/main/kotlin/io/sentient/android/history/HistoryDrawer.kt:330:fun rememberHistoryDrawerState(): DrawerState = rememberDrawerState(DrawerValue.Closed)
+android/src/main/kotlin/io/sentient/android/nav/AppNavHost.kt:191:internal fun navigateToCalendar(navigate: (String) -> Unit) {
+android/src/main/kotlin/io/sentient/android/nav/AppNavHost.kt:217:            onOpenCalendar = { navigateToCalendar { route -> nav.navigate(route) } },

@@ -92,7 +92,7 @@ final class VoiceViewModel {
             }
         } catch is CancellationError {
         } catch {
-            log.warn("fishGate.threw reason=\(error.localizedDescription)")
+            log.warn("fishGate.threw code=transport")
         }
     }
 
@@ -115,14 +115,14 @@ final class VoiceViewModel {
                 log.info("load.ok count=\(allVoices.count)")
             case .failure(let f):
                 phase = .failed
-                log.warn("load.failed kind=\(f.error.userMessage)")
+                log.warn("load.failed kind=\(f.error.kind.name)")
             case .loading:
                 phase = .loading
             }
         } catch is CancellationError {
         } catch {
             phase = .failed
-            log.warn("load.threw reason=\(error.localizedDescription)")
+            log.warn("load.threw code=transport")
         }
     }
 
@@ -135,7 +135,7 @@ final class VoiceViewModel {
             }
         } catch is CancellationError {
         } catch {
-            log.warn("active.seed.threw reason=\(error.localizedDescription)")
+            log.warn("active.seed.threw code=transport")
         }
     }
 
@@ -163,13 +163,13 @@ final class VoiceViewModel {
                 previewingId = voice.voiceId
             case .failure(let f):
                 notice = "Couldn't play preview"
-                log.warn("preview.failed kind=\(f.error.userMessage)")
+                log.warn("preview.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
             }
         } catch {
             notice = "Couldn't play preview"
-            log.warn("preview.threw reason=\(error.localizedDescription)")
+            log.warn("preview.threw code=transport")
         }
     }
 
@@ -187,13 +187,13 @@ final class VoiceViewModel {
                     log.info("pick.ok id=\(activeVoiceId)")
                 case .failure(let f):
                     notice = "Couldn't switch voice"
-                    log.warn("pick.failed kind=\(f.error.userMessage)")
+                    log.warn("pick.failed kind=\(f.error.kind.name)")
                 case .loading:
                     break
                 }
             } catch {
                 notice = "Couldn't switch voice"
-                log.warn("pick.threw reason=\(error.localizedDescription)")
+                log.warn("pick.threw code=transport")
             }
         }
     }
@@ -217,13 +217,13 @@ final class VoiceViewModel {
                     await seedActiveVoice()
                 case .failure(let f):
                     notice = "Couldn't delete voice"
-                    log.warn("delete.failed kind=\(f.error.userMessage)")
+                    log.warn("delete.failed kind=\(f.error.kind.name)")
                 case .loading:
                     break
                 }
             } catch {
                 notice = "Couldn't delete voice"
-                log.warn("delete.threw reason=\(error.localizedDescription)")
+                log.warn("delete.threw code=transport")
             }
         }
     }

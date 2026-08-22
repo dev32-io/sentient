@@ -26,7 +26,7 @@ echo "✓ built $IPA"
 
 if [ "$DEPLOY" = "1" ]; then
   IOS_SHORT_VERSION="$(grep -E 'CFBundleShortVersionString:' "$REPO/ios/project.yml" | head -1 | sed -E 's/.*: *//' | tr -d '"')"
-  IOS_BUNDLE_VERSION="$(grep -E 'CFBundleVersion:' "$REPO/ios/project.yml" | head -1 | sed -E 's/.*"?([0-9]+)"?.*/\1/')"
+  IOS_BUNDLE_VERSION="$(grep -E 'CFBundleVersion:' "$REPO/ios/project.yml" | head -1 | sed -E 's/^[[:space:]]*CFBundleVersion:[[:space:]]*"?([0-9]+)"?[[:space:]]*$/\1/')"
   [ -n "$IOS_SHORT_VERSION" ] && [ -n "$IOS_BUNDLE_VERSION" ] || { echo "ERROR: could not extract iOS version from ios/project.yml"; exit 1; }
   export IOS_SHORT_VERSION IOS_BUNDLE_VERSION
   "$REPO/scripts/deploy-mobile.sh" "$IPA"

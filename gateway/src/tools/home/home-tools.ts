@@ -5,10 +5,6 @@ import type { HomeAdapter, HomeEntity, HomeOutcome } from "./home-adapter.js";
 import {
   type HomeConfig,
   type HomeConfigKind,
-  calendarCreateSchema,
-  calendarReadSchema,
-  calendarRemoveSchema,
-  calendarUpdateSchema,
   configReferences,
   resourceId,
   schemaForConfigKind,
@@ -159,11 +155,11 @@ function writeError(outcome: string): boolean {
   return outcome === "rejected" || outcome === "failed" || outcome === "conflict";
 }
 
-function buildListAndCalendarTools(
+function buildListTools(
   adapter: HomeAdapter,
   safeRun: (run: NativeToolRunner["run"]) => NativeToolRunner["run"],
 ): NativeToolRunner[] {
-  const resolveCollection = async (target: string, domainName: "todo" | "calendar", signal: AbortSignal) =>
+  const resolveCollection = async (target: string, domainName: "todo", signal: AbortSignal) =>
     resolve(adapter, target, undefined, [domainName], signal);
   return [
     {
@@ -213,78 +209,6 @@ function buildListAndCalendarTools(
           if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
           const { list: _list, ...item } = parsed;
           const response = await adapter.mutateTodo(found.entity.entityId, operation, item, signal);
-          return result(response, writeError(response.outcome));
-        }),
-      };
-    }),
-    {
-      definition: definition(
-        "home_get_calendar_events",
-        "Read bounded events from a permitted household calendar.",
-        {
-          type: "object",
-          properties: {
-            calendar: { type: "string" },
-            start: { type: "string", format: "date-time" },
-            end: { type: "string", format: "date-time" },
-          },
-          required: ["calendar", "start", "end"],
-          additionalProperties: false,
-        },
-        "read",
-      ),
-      validate: validate(calendarReadSchema),
-      run: safeRun(async (args, { signal }) => {
-        const parsed = calendarReadSchema.parse(args);
-        const found = await resolveCollection(parsed.calendar, "calendar", signal);
-        if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
-        const response = await adapter.calendarEvents(found.entity.entityId, parsed.start, parsed.end, signal);
-        return result(
-          { ...response, calendar_id: found.entity.entityId },
-          response.outcome === "unavailable" || response.outcome === "rejected",
-        );
-      }),
-    },
-    ...(["create", "update", "remove"] as const).map((operation): NativeToolRunner => {
-      const schema =
-        operation === "create"
-          ? calendarCreateSchema
-          : operation === "update"
-            ? calendarUpdateSchema
-            : calendarRemoveSchema;
-      return {
-        definition: definition(
-          `home_${operation}_calendar_event`,
-          `${operation === "remove" ? "Deliberately remove" : operation === "create" ? "Create" : "Update"} a household calendar event.`,
-          {
-            type: "object",
-            properties: {
-              calendar: { type: "string" },
-              uid: { type: "string" },
-              summary: { type: "string" },
-              description: { type: "string" },
-              location: { type: "string" },
-              start: { type: "string", format: "date-time" },
-              end: { type: "string", format: "date-time" },
-              recurrence_id: { type: "string" },
-            },
-            required:
-              operation === "create"
-                ? ["calendar", "summary", "start", "end"]
-                : operation === "update"
-                  ? ["calendar", "uid", "summary", "start", "end"]
-                  : ["calendar", "uid"],
-            additionalProperties: false,
-          },
-          operation === "remove" ? "confirm" : "write",
-        ),
-        validate: validate(schema),
-        run: safeRun(async (args, { signal }) => {
-          const parsed = schema.parse(args);
-          const found = await resolveCollection(parsed.calendar, "calendar", signal);
-          if (found.outcome !== "succeeded") return result(found, found.outcome === "unavailable");
-          const { calendar: _calendar, ...event } = parsed;
-          const response = await adapter.mutateCalendar(found.entity.entityId, operation, event, signal);
           return result(response, writeError(response.outcome));
         }),
       };
@@ -595,6 +519,6 @@ export function buildHomeTools(adapter: HomeAdapter): readonly NativeToolRunner[
       }),
     ),
     ...buildConfigurationTools(adapter, safeRun),
-    ...buildListAndCalendarTools(adapter, safeRun),
+    ...buildListTools(adapter, safeRun),
   ];
 }

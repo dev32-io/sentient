@@ -18,13 +18,18 @@
 // save(): SecItemAdd, fall back to SecItemUpdate on errSecDuplicateItem.
 // load(): SecItemCopyMatching → CFDataRef → NSData → UTF-8 String.
 // clear(): SecItemDelete (errSecItemNotFound is idempotent-ok).
-// Keychain APIs are thread-safe; this class holds no mutable state.
+// Keychain APIs are thread-safe; process continuity uses one atomic fallback.
 // ---------------------------------------------------------------------------
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class, kotlinx.cinterop.BetaInteropApi::class)
+@file:OptIn(
+    kotlinx.cinterop.ExperimentalForeignApi::class,
+    kotlinx.cinterop.BetaInteropApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.sentient.mobilesdk.secure
 
 import io.sentient.mobilesdk.log.createLogger
+import kotlin.concurrent.atomics.AtomicReference
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
@@ -65,6 +70,8 @@ import platform.Security.kSecReturnData
 import platform.Security.kSecValueData
 
 private val log = createLogger("secure", "token-store", "ios")
+/** Process-only continuity when Keychain is temporarily unavailable (for example an unsigned simulator build). */
+private val volatileToken = AtomicReference<String?>(null)
 
 // ---------------------------------------------------------------------------
 // Named constants — no magic strings in source.
@@ -83,12 +90,16 @@ class IosSecureTokenStore : SecureTokenStore {
 
     override fun save(token: String) {
         log.debug("save", mapOf("tokenLength" to token.length))
+        // Auth and SDK factories use distinct store instances. Retaining the
+        // just-authenticated token process-locally makes the documented graceful
+        // Keychain failure path actually usable without weakening durable storage.
+        volatileToken.store(token)
         // A token-save failure must degrade gracefully, never abort the process.
         // Kotlin/Native traps any exception that escapes an @ObjCExport boundary
         // (SIGABRT via trapOnUndeclaredException). Catch here so a Keychain
         // hiccup logs WARN and the SDK still connects.
         runCatching { saveToKeychain(token) }.onFailure { e ->
-            log.warn("save-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+            log.warn("save-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
         }
     }
 
@@ -143,8 +154,9 @@ class IosSecureTokenStore : SecureTokenStore {
         log.debug("load")
         // A load failure must degrade to null, never abort the process across
         // the @ObjCExport boundary (see save()).
-        return runCatching { loadFromKeychain() }.getOrElse { e ->
-            log.warn("load-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+        volatileToken.load()?.let { return it }
+        return runCatching { loadFromKeychain() }.getOrElse {
+            log.warn("load-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
             null
         }
     }
@@ -198,6 +210,7 @@ class IosSecureTokenStore : SecureTokenStore {
 
     override fun clear() {
         log.debug("clear")
+        volatileToken.store(null)
         runCatching {
             val query = buildBaseQuery(includeAccessible = false, valueData = null)
             try {
@@ -211,7 +224,7 @@ class IosSecureTokenStore : SecureTokenStore {
                 else -> log.warn("clear-failed", mapOf("status" to status))
             }
         }.onFailure { e ->
-            log.warn("clear-failed", mapOf("op" to "exception", "cause" to (e.message ?: "unknown")))
+            log.warn("clear-failed", mapOf("op" to "exception", "code" to "keychain-failure"))
         }
     }
 

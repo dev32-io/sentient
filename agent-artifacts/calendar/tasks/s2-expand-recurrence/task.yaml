@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: s2-expand-recurrence
+title: expandRecurrence pure module (bounded subset, EXDATE, exceptions,
+  all-day, event-tz DST)
+status: merged
+dependsOn:
+  - s1-domain-contracts
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-2-recurrence-deprecation
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway && bun test src/calendar/expand-recurrence
+    - cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s2-expand-recurrence
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s2-expand-recurrence
+  baseCommit: c33ce10b68b4f714a6fd3a7199177bda0a546400
+  lastRunId: c11cf12d-1c20-4c63-9741-3c073bde51c6
+  completedCommit: 822915e7bb059bfb7f74a50d4e94d16513d270c3
+  mergedCommit: 8bb2e4244179250292c05a96b55a2ca664cf7148

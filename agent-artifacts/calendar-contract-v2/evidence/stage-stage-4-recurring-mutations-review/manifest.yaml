@@ -1,0 +1,19 @@
+schemaVersion: 1
+evaluation: stage-stage-4-recurring-mutations-review
+recordedAt: 2026-08-20T03:39:20.211Z
+entries:
+  - result: 67 pass, 0 fail
+    command: focused stage bun test
+    path: files/1-stage4-rereview2-tests.log
+    checksum: sha256:1d484473239b36ead0dde8edd174f10f47238c31903f41b59ff72e5cc8a43f37
+  - result: pass
+    command: gateway typecheck
+    path: files/2-stage4-rereview2-typecheck.log
+    checksum: sha256:8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+  - result: Backward anchor returns recurrence_conflict; original segment remains
+      unchanged with no successor.
+    command: prior S4-004 runtime probe
+    path: files/3-stage4-rereview2-overlap.log
+    checksum: sha256:dc8c366dbc626a214eb3dcb06fca043705d63ae145b7031fd3e97eb17ca47851
+  - result: pass
+    command: repair diff check

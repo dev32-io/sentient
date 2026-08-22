@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "html",
+  "title": "sentient-platforms-v2.html",
+  "entry": "sentient-platforms-v2.html",
+  "renderer": "html",
+  "status": "complete",
+  "exports": [
+    "html",
+    "pdf",
+    "zip"
+  ],
+  "createdAt": "2026-08-19T04:59:45.462Z",
+  "updatedAt": "2026-08-19T04:59:45.462Z",
+  "metadata": {
+    "inferred": true,
+    "reconciled": true
+  }
+}

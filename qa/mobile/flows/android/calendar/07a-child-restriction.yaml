@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, child, permission]
+---
+# Run only after logging in as this run's disposable child. The fixture exposes
+# one allowed household row and arms the existing local typed-forbidden control.
+- runFlow: "00-open.yaml"
+- assertNotVisible: { id: "${CALENDAR_RESTRICTED_EVENT_TAG}" }
+- assertNotVisible: { text: "${CALENDAR_RESTRICTED_FACET}" }
+- tapOn: { id: "${CALENDAR_CHILD_MUTATION_EVENT_TAG}" }
+- tapOn: { text: "Edit", optional: true }
+- tapOn: { id: "calendar-editor-save", optional: true }
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- assertNotVisible: { id: "${CALENDAR_RESTRICTED_EVENT_TAG}" }

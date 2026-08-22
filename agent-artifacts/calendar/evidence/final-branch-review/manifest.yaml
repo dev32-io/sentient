@@ -1,0 +1,24 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-19T00:31:14.668Z
+entries:
+  - result: pass; no whitespace errors
+    command: git diff --check 1aed83a5633a2ac8472202841e21537ff0353ae9..06c6333b
+  - result: typecheck passed; 50 tests passed, 0 failed
+    command: cd gateway && bun run typecheck && bun test src/calendar
+      src/bootstrap/product-tools/calendar-provider.test.ts
+      src/api/handlers/calendar.test.ts src/bootstrap/phase-services.test.ts
+  - result: 144 tests passed, 0 failed; typecheck passed
+    command: cd gateway/webui && bun run test:unit && bun run typecheck
+  - result: BUILD SUCCESSFUL
+    command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*'
+      :shared:mobile-sdk:compileDebugKotlin
+  - result: build succeeded; 73 iOS tests passed, 0 failures
+    command: ./gradlew :shared:mobile-data:assembleMobileDataXCFramework &&
+      xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16' build && xcodebuild
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16' test
+    description: Sanitized closure results and no sensitive content
+    path: files/5-calendar-final-branch-rereview-iteration-1.json
+    checksum: sha256:e9f4d254545cd8bcd0525d2e8ed3dc9efc924c5ecc5fbb62f4bbb4735e4a95a6

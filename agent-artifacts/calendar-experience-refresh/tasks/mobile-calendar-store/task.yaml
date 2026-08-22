@@ -1,0 +1,32 @@
+schemaVersion: 1
+id: mobile-calendar-store
+title: Implement the observable shared calendar store
+status: merged
+dependsOn:
+  - mobile-sqldelight-foundation
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-store-and-web-components
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    - source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/mobile-calendar-store
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/mobile-calendar-store
+  baseCommit: 85f0f851c3803bc6d16e80d80c3132a76a2e1559
+  lastRunId: e6a03b3f-9f57-4fe7-ba0b-474810573bab
+  completedCommit: 170ffa259a5699f382127421f908a2cf570eafdb
+  mergedCommit: de2bd60ca0a7d9598915a2d9584eee551c2a4d2f

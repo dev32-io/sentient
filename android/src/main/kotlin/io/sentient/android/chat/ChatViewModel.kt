@@ -21,6 +21,7 @@ import io.sentient.mobilesdk.connectors.PermissionPrompt
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.sdk.ConnectionState
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -58,6 +59,9 @@ class ChatViewModel(
     val talkMode: StateFlow<TalkMode> = component.talkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), TalkMode.Idle)
 
+    val micLevels: StateFlow<MicLevelEnvelope> = component.micLevels
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STATE_SUBSCRIBE_STOP_MS), MicLevelEnvelope.silence())
+
     /**
      * Temporary keep-screen-on condition (S8): `Continuous talk mode OR the assistant is
      * audibly speaking`. Reuses the EXACT [ConnectionState.isSpeaking] signal that drives
@@ -76,10 +80,11 @@ class ChatViewModel(
 
     init {
         log.info("init", mapOf("sessionId" to (sessionId ?: "<new>")))
-        // Make the route's conversation active (null = new chat). Fire-and-forget:
-        // the usecase no longer suspends or throws — no launch, no runCatching. The
-        // gateway buffers user.message behind the pending mint, so the UI never blocks.
-        component.switchConversation(sessionId)
+        // A null route entry is a cold/new-chat boundary, not an implicit reattach.
+        // Preparation is explicit and fire-and-forget; the gateway buffers the first
+        // message while the composer remains usable.
+        if (sessionId == null) component.switchConversation.startFreshChat()
+        else component.switchConversation(sessionId)
         // COLD-RECONCILE: an existing-conversation switch reloads authoritative history
         // from REST. That cold snapshot carries NO pendingId, so reconcile-by-pendingId
         // can't drop a still-pending optimistic bubble → a duplicate. On the cold-replace

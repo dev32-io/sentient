@@ -61,7 +61,7 @@ final class SettingsRootViewModel {
             // View disappeared / task replaced — not a real failure.
         } catch {
             access = .failed
-            log.warn("access.threw reason=\(error.localizedDescription)")
+            log.warn("access.threw code=transport")
         }
     }
 }

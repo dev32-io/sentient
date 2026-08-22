@@ -1,0 +1,26 @@
+stage: stage-mobile-platform-sessions-review
+work_item: calendar-experience-refresh
+reviewed_commit: 1d0c5114835889fd126b5599c6fe85b29fe8fc96
+bounded_repair_commit: ed228564dfcb428857eb6142f4a0f725a1c011c9
+mode: closure-focused re-review iteration 3
+
+prior finding:
+- MPS-005: RESOLVED
+
+source evidence:
+- Android platform instrumentation independently drives explicit logout, authentication expiry, account replacement, backend replacement, and successor creation through UserSessionManager with a deterministic pre-publish barrier and isolated app-private AndroidSqliteDriver.
+- Each Android scenario proves the losing experience closes, predecessor state never publishes, the successor experience/namespace is the only exposed runtime, and reopened SQLite contains no predecessor snapshots/preferences.
+- iOS simulator tests independently drive the same five scenarios through IosUserSession with a deterministic pre-publish barrier and a real temporary NativeSqliteDriver.
+- Each iOS scenario proves the losing experience closes, predecessor session/settings references remain absent, the successor experience/namespace is distinct and exposed, and reopened SQLite contains no predecessor snapshots/preferences.
+- Production auth-expiry routing now reaches distinct Android and iOS authenticated-session teardown entry points; platform driver factories are injectable only at the platform boundary for deterministic real-driver proof.
+
+fresh checks:
+- ./gradlew :shared:mobile-data:allTests :android:testDebugUnitTest :android:assembleDebug --rerun-tasks: PASS
+  - shared mobile-data Android unit tests: 152 passed
+  - shared mobile-data iOS simulator tests: 138 passed, including all five iOS publication-race scenarios
+  - Android unit tests: 105 passed
+- ./gradlew :android:connectedDebugAndroidTest --rerun-tasks: PASS (8/8, including all five Android publication-race scenarios)
+- scripts/ios-setup.sh: PASS
+- xcodebuild iPhone 16 simulator tests: PASS (82/82)
+- git diff --check: PASS
+- worktree: clean

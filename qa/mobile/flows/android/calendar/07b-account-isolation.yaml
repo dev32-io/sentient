@@ -1,0 +1,10 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, isolation]
+---
+# Run offline after User A logout and login as the independently disposable
+# User B. Verify sanitized database inspection separately against User B's key.
+- runFlow: "00-open.yaml"
+- assertNotVisible: { id: "${CALENDAR_FIRST_ACCOUNT_EVENT_TAG}" }
+- assertNotVisible: { text: "${CALENDAR_FIRST_ACCOUNT_FACET}" }
+- assertNotVisible: { id: "${CALENDAR_FIRST_ACCOUNT_FILTER_TAG}" }
+- takeScreenshot: "calendar-account-isolation"

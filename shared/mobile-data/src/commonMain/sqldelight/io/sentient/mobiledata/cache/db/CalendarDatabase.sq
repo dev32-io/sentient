@@ -1,0 +1,325 @@
+import kotlin.Boolean;
+
+-- A complete, unfiltered authorized month snapshot. Every cache row carries the
+-- authenticated account/backend namespace; no filtered request shape is a key.
+CREATE TABLE calendar_month_snapshot (
+  account_id TEXT NOT NULL,
+  backend_id TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  timezone_input TEXT NOT NULL,
+  is_complete INTEGER AS Boolean NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  occurrence_count INTEGER NOT NULL,
+  last_accessed_at INTEGER NOT NULL DEFAULT 0,
+  freshness TEXT NOT NULL DEFAULT 'stale',
+  PRIMARY KEY (account_id, backend_id, window_start, window_end, timezone_input)
+);
+
+CREATE INDEX calendar_month_snapshot_lru
+  ON calendar_month_snapshot(account_id, backend_id, last_accessed_at);
+
+-- One effective occurrence in a complete snapshot. Raw temporal strings are
+-- retained exactly as received; the explicit all-day flags preserve identity
+-- without inventing an IANA timezone. payload_json is the complete wire payload
+-- used by the store for lossless reconstruction of the current V2 model.
+CREATE TABLE calendar_occurrence (
+  account_id TEXT NOT NULL,
+  backend_id TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  timezone_input TEXT NOT NULL,
+  occurrence_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  original_start TEXT NOT NULL,
+  original_start_is_all_day INTEGER AS Boolean NOT NULL,
+  start_value TEXT NOT NULL,
+  start_is_all_day INTEGER AS Boolean NOT NULL,
+  end_value TEXT,
+  end_is_all_day INTEGER AS Boolean,
+  recurring INTEGER AS Boolean NOT NULL,
+  revision INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  visibility TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  importance TEXT NOT NULL,
+  group_name TEXT,
+  tags_json TEXT NOT NULL,
+  recurrence_json TEXT,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (
+    account_id,
+    backend_id,
+    window_start,
+    window_end,
+    timezone_input,
+    occurrence_id
+  ),
+  FOREIGN KEY (
+    account_id,
+    backend_id,
+    window_start,
+    window_end,
+    timezone_input
+  ) REFERENCES calendar_month_snapshot(
+    account_id,
+    backend_id,
+    window_start,
+    window_end,
+    timezone_input
+  ) ON DELETE CASCADE
+);
+
+CREATE INDEX calendar_occurrence_event
+  ON calendar_occurrence(
+    account_id,
+    backend_id,
+    event_id,
+    original_start
+  );
+
+CREATE INDEX calendar_occurrence_filter
+  ON calendar_occurrence(
+    account_id,
+    backend_id,
+    window_start,
+    window_end,
+    timezone_input,
+    scope,
+    importance,
+    group_name
+  );
+
+-- One presentation record per authenticated account/backend namespace. Filter
+-- collections are JSON so selected facets survive intervals where they have no
+-- matching occurrences; they are never part of the authoritative snapshot key.
+CREATE TABLE calendar_preferences (
+  account_id TEXT NOT NULL,
+  backend_id TEXT NOT NULL,
+  view_mode TEXT NOT NULL,
+  anchor_date TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  groups_json TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  importance_json TEXT NOT NULL,
+  search_text TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (account_id, backend_id)
+);
+
+-- Snapshot metadata and occurrence reads.
+snapshotForWindow:
+SELECT *
+FROM calendar_month_snapshot
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+-- One observable query returns the complete marker, metadata, and occurrences
+-- from the same SQLite read.  The LEFT JOIN keeps a committed empty window
+-- observable while still producing no occurrence row for its zero count.
+snapshotWithOccurrencesForWindow:
+SELECT
+  snapshot.account_id AS snapshot_account_id,
+  snapshot.backend_id AS snapshot_backend_id,
+  snapshot.window_start AS snapshot_window_start,
+  snapshot.window_end AS snapshot_window_end,
+  snapshot.timezone_input AS snapshot_timezone_input,
+  snapshot.is_complete AS snapshot_is_complete,
+  snapshot.fetched_at AS snapshot_fetched_at,
+  snapshot.occurrence_count AS snapshot_occurrence_count,
+  snapshot.last_accessed_at AS snapshot_last_accessed_at,
+  snapshot.freshness AS snapshot_freshness,
+  occurrence.account_id AS occurrence_account_id,
+  occurrence.backend_id AS occurrence_backend_id,
+  occurrence.window_start AS occurrence_window_start,
+  occurrence.window_end AS occurrence_window_end,
+  occurrence.timezone_input AS occurrence_timezone_input,
+  occurrence.occurrence_id AS occurrence_id,
+  occurrence.event_id AS event_id,
+  occurrence.original_start AS original_start,
+  occurrence.original_start_is_all_day AS original_start_is_all_day,
+  occurrence.start_value AS start_value,
+  occurrence.start_is_all_day AS start_is_all_day,
+  occurrence.end_value AS end_value,
+  occurrence.end_is_all_day AS end_is_all_day,
+  occurrence.recurring AS recurring,
+  occurrence.revision AS revision,
+  occurrence.scope AS scope,
+  occurrence.visibility AS visibility,
+  occurrence.title AS title,
+  occurrence.description AS description,
+  occurrence.importance AS importance,
+  occurrence.group_name AS group_name,
+  occurrence.tags_json AS tags_json,
+  occurrence.recurrence_json AS recurrence_json,
+  occurrence.payload_json AS payload_json
+FROM calendar_month_snapshot AS snapshot
+LEFT JOIN calendar_occurrence AS occurrence
+  ON occurrence.account_id = snapshot.account_id
+ AND occurrence.backend_id = snapshot.backend_id
+ AND occurrence.window_start = snapshot.window_start
+ AND occurrence.window_end = snapshot.window_end
+ AND occurrence.timezone_input = snapshot.timezone_input
+WHERE snapshot.account_id = ?
+  AND snapshot.backend_id = ?
+  AND snapshot.window_start = ?
+  AND snapshot.window_end = ?
+  AND snapshot.timezone_input = ?
+ORDER BY occurrence.start_value ASC, occurrence.occurrence_id ASC;
+
+occurrencesForWindow:
+SELECT calendar_occurrence.*
+FROM calendar_occurrence
+JOIN calendar_month_snapshot
+  ON calendar_month_snapshot.account_id = calendar_occurrence.account_id
+ AND calendar_month_snapshot.backend_id = calendar_occurrence.backend_id
+ AND calendar_month_snapshot.window_start = calendar_occurrence.window_start
+ AND calendar_month_snapshot.window_end = calendar_occurrence.window_end
+ AND calendar_month_snapshot.timezone_input = calendar_occurrence.timezone_input
+WHERE calendar_occurrence.account_id = ?
+  AND calendar_occurrence.backend_id = ?
+  AND calendar_occurrence.window_start = ?
+  AND calendar_occurrence.window_end = ?
+  AND calendar_occurrence.timezone_input = ?
+  AND calendar_month_snapshot.is_complete = 1
+ORDER BY calendar_occurrence.start_value ASC, calendar_occurrence.occurrence_id ASC;
+
+allSnapshotsForNamespace:
+SELECT *
+FROM calendar_month_snapshot
+WHERE account_id = ?
+  AND backend_id = ?
+ORDER BY last_accessed_at ASC, window_start ASC, window_end ASC, timezone_input ASC;
+
+-- Complete snapshot replacement primitives. CalendarCacheStore must invoke
+-- these in one driver transaction and set is_complete only after every row is
+-- present; an interrupted transaction therefore exposes the old snapshot.
+insertSnapshot:
+INSERT INTO calendar_month_snapshot(
+  account_id,
+  backend_id,
+  window_start,
+  window_end,
+  timezone_input,
+  is_complete,
+  fetched_at,
+  last_accessed_at,
+  freshness,
+  occurrence_count
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateSnapshotMetadata:
+UPDATE calendar_month_snapshot
+SET is_complete = ?,
+    fetched_at = ?,
+    last_accessed_at = ?,
+    freshness = ?,
+    occurrence_count = ?
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+touchSnapshot:
+UPDATE calendar_month_snapshot
+SET last_accessed_at = ?
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?
+  AND is_complete = 1;
+
+setSnapshotFreshness:
+UPDATE calendar_month_snapshot
+SET freshness = ?
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+insertOccurrence:
+INSERT INTO calendar_occurrence(
+  account_id,
+  backend_id,
+  window_start,
+  window_end,
+  timezone_input,
+  occurrence_id,
+  event_id,
+  original_start,
+  original_start_is_all_day,
+  start_value,
+  start_is_all_day,
+  end_value,
+  end_is_all_day,
+  recurring,
+  revision,
+  scope,
+  visibility,
+  title,
+  description,
+  importance,
+  group_name,
+  tags_json,
+  recurrence_json,
+  payload_json
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteOccurrencesForWindow:
+DELETE FROM calendar_occurrence
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+deleteSnapshot:
+DELETE FROM calendar_month_snapshot
+WHERE account_id = ?
+  AND backend_id = ?
+  AND window_start = ?
+  AND window_end = ?
+  AND timezone_input = ?;
+
+-- Namespace-wide lifecycle and retention primitives.
+deleteOccurrencesForNamespace:
+DELETE FROM calendar_occurrence
+WHERE account_id = ? AND backend_id = ?;
+
+deleteSnapshotsForNamespace:
+DELETE FROM calendar_month_snapshot
+WHERE account_id = ? AND backend_id = ?;
+
+deletePreferencesForNamespace:
+DELETE FROM calendar_preferences
+WHERE account_id = ? AND backend_id = ?;
+
+-- Preference persistence primitives.
+preferencesForNamespace:
+SELECT *
+FROM calendar_preferences
+WHERE account_id = ? AND backend_id = ?;
+
+upsertPreferences:
+INSERT OR REPLACE INTO calendar_preferences(
+  account_id,
+  backend_id,
+  view_mode,
+  anchor_date,
+  scopes_json,
+  groups_json,
+  tags_json,
+  importance_json,
+  search_text,
+  updated_at
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

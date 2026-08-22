@@ -2,6 +2,7 @@ package io.sentient.mobilesdk.voice.io
 
 import io.sentient.mobilesdk.audioio.VoicePlaybackSink
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -19,8 +20,12 @@ interface VoiceAudio : VoicePlaybackSink {
     /** Continuous readiness state (StateFlow — conflation fine). UI: spinner on Configuring. */
     val state: StateFlow<VoiceAudioState>
 
-    /** 16k mono PCM16 capture frames. Hot ONLY while micActive; bounded, drop-newest. */
+    /** 16k mono PCM16 capture frames. Internal SDK/uplink surface; never expose to UI. */
     val micFrames: Flow<ShortArray>
+
+    /** Latest aggregate microphone envelope; contains no PCM or platform audio objects. */
+    val micLevels: StateFlow<MicLevelEnvelope>
+        get() = MutableStateFlow(MicLevelEnvelope.silence())
 
     /**
      * THE reconfig call. Idempotent — no-op if already in (mic, playback). Diffs +

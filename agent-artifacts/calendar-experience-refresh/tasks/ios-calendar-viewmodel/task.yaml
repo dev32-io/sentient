@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: ios-calendar-viewmodel
+title: Make iOS CalendarViewModel a thin SKIE state adapter
+status: merged
+dependsOn:
+  - ios-calendar-database-session
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: mobile-viewmodel-adapters
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && scripts/ios-setup.sh
+    - source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/ios-calendar-viewmodel
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-viewmodel
+  baseCommit: 341387eef19ca4521c71ba16f8f2bd7c7fd54c02
+  lastRunId: 8d221390-03ae-4ea6-839f-5f9bea717c92
+  completedCommit: eb7671857a3dc2f17243611ece7928273e25110c
+  mergedCommit: 3d28676fe3338a3e3e7fc4234b3afe25dd2d5432

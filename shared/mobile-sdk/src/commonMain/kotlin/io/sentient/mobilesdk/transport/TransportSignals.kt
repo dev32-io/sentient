@@ -19,8 +19,11 @@ sealed class TransportSignal {
     /** Server (or local) close handshake completed with [code] + [reason]. */
     data class Closed(val code: Int, val reason: String) : TransportSignal()
 
-    /** Transport-level failure (network drop, TLS rejection). [error] is a message. */
-    data class Failure(val error: String) : TransportSignal()
+    /** Transport-level failure (network drop, TLS rejection), as a structural code. */
+    data class Failure(val code: TransportFailureCode) : TransportSignal() {
+        /** Compatibility constructor discards arbitrary transport text. */
+        constructor(ignoredError: String) : this(TransportFailureCode.RECEIVE_FAILED)
+    }
 }
 
 /**

@@ -1,0 +1,117 @@
+schemaVersion: 1
+id: stage-stage-5-bootstrap-nudge-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-5-bootstrap-nudge
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 3
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+criteria:
+  - orchestratorCfg.calendar config schema, config.yaml defaults, and old-config
+    compatibility
+  - Capability minting, store open and close on session disposal, and
+    prompt-cache stability preserved across an in-session write
+  - Nudge cap, deterministic drop order, empty-calendar omission, serving-tz
+    rendering, and child/guest visibility
+loop:
+  iteration: 2
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 91a4cae3-0605-45f8-b3c1-f7673b463e5c
+  reviewedCommit: 8e7d3ac07962cc0c83f9050709acb018bfaa99cc
+  managerPrompt: >-
+    Address S5-BOOTSTRAP-002 (high, blocking) in
+    gateway/src/bootstrap/product-tools/calendar-provider.ts. S5-BOOTSTRAP-001
+    and S5-NUDGE-001 are resolved; S5-VERIFY-001 is deferred (leave it). Do NOT
+    regress the resolved fixes.
+
+
+    Bug: `householdWriteBlocked(tier, requested)` only fires for explicit
+    `requested === "household"`. For a non-adult (child/guest)
+    `calendar_update`/`calendar_delete` with OMITTED scope, the gate returns
+    null, `common` passes, and the run handler calls `targetsFor(undefined)` =
+    [privateTarget, householdTarget], which calls `householdStore.update/delete`
+    — returning store-level `forbidden` and making a household store call. This
+    violates the CAL-001 pre-PDP contract: a non-adult household write must be
+    rejected with `household-write-forbidden` and ZERO household store calls.
+
+
+    Fix: for write/confirm tier operations, a non-adight must never route to the
+    household store. Add a `writeTargetsFor(requested)` helper that returns
+    `targetsFor(requested)` filtered to exclude the household target when the
+    household capability's role is non-adult — e.g.
+    `targetsFor(requested).filter((t) => t.scope !== "household" ||
+    isAdult(t.capability.role))`. Use `writeTargetsFor(value.scope)` in the
+    `calendar_update` run handler and `writeTargetsFor(p.scope)` in the
+    `calendar_delete` run handler (replacing the current `targetsFor(...)`
+    calls). Do NOT change `calendar_list`/`calendar_get`/`calendar_search`
+    (reads stay visibility-filtered and may touch both stores). Do NOT change
+    `calendar_create` (scope is required there and explicit-household is already
+    pre-gated by `householdWriteBlocked` in `common`).
+
+
+    Resulting behavior:
+
+    - Non-adult, omitted-scope update/delete -> searches ONLY the private store;
+    if the event is not in private, returns `not-found` (or the appropriate
+    private-store error) with ZERO household store calls and no store-level
+    `forbidden` leak.
+
+    - Non-adult, explicit scope=household update/delete ->
+    `householdWriteBlocked` in `common` returns `household-write-forbidden`
+    pre-PDP, zero store calls (unchanged).
+
+    - Non-adult, explicit scope=private -> private target only (unchanged).
+
+    - Adult/admin, any scope -> both stores reachable (unchanged).
+
+
+    Remove the now-redundant inline `householdWriteBlocked(CONFIRM, p.scope)`
+    call in the delete run handler if `writeTargetsFor` makes it unnecessary
+    (keep behavior equivalent; the explicit-household non-adult case is already
+    handled by `common`).
+
+
+    Add a test: a child/guest `calendar_update` and `calendar_delete` with
+    OMITTED scope against an event that exists only in the household store makes
+    ZERO household store calls (use a household store stub whose
+    update/delete/get throw or record calls) and returns `not-found` (not
+    store-level `forbidden`); a separate test confirms explicit scope=household
+    still returns `household-write-forbidden` with zero store calls.
+
+
+    Constraints: stay within calendar-provider.ts and its test. Keep `cd gateway
+    && bun run typecheck` and `cd gateway && bun test
+    src/bootstrap/product-tools/calendar-provider src/bootstrap/phase-services
+    src/calendar/nudge` green. Do not weaken existing tests or regress
+    S5-BOOTSTRAP-001/S5-NUDGE-001.
+  fixerAgentId: 852ffed6-360a-4aaf-b69c-846261acbf29
+findings:
+  - id: S5-BOOTSTRAP-002
+    severity: high
+    status: resolved
+    criterion: Non-adult household update/delete must fail pre-PDP with
+      household-write-forbidden and never call household store for omitted scope
+    location: gateway/src/bootstrap/product-tools/calendar-provider.ts:216-217,280,285;
+      gateway/src/bootstrap/product-tools/calendar-provider.test.ts:45-73
+    summary: writeTargetsFor filters household targets for non-adult roles; explicit
+      household gating remains pre-PDP. Child and guest omitted-scope and
+      explicit-household tests pass.
+    blocking: false
+  - id: S5-VERIFY-001
+    severity: medium
+    status: deferred
+    criterion: Broader bootstrap lifecycle and compatibility verification
+    location: gateway/src/bootstrap/phase-services.test.ts and related stage tests
+    summary: Prior deferred verification gap remains non-blocking and was not
+      reopened during this closure-focused re-review.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-5-bootstrap-nudge-review/manifest.yaml

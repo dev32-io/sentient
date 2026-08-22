@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: mobile-calendar-mutations
+title: Implement shared online calendar mutation intents and recovery
+status: merged
+dependsOn:
+  - mobile-calendar-read-coordinator
+  - mobile-calendar-retention-offline
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: mobile-calendar-policies
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+    - source scripts/env.sh && ./gradlew
+      :shared:mobile-data:assembleMobileDataDebugXCFramework
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: repository
+  branch: feature/calendar
+  worktree: /Users/kevinye/Development/sentient
+  baseCommit: ed29754eaaca9fa3794fc454f6ceef4b06f4817e
+  lastRunId: 3cdec244-5430-4340-afbe-661bc9441457
+  completedCommit: fe966c44a0b13a3a0780308528b54f97eb5e6488
+  mergedCommit: 3e14667cd8fdd8d3c641635729592d0c20d46687

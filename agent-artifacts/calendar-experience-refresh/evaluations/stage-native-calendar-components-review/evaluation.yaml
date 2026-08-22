@@ -1,0 +1,104 @@
+schemaVersion: 1
+id: stage-native-calendar-components-review
+type: combined-review
+checkpoint: stage-review
+stageId: native-calendar-components
+scope:
+  workItem: calendar-experience-refresh
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Leaf Compose/SwiftUI components are controlled and side-effect free
+  - Exact mobile comparison uses sentient-design/HANDOFF.md,
+    sentient-design/brand-spec.md, sentient-design/design/mobile/calendar.html,
+    and sentient-design/components/mobile/sentient-mobile.js at logical 390x844
+    and 430x932
+  - Reference geometry includes 58 top bar, 16 inset, 44 targets, 46 view
+    controls, 64 rows, 42 Month cells, complete Year, 84% sheets, filters,
+    agenda, floating bar, focus, scaling, safe areas, and reduced motion
+  - Prototype fixed data and member/color/place/reminder semantics are absent;
+    semantic accessibility inspection is required but an actual
+    assistive-technology session is not a stage gate
+loop:
+  iteration: 1
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: e184954f-9a37-4d26-ba46-976d4f074b12
+  reviewedCommit: 31933631a190de946571f29b9bb6833fb8475c7b
+  managerPrompt: "Resolve all six findings. Remove the separate styled Day canvas
+    on Android and iOS so Day is the focused agenda presentation specified by
+    the mobile reference. Delete native Month-to-Day policy duplication: Android
+    must forward one shared date-selection intent and render the resulting
+    shared view/date state, not emit redundant date plus view callbacks. Drive
+    editor submit enablement from authoritative shared validation/mutation state
+    wherever available; Android Save must be disabled for blank/invalid drafts
+    and missing required recurrence scope, and iOS must select canCreate versus
+    canEdit according to editor mode rather than aggregate availability. While
+    submission is active, disable every draft-mutating, scope, save, delete, and
+    dismissal control that could race; also harden the shared reducer to ignore
+    editor mutation intents that would move SUBMITTING back to EDITING until the
+    operation settles. Make Android overlay press feedback honor
+    LocalCalendarReducedMotion with immediate/non-tween behavior. Add focused
+    controlled-component and state-race tests for each correction, preserve 44px
+    targets and exact reference geometry, run all stage checks, and return for
+    automatic re-review."
+  fixerAgentId: d5ce6ecf-7f23-4236-ad22-12e0ec621a8c
+findings:
+  - id: F-001
+    severity: high
+    status: resolved
+    criterion: Focused agenda Day view
+    location: Android CalendarComponents.kt; iOS CalendarScaffold.swift
+    summary: Separate Day canvases removed.
+    blocking: false
+  - id: F-002
+    severity: high
+    status: resolved
+    criterion: No native duplication of shared navigation policy
+    location: Android CalendarComponents.kt; CalendarSurfaceModels.kt
+    summary: Android now emits one date callback and relies on shared navigation.
+    blocking: false
+  - id: F-003
+    severity: high
+    status: resolved
+    criterion: Authoritative Android Save validation
+    location: CalendarMutations.kt; Android CalendarOverlayModels.kt
+    summary: Save consumes shared command-builder validation, including required
+      edit scope.
+    blocking: false
+  - id: F-004
+    severity: high
+    status: resolved
+    criterion: Mode-specific iOS mutation permission
+    location: iOS CalendarOverlayModels.swift
+    summary: Save selects canCreate versus canEdit by editor mode.
+    blocking: false
+  - id: F-005
+    severity: high
+    status: resolved
+    criterion: Submission race hardening
+    location: iOS CalendarOverlays.swift; Android CalendarOverlays.kt;
+      CalendarExperience.kt
+    summary: Mutating/dismissal controls are disabled and shared intents are ignored
+      during submission.
+    blocking: false
+  - id: F-006
+    severity: low
+    status: resolved
+    criterion: Android overlay reduced motion
+    location: Android CalendarOverlays.kt
+    summary: Reduced motion uses immediate snap feedback.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-native-calendar-components-review/manifest.yaml

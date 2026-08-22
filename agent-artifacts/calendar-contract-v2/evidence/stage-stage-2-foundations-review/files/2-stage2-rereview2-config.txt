@@ -1,0 +1,18 @@
+bun test v1.3.11 (af24e281)
+
+src/schemas/orchestrator-config.test.ts:
+(pass) orchestratorConfigSchema > applies defaults for optional tunables [6.39ms]
+(pass) orchestratorConfigSchema > accepts explicit lower calendar safety limits [0.72ms]
+(pass) orchestratorConfigSchema > rejects zero, negative, and excessive calendar limits [6.50ms]
+(pass) orchestratorConfigSchema > keeps the proactive output limit strictly below the generic 20000-character backstop [1.57ms]
+(pass) orchestratorConfigSchema > rejects a non-url base_url [0.59ms]
+(pass) orchestratorConfigSchema > rejects an out-of-range max_iterations [0.18ms]
+(pass) orchestratorConfigSchema > defaults base_url to empty string when omitted — the composition root then relies entirely on the secrets store [0.11ms]
+(pass) orchestratorConfigSchema > no longer accepts/needs api_key_env — the key comes from the secrets store, not config [0.10ms]
+(pass) orchestratorConfigSchema > defaults memory.dreamer.model to "" (inherit provider.model) when the memory block is omitted [0.03ms]
+(pass) orchestratorConfigSchema > parses a non-empty memory.dreamer.model override [0.12ms]
+
+ 10 pass
+ 0 fail
+ 33 expect() calls
+Ran 10 tests across 1 file. [40.00ms]

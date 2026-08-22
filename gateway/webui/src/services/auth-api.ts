@@ -10,8 +10,12 @@ const log = createLogger(["sentient", "webui", "auth", "api"]);
 export interface AuthUser {
   userId: string;
   displayName: string;
+  /** Explicit non-content role projection used by capability-aware routes. */
+  role?: "admin" | "adult" | "child" | "guest";
   isAdmin: boolean;
   avatarTint: string;
+  /** Optional server-projected capability data; never contains calendar content. */
+  calendarCapabilities?: Record<string, unknown>;
 }
 
 export interface PublicUser {

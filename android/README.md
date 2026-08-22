@@ -62,6 +62,29 @@ source scripts/env.sh
 Point the app at a gateway via the build config / in-app backend resolution; the default
 is the dev gateway running on this host (see the root `deploy/` docs).
 
+## Calendar V2 overlays
+
+`settings/calendar/CalendarOverlays.kt` contains controlled preview, Add/Edit,
+recurrence-scope, delete, conflict, offline, permission, and outcome sheets. The Compose
+surface forwards exact shared `EffectiveOccurrence` and `CalendarMutationDraft` values;
+it does not access storage or transport.
+
+The V2 editor extends the reference Add sheet with the supported production fields:
+description, all-day/timed start and end, UI-only input time zone, private/household
+scope, visibility, importance, group, tags, and structured recurrence (frequency,
+interval, weekdays, count/until). Identity, revision, recurrence mutation scopes,
+conflict policy, and online write gates remain shared-owned. Unsupported prototype
+place, reminder, member-owner, and color semantics are intentionally absent.
+
+Visual review uses the exact served reference at
+`sentient-design/design/mobile/calendar.html`, whose implementation is
+`sentient-design/components/mobile/sentient-mobile.js`, at both 390×844 and 430×932.
+Open `CalendarOverlayPreviews.kt` and compare preview, Add, timed/all-day Edit,
+recurrence scope, delete confirmation, conflict, offline, permission/error, and
+large-font previews directly against those viewports. The adapted native contract keeps
+the Dusk paper surface, 26dp top corners, 42×4 handle, 84% maximum height, 48dp actions,
+Terra primary action, internal IME-safe scrolling, safe-area padding, and tonal scrim.
+
 ## Testing
 
 - **JVM unit** (`testDebugUnitTest`): thin VMs, reducers, pure usecases with fake transport

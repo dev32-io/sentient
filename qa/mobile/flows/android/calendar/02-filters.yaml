@@ -1,0 +1,42 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, filters]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { text: "Household" }
+- swipe:
+    start: "90%, 28%"
+    end: "20%, 28%"
+    duration: 400
+- tapOn: { text: "Group: ${CALENDAR_GROUP}" }
+- swipe:
+    start: "90%, 28%"
+    end: "20%, 28%"
+    duration: 400
+- tapOn: { text: "#${CALENDAR_TAG}" }
+- swipe:
+    start: "90%, 34%"
+    end: "20%, 34%"
+    duration: 400
+- tapOn: { text: "${CALENDAR_IMPORTANCE}" }
+- swipe:
+    start: "90%, 34%"
+    end: "20%, 34%"
+    duration: 400
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "${CALENDAR_FILTER_TEXT}"
+- hideKeyboard
+- assertVisible: { id: "${CALENDAR_FILTERED_EVENT_TAG}" }
+- tapOn: { text: "Next period" }
+- swipe:
+    start: "90%, 28%"
+    end: "20%, 28%"
+    duration: 400
+- tapOn: { text: "Group: ${CALENDAR_GROUP}" }
+- tapOn: { id: "calendar-back" }
+- tapOn: { id: "history-open" }
+- extendedWaitUntil:
+    visible: { id: "calendar-open" }
+    timeout: 5000
+- tapOn: { id: "calendar-open" }
+- assertVisible: { id: "calendar-filter-search" }
+- assertNotVisible: { id: "${CALENDAR_FILTERED_OUT_EVENT_TAG}" }

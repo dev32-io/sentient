@@ -19,6 +19,7 @@ import type { UserProvisioner } from "../admin/user-provisioner.js";
 import type { TestProviderResult } from "../api/wizard/index.ts";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import type { SessionManager } from "../auth/session-manager.ts";
+import type { CalendarConfig } from "../calendar/types.js";
 import type { StartupConfig } from "../config/startup-config.ts";
 import type { ExternalToolSlot } from "../external-tools/external-tool-slot.js";
 import type { UserPrincipal } from "../identity/user-principal.js";
@@ -83,6 +84,8 @@ export async function testProviderImpl(
 
 export interface GatewayServices {
   readonly installState: InstallState;
+  readonly calendarConfig: CalendarConfig | undefined;
+  readonly calendarHouseholdTimeZone: string | undefined;
   readonly hermesVersionPath: string;
   readonly sttHealthUrl: string;
   readonly ttsHealthUrl: string;
@@ -282,6 +285,8 @@ export async function createGatewayServices(cfg: StartupConfig): Promise<Gateway
 
   return {
     installState,
+    calendarConfig: services.calendarConfig,
+    calendarHouseholdTimeZone: services.calendarHouseholdTimeZone,
     hermesVersionPath,
     sttHealthUrl: cfg.companions.stt_health_url,
     ttsHealthUrl: cfg.companions.tts_health_url,

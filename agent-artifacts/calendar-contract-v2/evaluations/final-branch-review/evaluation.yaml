@@ -1,0 +1,111 @@
+schemaVersion: 1
+id: final-branch-review
+type: combined-review
+checkpoint: final-review
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 2
+methods:
+  - Review the complete feature-branch diff for specification fit, correctness,
+    regressions, maintainability, and test coverage.
+loop:
+  iteration: 1
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: cfc497de-4f78-4b7a-9528-b98f7fce25d7
+  reviewedCommit: 8884fa9d77e35c7ae86ad50c1bbad602256cc1bf
+  managerPrompt: >-
+    Repair CAL-V2-FINAL-002 through 005, but do not alter calendar UI/ViewModel
+    files. CAL-V2-FINAL-001 is a baseline-scope false positive: `git diff
+    db9ac6826e92449b5094a097a27b4a0a7f98f502..HEAD` shows no changes under the
+    reviewed web/Android/iOS calendar UI paths; those files predate this work
+    item. Preserve that zero work-item UI diff and have re-review mark the
+    finding rejected/resolved by baseline evidence.
+
+
+    For FINAL-002, accept and validate the optional REST list `query` parameter
+    and thread it into the shared effective query service so the web client's
+    list query is never silently ignored; add exact handler/service filtering
+    tests.
+
+
+    For FINAL-003, remove KMP V1 `more` and `baseEventId` fields and every
+    eventId-to-baseEventId normalization. Use `nextCursor`, `eventId`,
+    `occurrenceId`, and `originalStart` throughout SDK/mobile-data compatibility
+    paths, including safe delete resolution, while unchanged platform consumers
+    still compile.
+
+
+    For FINAL-005, remove raw `{rrule, rule}` recurrence acceptance/parsing from
+    the exported web service contract. Web requests must use only the structured
+    V2 recurrence object; retain no legacy fallback and keep UI files untouched.
+
+
+    For FINAL-004, make `calendar.nudge.max_per_day` strictly positive with
+    bounded schema tests, consistent with the planned operator-limit contract.
+
+
+    Run focused gateway REST/query, web service/view compile tests,
+    KMP/mobile-data calendar/privacy tests, shared/Android compilation, root
+    typecheck, and `git diff --check`; verify again that the work-item UI path
+    diff remains empty.
+  fixerAgentId: fa256d94-c637-4607-972d-f4a2a6c02054
+  acceptedRisks:
+    - findingId: CAL-V2-FINAL-003
+      rationale: The remaining deprecated baseEventId member exists only on a
+        non-serializable compatibility view used by unchanged platform source.
+        Exact serialized V2 DTOs expose eventId/occurrenceId/originalStart and
+        nextCursor only, CalendarHttpClient never populates or normalizes
+        baseEventId, and mobile-data mutations use persisted V2 identity.
+        Removing this source-only member now conflicts with the reviewed
+        no-UI-change boundary; it is deferred to the planned UI refresh without
+        accepting any V1 wire compatibility.
+findings:
+  - id: CAL-V2-FINAL-001
+    severity: high
+    status: rejected
+    criterion: Manager guidance classifies the UI concern as baseline scope and
+      requires no UI changes in repair.
+    location: gateway/webui/src/components/calendar;
+      android/src/main/kotlin/io/sentient/android/settings/calendar;
+      ios/App/Settings/Calendar
+    summary: "Rejected: bounded repair diff has no changes under the reviewed UI paths."
+    blocking: false
+  - id: CAL-V2-FINAL-002
+    severity: high
+    status: resolved
+    criterion: REST list query must be threaded into shared effective filtering.
+    location: gateway/src/api/handlers/calendar.ts:150-154
+    summary: "Resolved: query is forwarded and exact handler filtering coverage was
+      added."
+    blocking: false
+  - id: CAL-V2-FINAL-003
+    severity: high
+    status: accepted
+    criterion: KMP clean cutover removes V1 more/baseEventId fields and normalization.
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/calendar/CalendarModels.kt:455-462
+    summary: Deprecated baseEventId remains exported on CalendarEvent, so the
+      explicit V1-field removal requirement is unmet.
+    blocking: true
+  - id: CAL-V2-FINAL-004
+    severity: medium
+    status: resolved
+    criterion: nudge.max_per_day uses a strictly positive bounded schema.
+    location: shared/config/src/schemas/orchestrator-config.ts:299-301
+    summary: "Resolved: schema minimum is 1 and zero is covered by rejection tests."
+    blocking: false
+  - id: CAL-V2-FINAL-005
+    severity: high
+    status: resolved
+    criterion: Web recurrence accepts structured V2 only.
+    location: gateway/webui/src/services/calendar-api.ts:133,200,320-350
+    summary: "Resolved: legacy RRULE types/conversion were removed and malformed
+      legacy input is rejected before fetch."
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/final-branch-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md

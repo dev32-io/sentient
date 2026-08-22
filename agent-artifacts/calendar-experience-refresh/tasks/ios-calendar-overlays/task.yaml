@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: ios-calendar-overlays
+title: Build iOS calendar preview and editor sheets
+status: merged
+dependsOn:
+  - ios-calendar-viewmodel
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: native-calendar-components
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && scripts/ios-setup.sh
+    - source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/ios-calendar-overlays
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-overlays
+  baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
+  lastRunId: 57572c16-a06c-4f12-a50e-a3119fec53da
+  completedCommit: 845cfdb57ca546383af9d0df0c1a2fd8cb6e2aae
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0

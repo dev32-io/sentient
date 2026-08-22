@@ -1,0 +1,35 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-20T05:29:22.008Z
+entries:
+  - result: 31 tests passed; gateway typecheck passed
+    command: source scripts/env.sh && cd gateway && bun test
+      src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+      src/calendar/types.test.ts
+      src/bootstrap/product-tools/calendar-provider.test.ts && bun run typecheck
+    description: Focused REST/query contract verification.
+    path: files/1-gateway-summary.txt
+    checksum: sha256:160cf437e7c3782acfbc8b1c0bfbf061db3f01c2dd44efab503e4204383f8da7
+  - result: 12 tests passed; web typecheck passed
+    command: source scripts/env.sh && cd gateway/webui && bun run test:unit --
+      src/services/calendar-api.test.ts
+      src/components/calendar/calendar-view.test.tsx && bun run typecheck
+    description: Web recurrence and compatibility verification.
+    path: files/2-web-summary.txt
+    checksum: sha256:fc982673f69f8141c1a83e594efea9b1f071c37cd13e3312d68ae9933bc9109a
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+      --tests '*Calendar*' --tests '*PrivacyGuard*'
+      :shared:mobile-sdk:compileDebugKotlin
+      :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+      :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin
+    description: KMP/mobile-data calendar/privacy and Android compilation.
+    path: files/3-mobile-summary.txt
+    checksum: sha256:e5cb36f08c776fc42ff5f54fdaf781e029b95f0759a3be5ca113f473edd5eb1d
+  - result: root typecheck and bounded repair diff check passed; repair UI-path diff
+      is empty
+    command: source scripts/env.sh && bun run typecheck; git diff --check
+      327108f287d44c1e34ab3685e602f08e3fa99de2..HEAD
+    description: Repair integrity and no-UI repair-scope verification.
+    path: files/4-integrity-summary.txt
+    checksum: sha256:c9f45326ae1116c0413a9dc9ec4e3a03ab0f105848a0dc93d1362343338202b1

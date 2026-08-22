@@ -1,0 +1,12 @@
+appId: io.dev32.sentient.debug
+tags: [helper, fault-armed]
+---
+# Online phase. Seed CALENDAR_CACHED_EVENT_TAG in this run's unique namespace.
+# After this flow, seed CALENDAR_RECOVERY_EVENT_TAG online, make the native
+# network path unavailable with the direct platform control, then invoke 82.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+    timeout: 20000
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- stopApp

@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: s6-web-ui
+title: Web calendar route, REST client, and view
+status: merged
+dependsOn:
+  - s4-rest-api
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-6-clients
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - cd gateway/webui && bun run test:unit
+    - cd gateway/webui && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar/s6-web-ui
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar/s6-web-ui
+  baseCommit: b44179da5772970081870ed62d961bbc936fb9e0
+  lastRunId: da3ab1b3-621a-4715-bf23-4ec3073850de
+  completedCommit: 5eb3095e31ddca81677906925b67cee67406e847
+  mergedCommit: d4ac1100a634dfd469a4bb26c4026949044c1778

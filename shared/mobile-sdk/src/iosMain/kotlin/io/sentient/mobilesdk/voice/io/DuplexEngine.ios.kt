@@ -95,6 +95,7 @@ private const val PLAYBACK_MAKEUP_GAIN = 5.0f
 internal class DuplexEngine(
     private val state: MutableStateFlow<VoiceAudioState>,
     private val micCh: Channel<ShortArray>,
+    private val meter: MicLevelMeter,
 ) {
     private val log = createLogger("voice", "engine", "ios")
 
@@ -154,7 +155,7 @@ internal class DuplexEngine(
             // (it re-runs attachPlayer → double-attach + resets outstanding/epoch → the
             // drain counter corrupts → isPlaybackIdle sticks). Hard-reset to a clean idle
             // baseline so the next configure rebuilds from scratch.
-            failReset(mic, playback, err.message ?: "unknown")
+            failReset(mic, playback, "audio-setup-failed")
             return
         }
         state.value = VoiceAudioState(Phase.Ready, micActive = mic, playbackActive = playback)
@@ -172,6 +173,7 @@ internal class DuplexEngine(
         runCatching { if (current.player) { player.stop(); engine.detachNode(player) } }
         deactivateSession()
         converter = null
+        meter.reset()
         playerFormat = null
         outstanding.value = 0
         playbackEpoch.incrementAndGet()
@@ -222,25 +224,25 @@ internal class DuplexEngine(
             error = errVar.ptr,
         )
         if (!categorySet) {
-            log.warn("session-category-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-category-failed", mapOf("code" to "audio-session-failure"))
             return@memScoped false
         }
         val activated = s.setActive(true, errVar.ptr)
         if (!activated) {
-            log.warn("session-activate-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+            log.warn("session-activate-failed", mapOf("code" to "audio-session-failure"))
             return@memScoped false
         }
         // Force the LOUD speaker route. Canonical speakerphone toggle; keeps
         // voice-processing AEC intact for barge-in.
         val routed = s.overrideOutputAudioPort(AVAudioSessionPortOverrideSpeaker, errVar.ptr)
-        if (!routed) log.warn("session-speaker-override-failed", mapOf("error" to (errVar.value?.localizedDescription ?: "unknown")))
+        if (!routed) log.warn("session-speaker-override-failed", mapOf("code" to "audio-session-failure"))
         log.debug("session-active", mapOf("category" to "playAndRecord", "mode" to "videoChat", "override" to "speaker"))
         true
     }
 
     private fun deactivateSession() {
         runCatching { AVAudioSession.sharedInstance().setActive(false, null) }
-            .onFailure { log.warn("session-deactivate-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("session-deactivate-failed", mapOf("code" to "audio-operation-failure")) }
     }
 
     /**
@@ -306,8 +308,9 @@ internal class DuplexEngine(
 
     private fun removeTap() {
         runCatching { engine.inputNode.removeTapOnBus(INPUT_BUS) }
-            .onFailure { log.warn("remove-tap-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("remove-tap-failed", mapOf("code" to "audio-operation-failure")) }
         converter = null
+        meter.reset()
     }
 
     /** Convert one tap buffer to 16k PCM16 ShortArray and deliver (audio-thread safe). */
@@ -317,6 +320,7 @@ internal class DuplexEngine(
         val bytes = conv.convert(buffer) ?: return
         val shorts = pcm16LeToShorts(bytes)
         meterAndGain(shorts)
+        runCatching { meter.accept(shorts) }
         deliver(shorts)
     }
 
@@ -367,7 +371,7 @@ internal class DuplexEngine(
         runCatching {
             player.stop()
             engine.detachNode(player)
-        }.onFailure { log.warn("detach-player-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+        }.onFailure { log.warn("detach-player-failed", mapOf("code" to "audio-operation-failure")) }
         playerFormat = null
         outstanding.value = 0
         playbackEpoch.incrementAndGet()
@@ -386,7 +390,7 @@ internal class DuplexEngine(
             if (!player.playing) player.play()
         }.onFailure {
             if (playbackEpoch.value == epochAtSchedule) outstanding.decrementAndGet()
-            log.error("play-frame-failed", mapOf("cause" to (it.message ?: "unknown"), "bytes" to pcm16.size))
+            log.error("play-frame-failed", mapOf("code" to "audio-frame-failure", "bytes" to pcm16.size))
         }
     }
 
@@ -394,7 +398,7 @@ internal class DuplexEngine(
         playbackEpoch.incrementAndGet()
         outstanding.value = 0
         runCatching { player.stop() }
-            .onFailure { log.warn("flush-playback-failed", mapOf("cause" to (it.message ?: "unknown"))) }
+            .onFailure { log.warn("flush-playback-failed", mapOf("code" to "audio-operation-failure")) }
         log.info("flush-playback", mapOf("reason" to "barge-in/interrupt drop-guard"))
     }
 

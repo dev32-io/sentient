@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: android-calendar-surface
+title: Build the Android calendar views, filters, agenda, and floating controls
+status: merged
+dependsOn:
+  - android-calendar-viewmodel
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: native-calendar-components
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    - source scripts/env.sh && ./gradlew :android:assembleDebug
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/android-calendar-surface
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/android-calendar-surface
+  baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
+  lastRunId: a67bcedd-564b-4416-b604-01d7e88f494b
+  completedCommit: e3f5eb626847cf025e01179e04e4850dfa746a5d
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0

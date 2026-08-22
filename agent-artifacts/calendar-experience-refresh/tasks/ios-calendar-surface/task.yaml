@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: ios-calendar-surface
+title: Build the iOS calendar views, filters, agenda, and floating controls
+status: merged
+dependsOn:
+  - ios-calendar-viewmodel
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: native-calendar-components
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && scripts/ios-setup.sh
+    - source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/ios-calendar-surface
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-surface
+  baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
+  lastRunId: a3f8b1c0-39a8-4825-835f-b54cd5e7cd9a
+  completedCommit: 3d9de79248e3f4a03872d005cf7fcb0ef9241ba5
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0

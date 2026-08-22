@@ -1,0 +1,17 @@
+schemaVersion: 1
+evaluation: stage-stage-3-domain-services-review
+recordedAt: 2026-08-20T03:00:26.089Z
+entries:
+  - result: 18 pass, 0 fail
+    command: source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-query.test.ts
+      src/calendar/calendar-mutations.test.ts src/calendar/nudge.test.ts
+  - result: pass
+    command: source scripts/env.sh && cd gateway && bun run typecheck
+  - result: pass
+    command: git diff --check
+      6daaa64cb4f51c6e6afc24e881d12e28b7fbbaf5..d969f3e90d0f3a788bcb2cc94bfc78e1470112a5
+  - result: 18 tests passed; typecheck passed
+    description: Sanitized focused verification summary
+    path: files/4-stage3-domain-services-rereview-1.txt
+    checksum: sha256:4ad83f19394af4c37efad594c940cd51878c1404998b11aeac1c583c9959bf7c

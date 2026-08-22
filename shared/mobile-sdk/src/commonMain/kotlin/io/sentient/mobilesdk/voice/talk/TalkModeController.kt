@@ -117,6 +117,18 @@ class TalkModeController(
         commit(from, TalkMode.Idle, "stopContinuous")
     }
 
+    /**
+     * Reset capture ownership after a genuine shared audio failure or teardown.
+     * This is deliberately separate from [releaseMic]: the capture is already gone,
+     * so emitting another stop would duplicate the release intent. Idempotence also
+     * makes repeated Error/Idle projections harmless.
+     */
+    fun captureLost(reason: String) {
+        val from = _mode.value
+        if (from == TalkMode.Idle) return
+        commit(from, TalkMode.Idle, "captureLost:$reason")
+    }
+
     private fun commit(from: TalkMode, to: TalkMode, trigger: String) {
         _mode.value = to
         log.info("talk-mode", mapOf("from" to from.name, "to" to to.name, "trigger" to trigger))

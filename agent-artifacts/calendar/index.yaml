@@ -1,0 +1,262 @@
+schemaVersion: 1
+id: calendar
+kind: story
+title: Gateway-owned family calendar
+phase: complete
+state: complete
+planning:
+  revision: 119
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-behavior
+    type: spec
+    path: specs/calendar-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-design
+    type: design
+    path: design/calendar-design.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-e2e
+    type: e2e-matrix
+    path: e2e-matrix/calendar-e2e.md
+    status: approved
+    narrativeSchemaVersion: 2
+  - id: outcome
+    type: outcome
+    path: outcome.md
+    status: complete
+tasks:
+  - id: s1-resource-classes
+    path: tasks/s1-resource-classes/task.yaml
+  - id: s1-domain-contracts
+    path: tasks/s1-domain-contracts/task.yaml
+  - id: s1-e2e-scaffolding
+    path: tasks/s1-e2e-scaffolding/task.yaml
+  - id: s1-store-schema-factory
+    path: tasks/s1-store-schema-factory/task.yaml
+  - id: s2-ha-deprecation
+    path: tasks/s2-ha-deprecation/task.yaml
+  - id: s2-expand-recurrence
+    path: tasks/s2-expand-recurrence/task.yaml
+  - id: s3-store-writes
+    path: tasks/s3-store-writes/task.yaml
+  - id: s3-store-reads
+    path: tasks/s3-store-reads/task.yaml
+  - id: s4-rest-api
+    path: tasks/s4-rest-api/task.yaml
+  - id: s4-tool-provider
+    path: tasks/s4-tool-provider/task.yaml
+  - id: s5-phase-bootstrap
+    path: tasks/s5-phase-bootstrap/task.yaml
+  - id: s5-nudge
+    path: tasks/s5-nudge/task.yaml
+  - id: s6-mobile-sdk
+    path: tasks/s6-mobile-sdk/task.yaml
+  - id: s6-web-ui
+    path: tasks/s6-web-ui/task.yaml
+  - id: s7-mobile-data
+    path: tasks/s7-mobile-data/task.yaml
+  - id: s8-android
+    path: tasks/s8-android/task.yaml
+  - id: s8-ios
+    path: tasks/s8-ios/task.yaml
+integrationUnits: []
+delivery:
+  workingBranch: feature/calendar
+  createdFromCommit: 89d38b25c50708e4fffabc843388856c5ef896b9
+  executionStartCommit: 8d440fc99e7601b6d5b9769d3a5462b8edfd16ee
+evaluations:
+  - id: stage-stage-1-foundation-review
+    path: evaluations/stage-stage-1-foundation-review/evaluation.yaml
+  - id: stage-stage-2-recurrence-deprecation-review
+    path: evaluations/stage-stage-2-recurrence-deprecation-review/evaluation.yaml
+  - id: stage-stage-3-store-crud-review
+    path: evaluations/stage-stage-3-store-crud-review/evaluation.yaml
+  - id: stage-stage-4-rest-and-provider-review
+    path: evaluations/stage-stage-4-rest-and-provider-review/evaluation.yaml
+  - id: stage-stage-5-bootstrap-nudge-review
+    path: evaluations/stage-stage-5-bootstrap-nudge-review/evaluation.yaml
+  - id: stage-stage-6-clients-review
+    path: evaluations/stage-stage-6-clients-review/evaluation.yaml
+  - id: stage-stage-7-mobile-data-review
+    path: evaluations/stage-stage-7-mobile-data-review/evaluation.yaml
+  - id: stage-stage-8-mobile-platform-review
+    path: evaluations/stage-stage-8-mobile-platform-review/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
+executionStages:
+  - id: stage-1-foundation
+    tasks:
+      - s1-resource-classes
+      - s1-domain-contracts
+      - s1-e2e-scaffolding
+    checks:
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: foundation-tests
+        profile: gateway
+        command: cd gateway && bun test src/access src/calendar/types
+          src/calendar/e2e-helpers
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Resource-class isolation and household path derivation
+        - Wire schema, isAdult predicate, UTC timestamp representation, and
+          golden fixtures
+        - E2E scaffolding failure-safe cleanup and disposable-user isolation
+  - id: stage-2-recurrence-deprecation
+    tasks:
+      - s1-store-schema-factory
+      - s2-expand-recurrence
+      - s2-ha-deprecation
+    checks:
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: recurrence-deprecation-tests
+        profile: gateway
+        command: cd gateway && bun test src/calendar/calendar-store
+          src/calendar/expand-recurrence src/tools/home src/tools/tool-tier
+          src/api/handlers/mcp-catalog
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - CalendarStore capability gate, path isolation, close() lifecycle, and
+          ahead-of-binary policy
+        - expandRecurrence bounded subset, EXDATE/exception, all-day, and
+          serving-timezone DST correctness
+        - HA calendar tool removal across provider output, catalog, and role
+          defaults (no profile migrator)
+  - id: stage-3-store-crud
+    tasks:
+      - s3-store-writes
+      - s3-store-reads
+    checks:
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: store-crud-tests
+        profile: gateway
+        command: cd gateway && bun test src/calendar/calendar-store
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Household write adult-gate (adult|admin; no bypass) fail-fast with no
+          prompt at the store (defense-in-depth)
+        - Role-based visibility filtering at the query layer (child/guest omit
+          adults)
+        - UTC storage and serving-timezone recurrence expansion through the
+          store path with EXDATE/exception application
+  - id: stage-4-rest-and-provider
+    tasks:
+      - s4-rest-api
+      - s4-tool-provider
+    checks:
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: rest-provider-tests
+        profile: gateway
+        command: cd gateway && bun test src/api/handlers/calendar
+          src/bootstrap/product-tools src/bootstrap/product-tool-metadata
+          src/tools/tool-broker
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - REST authority from authenticated principal (configured household),
+          serving-tz rendering, request-scoped close, and golden-fixture wire
+          convergence
+        - Pre-PDP household-write rejection (no permission.request, zero confirm
+          calls, zero store calls) and tool tier/role reachability
+  - id: stage-5-bootstrap-nudge
+    tasks:
+      - s5-phase-bootstrap
+      - s5-nudge
+    checks:
+      - id: gateway-typecheck
+        profile: gateway
+        command: cd gateway && bun run typecheck
+      - id: bootstrap-nudge-tests
+        profile: gateway
+        command: cd gateway && bun test src/bootstrap/phase-services src/calendar/nudge
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - orchestratorCfg.calendar config schema, config.yaml defaults, and
+          old-config compatibility
+        - Capability minting, store open and close on session disposal, and
+          prompt-cache stability preserved across an in-session write
+        - Nudge cap, deterministic drop order, empty-calendar omission,
+          serving-tz rendering, and child/guest visibility
+  - id: stage-6-clients
+    tasks:
+      - s6-web-ui
+      - s6-mobile-sdk
+    checks:
+      - id: web-client
+        profile: web
+        command: cd gateway/webui && bun run test:unit && bun run typecheck
+      - id: mobile-sdk
+        profile: gradle
+        command: ./gradlew :shared:mobile-sdk:testDebugUnitTest --tests '*Calendar*' &&
+          ./gradlew :shared:mobile-sdk:compileDebugKotlin
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Web calendar REST client and view over /api/v1/calendar matching
+          golden fixtures
+        - Mobile SDK CalendarHttpClient golden-fixture wire fidelity and
+          serving-tz representation
+  - id: stage-7-mobile-data
+    tasks:
+      - s7-mobile-data
+    checks:
+      - id: mobile-data
+        profile: gradle
+        command: ./gradlew :shared:mobile-data:testDebugUnitTest --tests '*Calendar*' &&
+          ./gradlew :shared:mobile-data:compileDebugKotlin
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Stateless repository passthrough and explicit exported use-case
+          interfaces for platform ViewModels
+        - DI wiring exposes calendar to platform screens without
+          restart-mutation assumptions
+  - id: stage-8-mobile-platform
+    tasks:
+      - s8-android
+      - s8-ios
+    checks:
+      - id: android-calendar
+        profile: android
+        command: ./gradlew :android:testDebugUnitTest --tests '*Calendar*' && ./gradlew
+          :android:compileDebugKotlin
+      - id: ios-calendar
+        profile: ios
+        command: xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+          -destination 'platform=iOS Simulator,name=iPhone 16' build &&
+          xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp
+          -destination 'platform=iOS Simulator,name=iPhone 16' test
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Route-scoped ViewModels consume shared use cases (not raw
+          repositories) with state folding
+        - Accessibility identifiers consistent with mobile E2E contracts

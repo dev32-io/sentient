@@ -11,6 +11,8 @@ class SdkSessionsRepository(private val sdk: SentientSdk) : SessionsRepository {
 
     override fun newChatFireAndForget() = sdk.sendNewChat()
 
+    override fun startFreshChatFireAndForget() = sdk.startFreshChat()
+
     override fun switchToFireAndForget(sessionId: String) = sdk.sendSwitchSession(sessionId)
 
     override suspend fun switchTo(sessionId: String) { sdk.switchSession(sessionId) }

@@ -1,0 +1,34 @@
+schemaVersion: 1
+id: calendar-v2-mutation-core
+title: Create the mutation command boundary and whole-event operations
+status: merged
+dependsOn:
+  - calendar-v2-temporal
+  - calendar-v2-recurrence
+  - calendar-v2-storage
+  - calendar-v2-config
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: stage-3-domain-services
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && cd gateway && bun test
+      src/calendar/calendar-mutations.test.ts
+    - source scripts/env.sh && cd gateway && bun run typecheck
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-contract-v2/calendar-v2-mutation-core
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-contract-v2/calendar-v2-mutation-core
+  baseCommit: ca1dcec157993645830a4ec1f2ac825190721453
+  lastRunId: 5b85e2ed-d83c-435e-b3c8-d7fc4bc9b8d9
+  completedCommit: 8f867fb71e4d323f9bb42664c0db3a469ac76df5
+  mergedCommit: 571858d7b4458b7e683743d7db039a25e45f1b23

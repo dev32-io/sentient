@@ -1,0 +1,18 @@
+{
+  "reviewedCommit": "01b09ae38643d630d68607e3d03a5cb51ac09a41",
+  "repairCommit": "06c6333b",
+  "workingTree": "clean",
+  "checks": {
+    "gatewayTypecheck": "pass",
+    "gatewayCalendarFocused": "50 passed, 0 failed",
+    "webui": "144 passed, typecheck pass",
+    "mobileSdkCalendar": "BUILD SUCCESSFUL",
+    "iosBuildAndTests": "73 tests passed, 0 failures"
+  },
+  "closureProbes": {
+    "recurrenceLimit": "store list returned recurrence-limit for COUNT=10 with maxOccurrences=3",
+    "timedSearch": "calendar_search returned one important timed fixture event with importance forwarded",
+    "repairTests": "REST envelope/create/scope, cancellation, nudge cap, date/RRULE validation, iOS replacement, and fixture-consumption tests passed"
+  },
+  "evidencePolicy": "sanitized contract results only; no credentials, tokens, transcripts, or private content"
+}

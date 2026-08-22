@@ -34,6 +34,7 @@ import { PencilIcon } from "./icons/pencil.tsx";
 import { SearchIcon } from "./icons/search.tsx";
 import { Volume2Icon } from "./icons/volume-2.tsx";
 import { VolumeXIcon } from "./icons/volume-x.tsx";
+import { CalendarIcon } from "./icons/calendar.tsx";
 
 export type IconName =
   | "mic" | "send" | "chat" | "bell" | "settings"
@@ -43,7 +44,7 @@ export type IconName =
   | "book-open" | "brain" | "drama" | "waveform" | "cpu" | "wrench"
   | "sliders-h" | "user-circle" | "users-group" | "menu"
   | "more-horizontal" | "pencil" | "search"
-  | "volume-2" | "volume-x";
+  | "volume-2" | "volume-x" | "calendar";
 
 export interface IconProps {
   name: IconName;
@@ -86,6 +87,7 @@ const REGISTRY: Record<IconName, (props: { size: number }) => JSX.Element> = {
   search: SearchIcon,
   "volume-2": Volume2Icon,
   "volume-x": VolumeXIcon,
+  calendar: CalendarIcon,
 };
 
 export function Icon({ name, size = 16 }: IconProps): JSX.Element {

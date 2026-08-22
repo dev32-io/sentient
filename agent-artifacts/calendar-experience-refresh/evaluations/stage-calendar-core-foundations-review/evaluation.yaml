@@ -1,0 +1,90 @@
+schemaVersion: 1
+id: stage-calendar-core-foundations-review
+type: combined-review
+checkpoint: stage-review
+stageId: calendar-core-foundations
+scope:
+  workItem: calendar-experience-refresh
+status: passed
+required: true
+attempt: 3
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+  - source scripts/env.sh && bun run --filter @sentient/webui test:unit && bun
+    run --filter @sentient/webui typecheck
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Pinned SQLDelight/Kotlin 2.3.10 compatibility, source-set-correct
+    dependencies, schema/migration/namespace correctness, and commonMain purity
+  - Deterministic Day/Week/Month/Year, raw temporal, filter, overflow, and
+    navigation contracts
+  - Explicit all-scope complete web pagination, account/backend preference
+    isolation, and calendar-view.tsx remaining untouched
+  - Exact reference vocabulary is checked directly against
+    sentient-design/HANDOFF.md, sentient-design/brand-spec.md,
+    sentient-design/design/web/calendar.html,
+    sentient-design/components/web/sentient-web.js,
+    sentient-design/design/mobile/calendar.html, and
+    sentient-design/components/mobile/sentient-mobile.js without importing
+    prototype data
+loop:
+  iteration: 2
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: 99b235c9-3286-4d7a-ac87-c17a2196e2f1
+  reviewedCommit: 5af403be42a80b9f872f8ee72aa4bbc2a67dadd6
+  managerPrompt: "Resolve the two remaining blocking findings. Restore
+    gateway/webui/src/components/calendar/calendar-view.tsx and
+    calendar-view.test.tsx exactly to the stage's pre-contribution boundary;
+    foundation code must not modify or adapt them. Remove the duplicated
+    temporal/editor helpers from that view boundary. In foundation APIs, never
+    reinterpret the compatibility timeZoneId as an event IANA zone: preserve raw
+    RFC3339 offset-bearing start/end/originalStart values and all-day date
+    identity, and expose an event timezone only when the Calendar V2 wire
+    actually supplies one. Add focused regression coverage for absence of
+    synthesized timezone data, rerun the stage checks, and return for
+    re-review."
+  fixerAgentId: 8aa9488f-ca5f-460b-8fe0-e7a6b38a9cd5
+findings:
+  - id: CAL-FOUND-001
+    severity: high
+    status: resolved
+    criterion: calendar-view.tsx boundary
+    location: gateway/webui/src/components/calendar/calendar-view.tsx and
+      calendar-view.test.tsx
+    summary: Approved shared-helper boundary restored.
+    blocking: false
+  - id: CAL-FOUND-002
+    severity: high
+    status: resolved
+    criterion: Month-to-Day navigation
+    location: gateway/webui/src/components/calendar/calendar-controller.ts
+    summary: Verified resolved.
+    blocking: false
+  - id: CAL-FOUND-003
+    severity: high
+    status: resolved
+    criterion: Alias-shaped filters
+    location: gateway/webui/src/components/calendar/calendar-controller.ts
+    summary: Verified resolved.
+    blocking: false
+  - id: CAL-FOUND-004
+    severity: high
+    status: resolved
+    criterion: Backend preference isolation
+    location: gateway/webui/src/components/calendar/calendar-preferences.ts
+    summary: Verified resolved.
+    blocking: false
+  - id: CAL-FOUND-005
+    severity: high
+    status: resolved
+    criterion: Raw temporal contract
+    location: gateway/webui/src/services/calendar-api.ts and
+      gateway/webui/src/components/calendar/calendar-view.tsx
+    summary: Verified resolved; no synthesized or inferred event timezone remains in
+      the repaired path.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-calendar-core-foundations-review/manifest.yaml

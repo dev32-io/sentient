@@ -106,7 +106,7 @@ class Handshake(
             true
         }
         is ServerMessage.SessionExpired -> {
-            log.warn("session.expired", mapOf("reason" to msg.reason))
+            log.warn("session.expired", mapOf("code" to "server-session-expired"))
             failGates(LastErrorKind.AUTH)
             true
         }

@@ -8,14 +8,15 @@
 // destination, which decides on the EXISTING state sources:
 //   - backend configured: BackendConfigHolder.store.config != null
 //     OR BuildConfig.GATEWAY_WS_URL non-empty.
-//   - token present: DisplayNameHolder.store.name != null (login writes it; logout
-//     clears it). A WS drop does NOT clear it, so a drop keeps the user on chat.
+//   - authenticated identity present: the explicit server user id and display name
+//     are both persisted by login; a WS drop does NOT clear either, so a drop keeps
+//     the user on chat.
 //
 // Reactive transitions:
-//   - login: when the token appears (name flips non-null) → navigate chat.
+//   - login: when both identity projections are present → navigate chat.
 //   - setup onSaved → re-decide (login or chat).
-//   - settings logout / authExpired → shutdown the UserSessionManager + clear auth
-//     → token flips null → navigate login.
+//   - settings logout / authExpired → purge/close UserSessionManager + clear auth
+//     → identity flips absent → navigate login.
 //
 // testTagsAsResourceId is enabled at the composition root so Compose testTags
 // surface as Android resource-ids for Maestro / uiautomator.
@@ -52,6 +53,7 @@ import io.sentient.android.backend.BackendConfigHolder
 import io.sentient.android.backend.BackendSetupScreen
 import io.sentient.android.backend.BackendSetupViewModel
 import io.sentient.android.di.UserSessionManager
+import io.sentient.android.sdk.AuthenticatedUserHolder
 import io.sentient.android.sdk.DisplayNameHolder
 import io.sentient.android.splash.AppSplashOverlay
 import io.sentient.android.update.ForceUpdateScreen
@@ -74,6 +76,8 @@ fun AppNavHost() {
     // Auth gate value (token presence). The OTA overlay only mounts once authed so its
     // single (UpdateViewModel → resolved backend) is never constructed pre-config.
     val name by DisplayNameHolder.store.name.collectAsStateWithLifecycle()
+    val authenticatedUserId by AuthenticatedUserHolder.store.userId.collectAsStateWithLifecycle()
+    val hasAuthenticatedIdentity = name != null && authenticatedUserId != null
     Surface(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         Box(Modifier.fillMaxSize()) {
             NavHost(navController = nav, startDestination = Routes.SPLASH) {
@@ -84,7 +88,7 @@ fun AppNavHost() {
                 settingsDestinations(nav)
                 forceUpdateDestination()
             }
-            if (name != null && isBackendConfigured()) {
+            if (hasAuthenticatedIdentity && isBackendConfigured()) {
                 UpdateOverlay(nav)
             }
         }
@@ -143,10 +147,11 @@ private fun NavGraphBuilder.forceUpdateDestination() {
 private fun NavGraphBuilder.splashDestination(nav: NavHostController) {
     composable(Routes.SPLASH) {
         val name by DisplayNameHolder.store.name.collectAsStateWithLifecycle()
+        val authenticatedUserId by AuthenticatedUserHolder.store.userId.collectAsStateWithLifecycle()
         LaunchedEffect(Unit) {
             val target = when {
                 !isBackendConfigured() -> Routes.SETUP
-                name == null -> Routes.LOGIN
+                name == null || authenticatedUserId == null -> Routes.LOGIN
                 else -> Routes.chat(null)
             }
             nav.navigate(target) { popUpTo(Routes.SPLASH) { inclusive = true } }
@@ -162,7 +167,10 @@ private fun NavGraphBuilder.setupDestination(nav: NavHostController) {
             viewModel = vm,
             // After a successful save the backend is configured; re-decide login/chat.
             onSaved = {
-                val target = if (DisplayNameHolder.store.name.value == null) Routes.LOGIN else Routes.chat(null)
+                val target = if (
+                    DisplayNameHolder.store.name.value == null ||
+                    AuthenticatedUserHolder.store.userId.value == null
+                ) Routes.LOGIN else Routes.chat(null)
                 nav.navigate(target) { popUpTo(Routes.SETUP) { inclusive = true } }
             },
         )
@@ -173,9 +181,14 @@ private fun NavGraphBuilder.loginDestination(nav: NavHostController) {
     composable(Routes.LOGIN) {
         val vm = koinViewModel<AuthViewModel>()
         val name by DisplayNameHolder.store.name.collectAsStateWithLifecycle()
-        // Token appears (login persisted the display name) → enter chat.
-        LaunchedEffect(name) {
-            if (name != null) nav.navigate(Routes.chat(null)) { popUpTo(Routes.LOGIN) { inclusive = true } }
+        val authenticatedUserId by AuthenticatedUserHolder.store.userId.collectAsStateWithLifecycle()
+        // Both the display projection and explicit server identity must be present
+        // before entering chat; this prevents a route recreation from guessing a
+        // namespace while the login callback is still being applied.
+        LaunchedEffect(name, authenticatedUserId) {
+            if (name != null && authenticatedUserId != null) {
+                nav.navigate(Routes.chat(null)) { popUpTo(Routes.LOGIN) { inclusive = true } }
+            }
         }
         LoginScreen(viewModel = vm, onOpenBackendSetup = { nav.navigate(Routes.SETUP) })
     }
@@ -185,6 +198,11 @@ private fun NavGraphBuilder.loginDestination(nav: NavHostController) {
 private fun rememberUserName(): String {
     val name by DisplayNameHolder.store.name.collectAsStateWithLifecycle()
     return name ?: DEFAULT_DISPLAY_NAME
+}
+
+/** The callback passed from the drawer to the host must land on the calendar route. */
+internal fun navigateToCalendar(navigate: (String) -> Unit) {
+    navigate(Routes.SETTINGS_CALENDAR)
 }
 
 private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
@@ -209,13 +227,24 @@ private fun NavGraphBuilder.chatDestination(nav: NavHostController) {
                 nav.navigate(Routes.chat(null)) { popUpTo("chat") { inclusive = true } }
             },
             onOpenSettings = { nav.navigate(Routes.SETTINGS) },
-            onAuthExpired = { logoutTo(nav, userSession) },
+            onOpenCalendar = { navigateToCalendar { route -> nav.navigate(route) } },
+            onAuthExpired = { authenticationExpiredTo(nav, userSession) },
         )
     }
 }
 
 /** Tear down the SDK session and route to login (clears the whole back stack). */
 internal fun logoutTo(nav: NavHostController, userSession: UserSessionManager) {
-    userSession.shutdown()
+    userSession.performLocalLogout()
+    navigateToLogin(nav)
+}
+
+/** Authentication expiry has its own production lifecycle entry point. */
+internal fun authenticationExpiredTo(nav: NavHostController, userSession: UserSessionManager) {
+    userSession.onAuthenticationExpired()
+    navigateToLogin(nav)
+}
+
+private fun navigateToLogin(nav: NavHostController) {
     nav.navigate(Routes.LOGIN) { popUpTo(nav.graph.id) { inclusive = true } }
 }

@@ -1,0 +1,266 @@
+schemaVersion: 1
+id: calendar-contract-v2
+kind: story
+title: Model-friendly bounded calendar contracts and recurring mutations
+phase: complete
+state: complete
+planning:
+  revision: 61
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-contract-v2-behavior
+    type: spec
+    path: specs/calendar-contract-v2-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-contract-v2-design
+    type: design
+    path: design/calendar-contract-v2-design.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-contract-v2-e2e
+    type: e2e-matrix
+    path: e2e-matrix/calendar-contract-v2-e2e.md
+    status: approved
+    narrativeSchemaVersion: 2
+  - id: outcome
+    type: outcome
+    path: outcome.md
+    status: complete
+tasks:
+  - id: calendar-v2-contracts
+    path: tasks/calendar-v2-contracts/task.yaml
+  - id: calendar-v2-temporal
+    path: tasks/calendar-v2-temporal/task.yaml
+  - id: calendar-v2-recurrence
+    path: tasks/calendar-v2-recurrence/task.yaml
+  - id: calendar-v2-storage
+    path: tasks/calendar-v2-storage/task.yaml
+  - id: calendar-v2-config
+    path: tasks/calendar-v2-config/task.yaml
+  - id: calendar-v2-query
+    path: tasks/calendar-v2-query/task.yaml
+  - id: calendar-v2-mutation-core
+    path: tasks/calendar-v2-mutation-core/task.yaml
+  - id: calendar-v2-occurrence-mutations
+    path: tasks/calendar-v2-occurrence-mutations/task.yaml
+  - id: calendar-v2-following-update
+    path: tasks/calendar-v2-following-update/task.yaml
+  - id: calendar-v2-following-delete
+    path: tasks/calendar-v2-following-delete/task.yaml
+  - id: calendar-v2-tools
+    path: tasks/calendar-v2-tools/task.yaml
+  - id: calendar-v2-rest
+    path: tasks/calendar-v2-rest/task.yaml
+  - id: calendar-v2-bootstrap
+    path: tasks/calendar-v2-bootstrap/task.yaml
+  - id: calendar-v2-web-client
+    path: tasks/calendar-v2-web-client/task.yaml
+  - id: calendar-v2-kmp-sdk
+    path: tasks/calendar-v2-kmp-sdk/task.yaml
+  - id: calendar-v2-mobile-data
+    path: tasks/calendar-v2-mobile-data/task.yaml
+integrationUnits: []
+delivery:
+  workingBranch: feature/calendar
+  createdFromCommit: ea784d4269b68e9e3611b970326b83beab554316
+  executionStartCommit: ad153868d35a434833d0f2509b43d360fb9db930
+evaluations:
+  - id: stage-stage-1-contracts-review
+    path: evaluations/stage-stage-1-contracts-review/evaluation.yaml
+  - id: stage-stage-2-foundations-review
+    path: evaluations/stage-stage-2-foundations-review/evaluation.yaml
+  - id: stage-stage-3-domain-services-review
+    path: evaluations/stage-stage-3-domain-services-review/evaluation.yaml
+  - id: stage-stage-4-recurring-mutations-review
+    path: evaluations/stage-stage-4-recurring-mutations-review/evaluation.yaml
+  - id: stage-stage-5-gateway-adapters-review
+    path: evaluations/stage-stage-5-gateway-adapters-review/evaluation.yaml
+  - id: stage-stage-6-bootstrap-review
+    path: evaluations/stage-stage-6-bootstrap-review/evaluation.yaml
+  - id: stage-stage-7-clients-review
+    path: evaluations/stage-stage-7-clients-review/evaluation.yaml
+  - id: stage-stage-8-mobile-data-review
+    path: evaluations/stage-stage-8-mobile-data-review/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
+executionStages:
+  - id: stage-1-contracts
+    tasks:
+      - calendar-v2-contracts
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/types.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Exact V2 tool/REST fields and strict schema behavior
+        - Calendar scope versus mutation scope and stable occurrence identity
+        - Golden fixture completeness with no V1 compatibility parsing
+  - id: stage-2-foundations
+    tasks:
+      - calendar-v2-temporal
+      - calendar-v2-recurrence
+      - calendar-v2-storage
+      - calendar-v2-config
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/types.test.ts src/calendar/calendar-temporal.test.ts
+        src/calendar/expand-recurrence.test.ts
+        src/calendar/recurrence-splitter.test.ts
+        src/calendar/calendar-store.test.ts src/calendar/e2e-helpers.test.ts
+      - source scripts/env.sh && cd shared/config && bun test
+        src/schemas/orchestrator-config.test.ts
+      - source scripts/env.sh && bun run typecheck
+    mode: concurrent
+    review:
+      tier: high
+      focus:
+        - Temporal and recurrence correctness including DST and generated-slot
+          identity
+        - Fresh V2 storage isolation, capability gates, revision CAS, and
+          rollback primitives
+        - Operator limits remain bounded below the generic result cap
+        - Parallel contributions have non-overlapping source ownership and
+          coherent contracts
+      rationale: This concurrent barrier establishes recurrence identity, timezone
+        normalization, capability-rooted storage, revision CAS, and safety
+        limits. A defect here can corrupt every later mutation or weaken
+        authorization, and further decomposition would separate invariants that
+        must be reviewed together after merge.
+  - id: stage-3-domain-services
+    tasks:
+      - calendar-v2-query
+      - calendar-v2-mutation-core
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/calendar-query.test.ts
+        src/calendar/calendar-mutations.test.ts src/calendar/nudge.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: concurrent
+    review:
+      tier: high
+      focus:
+        - Complete-or-error model queries and deterministic bounded REST paging
+        - Effective-occurrence visibility and filter ordering
+        - Mutation authority, revisions, canonical recurrence, and whole-segment
+          atomicity
+      rationale: This merge establishes the two authoritative domain boundaries used
+        by tools and REST. Effective visibility and atomic revisioned mutation
+        are security/data-integrity seams that require joint post-merge review;
+        splitting review would miss disagreement between read and write
+        projections.
+  - id: stage-4-recurring-mutations
+    tasks:
+      - calendar-v2-occurrence-mutations
+      - calendar-v2-following-update
+      - calendar-v2-following-delete
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/calendar/calendar-mutations.test.ts
+        src/calendar/calendar-query.test.ts
+        src/calendar/expand-recurrence.test.ts
+        src/calendar/recurrence-splitter.test.ts
+        src/calendar/calendar-store.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: sequential
+    review:
+      tier: high
+      focus:
+        - Rich single-occurrence override and canonical cancellation invariants
+        - COUNT and UNTIL split arithmetic including excluded/cancelled slots
+          and DST
+        - Exception/exclusion partitioning, recurrence conflicts, first-slot
+          behavior, and atomic rollback
+        - No duplicate, missing, or cross-segment occurrence ownership
+      rationale: Google-style recurrence mutations combine immutable occurrence
+        identity, COUNT/UNTIL arithmetic, exception migration, optimistic
+        concurrency, authorization, and multi-row atomicity. The sequential
+        contributions intentionally share one mutation service, so one high
+        review must verify the assembled state machine and rollback invariants.
+  - id: stage-5-gateway-adapters
+    tasks:
+      - calendar-v2-tools
+      - calendar-v2-rest
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/bootstrap/product-tools/calendar-provider.test.ts
+        src/api/handlers/calendar.test.ts src/calendar/calendar-query.test.ts
+        src/calendar/calendar-mutations.test.ts
+      - source scripts/env.sh && cd gateway && bun run typecheck
+    mode: concurrent
+    review:
+      tier: high
+      focus:
+        - All six tool schemas, stable tiers, pre-PDP household gate, actionable
+          errors, and proactive caps
+        - REST V2 route replacement, paging, authentication, error mapping, and
+          handle closure
+        - Tool and REST adapters share domain behavior without loopback or
+          hidden-data leakage
+      rationale: The tool and REST boundaries independently expose the same
+        security-sensitive domain behavior to untrusted inputs. A joint high
+        review is needed to catch authority, error, paging, privacy, and
+        wire-shape drift across both adapters after concurrent integration.
+  - id: stage-6-bootstrap
+    tasks:
+      - calendar-v2-bootstrap
+    checks:
+      - source scripts/env.sh && cd gateway && bun test
+        src/bootstrap/phase-services.test.ts src/calendar/nudge.test.ts
+        src/api/handlers/calendar.test.ts src/runtime/session-runtime.test.ts
+      - source scripts/env.sh && bun run typecheck
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Immutable principal-to-capability authority and shared resolved
+          configuration
+        - Session/REST lifecycle and close behavior
+        - Nudge security and bounds remain unchanged
+        - No automatic destructive reset or production mutation
+  - id: stage-7-clients
+    tasks:
+      - calendar-v2-web-client
+      - calendar-v2-kmp-sdk
+    checks:
+      - source scripts/env.sh && cd gateway/webui && bun run test:unit --
+        src/services/calendar-api.test.ts
+        src/components/calendar/calendar-view.test.tsx
+      - source scripts/env.sh && cd gateway/webui && bun run typecheck
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+        --tests '*Calendar*' --tests '*PrivacyGuard*'
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:compileDebugKotlin
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Exact REST V2 parity across web and KMP
+        - No PATCH/DELETE or V1 wire fallback
+        - Source-level whole-series adapters preserve untouched UI compilation
+        - Calendar payload and token privacy in client diagnostics
+  - id: stage-8-mobile-data
+    tasks:
+      - calendar-v2-mobile-data
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+        --tests '*Calendar*'
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin
+      - source scripts/env.sh && git diff --check
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Stateless repository and exhaustive SentientResult/StateFlow behavior
+        - One-call mixed-kind V2 reads, cursor propagation, and typed recurring
+          mutation use case
+        - Untouched platform UI compatibility and content-free diagnostics

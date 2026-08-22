@@ -36,9 +36,9 @@ final class LocalNetworkPrimer {
             case .ready:
                 self?.log.info("primer.ready")
             case let .failed(error):
-                self?.log.warn("primer.failed reason=\(error)")
+                self?.log.warn("primer.failed code=network")
             case let .waiting(error):
-                self?.log.warn("primer.waiting reason=\(error)")
+                self?.log.warn("primer.waiting code=network")
             default:
                 break
             }

@@ -1,0 +1,46 @@
+schemaVersion: 1
+id: stage-stage-4-recurring-mutations-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-4-recurring-mutations
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 3
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/calendar/calendar-mutations.test.ts src/calendar/calendar-query.test.ts
+    src/calendar/expand-recurrence.test.ts
+    src/calendar/recurrence-splitter.test.ts src/calendar/calendar-store.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Rich single-occurrence override and canonical cancellation invariants
+  - COUNT and UNTIL split arithmetic including excluded/cancelled slots and DST
+  - Exception/exclusion partitioning, recurrence conflicts, first-slot behavior,
+    and atomic rollback
+  - No duplicate, missing, or cross-segment occurrence ownership
+loop:
+  iteration: 2
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 005aaf04-ca86-441c-88f5-4e58e38a9c89
+  reviewedCommit: 029718e2d2498fe3a7d595790fb6e0ec19ba1031
+  managerPrompt: Repair S4-004 by rejecting a re-anchored successor schedule that
+    would claim the same or an earlier generated slot than the retained prefix
+    terminal slot. Compute the last retained generated slot and the successor's
+    first generated slot in their correct all-day/timed and event-timezone
+    domains before opening or committing the split transaction; require strict
+    chronological separation. Do not silently truncate additional prefix
+    occurrences or allow different segment IDs to mask duplicate ownership.
+    Return recurrence_conflict with no writes when the new anchor or recurrence
+    rule causes equality/backward overlap. Add timed and all-day tests for
+    equal, earlier, and valid later anchors, including atomic no-change
+    assertions for prefix, successor, exceptions, exclusions, and revisions,
+    then rerun all stage-4 checks.
+  fixerAgentId: 6ad32506-6eaf-4d6e-94fa-57881822b1a8
+findings: []
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-4-recurring-mutations-review/manifest.yaml

@@ -1,0 +1,25 @@
+stage: stage-mobile-platform-sessions-review
+work_item: calendar-experience-refresh
+prior_reviewed_commit: bfe0d35bfea7d10de8f89dace420e2172d2eb347
+repair_commit: 71c3ef5d2bd956027f313ad5d82a9e01b3fa6b69
+reviewed_commit: 43ffe303b02d8ffda10c525be9a7b7094a42db10
+mode: closure-focused re-review, repair diff only
+
+checks:
+- source scripts/env.sh && ./gradlew :shared:mobile-data:allTests :android:testDebugUnitTest :android:assembleDebug --console=plain: PASS
+- source scripts/env.sh && scripts/ios-setup.sh: PASS
+- source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest': PASS (82 tests)
+- source scripts/env.sh && ./gradlew :android:compileDebugAndroidTestKotlin --console=plain: PASS
+- source scripts/env.sh && ./gradlew :android:connectedDebugAndroidTest --console=plain: PASS (3 tests)
+- source scripts/env.sh && git diff --check: PASS
+
+repair-verification:
+- CalendarDependencyTest proves protected settings boundary performs zero network calls and legacy construction remains explicit.
+- Android instrumented tests exercise real AndroidSqliteDriver open/migrate/reopen/close, purge, switch isolation, cancellation boundary, and bounded background execution.
+- iOS tests exercise protected NativeSqliteDriver open/migrate/reopen/close, purge/switch isolation, stale successor snapshot, route lifetime, and typed invalid-identity states.
+- LogSanitizer endpoint userinfo/query/fragment tests pass; app/transport logs observed in test output use structural endpoint identities or redacted endpoints.
+- commonMain platform-type and forbidden-storage scans: no matches.
+- worktree status: clean
+
+review-note:
+- Repair introduces an asynchronous init/close check-then-publish race in Android and iOS; no runtime logs or private data are recorded here.

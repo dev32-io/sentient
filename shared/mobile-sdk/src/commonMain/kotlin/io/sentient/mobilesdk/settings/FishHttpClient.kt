@@ -94,9 +94,9 @@ internal suspend fun <T> mapFishResponse(
 ): FishResult<T> {
     if (response.status.isSuccess()) {
         return runCatching { FishResult.Success(parse(response)) }
-            .getOrElse { e ->
-                log.warn("fish.parse-error", mapOf("cause" to (e.message ?: "unknown")))
-                FishResult.Failure(AuthError.Unknown(cause = e.message ?: "parse error"))
+            .getOrElse {
+                log.warn("fish.parse-error", mapOf("code" to "decode-failure"))
+                FishResult.Failure(AuthError.Unknown(cause = "decode-failure"))
             }
     }
     val status = response.status.value
@@ -111,7 +111,7 @@ internal suspend fun <T> mapFishResponse(
 
 /** Wraps a Fish call so a transport failure becomes FishResult.Failure(Network), never a throw. */
 internal suspend fun <T> safeFishCall(log: Log, block: suspend () -> FishResult<T>): FishResult<T> =
-    runCatching { block() }.getOrElse { e ->
-        log.warn("fish.network-error", mapOf("cause" to (e.message ?: "unknown")))
-        FishResult.Failure(AuthError.Network(cause = e.message ?: "network error"))
+    runCatching { block() }.getOrElse {
+        log.warn("fish.network-error", mapOf("code" to "transport-failure"))
+        FishResult.Failure(AuthError.Network(cause = "transport-failure"))
     }

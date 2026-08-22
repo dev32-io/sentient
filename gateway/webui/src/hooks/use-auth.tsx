@@ -2,7 +2,7 @@ import { createContext, type ComponentChildren } from "preact";
 import { useContext, useEffect, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { AUTH_STORAGE_KEY } from "../constants.js";
-import type { AuthApi, AuthApiError } from "../services/auth-api.js";
+import type { AuthApi, AuthApiError, AuthUser } from "../services/auth-api.js";
 import type { AuthState } from "../types.js";
 
 const log = createLogger(["sentient", "webui", "auth", "context"]);
@@ -17,7 +17,7 @@ type AuthContextValue = AuthState & {
   login(input: { userId: string; pin: string }): Promise<AuthResult<{ token: string }>>;
   setup(input: { userId: string; displayName: string; pin: string }): Promise<AuthResult<{ token: string }>>;
   logout(): Promise<void>;
-  updateUser(user: { userId: string; displayName: string; isAdmin: boolean; avatarTint: string }): void;
+  updateUser(user: AuthUser): void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);

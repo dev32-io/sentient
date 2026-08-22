@@ -1,0 +1,112 @@
+schemaVersion: 1
+id: stage-stage-1-foundation-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-1-foundation
+scope:
+  workItem: calendar
+status: passed
+required: true
+attempt: 4
+methods:
+  - cd gateway && bun run typecheck
+  - cd gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers
+criteria:
+  - Resource-class isolation and household path derivation
+  - Wire schema, isAdult predicate, UTC timestamp representation, and golden
+    fixtures
+  - E2E scaffolding failure-safe cleanup and disposable-user isolation
+loop:
+  iteration: 3
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 86435468-ce78-41f0-947d-542d74003c94
+  reviewedCommit: d5e2805aa5c3d60bb0276b35b524a4f84756054e
+  managerPrompt: >-
+    Address CAL-S1-004 in gateway/src/calendar/types.ts only (plus types.test.ts
+    for tests). Valid UNTIL recurrences are rejected because the raw RFC UNTIL
+    format and the wire ISO UNTIL format are compared as strings and never
+    match.
+
+
+    Root cause: parseRRule (~line 306) returns `until` as the raw RFC string
+    ("20261231T235959Z") cast to UtcInstant, but UtcInstant is an ISO-8601
+    instant contract and wireRRuleSchema.until uses `z.string().datetime({
+    offset: true })` (ISO). The superRefine (~line 195) then compares
+    `recurrence.rule.until !== rule.until` as strings, so the ISO wire value and
+    the RFC parsed value never compare equal.
+
+
+    Fix both, reusing parseRRule as the single RRULE validator:
+
+
+    1. In parseRRule, convert the validated RFC UNTIL (matched by
+    /^\d{8}T\d{6}Z$/) to a proper ISO UtcInstant before returning it as
+    `value.until` (e.g. "20261231T235959Z" -> "2026-12-31T23:59:59.000Z"). Add a
+    small helper (e.g. rfcUntilToIso) or use Date.UTC + toISOString. This makes
+    the parsed domain value honor the UtcInstant (ISO) contract. Keep the stored
+    recurrence.rrule as the raw RFC string (storage stays RFC); only the parsed
+    `rule.until` becomes ISO.
+
+
+    2. In the recurrence superRefine, compare `until` by instant equivalence,
+    not string equality — wire clients may send "2026-12-31T23:59:59Z",
+    "2026-12-31T23:59:59.000Z", or "2026-12-31T23:59:59+00:00", all valid under
+    datetime({ offset: true }). Replace the `recurrence.rule.until !==
+    rule.until` term with a normalized comparison: if both are undefined they
+    match; if exactly one is undefined they mismatch; if both are defined,
+    compare `new Date(recurrence.rule.until).getTime() === new
+    Date(rule.until).getTime()`. Keep the freq/interval/count comparisons as-is
+    (numbers/enums) and the byDay JSON.stringify comparison as-is. Do not weaken
+    the malformed-RRULE or rrule/rule-disagreement rejections from CAL-S1-003.
+
+
+    Add/adjust unit tests in src/calendar/types.test.ts:
+
+    (a) parseRRule("FREQ=DAILY;UNTIL=20261231T235959Z").value.until equals
+    "2026-12-31T23:59:59.000Z" (ISO);
+
+    (b) a valid wire UNTIL recurrence with
+    rrule="FREQ=DAILY;UNTIL=20261231T235959Z" and
+    rule.until="2026-12-31T23:59:59.000Z" is ACCEPTED by calendarEventSchema
+    (and equivalently by calendarRequestSchema wrapped in a create request);
+
+    (c) the same valid UNTIL is also accepted when the wire until is
+    "2026-12-31T23:59:59Z" (no milliseconds) and "2026-12-31T23:59:59+00:00"
+    (offset form) — instant equivalence, not string match;
+
+    (d) the existing rejections still hold: malformed rrule ("GIBBERISH"),
+    unsupported key ("FREQ=WEEKLY;BYDAY=MO;BYMONTH=1"), and rrule/rule
+    disagreement on COUNT.
+
+
+    Constraints: stay within s1-domain-contracts scope (types.ts + types.test.ts
+    only). If any existing parseRRule test asserted the raw RFC until string,
+    update it to the ISO form. Keep `cd gateway && bun run typecheck` and `cd
+    gateway && bun test src/access src/calendar/types src/calendar/e2e-helpers`
+    green.
+  fixerAgentId: f87fd53d-328d-434a-ac78-a4eee8eefda0
+  acceptedRisks:
+    - findingId: CAL-S1-005
+      rationale: The impossible-date/impossible-UNTIL validation gap (localDate regex
+        + parseRRule UNTIL) captured by this finding has since been FIXED at the
+        final-branch review under CAL-FINAL-003 (real-calendar-date round-trip
+        validation added to localDate and real date+time component validation
+        added to parseRRule UNTIL). The stage-1 code now rejects impossible
+        values; this finding is no longer a live defect. Re-approving to close
+        the stage-1 loop, which remained in awaiting_manager after the prior
+        approve.
+findings:
+  - id: CAL-S1-005
+    severity: medium
+    status: accepted
+    criterion: RRULE subset parsing and all-day date wire representation must reject
+      malformed values
+    location: gateway/src/calendar/types.ts:138-145, 283-305
+    summary: Impossible RRULE UNTIL timestamps and invalid all-day dates are accepted.
+    blocking: true
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-1-foundation-review/manifest.yaml
+  riskAcceptance: risk-acceptance.md

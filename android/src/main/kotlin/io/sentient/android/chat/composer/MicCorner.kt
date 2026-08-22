@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.sentient.mobilesdk.log.createLogger
+import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -72,8 +73,7 @@ internal val MIC_CORNER_TRAVEL = MIC_CORNER_WRAP_WIDTH - MIC_CORNER_BUTTON
 
 @Composable
 internal fun MicCorner(
-    micActive: Boolean,
-    onModeChange: (MicCornerMode) -> Unit,
+    talkMode: TalkMode,
     ensureMicPermission: () -> Boolean,
     onPress: () -> Unit,
     onRelease: () -> Unit,
@@ -87,29 +87,43 @@ internal fun MicCorner(
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    var mode by remember { mutableStateOf(MicCornerMode.IDLE) }
     var dragging by remember { mutableStateOf(false) }
+    val sharedMode = when (talkMode) {
+        TalkMode.Idle -> MicCornerMode.IDLE
+        TalkMode.Hold -> MicCornerMode.HOLD
+        TalkMode.Continuous -> MicCornerMode.LOCKED
+    }
+    // The optimistic preview is presentation-only while the shared FSM processes press.
+    val renderedMode = if (dragging && sharedMode == MicCornerMode.IDLE) {
+        MicCornerMode.HOLD
+    } else sharedMode
     val drag = remember { Animatable(0f) }
     val armed by remember(travelPx) { derivedStateOf { isArmed(drag.value, travelPx) } }
-    val railShown = dragging || mode == MicCornerMode.LOCKED
+    val railShown = dragging || renderedMode == MicCornerMode.LOCKED
 
-    val currentOnModeChange by rememberUpdatedState(onModeChange)
     val currentOnPress by rememberUpdatedState(onPress)
     val currentOnRelease by rememberUpdatedState(onRelease)
     val currentOnLock by rememberUpdatedState(onLock)
     val currentOnStopContinuous by rememberUpdatedState(onStopContinuous)
     val currentEnsurePermission by rememberUpdatedState(ensureMicPermission)
 
+    // Shared Idle is the only teardown presentation reset; it emits no intent.
+    LaunchedEffect(talkMode, dragging) {
+        if (talkMode == TalkMode.Idle && !dragging) {
+            scope.launch { drag.animateTo(0f, micCornerSpring()) }
+        }
+    }
+
     // Mode transition → ONE SDK talk-mode intent. Pure gesture→intent translation with zero
     // mode semantics (the SDK's TalkModeController owns them all): this only names which
     // intent each FSM edge maps to. HOLD→LOCKED now emits onLock (audio.end + semantic
     // audio.start) rather than staying a silent visual promotion.
     fun setMode(next: MicCornerMode, trigger: String) {
-        val prev = mode
+        val prev = renderedMode
         if (prev == next) return
-        mode = next
-        currentOnModeChange(next)
-        log.info("mode-change", mapOf("from" to prev.name, "to" to next.name, "trigger" to trigger))
+        // TalkMode remains the sole state owner; this adapter only translates the
+        // pointer outcome into one shared intent.
+        log.info("gesture-outcome", mapOf("from" to prev.name, "to" to next.name, "trigger" to trigger))
         when {
             prev == MicCornerMode.IDLE && next == MicCornerMode.HOLD -> currentOnPress()
             prev == MicCornerMode.HOLD && next == MicCornerMode.IDLE -> currentOnRelease()
@@ -121,27 +135,11 @@ internal fun MicCorner(
         }
     }
 
-    // External teardown (disconnect / failed start) while held or locked →
-    // snap back to IDLE without stopping again. Keyed on dragging too so an
-    // edge that lands mid-drag is consumed without resetting (webui parity).
-    var prevActive by remember { mutableStateOf(micActive) }
-    LaunchedEffect(micActive, dragging) {
-        val was = prevActive
-        prevActive = micActive
-        if (was && !micActive && mode != MicCornerMode.IDLE && !dragging) {
-            val prev = mode
-            mode = MicCornerMode.IDLE
-            currentOnModeChange(MicCornerMode.IDLE)
-            log.info("mode-change", mapOf("from" to prev.name, "to" to "IDLE", "trigger" to "external-off"))
-            scope.launch { drag.animateTo(0f, micCornerSpring()) }
-        }
-    }
-
     Box(
         modifier = modifier
             .size(MIC_CORNER_WRAP_WIDTH, MIC_CORNER_BUTTON)
-            .testTag(if (mode == MicCornerMode.LOCKED) "mic-corner-locked" else "mic-corner")
-            .then(micCornerOverlays(drag = { drag.value }, travelPx = travelPx, railShown = railShown, armed = armed, locked = mode == MicCornerMode.LOCKED))
+            .testTag(if (renderedMode == MicCornerMode.LOCKED) "mic-corner-locked" else "mic-corner")
+            .then(micCornerOverlays(drag = { drag.value }, travelPx = travelPx, railShown = railShown, armed = armed, locked = renderedMode == MicCornerMode.LOCKED))
             .pointerInput(travelPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
@@ -149,10 +147,10 @@ internal fun MicCorner(
                     // empty rail area to its left stays inert.
                     val buttonLeft = size.width - buttonPx - drag.value
                     if (down.position.x < buttonLeft || down.position.x > buttonLeft + buttonPx) return@awaitEachGesture
-                    if (mode == MicCornerMode.IDLE && !currentEnsurePermission()) return@awaitEachGesture
+                    if (renderedMode == MicCornerMode.IDLE && !currentEnsurePermission()) return@awaitEachGesture
                     down.consume()
 
-                    val origin = mode
+                    val origin = renderedMode
                     val base = if (origin == MicCornerMode.LOCKED) travelPx else 0f
                     val startX = down.position.x
                     var dragPx = base
@@ -196,7 +194,7 @@ internal fun MicCorner(
             },
     ) {
         MicCornerButton(
-            mode = mode,
+            mode = renderedMode,
             railShown = railShown,
             armed = armed,
             dragOffset = { -drag.value },

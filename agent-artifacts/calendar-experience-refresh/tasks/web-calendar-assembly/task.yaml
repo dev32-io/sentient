@@ -1,0 +1,37 @@
+schemaVersion: 1
+id: web-calendar-assembly
+title: Assemble and verify the complete web calendar workspace
+status: merged
+dependsOn:
+  - web-calendar-projections
+  - web-calendar-data-controller
+  - web-calendar-canvas
+  - web-calendar-shell-filters
+  - web-calendar-preview
+  - web-calendar-editor
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: calendar-experience-and-web-assembly
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && bun run --filter @sentient/webui test:unit
+    - source scripts/env.sh && bun run --filter @sentient/webui typecheck
+    - source scripts/env.sh && bun run --filter @sentient/webui build
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/web-calendar-assembly
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/web-calendar-assembly
+  baseCommit: 5c961a1f91a0cd1d6eb8fd62deb3ac140a6f8921
+  lastRunId: 4e7e2b28-f990-441e-ab1c-aa8a65277a08
+  completedCommit: e7e050733e3e689ce1b2dba7a0f2d1ba17381879
+  mergedCommit: 088acf38187cfcd82e2f7b65914f722102f5983d

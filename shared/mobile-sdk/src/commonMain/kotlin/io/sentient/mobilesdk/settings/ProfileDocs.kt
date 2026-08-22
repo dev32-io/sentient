@@ -76,7 +76,9 @@ sealed class ApplyResult {
     data class Failed(val status: Int, val code: String?) : ApplyResult()
 
     /** Transport failure — the request never reached the server. */
-    data class Network(val cause: String) : ApplyResult()
+    class Network(@Suppress("UNUSED_PARAMETER") cause: String) : ApplyResult() {
+        val cause: String = "transport-failure"
+    }
 }
 
 private const val HTTP_TOO_MANY = 429
@@ -99,13 +101,26 @@ internal suspend fun mapApplyResponse(log: Log, response: HttpResponse, json: Js
         val body = response.bodyAsText()
         json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.contentOrNull
     }.getOrNull()
-    log.warn("apply.failed", mapOf("status" to status, "code" to (code ?: "unknown")))
-    return ApplyResult.Failed(status = status, code = code)
+    val safeCode = normalizeApplyFailureCode(code)
+    log.warn("apply.failed", mapOf("status" to status, "code" to safeCode))
+    return ApplyResult.Failed(status = status, code = safeCode)
+}
+
+private fun normalizeApplyFailureCode(code: String?): String? = when (code) {
+    "name-conflict",
+    "userId-mismatch",
+    "invalid-input",
+    "unauthorized",
+    "forbidden",
+    "not-found",
+    "restart-timeout",
+    -> code
+    else -> if (code == null) null else "server-error"
 }
 
 /** Wraps an apply/restart call so a transport failure becomes ApplyResult.Network, never a throw. */
 internal suspend fun safeApplyCall(log: Log, block: suspend () -> ApplyResult): ApplyResult =
-    runCatching { block() }.getOrElse { e ->
-        log.warn("apply.network-error", mapOf("cause" to (e.message ?: "unknown")))
-        ApplyResult.Network(cause = e.message ?: "network error")
+    runCatching { block() }.getOrElse {
+        log.warn("apply.network-error", mapOf("code" to "transport-failure"))
+        ApplyResult.Network(cause = "transport-failure")
     }

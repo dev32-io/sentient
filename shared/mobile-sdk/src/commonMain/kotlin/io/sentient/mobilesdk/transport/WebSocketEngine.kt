@@ -22,6 +22,12 @@ import kotlinx.coroutines.flow.Flow
  * delegate equals/hashCode to ByteArray, which uses **reference** equality.
  * Callers that need structural comparison must use [Binary.data].contentEquals().
  */
+/** Structural transport failure; exception/server text never crosses this boundary. */
+enum class TransportFailureCode {
+    OPEN_FAILED,
+    RECEIVE_FAILED,
+}
+
 sealed class WsIncoming {
     /** A UTF-8 text frame from the server. */
     data class Text(val data: String) : WsIncoming()
@@ -42,16 +48,19 @@ sealed class WsIncoming {
         override fun hashCode(): Int = data.contentHashCode()
     }
 
-    /** Server closed the connection cleanly. */
+    /** Server closed the connection cleanly. The reason is structural only. */
     data class Closed(val code: Int, val reason: String) : WsIncoming()
 
     /**
      * Transport-level failure (network error, TLS rejection, etc.).
      *
      * The stream MUST complete after emitting this frame. The reconnect layer
-     * above consumes it to decide the next state transition.
+     * above consumes it to decide the next state transition. The String
+     * compatibility constructor intentionally discards its input.
      */
-    data class Failure(val error: String) : WsIncoming()
+    data class Failure(val code: TransportFailureCode) : WsIncoming() {
+        constructor(ignoredError: String) : this(TransportFailureCode.RECEIVE_FAILED)
+    }
 }
 
 /**
@@ -61,6 +70,15 @@ sealed class WsIncoming {
  * [WsIncoming.Failure] is received, at which point the flow completes.
  * Calling [close] before the remote side closes is always safe.
  */
+internal fun structuralCloseReason(code: Int): String = when (code) {
+    WS_NORMAL_CLOSURE -> "normal"
+    1001 -> "going-away"
+    1002 -> "protocol"
+    1008 -> "policy"
+    1011 -> "server"
+    else -> "remote"
+}
+
 interface WebSocketSession {
     /** Hot flow of frames arriving from the server. Completes on close/failure. */
     val incoming: Flow<WsIncoming>

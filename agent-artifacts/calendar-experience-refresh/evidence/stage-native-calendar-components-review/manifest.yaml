@@ -1,0 +1,20 @@
+schemaVersion: 1
+evaluation: stage-native-calendar-components-review
+recordedAt: 2026-08-22T01:07:28.847Z
+entries:
+  - result: Bounded repair changes 16 files with focused production and test updates.
+    command: git show --stat 071fd69a96f23d584567c53a2d2978681dc4b653
+  - result: Passed (BUILD SUCCESSFUL).
+    command: source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+      :android:assembleDebug
+  - result: Passed; project generation and XCFramework setup completed.
+    command: source scripts/env.sh && scripts/ios-setup.sh
+  - result: Passed; 99 tests in 15 suites.
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+  - result: Passed, including the shared submission-race and authoritative
+      validation tests.
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+  - result: Passed.
+    command: source scripts/env.sh && git diff --check

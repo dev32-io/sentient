@@ -1,0 +1,63 @@
+schemaVersion: 1
+id: stage-mobile-platform-sessions-review
+type: combined-review
+checkpoint: stage-review
+stageId: mobile-platform-sessions
+scope:
+  workItem: calendar-experience-refresh
+status: passed
+required: true
+attempt: 4
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+    :android:testDebugUnitTest :android:assembleDebug
+  - source scripts/env.sh && scripts/ios-setup.sh
+  - source scripts/env.sh && xcodebuild test -project ios/SentientApp.xcodeproj
+    -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone
+    16,OS=latest'
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Explicit AuthUser.userId plus normalized backend identity reaches both
+    session boundaries before namespace derivation
+  - Android app-private AndroidSqliteDriver and iOS Application Support
+    NativeSqliteDriver/Data Protection
+  - Authenticated-session lifetime, cancellation-before-purge, non-cancelled
+    bounded purge/switch, close, and account/backend isolation
+  - No platform types in commonMain, native cache/policy duplication, SQLCipher,
+    external storage, content-bearing paths, or diagnostics
+loop:
+  iteration: 3
+  maxIterations: 6
+  state: passed
+  reviewerAgentId: d5de5b93-2a3c-4516-ac61-c04c190fa469
+  reviewedCommit: 1d0c5114835889fd126b5599c6fe85b29fe8fc96
+  managerPrompt: "Keep the accepted lifecycle-gate implementation and close the
+    remaining proof gap with distinct platform-path tests, not renamed copies of
+    one generic gate test. Add deterministic pre-publish barriers to the actual
+    Android UserSessionManager and iOS IosUserSession/UserSession lifecycle
+    seams, then independently drive: explicit logout, authentication expiry,
+    account replacement, backend replacement, and successor-session creation
+    through their production entry points. For each scenario, prove the losing
+    initializer closes/purges its locally owned real driver/experience,
+    publishes no stale state, cannot overwrite the manager/session slot, and the
+    successor exposes only its own namespace/runtime. Retain focused common gate
+    tests, but platform evidence must exercise the real orchestration paths and
+    real temporary SQLite drivers where supported. Run every declared stage
+    check and return for automatic re-review."
+  fixerAgentId: 58385ebc-d5b2-4aca-a937-00eb688f0a3d
+findings:
+  - id: MPS-005
+    severity: high
+    status: resolved
+    criterion: Manager-required deterministic platform-path publication-race matrix
+    location: android/src/androidTest/kotlin/io/sentient/android/calendar/CalendarSessionLifecycleInstrumentedTest.kt:112-328;
+      shared/mobile-data/src/iosSimulatorArm64Test/kotlin/io/sentient/mobiledata/di/IosCalendarDatabaseFactoryTest.kt:93-265
+    summary: "Resolved: both platform suites independently exercise all five
+      required lifecycle scenarios with deterministic barriers and real
+      temporary SQLite drivers, proving close/purge, stale-publication
+      rejection, slot integrity, and successor-only exposure."
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-mobile-platform-sessions-review/manifest.yaml

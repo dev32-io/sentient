@@ -1,0 +1,72 @@
+schemaVersion: 1
+id: stage-stage-3-domain-services-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-3-domain-services
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 2
+methods:
+  - source scripts/env.sh && cd gateway && bun test
+    src/calendar/calendar-query.test.ts src/calendar/calendar-mutations.test.ts
+    src/calendar/nudge.test.ts
+  - source scripts/env.sh && cd gateway && bun run typecheck
+criteria:
+  - Complete-or-error model queries and deterministic bounded REST paging
+  - Effective-occurrence visibility and filter ordering
+  - Mutation authority, revisions, canonical recurrence, and whole-segment
+    atomicity
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 1605936e-59e2-48e1-8c80-ed2d583953a1
+  reviewedCommit: d969f3e90d0f3a788bcb2cc94bfc78e1470112a5
+  managerPrompt: "Repair all three blocking query defects and add regressions.
+    Build each response from one complete bounded effective candidate set: the
+    store must expose a bounded candidate-read primitive with max-plus-one
+    overflow signaling rather than loading every base ID; any candidate or
+    expanded-occurrence overflow must return result_too_large, never a subset.
+    Apply exceptions, authorization, and filters, then deterministically sort
+    the complete bounded set by effective start/scope/eventId/originalStart;
+    only after that validate/apply the opaque cursor and slice a REST page. Tool
+    mode must return result_too_large whenever the complete sorted result would
+    have a next REST page, even when it remains below max_occurrences, and must
+    still enforce serialized output size. Add tests where late source rows sort
+    before early rows, where a tool result is page_size+1 but below
+    max_occurrences, and where base-candidate scanning overflows before
+    expansion. Preserve all-scope complete-or-error behavior and rerun every
+    stage-3 check."
+  fixerAgentId: 38fc50db-f7b6-491b-b8ce-da05db9133ad
+findings:
+  - id: STAGE3-001
+    severity: high
+    status: resolved
+    criterion: Complete deterministic REST paging
+    location: gateway/src/calendar/calendar-query.ts:375-421
+    summary: Pre-sort source-order overflow defect repaired with complete-or-error
+      collection before sorting and slicing.
+    blocking: false
+  - id: STAGE3-002
+    severity: high
+    status: resolved
+    criterion: Tool pagination rejection
+    location: gateway/src/calendar/calendar-query.ts:407-414
+    summary: Tool results requiring an equivalent REST continuation now return
+      result_too_large.
+    blocking: false
+  - id: STAGE3-003
+    severity: high
+    status: resolved
+    criterion: Bounded candidate work
+    location: gateway/src/calendar/calendar-store.ts:420-449;
+      gateway/src/calendar/calendar-query.ts:363-380
+    summary: Base candidates are read with max-plus-one overflow signaling and never
+      scanned unboundedly.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-3-domain-services-review/manifest.yaml

@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: stage-stage-8-mobile-data-review
+recordedAt: 2026-08-20T05:14:26.104Z
+entries:
+  - result: pass
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-data:testDebugUnitTest --tests '*Calendar*'
+    description: Calendar mobile-data behavior including id-only household/private
+      resolution, failure-before-mutation, and stale conflict.
+  - result: pass
+    command: source scripts/env.sh && ./gradlew :shared:mobile-sdk:testDebugUnitTest
+      --tests '*Calendar*' --tests '*PrivacyGuard*'
+    description: Calendar SDK and privacy regressions.
+  - result: pass
+    command: source scripts/env.sh && ./gradlew
+      :shared:mobile-sdk:compileDebugKotlin
+      :shared:mobile-data:compileDebugKotlin :android:compileDebugKotlin
+    description: Shared SDK, mobile-data, and unchanged Android consumer compilation.
+  - result: pass
+    command: git diff --check and pre-commit secrets/typecheck hooks
+    description: Whitespace, secret scanning, and root TypeScript typecheck passed.

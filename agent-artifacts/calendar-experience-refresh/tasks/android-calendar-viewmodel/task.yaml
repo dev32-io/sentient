@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: android-calendar-viewmodel
+title: Make Android CalendarViewModel a thin shared-state adapter
+status: merged
+dependsOn:
+  - android-calendar-database-session
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Default medium routing for a bounded contribution.
+assembly:
+  stageId: mobile-viewmodel-adapters
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+    - source scripts/env.sh && ./gradlew :android:assembleDebug
+    - source scripts/env.sh && git diff --check
+  rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/android-calendar-viewmodel
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/android-calendar-viewmodel
+  baseCommit: 341387eef19ca4521c71ba16f8f2bd7c7fd54c02
+  lastRunId: c403f359-32f3-43c1-8f9a-f3fdfdf7266a
+  completedCommit: aed7d24c54af00d7ac938ad37f8c320238a13e05
+  mergedCommit: 3d28676fe3338a3e3e7fc4234b3afe25dd2d5432

@@ -1,0 +1,16 @@
+schemaVersion: 1
+evaluation: stage-stage-1-foundation-review
+recordedAt: 2026-08-18T00:20:00.502Z
+entries:
+  - result: pass
+    command: cd gateway && bun run typecheck
+  - result: "pass: 33 tests, 0 failures"
+    command: cd gateway && bun test src/access src/calendar/types
+      src/calendar/e2e-helpers
+  - result: invalidUntil returned ok:true; invalidDate returned true
+    command: cd gateway && bun -e 'import {parseRRule,wireCalendarTimeSchema} from
+      "./src/calendar/types.ts";
+      console.log(JSON.stringify({invalidUntil:parseRRule("FREQ=DAILY;UNTIL=20261399T256199Z"),invalidDate:wireCalendarTimeSchema.safeParse({kind:"all-day",date:"2026-99-99"}).success}))'
+    description: Sanitized targeted date-validation probes
+    path: files/3-types.ts
+    checksum: sha256:a4c2bc3d7f039a2bd1f783b5dce47f5e9032fae7efd96d84533bdb12f7a3fe05

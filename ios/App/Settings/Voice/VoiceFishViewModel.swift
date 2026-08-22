@@ -21,6 +21,32 @@ final class VoiceFishViewModel {
     private(set) var phase: Phase = .loading
     private(set) var entries: [FishVoiceEntry] = []
     private(set) var hasMore = false
+    enum Sort: String { case popular, recent, az }
+    var languageFilter = ""
+    var selectedGenders: [String] = []
+    var selectedAges: [String] = []
+    var selectedVibes: [String] = []
+    var sort: Sort = .popular
+    var filterActive: Bool { !languageFilter.isEmpty || !selectedGenders.isEmpty || !selectedAges.isEmpty || !selectedVibes.isEmpty || !query.trimmingCharacters(in: .whitespaces).isEmpty }
+    var filteredEntries: [FishVoiceEntry] {
+        let language = languageFilter.lowercased()
+        let filtered = entries.filter { entry in
+            let tags = Set(entry.tags.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+            return (language.isEmpty || entry.languages.contains { $0.lowercased() == language }) &&
+                (selectedGenders.isEmpty || selectedGenders.contains { tags.contains($0.lowercased()) }) &&
+                (selectedAges.isEmpty || selectedAges.contains { tags.contains($0.lowercased()) }) &&
+                (selectedVibes.isEmpty || selectedVibes.contains { tags.contains($0.lowercased()) })
+        }
+        switch sort {
+        case .popular: return filtered
+        case .recent: return filtered.sorted { $0.createdAt > $1.createdAt }
+        case .az: return filtered.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
+    }
+    var filterLanguages: [String] { Array(Set(entries.flatMap { $0.languages.map { $0.lowercased() }.filter { VoiceLanguages.normalize($0) != "" } })).sorted() }
+    var filterGenders: [String] { facetOptions(["male", "female"], canonical: ["Male", "Female"]) }
+    var filterAges: [String] { ["Young", "Middle-aged", "Old"].filter { facetOptions([$0.lowercased()]).contains($0) } }
+    var filterVibes: [String] { Array(Set(entries.flatMap { $0.tags.filter { !["male", "female", "young", "middle-aged", "old"].contains($0.lowercased()) }.map { $0.trimmingCharacters(in: .whitespaces) } })).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending } }
     private(set) var loadingMore = false
     private(set) var playingId: String?
 
@@ -86,7 +112,7 @@ final class VoiceFishViewModel {
         } catch is CancellationError {
         } catch {
             phase = .failed
-            log.warn("browse.threw reason=\(error.localizedDescription)")
+            log.warn("browse.threw code=transport")
         }
     }
 
@@ -121,7 +147,7 @@ final class VoiceFishViewModel {
             } catch is CancellationError {
             } catch {
                 notice = "Couldn't load more voices"
-                log.warn("loadMore.threw reason=\(error.localizedDescription)")
+                log.warn("loadMore.threw code=transport")
             }
         }
     }
@@ -149,6 +175,19 @@ final class VoiceFishViewModel {
     }
 
     func cancelSelect() { selected = nil }
+
+    func toggleGender(_ value: String) { selectedGenders = toggle(selectedGenders, value) }
+    func toggleAge(_ value: String) { selectedAges = toggle(selectedAges, value) }
+    func toggleVibe(_ value: String) { selectedVibes = toggle(selectedVibes, value) }
+    func resetFilters() {
+        query = ""; languageFilter = ""; selectedGenders = []; selectedAges = []; selectedVibes = []; sort = .popular
+    }
+
+    private func toggle(_ values: [String], _ value: String) -> [String] { values.contains(value) ? values.filter { $0 != value } : values + [value] }
+    private func facetOptions(_ keys: [String], canonical: [String] = []) -> [String] {
+        let present = Set(entries.flatMap { $0.tags.map { $0.lowercased() } })
+        return keys.enumerated().compactMap { present.contains($0.element) ? (canonical.isEmpty ? $0.element.capitalized : canonical[$0.offset]) : nil }
+    }
 
     func setCloneName(_ value: String) { cloneName = String(value.prefix(VoiceCaps.nameMax)) }
 
@@ -185,7 +224,7 @@ final class VoiceFishViewModel {
                 }
             } catch {
                 notice = "Couldn't clone this voice"
-                log.warn("clone.threw reason=\(error.localizedDescription)")
+                log.warn("clone.threw code=transport")
             }
         }
     }

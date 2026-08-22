@@ -32,12 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,32 +85,38 @@ fun MessageList(
     // window (the post-commit TTS tail has no streaming bubble). -1 when none.
     val lastAssistant = messages.indexOfLast { it.role == "assistant" }
 
-    // Pin-to-bottom follow-latest: mirrors iOS Task 4.1/4.2 semantics.
-    // While pinned (default), the list scrolls to the tail on growth or token
-    // change. A real user scroll-up unpins and holds position. Re-entering the
-    // bottom zone re-pins automatically.
-    val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
-    var pinned by remember { mutableStateOf(true) }
-    var prevFirst by remember { mutableStateOf(0) }
-    var prevOffset by remember { mutableStateOf(0) }
-
-    // Unpin on a real user scroll-up; re-pin when back in the bottom zone.
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (idx, off) ->
-                val movedUp = idx < prevFirst || (idx == prevFirst && off < prevOffset - 1)
-                prevFirst = idx
-                prevOffset = off
-                if (pinned && movedUp && !atBottom) pinned = false
+    // Initial history positioning is intentionally separate from live sends.
+    // It is non-animated and runs once when the first snapshot has rows.
+    var positionedHistory by remember { mutableStateOf(false) }
+    var anchorState by remember { mutableStateOf(SendAnchorState()) }
+    val sendIdentities = rows.mapNotNull { row ->
+        when (row) {
+            is ChatRow.Pending -> sendAnchorIdentity(row.msg.id)
+            is ChatRow.Msg -> row.message.pendingId?.takeIf { row.message.role == "user" }?.let(::sendAnchorIdentity)
+            is ChatRow.Divider -> null
+        }
+    }.toSet()
+    LaunchedEffect(sendIdentities, rows.size) {
+        if (!positionedHistory && rows.isNotEmpty()) {
+            listState.scrollToItem(rows.lastIndex)
+            positionedHistory = true
+            // Existing pending/history rows are part of the initial snapshot, not sends
+            // observed by this live list.
+            anchorState = SendAnchorState(sendIdentities)
+            return@LaunchedEffect
+        }
+        val (next, newlySent) = reduceSendAnchor(anchorState, sendIdentities)
+        anchorState = next
+        if (newlySent != null) {
+            val target = rows.indexOfFirst { row ->
+                when (row) {
+                    is ChatRow.Pending -> sendAnchorIdentity(row.msg.id) == newlySent
+                    is ChatRow.Msg -> row.message.pendingId?.let(::sendAnchorIdentity) == newlySent
+                    is ChatRow.Divider -> false
+                }
             }
-    }
-    LaunchedEffect(atBottom) { if (atBottom) pinned = true }
-
-    // Follow latest while pinned (growth or streaming-token change).
-    // Scroll to rows.lastIndex — NOT messages.lastIndex — because the LazyColumn
-    // renders rows (Msg + Divider items), so messages.lastIndex is the wrong target.
-    LaunchedEffect(rows.size, messages.lastOrNull()?.content) {
-        if (pinned && rows.isNotEmpty()) listState.animateScrollToItem(rows.lastIndex)
+            if (target >= 0) listState.animateScrollToItem(target, 0)
+        }
     }
 
     LazyColumn(
@@ -140,7 +144,7 @@ fun MessageList(
                 when (row) {
                     is ChatRow.Divider -> "div-${row.key}"
                     is ChatRow.Msg -> messageRowKey(row.message, row.index)
-                    is ChatRow.Pending -> "pending-${row.msg.id}"
+                    is ChatRow.Pending -> "send-${row.msg.id}"
                 }
             },
         ) { row ->
@@ -164,14 +168,22 @@ fun MessageList(
                         index = row.index,
                         avatarMode = mode,
                         userName = userName,
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .let { base ->
+                                if (row.message.role == "user" && row.message.pendingId != null) {
+                                    base.testTag("chat-user-row-${row.message.pendingId}")
+                                } else base
+                            },
                     )
                 }
                 is ChatRow.Pending -> PendingBubble(
                     msg = row.msg,
                     userName = userName,
                     onRetry = onRetry,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("chat-user-row-${row.msg.id}"),
                 )
             }
         }

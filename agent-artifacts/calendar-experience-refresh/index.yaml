@@ -1,0 +1,332 @@
+schemaVersion: 1
+id: calendar-experience-refresh
+kind: story
+title: Cross-platform family calendar experience
+phase: complete
+state: complete
+planning:
+  revision: 81
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-experience-behavior
+    type: spec
+    path: specs/calendar-experience-behavior.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-experience-design
+    type: design
+    path: design/calendar-experience-design.md
+    status: draft
+    narrativeSchemaVersion: 2
+  - id: calendar-experience-e2e
+    type: e2e-matrix
+    path: e2e-matrix/calendar-experience-e2e.md
+    status: approved
+    narrativeSchemaVersion: 2
+  - id: outcome
+    type: outcome
+    path: outcome.md
+    status: complete
+tasks:
+  - id: mobile-sqldelight-foundation
+    path: tasks/mobile-sqldelight-foundation/task.yaml
+  - id: mobile-calendar-projections
+    path: tasks/mobile-calendar-projections/task.yaml
+  - id: web-calendar-projections
+    path: tasks/web-calendar-projections/task.yaml
+  - id: web-calendar-data-controller
+    path: tasks/web-calendar-data-controller/task.yaml
+  - id: mobile-calendar-store
+    path: tasks/mobile-calendar-store/task.yaml
+  - id: web-calendar-canvas
+    path: tasks/web-calendar-canvas/task.yaml
+  - id: web-calendar-shell-filters
+    path: tasks/web-calendar-shell-filters/task.yaml
+  - id: web-calendar-preview
+    path: tasks/web-calendar-preview/task.yaml
+  - id: web-calendar-editor
+    path: tasks/web-calendar-editor/task.yaml
+  - id: mobile-calendar-read-coordinator
+    path: tasks/mobile-calendar-read-coordinator/task.yaml
+  - id: web-calendar-assembly
+    path: tasks/web-calendar-assembly/task.yaml
+  - id: mobile-calendar-retention-offline
+    path: tasks/mobile-calendar-retention-offline/task.yaml
+  - id: mobile-calendar-mutations
+    path: tasks/mobile-calendar-mutations/task.yaml
+  - id: android-calendar-database-session
+    path: tasks/android-calendar-database-session/task.yaml
+  - id: ios-calendar-database-session
+    path: tasks/ios-calendar-database-session/task.yaml
+  - id: android-calendar-viewmodel
+    path: tasks/android-calendar-viewmodel/task.yaml
+  - id: ios-calendar-viewmodel
+    path: tasks/ios-calendar-viewmodel/task.yaml
+  - id: android-calendar-surface
+    path: tasks/android-calendar-surface/task.yaml
+  - id: android-calendar-overlays
+    path: tasks/android-calendar-overlays/task.yaml
+  - id: ios-calendar-surface
+    path: tasks/ios-calendar-surface/task.yaml
+  - id: ios-calendar-overlays
+    path: tasks/ios-calendar-overlays/task.yaml
+  - id: android-calendar-assembly
+    path: tasks/android-calendar-assembly/task.yaml
+  - id: ios-calendar-assembly
+    path: tasks/ios-calendar-assembly/task.yaml
+integrationUnits: []
+delivery:
+  workingBranch: feature/calendar
+  createdFromCommit: 6bdc28cc5f5086af23537527b1c8e83a310d016c
+  executionStartCommit: 2dd9449aed19afb112e0d49f109193a0f98492db
+evaluations:
+  - id: stage-calendar-core-foundations-review
+    path: evaluations/stage-calendar-core-foundations-review/evaluation.yaml
+  - id: stage-calendar-store-and-web-components-review
+    path: evaluations/stage-calendar-store-and-web-components-review/evaluation.yaml
+  - id: stage-calendar-experience-and-web-assembly-review
+    path: evaluations/stage-calendar-experience-and-web-assembly-review/evaluation.yaml
+  - id: stage-mobile-calendar-policies-review
+    path: evaluations/stage-mobile-calendar-policies-review/evaluation.yaml
+  - id: stage-mobile-platform-sessions-review
+    path: evaluations/stage-mobile-platform-sessions-review/evaluation.yaml
+  - id: stage-mobile-viewmodel-adapters-review
+    path: evaluations/stage-mobile-viewmodel-adapters-review/evaluation.yaml
+  - id: stage-native-calendar-components-review
+    path: evaluations/stage-native-calendar-components-review/evaluation.yaml
+  - id: stage-calendar-delivery-completion-review
+    path: evaluations/stage-calendar-delivery-completion-review/evaluation.yaml
+  - id: final-e2e
+    path: evaluations/final-e2e/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
+executionStages:
+  - id: calendar-core-foundations
+    tasks:
+      - mobile-sqldelight-foundation
+      - mobile-calendar-projections
+      - web-calendar-projections
+      - web-calendar-data-controller
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Pinned SQLDelight/Kotlin 2.3.10 compatibility, source-set-correct
+          dependencies, schema/migration/namespace correctness, and commonMain
+          purity
+        - Deterministic Day/Week/Month/Year, raw temporal, filter, overflow, and
+          navigation contracts
+        - Explicit all-scope complete web pagination, account/backend preference
+          isolation, and calendar-view.tsx remaining untouched
+        - Exact reference vocabulary is checked directly against
+          sentient-design/HANDOFF.md, sentient-design/brand-spec.md,
+          sentient-design/design/web/calendar.html,
+          sentient-design/components/web/sentient-web.js,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js without importing
+          prototype data
+  - id: calendar-store-and-web-components
+    tasks:
+      - mobile-calendar-store
+      - web-calendar-canvas
+      - web-calendar-shell-filters
+      - web-calendar-preview
+      - web-calendar-editor
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck && bun run --filter
+        @sentient/webui build
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Atomic observable SQLDelight store, raw RFC3339 temporal round-trip,
+          and namespace/purge behavior
+        - Web leaf components remain isolated through a typed CalendarWorkspace
+          canvas slot, component-scoped CSS, shared calendar-time helpers, and
+          explicit draft/capability ownership
+        - Exact web comparison uses sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/web/calendar.html, and
+          sentient-design/components/web/sentient-web.js at 1440x1000, 1024x900,
+          768x900, and 390x844
+        - 900px sidebar collapse, seven-column no-overflow correction,
+          viewport-safe preview, Dialog inert/safe dismissal, complete V2
+          editor, focus, semantics, and reduced motion
+  - id: calendar-experience-and-web-assembly
+    tasks:
+      - mobile-calendar-read-coordinator
+      - web-calendar-assembly
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+        :android:assembleDebug
+      - source scripts/env.sh && bun run --filter @sentient/webui test:unit &&
+        bun run --filter @sentient/webui typecheck && bun run --filter
+        @sentient/webui build
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Shared cache-first complete pagination, stale-while-revalidate,
+          coalescing, cancellation, one coherent StateFlow, source-compatible
+          SettingsComponent/factory exposure, and Android intermediate
+          compilation
+        - Complete web route, authenticated capability projection, Dialog
+          safety, exact V2 mutations, and deterministic local-only disposable
+          fixture/cleanup adapter
+        - Production web is compared by the final E2E agent through Playwright
+          MCP against sentient-design/design/web/calendar.html and
+          sentient-design/components/web/sentient-web.js at exactly 1440x1000,
+          1024x900, 768x900, and 390x844
+        - Web CAL-UX-001..007, 013, and 014 use unique synthetic data,
+          guaranteed cleanup, semantic/keyboard/focus evidence, and documented
+          deviations without adding a separate browser-runner project or
+          mandatory screen-reader gate
+  - id: mobile-calendar-policies
+    tasks:
+      - mobile-calendar-retention-offline
+      - mobile-calendar-mutations
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-sdk:allTests
+        :shared:mobile-data:allTests
+      - source scripts/env.sh && ./gradlew
+        :shared:mobile-data:assembleMobileDataDebugXCFramework
+      - source scripts/env.sh && git diff --check
+    mode: sequential
+    review:
+      tier: medium
+      focus:
+        - Nonblocking adjacent prefetch, transactional twelve-month LRU,
+          explicit cached/unavailable offline states, recovery, and isolation
+        - mobile-calendar-mutations follows and depends on the finalized
+          retention/offline state in this sequential stage
+        - Exact V2 create/edit/delete recurrence, revision, raw offset-bearing
+          originalStart, conflict, permission, and temporal semantics
+        - Offline writes produce no optimistic success, queue row, or hidden
+          retry, and shared state supports
+          sentient-design/design/mobile/calendar.html plus
+          sentient-design/components/mobile/sentient-mobile.js without native
+          policy
+  - id: mobile-platform-sessions
+    tasks:
+      - android-calendar-database-session
+      - ios-calendar-database-session
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+        :android:testDebugUnitTest :android:assembleDebug
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Explicit AuthUser.userId plus normalized backend identity reaches both
+          session boundaries before namespace derivation
+        - Android app-private AndroidSqliteDriver and iOS Application Support
+          NativeSqliteDriver/Data Protection
+        - Authenticated-session lifetime, cancellation-before-purge,
+          non-cancelled bounded purge/switch, close, and account/backend
+          isolation
+        - No platform types in commonMain, native cache/policy duplication,
+          SQLCipher, external storage, content-bearing paths, or diagnostics
+  - id: mobile-viewmodel-adapters
+    tasks:
+      - android-calendar-viewmodel
+      - ios-calendar-viewmodel
+    checks:
+      - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+        :android:assembleDebug
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Thin Android StateFlow and iOS SKIE AsyncSequence mapping with correct
+          cancellation
+        - A focused XCFramework/Swift test proves the complete nested
+          CalendarExperienceState bridges before SwiftUI components depend on it
+        - Exact intent/identity forwarding with raw offset-bearing recurrence
+          anchors and no native pagination/filter/cache/prefetch/mutation policy
+        - Every supported state from sentient-design/design/mobile/calendar.html
+          and sentient-design/components/mobile/sentient-mobile.js is
+          representable without prototype data
+  - id: native-calendar-components
+    tasks:
+      - android-calendar-surface
+      - android-calendar-overlays
+      - ios-calendar-surface
+      - ios-calendar-overlays
+    checks:
+      - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+        :android:assembleDebug
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Leaf Compose/SwiftUI components are controlled and side-effect free
+        - Exact mobile comparison uses sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js at logical
+          390x844 and 430x932
+        - Reference geometry includes 58 top bar, 16 inset, 44 targets, 46 view
+          controls, 64 rows, 42 Month cells, complete Year, 84% sheets, filters,
+          agenda, floating bar, focus, scaling, safe areas, and reduced motion
+        - Prototype fixed data and member/color/place/reminder semantics are
+          absent; semantic accessibility inspection is required but an actual
+          assistive-technology session is not a stage gate
+  - id: calendar-delivery-completion
+    tasks:
+      - android-calendar-assembly
+      - ios-calendar-assembly
+    checks:
+      - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+        :android:testDebugUnitTest :android:assembleDebug
+      - source scripts/env.sh && scripts/ios-setup.sh
+      - source scripts/env.sh && xcodebuild test -project
+        ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+        Simulator,name=iPhone 16,OS=latest'
+      - source scripts/env.sh && git diff --check
+    mode: concurrent
+    review:
+      tier: medium
+      focus:
+        - Android and iOS production code remains thin over shared StateFlow
+          with no duplicated cache/network/policy
+        - Production screens compare directly to sentient-design/HANDOFF.md,
+          sentient-design/brand-spec.md,
+          sentient-design/design/mobile/calendar.html, and
+          sentient-design/components/mobile/sentient-mobile.js at exact logical
+          390x844 and 430x932 profiles
+        - Day/Week/Month/Year, filters, sheets, cache/offline/recovery,
+          mutations, conflicts, permissions, temporal behavior, semantic
+          accessibility, safe areas, and reduced motion
+        - The runtime's final E2E agent—not concurrent task checks—runs Android
+          then iOS sequentially with direct Maestro/existing fault controls,
+          unique disposable fixture namespaces, guaranteed cleanup, and
+          CAL-UX-001..014 evidence; no qa/mobile runner extension or mandatory
+          actual assistive-technology session is required

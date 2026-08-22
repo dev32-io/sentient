@@ -1,0 +1,64 @@
+schemaVersion: 1
+id: stage-stage-8-mobile-data-review
+type: combined-review
+checkpoint: stage-review
+stageId: stage-8-mobile-data
+scope:
+  workItem: calendar-contract-v2
+status: passed
+required: true
+attempt: 3
+methods:
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:testDebugUnitTest
+    --tests '*Calendar*'
+  - source scripts/env.sh && ./gradlew :shared:mobile-data:compileDebugKotlin
+    :android:compileDebugKotlin
+  - source scripts/env.sh && git diff --check
+criteria:
+  - Stateless repository and exhaustive SentientResult/StateFlow behavior
+  - One-call mixed-kind V2 reads, cursor propagation, and typed recurring
+    mutation use case
+  - Untouched platform UI compatibility and content-free diagnostics
+loop:
+  iteration: 1
+  maxIterations: 3
+  state: passed
+  reviewerAgentId: 187996dd-1067-4e67-a0b2-b45a81b91a34
+  reviewedCommit: 7ad472858616fd439c90d0038d143c27d2a707a0
+  managerPrompt: "Complete CAL-MOBILE-001 without editing iOS/Android UI or
+    ViewModel source. Keep the legacy id-only delete call source-compatible, but
+    make its mobile-data compatibility adapter safe: resolve the selected V2
+    event from existing loaded use-case state when unambiguous, or perform an
+    authoritative bounded get with read scope all, then issue entire_series
+    delete with that event's exact writable scope and current revision. Never
+    default id-only deletion to private, probe writes across scopes, or omit
+    expectedRevision; fail safely if the event cannot be resolved uniquely.
+    Retain the event-aware overload as the direct path. Add a regression that
+    invokes the same id-only path used by the unchanged iOS ViewModel for a
+    household event and asserts household scope plus expectedRevision, along
+    with private, missing/ambiguous, and stale-conflict cases. Confirm platform
+    sources remain unchanged and rerun Stage 8 tests and Android/shared
+    compilation."
+  fixerAgentId: 1a0afb2a-3939-4b42-a0e8-3367c367178c
+findings:
+  - id: CAL-MOBILE-001
+    severity: high
+    status: resolved
+    criterion: Whole-series delete convenience preserves selected event scope and
+      expected revision for current Android/iOS callers
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/calendar/CalendarUseCases.kt
+    summary: The id-only adapter resolves exact event scope/revision before mutation
+      and fails closed when it cannot do so; platform UI sources remain
+      unchanged in the net workflow diff.
+    blocking: false
+  - id: CAL-MOBILE-002
+    severity: low
+    status: resolved
+    criterion: Calendar HTTP 401 failures map to stable authentication failures
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/data/calendar/CalendarErrorMapper.kt
+    summary: 401 responses map to a stable content-free authentication failure.
+    blocking: false
+result:
+  verdict: pass
+  report: report.md
+  evidence: ../../evidence/stage-stage-8-mobile-data-review/manifest.yaml

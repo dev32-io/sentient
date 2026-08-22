@@ -174,6 +174,19 @@
   background: color-mix(in oklab, var(--color-stop) 88%, white);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .app-dialog__scrim,
+  .app-dialog {
+    animation: none;
+  }
+
+  .app-dialog__close,
+  .app-dialog__btn,
+  .app-dialog__input {
+    transition: none;
+  }
+}
+
 @media (max-width: 620px) {
   .app-dialog {
     max-height: calc(100dvh - var(--space-md));
