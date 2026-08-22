@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -32,8 +32,8 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 6
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
   reviewedCommit: 444d2a1e3cc89794fc68c70212dbaace15d6f129
