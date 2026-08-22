@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-surface
 title: Build the Android calendar views, filters, agenda, and floating controls
-status: contribution_complete
+status: merged
 dependsOn:
   - android-calendar-viewmodel
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
   lastRunId: a67bcedd-564b-4416-b604-01d7e88f494b
   completedCommit: e3f5eb626847cf025e01179e04e4850dfa746a5d
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0
