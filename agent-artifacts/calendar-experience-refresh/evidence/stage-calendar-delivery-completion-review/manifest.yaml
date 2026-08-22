@@ -1,27 +1,28 @@
 schemaVersion: 1
 evaluation: stage-calendar-delivery-completion-review
-recordedAt: 2026-08-22T01:35:53.616Z
+recordedAt: 2026-08-22T02:00:28.487Z
 entries:
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
       :android:testDebugUnitTest :android:assembleDebug
-    path: files/1-calendar-rereview1-android.log
-    checksum: sha256:587a8a5c61452a89472d4edf8f50b93da1cf66c36cb17223fbf3d1dbe46219b7
+    path: files/1-calendar-rereview2-android.log
+    checksum: sha256:c90cfb4add5a2e6c98da52003ebf8f9cbdb559f4ca90efccdc1ba66c153aefad
   - result: BUILD SUCCESSFUL; project generated
     command: source scripts/env.sh && scripts/ios-setup.sh
-    path: files/2-calendar-rereview1-ios-setup.log
+    path: files/2-calendar-rereview2-ios-setup.log
     checksum: sha256:c93ec5d6f66839a0621d7602292bdbb6dccccbda34db8debda9e9ffad8574086
-  - result: TEST SUCCEEDED; 104 tests passed
+  - result: TEST SUCCEEDED; 105 tests passed
     command: source scripts/env.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
       Simulator,name=iPhone 16,OS=latest'
-    path: files/3-calendar-rereview1-xcode.log
-    checksum: sha256:a5e18776414608c9946db4a1755f159dc90ee437bc3d10189a871c5393f357db
+    path: files/3-calendar-rereview2-xcode.log
+    checksum: sha256:5d8ad51af8c8cfbe10139a02aaf11c72db04d9abf21a6226e776f8389792dfef
+  - result: 375 selectors and 47 Maestro flows validated
+    command: qa/mobile/validate-calendar-flows.rb
+  - result: Only CalendarExperience declarations and a common test; no native
+      production caller
+    command: rg -n
+      'onConnectivityRecovered|connectivityRecovered|recoverFromOffline' shared
+      android ios -g'*.kt' -g'*.swift'
   - result: Clean
     command: source scripts/env.sh && git diff --check
-  - result: No production definition found
-    command: rg -l 'accessibilityIdentifier\("calendar-canvas"\)'
-      ios/App/Settings/Calendar
-  - result: Reconnect flow reopens Calendar at line 6
-    command: "rg -n 'runFlow: _calendar/open-calendar.yaml'
-      qa/mobile/flows/ios/77-calendar-reconnect.yaml"

@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -32,11 +32,11 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
-  reviewedCommit: 444d2a1e3cc89794fc68c70212dbaace15d6f129
+  reviewedCommit: 952f4734788b56d48ee2e236cbafdcb1b78f7791
   managerPrompt: "Resolve the remaining Maestro proof blocker. Replace the
     undefined iOS timezone/DST selector with a production accessibility
     identifier or stable visible assertion that actually exists in the assembled
@@ -55,41 +55,24 @@ loop:
     for automatic re-review."
   fixerAgentId: f3e6d81e-bc4a-4b96-a0c1-5fb175494a0c
 findings:
-  - id: CAL-DELIVERY-001
-    severity: high
-    status: resolved
-    criterion: AC-001, AC-004, AC-013
-    location: ios/App/Settings/Calendar/CalendarScreen.swift
-    summary: iOS device projection context forwarding is implemented without
-      synthesizing an event IANA zone.
-    blocking: false
   - id: CAL-DELIVERY-002
     severity: high
     status: open
-    criterion: Assembly boundary proof; CAL-UX-001..014
-    location: qa/mobile/flows/ios/80-calendar-timezone-dst.yaml;
-      qa/mobile/flows/ios/77-calendar-reconnect.yaml;
-      qa/mobile/flows/android/calendar/09-cache-first.yaml
-    summary: Committed direct-Maestro flows still contain an undefined iOS
-      identifier and do not observably drive reconnect/cache-first acceptance
-      cases.
+    criterion: CAL-UX-008, CAL-UX-011; AC-011
+    location: CalendarExperience.kt:1480-1483; iOS UserSession.swift:112-121;
+      Android UserSessionManager.kt
+    summary: Paired flows are syntactically valid but production never signals
+      CalendarExperience to revalidate automatically after connectivity
+      recovery.
     blocking: true
-  - id: CAL-DELIVERY-003
+  - id: CAL-DELIVERY-005
     severity: high
-    status: resolved
+    status: open
     criterion: AC-002, AC-004, AC-014
-    location: shared/mobile-data CalendarProjection and native mappings
-    summary: Shared authoritative four-day Month agenda is consumed by both native
-      clients.
-    blocking: false
-  - id: CAL-DELIVERY-004
-    severity: low
-    status: resolved
-    criterion: AC-001 accessibility live freshness updates
-    location: ios CalendarScaffold and CalendarSurfaceSupport
-    summary: Freshness recovery announcement is implemented with initial/duplicate
-      suppression.
-    blocking: false
+    location: ios/App/Settings/Calendar/CalendarScaffold.swift:220-227
+    summary: Repair adds a persistent visible fresh-status row that regresses the
+      authoritative normal mobile composition.
+    blocking: true
 result:
   verdict: fail
   report: report.md
