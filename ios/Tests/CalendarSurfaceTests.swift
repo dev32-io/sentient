@@ -4,6 +4,12 @@ import Testing
 @testable import SentientApp
 
 struct CalendarSurfaceTests {
+    @Test func eventIdentifierUsesTheCanonicalContentFreeFixtureDigest() {
+        let stableKey = "36:236795b5-94d4-42ac-bc72-b2336c348cf661:236795b5-94d4-42ac-bc72-b2336c348cf6:2026-08-22T07:00:00.000Z24:2026-08-22T07:00:00.000Z9:HOUSEHOLD"
+
+        #expect(calendarEventIdentifier(stableKey) == "calendar-event-b8d13ff64fac82fa8024cd2c")
+    }
+
     @Test func approvedStableGeometryRemainsExplicit() {
         #expect(CalendarSurfaceLayout.topBarHeight == 58)
         #expect(CalendarSurfaceLayout.contentInset == 16)

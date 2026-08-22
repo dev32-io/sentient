@@ -1,3 +1,5 @@
+import CryptoKit
+import Foundation
 import MobileData
 import SwiftUI
 
@@ -83,7 +85,7 @@ struct CalendarAgendaRow: View {
         .accessibilityLabel(event.accessibilityLabel)
         .accessibilityHint("Opens event preview")
         .accessibilityFocused(openerFocus, equals: .event(event.actionIdentity.stableKey))
-        .accessibilityIdentifier("calendar-event-\(event.actionIdentity.stableKey)")
+        .accessibilityIdentifier(calendarEventIdentifier(event.actionIdentity.stableKey))
     }
 
     private var metadata: String {
@@ -94,6 +96,18 @@ struct CalendarAgendaRow: View {
     private var scopeInitial: String {
         String(CalendarFilterMapping.scopeLabel(event.scope).prefix(1))
     }
+}
+
+func calendarEventIdentifier(_ stableKey: String) -> String {
+    "calendar-event-\(calendarTagToken(stableKey))"
+}
+
+/** One-way digest keeps dynamic IDs content-free and aligned with Android/fixture semantics. */
+func calendarTagToken(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8))
+        .prefix(12)
+        .map { String(format: "%02x", $0) }
+        .joined()
 }
 
 struct CalendarEmptyState: View {
