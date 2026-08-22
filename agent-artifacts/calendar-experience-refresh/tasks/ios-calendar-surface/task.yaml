@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-surface
 title: Build the iOS calendar views, filters, agenda, and floating controls
-status: ready
+status: running
 dependsOn:
   - ios-calendar-viewmodel
 execution:
@@ -23,3 +23,9 @@ verification:
       Simulator,name=iPhone 16,OS=latest'
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/ios-calendar-surface
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-surface
+  baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
+  lastRunId: a3f8b1c0-39a8-4825-835f-b54cd5e7cd9a
