@@ -1,21 +1,26 @@
 schemaVersion: 1
 evaluation: final-branch-review
-recordedAt: 2026-08-22T10:09:58.396Z
+recordedAt: 2026-08-22T17:45:49.053Z
 entries:
-  - result: All static/unit/build checks passed; matrix count is 2 pass, 12 blocked.
-    description: Sanitized fresh verification summary
-    path: files/001-1-calendar-final-branch-review-evidence.txt
-    checksum: sha256:3f05695e8f2f0f1fcec6b38596e8b1133ec25e2492d639b98cb7e8314752ac65
-  - result: E2E-001/002 pass; E2E-003..014 blocked.
-    description: Individual final E2E case outcomes
-    path: files/001-2-005-6-case-results.json
+  - result: Focused repair checks pass; final matrix remains 2 pass / 12 blocked; no
+      committed native screenshots.
+    description: Sanitized fresh re-review check summary
+    path: files/002-1-calendar-final-branch-rereview-iteration1.txt
+    checksum: sha256:065c847234bf21cb49a18f52ced018c6f4772a54a46cc3eabec0e43d4d5bb18d
+  - result: E2E-001/002 pass and E2E-003..014 blocked.
+    description: Current individual matrix outcomes
+    path: files/002-2-005-6-case-results.json
     checksum: sha256:5ede912d56cd0ea12d536f5147a83a1d9c17ab7dd6b5e3779ea7dc0d3cad6399
-  - result: Checkpoint marked passed despite instruction to rerun the complete
-      14-case matrix.
-    description: Required checkpoint state and manager instruction
-    path: files/001-3-evaluation.yaml
-    checksum: sha256:7e61931e0a43a0b4de6c0ead15e7e7da4f39e6a6908c63764eb1efe5f899efc5
-  - result: Records iOS recovery gap and multiple blocked subflows.
-    description: Final E2E report
-    path: files/001-4-report.md
-    checksum: sha256:7b0631bf57b841a00dcbfcc837a57696d27b983a03bb4de93c78c4effe22ee7e
+  - result: "MERGE: NO; verdict fail; incomplete platform and visual subflows remain
+      blocked."
+    description: Current final-E2E report
+    path: files/002-3-report.md
+    checksum: sha256:21b565d19acb01e98606c5d02787dd3e05585668de84f2faa1419f7f82fcdce1
+  - result: Contains no accepted findings or residual risks and no new matrix evidence.
+    description: Approval artifact
+    path: files/002-4-risk-acceptance.md
+    checksum: sha256:9a8ddabff8620063c0fda527571600e5de3434ce7f4aec1ecf604ea68e351b18
+  - result: Marked passed despite unchanged blocked case evidence and failed report.
+    description: Checkpoint metadata
+    path: files/002-5-evaluation.yaml
+    checksum: sha256:8ad2ebd078e5a5e107d8c87143ee292690bdc05a0ffec1dedd56ffe38ec9b501
