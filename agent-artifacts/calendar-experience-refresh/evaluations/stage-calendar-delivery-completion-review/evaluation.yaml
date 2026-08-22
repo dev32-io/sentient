@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 3
+attempt: 4
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -32,11 +32,11 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: rereviewing
   iteration: 3
   maxIterations: 6
+  state: passed
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
-  reviewedCommit: 952f4734788b56d48ee2e236cbafdcb1b78f7791
+  reviewedCommit: a9d672d6aa37588b69118e1388167cb555593563
   managerPrompt: "Resolve both blockers. Add session-scoped production
     connectivity-edge adapters on Android and iOS using the repository's
     platform network-monitor seam (or the narrow native equivalent): forward
@@ -57,23 +57,22 @@ loop:
 findings:
   - id: CAL-DELIVERY-002
     severity: high
-    status: open
+    status: resolved
     criterion: CAL-UX-008, CAL-UX-011; AC-011
-    location: CalendarExperience.kt:1480-1483; iOS UserSession.swift:112-121;
-      Android UserSessionManager.kt
-    summary: Paired flows are syntactically valid but production never signals
-      CalendarExperience to revalidate automatically after connectivity
-      recovery.
-    blocking: true
+    location: Android UserSessionManager.kt/NetworkChangeObserver.kt; iOS
+      NetworkPathMonitor.swift/UserSession.swift
+    summary: Production connectivity recovery is now session-scoped, edge-triggered,
+      shared-policy-only, idempotent, stopped on disposal, and fenced against
+      old callbacks.
+    blocking: false
   - id: CAL-DELIVERY-005
     severity: high
-    status: open
+    status: resolved
     criterion: AC-002, AC-004, AC-014
-    location: ios/App/Settings/Calendar/CalendarScaffold.swift:220-227
-    summary: Repair adds a persistent visible fresh-status row that regresses the
-      authoritative normal mobile composition.
-    blocking: true
+    location: ios/App/Settings/Calendar/CalendarScaffold.swift:218-227
+    summary: Persistent visible fresh-status row removed from normal iOS composition.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-calendar-delivery-completion-review/manifest.yaml
