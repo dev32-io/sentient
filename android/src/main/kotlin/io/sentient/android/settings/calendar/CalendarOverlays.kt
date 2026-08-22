@@ -4,7 +4,9 @@ package io.sentient.android.settings.calendar
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -227,11 +229,11 @@ fun CalendarEditorSheet(
     onReviewConflict: (CalendarMutationDraft) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-) = CalendarSheet(editor.sheetTitle(), onDismiss, modifier.testTag("calendar-editor-sheet")) {
+) = CalendarSheet(editor.sheetTitle(), onDismiss, modifier.testTag("calendar-editor-sheet"), dismissEnabled = !submitting) {
     val draft = editor.draft
     val titleFocus = remember { FocusRequester() }
     LaunchedEffect(editor.eventId) { titleFocus.requestFocus() }
-    SheetHeader(editor.sheetTitle(), onDismiss)
+    SheetHeader(editor.sheetTitle(), onDismiss, enabled = !submitting)
     Text(
         if (editor.isCreate) "Sentient will check household conflicts before saving."
         else "Update the supported Calendar V2 event details.",
@@ -334,8 +336,8 @@ fun CalendarDeleteConfirmationSheet(
     onConfirm: (CalendarMutationScope?) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-) = CalendarSheet("Delete event", onDismiss, modifier.testTag("calendar-delete-sheet")) {
-    SheetHeader("Delete event?", onDismiss)
+) = CalendarSheet("Delete event", onDismiss, modifier.testTag("calendar-delete-sheet"), dismissEnabled = !submitting) {
+    SheetHeader("Delete event?", onDismiss, enabled = !submitting)
     Text("This action cannot be undone. Choose which recurring events to delete.")
     OverlayError(error)
     if (connectionRequired) ConnectionRequiredNotice("Connect to delete this event.")
@@ -391,12 +393,13 @@ private fun CalendarSheet(
     paneName: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    dismissEnabled: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * .84f
     val tokens = LocalTokens.current
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (dismissEnabled) onDismiss() },
         shape = RoundedCornerShape(topStart = tokens.radii.xl, topEnd = tokens.radii.xl),
         containerColor = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -429,7 +432,7 @@ private fun SheetHandle() {
 }
 
 @Composable
-private fun SheetHeader(title: String, onDismiss: () -> Unit) {
+private fun SheetHeader(title: String, onDismiss: () -> Unit, enabled: Boolean = true) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
             title,
@@ -438,6 +441,7 @@ private fun SheetHeader(title: String, onDismiss: () -> Unit) {
         )
         TextButton(
             onClick = onDismiss,
+            enabled = enabled,
             modifier = Modifier.size(48.dp).semantics { contentDescription = "Close sheet" }
                 .testTag("calendar-sheet-close"),
         ) {
@@ -762,13 +766,19 @@ private fun DestructiveAction(text: String, onClick: () -> Unit, enabled: Boolea
 @Composable
 private fun Modifier.pressScale(interactions: MutableInteractionSource): Modifier {
     val pressed by interactions.collectIsPressedAsState()
+    val reducedMotion = LocalCalendarReducedMotion.current
     val scale by animateFloatAsState(
         if (pressed) .98f else 1f,
-        tween(LocalTokens.current.motion.fastMs),
+        calendarOverlayPressAnimationSpec(reducedMotion, LocalTokens.current.motion.fastMs),
         label = "calendar press",
     )
     return graphicsLayer { scaleX = scale; scaleY = scale }
 }
+
+internal fun calendarOverlayPressAnimationSpec(
+    reducedMotion: Boolean,
+    fastMs: Int,
+): FiniteAnimationSpec<Float> = if (reducedMotion) snap() else tween(fastMs)
 
 private fun CalendarMutationDraft.convertAllDay(toAllDay: Boolean): CalendarMutationDraft {
     if (toAllDay == allDay) return this

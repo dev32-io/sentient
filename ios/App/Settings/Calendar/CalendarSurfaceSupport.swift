@@ -111,6 +111,8 @@ struct CalendarAgendaSlice: Identifiable {
 }
 
 enum CalendarSurfaceMapping {
+    static func showsCompactCanvas(_ view: CalendarView) -> Bool { view != .day }
+
     static func agenda(for state: CalendarUiState) -> [CalendarAgendaSlice] {
         if !state.agenda.isEmpty {
             return state.agenda.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }

@@ -473,7 +473,7 @@ class CalendarExperience(
     }
 
     fun updateDraft(draft: CalendarMutationDraft) {
-        if (closed || accessDisabled) return
+        if (closed || accessDisabled || _state.value.mutation.isSubmitting) return
         val editor = _state.value.mutation.editor ?: return
         val retained = if (editor.target == null) {
             draft.copy(eventId = null, occurrenceId = null, originalStart = null, expectedRevision = null)
@@ -511,7 +511,7 @@ class CalendarExperience(
     fun setDraft(draft: CalendarMutationDraft) = updateDraft(draft)
 
     fun chooseMutationScope(scope: CalendarMutationScope) {
-        if (closed) return
+        if (closed || _state.value.mutation.isSubmitting) return
         val mutation = _state.value.mutation
         val editor = mutation.editor
         if (editor == null || scope !in editor.applicableScopes) {
@@ -544,7 +544,7 @@ class CalendarExperience(
     fun selectMutationScope(scope: CalendarMutationScope) = chooseMutationScope(scope)
 
     fun requestDelete() {
-        if (closed) return
+        if (closed || _state.value.mutation.isSubmitting) return
         val mutation = _state.value.mutation
         val editor = mutation.editor
         val target = editor?.target
@@ -574,7 +574,7 @@ class CalendarExperience(
     fun openDeleteConfirmation() = requestDelete()
 
     fun confirmDelete(scope: CalendarMutationScope? = null): Job? {
-        if (closed) return null
+        if (closed || _state.value.mutation.isSubmitting) return null
         val mutation = _state.value.mutation
         val confirmation = mutation.deleteConfirmation
         val selected = scope ?: confirmation?.selectedScope
@@ -609,7 +609,7 @@ class CalendarExperience(
     }
 
     fun submitMutation(draft: CalendarMutationDraft? = null): Job? {
-        if (closed) return null
+        if (closed || _state.value.mutation.isSubmitting) return null
         val editor = _state.value.mutation.editor
         if (editor == null || editor.mode != CalendarMutationEditorMode.CREATE && editor.mode != CalendarMutationEditorMode.EDIT) {
             setMutationError(

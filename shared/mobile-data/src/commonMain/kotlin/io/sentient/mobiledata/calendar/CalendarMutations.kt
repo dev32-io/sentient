@@ -238,6 +238,7 @@ data class CalendarMutationEditorState(
     val recurring: Boolean get() = applicableScopes.size > 1
     val mutationScope: CalendarMutationScope? get() = selectedScope
     val eventId: String? get() = target?.eventId ?: draft.eventId
+    val canSubmitDraft: Boolean get() = CalendarMutationDraftValidation.isValid(this, draft)
 }
 
 data class CalendarDeleteConfirmationState(
@@ -422,6 +423,16 @@ object CalendarMutationCommands {
         applyTo: CalendarMutationScope,
     ): CalendarCommandBuildResult<CalendarMutationRequest.Delete> =
         buildCalendarDeleteRequest(draft, applyTo)
+}
+
+/** One authoritative draft validator shared by native editor presentation and submission. */
+object CalendarMutationDraftValidation {
+    fun isValid(editor: CalendarMutationEditorState, draft: CalendarMutationDraft): Boolean = when (editor.mode) {
+        CalendarMutationEditorMode.CREATE -> buildCalendarCreateInput(draft) is CalendarCommandBuildResult.Success
+        CalendarMutationEditorMode.EDIT -> editor.selectedScope?.let { scope ->
+            buildCalendarUpdateRequest(draft, scope) is CalendarCommandBuildResult.Success
+        } == true
+    }
 }
 
 typealias CalendarMutationRequestState = CalendarMutationRequest

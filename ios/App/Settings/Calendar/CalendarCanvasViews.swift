@@ -10,7 +10,7 @@ struct CalendarCanvasView: View {
         Group {
             switch state.view {
             case .day:
-                CalendarDayCanvas(day: state.day, locale: state.locale)
+                EmptyView()
             case .week:
                 if let week = state.week {
                     CalendarWeekCanvas(week: week, onSelectDate: onSelectDate)
@@ -31,34 +31,6 @@ struct CalendarCanvasView: View {
         .overlay(RoundedRectangle(cornerRadius: Radii.lg).stroke(DuskColors.lineSoft))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(state.view.displayName) calendar")
-    }
-}
-
-struct CalendarDayCanvas: View {
-    let day: CalendarDayProjection?
-    let locale: CalendarLocale
-
-    var body: some View {
-        if let day {
-            HStack(spacing: Space.md) {
-                Image(systemName: day.isToday ? "sun.max.fill" : "calendar")
-                    .foregroundStyle(day.isToday ? DuskColors.amber : DuskColors.sage)
-                VStack(alignment: .leading, spacing: Space.xs) {
-                    Text(CalendarSurfaceText.fullDate(day.date, locale: locale))
-                        .font(CalendarFont.display(TypeScale.lg, .medium))
-                        .foregroundStyle(DuskColors.ink)
-                    Text(day.events.isEmpty ? "No events planned" : "\(day.events.count) event\(day.events.count == 1 ? "" : "s")")
-                        .font(CalendarFont.mono(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(Space.md)
-            .frame(minHeight: CalendarSurfaceLayout.agendaRowHeight)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(day.accessibilityLabel)
-            .accessibilityValue(day.isToday ? "Today" : "Focused day")
-        }
     }
 }
 

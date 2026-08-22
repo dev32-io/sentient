@@ -13,6 +13,13 @@ struct CalendarSurfaceTests {
         #expect(CalendarSurfaceLayout.floatingBarClearance >= CalendarSurfaceLayout.viewControlHeight)
     }
 
+    @Test func dayIsFocusedAgendaWithoutASeparateCompactCanvas() {
+        #expect(!CalendarSurfaceMapping.showsCompactCanvas(.day))
+        #expect(CalendarSurfaceMapping.showsCompactCanvas(.week))
+        #expect(CalendarSurfaceMapping.showsCompactCanvas(.month))
+        #expect(CalendarSurfaceMapping.showsCompactCanvas(.year))
+    }
+
     @Test func sharedProjectionSuppliesCompleteMonthWeekAndLeapYearDates() {
         let month = projection(view: .month, anchor: "2028-02-14").month
         #expect(month?.cells.count == 42)

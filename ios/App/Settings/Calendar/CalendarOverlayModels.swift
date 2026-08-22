@@ -37,24 +37,23 @@ enum CalendarOverlaySemantics {
     }
 
     static func canSave(_ state: CalendarUiState, draft: CalendarMutationDraft) -> Bool {
-        canSave(isOffline: state.isOffline,
-                mutationAvailable: state.mutationAvailability.isAvailable,
-                isSubmitting: state.mutation.isSubmitting,
-                draft: draft)
+        guard let editor = state.editor else { return false }
+        return canSave(
+            editor: editor,
+            isOffline: state.isOffline,
+            canCreate: state.mutationAvailability.canCreate,
+            canEdit: state.mutationAvailability.canEdit,
+            isSubmitting: state.mutation.isSubmitting,
+            draft: draft
+        )
     }
 
-    static func canSave(isOffline: Bool, mutationAvailable: Bool, isSubmitting: Bool,
+    static func canSave(editor: CalendarMutationEditorState, isOffline: Bool,
+                        canCreate: Bool, canEdit: Bool, isSubmitting: Bool,
                         draft: CalendarMutationDraft) -> Bool {
-        !isOffline && mutationAvailable && !isSubmitting &&
-            !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !draft.start.isEmpty &&
-            validRecurrence(draft.recurrence)
-    }
-
-    private static func validRecurrence(_ recurrence: StructuredRecurrence?) -> Bool {
-        guard let recurrence else { return true }
-        let hasExactlyOneEnd = (recurrence.count != nil) != (recurrence.until != nil)
-        let hasWeeklyDay = recurrence.frequency != .weekly || !(recurrence.weekdays?.isEmpty ?? true)
-        return hasExactlyOneEnd && hasWeeklyDay
+        let modeAllowed = editor.isCreate ? canCreate : canEdit
+        return !isOffline && modeAllowed && !isSubmitting &&
+            CalendarMutationDraftValidation.shared.isValid(editor: editor, draft: draft)
     }
 
     static func canDelete(_ state: CalendarUiState) -> Bool {

@@ -33,24 +33,35 @@ struct CalendarOverlayTests {
         #expect(restored == .event("event-7/occurrence-7"))
     }
 
-    @Test func saveEnablementReflectsConnectionAvailabilitySubmissionAndRequiredFields() {
+    @Test func saveEnablementUsesModeSpecificPermissionAndSharedDraftValidation() {
         let valid = overlayDraft()
-        #expect(CalendarOverlaySemantics.canSave(isOffline: false, mutationAvailable: true,
+        let editor = CalendarMutationEditorState(
+            mode: .edit, draft: valid, target: nil,
+            applicableScopes: [.entireSeries], selectedScope: .entireSeries
+        )
+        #expect(CalendarOverlaySemantics.canSave(editor: editor, isOffline: false,
+                                                  canCreate: false, canEdit: true,
                                                   isSubmitting: false, draft: valid))
-        #expect(!CalendarOverlaySemantics.canSave(isOffline: true, mutationAvailable: true,
+        #expect(!CalendarOverlaySemantics.canSave(editor: editor, isOffline: false,
+                                                   canCreate: true, canEdit: false,
                                                    isSubmitting: false, draft: valid))
-        #expect(!CalendarOverlaySemantics.canSave(isOffline: false, mutationAvailable: false,
+        #expect(!CalendarOverlaySemantics.canSave(editor: editor, isOffline: true,
+                                                   canCreate: true, canEdit: true,
                                                    isSubmitting: false, draft: valid))
-        #expect(!CalendarOverlaySemantics.canSave(isOffline: false, mutationAvailable: true,
+        #expect(!CalendarOverlaySemantics.canSave(editor: editor, isOffline: false,
+                                                   canCreate: true, canEdit: true,
                                                    isSubmitting: true, draft: valid))
         let emptyTitle = copyOverlayDraft(valid, title: "  ")
-        #expect(!CalendarOverlaySemantics.canSave(isOffline: false, mutationAvailable: true,
+        #expect(!CalendarOverlaySemantics.canSave(editor: editor, isOffline: false,
+                                                   canCreate: true, canEdit: true,
                                                    isSubmitting: false, draft: emptyTitle))
-        let incompleteRepeat = copyOverlayDraft(valid, recurrence: StructuredRecurrence(
-            frequency: .weekly, interval: 1, weekdays: [], count: nil, until: nil
-        ))
-        #expect(!CalendarOverlaySemantics.canSave(isOffline: false, mutationAvailable: true,
-                                                   isSubmitting: false, draft: incompleteRepeat))
+        let missingScope = CalendarMutationEditorState(
+            mode: .edit, draft: valid, target: nil,
+            applicableScopes: CalendarMutationScope.allCases, selectedScope: nil
+        )
+        #expect(!CalendarOverlaySemantics.canSave(editor: missingScope, isOffline: false,
+                                                   canCreate: true, canEdit: true,
+                                                   isSubmitting: false, draft: valid))
     }
 
     @Test func closedMutationHasNoAccessibleOverlay() {

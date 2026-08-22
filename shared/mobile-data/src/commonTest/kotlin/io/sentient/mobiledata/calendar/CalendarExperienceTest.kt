@@ -20,6 +20,7 @@ import io.sentient.mobilesdk.calendar.CalendarEvent
 import io.sentient.mobilesdk.calendar.CalendarEventPage
 import io.sentient.mobilesdk.calendar.CalendarMutationCommand
 import io.sentient.mobilesdk.calendar.CalendarMutationResult
+import io.sentient.mobilesdk.calendar.CalendarMutationScope
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.CalendarTime
 import io.sentient.mobilesdk.calendar.Importance
@@ -642,6 +643,68 @@ class CalendarExperienceTest {
             assertEquals(listOf("Family lunch"), experience.state.value.projection?.filteredOccurrences?.map { it.title })
             assertEquals(listOf("family", "work"), experience.state.value.projection?.facets?.groups)
             assertTrue(cache.writtenPreferences.isNotEmpty())
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `editor draft validation uses the same command builders as submission`() {
+        val create = CalendarMutationEditorState(
+            CalendarMutationEditorMode.CREATE,
+            CalendarMutationDraft.create(start = "2026-06-14", title = "Dinner"),
+        )
+        assertTrue(create.canSubmitDraft)
+        assertTrue(!create.copy(draft = create.draft.copy(title = "  ")).canSubmitDraft)
+
+        val recurring = occurrence("valid", "Dinner").copy(recurring = true)
+        val draft = CalendarMutationDraft.fromOccurrence(recurring)
+        val edit = CalendarMutationEditorState(
+            CalendarMutationEditorMode.EDIT,
+            draft,
+            target = CalendarMutationTarget.fromOccurrence(recurring),
+            applicableScopes = CalendarMutationScope.entries,
+            selectedScope = null,
+        )
+        assertTrue(!edit.canSubmitDraft)
+        assertTrue(edit.copy(selectedScope = CalendarMutationScope.THIS_OCCURRENCE).canSubmitDraft)
+    }
+
+    @Test
+    fun `submitting ignores draft scope delete dismissal and duplicate submit intents`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val repository = FakeRepository(
+            pages = listOf(page(event(title = "remote"))),
+            beforeMutation = { gate.await() },
+        )
+        val experience = experience(repository, FakeCacheStore(), monthWindow(), this)
+        try {
+            val recurring = occurrence("race", "Original").copy(recurring = true)
+            experience.editOccurrence(recurring)
+            experience.chooseMutationScope(CalendarMutationScope.THIS_OCCURRENCE)
+            val submittedDraft = experience.state.value.mutation.draft!!.copy(title = "Submitted")
+            experience.updateDraft(submittedDraft)
+            experience.submitMutation()
+            runCurrent()
+
+            assertEquals(CalendarMutationPhase.SUBMITTING, experience.state.value.mutation.phase)
+            assertEquals(1, repository.mutationCalls)
+
+            experience.updateDraft(submittedDraft.copy(title = "Racing edit"))
+            experience.chooseMutationScope(CalendarMutationScope.THIS_AND_FOLLOWING)
+            experience.requestDelete()
+            experience.cancelMutation()
+            experience.submitMutation(submittedDraft.copy(title = "Duplicate"))
+
+            val mutation = experience.state.value.mutation
+            assertEquals(CalendarMutationPhase.SUBMITTING, mutation.phase)
+            assertEquals("Submitted", mutation.draft?.title)
+            assertEquals(CalendarMutationScope.THIS_OCCURRENCE, mutation.editor?.selectedScope)
+            assertEquals(null, mutation.deleteConfirmation)
+            assertEquals(1, repository.mutationCalls)
+
+            gate.complete(Unit)
+            advanceUntilIdle()
         } finally {
             experience.close()
         }

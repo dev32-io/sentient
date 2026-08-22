@@ -16,15 +16,16 @@ import kotlin.test.assertTrue
 
 class CalendarSurfaceModelsTest {
     @Test
-    fun `month selection requests day while week selection retains week`() {
-        assertEquals(
-            CalendarDateSelection("2026-04-18", CalendarView.DAY),
-            calendarDateSelection(CalendarView.MONTH, "2026-04-18"),
-        )
-        assertEquals(
-            CalendarDateSelection("2026-04-18", CalendarView.WEEK),
-            calendarDateSelection(CalendarView.WEEK, "2026-04-18"),
-        )
+    fun `day omits the compact canvas while shared date selection remains a single callback`() {
+        assertFalse(calendarShowsCompactCanvas(CalendarView.DAY))
+        assertTrue(calendarShowsCompactCanvas(CalendarView.WEEK))
+        assertTrue(calendarShowsCompactCanvas(CalendarView.MONTH))
+        assertTrue(calendarShowsCompactCanvas(CalendarView.YEAR))
+
+        val dates = mutableListOf<String>()
+        val callbacks = surfaceCallbacks(onDateSelected = dates::add)
+        callbacks.onDateSelected("2026-04-18")
+        assertEquals(listOf("2026-04-18"), dates)
     }
 
     @Test
@@ -72,6 +73,13 @@ class CalendarSurfaceModelsTest {
         assertEquals(12, CalendarSurfaceLayout.YEAR_MONTH_COUNT)
         assertTrue(CalendarSurfaceLayout.SCROLL_BOTTOM_CLEARANCE_DP > CalendarSurfaceLayout.VIEW_CONTROL_DP)
     }
+
+    private fun surfaceCallbacks(onDateSelected: (String) -> Unit) = CalendarSurfaceCallbacks(
+        onBack = {}, onAdd = {}, onToday = {}, onPrevious = {}, onNext = {},
+        onDateSelected = onDateSelected, onMonthSelected = { _, _ -> }, onViewSelected = {},
+        onScopeSelected = {}, onGroupToggled = {}, onTagToggled = {}, onImportanceSelected = {},
+        onSearchChanged = {}, onEventSelected = {}, onRetry = {},
+    )
 
     private fun yearProjection(year: Int, complete: Boolean): CalendarYearProjection = CalendarYearProjection(
         year,

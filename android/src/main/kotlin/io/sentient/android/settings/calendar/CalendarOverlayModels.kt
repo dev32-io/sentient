@@ -43,6 +43,7 @@ fun CalendarUiState.overlayActionState(): CalendarOverlayActionState {
         mutationAvailability.reason == CalendarMutationAvailabilityReason.UNAVAILABLE
     return CalendarOverlayActionState(
         saveEnabled = !connectionRequired && !isSubmitting && conflictAllowsSave &&
+            editor?.canSubmitDraft == true &&
             if (editing) mutationAvailability.canEdit else mutationAvailability.canCreate,
         deleteEnabled = !connectionRequired && !isSubmitting && mutationAvailability.canDelete,
         editEnabled = !connectionRequired && !isSubmitting && mutationAvailability.canEdit,

@@ -140,7 +140,7 @@ private struct CalendarSheet<Content: View>: View {
                 .gesture(dismissOnScrim ? dismissGesture : nil)
                 .accessibilityElement(children: .contain)
                 .accessibilityAddTraits(.isModal)
-                .accessibilityAction(.escape, onDismiss)
+                .accessibilityAction(.escape) { if dismissOnScrim { onDismiss() } }
             }
         }
         .ignoresSafeArea(edges: .bottom)
@@ -248,10 +248,13 @@ struct CalendarEditorSheet: View {
                 title: editor.isCreate ? "Add event" : "Edit event",
                 onClose: onCancel
             )
+            .disabled(isSubmitting)
             CalendarDraftFields(draft: $draft, titleFocused: $titleFocused, onUpdate: onUpdate)
+                .disabled(isSubmitting)
             if editor.applicableScopes.count > 1 {
                 CalendarScopeChoices(scopes: editor.applicableScopes, selected: editor.selectedScope,
                                      onChoose: onChooseScope)
+                    .disabled(isSubmitting)
             }
             if isOffline {
                 CalendarStatusNotice(kind: .offline,
@@ -593,6 +596,7 @@ struct CalendarDeleteSheet: View {
     var body: some View {
         CalendarSheet(dismissOnScrim: false, onDismiss: {}) {
             CalendarSheetHeader(kicker: "CONFIRM DELETE", title: "Delete event?", onClose: onCancel)
+                .disabled(isSubmitting)
                 .accessibilityFocused($headingFocused)
             Text("This action can’t be undone.")
                 .font(Typo.ui(TypeScale.base)).foregroundStyle(DuskColors.ink2)
@@ -600,6 +604,7 @@ struct CalendarDeleteSheet: View {
                 CalendarScopeChoices(scopes: confirmation.applicableScopes,
                                      selected: confirmation.selectedScope,
                                      onChoose: onChooseScope)
+                    .disabled(isSubmitting)
             }
             if isOffline {
                 CalendarStatusNotice(kind: .offline, message: "Connect to delete this event.")

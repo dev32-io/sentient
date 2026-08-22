@@ -50,14 +50,16 @@ struct CalendarScaffold: View {
                         .padding(.top, Space.sm)
 
                     if state.projection != nil {
-                        CalendarCanvasView(
-                            state: state,
-                            onSelectDate: actions.onSelectDate,
-                            onSelectMonth: actions.onSelectMonth
-                        )
-                        .padding(.top, Space.lg)
-                        .id("\(state.view)-\(state.anchorDate)")
-                        .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.99)))
+                        if CalendarSurfaceMapping.showsCompactCanvas(state.view) {
+                            CalendarCanvasView(
+                                state: state,
+                                onSelectDate: actions.onSelectDate,
+                                onSelectMonth: actions.onSelectMonth
+                            )
+                            .padding(.top, Space.lg)
+                            .id("\(state.view)-\(state.anchorDate)")
+                            .transition(reduceMotion ? .identity : .opacity.combined(with: .scale(scale: 0.99)))
+                        }
 
                         if state.view != .year {
                             CalendarAgendaView(

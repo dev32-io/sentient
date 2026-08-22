@@ -26,11 +26,8 @@ object CalendarSurfaceLayout {
     const val SCROLL_BOTTOM_CLEARANCE_DP = 82
 }
 
-data class CalendarDateSelection(val date: String, val view: CalendarView)
-
-/** Month intentionally drills into Day; Week and all other views retain their active view. */
-fun calendarDateSelection(currentView: CalendarView, date: String): CalendarDateSelection =
-    CalendarDateSelection(date, if (currentView == CalendarView.MONTH) CalendarView.DAY else currentView)
+/** Day is the focused agenda presentation and therefore has no separate compact canvas. */
+fun calendarShowsCompactCanvas(view: CalendarView): Boolean = view != CalendarView.DAY
 
 data class RetainedCalendarFacets(
     val groups: List<String>,

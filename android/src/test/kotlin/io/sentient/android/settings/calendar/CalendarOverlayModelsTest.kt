@@ -1,5 +1,7 @@
 package io.sentient.android.settings.calendar
 
+import androidx.compose.animation.core.SnapSpec
+import androidx.compose.animation.core.TweenSpec
 import io.sentient.mobiledata.calendar.CalendarExperienceState
 import io.sentient.mobiledata.calendar.CalendarMutationAvailability
 import io.sentient.mobiledata.calendar.CalendarMutationDraft
@@ -14,10 +16,13 @@ import io.sentient.mobilesdk.calendar.CalendarMutationScope
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import io.sentient.mobilesdk.calendar.Importance
+import io.sentient.mobilesdk.calendar.RecurrenceFrequency
+import io.sentient.mobilesdk.calendar.StructuredRecurrence
 import io.sentient.mobilesdk.calendar.Visibility
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -66,6 +71,38 @@ class CalendarOverlayModelsTest {
         assertFalse(result.deleteEnabled)
         assertFalse(result.editEnabled)
         assertTrue(result.connectionRequired)
+    }
+
+    @Test
+    fun save_requires_authoritative_valid_draft_and_required_edit_scope() {
+        val validCreate = CalendarMutationDraft.create(start = "2026-08-01", title = "Dinner")
+        fun actionState(editor: CalendarMutationEditorState) = ui(
+            mutation = CalendarMutationState(phase = CalendarMutationPhase.EDITING, editor = editor),
+        ).overlayActionState()
+
+        assertTrue(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate)).saveEnabled)
+        assertFalse(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate.copy(title = "  "))).saveEnabled)
+        assertFalse(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate.copy(start = "not-a-date"))).saveEnabled)
+        assertFalse(actionState(CalendarMutationEditorState(
+            CalendarMutationEditorMode.CREATE,
+            validCreate.copy(recurrence = StructuredRecurrence(RecurrenceFrequency.WEEKLY)),
+        )).saveEnabled)
+
+        val editDraft = CalendarMutationDraft.fromOccurrence(occurrence)
+        val scopes = CalendarMutationScope.entries
+        assertFalse(actionState(CalendarMutationEditorState(
+            CalendarMutationEditorMode.EDIT, editDraft, applicableScopes = scopes, selectedScope = null,
+        )).saveEnabled)
+        assertTrue(actionState(CalendarMutationEditorState(
+            CalendarMutationEditorMode.EDIT, editDraft, applicableScopes = scopes,
+            selectedScope = CalendarMutationScope.THIS_OCCURRENCE,
+        )).saveEnabled)
+    }
+
+    @Test
+    fun overlay_press_feedback_is_immediate_under_reduced_motion() {
+        assertIs<SnapSpec<Float>>(calendarOverlayPressAnimationSpec(reducedMotion = true, fastMs = 150))
+        assertIs<TweenSpec<Float>>(calendarOverlayPressAnimationSpec(reducedMotion = false, fastMs = 150))
     }
 
     @Test

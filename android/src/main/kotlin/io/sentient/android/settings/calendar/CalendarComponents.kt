@@ -69,7 +69,6 @@ import io.sentient.android.theme.JetBrainsMono
 import io.sentient.android.theme.LocalTokens
 import io.sentient.mobiledata.calendar.CalendarAgendaSection
 import io.sentient.mobiledata.calendar.CalendarDateCell
-import io.sentient.mobiledata.calendar.CalendarDayProjection
 import io.sentient.mobiledata.calendar.CalendarFacetOptions
 import io.sentient.mobiledata.calendar.CalendarFilters
 import io.sentient.mobiledata.calendar.CalendarFreshness
@@ -158,21 +157,18 @@ fun CalendarScaffold(
                             onSearchChanged = callbacks.onSearchChanged,
                         )
                     }
-                    item {
-                        CalendarCompactCanvas(
-                            view = state.view,
-                            day = state.day,
-                            week = state.week,
-                            month = state.month,
-                            year = state.year,
-                            languageTag = state.locale.languageTag,
-                            onDateSelected = { date ->
-                                val selection = calendarDateSelection(state.view, date)
-                                callbacks.onDateSelected(selection.date)
-                                if (selection.view != state.view) callbacks.onViewSelected(selection.view)
-                            },
-                            onMonthSelected = callbacks.onMonthSelected,
-                        )
+                    if (calendarShowsCompactCanvas(state.view)) {
+                        item {
+                            CalendarCompactCanvas(
+                                view = state.view,
+                                week = state.week,
+                                month = state.month,
+                                year = state.year,
+                                languageTag = state.locale.languageTag,
+                                onDateSelected = callbacks.onDateSelected,
+                                onMonthSelected = callbacks.onMonthSelected,
+                            )
+                        }
                     }
                     item {
                         CalendarStateNotice(state = state, onRetry = callbacks.onRetry)
@@ -428,7 +424,6 @@ private fun CalendarSearchField(value: String, onValueChange: (String) -> Unit) 
 @Composable
 fun CalendarCompactCanvas(
     view: CalendarView,
-    day: CalendarDayProjection?,
     week: CalendarWeekProjection?,
     month: CalendarMonthProjection?,
     year: CalendarYearProjection?,
@@ -437,6 +432,7 @@ fun CalendarCompactCanvas(
     onMonthSelected: (Int, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (!calendarShowsCompactCanvas(view)) return
     val shape = RoundedCornerShape(LocalTokens.current.radii.lg)
     Surface(
         modifier = modifier.padding(horizontal = 16.dp, vertical = 18.dp).fillMaxWidth(),
@@ -445,23 +441,11 @@ fun CalendarCompactCanvas(
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         when (view) {
-            CalendarView.DAY -> DayCalendarView(day, languageTag)
+            CalendarView.DAY -> Unit
             CalendarView.WEEK -> WeekCalendarView(week, onDateSelected)
             CalendarView.MONTH -> MonthCalendarView(month, onDateSelected)
             CalendarView.YEAR -> YearCalendarView(year, languageTag, onMonthSelected)
         }
-    }
-}
-
-@Composable
-fun DayCalendarView(day: CalendarDayProjection?, languageTag: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(18.dp), contentAlignment = Alignment.CenterStart) {
-        Text(
-            day?.let { fullCalendarDateLabel(it.date, languageTag) } ?: "Day unavailable",
-            fontFamily = Fraunces,
-            fontSize = 18.sp,
-            modifier = Modifier.semantics { day?.accessibilityLabel?.let { contentDescription = it } },
-        )
     }
 }
 
