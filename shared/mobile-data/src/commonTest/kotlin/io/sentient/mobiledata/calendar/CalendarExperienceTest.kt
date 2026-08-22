@@ -261,6 +261,8 @@ class CalendarExperienceTest {
             advanceUntilIdle()
 
             assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals(CalendarRecoveryPhase.UP_TO_DATE, experience.state.value.recovery.phase)
+            assertTrue(experience.state.value.recoveryReady)
             assertEquals("recovery-sentinel", experience.state.value.authorizedOccurrences.single().title)
             assertEquals("recovery-sentinel", cache.snapshotFor(previous)?.occurrences?.single()?.title)
             assertEquals("recovery-sentinel", cache.snapshotFor(next)?.occurrences?.single()?.title)
@@ -692,6 +694,7 @@ class CalendarExperienceTest {
             assertEquals(callsBeforeRecovery + 1, repository.currentWindowCalls)
             assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
             assertEquals(CalendarLoadingPhase.IDLE, experience.state.value.loading.phase)
+            assertEquals(CalendarRecoveryPhase.UP_TO_DATE, experience.state.value.recovery.phase)
             assertEquals("recovery-sentinel", experience.state.value.authorizedOccurrences.single().title)
             assertEquals("recovery-sentinel", cache.snapshotFor(window)?.occurrences?.single()?.title)
             assertTrue(cache.replacementTitles.drop(3).none { it == "old-stale-sentinel" })

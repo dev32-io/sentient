@@ -52,6 +52,7 @@ private enum PreviewCalendarFactory {
             error: error, hasCompleteCache: variant != .error,
             cachedWindow: nil, persistedCachePreferences: nil,
             presentationReady: true,
+            recovery: CalendarRecoveryState(phase: .idle, generation: 0, failureKind: nil),
             mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
             mutation: CalendarMutationState(
                 phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil,

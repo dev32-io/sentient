@@ -4,6 +4,12 @@ tags: [calendar, recovery, fault-armed]
 # Disable airplane mode with the direct emulator control before invoking. Calendar
 # remains open from 06-offline-recovery; no launch or navigation is allowed.
 - assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- extendedWaitUntil:
+    visible: { id: "calendar-recovery-ready" }
+    timeout: 20000
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-up-to-date" }
+    timeout: 20000
 - scrollUntilVisible:
     element: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
     direction: DOWN

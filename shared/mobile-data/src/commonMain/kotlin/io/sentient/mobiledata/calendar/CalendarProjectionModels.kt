@@ -404,6 +404,8 @@ data class CalendarExperienceState(
     val persistedCachePreferences: CalendarCachePreferences? = null,
     /** True only after preferences and the matching cache projection have both been applied. */
     val presentationReady: Boolean = false,
+    /** Stable, content-free unavailable→available recovery settlement. */
+    val recovery: CalendarRecoveryState = CalendarRecoveryState(),
     val mutationAvailability: CalendarMutationAvailability = CalendarMutationAvailability(),
     /** Shared preview/editor/delete/conflict state; drafts are never persisted. */
     val mutation: CalendarMutationState = CalendarMutationState(),
@@ -459,6 +461,8 @@ data class CalendarExperienceState(
     val isCachedOffline: Boolean get() = freshness == CalendarFreshness.CACHED_OFFLINE
     val isOffline: Boolean get() = offline != CalendarOfflineState.ONLINE
     val isUnavailableOffline: Boolean get() = offline == CalendarOfflineState.UNAVAILABLE || freshness.isUnavailableOffline
+    val recoveryReady: Boolean get() = recovery.isReady
+    val recoverySettled: Boolean get() = recovery.isSettled
     val hasCachedContent: Boolean get() = hasCompleteCache
     val data: CalendarExperienceProjection? get() = projection
     val activeProjection: CalendarExperienceProjection? get() = projection

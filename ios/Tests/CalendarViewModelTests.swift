@@ -485,6 +485,7 @@ private func makeState(
         freshness: freshness, loading: CalendarLoadingState(phase: loading), offline: offline, error: nil,
         hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
         presentationReady: true,
+        recovery: CalendarRecoveryState(phase: .idle, generation: 0, failureKind: nil),
         mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
         mutation: CalendarMutationState(
             phase: .previewing, preview: occurrence, editor: nil, deleteConfirmation: nil,

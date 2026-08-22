@@ -6,6 +6,7 @@
  * the existing authenticated local REST controls and writes an IDs-only state
  * file. Maestro/Playwright remain directly owned by the E2E agent.
  */
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
@@ -23,8 +24,24 @@ import {
 const fixtureReferenceSchema = z.object({
   eventId: z.string().min(1).max(256),
   occurrenceIds: z.array(z.string().min(1).max(256)),
+  eventTags: z.array(z.string().regex(/^calendar-event-[a-f0-9]{24}$/)).optional(),
   scope: z.enum(["private", "household"]),
 });
+
+const occurrenceIdentitySchema = z.object({
+  eventId: z.string().min(1).max(256),
+  occurrenceId: z.string().min(1).max(256),
+  originalStart: z.string().min(1).max(128),
+  scope: z.enum(["private", "household"]),
+});
+const calendarPageSchema = z.object({
+  body: z.object({
+    events: z.array(occurrenceIdentitySchema),
+    nextCursor: z.string().min(1).max(4096).nullable().optional(),
+  }),
+});
+
+const RECOVERY_WINDOW = { from: "2026-07-26", to: "2026-09-06" } as const;
 const fixtureSchema = z.object({
   runId: z.string().startsWith("calendar-e2e-").max(128),
   adultId: z.string().min(1).max(64),
@@ -108,6 +125,37 @@ async function login(target: string, userId: string, pin: string): Promise<strin
 
 function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
+}
+
+function occurrenceTag(identity: z.infer<typeof occurrenceIdentitySchema>): string {
+  const values = [identity.eventId, identity.occurrenceId, identity.originalStart, identity.scope.toUpperCase()];
+  const stableKey = values.map((value) => `${value.length}:${value}`).join("");
+  return `calendar-event-${createHash("sha256").update(stableKey).digest("hex").slice(0, 24)}`;
+}
+
+async function listRecoveryIdentities(
+  target: string,
+  token: string,
+  eventId: string,
+): Promise<readonly z.infer<typeof occurrenceIdentitySchema>[]> {
+  const occurrences: z.infer<typeof occurrenceIdentitySchema>[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < 100; page += 1) {
+    const query = new URLSearchParams({ ...RECOVERY_WINDOW, scope: "all" });
+    if (cursor) query.set("cursor", cursor);
+    const result = await json(
+      await localFetch(target, `/api/v1/calendar/events?${query}`, { headers: bearer(token) }),
+      calendarPageSchema,
+    );
+    occurrences.push(...result.body.events.filter((event) => event.eventId === eventId));
+    const next = result.body.nextCursor ?? undefined;
+    if (!next) return occurrences;
+    if (seen.has(next)) throw new Error("recovery fixture query returned a cursor loop");
+    seen.add(next);
+    cursor = next;
+  }
+  throw new Error("recovery fixture query exceeded its page bound");
 }
 
 function profileBody(profile: z.infer<typeof profileV1Schema>): Record<string, unknown> {
@@ -278,7 +326,23 @@ async function main(): Promise<void> {
     const event = calendarFixtureEvents(value.runId).find((candidate) => candidate.case === "recovery");
     if (!event) throw new Error("recovery fixture definition is unavailable");
     const seeded = await deps.seedEvent(value.adultId, event);
-    const reference = { eventId: seeded.eventId, occurrenceIds: seeded.occurrenceIds ?? [], scope: event.scope };
+    let identities: readonly z.infer<typeof occurrenceIdentitySchema>[];
+    try {
+      const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
+      identities = await listRecoveryIdentities(target, adultToken, seeded.eventId);
+      if (identities.length !== 1 || identities[0]?.scope !== event.scope) {
+        throw new Error("recovery fixture was not returned by the authenticated all-scope window query");
+      }
+    } catch (error) {
+      await deps.deleteEvent(value.adultId, seeded.eventId, event.scope);
+      throw error;
+    }
+    const reference = {
+      eventId: seeded.eventId,
+      occurrenceIds: identities.map((identity) => identity.occurrenceId),
+      eventTags: identities.map(occurrenceTag),
+      scope: event.scope,
+    };
     const updated: DisposableCalendarFixture = {
       ...value,
       eventIds: [...value.eventIds, seeded.eventId],
@@ -297,6 +361,24 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "verify-recovery") {
+    const value = await readFixture(statePath);
+    const reference = value.cases.recovery[0];
+    if (!reference) throw new Error("recovery fixture has not been seeded");
+    const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
+    const identities = await listRecoveryIdentities(target, adultToken, reference.eventId);
+    const occurrenceIds = identities.map((identity) => identity.occurrenceId).sort();
+    const expectedIds = [...reference.occurrenceIds].sort();
+    const eventTags = identities.map(occurrenceTag).sort();
+    const expectedTags = [...(reference.eventTags ?? [])].sort();
+    if (JSON.stringify(occurrenceIds) !== JSON.stringify(expectedIds) ||
+        JSON.stringify(eventTags) !== JSON.stringify(expectedTags)) {
+      throw new Error("recovery fixture identity changed in the authenticated all-scope window query");
+    }
+    process.stdout.write(`${statePath}\n`);
+    return;
+  }
+
   if (command === "cleanup") {
     const value = await readFixture(statePath);
     const report = await cleanupLocalCalendarFixture(deps, value);
@@ -310,7 +392,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  throw new Error("usage: calendar:fixture <provision|seed-recovery|cleanup> --target <loopback-url> --state <file>");
+  throw new Error("usage: calendar:fixture <provision|seed-recovery|verify-recovery|cleanup> --target <loopback-url> --state <file>");
 }
 
 await main();

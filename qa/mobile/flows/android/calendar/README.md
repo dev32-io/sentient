@@ -18,10 +18,11 @@ CALENDAR_E2E_ADMIN_USER_ID=... CALENDAR_E2E_ADMIN_PIN=... \
 CALENDAR_E2E_ADULT_PIN=... CALENDAR_E2E_CHILD_PIN=... \
 bun run calendar:fixture provision --target https://localhost:8888 --state /tmp/calendar-android-fixture.json
 # Run direct Maestro files sequentially, then always:
+bun run calendar:fixture verify-recovery --target https://localhost:8888 --state /tmp/calendar-android-fixture.json
 bun run calendar:fixture cleanup --target https://localhost:8888 --state /tmp/calendar-android-fixture.json
 ```
 
-It refuses non-loopback targets, creates a unique adult/child plus facet, recurrence, conflict, cache/recovery, and temporal sentinels through authenticated APIs, and writes only sanitized IDs to the named file. Cleanup deletes events before principals. Never reuse the principal for iOS. Derive the content-free `calendar-event-<sha256-prefix>` resource IDs from fixture identities for Maestro environment variables: concatenate the length-prefixed `eventId`, `occurrenceId`, `originalStart`, and uppercase scope name exactly as shared `stableKey` does, SHA-256 it, and use the first 12 bytes as lowercase hex. Do not write titles, payloads, credentials, descriptions, or search text to evidence/log files.
+It refuses non-loopback targets, creates a unique adult/child plus facet, recurrence, conflict, cache/recovery, and temporal sentinels through authenticated APIs, and writes only sanitized IDs to the named file. `seed-recovery` follows the same authenticated `scope=all` 2026-07-26→2026-09-06 query through every cursor and records the canonical content-free `eventTags`; use that value directly for `CALENDAR_RECOVERY_EVENT_TAG`. After reconnect, `verify-recovery` repeats that exact query and fails unless the same occurrence identity remains present. Cleanup deletes events before principals. Never reuse the principal for iOS. Do not write titles, payloads, credentials, descriptions, or search text to evidence/log files.
 
 The direct agent owns this sequence:
 

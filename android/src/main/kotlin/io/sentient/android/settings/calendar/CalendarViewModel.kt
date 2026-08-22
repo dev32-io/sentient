@@ -27,6 +27,7 @@ import io.sentient.mobiledata.calendar.CalendarMutationPhase
 import io.sentient.mobiledata.calendar.CalendarNavigationAction
 import io.sentient.mobiledata.calendar.CalendarOfflineState
 import io.sentient.mobiledata.calendar.CalendarProjectedEvent
+import io.sentient.mobiledata.calendar.CalendarRecoveryState
 import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobiledata.calendar.CalendarWeekProjection
 import io.sentient.mobiledata.calendar.CalendarYearProjection
@@ -85,6 +86,8 @@ data class CalendarUiState(
     val presentationReady: Boolean = false,
     /** Actual SQLDelight preference row matches the activated view/date/filter controls. */
     val restoredPresentationReady: Boolean = false,
+    /** Content-free recovery settlement for stable automation semantics. */
+    val recovery: CalendarRecoveryState = CalendarRecoveryState(),
     val contentState: CalendarContentState,
     val error: CalendarExperienceError?,
     val mutationAvailability: CalendarMutationAvailability,
@@ -265,6 +268,7 @@ internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
         hasCompleteCache = hasCompleteCache,
         presentationReady = presentationReady,
         restoredPresentationReady = persistedPresentationActive,
+        recovery = recovery,
         contentState = contentState,
         error = error,
         mutationAvailability = mutationAvailability,

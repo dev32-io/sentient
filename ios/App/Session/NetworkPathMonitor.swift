@@ -17,7 +17,7 @@ protocol NetworkPathMonitoring: AnyObject {
 }
 
 struct NetworkPathMonitorFactory {
-    let make: (@escaping @Sendable (_ recovered: Bool) -> Void) -> any NetworkPathMonitoring
+    let make: (@escaping @Sendable (_ available: Bool, _ recovered: Bool) -> Void) -> any NetworkPathMonitoring
 
     static let live = NetworkPathMonitorFactory { NetworkPathMonitor(onChange: $0) }
 }
@@ -37,7 +37,7 @@ struct ConnectivityRecoveryEdge {
 final class NetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "io.sentient.app.net-path-monitor")
-    private let onChange: @Sendable (_ recovered: Bool) -> Void
+    private let onChange: @Sendable (_ available: Bool, _ recovered: Bool) -> Void
     private let log = AppLog("net-path-monitor")
     /// Single-writer on the monitor queue; the initial snapshot is ignored.
     private var recoveryEdge = ConnectivityRecoveryEdge()
@@ -45,7 +45,7 @@ final class NetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
     /// Main-actor-confined (set only from start/cancel, called by UserSession on MainActor).
     private var started = false
 
-    init(onChange: @escaping @Sendable (_ recovered: Bool) -> Void) {
+    init(onChange: @escaping @Sendable (_ available: Bool, _ recovered: Bool) -> Void) {
         self.onChange = onChange
     }
 
@@ -63,8 +63,9 @@ final class NetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
                 self.log.info("path-snapshot status=\(status) (skip)")
                 return
             }
+            guard transition.changed else { return }
             self.log.info("path-changed status=\(status)")
-            self.onChange(transition.recovered)
+            self.onChange(available, transition.recovered)
         }
         monitor.start(queue: queue)
     }

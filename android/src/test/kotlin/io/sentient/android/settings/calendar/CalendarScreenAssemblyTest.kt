@@ -2,6 +2,8 @@ package io.sentient.android.settings.calendar
 
 import io.sentient.mobiledata.calendar.CalendarExperienceState
 import io.sentient.mobiledata.calendar.CalendarFilters
+import io.sentient.mobiledata.calendar.CalendarRecoveryPhase
+import io.sentient.mobiledata.calendar.CalendarRecoveryState
 import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobiledata.calendar.projectCalendar
 import io.sentient.mobilesdk.calendar.CalendarScope
@@ -64,6 +66,15 @@ class CalendarScreenAssemblyTest {
         assertEquals(CalendarView.MONTH, restored.view)
         assertEquals("2026-08-24", restored.selectedDate)
         assertEquals(setOf("family"), restored.filters.groups)
+    }
+
+    @Test
+    fun recovery_semantics_are_stable_without_event_content() {
+        val base = state(CalendarView.MONTH)
+        assertEquals("Calendar recovery idle", calendarRecoveryStateDescription(base))
+        val ready = base.copy(recovery = CalendarRecoveryState(CalendarRecoveryPhase.UP_TO_DATE, generation = 4L))
+        assertEquals("Calendar recovery ready", calendarRecoveryStateDescription(ready))
+        assertFalse(calendarRecoveryStateDescription(ready).contains(occurrence.title))
     }
 
     @Test

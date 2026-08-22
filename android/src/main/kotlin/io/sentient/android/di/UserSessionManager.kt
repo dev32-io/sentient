@@ -273,6 +273,7 @@ class UserSessionManager(
         // revalidation/coalescing policy. The generation gate fences old sessions.
         val recoveryFence = SessionConnectivityRecoveryFence {
             calendarLifecycleGate.ifCurrent(newCalendarGeneration) {
+                log.info("calendar-connectivity-recovered", mapOf("generation" to newCalendarGeneration))
                 calendarBoundary?.experience?.onConnectivityRecovered()
             }
         }
@@ -288,6 +289,7 @@ class UserSessionManager(
             onConnectivityRecovered = recoveryFence::signalIfActive,
             onConnectivityUnavailable = {
                 calendarLifecycleGate.ifCurrent(newCalendarGeneration) {
+                    log.info("calendar-connectivity-unavailable", mapOf("generation" to newCalendarGeneration))
                     calendarBoundary?.experience?.onConnectivityUnavailable()
                 }
             },

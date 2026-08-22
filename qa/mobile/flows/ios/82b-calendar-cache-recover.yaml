@@ -4,6 +4,12 @@ tags: [helper, fault-armed]
 # Restore the native network path before invoking. Do not relaunch or navigate: automatic
 # revalidation must update the same visible Calendar without blanking cache.
 - assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- extendedWaitUntil:
+    visible: { id: "calendar-recovery-ready" }
+    timeout: 20000
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-up-to-date" }
+    timeout: 20000
 - scrollUntilVisible:
     element: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
     direction: DOWN

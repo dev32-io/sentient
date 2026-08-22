@@ -225,6 +225,7 @@ struct CalendarSurfaceTests {
             freshness: freshness, loading: loading, offline: offline,
             error: nil, hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
             presentationReady: true,
+            recovery: CalendarRecoveryState(phase: .idle, generation: 0, failureKind: nil),
             mutationAvailability: CalendarMutationAvailability(
                 canCreate: true, canEdit: true, canDelete: true, reason: nil
             ),

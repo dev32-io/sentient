@@ -243,6 +243,8 @@ export interface CalendarFixtureHelperDeps extends CalendarE2EHelperDeps {
 export interface CalendarFixtureEventReference {
   readonly eventId: string;
   readonly occurrenceIds: readonly string[];
+  /** Content-free resource IDs derived from canonical V2 occurrence identity. */
+  readonly eventTags?: readonly string[];
   readonly scope: "private" | "household";
 }
 

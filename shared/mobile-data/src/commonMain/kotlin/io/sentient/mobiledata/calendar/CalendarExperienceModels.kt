@@ -30,6 +30,25 @@ enum class CalendarOfflineState {
     UNAVAILABLE,
 }
 
+/** Structural connectivity-recovery lifecycle exported to native automation. */
+enum class CalendarRecoveryPhase {
+    IDLE,
+    WAITING_FOR_NETWORK,
+    REVALIDATING,
+    UP_TO_DATE,
+    FAILED,
+}
+
+data class CalendarRecoveryState(
+    val phase: CalendarRecoveryPhase = CalendarRecoveryPhase.IDLE,
+    /** Monotonic within one authenticated CalendarExperience only. */
+    val generation: Long = 0L,
+    val failureKind: CalendarExperienceErrorKind? = null,
+) {
+    val isReady: Boolean get() = phase == CalendarRecoveryPhase.UP_TO_DATE
+    val isSettled: Boolean get() = phase == CalendarRecoveryPhase.UP_TO_DATE || phase == CalendarRecoveryPhase.FAILED
+}
+
 enum class CalendarMutationAvailabilityReason {
     OFFLINE,
     UNAVAILABLE,

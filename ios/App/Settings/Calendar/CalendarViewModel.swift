@@ -32,6 +32,7 @@ struct CalendarUiState {
     let error: CalendarExperienceError?
     let hasCompleteCache: Bool
     let presentationReady: Bool
+    let recovery: CalendarRecoveryState
     let mutationAvailability: CalendarMutationAvailability
     let mutation: CalendarMutationState
     let content: Content
@@ -73,6 +74,7 @@ struct CalendarUiState {
         error = state.error
         hasCompleteCache = state.hasCompleteCache
         presentationReady = state.presentationReady
+        recovery = state.recovery
         mutationAvailability = state.mutationAvailability
         mutation = state.mutation
 

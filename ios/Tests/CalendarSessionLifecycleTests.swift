@@ -145,6 +145,7 @@ struct CalendarSessionLifecycleTests {
 
     @Test @MainActor func sessionForwardsOneRecoveryAndFencesCallbacksAfterShutdown() async {
         let monitor = FakeNetworkPathMonitor()
+        var unavailable = 0
         var recoveries = 0
         let session = UserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
@@ -155,21 +156,24 @@ struct CalendarSessionLifecycleTests {
                 monitor.handler = handler
                 return monitor
             },
+            calendarUnavailableSignal: { _ in unavailable += 1 },
             calendarRecoverySignal: { _ in recoveries += 1 }
         )
         await session.awaitCalendarLifecycle()
         #expect(monitor.starts == 1)
 
-        monitor.emit(recovered: false)
-        monitor.emit(recovered: true)
+        monitor.emit(available: false, recovered: false)
+        monitor.emit(available: true, recovered: true)
         await Task.yield()
+        #expect(unavailable == 1)
         #expect(recoveries == 1)
 
         session.shutdown()
         await session.awaitCalendarLifecycle()
         #expect(monitor.cancels == 1)
-        monitor.emit(recovered: true)
+        monitor.emit(available: true, recovered: true)
         await Task.yield()
+        #expect(unavailable == 1)
         #expect(recoveries == 1)
     }
 
@@ -223,11 +227,11 @@ struct CalendarSessionLifecycleTests {
 }
 
 private final class FakeNetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
-    var handler: (@Sendable (Bool) -> Void)?
+    var handler: (@Sendable (Bool, Bool) -> Void)?
     private(set) var starts = 0
     private(set) var cancels = 0
 
     func start() { starts += 1 }
     func cancel() { cancels += 1 }
-    func emit(recovered: Bool) { handler?(recovered) }
+    func emit(available: Bool, recovered: Bool) { handler?(available, recovered) }
 }

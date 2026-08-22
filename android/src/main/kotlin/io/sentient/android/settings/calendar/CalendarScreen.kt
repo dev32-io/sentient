@@ -11,10 +11,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.sentient.mobiledata.calendar.CalendarAgendaSection
 import io.sentient.mobiledata.calendar.CalendarFilters
 import io.sentient.mobiledata.calendar.CalendarProjectedEvent
+import io.sentient.mobiledata.calendar.CalendarRecoveryPhase
 import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
 import java.security.MessageDigest
@@ -91,7 +94,9 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier
             },
             onRetry = vm::refresh,
         ),
-        modifier = modifier.testTag(CalendarTestTags.SCREEN),
+        modifier = modifier
+            .testTag(CalendarTestTags.SCREEN)
+            .semantics { stateDescription = calendarRecoveryStateDescription(state) },
         agendaSections = calendarAgendaSections(state),
         addFocusRequester = addFocusRequester,
     )
@@ -122,10 +127,19 @@ internal fun shouldForwardCalendarLocale(
 ): Boolean = state.presentationReady &&
     (state.locale.languageTag != languageTag || state.locale.timeZoneId != timeZoneId)
 
+internal fun calendarRecoveryStateDescription(state: CalendarUiState): String = when (state.recovery.phase) {
+    CalendarRecoveryPhase.IDLE -> "Calendar recovery idle"
+    CalendarRecoveryPhase.WAITING_FOR_NETWORK -> "Calendar recovery waiting"
+    CalendarRecoveryPhase.REVALIDATING -> "Calendar recovery refreshing"
+    CalendarRecoveryPhase.UP_TO_DATE -> "Calendar recovery ready"
+    CalendarRecoveryPhase.FAILED -> "Calendar recovery failed"
+}
+
 object CalendarTestTags {
     const val SCREEN = "calendar-screen"
     const val SHARED_READY = "calendar-shared-ready"
     const val RESTORED_READY = "calendar-restored-ready"
+    const val RECOVERY_READY = "calendar-recovery-ready"
     const val TOP_BAR = "calendar-topbar"
     const val BACK = "calendar-back"
     const val ADD = "calendar-add"

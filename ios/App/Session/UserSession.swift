@@ -26,12 +26,15 @@ final class SessionConnectivityRecoveryFence {
     private var active = true
 
     func forwardPathChange(
+        available: Bool,
         recovered: Bool,
         onChange: () -> Void,
+        onUnavailable: () -> Void,
         onRecovery: () -> Void
     ) {
         guard active else { return }
         onChange()
+        if !available { onUnavailable() }
         if recovered { onRecovery() }
     }
 
@@ -98,6 +101,9 @@ final class UserSession: ObservableObject {
         authenticatedUserId: String,
         onLoggedOut: @escaping @MainActor () -> Void = {},
         networkMonitorFactory: NetworkPathMonitorFactory = .live,
+        calendarUnavailableSignal: @escaping (CalendarExperience) -> Void = {
+            $0.onConnectivityUnavailable()
+        },
         calendarRecoverySignal: @escaping (CalendarExperience) -> Void = {
             _ = $0.onConnectivityRecovered()
         }
@@ -133,14 +139,19 @@ final class UserSession: ObservableObject {
         inner.open()
         // Verify chat on each real path transition. Only unavailable→available
         // forwards the shared calendar recovery intent; shared KMP owns policy.
-        let monitor = networkMonitorFactory.make { [weak self] recovered in
+        let monitor = networkMonitorFactory.make { [weak self] available, recovered in
             Task { @MainActor in
                 guard let self else { return }
                 self.calendarRecoveryFence.forwardPathChange(
+                    available: available,
                     recovered: recovered,
                     onChange: {
                         self.log.info("network-changed → ensureConnected")
                         self.component.ensureConnected()
+                    },
+                    onUnavailable: {
+                        guard let experience = self.calendarExperience else { return }
+                        calendarUnavailableSignal(experience)
                     },
                     onRecovery: {
                         guard let experience = self.calendarExperience else { return }

@@ -16,6 +16,7 @@ import io.sentient.mobilesdk.calendar.CalendarMutationResult
 import io.sentient.mobilesdk.calendar.CalendarMutationScope
 import io.sentient.mobilesdk.calendar.CalendarScope
 import io.sentient.mobilesdk.calendar.EffectiveOccurrence
+import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.result.SentientError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -210,6 +211,7 @@ class CalendarExperience(
     private val nowMillis: () -> Long = { KtClock.System.now().toEpochMilliseconds() },
     private val todayDate: () -> String = ::defaultCalendarToday,
 ) {
+    private val log = createLogger("data", "calendar-experience")
     private val initialToday = validOrFallbackDate(todayDate(), initialAnchorDate ?: initialWindow?.windowStart)
     private val initialAnchor = validOrFallbackDate(initialAnchorDate, initialWindow?.windowStart ?: initialToday)
     private val initialState = CalendarExperienceState(
@@ -257,6 +259,8 @@ class CalendarExperience(
     )
     private val requestIdSequence = AtomicLong(0L)
     private val foregroundAttemptSequence = AtomicLong(0L)
+    private val latestActiveFetchedAt = AtomicLong(-1L)
+    private val recoveryBaselineFetchedAt = AtomicLong(-1L)
     private var recoveryJob: Job? = null
     private var connectivityEpoch: Long = 0L
     private var recoveredConnectivityEpoch: Long = -1L
@@ -1492,17 +1496,47 @@ class CalendarExperience(
         if (closed || accessDisabled) return
         connectivityEpoch += 1L
         recoveredConnectivityEpoch = -1L
+        _state.update { current ->
+            current.copy(
+                recovery = CalendarRecoveryState(
+                    phase = CalendarRecoveryPhase.WAITING_FOR_NETWORK,
+                    generation = connectivityEpoch,
+                ),
+            )
+        }
+        log.info(
+            "recovery.transition",
+            mapOf("to" to "waiting", "generation" to connectivityEpoch, "sessionGeneration" to namespaceGeneration),
+        )
     }
 
     fun onConnectivityRecovered(): Job? {
         if (closed || accessDisabled) return null
-        recoveryJob?.takeIf { it.isActive }?.let { return it }
+        recoveryJob?.takeIf { it.isActive }?.let {
+            log.info("recovery.coalesced", mapOf("generation" to connectivityEpoch))
+            return it
+        }
         if (recoveredConnectivityEpoch == connectivityEpoch) return null
         recoveredConnectivityEpoch = connectivityEpoch
         val current = _state.value
-        if (current.freshness == CalendarFreshness.FRESH && current.offline == CalendarOfflineState.ONLINE) {
+        if (current.freshness == CalendarFreshness.FRESH && current.offline == CalendarOfflineState.ONLINE &&
+            current.recovery.phase != CalendarRecoveryPhase.WAITING_FOR_NETWORK
+        ) {
             return null
         }
+        recoveryBaselineFetchedAt.store(latestActiveFetchedAt.load())
+        _state.update { latest ->
+            latest.copy(
+                recovery = CalendarRecoveryState(
+                    phase = CalendarRecoveryPhase.REVALIDATING,
+                    generation = connectivityEpoch,
+                ),
+            )
+        }
+        log.info(
+            "recovery.transition",
+            mapOf("to" to "revalidating", "generation" to connectivityEpoch, "sessionGeneration" to namespaceGeneration),
+        )
         val namespace = cacheStore.currentNamespace.value
         val namespaceEpoch = namespaceGeneration
         val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -1907,21 +1941,23 @@ class CalendarExperience(
                 CalendarExperienceErrorKind.DATABASE,
             )
         }
-        _state.value = _state.value.copy(
-            loading = CalendarLoadingState(
-                if (hasCachedContent) CalendarLoadingPhase.REFRESHING else CalendarLoadingPhase.LOADING,
-            ),
-            freshness = CalendarFreshness.REFRESHING,
-            offline = CalendarOfflineState.ONLINE,
-            error = retainedCacheError,
-            mutationAvailability = CalendarMutationAvailability(
-                // An authenticated online create is valid even before the first
-                // interval has cached rows; edit/delete still require targets.
-                canCreate = true,
-                canEdit = hasCachedContent,
-                canDelete = hasCachedContent,
-            ),
-        )
+        _state.update { current ->
+            current.copy(
+                loading = CalendarLoadingState(
+                    if (hasCachedContent) CalendarLoadingPhase.REFRESHING else CalendarLoadingPhase.LOADING,
+                ),
+                freshness = CalendarFreshness.REFRESHING,
+                offline = CalendarOfflineState.ONLINE,
+                error = retainedCacheError,
+                mutationAvailability = CalendarMutationAvailability(
+                    // An authenticated online create is valid even before the first
+                    // interval has cached rows; edit/delete still require targets.
+                    canCreate = true,
+                    canEdit = hasCachedContent,
+                    canDelete = hasCachedContent,
+                ),
+            )
+        }
 
         try {
             when (val loaded = loadWindow(window, namespace, namespaceEpoch)) {
@@ -1952,20 +1988,32 @@ class CalendarExperience(
                     CalendarFreshness.ERROR
                 }
                 if (hasCache) persistFreshness(namespace, window, namespaceEpoch, resultingFreshness)
-                _state.value = _state.value.copy(
-                    loading = CalendarLoadingState(),
-                    freshness = resultingFreshness,
-                    offline = if (connection) {
-                        if (hasCache) CalendarOfflineState.OFFLINE else CalendarOfflineState.UNAVAILABLE
-                    } else {
-                        CalendarOfflineState.ONLINE
-                    },
-                    error = resultingError,
-                    mutationAvailability = unavailableMutationAvailability(
-                        if (connection) CalendarMutationAvailabilityReason.OFFLINE
-                        else if (loaded.error.kind == CalendarExperienceErrorKind.AUTHORIZATION || loaded.error.kind == CalendarExperienceErrorKind.FORBIDDEN) {
-                            CalendarMutationAvailabilityReason.AUTHORIZATION
-                        } else CalendarMutationAvailabilityReason.ERROR,
+                _state.update { current ->
+                    current.copy(
+                        loading = CalendarLoadingState(),
+                        freshness = resultingFreshness,
+                        offline = if (connection) {
+                            if (hasCache) CalendarOfflineState.OFFLINE else CalendarOfflineState.UNAVAILABLE
+                        } else {
+                            CalendarOfflineState.ONLINE
+                        },
+                        error = resultingError,
+                        mutationAvailability = unavailableMutationAvailability(
+                            if (connection) CalendarMutationAvailabilityReason.OFFLINE
+                            else if (loaded.error.kind == CalendarExperienceErrorKind.AUTHORIZATION || loaded.error.kind == CalendarExperienceErrorKind.FORBIDDEN) {
+                                CalendarMutationAvailabilityReason.AUTHORIZATION
+                            } else CalendarMutationAvailabilityReason.ERROR,
+                        ),
+                        recovery = recoveryFailure(current.recovery, resultingError.kind),
+                    )
+                }
+                log.info(
+                    "revalidation.settled",
+                    mapOf(
+                        "attempt" to attempt,
+                        "result" to "failure",
+                        "kind" to resultingError.kind.name,
+                        "generation" to generation,
                     ),
                 )
             }
@@ -1976,6 +2024,15 @@ class CalendarExperience(
                 // apply it here so lightweight injected stores that acknowledge
                 // writes before emitting expose a complete value immediately.
                 applyCommittedData(window, loaded.occurrences, loaded.fetchedAt)
+                log.info(
+                    "revalidation.settled",
+                    mapOf(
+                        "attempt" to attempt,
+                        "result" to "up-to-date",
+                        "count" to loaded.occurrences.size,
+                        "generation" to generation,
+                    ),
+                )
                 scheduleAdjacentPrefetch(window, namespace, namespaceEpoch)
             }
         }
@@ -2083,8 +2140,12 @@ class CalendarExperience(
                 if (!isLoadRequestCurrent(key, requestId, namespaceEpoch) ||
                     continuationFence != null && !isMutationFenceCurrent(continuationFence)
                 ) return WindowLoadResult.Cancelled
-                val fetchedAt = nowMillis().coerceAtLeast(0L)
                 val isViewedWindow = activeWindow == window && isNamespaceCurrent(namespace, namespaceEpoch)
+                val fetchedAt = if (isViewedWindow) {
+                    nextMonotonicTimestamp(latestActiveFetchedAt, nowMillis().coerceAtLeast(0L))
+                } else {
+                    nowMillis().coerceAtLeast(0L)
+                }
                 val lastAccessedAt = if (isViewedWindow) fetchedAt else previousAccessedAt(namespace, namespaceEpoch, window)
                 if (!isLoadRequestCurrent(key, requestId, namespaceEpoch) ||
                     continuationFence != null && !isMutationFenceCurrent(continuationFence)
@@ -2258,6 +2319,15 @@ class CalendarExperience(
             }
 
             val nextCursor = converted.nextCursor
+            log.debug(
+                "pagination.page",
+                mapOf(
+                    "requestId" to (requestId ?: 0L),
+                    "page" to pageCount,
+                    "count" to converted.occurrences.size,
+                    "hasNext" to (nextCursor != null),
+                ),
+            )
             if (nextCursor == null) break
             if (nextCursor.isBlank() || !seenCursors.add(nextCursor)) {
                 return AggregationResult.Failed(contractError("Calendar pagination returned a cursor loop."))
@@ -2265,6 +2335,15 @@ class CalendarExperience(
             cursor = nextCursor
         }
 
+        log.info(
+            "pagination.settled",
+            mapOf(
+                "requestId" to (requestId ?: 0L),
+                "pages" to pageCount,
+                "count" to byIdentity.size,
+                "scope" to "all",
+            ),
+        )
         return AggregationResult.Complete(
             byIdentity.values.sortedWith(
                 compareBy<EffectiveOccurrence> { it.start }
@@ -2354,48 +2433,77 @@ class CalendarExperience(
         snapshotChanged: Boolean,
     ) {
         if (closed) return
-        val current = _state.value
-        val occurrences = if (hasSeenSnapshot) snapshot?.occurrences.orEmpty() else current.authorizedOccurrences
-        val hasCache = if (hasSeenSnapshot) snapshot != null else current.hasCompleteCache && current.cachedWindow == window
-        val nextPresentation = preferences?.let(::presentationFor)
-        val base = nextPresentation ?: current
-        val snapshotIsOffline = snapshot?.freshness == CalendarFreshness.CACHED_OFFLINE || snapshot?.freshness?.isUnavailableOffline == true
-        val projection = buildProjection(base, occurrences)
-        val next = current.copy(
-            anchorDate = base.anchorDate,
-            view = base.view,
-            selectedDate = base.selectedDate,
-            filters = base.filters,
-            locale = base.locale,
-            todayDate = base.todayDate,
-            visibleInterval = calendarVisibleInterval(base.view, base.anchorDate, base.locale),
-            selectedInterval = selectedDateInterval(base.selectedDate),
-            authorizedOccurrences = occurrences,
-            projection = projection,
-            facets = projection?.facets ?: emptyCalendarFacets(),
-            hasCompleteCache = hasCache,
-            cachedWindow = if (hasCache) snapshot?.window ?: current.cachedWindow else null,
-            persistedCachePreferences = if (hasSeenPreferences) preferences else current.persistedCachePreferences,
-            presentationReady = current.presentationReady || (hasSeenPreferences && hasSeenSnapshot),
-            loading = if (snapshot != null && current.loading.phase == CalendarLoadingPhase.LOADING) CalendarLoadingState() else current.loading,
-            freshness = if (snapshotChanged && snapshot != null) snapshot.freshness else current.freshness,
-            error = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH) null else current.error,
-            offline = if (snapshotChanged && snapshot != null) {
-                if (snapshotIsOffline) CalendarOfflineState.OFFLINE else CalendarOfflineState.ONLINE
-            } else {
-                current.offline
-            },
-            mutationAvailability = if (snapshot != null && snapshotChanged && current.error == null) {
-                if (snapshotIsOffline) {
-                    unavailableMutationAvailability(CalendarMutationAvailabilityReason.OFFLINE)
+        var recoveryBecameReady = false
+        _state.update { current ->
+            val occurrences = if (hasSeenSnapshot) snapshot?.occurrences.orEmpty() else current.authorizedOccurrences
+            val hasCache = if (hasSeenSnapshot) snapshot != null else current.hasCompleteCache && current.cachedWindow == window
+            val nextPresentation = preferences?.let(::presentationFor)
+            val base = nextPresentation ?: current
+            val snapshotIsOffline = snapshot?.freshness == CalendarFreshness.CACHED_OFFLINE || snapshot?.freshness?.isUnavailableOffline == true
+            val projection = buildProjection(base, occurrences)
+            val next = current.copy(
+                anchorDate = base.anchorDate,
+                view = base.view,
+                selectedDate = base.selectedDate,
+                filters = base.filters,
+                locale = base.locale,
+                todayDate = base.todayDate,
+                visibleInterval = calendarVisibleInterval(base.view, base.anchorDate, base.locale),
+                selectedInterval = selectedDateInterval(base.selectedDate),
+                authorizedOccurrences = occurrences,
+                projection = projection,
+                facets = projection?.facets ?: emptyCalendarFacets(),
+                hasCompleteCache = hasCache,
+                cachedWindow = if (hasCache) snapshot?.window ?: current.cachedWindow else null,
+                persistedCachePreferences = if (hasSeenPreferences) preferences else current.persistedCachePreferences,
+                presentationReady = current.presentationReady || (hasSeenPreferences && hasSeenSnapshot),
+                // A complete observed snapshot is the authoritative transaction
+                // boundary. It settles either initial loading or refresh loading,
+                // even when the caller that initiated the write was superseded.
+                loading = if (snapshotChanged && snapshot != null && current.loading.isLoading) CalendarLoadingState() else current.loading,
+                freshness = if (snapshotChanged && snapshot != null) snapshot.freshness else current.freshness,
+                error = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH) null else current.error,
+                offline = if (snapshotChanged && snapshot != null) {
+                    if (snapshotIsOffline) CalendarOfflineState.OFFLINE else CalendarOfflineState.ONLINE
                 } else {
-                    CalendarMutationAvailability()
-                }
-            } else {
-                current.mutationAvailability
-            },
-        )
-        _state.value = next
+                    current.offline
+                },
+                mutationAvailability = if (snapshot != null && snapshotChanged && current.error == null) {
+                    if (snapshotIsOffline) {
+                        unavailableMutationAvailability(CalendarMutationAvailabilityReason.OFFLINE)
+                    } else {
+                        CalendarMutationAvailability()
+                    }
+                } else {
+                    current.mutationAvailability
+                },
+                recovery = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH &&
+                    snapshot.fetchedAt > recoveryBaselineFetchedAt.load() &&
+                    current.recovery.phase == CalendarRecoveryPhase.REVALIDATING
+                ) {
+                    current.recovery.copy(phase = CalendarRecoveryPhase.UP_TO_DATE, failureKind = null)
+                } else {
+                    current.recovery
+                },
+            )
+            recoveryBecameReady = current.recovery.phase != CalendarRecoveryPhase.UP_TO_DATE &&
+                next.recovery.phase == CalendarRecoveryPhase.UP_TO_DATE
+            next
+        }
+        snapshot?.takeIf { snapshotChanged && it.window == activeWindow }?.let {
+            recordLatestTimestamp(latestActiveFetchedAt, it.fetchedAt)
+        }
+        val published = _state.value
+        if (recoveryBecameReady) {
+            log.info(
+                "recovery.transition",
+                mapOf(
+                    "to" to "up-to-date",
+                    "generation" to published.recovery.generation,
+                    "count" to published.authorizedOccurrences.size,
+                ),
+            )
+        }
     }
 
     private suspend fun recordViewedWindow(
@@ -2717,20 +2825,37 @@ class CalendarExperience(
         occurrences: List<EffectiveOccurrence>,
         fetchedAt: Long,
     ) {
-        val current = _state.value
-        val projection = buildProjection(current, occurrences)
-        _state.value = current.copy(
-            visibleInterval = calendarVisibleInterval(current.view, current.anchorDate, current.locale),
-            authorizedOccurrences = occurrences,
-            projection = projection,
-            facets = projection?.facets ?: emptyCalendarFacets(),
-            freshness = CalendarFreshness.FRESH,
-            loading = CalendarLoadingState(),
-            offline = CalendarOfflineState.ONLINE,
-            error = null,
-            hasCompleteCache = true,
-            cachedWindow = window,
-            mutationAvailability = CalendarMutationAvailability(),
+        _state.update { current ->
+            val projection = buildProjection(current, occurrences)
+            current.copy(
+                visibleInterval = calendarVisibleInterval(current.view, current.anchorDate, current.locale),
+                authorizedOccurrences = occurrences,
+                projection = projection,
+                facets = projection?.facets ?: emptyCalendarFacets(),
+                freshness = CalendarFreshness.FRESH,
+                loading = CalendarLoadingState(),
+                offline = CalendarOfflineState.ONLINE,
+                error = null,
+                hasCompleteCache = true,
+                cachedWindow = window,
+                recovery = if (current.recovery.phase == CalendarRecoveryPhase.REVALIDATING &&
+                    fetchedAt > recoveryBaselineFetchedAt.load()
+                ) {
+                    current.recovery.copy(phase = CalendarRecoveryPhase.UP_TO_DATE, failureKind = null)
+                } else {
+                    current.recovery
+                },
+                mutationAvailability = CalendarMutationAvailability(),
+            )
+        }
+        log.info(
+            "snapshot.published",
+            mapOf(
+                "count" to occurrences.size,
+                "recovery" to _state.value.recovery.phase.name,
+                "windowStart" to window.windowStart,
+                "windowEnd" to window.windowEnd,
+            ),
         )
         // The generation marker is deliberately represented by the persisted
         // cache snapshot, not by a second in-memory page cache.
@@ -2739,22 +2864,23 @@ class CalendarExperience(
     }
 
     private fun applyPresentation(next: CalendarExperienceState) {
-        val current = _state.value
-        val projection = buildProjection(next, current.authorizedOccurrences)
-        _state.value = current.copy(
-            anchorDate = next.anchorDate,
-            view = next.view,
-            selectedDate = next.selectedDate,
-            filters = next.filters,
-            locale = next.locale,
-            todayDate = next.todayDate,
-            visibleInterval = calendarVisibleInterval(next.view, next.anchorDate, next.locale),
-            selectedInterval = selectedDateInterval(next.selectedDate),
-            projection = projection,
-            facets = projection?.facets ?: emptyCalendarFacets(),
-            // A local filter/view intent is immediately usable over cached data.
-            error = current.error,
-        )
+        _state.update { current ->
+            val projection = buildProjection(next, current.authorizedOccurrences)
+            current.copy(
+                anchorDate = next.anchorDate,
+                view = next.view,
+                selectedDate = next.selectedDate,
+                filters = next.filters,
+                locale = next.locale,
+                todayDate = next.todayDate,
+                visibleInterval = calendarVisibleInterval(next.view, next.anchorDate, next.locale),
+                selectedInterval = selectedDateInterval(next.selectedDate),
+                projection = projection,
+                facets = projection?.facets ?: emptyCalendarFacets(),
+                // A local filter/view intent is immediately usable over cached data.
+                error = current.error,
+            )
+        }
     }
 
     private fun persistPresentation(presentation: CalendarExperienceState) {
@@ -3086,6 +3212,15 @@ class CalendarExperience(
         reason = reason,
     )
 
+    private fun recoveryFailure(
+        recovery: CalendarRecoveryState,
+        kind: CalendarExperienceErrorKind,
+    ): CalendarRecoveryState = if (recovery.phase == CalendarRecoveryPhase.REVALIDATING) {
+        recovery.copy(phase = CalendarRecoveryPhase.FAILED, failureKind = kind)
+    } else {
+        recovery
+    }
+
     private fun isRequestCurrent(
         generation: Long?,
         namespace: CalendarCacheNamespace,
@@ -3122,6 +3257,21 @@ class CalendarExperience(
         }
     }
 
+    private fun nextMonotonicTimestamp(sequence: AtomicLong, candidate: Long): Long {
+        while (true) {
+            val current = sequence.load()
+            val next = maxOf(candidate, current + 1L)
+            if (sequence.compareAndSet(current, next)) return next
+        }
+    }
+
+    private fun recordLatestTimestamp(sequence: AtomicLong, candidate: Long) {
+        while (true) {
+            val current = sequence.load()
+            if (candidate <= current || sequence.compareAndSet(current, candidate)) return
+        }
+    }
+
     private fun settleForegroundAttempt(
         generation: Long,
         namespace: CalendarCacheNamespace,
@@ -3131,16 +3281,38 @@ class CalendarExperience(
         if (!isCurrent(generation, namespace, namespaceEpoch) ||
             foregroundAttemptSequence.load() != attempt
         ) return
-        val current = _state.value
-        if (!current.loading.isLoading && current.freshness != CalendarFreshness.REFRESHING) return
-        val hasCache = current.hasCompleteCache
-        _state.value = current.copy(
-            loading = CalendarLoadingState(),
-            freshness = if (hasCache) CalendarFreshness.STALE else CalendarFreshness.ERROR,
-            offline = CalendarOfflineState.ONLINE,
-            mutationAvailability = if (hasCache) CalendarMutationAvailability() else
-                unavailableMutationAvailability(CalendarMutationAvailabilityReason.ERROR),
-        )
+        var settled = false
+        var settledWithCache = false
+        _state.update { current ->
+            if (!current.loading.isLoading && current.freshness != CalendarFreshness.REFRESHING) {
+                current
+            } else {
+                settled = true
+                settledWithCache = current.hasCompleteCache
+                current.copy(
+                    loading = CalendarLoadingState(),
+                    freshness = if (current.hasCompleteCache) CalendarFreshness.STALE else CalendarFreshness.ERROR,
+                    offline = CalendarOfflineState.ONLINE,
+                    mutationAvailability = if (current.hasCompleteCache) CalendarMutationAvailability() else
+                        unavailableMutationAvailability(CalendarMutationAvailabilityReason.ERROR),
+                    recovery = recoveryFailure(
+                        current.recovery,
+                        current.error?.kind ?: CalendarExperienceErrorKind.UNKNOWN,
+                    ),
+                )
+            }
+        }
+        if (settled) {
+            log.info(
+                "revalidation.settled",
+                mapOf(
+                    "attempt" to attempt,
+                    "result" to "superseded",
+                    "generation" to generation,
+                    "hasCache" to settledWithCache,
+                ),
+            )
+        }
     }
 
     private fun isCurrent(

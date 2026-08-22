@@ -197,6 +197,9 @@ fun CalendarScaffold(
             if (state.restoredPresentationReady) {
                 Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.RESTORED_READY))
             }
+            if (state.recovery.isReady) {
+                Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.RECOVERY_READY))
+            }
             FloatingViewBar(
                 selected = state.view,
                 onViewSelected = callbacks.onViewSelected,

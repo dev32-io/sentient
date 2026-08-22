@@ -90,6 +90,13 @@ struct CalendarScaffold: View {
                 .padding(.bottom, Space.sm)
         }
         .background(DuskColors.bg)
+        .overlay(alignment: .topLeading) {
+            if state.recovery.isReady {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier("calendar-recovery-ready")
+            }
+        }
         .animation(reduceMotion ? nil : .easeInOut(duration: Motion.normal), value: state.view)
         .onChange(of: CalendarSurfaceText.stateAnnouncement(state), initial: true) { _, announcement in
             guard let announcement else { return }
@@ -106,6 +113,7 @@ struct CalendarScaffold: View {
             UIAccessibility.post(notification: .announcement, argument: "Calendar filters updated")
         }
         .accessibilityIdentifier("calendar-surface")
+        .accessibilityValue(state.recovery.isReady ? "Calendar recovery ready" : "Calendar recovery pending")
         .duskTheme()
     }
 }

@@ -9,16 +9,21 @@
 // ---------------------------------------------------------------------------
 package io.sentient.android.presence
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import io.sentient.mobilesdk.log.createLogger
 
 class NetworkChangeObserver(
-    appContext: Context,
+    private val appContext: Context,
     private val onChange: () -> Unit,
     private val onConnectivityRecovered: () -> Unit = {},
     private val onConnectivityUnavailable: () -> Unit = {},
@@ -29,9 +34,27 @@ class NetworkChangeObserver(
     private val main = Handler(Looper.getMainLooper())
     private var activeNetwork: Network? = cm?.activeNetwork
     private val recoveryEdge = ConnectivityRecoveryEdge(
-        activeNetwork?.let { network -> cm?.getNetworkCapabilities(network).isUsableInternet() } ?: false,
+        initiallyAvailable = if (
+            Settings.Global.getInt(appContext.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1
+        ) {
+            false
+        } else {
+            activeNetwork?.let { network -> cm?.getNetworkCapabilities(network).isUsableInternet() } ?: false
+        },
     )
     @Volatile private var started = false
+    private var recoveryProbe: ConnectivityManager.NetworkCallback? = null
+
+    private val airplaneModeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_AIRPLANE_MODE_CHANGED) return
+            if (intent.getBooleanExtra("state", false)) {
+                dispatch(markAirplaneModeUnavailable())
+            } else {
+                armValidatedRecoveryProbe()
+            }
+        }
+    }
 
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -51,10 +74,16 @@ class NetworkChangeObserver(
     private fun markAvailable(network: Network): ConnectivityTransition {
         val pathChanged = activeNetwork != network
         activeNetwork = network
-        // onAvailable precedes validated capabilities. Reconnect the socket for
-        // a path change, but do not publish Calendar recovery until the path is
-        // actually usable by the HTTPS all-scope request.
-        return ConnectivityTransition(changed = pathChanged, recovered = false)
+        // Capability delivery can race before onAvailable and is not guaranteed
+        // to repeat. Snapshot the newly active path here; a later capability
+        // callback remains an idempotent fallback.
+        val availability = recoveryEdge.update(
+            available = cm?.getNetworkCapabilities(network).isUsableInternet(),
+        )
+        return ConnectivityTransition(
+            changed = pathChanged || availability.changed,
+            recovered = availability.recovered,
+        )
     }
 
     @Synchronized
@@ -72,14 +101,59 @@ class NetworkChangeObserver(
         if (activeNetwork != network) return ConnectivityTransition(changed = false, recovered = false)
         val replacement = cm?.activeNetwork
         if (replacement != null && replacement != network) {
-            // Cellular→Wi-Fi/VPN replacement is one recovery cycle, not a new
-            // unavailable edge after the first usable request has committed.
+            // A handoff is not a second outage. Airplane-mode loss is armed by
+            // its platform broadcast; a genuine no-replacement loss reaches
+            // the unavailable reducer below.
             activeNetwork = replacement
             return ConnectivityTransition(changed = true, recovered = false)
         }
         activeNetwork = null
         val transition = recoveryEdge.update(available = false)
         return transition.copy(unavailable = transition.changed)
+    }
+
+    @Synchronized
+    private fun markAirplaneModeUnavailable(): ConnectivityTransition {
+        val transition = recoveryEdge.update(available = false)
+        return transition.copy(unavailable = transition.changed)
+    }
+
+    private fun armValidatedRecoveryProbe() {
+        val manager = cm ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val transition = synchronized(this@NetworkChangeObserver) {
+                    activeNetwork = network
+                    recoveryEdge.update(available = true)
+                }
+                dispatch(transition)
+                main.post { clearRecoveryProbe(this) }
+            }
+        }
+        synchronized(this) {
+            recoveryProbe?.let { runCatching { manager.unregisterNetworkCallback(it) } }
+            recoveryProbe = callback
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            .build()
+        try {
+            manager.registerNetworkCallback(request, callback)
+        } catch (failure: Throwable) {
+            clearRecoveryProbe(callback)
+            log.warn(
+                "recovery-probe.failed",
+                mapOf("errorType" to (failure::class.simpleName ?: "unknown")),
+            )
+        }
+    }
+
+    @Synchronized
+    private fun clearRecoveryProbe(callback: ConnectivityManager.NetworkCallback) {
+        if (recoveryProbe !== callback) return
+        recoveryProbe = null
+        runCatching { cm?.unregisterNetworkCallback(callback) }
     }
 
     private fun dispatch(transition: ConnectivityTransition) {
@@ -102,7 +176,9 @@ class NetworkChangeObserver(
         started = true
         try {
             manager.registerDefaultNetworkCallback(callback)
+            appContext.registerReceiver(airplaneModeReceiver, IntentFilter(Intent.ACTION_AIRPLANE_MODE_CHANGED))
         } catch (failure: Throwable) {
+            runCatching { manager.unregisterNetworkCallback(callback) }
             started = false
             throw failure
         }
@@ -113,6 +189,8 @@ class NetworkChangeObserver(
         if (!started) return
         started = false
         cm?.unregisterNetworkCallback(callback)
+        recoveryProbe?.let(::clearRecoveryProbe)
+        runCatching { appContext.unregisterReceiver(airplaneModeReceiver) }
         log.info("stop")
     }
 }
