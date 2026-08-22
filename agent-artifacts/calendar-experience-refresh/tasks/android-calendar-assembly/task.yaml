@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-assembly
 title: Assemble and verify the complete Android calendar experience
-status: ready
+status: running
 dependsOn:
   - android-calendar-database-session
   - android-calendar-viewmodel
@@ -24,3 +24,9 @@ verification:
       :android:testDebugUnitTest :android:assembleDebug
     - source scripts/env.sh && git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/calendar-experience-refresh/android-calendar-assembly
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/android-calendar-assembly
+  baseCommit: b087110223892e6dfd531f8820f9dd90bf2eb7e3
+  lastRunId: 517950f2-4e5d-4b72-8b1e-bf204c80d985
