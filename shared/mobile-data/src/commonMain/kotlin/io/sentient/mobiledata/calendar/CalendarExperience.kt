@@ -1478,7 +1478,10 @@ class CalendarExperience(
     fun revalidate(window: CalendarCacheWindow): Job? = refresh(window)
 
     /** Connectivity is deliberately a caller signal; revalidation remains shared. */
-    fun onConnectivityRecovered(): Job? = refresh()
+    fun onConnectivityRecovered(): Job? {
+        preparePrefetchForRecovery(clearSuccessful = true)
+        return refresh()
+    }
     fun connectivityRecovered(): Job? = onConnectivityRecovered()
     fun recoverFromOffline(): Job? = onConnectivityRecovered()
 
@@ -2246,7 +2249,7 @@ class CalendarExperience(
             filters = base.filters,
             locale = base.locale,
             todayDate = base.todayDate,
-            visibleInterval = window.toDateInterval(),
+            visibleInterval = calendarVisibleInterval(base.view, base.anchorDate, base.locale),
             selectedInterval = selectedDateInterval(base.selectedDate),
             authorizedOccurrences = occurrences,
             projection = projection,
@@ -2428,23 +2431,29 @@ class CalendarExperience(
         }
     }
 
-    private fun preparePrefetchForRecovery() {
+    private fun preparePrefetchForRecovery(clearSuccessful: Boolean = false) {
         val namespace = cacheStore.currentNamespace.value
+        val clearNamespaceRegistrations = {
+            val targets = if (clearSuccessful) {
+                scheduledPrefetchKeys.keys.filter { it.namespace == namespace }
+            } else {
+                _prefetchDiagnostics.value.map { CalendarWindowRequestKey(namespace, it.window) }
+            }
+            targets.forEach { scheduledPrefetchKeys.remove(it) }
+        }
         if (bookkeepingMutex.tryLock()) {
             try {
-                _prefetchDiagnostics.value.forEach { diagnostic ->
-                    scheduledPrefetchKeys.remove(CalendarWindowRequestKey(namespace, diagnostic.window))
-                }
+                // A real recovery edge starts a new adjacent revalidation cycle,
+                // including windows that succeeded before connectivity was lost.
+                // Keeping their one-shot registrations forever made recovery
+                // refresh only the foreground window.
+                clearNamespaceRegistrations()
             } finally {
                 bookkeepingMutex.unlock()
             }
         } else {
             scope.launch {
-                bookkeepingMutex.withLock {
-                    _prefetchDiagnostics.value.forEach { diagnostic ->
-                        scheduledPrefetchKeys.remove(CalendarWindowRequestKey(namespace, diagnostic.window))
-                    }
-                }
+                bookkeepingMutex.withLock { clearNamespaceRegistrations() }
             }
         }
     }
@@ -2591,7 +2600,7 @@ class CalendarExperience(
         val current = _state.value
         val projection = buildProjection(current, occurrences)
         _state.value = current.copy(
-            visibleInterval = window.toDateInterval(),
+            visibleInterval = calendarVisibleInterval(current.view, current.anchorDate, current.locale),
             authorizedOccurrences = occurrences,
             projection = projection,
             facets = projection?.facets ?: emptyCalendarFacets(),
@@ -2980,7 +2989,13 @@ class CalendarExperience(
     ): Boolean = !closed && this.namespaceGeneration == namespaceEpoch && cacheStore.currentNamespace.value == namespace
 
     private fun windowFor(presentation: CalendarExperienceState, timezoneInput: String? = null): CalendarCacheWindow {
-        val interval = calendarVisibleInterval(presentation.view, presentation.anchorDate, presentation.locale)
+        // Day, Week, and Month all observe the same complete locale-aware month
+        // snapshot. This makes a prefetched month usable for offline day/week
+        // navigation instead of requiring an exact one-day/one-week cache key.
+        // Year remains its explicit bounded interval until multi-month aggregation
+        // is introduced at the store boundary.
+        val cacheView = if (presentation.view == CalendarView.YEAR) CalendarView.YEAR else CalendarView.MONTH
+        val interval = calendarVisibleInterval(cacheView, presentation.anchorDate, presentation.locale)
         val timezone = timezoneInput?.takeIf(String::isNotBlank)
             ?: presentation.locale.timeZoneId.takeIf(String::isNotBlank)
             ?: io.sentient.mobilesdk.calendar.CALENDAR_WIRE_TIME_ZONE

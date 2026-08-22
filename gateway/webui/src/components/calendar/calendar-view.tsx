@@ -313,11 +313,15 @@ export function CalendarView({
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [overflow, setOverflow] = useState<OverflowState | null>(null);
   const overflowOriginRef = useRef<HTMLElement | null>(null);
+  const overlayOriginRef = useRef<HTMLElement | null>(null);
   const [mutationNotice, setMutationNotice] = useState<string | null>(null);
   const [successorEventId, setSuccessorEventId] = useState<string | null>(null);
 
   const openAddEvent = useCallback((): void => {
     if (!canCreate) return;
+    overlayOriginRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : document.querySelector<HTMLElement>("[data-calendar-add-event]");
     setMutationNotice(null);
     setSuccessorEventId(null);
     setPreview(null);
@@ -380,12 +384,15 @@ export function CalendarView({
   const openEditorFor = useCallback((occurrence: ProjectedCalendarOccurrence): void => {
     const event = editorEventOf(occurrence);
     if (!event) return;
+    overlayOriginRef.current = preview?.anchor?.isConnected
+      ? preview.anchor
+      : overlayOriginRef.current;
     setPreview(null);
     setOverflow(null);
     setMutationNotice(null);
     setSuccessorEventId(null);
     setEditor({ mode: "edit", event });
-  }, []);
+  }, [preview]);
 
   const onOpenEvent = useCallback((occurrence: ProjectedCalendarOccurrence): void => {
     overflowOriginRef.current = null;
@@ -451,6 +458,14 @@ export function CalendarView({
 
   const closeEditor = useCallback((): void => {
     setEditor(null);
+    queueMicrotask(() => {
+      const origin = overlayOriginRef.current?.isConnected
+        ? overlayOriginRef.current
+        : document.querySelector<HTMLElement>("[data-calendar-add-event]")
+          ?? document.querySelector<HTMLElement>("[data-calendar-floating-view-bar] button");
+      origin?.focus();
+      overlayOriginRef.current = origin;
+    });
   }, []);
 
   const stateHasData = controller.dataInterval !== null;

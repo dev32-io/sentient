@@ -2,6 +2,7 @@ package io.sentient.android.settings.calendar
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.sentient.android.calendar.CalendarSessionState
 import io.sentient.mobiledata.calendar.CalendarAgendaSection
 import io.sentient.mobiledata.calendar.CalendarConflictReviewState
 import io.sentient.mobiledata.calendar.CalendarDateInterval
@@ -13,6 +14,7 @@ import io.sentient.mobiledata.calendar.CalendarExperienceState
 import io.sentient.mobiledata.calendar.CalendarFacetOptions
 import io.sentient.mobiledata.calendar.CalendarFilters
 import io.sentient.mobiledata.calendar.CalendarFreshness
+import io.sentient.mobiledata.calendar.CalendarLoadingPhase
 import io.sentient.mobiledata.calendar.CalendarLoadingState
 import io.sentient.mobiledata.calendar.CalendarLocale
 import io.sentient.mobiledata.calendar.CalendarMonthProjection
@@ -35,6 +37,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -107,6 +110,7 @@ class CalendarViewModel internal constructor(
     private val forward: (CalendarExperienceIntent) -> Unit,
     startExperience: () -> Unit,
     collectionScope: CoroutineScope? = null,
+    private val sessionState: StateFlow<CalendarSessionState>? = null,
 ) : ViewModel() {
     constructor(experience: CalendarExperience?) : this(
         sharedState = experience?.state ?: MutableStateFlow(CalendarExperienceState(
@@ -120,15 +124,44 @@ class CalendarViewModel internal constructor(
         collectionScope = null,
     )
 
+    /** Production constructor follows the asynchronous protected-store lifecycle. */
+    internal constructor(
+        sessionState: StateFlow<CalendarSessionState>,
+        currentExperience: () -> CalendarExperience?,
+    ) : this(
+        sharedState = MutableStateFlow(unavailableCalendarExperienceState()),
+        forward = { intent -> currentExperience()?.dispatch(intent) },
+        startExperience = {},
+        sessionState = sessionState,
+    )
+
     private val _ui = MutableStateFlow(sharedState.value.toAndroidUiState())
     val ui: StateFlow<CalendarUiState> = _ui.asStateFlow()
 
     init {
-        // start() is shared/idempotent. Route recreation joins the existing
-        // observation and never acquires ownership of the experience.
-        startExperience()
-        (collectionScope ?: viewModelScope).launch {
-            sharedState.collect { _ui.value = it.toAndroidUiState() }
+        val scope = collectionScope ?: viewModelScope
+        if (sessionState == null) {
+            // start() is shared/idempotent. Route recreation joins the existing
+            // observation and never acquires ownership of the experience.
+            startExperience()
+            scope.launch { sharedState.collect { _ui.value = it.toAndroidUiState() } }
+        } else {
+            // The route can be created while app-private SQLite is still opening.
+            // Join the published session experience instead of permanently binding
+            // the ViewModel to a native fallback/default state.
+            scope.launch {
+                sessionState.collectLatest { session ->
+                    when (session) {
+                        is CalendarSessionState.Available -> {
+                            session.experience.start()
+                            session.experience.state.collect { _ui.value = it.toAndroidUiState() }
+                        }
+                        is CalendarSessionState.Unavailable,
+                        CalendarSessionState.Unauthenticated,
+                        -> _ui.value = unavailableCalendarExperienceState().toAndroidUiState()
+                    }
+                }
+            }
         }
     }
 
@@ -180,6 +213,14 @@ class CalendarViewModel internal constructor(
     private fun navigate(action: CalendarNavigationAction) =
         forward(CalendarExperienceIntent.Navigate(action))
 }
+
+private fun unavailableCalendarExperienceState() = CalendarExperienceState(
+    anchorDate = "1970-01-01",
+    selectedDate = "1970-01-01",
+    todayDate = "1970-01-01",
+    offline = CalendarOfflineState.UNAVAILABLE,
+    loading = CalendarLoadingState(CalendarLoadingPhase.LOADING),
+)
 
 internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
     val projection = projection

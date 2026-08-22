@@ -666,7 +666,7 @@ export function CalendarFilterSidebar({
 }: CalendarFilterSidebarProps): JSX.Element {
   return (
     <aside class="calendar-filter-sidebar" data-calendar-filter-sidebar aria-label="Calendar filters">
-      <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
+      <button type="button" class="calendar-add-event" data-calendar-add-event onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
         <Icon name="plus" size={16} />
         <span>{addEventLabel}</span>
       </button>
@@ -743,7 +743,7 @@ export function CalendarCompactControls({
   return (
     <section class="calendar-compact-controls" data-calendar-compact-controls aria-label="Compact calendar controls">
       <div class="calendar-compact-controls__row">
-        <button type="button" class="calendar-add-event" onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
+        <button type="button" class="calendar-add-event" data-calendar-add-event onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
           <Icon name="plus" size={16} />
           <span>{addEventLabel}</span>
         </button>

@@ -115,6 +115,7 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier
 
 object CalendarTestTags {
     const val SCREEN = "calendar-screen"
+    const val SHARED_READY = "calendar-shared-ready"
     const val TOP_BAR = "calendar-topbar"
     const val BACK = "calendar-back"
     const val ADD = "calendar-add"

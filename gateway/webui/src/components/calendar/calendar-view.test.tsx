@@ -113,7 +113,9 @@ describe("CalendarView", () => {
     const api = apiFor([]);
     render(<CalendarView api={api} {...routeOptions} />);
     await waitFor(() => expect(screen.getAllByRole("button", { name: "Add event" }).length).toBeGreaterThan(0));
-    fireEvent.click(screen.getAllByRole("button", { name: "Add event" })[0]!);
+    const addOrigin = screen.getAllByRole("button", { name: "Add event" })[0] as HTMLButtonElement;
+    addOrigin.focus();
+    fireEvent.click(addOrigin);
     const editor = screen.getByRole("dialog", { name: "Add to the family calendar" });
     fireEvent.input(within(editor).getByLabelText("Event title"), { target: { value: "New household event" } });
     fireEvent.click(within(editor).getByRole("button", { name: "Add event" }));
@@ -125,7 +127,10 @@ describe("CalendarView", () => {
       importance: "normal",
       tags: [],
     }));
+    const submitted = (api.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(submitted.description).toBeUndefined();
     expect(screen.queryByRole("dialog", { name: "Add to the family calendar" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(addOrigin));
   });
 
   it("opens the anchored preview, edits with exact V2 identity, and refreshes without blanking", async () => {

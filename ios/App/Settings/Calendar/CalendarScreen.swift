@@ -1,6 +1,44 @@
 import MobileData
 import SwiftUI
 
+/// Keeps an already-mounted Calendar destination reactive while the protected
+/// Application Support database finishes opening in the authenticated session.
+struct CalendarSessionRoute: View {
+    @ObservedObject var userSession: UserSession
+    let onBack: () -> Void
+
+    @ViewBuilder
+    var body: some View {
+        if let experience = userSession.calendarExperience {
+            CalendarScreen(experience: experience, onBack: onBack)
+        } else if userSession.calendarAvailability.unavailableReason == .initializing {
+            CalendarInitializingScreen(onBack: onBack)
+        } else {
+            CalendarScreen(experience: nil, onBack: onBack)
+        }
+    }
+}
+
+private struct CalendarInitializingScreen: View {
+    let onBack: () -> Void
+
+    var body: some View {
+        VStack {
+            HStack {
+                Button("Back", action: onBack)
+                Spacer()
+                Text("Calendar")
+            }
+            .padding()
+            ProgressView("Opening calendar…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .accessibilityIdentifier("calendar-initializing")
+        .background(DuskColors.bg)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
 /// Authenticated route shell. The session owns CalendarExperience; this route
 /// owns only the cancellable SKIE collector and transient presentation focus.
 struct CalendarScreen: View {

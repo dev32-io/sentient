@@ -185,7 +185,22 @@ fun CalendarEventPreviewSheet(
     onEdit: (EffectiveOccurrence) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-) = CalendarSheet("Event preview", onDismiss, modifier.testTag("calendar-preview-sheet")) {
+) = CalendarSheet(
+    "Event preview",
+    onDismiss,
+    modifier.testTag("calendar-preview-sheet"),
+    footer = {
+        SheetActionRow {
+            SecondaryAction("Close", onDismiss, Modifier.weight(1f))
+            PrimaryAction(
+                "Edit",
+                { onEdit(occurrence) },
+                editEnabled,
+                Modifier.weight(1f).testTag("calendar-preview-edit"),
+            )
+        }
+    },
+) {
     Text(
         text = occurrence.tags.firstOrNull()?.uppercase()?.let { "$it · EVENT PREVIEW" } ?: "EVENT PREVIEW",
         style = MaterialTheme.typography.labelSmall,
@@ -209,10 +224,6 @@ fun CalendarEventPreviewSheet(
         ),
     )
     if (connectionRequired) ConnectionRequiredNotice("Editing requires a connection.")
-    SheetActionRow {
-        SecondaryAction("Close", onDismiss, Modifier.weight(1f))
-        PrimaryAction("Edit", { onEdit(occurrence) }, editEnabled, Modifier.weight(1f))
-    }
 }
 
 @Composable
@@ -232,7 +243,24 @@ fun CalendarEditorSheet(
     onReviewConflict: (CalendarMutationDraft) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-) = CalendarSheet(editor.sheetTitle(), onDismiss, modifier.testTag("calendar-editor-sheet"), dismissEnabled = !submitting) {
+) = CalendarSheet(
+    editor.sheetTitle(),
+    onDismiss,
+    modifier.testTag("calendar-editor-sheet"),
+    dismissEnabled = !submitting,
+    footer = {
+        SheetActionRow {
+            SecondaryAction("Cancel", onDismiss, Modifier.weight(1f), enabled = !submitting)
+            PrimaryAction(
+                if (submitting) "Saving…" else "Save event",
+                { onSave(editor.draft) },
+                saveEnabled,
+                Modifier.weight(1f).testTag("calendar-editor-save"),
+                submitting,
+            )
+        }
+    },
+) {
     val draft = editor.draft
     val titleFocus = remember { FocusRequester() }
     LaunchedEffect(editor.eventId) { titleFocus.requestFocus() }
@@ -315,16 +343,6 @@ fun CalendarEditorSheet(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("calendar-editor-delete"),
         ) { Text("Delete event") }
     }
-    SheetActionRow {
-        SecondaryAction("Cancel", onDismiss, Modifier.weight(1f), enabled = !submitting)
-        PrimaryAction(
-            if (submitting) "Saving…" else "Save event",
-            { onSave(draft) },
-            saveEnabled,
-            Modifier.weight(1f).testTag("calendar-editor-save"),
-            submitting,
-        )
-    }
 }
 
 @Composable
@@ -397,6 +415,7 @@ private fun CalendarSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     dismissEnabled: Boolean = true,
+    footer: (@Composable ColumnScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * .84f
@@ -414,13 +433,23 @@ private fun CalendarSheet(
     ) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = maxHeight)
-                .verticalScroll(rememberScrollState())
                 .imePadding().navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = tokens.space.xl)
                 .semantics { paneTitle = paneName },
-            verticalArrangement = Arrangement.spacedBy(tokens.space.md),
-            content = content,
-        )
+        ) {
+            Column(
+                Modifier.fillMaxWidth().weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = if (footer == null) tokens.space.xl else tokens.space.md),
+                verticalArrangement = Arrangement.spacedBy(tokens.space.md),
+                content = content,
+            )
+            if (footer != null) {
+                Column(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = tokens.space.xl),
+                    content = footer,
+                )
+            }
+        }
     }
 }
 
@@ -670,7 +699,7 @@ private fun DateButton(
             },
             enabled = enabled,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                .testTag("calendar-editor-${calendarTagToken(label)}"),
+                .testTag(calendarEditorControlTag(label)),
         ) {
             Text("$label: ${value ?: "Not set"}", maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -691,7 +720,7 @@ private fun TimeButton(label: String, value: LocalDateTime, enabled: Boolean, on
         },
         enabled = enabled,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .testTag("calendar-editor-${calendarTagToken(label)}"),
+            .testTag(calendarEditorControlTag(label)),
     ) { Text("$label: ${value.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))}") }
 }
 
@@ -699,12 +728,23 @@ private fun TimeButton(label: String, value: LocalDateTime, enabled: Boolean, on
 private fun LabeledSwitch(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .testTag("calendar-editor-${calendarTagToken(label)}"),
+            .testTag(calendarEditorControlTag(label)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked, onChange, enabled = enabled)
     }
+}
+
+private fun calendarEditorControlTag(label: String): String = when (label) {
+    "All-day event" -> "calendar-editor-all-day"
+    "Start date" -> "calendar-editor-start-date"
+    "Start time" -> "calendar-editor-start-time"
+    "End date", "End date (optional)" -> "calendar-editor-end-date"
+    "End time" -> "calendar-editor-end-time"
+    "Repeats" -> "calendar-editor-recurrence"
+    "Repeat until (optional)" -> "calendar-editor-recurrence-until"
+    else -> "calendar-editor-${calendarTagToken(label)}"
 }
 
 @Composable

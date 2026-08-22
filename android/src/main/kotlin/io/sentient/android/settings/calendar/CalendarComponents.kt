@@ -147,6 +147,9 @@ fun CalendarScaffold(
                         bottom = CalendarSurfaceLayout.SCROLL_BOTTOM_CLEARANCE_DP.dp,
                     ),
                 ) {
+                    if (!state.loading.isInitial) {
+                        item { Spacer(Modifier.size(1.dp).testTag(CalendarTestTags.SHARED_READY)) }
+                    }
                     item {
                         CalendarHeading(
                             title = title,

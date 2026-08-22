@@ -12,5 +12,8 @@ appId: io.dev32.sentient.debug
 - extendedWaitUntil:
     visible: { id: "calendar-screen" }
     timeout: 10000
+- extendedWaitUntil:
+    visible: { id: "calendar-shared-ready" }
+    timeout: 20000
 - assertVisible: { id: "calendar-add" }
 - assertVisible: { id: "calendar-view-bar" }

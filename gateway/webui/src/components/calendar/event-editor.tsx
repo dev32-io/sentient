@@ -473,7 +473,7 @@ function buildCreateInput(draft: CalendarEditorDraft):
   if (!recurrence.ok) return recurrence;
   const value: CalendarCreateInput = {
     title: draft.title.trim(),
-    description: draft.description,
+    ...(draft.description.trim() ? { description: draft.description } : {}),
     start: times.start,
     ...(times.end !== undefined ? { end: times.end } : {}),
     scope: draft.scope,
@@ -1086,7 +1086,12 @@ export function EventEditor({
                 if (next === "none") {
                   setDraftValue({ recurrenceEnabled: false });
                 } else if (VALID_FREQUENCIES.has(next as CalendarEditorFrequency)) {
-                  setDraftValue({ recurrenceEnabled: true, recurrenceFrequency: next as CalendarEditorFrequency });
+                  const frequency = next as CalendarEditorFrequency;
+                  setDraftValue({
+                    recurrenceEnabled: true,
+                    recurrenceFrequency: frequency,
+                    ...(frequency === "weekly" ? { recurrenceWeekdays: [weekdaysForStart(draft.start)] } : {}),
+                  });
                 }
               }}
             >
