@@ -29,11 +29,28 @@ criteria:
     semantic accessibility inspection is required but an actual
     assistive-technology session is not a stage gate
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: e184954f-9a37-4d26-ba46-976d4f074b12
   reviewedCommit: 2a49b8333aec3abd67d5599864a9b31427a8b835
+  managerPrompt: "Resolve all six findings. Remove the separate styled Day canvas
+    on Android and iOS so Day is the focused agenda presentation specified by
+    the mobile reference. Delete native Month-to-Day policy duplication: Android
+    must forward one shared date-selection intent and render the resulting
+    shared view/date state, not emit redundant date plus view callbacks. Drive
+    editor submit enablement from authoritative shared validation/mutation state
+    wherever available; Android Save must be disabled for blank/invalid drafts
+    and missing required recurrence scope, and iOS must select canCreate versus
+    canEdit according to editor mode rather than aggregate availability. While
+    submission is active, disable every draft-mutating, scope, save, delete, and
+    dismissal control that could race; also harden the shared reducer to ignore
+    editor mutation intents that would move SUBMITTING back to EDITING until the
+    operation settles. Make Android overlay press feedback honor
+    LocalCalendarReducedMotion with immediate/non-tween behavior. Add focused
+    controlled-component and state-race tests for each correction, preserve 44px
+    targets and exact reference geometry, run all stage checks, and return for
+    automatic re-review."
 findings:
   - id: F-001
     severity: high
