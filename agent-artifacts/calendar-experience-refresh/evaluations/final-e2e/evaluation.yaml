@@ -10,37 +10,36 @@ attempt: 2
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
-  managerPrompt: "Resolve all six blocking final-E2E findings; do not weaken
-    selectors, assertions, or the approved matrix. (1) Android route
-    recreation/relaunch must restore the persisted shared view/date/filter state
-    without a native default overwriting cache-first state; add production-path
-    regression coverage and make the direct flow wait on stable shared
-    readiness. (2) For an authorized adult with a valid draft, Android must
-    expose functional `calendar-editor-save`, preview Edit, recurrence, delete,
-    and temporal controls with stable semantics/identifiers; capability gating
-    and shared validation must drive visibility/enabled state. (3) Diagnose the
-    actual web Calendar V2 responses for all-day household and recurring
-    creates, then correct payload/wire mapping so both succeed while preserving
-    raw dates/offsets, scope, recurrence, and drafts on genuine failure. (4)
-    Make adjacent-window prefetch/cache and unavailable→available recovery
-    observable in production: adjacent cached events survive offline navigation,
-    one recovery edge revalidates automatically without blanking, and updated
-    fixture content appears; fix implementation or deterministic fixture timing
-    rather than relaxing flows. (5) Diagnose the freshly built iOS
-    session/navigation path and ensure the production Calendar screen reaches
-    the `calendar-surface` for a valid authenticated session, with typed
-    unavailable UI only for real protected-database failures; rerun on the
-    explicitly selected iOS simulator. (6) Restore web focus after
-    Add/Edit/cancel/delete/preview close to the stable originating control or
-    deterministic mounted fallback, never BODY/unnamed. Preserve sequential
-    Android→iOS execution, unique disposable fixtures and cleanup. Run focused
-    checks, then rerun all 14 E2E cases and exact viewport evidence through the
-    managed loop."
+  managerPrompt: "Preserve verified repairs and resolve the five remaining
+    blockers without weakening the matrix. (1) Trace Android stopApp/launchApp
+    activation order: persisted shared preferences must load before any
+    native/default view/date intent can overwrite them; expose readiness only
+    after the restored projection is applied and add a process-recreation test
+    for Month/date/filter restoration. (2) Ensure the Android editor action area
+    is always reachable above the safe area/IME—scrollable content with a stable
+    or pinned footer—and expose `calendar-editor-save` even when disabled, with
+    shared validation state explaining enablement; authorized valid create/edit
+    drafts must enable it. (3) Capture the exact web recurring-create request
+    and typed invalid-time response, then correct draft normalization/wire
+    mapping for start/end, recurrence anchor, original offset, and scope so a
+    valid recurring create succeeds while invalid drafts remain protected. (4)
+    Separate cache-prime fixture readiness from product recovery: prove initial
+    revalidation reaches up-to-date, persist a known adjacent/current sentinel,
+    arm unavailability, mutate a recovery sentinel while unavailable, restore
+    one connectivity edge, and verify shared coalesced revalidation publishes
+    the update without blanking; repair shared/platform signaling if that
+    deterministic sequence fails. (5) Diagnose iOS before changing Calendar UI:
+    use the explicitly selected iOS simulator, capture the accessibility
+    hierarchy and session/auth state at the composer-readiness failure, fix the
+    iOS login/startup flow or production session publication as indicated, then
+    prove calendar-surface and the native matrix are reachable on the fresh
+    build. Continue to use file—not directory—evidence paths when recording
+    results. Run focused regressions and all 14 cases again with cleanup."
   fixerAgentId: 7abeb8da-2940-4616-980e-ed5a711ad7be
 findings:
   - id: E2E-MAJOR-001
