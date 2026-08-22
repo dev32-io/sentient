@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: mobile-viewmodel-adapters
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -27,8 +27,8 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js is representable
     without prototype data
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 19a95521-14d0-45fe-bf6c-cf8d750d16c7
   reviewedCommit: b840c803a2d979bef9d3d024bc443b1ed226af9a
@@ -43,6 +43,7 @@ loop:
     cached state can arrive first, revalidation follows, route recreation does
     not duplicate work, and disposal cancels only the owned collector. Run all
     stage checks and return for automatic re-review.
+  fixerAgentId: dc383fb1-0b06-4c82-877f-11cb428e9eb0
 findings:
   - id: MVA-001
     severity: medium
