@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-overlays
 title: Build iOS calendar preview and editor sheets
-status: submitted
+status: awaiting_ci
 dependsOn:
   - ios-calendar-viewmodel
 execution:
