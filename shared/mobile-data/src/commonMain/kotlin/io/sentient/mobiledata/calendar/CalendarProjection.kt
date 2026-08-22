@@ -107,6 +107,15 @@ object CalendarProjection {
                 val parsed = parseCalendarDate(date)
                 cell(date, outsideMonth = parsed.year != anchor.year || parsed.month != anchor.month)
             }
+            val agenda = (0 until 4).map { addCalendarDays(request.anchorDate, it) }
+                .mapNotNull { date ->
+                    val dayEvents = eventsFor(date)
+                    if (dayEvents.isEmpty()) null else CalendarAgendaSection(
+                        date = date,
+                        events = dayEvents,
+                        accessibilityLabel = dateLabel(date, request.locale),
+                    )
+                }
             CalendarMonthProjection(
                 year = anchor.year,
                 month = anchor.month,
@@ -114,6 +123,7 @@ object CalendarProjection {
                 gridEndDate = cells.last().date,
                 cells = cells,
                 weekdayLabels = weekdayLabels(request.locale.resolvedWeekStart, request.locale),
+                agenda = agenda,
             )
         } else {
             null

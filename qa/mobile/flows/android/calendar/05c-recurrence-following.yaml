@@ -1,0 +1,15 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, recurrence, following]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "${CALENDAR_RECURRING_FOLLOWING_EVENT_TAG}" }
+- tapOn: { text: "Edit" }
+- scrollUntilVisible:
+    element: { id: "calendar-scope-this_and_following" }
+    direction: DOWN
+- tapOn: { id: "calendar-scope-this_and_following" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+# Direct fixture reread verifies the successor ID and unchanged prefix.

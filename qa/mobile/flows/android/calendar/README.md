@@ -22,7 +22,24 @@ The direct agent owns this sequence:
 5. Run account/child phases sequentially, logging out before changing disposable principals.
 6. Always restore emulator settings and allow `withLocalCalendarFixture` cleanup to finish, even after an assertion failure.
 
-`00-open.yaml` is the reusable navigation step. The remaining files cover CAL-UX-001..007 and 013..014: four views/preferences, filters, CRUD, recurrence/conflict, permissions/account isolation, cached and unavailable offline/recovery, timezone/DST, visual states, and reduced motion.
+`00-open.yaml` is the reusable navigation step. The inventory covers every mobile checkpoint CAL-UX-001..014:
+
+| Checkpoint | Direct flow(s) | Required direct setup/assertion |
+| --- | --- | --- |
+| 001–002 | `01-views-preferences.yaml` | Seed paged, dense and adjacent events; reread restored view/date. |
+| 003 | `02-filters.yaml` | Supply scope/group/tag/importance/search fixtures, including an absent selected facet. |
+| 004 | `03-create.yaml`, `03a-create-all-day-household.yaml`, `03b-create-recurring.yaml` | Supply unique timed/all-day/recurring titles; REST-reread each and delete in fixture cleanup. |
+| 005 | `04-preview-edit-delete.yaml`, `05-recurrence-conflict.yaml`, `05c-recurrence-following.yaml`, `05d-recurrence-entire-delete.yaml` | Use independent series per scope; reread occurrence, prefix/successor, and deletion identities. |
+| 006 | `05a-conflict-open.yaml`, then `05b-conflict-resolve.yaml` | **Outside the ordinary tag runner**, advance the fixture revision between these files with the existing direct gateway fixture control. |
+| 007 | `07a-child-restriction.yaml` | Login as the disposable child and arm the existing typed-forbidden fixture case directly. |
+| 008 | `09-cache-first.yaml` | Prime cache/preferences, relaunch, and arm delayed REST directly. |
+| 009–010 | `10-cached-offline.yaml`, `11-uncached-offline.yaml` | Prime adjacent cache, then disable network; inspect the sanitized store for no queued mutation. |
+| 011 | `06b-reconnect.yaml` | Restore network while the cached screen remains open and observe freshness recovery. |
+| 012 | `07b-account-isolation.yaml` | Logout A, login independently disposable B offline, and inspect B's sanitized namespace. |
+| 013 | `08-temporal-visuals.yaml` | Change device zone/locale; reread unchanged all-day date, event IANA zone, and `originalStart`. |
+| 014 | `01`, `02`, `04`, `05a`/`05b`, `08`, `10`, `11` | Repeat at both exact profiles, large font and reduced motion; inspect semantics/safe areas. |
+
+Run fault-armed files by explicit filename, never through the ordinary Maestro tag runner. The final agent must complete this Android table first, let its unique `withLocalCalendarFixture` callback and `finally` cleanup finish, and only then provision a different namespace and begin the iOS table. Required environment values are fixture-derived content-free resource IDs and unique synthetic inputs: `CALENDAR_*_EVENT_TAG`, `CALENDAR_*_TITLE`, `CALENDAR_FILTER_TEXT`, `CALENDAR_GROUP`, `CALENDAR_TAG`, `CALENDAR_WEEK_DATE`, `CALENDAR_MONTH_DATE`, `CALENDAR_YEAR_MONTH`, and restricted/first-account facet tokens.
 
 ## Exact Android display profiles
 

@@ -1,0 +1,27 @@
+appId: io.dev32.sentient.debug
+tags: [helper]
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-add" }
+- tapOn: { id: "calendar-editor-title" }
+- eraseText
+- inputText: "${CALENDAR_ALL_DAY_TITLE}"
+- hideKeyboard
+- tapOn: { text: "All-day" }
+- scrollUntilVisible:
+    element: { text: "Household" }
+    direction: DOWN
+- tapOn: { text: "Household" }
+- tapOn: { text: "Optional group" }
+- inputText: "${CALENDAR_GROUP}"
+- tapOn: { text: "Comma-separated tags" }
+- inputText: "${CALENDAR_TAG}"
+- hideKeyboard
+- scrollUntilVisible:
+    element: { id: "calendar-editor-save" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { text: "Done" }

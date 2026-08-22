@@ -60,6 +60,26 @@ class CalendarProjectionTest {
     }
 
     @Test
+    fun month_agenda_is_the_event_bearing_slice_of_four_days_from_anchor() {
+        val projection = projectCalendarOccurrences(
+            occurrences = listOf(
+                occurrence(id = "anchor", title = "Anchor", start = "2026-08-15T09:00:00Z"),
+                occurrence(id = "third", title = "Third", start = "2026-08-17T09:00:00Z"),
+                occurrence(id = "fifth", title = "Fifth", start = "2026-08-19T09:00:00Z"),
+            ),
+            state = CalendarExperienceState(
+                anchorDate = "2026-08-15",
+                selectedDate = "2026-08-01",
+                view = CalendarView.MONTH,
+                locale = CalendarLocale(timeZoneId = "UTC"),
+            ),
+        )
+
+        assertEquals(listOf("2026-08-15", "2026-08-17"), projection.month?.agenda?.map { it.date })
+        assertEquals(listOf("anchor", "third"), projection.month?.agenda?.flatMap { it.events }?.map { it.eventId })
+    }
+
+    @Test
     fun named_zone_projection_handles_dst_without_rewriting_raw_values() {
         val occurrence = occurrence(
             id = "dst",

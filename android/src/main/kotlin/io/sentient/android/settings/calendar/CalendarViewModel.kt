@@ -186,9 +186,8 @@ internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
     val agenda = when (view) {
         CalendarView.DAY -> projection?.day?.agenda
         CalendarView.WEEK -> projection?.week?.agenda
-        CalendarView.MONTH,
-        CalendarView.YEAR,
-        -> null
+        CalendarView.MONTH -> projection?.month?.agenda
+        CalendarView.YEAR -> null
     }.orEmpty()
     val visibleEvents = projection?.visibleEvents.orEmpty()
     val contentState = when {

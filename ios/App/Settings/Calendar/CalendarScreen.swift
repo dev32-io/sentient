@@ -67,7 +67,26 @@ private struct CalendarExperienceScreen: View {
             }
         }
         .accessibilityIdentifier("settings-calendar-screen")
+        .task {
+            forwardDeviceProjectionContext()
+        }
+        .task {
+            for await _ in NotificationCenter.default.notifications(named: NSLocale.currentLocaleDidChangeNotification) {
+                guard !Task.isCancelled else { return }
+                forwardDeviceProjectionContext()
+            }
+        }
+        .task {
+            for await _ in NotificationCenter.default.notifications(named: Notification.Name.NSSystemTimeZoneDidChange) {
+                guard !Task.isCancelled else { return }
+                forwardDeviceProjectionContext()
+            }
+        }
         .onDisappear { vm.dispose() }
+    }
+
+    private func forwardDeviceProjectionContext() {
+        vm.setLocale(CalendarDeviceProjectionContext.current())
     }
 
     private func surfaceActions(_ state: CalendarUiState) -> CalendarSurfaceActions {
@@ -96,7 +115,7 @@ private struct CalendarExperienceScreen: View {
 
     private var overlayActions: CalendarOverlayActions {
         CalendarOverlayActions(
-            edit: { vm.edit($0, inputTimeZoneId: vm.state?.locale.timeZoneId) },
+            edit: { vm.edit($0) },
             updateDraft: vm.updateDraft,
             chooseScope: vm.chooseMutationScope,
             save: { vm.save($0) },
@@ -137,6 +156,40 @@ private struct CalendarExperienceScreen: View {
         case .month(let year, let month): vm.selectMonth(year: year, month: month)
         case .view(let view): vm.selectView(view)
         }
+    }
+}
+
+/// Device settings are projection context only. They are never copied into an
+/// event draft's persisted IANA time-zone field.
+enum CalendarDeviceProjectionContext {
+    static func current(
+        locale: Locale = .current,
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) -> CalendarLocale {
+        let languageTag = locale.identifier
+            .split(separator: "@", maxSplits: 1)
+            .first
+            .map(String.init)?
+            .replacingOccurrences(of: "_", with: "-") ?? "en-US"
+        let weekStart: Weekday? = switch calendar.firstWeekday {
+        case 1: .sunday
+        case 2: .monday
+        case 3: .tuesday
+        case 4: .wednesday
+        case 5: .thursday
+        case 6: .friday
+        case 7: .saturday
+        default: nil
+        }
+        let hourPattern = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: locale) ?? ""
+        let hourCycle: CalendarHourCycle = hourPattern.contains("a") ? .hour12 : .hour24
+        return CalendarLocale(
+            languageTag: languageTag,
+            timeZoneId: timeZone.identifier,
+            weekStart: weekStart,
+            hourCycle: hourCycle
+        )
     }
 }
 

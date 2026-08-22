@@ -3,10 +3,17 @@ tags: [calendar, filters]
 ---
 - runFlow: "00-open.yaml"
 - tapOn: { text: "Household" }
-- assertVisible: { id: "calendar-filters" }
-- tapOn: { text: "#calendar-evidence" }
+- tapOn: { text: "${CALENDAR_GROUP}" }
+- tapOn: { text: "${CALENDAR_TAG}" }
+- tapOn: { text: "Important" }
 - tapOn: { id: "calendar-filter-search" }
-- inputText: "calendar-evidence"
-- assertVisible: { id: "calendar-freshness" }
-- eraseText
-- tapOn: { text: "All" }
+- inputText: "${CALENDAR_FILTER_TEXT}"
+- hideKeyboard
+- assertVisible: { id: "${CALENDAR_FILTERED_EVENT_TAG}" }
+- tapOn: { text: "Next period" }
+- assertVisible: { text: "${CALENDAR_GROUP}" }
+- tapOn: { text: "${CALENDAR_GROUP}" }
+- tapOn: { id: "calendar-back" }
+- tapOn: { id: "calendar-open" }
+- assertVisible: { id: "calendar-filter-search" }
+- assertNotVisible: { id: "${CALENDAR_FILTERED_OUT_EVENT_TAG}" }

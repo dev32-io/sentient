@@ -1,3 +1,4 @@
+import Foundation
 import MobileData
 import Testing
 @testable import SentientApp
@@ -37,6 +38,38 @@ struct CalendarSurfaceTests {
         #expect(year?.months[1].days.count == 29)
         #expect(year?.months.first?.days.first?.date == "2028-01-01")
         #expect(year?.months.last?.days.last?.date == "2028-12-31")
+    }
+
+    @Test func monthAgendaUsesTheSharedFourDaySlice() throws {
+        let shared = projection(view: .month, anchor: "2028-02-14")
+        let state = screenState(projection: shared, occurrences: [screenOccurrence(originalStart: "2028-02-14T15:20:00Z")])
+        let agenda = CalendarSurfaceMapping.agenda(for: state)
+
+        #expect(agenda.map(\.date) == shared.month?.agenda.map(\.date))
+        #expect(agenda.count == 1)
+        #expect(agenda.first?.events.first?.eventId == "event")
+    }
+
+    @Test func deviceProjectionContextIncludesLocaleWeekStartAndTimeZone() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 2
+        let zone = try #require(TimeZone(identifier: "Pacific/Auckland"))
+
+        let context = CalendarDeviceProjectionContext.current(
+            locale: Locale(identifier: "en_GB"),
+            calendar: calendar,
+            timeZone: zone
+        )
+
+        #expect(context.languageTag == "en-GB")
+        #expect(context.weekStart == .monday)
+        #expect(context.timeZoneId == "Pacific/Auckland")
+    }
+
+    @Test func freshnessRecoveryAnnouncementOnlyFiresOnATransitionToFresh() {
+        #expect(CalendarSurfaceText.freshnessRecoveryAnnouncement(from: .refreshing, to: .fresh) == "Calendar is up to date")
+        #expect(CalendarSurfaceText.freshnessRecoveryAnnouncement(from: .fresh, to: .fresh) == nil)
+        #expect(CalendarSurfaceText.freshnessRecoveryAnnouncement(from: .stale, to: .refreshing) == nil)
     }
 
     @Test func accessibilityCellLabelIncludesFullSemanticStateAndOverflow() {

@@ -95,6 +95,10 @@ struct CalendarScaffold: View {
             guard let announcement else { return }
             UIAccessibility.post(notification: .announcement, argument: announcement)
         }
+        .onChange(of: state.freshness) { previous, current in
+            guard let announcement = CalendarSurfaceText.freshnessRecoveryAnnouncement(from: previous, to: current) else { return }
+            UIAccessibility.post(notification: .announcement, argument: announcement)
+        }
         .onChange(of: CalendarSurfaceText.navigationAnnouncement(state)) { _, announcement in
             UIAccessibility.post(notification: .announcement, argument: announcement)
         }

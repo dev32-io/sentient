@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, cache-first]
+---
+# Invoke after an online priming visit, relaunch, and arm delayed calendar REST
+# through the existing direct gateway fault control for this fixture namespace.
+- runFlow: "00-open.yaml"
+- assertVisible: { id: "calendar-screen" }
+- assertVisible: { id: "${CALENDAR_EVENT_TAG}" }
+- assertNotVisible: { id: "calendar-loading" }
+- takeScreenshot: "calendar-cache-first"
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness" }
+    timeout: 15000

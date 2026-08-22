@@ -1,0 +1,24 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, crud, all-day]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-add" }
+- tapOn: { id: "calendar-editor-title" }
+- inputText: "${CALENDAR_ALL_DAY_TITLE}"
+- tapOn: { text: "All-day event" }
+- scrollUntilVisible:
+    element: { text: "Household" }
+    direction: DOWN
+- tapOn: { text: "Household" }
+- tapOn: { id: "calendar-editor-group" }
+- inputText: "${CALENDAR_GROUP}"
+- tapOn: { id: "calendar-editor-tags" }
+- inputText: "${CALENDAR_TAG}"
+- scrollUntilVisible:
+    element: { id: "calendar-editor-save" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { id: "calendar-sheet-close" }

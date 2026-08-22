@@ -43,6 +43,7 @@ struct CalendarUiState {
     var agenda: [CalendarAgendaSection] {
         if let day { return day.agenda }
         if let week { return week.agenda }
+        if let month { return month.agenda }
         return []
     }
     var isRefreshing: Bool { loading.isRefreshing || freshness == .refreshing }

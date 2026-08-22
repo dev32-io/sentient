@@ -115,6 +115,13 @@ enum CalendarSurfaceText {
         if state.content == .empty { return "No events match these filters" }
         return nil
     }
+
+    static func freshnessRecoveryAnnouncement(
+        from previous: CalendarCacheFreshness,
+        to current: CalendarCacheFreshness
+    ) -> String? {
+        previous != .fresh && current == .fresh ? "Calendar is up to date" : nil
+    }
 }
 
 struct CalendarAgendaSlice: Identifiable {
@@ -128,15 +135,7 @@ enum CalendarSurfaceMapping {
     static func showsCompactCanvas(_ view: CalendarView) -> Bool { view != .day }
 
     static func agenda(for state: CalendarUiState) -> [CalendarAgendaSlice] {
-        if !state.agenda.isEmpty {
-            return state.agenda.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }
-        }
-        if let month = state.month {
-            return month.cells.compactMap { cell in
-                cell.events.isEmpty ? nil : .init(date: cell.date, events: cell.events, accessibilityLabel: cell.accessibilityLabel)
-            }
-        }
-        return []
+        state.agenda.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }
     }
 }
 

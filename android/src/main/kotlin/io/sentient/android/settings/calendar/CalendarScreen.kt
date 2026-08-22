@@ -97,7 +97,7 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier
         state = state,
         actions = CalendarOverlayActions(
             onDismiss = vm::close,
-            onEdit = { vm.edit(it, state.locale.timeZoneId) },
+            onEdit = vm::edit,
             onDraftChange = vm::updateDraft,
             onScopeChange = vm::chooseRecurrenceScope,
             onSave = vm::save,
@@ -192,12 +192,8 @@ fun calendarHeadingSubtitle(state: CalendarUiState): String {
     return "${selected.dayOfWeek.getDisplayName(TextStyle.FULL, locale)} · ${selected.dayOfMonth}"
 }
 
-/** Uses shared projected cells/events only; no filtering or temporal reprojection occurs here. */
+/** Uses only the agenda window supplied by the shared projection. */
 fun calendarAgendaSections(state: CalendarUiState): List<CalendarAgendaSection> = when (state.view) {
-    CalendarView.DAY, CalendarView.WEEK -> state.agendaRows
-    CalendarView.MONTH -> state.month?.cells
-        ?.firstOrNull { it.date == state.selectedDate }
-        ?.let { cell -> listOf(CalendarAgendaSection(cell.date, cell.events, fullCalendarDateLabel(cell.date, state.locale.languageTag))) }
-        .orEmpty()
+    CalendarView.DAY, CalendarView.WEEK, CalendarView.MONTH -> state.agendaRows
     CalendarView.YEAR -> emptyList()
 }

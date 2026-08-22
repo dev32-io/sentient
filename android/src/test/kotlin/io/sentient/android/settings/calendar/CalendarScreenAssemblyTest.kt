@@ -55,7 +55,7 @@ class CalendarScreenAssemblyTest {
     }
 
     @Test
-    fun headings_and_month_agenda_use_shared_projection_and_selected_date() {
+    fun headings_and_month_agenda_use_the_shared_projection_slice() {
         val day = state(CalendarView.DAY)
         val week = state(CalendarView.WEEK)
         val month = state(CalendarView.MONTH)
@@ -67,6 +67,7 @@ class CalendarScreenAssemblyTest {
         assertEquals("2026", calendarHeadingTitle(year))
         assertEquals("Monday · 24", calendarHeadingSubtitle(month))
         assertEquals("Year at a glance", calendarHeadingSubtitle(year))
+        assertEquals(month.month?.agenda?.map { it.date }, calendarAgendaSections(month).map { it.date })
         assertSame(month.visibleEvents.single(), calendarAgendaSections(month).single().events.single())
         assertTrue(calendarAgendaSections(year).isEmpty())
     }

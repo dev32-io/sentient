@@ -7,7 +7,7 @@ tags: [calendar, crud]
     visible: { id: "calendar-editor-sheet" }
     timeout: 5000
 - tapOn: { id: "calendar-editor-title" }
-- inputText: "calendar-agent-created"
+- inputText: "${CALENDAR_TIMED_TITLE}"
 - tapOn: { id: "calendar-editor-save" }
 - extendedWaitUntil:
     visible: { id: "calendar-outcome-sheet" }

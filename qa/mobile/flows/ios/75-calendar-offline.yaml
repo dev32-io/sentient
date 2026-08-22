@@ -1,14 +1,23 @@
 appId: io.dev32.sentient.debug
-tags:
-  - helper
+tags: [helper]
 ---
-# Invoke after the agent observes gateway/network unready; do not add sleeps here.
+# Invoke with current and adjacent months primed and the existing gateway or
+# simulator network control observably offline.
 - runFlow: _calendar/open-calendar.yaml
 - extendedWaitUntil:
     visible: { id: "calendar-freshness-offline" }
     timeout: 15000
-- assertVisible: { id: "calendar-surface" }
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { text: "Next period" }
+- assertVisible: { id: "calendar-event-.*" }
+- tapOn: { id: "calendar-view-week" }
+- tapOn: { text: "Previous period" }
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "${CALENDAR_FILTER_TEXT}"
+- hideKeyboard
+- assertVisible: { id: "calendar-freshness-offline" }
+- tapOn: { id: "calendar-add", optional: true }
+- assertNotVisible: { id: "calendar-outcome-sheet" }
 - takeScreenshot: "calendar-cached-offline"
-- tapOn: { id: "calendar-add" }
-- assertVisible: { text: "Connection required.*" }
-- tapOn: { text: "Cancel" }

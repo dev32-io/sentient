@@ -3,20 +3,32 @@ tags: [calendar, views, preferences]
 ---
 - runFlow: "00-open.yaml"
 - tapOn: { id: "calendar-view-day" }
-- assertVisible: { id: "calendar-view-day" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { text: "Today" }
 - takeScreenshot: "calendar-day"
 - tapOn: { id: "calendar-view-week" }
-- assertVisible: { id: "calendar-canvas" }
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_WEEK_DATE}" }
 - takeScreenshot: "calendar-week"
 - tapOn: { id: "calendar-view-month" }
-- assertVisible: { id: "calendar-canvas" }
-- takeScreenshot: "calendar-month"
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- tapOn: { id: "calendar-date-${CALENDAR_MONTH_DATE}" }
+- assertVisible: { id: "calendar-view-day" }
 - tapOn: { id: "calendar-view-year" }
-- assertVisible: { id: "calendar-canvas" }
-- takeScreenshot: "calendar-year"
+- tapOn: { text: "Previous period" }
+- tapOn: { text: "Next period" }
+- scrollUntilVisible:
+    element: { id: "calendar-month-${CALENDAR_YEAR_MONTH}" }
+    direction: DOWN
+- tapOn: { id: "calendar-month-${CALENDAR_YEAR_MONTH}" }
+- assertVisible: { id: "calendar-view-month" }
+- takeScreenshot: "calendar-year-selection"
 - stopApp
 - launchApp
 - extendedWaitUntil:
-    visible: { id: "calendar-view-year" }
+    visible: { id: "calendar-view-month" }
     timeout: 10000
-- assertVisible: { id: "calendar-view-year" }
+- assertVisible: { id: "calendar-date-${CALENDAR_MONTH_DATE}" }

@@ -1,18 +1,23 @@
 appId: io.dev32.sentient.debug
-tags:
-  - helper
+tags: [helper]
 ---
 - runFlow: _calendar/open-calendar.yaml
 - tapOn: { id: "calendar-view-week" }
-- tapOn: { id: "calendar-filter-scope-private" }
-- tapOn: { id: "calendar-filter-tag-0", optional: true }
+- tapOn: { id: "calendar-filter-scope-household" }
+- tapOn: { text: "${CALENDAR_GROUP}" }
+- tapOn: { text: "${CALENDAR_TAG}" }
+- tapOn: { text: "Important" }
 - tapOn: { id: "calendar-filter-search" }
 - inputText: "${CALENDAR_FILTER_TEXT}"
 - hideKeyboard
+- assertVisible: { id: "${CALENDAR_FILTERED_EVENT_TAG}" }
 - takeScreenshot: "calendar-filters"
+- tapOn: { text: "Next period" }
+- assertVisible: { text: "${CALENDAR_GROUP}" }
+- tapOn: { text: "${CALENDAR_GROUP}" }
 - tapOn: { id: "calendar-back" }
 - tapOn: { id: "settings-cat-calendar" }
 - extendedWaitUntil:
     visible: { id: "calendar-view-week" }
     timeout: 10000
-- assertVisible: { id: "calendar-filter-scope-private" }
+- assertNotVisible: { id: "${CALENDAR_FILTERED_OUT_EVENT_TAG}" }

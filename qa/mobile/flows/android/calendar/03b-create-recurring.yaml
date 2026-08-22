@@ -1,0 +1,20 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, crud, recurrence]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-add" }
+- tapOn: { id: "calendar-editor-title" }
+- inputText: "${CALENDAR_RECURRING_TITLE}"
+- scrollUntilVisible:
+    element: { text: "Repeats" }
+    direction: DOWN
+- tapOn: { text: "Repeats" }
+- assertVisible: { text: "Weekly" }
+- scrollUntilVisible:
+    element: { id: "calendar-editor-save" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { id: "calendar-sheet-close" }

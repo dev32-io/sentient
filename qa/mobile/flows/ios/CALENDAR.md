@@ -10,9 +10,24 @@ Provide only the relevant disposable fixture values through Maestro environment 
 
 ## Orchestration
 
-Run `70`–`81` directly and sequentially. For `74`, arm the stale revision through the local fixture dependency after the editor opens. For `75`–`77`, the agent must stop/restart the existing gateway or simulator network, poll the existing readiness signal, and then invoke the flow; arbitrary sleeps are prohibited. Restore the gateway, simulator network, account, content-size category, and Reduce Motion setting in a guaranteed final cleanup block.
+The final agent runs this inventory only after the Android inventory and its fixture cleanup have completed. Provision a new unique iOS namespace. Run direct files `70` through `82`, including `72c`, `72d`, and `74a`–`74e`; do not use the ordinary tag runner for fault-armed cases.
 
-`78` and `79` require relaunch/login with the fixture's disposable child and second adult respectively before running the flow. Account isolation must use separate cache namespaces.
+| Checkpoint | Direct flow(s) | Required direct setup/assertion |
+| --- | --- | --- |
+| 001–002 | `70-calendar-navigation.yaml`, `71-calendar-preferences-filters.yaml` | Seed paged/dense/adjacent rows and reread restored date/view. |
+| 003 | `71-calendar-preferences-filters.yaml` | Supply every supported facet plus an absent selected facet. |
+| 004 | `72-calendar-create.yaml`, `72c-calendar-create-all-day-household.yaml`, `72d-calendar-create-recurring.yaml` | Use unique synthetic titles; REST-reread and clean every created event. |
+| 005 | `72b-calendar-update.yaml`, `73-calendar-preview-edit-delete.yaml`, `74e-calendar-recurrence-occurrence.yaml`, `74c-calendar-recurrence-following.yaml`, `74d-calendar-recurrence-entire-delete.yaml` | Use independent series and reread occurrence/prefix/successor/deletion identities. |
+| 006 | `74a-calendar-conflict-open.yaml`, then `74b-calendar-conflict-resolve.yaml` | **Outside the tag runner**, advance the fixture revision with the existing direct gateway control between the two files. |
+| 007 | `78-calendar-child-restriction.yaml` | Login as the disposable child and directly arm the existing typed-forbidden case. |
+| 008 | `82-calendar-cache-first.yaml` | Prime cache/preferences, relaunch, and directly delay REST. |
+| 009–010 | `75-calendar-offline.yaml`, `76-calendar-offline-unavailable.yaml` | Prime adjacent cache, stop gateway or simulator network, and inspect no mutation/queue row. |
+| 011 | `77-calendar-reconnect.yaml` | Restore connectivity while Calendar remains open; observe the up-to-date transition. |
+| 012 | `79-calendar-account-isolation.yaml` | Logout A, login independently disposable B offline, inspect B namespace. |
+| 013 | `80-calendar-timezone-dst.yaml` | Change device locale/zone; reread fixed all-day date and unchanged event zone/`originalStart`. |
+| 014 | `70`, `71`, `73`, `74`, `75`, `76`, `80`, `81` | Repeat exact profiles, Dynamic Type and Reduce Motion; inspect safe areas/semantics. |
+
+For conflict, arm stale revision only between explicit `74a` and `74b` invocations. For `75`–`77` and `82`, use the existing gateway stop/restart, simulator network, and direct fixture delay controls, polling observable readiness rather than sleeping. `78` and `79` require logout/relaunch and disposable child/second-adult login. Restore gateway, network, account, locale/time zone, content-size category, and Reduce Motion in a guaranteed outer cleanup block; then allow `withLocalCalendarFixture`'s `finally` cleanup to complete. Required `CALENDAR_*` values are unique synthetic inputs and fixture-derived content-free IDs, never shared with Android.
 
 ## Visual and semantic matrix
 

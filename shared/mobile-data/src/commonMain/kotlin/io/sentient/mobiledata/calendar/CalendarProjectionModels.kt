@@ -293,6 +293,8 @@ data class CalendarMonthProjection(
     val gridEndDate: String,
     val cells: List<CalendarDateCell>,
     val weekdayLabels: List<CalendarWeekdayLabel>,
+    /** Event-bearing days in the canonical four-day mobile agenda window from the anchor. */
+    val agenda: List<CalendarAgendaSection> = emptyList(),
 ) {
     init {
         require(cells.size == 42) { "A calendar month must contain 42 cells" }
