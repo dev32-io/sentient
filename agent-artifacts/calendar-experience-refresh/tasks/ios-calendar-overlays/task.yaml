@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-overlays
 title: Build iOS calendar preview and editor sheets
-status: running
+status: submitted
 dependsOn:
   - ios-calendar-viewmodel
 execution:
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-overlays
   baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
   lastRunId: 57572c16-a06c-4f12-a50e-a3119fec53da
+  completedCommit: 845cfdb57ca546383af9d0df0c1a2fd8cb6e2aae
