@@ -70,16 +70,18 @@ struct CalendarFiltersView: View {
                         CalendarFilterChip(
                             label: CalendarFilterMapping.scopeLabel(scope),
                             selected: filters.scope == scope,
-                            accessibilityPrefix: "Scope"
+                            accessibilityPrefix: "Scope",
+                            identifier: "calendar-filter-scope-\(scope.name.lowercased())"
                         ) {
                             onChange(CalendarFilterMapping.replacing(filters, scope: scope))
                         }
                     }
-                    ForEach(CalendarFilterMapping.groups(filters: filters, facets: facets), id: \.self) { group in
+                    ForEach(Array(CalendarFilterMapping.groups(filters: filters, facets: facets).enumerated()), id: \.element) { index, group in
                         CalendarFilterChip(
                             label: group,
                             selected: filters.groups.contains(group),
-                            accessibilityPrefix: "Group"
+                            accessibilityPrefix: "Group",
+                            identifier: "calendar-filter-group-\(index)"
                         ) {
                             onChange(CalendarFilterMapping.replacing(
                                 filters,
@@ -95,21 +97,23 @@ struct CalendarFiltersView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Space.sm) {
-                    ForEach(CalendarFilterMapping.tags(filters: filters, facets: facets), id: \.self) { tag in
-                        CalendarTagChip(label: tag, selected: filters.tags.contains(tag)) {
+                    ForEach(Array(CalendarFilterMapping.tags(filters: filters, facets: facets).enumerated()), id: \.element) { index, tag in
+                        CalendarTagChip(label: tag, selected: filters.tags.contains(tag), identifier: "calendar-filter-tag-\(index)") {
                             onChange(CalendarFilterMapping.replacing(
                                 filters,
                                 tags: CalendarFilterMapping.toggling(tag, in: filters.tags)
                             ))
                         }
                     }
-                    CalendarTagChip(label: "Any importance", selected: filters.importance == nil) {
+                    CalendarTagChip(label: "Any importance", selected: filters.importance == nil,
+                                    identifier: "calendar-filter-importance-any") {
                         onChange(CalendarFilterMapping.replacing(filters, importance: .some(nil)))
                     }
                     ForEach(CalendarFilterMapping.importances(filters: filters, facets: facets), id: \.self) { importance in
                         CalendarTagChip(
                             label: CalendarFilterMapping.importanceLabel(importance),
-                            selected: filters.importance == importance
+                            selected: filters.importance == importance,
+                            identifier: "calendar-filter-importance-\(importance.name.lowercased())"
                         ) {
                             onChange(CalendarFilterMapping.replacing(filters, importance: .some(importance)))
                         }
@@ -129,6 +133,7 @@ struct CalendarFiltersView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityLabel("Search calendar events")
+                    .accessibilityIdentifier("calendar-filter-search")
                 if !filters.text.isEmpty {
                     Button("Clear search", systemImage: "xmark.circle.fill") { onSearch("") }
                         .labelStyle(.iconOnly)
@@ -148,6 +153,7 @@ private struct CalendarFilterChip: View {
     let label: String
     let selected: Bool
     let accessibilityPrefix: String
+    let identifier: String
     let action: () -> Void
 
     var body: some View {
@@ -164,12 +170,14 @@ private struct CalendarFilterChip: View {
         .accessibilityLabel("\(accessibilityPrefix), \(label)")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
     }
 }
 
 private struct CalendarTagChip: View {
     let label: String
     let selected: Bool
+    let identifier: String
     let action: () -> Void
 
     var body: some View {
@@ -188,5 +196,6 @@ private struct CalendarTagChip: View {
         .accessibilityLabel("Tag or importance, \(label)")
         .accessibilityValue(selected ? "Selected" : "Not selected")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(identifier)
     }
 }

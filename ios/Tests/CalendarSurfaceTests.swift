@@ -112,10 +112,35 @@ struct CalendarSurfaceTests {
         #expect(event.map(CalendarSurfaceText.eventTime) == "3:20 PM")
     }
 
+    @Test func screenMapsProjectedActionToExactAuthorizedOccurrenceIdentity() throws {
+        let projection = projection(view: .day, anchor: "2028-02-14")
+        let event = try #require(projection.day?.events.first)
+        let wrong = screenOccurrence(originalStart: "2028-02-14T14:20:00Z")
+        let exact = screenOccurrence(originalStart: "2028-02-14T15:20:00Z")
+        let state = screenState(projection: projection, occurrences: [wrong, exact])
+
+        #expect(CalendarScreenMapping.occurrence(for: event, in: state) === exact)
+    }
+
+    @Test func screenNavigationAlwaysDismissesTopMutationStateFirst() {
+        let projection = projection(view: .day, anchor: "2028-02-14")
+        let occurrence = screenOccurrence(originalStart: "2028-02-14T15:20:00Z")
+        let closed = screenState(projection: projection, occurrences: [occurrence])
+        #expect(CalendarScreenMapping.navigationDisposition(for: closed) == .perform)
+
+        let openMutation = CalendarMutationState(
+            phase: .previewing, preview: occurrence, editor: nil, deleteConfirmation: nil,
+            pendingRequest: nil, error: nil, conflict: nil, outcome: nil,
+            successorEventId: nil, affectedWindows: []
+        )
+        let open = screenState(projection: projection, occurrences: [occurrence], mutation: openMutation)
+        #expect(CalendarScreenMapping.navigationDisposition(for: open) == .dismissOverlayFirst)
+    }
+
     private func projection(view: CalendarView, anchor: String) -> CalendarExperienceProjection {
         let locale = CalendarLocale(languageTag: "en-US", timeZoneId: "UTC", weekStart: .sunday, hourCycle: .hour12)
         let occurrence = CalendarProjectionOccurrence(
-            eventId: "event", occurrenceId: "occurrence", originalStart: nil,
+            eventId: "event", occurrenceId: "occurrence", originalStart: "2028-02-14T15:20:00Z",
             recurring: false, recurrence: nil, revision: 1, scope: .household,
             title: "School pickup", description: nil,
             start: "2028-02-14T15:20:00Z", end: "2028-02-14T16:00:00Z",
@@ -126,6 +151,39 @@ struct CalendarSurfaceTests {
             occurrences: [occurrence], anchorDate: anchor, view: view,
             selectedDate: anchor, todayDate: anchor, locale: locale,
             filters: CalendarFilters(scope: .all, groups: [], tags: [], importance: nil, text: "")
+        ))
+    }
+
+    private func screenOccurrence(originalStart: String) -> EffectiveOccurrence {
+        EffectiveOccurrence(
+            eventId: "event", occurrenceId: "occurrence", originalStart: originalStart,
+            recurring: false, revision: 1, scope: .household, title: "School pickup",
+            description: nil, start: "2028-02-14T15:20:00Z", end: "2028-02-14T16:00:00Z",
+            visibility: .everyone, importance: .important, group: "Family", tags: ["school"], recurrence: nil
+        )
+    }
+
+    private func screenState(
+        projection: CalendarExperienceProjection,
+        occurrences: [EffectiveOccurrence],
+        mutation: CalendarMutationState = CalendarMutationState(
+            phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil,
+            pendingRequest: nil, error: nil, conflict: nil, outcome: nil,
+            successorEventId: nil, affectedWindows: []
+        )
+    ) -> CalendarUiState {
+        CalendarUiState(CalendarExperienceState(
+            anchorDate: projection.anchorDate, view: projection.view,
+            selectedDate: projection.selectedDate, filters: projection.filters,
+            locale: projection.locale, todayDate: projection.todayDate,
+            visibleInterval: projection.interval, selectedInterval: nil,
+            authorizedOccurrences: occurrences, projection: projection, facets: projection.facets,
+            freshness: .fresh, loading: CalendarLoadingState(phase: .idle), offline: .online,
+            error: nil, hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
+            mutationAvailability: CalendarMutationAvailability(
+                canCreate: true, canEdit: true, canDelete: true, reason: nil
+            ),
+            mutation: mutation
         ))
     }
 }

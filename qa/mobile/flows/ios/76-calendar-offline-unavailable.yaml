@@ -1,0 +1,11 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Invoke on an uncached fixture namespace while gateway/network is observably down.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "calendar-retry" }
+    timeout: 15000
+- assertVisible: { text: "This date range is not available offline." }
+- takeScreenshot: "calendar-uncached-offline"

@@ -2,7 +2,7 @@ import Foundation
 import MobileData
 
 /// The control to return VoiceOver/keyboard focus to after an overlay closes.
-enum CalendarOverlayOrigin: Equatable {
+enum CalendarOverlayOrigin: Hashable {
     case addControl
     case event(String)
 }

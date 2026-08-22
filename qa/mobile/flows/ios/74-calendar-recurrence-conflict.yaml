@@ -1,0 +1,17 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# The agent seeds a recurring occurrence and arms a stale revision before the save.
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-event-.*" }
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-recurrence" }
+- tapOn: { id: "calendar-scope-this_occurrence" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-conflict-sheet" }
+    timeout: 10000
+- tapOn: { text: "Reread event", optional: true }
+- tapOn: { text: "Review my changes", optional: true }
+- takeScreenshot: "calendar-conflict"
