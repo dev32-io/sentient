@@ -11,11 +11,28 @@ methods:
   - Review the complete feature-branch diff for specification fit, correctness,
     regressions, maintainability, and test coverage.
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: bdaa13d0-e861-41f1-84c8-187070bae65f
   reviewedCommit: 85d1c756445fd7825a9ed181508de41691dee602
+  managerPrompt: "Do not approve or accept either finding. The final-E2E pass is
+    not valid evidence for the approved matrix because its current case-results
+    artifact records only E2E-001 and E2E-009 passing and twelve cases blocked.
+    Supersede that checkpoint only after a fresh, complete run against the
+    current repaired commit: provision unique disposable adult/child fixtures
+    through the approved local-only adapter; execute every step of E2E-001..014
+    on web and each applicable native platform; run Android then iOS
+    sequentially; require every case to pass rather than carrying forward
+    historical subflow observations or treating blocked setup as success; and
+    guarantee fault/network/display/fixture cleanup. Capture current exact
+    logical 390x844 and 430x932 Android and iOS evidence for
+    Day/Week/Month/Year, sheets, safe areas, target geometry, no
+    overflow/clipping, and reduced-motion behavior, compared directly with the
+    committed mobile references. Use only individual sanitized evidence files,
+    never directory paths. If setup or a platform remains blocked, keep the
+    checkpoint failed and repair it rather than marking pass. Then rerun
+    whole-branch review against the corrected final-E2E report and evidence."
 findings:
   - id: FINAL-MAJOR-001
     severity: high
