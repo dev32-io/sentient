@@ -543,7 +543,7 @@ private struct CalendarWeekdayPicker: View {
                             .background(selection.contains(day) ? DuskColors.accent50 : DuskColors.bgElev,
                                         in: RoundedRectangle(cornerRadius: Radii.sm))
                     }
-                    .buttonStyle(CalendarPressButtonStyle())
+                    .buttonStyle(CalendarOverlayPressButtonStyle())
                     .accessibilityLabel(day.name.capitalized)
                     .accessibilityValue(selection.contains(day) ? "Selected" : "Not selected")
                 }
@@ -716,7 +716,7 @@ private struct CalendarSheetHeader: View {
             Button(action: onClose) {
                 Image(systemName: "xmark").frame(width: 44, height: 44)
             }
-            .buttonStyle(CalendarPressButtonStyle())
+            .buttonStyle(CalendarOverlayPressButtonStyle())
             .accessibilityLabel("Close")
             .accessibilityIdentifier("calendar-overlay-close")
         }
@@ -851,7 +851,7 @@ private struct CalendarActionButtonStyle: ButtonStyle {
     }
 }
 
-private struct CalendarPressButtonStyle: ButtonStyle {
+private struct CalendarOverlayPressButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
