@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-assembly
 title: Assemble and verify the complete iOS calendar experience
-status: running
+status: submitted
 dependsOn:
   - ios-calendar-database-session
   - ios-calendar-viewmodel
@@ -32,3 +32,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/calendar-experience-refresh/ios-calendar-assembly
   baseCommit: b087110223892e6dfd531f8820f9dd90bf2eb7e3
   lastRunId: 22a00da9-0e1b-4c64-84cb-23021f7b9f20
+  completedCommit: 6012e81ef7adb9cbd3f84ab1c95208f0e126ca16
