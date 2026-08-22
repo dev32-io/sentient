@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-event-.*" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- takeScreenshot: "calendar-timezone-preview"
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-start" }
+- assertVisible: { text: "Time zone:.*" }
+- assertVisible: { text: "All-day" }
+- takeScreenshot: "calendar-dst-editor"
+- tapOn: { text: "Cancel" }

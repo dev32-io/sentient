@@ -1,0 +1,12 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, filters]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { text: "Household" }
+- assertVisible: { id: "calendar-filters" }
+- tapOn: { text: "#calendar-evidence" }
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "calendar-evidence"
+- assertVisible: { id: "calendar-freshness" }
+- eraseText
+- tapOn: { text: "All" }

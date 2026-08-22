@@ -93,6 +93,20 @@ enum CalendarSurfaceText {
         return values.joined(separator: ", ")
     }
 
+    static func navigationAnnouncement(_ state: CalendarUiState) -> String {
+        "\(state.view.displayName) view, \(fullDate(state.anchorDate, locale: state.locale))"
+    }
+
+    static func filterAnnouncementKey(_ state: CalendarUiState) -> String {
+        [
+            state.filters.scope.name,
+            String(state.filters.groups.count),
+            String(state.filters.tags.count),
+            state.filters.importance?.name ?? "ANY",
+            state.filters.text.isEmpty ? "EMPTY" : "SET"
+        ].joined(separator: ":")
+    }
+
     static func stateAnnouncement(_ state: CalendarUiState) -> String? {
         if state.content == .unavailableOffline { return "Calendar unavailable offline" }
         if state.content == .error { return state.error?.userMessage ?? "Calendar unavailable" }

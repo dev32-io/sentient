@@ -20,12 +20,14 @@ struct CalendarSurfaceActions {
 struct CalendarScaffold: View {
     let state: CalendarUiState
     let actions: CalendarSurfaceActions
+    let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
             CalendarTopBar(
                 canAdd: state.mutationAvailability.canCreate,
+                openerFocus: openerFocus,
                 onBack: actions.onBack,
                 onAdd: actions.onAdd
             )
@@ -66,6 +68,7 @@ struct CalendarScaffold: View {
                                 sections: CalendarSurfaceMapping.agenda(for: state),
                                 locale: state.locale,
                                 emptyMessage: state.content == .empty ? "No events match these filters." : "No events planned.",
+                                openerFocus: openerFocus,
                                 onEvent: actions.onEvent
                             )
                             .padding(.top, Space.sm)
@@ -78,6 +81,7 @@ struct CalendarScaffold: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .accessibilityLabel("Calendar content")
+            .accessibilityIdentifier("calendar-scroll-region")
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             FloatingViewBar(selected: state.view, onSelect: actions.onSelectView)
@@ -91,6 +95,12 @@ struct CalendarScaffold: View {
             guard let announcement else { return }
             UIAccessibility.post(notification: .announcement, argument: announcement)
         }
+        .onChange(of: CalendarSurfaceText.navigationAnnouncement(state)) { _, announcement in
+            UIAccessibility.post(notification: .announcement, argument: announcement)
+        }
+        .onChange(of: CalendarSurfaceText.filterAnnouncementKey(state)) {
+            UIAccessibility.post(notification: .announcement, argument: "Calendar filters updated")
+        }
         .accessibilityIdentifier("calendar-surface")
         .duskTheme()
     }
@@ -98,6 +108,7 @@ struct CalendarScaffold: View {
 
 struct CalendarTopBar: View {
     let canAdd: Bool
+    let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding?
     let onBack: () -> Void
     let onAdd: () -> Void
 
@@ -122,6 +133,7 @@ struct CalendarTopBar: View {
                 .disabled(!canAdd)
                 .opacity(canAdd ? 1 : 0.45)
                 .accessibilityHint(canAdd ? "Creates a calendar event" : "Adding events is unavailable")
+                .calendarAccessibilityFocus(openerFocus, equals: .addControl)
                 .accessibilityIdentifier("calendar-add")
         }
         .padding(.horizontal, Space.sm)
@@ -209,9 +221,9 @@ struct CalendarStatusView: View {
                 }
             }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(CalendarSurfaceText.stateAnnouncement(state) ?? "Calendar ready")
-        .accessibilityIdentifier("calendar-state")
+        .accessibilityIdentifier(state.isOffline ? "calendar-freshness-offline" : "calendar-freshness")
     }
 
     private func retryStatus(_ message: String, icon: String) -> some View {
@@ -220,6 +232,7 @@ struct CalendarStatusView: View {
             Spacer(minLength: 0)
             Button("Retry", action: onRetry)
                 .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
+                .accessibilityIdentifier("calendar-retry")
         }
         .statusStyle()
     }
@@ -263,6 +276,20 @@ struct FloatingViewBar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Calendar view")
         .accessibilityIdentifier("calendar-floating-view-bar-46")
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func calendarAccessibilityFocus(
+        _ focus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding?,
+        equals origin: CalendarOverlayOrigin
+    ) -> some View {
+        if let focus {
+            accessibilityFocused(focus, equals: origin)
+        } else {
+            self
+        }
     }
 }
 

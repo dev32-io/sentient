@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+- runFlow: ../_helpers/open-settings.yaml
+- tapOn:
+    id: "settings-cat-calendar"
+- extendedWaitUntil:
+    visible: { id: "settings-calendar-screen" }
+    timeout: 10000
+- extendedWaitUntil:
+    visible: { id: "calendar-surface" }
+    timeout: 10000

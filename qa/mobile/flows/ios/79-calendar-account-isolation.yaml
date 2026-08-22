@@ -1,0 +1,8 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Run after login as the second disposable principal; its namespace starts uncached.
+- runFlow: _calendar/open-calendar.yaml
+- assertNotVisible: { text: "${CALENDAR_FIRST_ACCOUNT_TITLE}" }
+- takeScreenshot: "calendar-account-isolation"

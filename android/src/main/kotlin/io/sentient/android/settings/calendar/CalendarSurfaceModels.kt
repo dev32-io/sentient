@@ -2,6 +2,8 @@ package io.sentient.android.settings.calendar
 
 import io.sentient.mobiledata.calendar.CalendarFacetOptions
 import io.sentient.mobiledata.calendar.CalendarFilters
+import io.sentient.mobiledata.calendar.CalendarFreshness
+import io.sentient.mobiledata.calendar.CalendarOfflineState
 import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobiledata.calendar.CalendarYearProjection
 import java.time.LocalDate
@@ -72,3 +74,11 @@ fun calendarViewAccessibilityLabel(view: CalendarView, selected: Boolean): Strin
 
 fun calendarOverflowAccessibilityLabel(dateLabel: String, count: Int): String =
     "$count more ${if (count == 1) "event" else "events"} on $dateLabel"
+
+fun calendarFreshnessDescription(state: CalendarUiState): String = when {
+    state.offline == CalendarOfflineState.UNAVAILABLE -> "Unavailable offline"
+    state.offline == CalendarOfflineState.OFFLINE -> "Offline, showing saved calendar"
+    state.isRefreshing -> "Refreshing"
+    state.freshness == CalendarFreshness.STALE -> "May be out of date"
+    else -> "Up to date"
+}

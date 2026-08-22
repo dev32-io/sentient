@@ -1,0 +1,17 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-event-.*" }
+- tapOn: { id: "calendar-preview-edit" }
+- tapOn: { id: "calendar-editor-title" }
+- eraseText
+- inputText: "${CALENDAR_UPDATED_EVENT_TITLE}"
+- hideKeyboard
+- tapOn: { id: "calendar-scope-entire_series", optional: true }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { text: "Done" }

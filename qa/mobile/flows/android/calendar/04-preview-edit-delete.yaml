@@ -1,0 +1,23 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, crud, preview]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "${CALENDAR_EVENT_TAG}" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- tapOn: { id: "calendar-editor-description" }
+- inputText: "synthetic-edit"
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { id: "calendar-sheet-close" }
+- tapOn: { id: "${CALENDAR_EVENT_TAG}" }
+- tapOn: { text: "Edit" }
+- scrollUntilVisible:
+    element: { id: "calendar-editor-delete" }
+    direction: DOWN
+- tapOn: { id: "calendar-editor-delete" }
+- assertVisible: { id: "calendar-delete-sheet" }
+- tapOn: { id: "calendar-delete-confirm" }

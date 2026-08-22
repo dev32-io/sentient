@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -102,6 +103,7 @@ fun CalendarOverlays(
     actions: CalendarOverlayActions,
     origin: CalendarOverlayFocusOrigin?,
     originFocusRequester: FocusRequester?,
+    fallbackFocusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
     val visible = state.hasVisibleOverlay
@@ -112,7 +114,8 @@ fun CalendarOverlays(
             if (origin != null) lastOrigin = origin
             if (originFocusRequester != null) lastOriginRequester = originFocusRequester
         } else if (lastOrigin != null) {
-            lastOriginRequester?.requestFocus()
+            val restored = runCatching { lastOriginRequester?.requestFocus() == true }.getOrDefault(false)
+            if (!restored) runCatching { fallbackFocusRequester?.requestFocus() }
             lastOrigin = null
             lastOriginRequester = null
         }
@@ -407,7 +410,7 @@ private fun CalendarSheet(
         tonalElevation = 18.dp,
         dragHandle = { SheetHandle() },
         contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
-        modifier = modifier,
+        modifier = modifier.semantics { testTagsAsResourceId = true },
     ) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = maxHeight)
@@ -666,7 +669,8 @@ private fun DateButton(
                 DatePickerDialog(context, { _, year, month, day -> onDate(LocalDate.of(year, month + 1, day)) }, initial.year, initial.monthValue - 1, initial.dayOfMonth).show()
             },
             enabled = enabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .testTag("calendar-editor-${calendarTagToken(label)}"),
         ) {
             Text("$label: ${value ?: "Not set"}", maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
@@ -686,13 +690,18 @@ private fun TimeButton(label: String, value: LocalDateTime, enabled: Boolean, on
             TimePickerDialog(context, { _, hour, minute -> onTime(value.withHour(hour).withMinute(minute)) }, value.hour, value.minute, false).show()
         },
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .testTag("calendar-editor-${calendarTagToken(label)}"),
     ) { Text("$label: ${value.format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT))}") }
 }
 
 @Composable
 private fun LabeledSwitch(label: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .testTag("calendar-editor-${calendarTagToken(label)}"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked, onChange, enabled = enabled)
     }

@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, timezone, dst, visuals, reduced-motion]
+---
+# The agent sets fixture timezone/DST case, exact emulator profile, font scale,
+# and animator scales before invoking this reusable capture sequence.
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-view-day" }
+- assertVisible: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- takeScreenshot: "calendar-temporal-day"
+- tapOn: { id: "${CALENDAR_TIMEZONE_EVENT_TAG}" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- takeScreenshot: "calendar-temporal-preview"
+- back
+- tapOn: { id: "calendar-add" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- takeScreenshot: "calendar-editor-accessibility"
