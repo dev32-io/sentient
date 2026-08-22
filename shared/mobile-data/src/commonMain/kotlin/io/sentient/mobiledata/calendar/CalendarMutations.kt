@@ -238,7 +238,10 @@ data class CalendarMutationEditorState(
     val recurring: Boolean get() = applicableScopes.size > 1
     val mutationScope: CalendarMutationScope? get() = selectedScope
     val eventId: String? get() = target?.eventId ?: draft.eventId
-    val canSubmitDraft: Boolean get() = CalendarMutationDraftValidation.isValid(this, draft)
+    /** Shared command-builder validation is the single enablement explanation. */
+    val submissionValidationError: CalendarMutationError?
+        get() = CalendarMutationDraftValidation.validate(this, draft)
+    val canSubmitDraft: Boolean get() = submissionValidationError == null
 }
 
 data class CalendarDeleteConfirmationState(
@@ -427,12 +430,22 @@ object CalendarMutationCommands {
 
 /** One authoritative draft validator shared by native editor presentation and submission. */
 object CalendarMutationDraftValidation {
-    fun isValid(editor: CalendarMutationEditorState, draft: CalendarMutationDraft): Boolean = when (editor.mode) {
-        CalendarMutationEditorMode.CREATE -> buildCalendarCreateInput(draft) is CalendarCommandBuildResult.Success
-        CalendarMutationEditorMode.EDIT -> editor.selectedScope?.let { scope ->
-            buildCalendarUpdateRequest(draft, scope) is CalendarCommandBuildResult.Success
-        } == true
+    fun validate(editor: CalendarMutationEditorState, draft: CalendarMutationDraft): CalendarMutationError? {
+        val result: CalendarCommandBuildResult<*> = when (editor.mode) {
+            CalendarMutationEditorMode.CREATE -> buildCalendarCreateInput(draft)
+            CalendarMutationEditorMode.EDIT -> editor.selectedScope?.let { scope ->
+                buildCalendarUpdateRequest(draft, scope)
+            } ?: return CalendarMutationError(
+                kind = CalendarMutationErrorKind.VALIDATION,
+                code = "mutation_scope_required",
+                userMessage = "Choose which recurring events to update.",
+            )
+        }
+        return (result as? CalendarCommandBuildResult.Failure)?.error
     }
+
+    fun isValid(editor: CalendarMutationEditorState, draft: CalendarMutationDraft): Boolean =
+        validate(editor, draft) == null
 }
 
 typealias CalendarMutationRequestState = CalendarMutationRequest

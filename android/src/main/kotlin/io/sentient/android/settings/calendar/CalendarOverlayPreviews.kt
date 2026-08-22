@@ -164,6 +164,7 @@ private fun EditorPreview(
         saveEnabled = saveEnabled,
         deleteEnabled = deleteEnabled,
         connectionRequired = connectionRequired,
+        validationMessage = editor.submissionValidationError?.userMessage,
         submitting = false,
         onDraftChange = {},
         onScopeChange = {},

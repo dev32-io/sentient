@@ -34,6 +34,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -226,6 +227,51 @@ class CalendarExperienceTest {
             assertEquals("refreshed", experience.state.value.authorizedOccurrences.single().title)
             assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
         } finally {
+            experience.close()
+        }
+    }
+
+    @Test
+    fun `one recovery edge republishes current and adjacent sentinels without blanking`() = runTest {
+        val window = monthWindow()
+        val previous = CalendarCacheWindow("2026-05-01", "2026-06-01")
+        val next = CalendarCacheWindow("2026-07-01", "2026-08-01")
+        val cache = FakeCacheStore()
+        val repository = FakeRepository(pages = listOf(page(event(title = "prime-sentinel"))))
+        val experience = experience(repository, cache, window, this)
+        val visibleCounts = mutableListOf<Int>()
+        val collector = launch { experience.state.collect { visibleCounts += it.authorizedOccurrences.size } }
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals("prime-sentinel", cache.snapshotFor(previous)?.occurrences?.single()?.title)
+            assertEquals("prime-sentinel", cache.snapshotFor(next)?.occurrences?.single()?.title)
+
+            repository.offline = true
+            experience.refresh()
+            advanceUntilIdle()
+            assertEquals(CalendarFreshness.CACHED_OFFLINE, experience.state.value.freshness)
+            val callsBeforeRecovery = repository.windows.groupingBy { it }.eachCount()
+            repository.pagesOverride = listOf(page(event(title = "recovery-sentinel")))
+            repository.offline = false
+
+            experience.onConnectivityRecovered()
+            advanceUntilIdle()
+
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+            assertEquals("recovery-sentinel", experience.state.value.authorizedOccurrences.single().title)
+            assertEquals("recovery-sentinel", cache.snapshotFor(previous)?.occurrences?.single()?.title)
+            assertEquals("recovery-sentinel", cache.snapshotFor(next)?.occurrences?.single()?.title)
+            val callsAfterRecovery = repository.windows.groupingBy { it }.eachCount()
+            for (target in listOf(window, previous, next)) {
+                val key = target.windowStart to target.windowEnd
+                assertEquals((callsBeforeRecovery[key] ?: 0) + 1, callsAfterRecovery[key])
+            }
+            val firstContent = visibleCounts.indexOfFirst { it > 0 }
+            assertTrue(firstContent >= 0 && visibleCounts.drop(firstContent).all { it > 0 })
+        } finally {
+            collector.cancel()
             experience.close()
         }
     }
@@ -635,9 +681,45 @@ class CalendarExperienceTest {
             assertEquals(CalendarView.DAY, experience.state.value.view)
             assertEquals("2026-06-14", experience.state.value.anchorDate)
             assertEquals(setOf("family"), experience.state.value.filters.groups)
+            assertTrue(experience.state.value.presentationReady)
             assertTrue(repository.scopes.all { it == CalendarScope.ALL })
         } finally {
             experience.close()
+        }
+    }
+
+    @Test
+    fun `process recreation restores Month date and filters before presentation readiness`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached"))
+        val repository = FakeRepository(pages = listOf(page(event(group = "family"))))
+        val first = experience(repository, cache, window, this)
+        try {
+            first.observe(window)
+            advanceUntilIdle()
+            first.selectDate("2026-06-19")
+            first.selectView(CalendarView.MONTH)
+            first.setFilters(CalendarFilters(scope = CalendarScope.HOUSEHOLD, groups = setOf("family")))
+            advanceUntilIdle()
+        } finally {
+            first.close()
+        }
+
+        val recreated = experience(repository, cache, window, this)
+        try {
+            assertTrue(!recreated.state.value.presentationReady)
+            recreated.observe(window)
+            advanceUntilIdle()
+
+            val restored = recreated.state.value
+            assertTrue(restored.presentationReady)
+            assertEquals(CalendarView.MONTH, restored.view)
+            assertEquals("2026-06-19", restored.anchorDate)
+            assertEquals("2026-06-19", restored.selectedDate)
+            assertEquals(CalendarScope.HOUSEHOLD, restored.filters.scope)
+            assertEquals(setOf("family"), restored.filters.groups)
+        } finally {
+            recreated.close()
         }
     }
 
@@ -1181,6 +1263,7 @@ class CalendarExperienceTest {
         var cancelled: Boolean = false
         var offline: Boolean = false
         var mutationCancelled: Boolean = false
+        var pagesOverride: List<SentientResult<CalendarEventPage>>? = null
         val scopes = mutableListOf<CalendarScope?>()
         val windows = mutableListOf<Pair<String, String>>()
         var mutationCalls: Int = 0
@@ -1228,7 +1311,8 @@ class CalendarExperienceTest {
             if (offline || key in failureWindows) {
                 return SentientResult.Failure(SentientError.Connection("offline"))
             }
-            return pages.getOrElse(pageIndex) { pages.last() }
+            val activePages = pagesOverride ?: pages
+            return activePages.getOrElse(pageIndex) { activePages.last() }
         }
 
         override suspend fun create(event: CalendarEvent) = error("unused")

@@ -81,6 +81,8 @@ data class CalendarUiState(
     val offline: CalendarOfflineState,
     val loading: CalendarLoadingState,
     val hasCompleteCache: Boolean,
+    /** Native intents stay gated until shared persisted presentation has been projected. */
+    val presentationReady: Boolean = false,
     val contentState: CalendarContentState,
     val error: CalendarExperienceError?,
     val mutationAvailability: CalendarMutationAvailability,
@@ -259,6 +261,7 @@ internal fun CalendarExperienceState.toAndroidUiState(): CalendarUiState {
         offline = offline,
         loading = loading,
         hasCompleteCache = hasCompleteCache,
+        presentationReady = presentationReady,
         contentState = contentState,
         error = error,
         mutationAvailability = mutationAvailability,

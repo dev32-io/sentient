@@ -22,6 +22,7 @@ import {
   browserTimeZone,
   calendarTimeFromInput,
   formatCalendarInputValue,
+  parseCalendarInputWithOffset,
   rawCalendarTime,
   todayCalendarDate,
 } from "./calendar-time.ts";
@@ -380,13 +381,16 @@ function rawDraftTime(
 ): { ok: true; value: string } | { ok: false; code: string; message: string } {
   const original = unchangedSourceTime(value, sourceInput, sourceValue);
   if (original !== undefined) return { ok: true, value: original };
-  const parsed = calendarTimeFromInput(value, {
-    allDay,
-    inputTimeZoneId: timeZoneId,
-    ...(eventTimeZoneId !== undefined ? { eventTimeZoneId } : {}),
-  });
-  if (!parsed) return { ok: false, code: "invalid_time", message: "Check the date and time values." };
-  return { ok: true, value: rawCalendarTime(parsed) };
+  if (allDay) {
+    const parsed = calendarTimeFromInput(value, { allDay: true, inputTimeZoneId: timeZoneId });
+    if (!parsed) return { ok: false, code: "invalid_time", message: "Check the date and time values." };
+    return { ok: true, value: rawCalendarTime(parsed) };
+  }
+  // Keep the local wall-clock offset on the wire. Calendar V2 uses it to
+  // validate a recurring anchor against the configured household timezone.
+  const offsetValue = parseCalendarInputWithOffset(value, eventTimeZoneId ?? timeZoneId);
+  if (offsetValue === null) return { ok: false, code: "invalid_time", message: "Check the date and time values." };
+  return { ok: true, value: offsetValue };
 }
 
 function buildRecurrence(

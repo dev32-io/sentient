@@ -29,6 +29,13 @@ env:
       - extendedWaitUntil:
           visible: { id: "pin-key-1" }
           timeout: 3000
+# A prior interrupted flow can relaunch directly into the selected user's PIN
+# screen. Handle that production auth state instead of waiting for a composer
+# that cannot mount until PIN completion.
+- runFlow:
+    when:
+      visible: { id: "pin-key-1" }
+    commands:
       - tapOn: { id: "pin-key-1" }
       - tapOn: { id: "pin-key-2" }
       - tapOn: { id: "pin-key-3" }

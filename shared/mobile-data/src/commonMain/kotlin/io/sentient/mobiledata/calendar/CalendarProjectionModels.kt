@@ -402,6 +402,8 @@ data class CalendarExperienceState(
     val cachedWindow: CalendarCacheWindow? = null,
     /** Validated persisted controls as decoded from the shared cache store. */
     val persistedCachePreferences: CalendarCachePreferences? = null,
+    /** True only after preferences and the matching cache projection have both been applied. */
+    val presentationReady: Boolean = false,
     val mutationAvailability: CalendarMutationAvailability = CalendarMutationAvailability(),
     /** Shared preview/editor/delete/conflict state; drafts are never persisted. */
     val mutation: CalendarMutationState = CalendarMutationState(),

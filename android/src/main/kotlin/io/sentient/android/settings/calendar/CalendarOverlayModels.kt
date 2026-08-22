@@ -34,6 +34,7 @@ data class CalendarOverlayActionState(
     val deleteEnabled: Boolean,
     val editEnabled: Boolean,
     val connectionRequired: Boolean,
+    val validationMessage: String?,
 )
 
 fun CalendarUiState.overlayActionState(): CalendarOverlayActionState {
@@ -48,6 +49,7 @@ fun CalendarUiState.overlayActionState(): CalendarOverlayActionState {
         deleteEnabled = !connectionRequired && !isSubmitting && mutationAvailability.canDelete,
         editEnabled = !connectionRequired && !isSubmitting && mutationAvailability.canEdit,
         connectionRequired = connectionRequired,
+        validationMessage = editor?.submissionValidationError?.presentationMessage(),
     )
 }
 

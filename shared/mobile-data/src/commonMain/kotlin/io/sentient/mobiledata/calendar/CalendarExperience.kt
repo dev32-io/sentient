@@ -1479,8 +1479,21 @@ class CalendarExperience(
 
     /** Connectivity is deliberately a caller signal; revalidation remains shared. */
     fun onConnectivityRecovered(): Job? {
-        preparePrefetchForRecovery(clearSuccessful = true)
-        return refresh()
+        if (closed || accessDisabled) return null
+        val namespace = cacheStore.currentNamespace.value
+        val namespaceEpoch = namespaceGeneration
+        return scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            // Linearize the recovery edge with prefetch bookkeeping. Clearing in
+            // a best-effort side job could race the foreground completion and
+            // suppress the adjacent recovery publication for this sole edge.
+            bookkeepingMutex.withLock {
+                scheduledPrefetchKeys.keys
+                    .filter { it.namespace == namespace }
+                    .forEach { scheduledPrefetchKeys.remove(it) }
+            }
+            if (!isNamespaceCurrent(namespace, namespaceEpoch)) return@launch
+            refresh()?.join()
+        }
     }
     fun connectivityRecovered(): Job? = onConnectivityRecovered()
     fun recoverFromOffline(): Job? = onConnectivityRecovered()
@@ -1552,6 +1565,7 @@ class CalendarExperience(
             facets = emptyCalendarFacets(),
             loading = CalendarLoadingState(),
             persistedCachePreferences = null,
+            presentationReady = false,
             mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.UNAVAILABLE),
             mutation = CalendarMutationState(),
         )
@@ -1839,7 +1853,9 @@ class CalendarExperience(
             offline = CalendarOfflineState.ONLINE,
             error = retainedCacheError,
             mutationAvailability = CalendarMutationAvailability(
-                canCreate = hasCachedContent,
+                // An authenticated online create is valid even before the first
+                // interval has cached rows; edit/delete still require targets.
+                canCreate = true,
                 canEdit = hasCachedContent,
                 canDelete = hasCachedContent,
             ),
@@ -2257,6 +2273,7 @@ class CalendarExperience(
             hasCompleteCache = hasCache,
             cachedWindow = if (hasCache) snapshot?.window ?: current.cachedWindow else null,
             persistedCachePreferences = if (hasSeenPreferences) preferences else current.persistedCachePreferences,
+            presentationReady = current.presentationReady || (hasSeenPreferences && hasSeenSnapshot),
             loading = if (snapshot != null && current.loading.phase == CalendarLoadingPhase.LOADING) CalendarLoadingState() else current.loading,
             freshness = if (snapshotChanged && snapshot != null) snapshot.freshness else current.freshness,
             error = if (snapshotChanged && snapshot?.freshness == CalendarFreshness.FRESH) null else current.error,
@@ -2737,6 +2754,7 @@ class CalendarExperience(
             projection = null,
             facets = emptyCalendarFacets(),
             persistedCachePreferences = null,
+            presentationReady = false,
             mutationAvailability = unavailableMutationAvailability(CalendarMutationAvailabilityReason.UNAVAILABLE),
             mutation = CalendarMutationState(),
         )

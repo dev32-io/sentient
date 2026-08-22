@@ -258,6 +258,29 @@ export function parseCalendarInput(value: string, timeZoneId = browserTimeZone()
   return new Date(Math.min(...candidates)).toISOString();
 }
 
+/**
+ * Convert datetime-local fields to RFC3339 while retaining the selected zone's
+ * numeric offset. Recurring Calendar V2 writes validate that original wall-clock
+ * offset against the configured household zone, so normalizing to `Z` is lossy.
+ */
+export function parseCalendarInputWithOffset(value: string, timeZoneId = browserTimeZone()): string | null {
+  const match = INPUT_PATTERN.exec(value);
+  const instant = parseCalendarInput(value, timeZoneId);
+  if (!match || instant === null) return null;
+  const naive = utcFieldMillis(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+  );
+  const offsetMinutes = Math.round((naive - Date.parse(instant)) / 60_000);
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const absolute = Math.abs(offsetMinutes);
+  const offset = `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+  return `${value}:00${offset}`;
+}
+
 /** Keep the exact source value when adapting service and V2 temporal shapes. */
 export function rawCalendarTime(value: CalendarTimeInput | CalendarTime): string {
   if (typeof value === "string") return value;

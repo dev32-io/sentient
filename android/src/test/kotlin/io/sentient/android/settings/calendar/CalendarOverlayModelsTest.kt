@@ -81,7 +81,12 @@ class CalendarOverlayModelsTest {
         ).overlayActionState()
 
         assertTrue(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate)).saveEnabled)
-        assertFalse(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate.copy(title = "  "))).saveEnabled)
+        val invalidTitle = actionState(CalendarMutationEditorState(
+            CalendarMutationEditorMode.CREATE,
+            validCreate.copy(title = "  "),
+        ))
+        assertFalse(invalidTitle.saveEnabled)
+        assertTrue(invalidTitle.validationMessage?.isNotBlank() == true)
         assertFalse(actionState(CalendarMutationEditorState(CalendarMutationEditorMode.CREATE, validCreate.copy(start = "not-a-date"))).saveEnabled)
         assertFalse(actionState(CalendarMutationEditorState(
             CalendarMutationEditorMode.CREATE,

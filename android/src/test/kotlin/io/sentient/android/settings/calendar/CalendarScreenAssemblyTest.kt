@@ -45,6 +45,28 @@ class CalendarScreenAssemblyTest {
     }
 
     @Test
+    fun process_recreation_waits_for_restored_month_date_and_filters_before_native_locale_intent() {
+        val restored = state(CalendarView.MONTH).copy(
+            anchorDate = "2026-08-24",
+            selectedDate = "2026-08-24",
+            filters = CalendarFilters(scope = CalendarScope.HOUSEHOLD, groups = setOf("family")),
+            presentationReady = true,
+        )
+        val loading = restored.copy(
+            anchorDate = "1970-01-01",
+            selectedDate = "1970-01-01",
+            filters = CalendarFilters(),
+            presentationReady = false,
+        )
+
+        assertFalse(shouldForwardCalendarLocale(loading, "en-CA", "America/Toronto"))
+        assertTrue(shouldForwardCalendarLocale(restored, "en-CA", "America/Toronto"))
+        assertEquals(CalendarView.MONTH, restored.view)
+        assertEquals("2026-08-24", restored.selectedDate)
+        assertEquals(setOf("family"), restored.filters.groups)
+    }
+
+    @Test
     fun stable_tags_are_content_free_and_resource_id_safe() {
         val eventTag = calendarEventTag(state(CalendarView.DAY).visibleEvents.single())
         assertFalse(eventTag.contains(occurrence.title))

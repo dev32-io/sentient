@@ -40,8 +40,10 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier
     val configuration = LocalConfiguration.current
     val languageTag = configuration.locales[0]?.toLanguageTag().orEmpty().ifBlank { "en-US" }
     val timeZoneId = ZoneId.systemDefault().id
-    LaunchedEffect(languageTag, timeZoneId) {
-        if (state.locale.languageTag != languageTag || state.locale.timeZoneId != timeZoneId) {
+    LaunchedEffect(state.presentationReady, languageTag, timeZoneId) {
+        // The initial native locale must never persist a default Month/date over
+        // preferences that are still loading after process recreation.
+        if (shouldForwardCalendarLocale(state, languageTag, timeZoneId)) {
             vm.setLocale(state.locale.copy(languageTag = languageTag, timeZoneId = timeZoneId))
         }
     }
@@ -112,6 +114,13 @@ fun CalendarScreen(vm: CalendarViewModel, onBack: () -> Unit, modifier: Modifier
         fallbackFocusRequester = addFocusRequester,
     )
 }
+
+internal fun shouldForwardCalendarLocale(
+    state: CalendarUiState,
+    languageTag: String,
+    timeZoneId: String,
+): Boolean = state.presentationReady &&
+    (state.locale.languageTag != languageTag || state.locale.timeZoneId != timeZoneId)
 
 object CalendarTestTags {
     const val SCREEN = "calendar-screen"

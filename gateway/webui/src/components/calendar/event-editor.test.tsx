@@ -115,6 +115,80 @@ describe("EventEditor", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("creates a timed recurrence with offset-bearing start end anchor and write scope", async () => {
+    const create = vi.fn(async () => ({
+      ok: true as const,
+      value: createdEvent({
+        start: { kind: "timed", instant: "2026-11-02T09:00:00-05:00" },
+        end: { kind: "timed", instant: "2026-11-02T10:00:00-05:00" },
+      }),
+    }));
+    render(
+      <EventEditor
+        mode="create"
+        api={apiFixture({ create })}
+        token="token"
+        capabilities={{ canCreate: true }}
+        inputTimeZoneId="America/Toronto"
+        initialDraft={{
+          title: "Recurring household event",
+          allDay: false,
+          start: "2026-11-02T09:00",
+          end: "2026-11-02T10:00",
+          scope: "household",
+          recurrenceEnabled: true,
+          recurrenceFrequency: "weekly",
+          recurrenceInterval: "1",
+          recurrenceWeekdays: ["monday"],
+          recurrenceEnd: "count",
+          recurrenceCount: "4",
+        }}
+      />,
+    );
+
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+    expect(create).toHaveBeenCalledWith("token", expect.objectContaining({
+      start: "2026-11-02T09:00:00-05:00",
+      end: "2026-11-02T10:00:00-05:00",
+      scope: "household",
+      recurrence: {
+        frequency: "weekly",
+        interval: 1,
+        weekdays: ["monday"],
+        count: 4,
+      },
+    }));
+  });
+
+  it("protects invalid timed recurrence drafts without issuing a request", async () => {
+    const create = vi.fn();
+    render(
+      <EventEditor
+        mode="create"
+        api={apiFixture({ create })}
+        token="token"
+        capabilities={{ canCreate: true }}
+        inputTimeZoneId="America/Toronto"
+        initialDraft={{
+          title: "Invalid recurrence",
+          allDay: false,
+          start: "2026-03-08T02:30",
+          end: "2026-03-08T03:30",
+          recurrenceEnabled: true,
+          recurrenceFrequency: "weekly",
+          recurrenceWeekdays: ["sunday"],
+          recurrenceEnd: "count",
+          recurrenceCount: "2",
+        }}
+      />,
+    );
+
+    fireEvent.submit(document.querySelector("form") as HTMLFormElement);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Check the date and time values"));
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("keeps an edit calendar scope read-only and looks up mutations by original scope", async () => {
     const mutate = vi.fn(async (_token: string, _eventId: string, _command: unknown) => ({
       ok: true as const,

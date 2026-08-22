@@ -82,7 +82,7 @@ private struct CalendarExperienceScreen: View {
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if let state = vm.state {
                 CalendarOverlayContainer(
                     state: state,
@@ -103,10 +103,20 @@ private struct CalendarExperienceScreen: View {
             } else {
                 CalendarRouteLoading(onBack: onBack)
             }
+            // Keep the route-level checkpoint distinct from CalendarScaffold's
+            // `calendar-surface`; applying an identifier to the outer Group
+            // causes SwiftUI to overwrite the descendant surface identifier.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement()
+                .accessibilityIdentifier("settings-calendar-screen")
+                .allowsHitTesting(false)
         }
-        .accessibilityIdentifier("settings-calendar-screen")
         .task {
             forwardDeviceProjectionContext()
+        }
+        .onChange(of: vm.state?.presentationReady) { _, ready in
+            if ready == true { forwardDeviceProjectionContext() }
         }
         .task {
             for await _ in NotificationCenter.default.notifications(named: NSLocale.currentLocaleDidChangeNotification) {
@@ -124,6 +134,9 @@ private struct CalendarExperienceScreen: View {
     }
 
     private func forwardDeviceProjectionContext() {
+        // Do not let initial native defaults overwrite persisted view/date/filter
+        // values before the shared cache projection has restored them.
+        guard vm.state?.presentationReady == true else { return }
         vm.setLocale(CalendarDeviceProjectionContext.current())
     }
 

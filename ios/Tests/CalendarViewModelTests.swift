@@ -484,6 +484,7 @@ private func makeState(
         facets: CalendarFacetOptions(scopes: [.all, .household], groups: ["family"], tags: ["school"], importances: [.important]),
         freshness: freshness, loading: CalendarLoadingState(phase: loading), offline: offline, error: nil,
         hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
+        presentationReady: true,
         mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
         mutation: CalendarMutationState(
             phase: .previewing, preview: occurrence, editor: nil, deleteConfirmation: nil,

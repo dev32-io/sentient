@@ -24,6 +24,7 @@ import {
   formatCalendarTime,
   localeWeekStart,
   parseCalendarInput,
+  parseCalendarInputWithOffset,
 } from "./calendar-time.ts";
 
 function occurrence(overrides: Partial<CalendarOccurrenceV2> = {}): CalendarOccurrenceV2 {
@@ -49,6 +50,8 @@ describe("calendar-time", () => {
     const input = formatCalendarInputValue(instant, "America/Toronto");
     expect(input).toBe("2026-08-05T09:00");
     expect(parseCalendarInput(input, "America/Toronto")).toBe(instant);
+    expect(parseCalendarInputWithOffset(input, "America/Toronto")).toBe("2026-08-05T09:00:00-04:00");
+    expect(parseCalendarInputWithOffset("2026-11-01T09:00", "America/Toronto")).toBe("2026-11-01T09:00:00-05:00");
     expect(parseCalendarInput("2026-03-08T02:30", "America/Toronto")).toBeNull();
     expect(calendarTimeFromInput("2026-08-05", { allDay: true, inputTimeZoneId: "Pacific/Kiritimati" })).toEqual({
       kind: "all-day",

@@ -51,6 +51,7 @@ private enum PreviewCalendarFactory {
             offline: variant == .offline ? .offline : .online,
             error: error, hasCompleteCache: variant != .error,
             cachedWindow: nil, persistedCachePreferences: nil,
+            presentationReady: true,
             mutationAvailability: CalendarMutationAvailability(canCreate: true, canEdit: true, canDelete: true, reason: nil),
             mutation: CalendarMutationState(
                 phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil,

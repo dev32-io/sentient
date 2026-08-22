@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,6 +56,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -148,6 +149,7 @@ fun CalendarOverlays(
             saveEnabled = actionState.saveEnabled,
             deleteEnabled = actionState.deleteEnabled,
             connectionRequired = actionState.connectionRequired,
+            validationMessage = actionState.validationMessage,
             submitting = state.mutationPhase == CalendarMutationPhase.SUBMITTING,
             onDraftChange = actions.onDraftChange,
             onScopeChange = actions.onScopeChange,
@@ -234,6 +236,7 @@ fun CalendarEditorSheet(
     saveEnabled: Boolean,
     deleteEnabled: Boolean,
     connectionRequired: Boolean,
+    validationMessage: String?,
     submitting: Boolean,
     onDraftChange: (CalendarMutationDraft) -> Unit,
     onScopeChange: (CalendarMutationScope) -> Unit,
@@ -249,6 +252,15 @@ fun CalendarEditorSheet(
     modifier.testTag("calendar-editor-sheet"),
     dismissEnabled = !submitting,
     footer = {
+        validationMessage?.takeIf { !saveEnabled && !connectionRequired }?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.testTag("calendar-editor-validation")
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
         SheetActionRow {
             SecondaryAction("Cancel", onDismiss, Modifier.weight(1f), enabled = !submitting)
             PrimaryAction(
@@ -418,7 +430,13 @@ private fun CalendarSheet(
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * .84f
+    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val density = LocalDensity.current
+    val imeHeight = with(density) { WindowInsets.ime.getBottom(this).toDp() }
+    // ModalBottomSheet remains edge-to-edge while the IME is shown. Bound the
+    // actual sheet height to the unobscured region so the pinned footer never
+    // lands behind the keyboard even when the window itself is not resized.
+    val maxHeight = minOf(screenHeight * .84f, (screenHeight - imeHeight).coerceAtLeast(320.dp))
     val tokens = LocalTokens.current
     ModalBottomSheet(
         onDismissRequest = { if (dismissEnabled) onDismiss() },
@@ -432,23 +450,26 @@ private fun CalendarSheet(
         modifier = modifier.semantics { testTagsAsResourceId = true },
     ) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = maxHeight)
-                .imePadding().navigationBarsPadding()
+            Modifier.fillMaxWidth().height(maxHeight)
+                .navigationBarsPadding()
                 .semantics { paneTitle = paneName },
         ) {
-            Column(
-                Modifier.fillMaxWidth().weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState())
-                    .padding(start = 16.dp, end = 16.dp, bottom = if (footer == null) tokens.space.xl else tokens.space.md),
-                verticalArrangement = Arrangement.spacedBy(tokens.space.md),
-                content = content,
-            )
+            // Keep actions outside and before the scroll region. ModalBottomSheet
+            // can remain edge-to-edge on some IMEs even when insets report zero;
+            // top-pinning guarantees the action bar stays in the unobscured pane.
             if (footer != null) {
                 Column(
-                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = tokens.space.xl),
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = tokens.space.md),
                     content = footer,
                 )
             }
+            Column(
+                Modifier.fillMaxWidth().weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = tokens.space.xl),
+                verticalArrangement = Arrangement.spacedBy(tokens.space.md),
+                content = content,
+            )
         }
     }
 }
