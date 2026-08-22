@@ -5,11 +5,12 @@ tags:
 # Invoke on an uncached fixture namespace while gateway/network is observably down.
 - runFlow: _calendar/open-calendar.yaml
 - extendedWaitUntil:
-    visible: { id: "calendar-retry" }
+    visible: { id: "calendar-freshness-unavailable" }
     timeout: 15000
 - assertVisible: { text: "This date range is not available offline." }
-- tapOn: { id: "calendar-add", optional: true }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
 - assertNotVisible: { id: "calendar-outcome-sheet" }
-- assertNotVisible: { text: "Event created" }
 # Direct sanitized store inspection must show no mutation/queue row.
 - takeScreenshot: "calendar-uncached-offline"

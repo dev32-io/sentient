@@ -1,8 +1,8 @@
 appId: io.dev32.sentient.debug
-tags: [calendar, recovery, fault-armed]
+tags: [calendar, cache-first, recovery, fault-armed]
 ---
-# Restore the existing direct gateway/network control before invoking. Calendar
-# remains open from 06-offline-recovery; no launch or navigation is allowed.
+# Restore the gateway/network before invoking. Do not relaunch or navigate: the
+# same Calendar must automatically revalidate while cached content stays visible.
 - assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
 - extendedWaitUntil:
     visible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }

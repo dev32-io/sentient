@@ -82,3 +82,11 @@ fun calendarFreshnessDescription(state: CalendarUiState): String = when {
     state.freshness == CalendarFreshness.STALE -> "May be out of date"
     else -> "Up to date"
 }
+
+fun calendarFreshnessTag(state: CalendarUiState): String = when {
+    state.offline == CalendarOfflineState.UNAVAILABLE -> CalendarTestTags.FRESHNESS_UNAVAILABLE
+    state.offline == CalendarOfflineState.OFFLINE -> CalendarTestTags.FRESHNESS_OFFLINE
+    state.isRefreshing -> CalendarTestTags.FRESHNESS_REFRESHING
+    state.freshness == CalendarFreshness.STALE -> CalendarTestTags.FRESHNESS_STALE
+    else -> CalendarTestTags.FRESHNESS_UP_TO_DATE
+}

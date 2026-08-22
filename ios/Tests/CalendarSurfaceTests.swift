@@ -72,6 +72,14 @@ struct CalendarSurfaceTests {
         #expect(CalendarSurfaceText.freshnessRecoveryAnnouncement(from: .stale, to: .refreshing) == nil)
     }
 
+    @Test func freshnessIdentifiersExposeBehavioralStates() {
+        let projection = projection(view: .month, anchor: "2028-02-14")
+        let occurrence = screenOccurrence(originalStart: "2028-02-14T15:20:00Z")
+        #expect(CalendarSurfaceMapping.freshnessIdentifier(for: screenState(projection: projection, occurrences: [occurrence])) == "calendar-freshness-up-to-date")
+        #expect(CalendarSurfaceMapping.freshnessIdentifier(for: screenState(projection: projection, occurrences: [occurrence], freshness: .refreshing, loading: CalendarLoadingState(phase: .refreshing))) == "calendar-freshness-refreshing")
+        #expect(CalendarSurfaceMapping.freshnessIdentifier(for: screenState(projection: projection, occurrences: [occurrence], freshness: .cachedOffline, offline: .offline)) == "calendar-freshness-offline")
+    }
+
     @Test func accessibilityCellLabelIncludesFullSemanticStateAndOverflow() {
         let cell = CalendarDateCell(
             date: "2026-04-18", dayOfMonth: 18, events: [], indicators: [],
@@ -203,7 +211,10 @@ struct CalendarSurfaceTests {
             phase: .idle, preview: nil, editor: nil, deleteConfirmation: nil,
             pendingRequest: nil, error: nil, conflict: nil, outcome: nil,
             successorEventId: nil, affectedWindows: []
-        )
+        ),
+        freshness: CalendarCacheFreshness = .fresh,
+        loading: CalendarLoadingState = CalendarLoadingState(phase: .idle),
+        offline: CalendarOfflineState = .online
     ) -> CalendarUiState {
         CalendarUiState(CalendarExperienceState(
             anchorDate: projection.anchorDate, view: projection.view,
@@ -211,7 +222,7 @@ struct CalendarSurfaceTests {
             locale: projection.locale, todayDate: projection.todayDate,
             visibleInterval: projection.interval, selectedInterval: nil,
             authorizedOccurrences: occurrences, projection: projection, facets: projection.facets,
-            freshness: .fresh, loading: CalendarLoadingState(phase: .idle), offline: .online,
+            freshness: freshness, loading: loading, offline: offline,
             error: nil, hasCompleteCache: true, cachedWindow: nil, persistedCachePreferences: nil,
             mutationAvailability: CalendarMutationAvailability(
                 canCreate: true, canEdit: true, canDelete: true, reason: nil

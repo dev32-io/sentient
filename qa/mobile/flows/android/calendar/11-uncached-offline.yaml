@@ -5,10 +5,11 @@ tags: [calendar, uncached-offline]
 # observably offline. Inspect the sanitized shared store afterward: no mutation
 # or queue row may exist.
 - extendedWaitUntil:
-    visible: { id: "calendar-unavailable-offline" }
+    visible: { id: "calendar-freshness-unavailable" }
     timeout: 15000
 - assertVisible: { id: "calendar-retry" }
-- tapOn: { id: "calendar-add", optional: true }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
 - assertNotVisible: { id: "calendar-outcome-sheet" }
-- assertNotVisible: { text: "Event created" }
 - takeScreenshot: "calendar-uncached-offline"

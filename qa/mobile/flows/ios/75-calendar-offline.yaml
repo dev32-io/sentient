@@ -9,7 +9,8 @@ tags: [helper]
     timeout: 15000
 - tapOn: { id: "calendar-view-day" }
 - tapOn: { text: "Next period" }
-- assertVisible: { id: "calendar-event-.*" }
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
 - tapOn: { id: "calendar-view-week" }
 - tapOn: { text: "Previous period" }
 - tapOn: { id: "calendar-view-month" }
@@ -18,6 +19,8 @@ tags: [helper]
 - inputText: "${CALENDAR_FILTER_TEXT}"
 - hideKeyboard
 - assertVisible: { id: "calendar-freshness-offline" }
-- tapOn: { id: "calendar-add", optional: true }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
 - assertNotVisible: { id: "calendar-outcome-sheet" }
 - takeScreenshot: "calendar-cached-offline"

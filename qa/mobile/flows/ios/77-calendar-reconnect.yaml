@@ -1,12 +1,17 @@
 appId: io.dev32.sentient.debug
-tags:
-  - helper
+tags: [helper, fault-armed]
 ---
-# Start cached/offline; the agent restores the gateway before the Retry action.
-- runFlow: _calendar/open-calendar.yaml
-- assertVisible: { id: "calendar-freshness-offline" }
-- tapOn: { id: "calendar-retry", optional: true }
+# Restore the direct gateway/network control before invoking. Calendar remains
+# open from 75; this flow must not launch, login, navigate, or tap Retry.
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
 - extendedWaitUntil:
-    notVisible: { id: "calendar-freshness-offline" }
-    timeout: 15000
-- assertVisible: { id: "calendar-surface" }
+    visible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-up-to-date" }
+    timeout: 20000
+- assertNotVisible: { id: "calendar-freshness-offline" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: true

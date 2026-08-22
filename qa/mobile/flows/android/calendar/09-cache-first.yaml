@@ -1,13 +1,16 @@
 appId: io.dev32.sentient.debug
-tags: [calendar, cache-first]
+tags: [calendar, cache-first, fault-armed]
 ---
-# Invoke after an online priming visit, relaunch, and arm delayed calendar REST
-# through the existing direct gateway fault control for this fixture namespace.
+# Gateway/network is DOWN. This relaunch proves SQLDelight content is emitted
+# without a blank loading replacement. Keep Calendar open after this flow.
 - runFlow: "00-open.yaml"
-- assertVisible: { id: "calendar-screen" }
-- assertVisible: { id: "${CALENDAR_EVENT_TAG}" }
-- assertNotVisible: { id: "calendar-loading" }
-- takeScreenshot: "calendar-cache-first"
 - extendedWaitUntil:
-    visible: { id: "calendar-freshness" }
-    timeout: 15000
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- takeScreenshot: "calendar-cache-first-offline"

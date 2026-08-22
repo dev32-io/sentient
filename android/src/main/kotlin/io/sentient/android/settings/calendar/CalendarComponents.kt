@@ -138,7 +138,7 @@ fun CalendarScaffold(
                 )
                 LazyColumn(
                     modifier = Modifier.fillMaxSize()
-                        .testTag(CalendarTestTags.FRESHNESS)
+                        .testTag(calendarFreshnessTag(state))
                         .semantics {
                             liveRegion = LiveRegionMode.Polite
                             stateDescription = calendarFreshnessDescription(state)

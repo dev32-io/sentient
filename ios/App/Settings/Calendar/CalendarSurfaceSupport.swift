@@ -137,6 +137,14 @@ enum CalendarSurfaceMapping {
     static func agenda(for state: CalendarUiState) -> [CalendarAgendaSlice] {
         state.agenda.map { .init(date: $0.date, events: $0.events, accessibilityLabel: $0.accessibilityLabel) }
     }
+
+    static func freshnessIdentifier(for state: CalendarUiState) -> String {
+        if state.content == .unavailableOffline { return "calendar-freshness-unavailable" }
+        if state.isOffline { return "calendar-freshness-offline" }
+        if state.isRefreshing { return "calendar-freshness-refreshing" }
+        if state.freshness == .stale { return "calendar-freshness-stale" }
+        return "calendar-freshness-up-to-date"
+    }
 }
 
 struct CalendarPressButtonStyle: ButtonStyle {

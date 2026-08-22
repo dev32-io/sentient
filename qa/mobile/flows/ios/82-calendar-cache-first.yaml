@@ -1,13 +1,16 @@
 appId: io.dev32.sentient.debug
-tags:
-  - helper
+tags: [helper, fault-armed]
 ---
-# Agent delays local revalidation after first priming this disposable namespace.
+# Gateway/network is DOWN. Relaunch and revisit Calendar to prove cached content
+# appears with offline state and without a blank loading replacement.
 - runFlow: _calendar/open-calendar.yaml
-- assertVisible: { id: "calendar-surface" }
-- assertVisible: { id: "calendar-event-.*" }
-- assertVisible: { id: "calendar-freshness", optional: true }
-- takeScreenshot: "calendar-cache-first"
 - extendedWaitUntil:
-    notVisible: { text: "Refreshing calendar…" }
-    timeout: 15000
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
+- takeScreenshot: "calendar-cache-first-offline"

@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, cache-first, fault-armed]
+---
+# Online phase. Seed CALENDAR_CACHED_EVENT_TAG in this run's unique namespace
+# before invoking. After this flow, seed CALENDAR_RECOVERY_EVENT_TAG online,
+# stop the local gateway with the existing direct gateway control, then run 09.
+- runFlow: "00-open.yaml"
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-up-to-date" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- stopApp

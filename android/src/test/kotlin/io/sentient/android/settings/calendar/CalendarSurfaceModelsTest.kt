@@ -65,21 +65,23 @@ class CalendarSurfaceModelsTest {
 
     @Test
     fun `freshness semantics distinguish online cached and unavailable states`() {
-        fun description(freshness: CalendarCacheFreshness, offline: CalendarOfflineState) =
-            calendarFreshnessDescription(
-                CalendarExperienceState(
-                    anchorDate = "2026-04-18",
-                    selectedDate = "2026-04-18",
-                    todayDate = "2026-04-18",
-                    freshness = freshness,
-                    offline = offline,
-                ).toAndroidUiState(),
-            )
+        fun state(freshness: CalendarCacheFreshness, offline: CalendarOfflineState) =
+            CalendarExperienceState(
+                anchorDate = "2026-04-18",
+                selectedDate = "2026-04-18",
+                todayDate = "2026-04-18",
+                freshness = freshness,
+                offline = offline,
+            ).toAndroidUiState()
 
-        assertEquals("Up to date", description(CalendarCacheFreshness.FRESH, CalendarOfflineState.ONLINE))
-        assertEquals("May be out of date", description(CalendarCacheFreshness.STALE, CalendarOfflineState.ONLINE))
-        assertEquals("Offline, showing saved calendar", description(CalendarCacheFreshness.CACHED_OFFLINE, CalendarOfflineState.OFFLINE))
-        assertEquals("Unavailable offline", description(CalendarCacheFreshness.UNAVAILABLE_OFFLINE, CalendarOfflineState.UNAVAILABLE))
+        assertEquals("Up to date", calendarFreshnessDescription(state(CalendarCacheFreshness.FRESH, CalendarOfflineState.ONLINE)))
+        assertEquals("May be out of date", calendarFreshnessDescription(state(CalendarCacheFreshness.STALE, CalendarOfflineState.ONLINE)))
+        assertEquals("Offline, showing saved calendar", calendarFreshnessDescription(state(CalendarCacheFreshness.CACHED_OFFLINE, CalendarOfflineState.OFFLINE)))
+        assertEquals("Unavailable offline", calendarFreshnessDescription(state(CalendarCacheFreshness.UNAVAILABLE_OFFLINE, CalendarOfflineState.UNAVAILABLE)))
+        assertEquals(CalendarTestTags.FRESHNESS_UP_TO_DATE, calendarFreshnessTag(state(CalendarCacheFreshness.FRESH, CalendarOfflineState.ONLINE)))
+        assertEquals(CalendarTestTags.FRESHNESS_STALE, calendarFreshnessTag(state(CalendarCacheFreshness.STALE, CalendarOfflineState.ONLINE)))
+        assertEquals(CalendarTestTags.FRESHNESS_OFFLINE, calendarFreshnessTag(state(CalendarCacheFreshness.CACHED_OFFLINE, CalendarOfflineState.OFFLINE)))
+        assertEquals(CalendarTestTags.FRESHNESS_UNAVAILABLE, calendarFreshnessTag(state(CalendarCacheFreshness.UNAVAILABLE_OFFLINE, CalendarOfflineState.UNAVAILABLE)))
     }
 
     @Test

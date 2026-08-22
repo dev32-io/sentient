@@ -20,14 +20,16 @@ The final agent runs this inventory only after the Android inventory and its fix
 | 005 | `72b-calendar-update.yaml`, `73-calendar-preview-edit-delete.yaml`, `74e-calendar-recurrence-occurrence.yaml`, `74c-calendar-recurrence-following.yaml`, `74d-calendar-recurrence-entire-delete.yaml` | Use independent series and reread occurrence/prefix/successor/deletion identities. |
 | 006 | `74a-calendar-conflict-open.yaml`, then `74b-calendar-conflict-resolve.yaml` | **Outside the tag runner**, advance the fixture revision with the existing direct gateway control between the two files. |
 | 007 | `78-calendar-child-restriction.yaml` | Login as the disposable child and directly arm the existing typed-forbidden case. |
-| 008 | `82-calendar-cache-first.yaml` | Prime cache/preferences, relaunch, and directly delay REST. |
-| 009–010 | `75-calendar-offline.yaml`, `76-calendar-offline-unavailable.yaml` | Prime adjacent cache, stop gateway or simulator network, and inspect no mutation/queue row. |
-| 011 | `77-calendar-reconnect.yaml` | Restore connectivity while Calendar remains open; observe the up-to-date transition. |
+| 008 | `82a-calendar-cache-prime.yaml` → `82-calendar-cache-first.yaml` → `82b-calendar-cache-recover.yaml` | Prime online, seed a recovery row, stop gateway, relaunch into cached/offline state, restart gateway, and observe the recovery row plus up-to-date state without blanking the cached row. |
+| 009–010 | `75-calendar-offline.yaml`, `76-calendar-offline-unavailable.yaml` | Prime adjacent cache, stop gateway, assert cached navigation/filtering and disabled writes, and inspect no mutation/queue row. |
+| 011 | `75-calendar-offline.yaml` → `77-calendar-reconnect.yaml` | Restart gateway while Calendar remains open; cached and recovery IDs prove uninterrupted automatic revalidation. |
 | 012 | `79-calendar-account-isolation.yaml` | Logout A, login independently disposable B offline, inspect B namespace. |
 | 013 | `80-calendar-timezone-dst.yaml` | Change device locale/zone; reread fixed all-day date and unchanged event zone/`originalStart`. |
 | 014 | `70`, `71`, `73`, `74`, `75`, `76`, `80`, `81` | Repeat exact profiles, Dynamic Type and Reduce Motion; inspect safe areas/semantics. |
 
-For conflict, arm stale revision only between explicit `74a` and `74b` invocations. For `75`–`77` and `82`, use the existing gateway stop/restart, simulator network, and direct fixture delay controls, polling observable readiness rather than sleeping. `78` and `79` require logout/relaunch and disposable child/second-adult login. Restore gateway, network, account, locale/time zone, content-size category, and Reduce Motion in a guaranteed outer cleanup block; then allow `withLocalCalendarFixture`'s `finally` cleanup to complete. Required `CALENDAR_*` values are unique synthetic inputs and fixture-derived content-free IDs, never shared with Android.
+For conflict, arm stale revision only between explicit `74a` and `74b` invocations. For CAL-UX-008/011, run `82a`; seed `CALENDAR_RECOVERY_EVENT_TAG` online in the same unique fixture; invoke the existing native gateway lifecycle stop operation (TERM the local listener and poll health unready); run `82`; invoke the matching start operation and poll `/health` to 200; then run `82b` without relaunch. The open-screen variant uses `75`/`77` around the same stop/start control. These are the same direct gateway lifecycle operations already used by `qa/mobile/run-e2e.sh`; do not edit or invoke its ordinary tag runner.
+
+Install an outer cleanup trap that starts the gateway if needed before returning from the fixture callback. Then restore account, locale/time zone, content-size category, and Reduce Motion and allow `withLocalCalendarFixture`'s `finally` cleanup to delete only its generated namespace. `78` and `79` require logout/relaunch and disposable child/second-adult login. Run `qa/mobile/validate-calendar-flows.rb` before evidence. Required `CALENDAR_*` values, including `CALENDAR_CACHED_EVENT_TAG` and `CALENDAR_RECOVERY_EVENT_TAG`, are unique synthetic inputs and fixture-derived content-free IDs never shared with Android.
 
 ## Visual and semantic matrix
 

@@ -222,12 +222,16 @@ struct CalendarStatusView: View {
                     Label("Showing saved calendar data", systemImage: "wifi.slash").statusStyle()
                 } else if state.isRefreshing {
                     Label("Refreshing calendar…", systemImage: "arrow.clockwise").statusStyle()
+                } else if state.freshness == .stale {
+                    Label("Calendar may be out of date", systemImage: "clock").statusStyle()
+                } else {
+                    Label("Calendar is up to date", systemImage: "checkmark").statusStyle()
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(CalendarSurfaceText.stateAnnouncement(state) ?? "Calendar ready")
-        .accessibilityIdentifier(state.isOffline ? "calendar-freshness-offline" : "calendar-freshness")
+        .accessibilityIdentifier(CalendarSurfaceMapping.freshnessIdentifier(for: state))
     }
 
     private func retryStatus(_ message: String, icon: String) -> some View {

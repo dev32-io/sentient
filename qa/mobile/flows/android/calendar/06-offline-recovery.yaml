@@ -1,15 +1,16 @@
 appId: io.dev32.sentient.debug
-tags: [calendar, offline]
+tags: [calendar, offline, fault-armed]
 ---
-# Invoke after the direct agent disables networking with existing Android
-# controls. No sleeps: readiness is an observable calendar state ID.
+# Invoke on the already-open Calendar after the direct agent seeds the recovery
+# fixture and disables the existing gateway/network control.
 - assertVisible: { id: "calendar-screen" }
 - extendedWaitUntil:
-    visible:
-      id: "calendar-offline|calendar-unavailable-offline"
-    timeout: 15000
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 20000
+- assertVisible: { id: "${CALENDAR_CACHED_EVENT_TAG}" }
+- assertNotVisible: { id: "${CALENDAR_RECOVERY_EVENT_TAG}" }
+- assertVisible:
+    id: "calendar-add"
+    enabled: false
+- assertNotVisible: { id: "calendar-outcome-sheet" }
 - takeScreenshot: "calendar-offline"
-- runFlow:
-    when: { visible: { id: "calendar-retry" } }
-    commands:
-      - tapOn: { id: "calendar-retry" }
