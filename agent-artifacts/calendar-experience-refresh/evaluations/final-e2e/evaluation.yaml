@@ -10,9 +10,11 @@ attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: awaiting_manager
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
+  reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
+  reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
 findings:
   - id: E2E-MAJOR-001
     severity: high
