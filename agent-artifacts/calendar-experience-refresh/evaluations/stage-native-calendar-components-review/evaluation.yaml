@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: native-calendar-components
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -29,8 +29,8 @@ criteria:
     semantic accessibility inspection is required but an actual
     assistive-technology session is not a stage gate
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: e184954f-9a37-4d26-ba46-976d4f074b12
   reviewedCommit: 2a49b8333aec3abd67d5599864a9b31427a8b835
@@ -51,6 +51,7 @@ loop:
     controlled-component and state-race tests for each correction, preserve 44px
     targets and exact reference geometry, run all stage checks, and return for
     automatic re-review."
+  fixerAgentId: d5ce6ecf-7f23-4236-ad22-12e0ec621a8c
 findings:
   - id: F-001
     severity: high
