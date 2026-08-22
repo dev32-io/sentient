@@ -200,6 +200,37 @@ class CalendarExperienceTest {
     }
 
     @Test
+    fun `cached content survives offline and duplicate recovery signals coalesce to one refresh`() = runTest {
+        val window = monthWindow()
+        val cache = FakeCacheStore(snapshot = snapshot(window, title = "cached"))
+        val repository = FakeRepository(pages = listOf(page(event(title = "refreshed")))).apply {
+            offline = true
+        }
+        val experience = experience(repository, cache, window, this)
+        try {
+            experience.observe(window)
+            advanceUntilIdle()
+            assertEquals("cached", experience.state.value.authorizedOccurrences.single().title)
+            assertEquals(CalendarFreshness.CACHED_OFFLINE, experience.state.value.freshness)
+            val callsBeforeRecovery = repository.windows.count { it == (window.windowStart to window.windowEnd) }
+
+            repository.offline = false
+            experience.onConnectivityRecovered()
+            experience.onConnectivityRecovered()
+            advanceUntilIdle()
+
+            assertEquals(
+                callsBeforeRecovery + 1,
+                repository.windows.count { it == (window.windowStart to window.windowEnd) },
+            )
+            assertEquals("refreshed", experience.state.value.authorizedOccurrences.single().title)
+            assertEquals(CalendarFreshness.FRESH, experience.state.value.freshness)
+        } finally {
+            experience.close()
+        }
+    }
+
+    @Test
     fun `auth expiry purges private cache and closes the experience`() = runTest {
         val window = monthWindow()
         val cache = FakeCacheStore(snapshot = snapshot(window, title = "private"))

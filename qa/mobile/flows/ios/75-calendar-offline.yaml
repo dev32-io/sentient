@@ -1,8 +1,8 @@
 appId: io.dev32.sentient.debug
 tags: [helper]
 ---
-# Invoke with current and adjacent months primed and the existing gateway or
-# simulator network control observably offline.
+# Invoke with current and adjacent months primed and the native network path
+# observably unavailable.
 - runFlow: _calendar/open-calendar.yaml
 - extendedWaitUntil:
     visible: { id: "calendar-freshness-offline" }

@@ -76,6 +76,22 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** Prevents a queued platform callback from reaching a disposed/replaced session. */
+internal class SessionConnectivityRecoveryFence(
+    private val signal: () -> Unit,
+) {
+    private val lock = Any()
+    private var active = true
+
+    fun signalIfActive() = synchronized(lock) {
+        if (active) signal()
+    }
+
+    fun close() = synchronized(lock) {
+        active = false
+    }
+}
+
 /**
  * One per logged-in user (Koin single). Lazily builds the SDK + ChatComponent on
  * first [component] call and background-connects; [shutdown] tears it down on logout.
@@ -101,6 +117,7 @@ class UserSessionManager(
     private var chatComponent: ChatComponent? = null
     private var settingsComponent: SettingsComponent? = null
     private var networkObserver: NetworkChangeObserver? = null
+    private var calendarRecoveryFence: SessionConnectivityRecoveryFence? = null
     private var updateDeps: UpdateDeps? = null
     private var authenticatedUserId: String? = null
     private var activeBackendIdentity: String? = null
@@ -251,14 +268,25 @@ class UserSessionManager(
             }
         }
 
-        // Reconnect on a network-path change (VPN→WiFi, etc.): verify the socket so a
-        // queued send is never stranded on a dead-but-"READY" connection.
-        networkObserver = NetworkChangeObserver(appContext) {
-            chatComponent?.let {
-                log.info("network-changed → ensureConnected")
-                it.ensureConnected()
+        // Reconnect on any real path transition. Only unavailable→available also
+        // signals the shared calendar recovery intent; shared KMP retains all
+        // revalidation/coalescing policy. The generation gate fences old sessions.
+        val recoveryFence = SessionConnectivityRecoveryFence {
+            calendarLifecycleGate.ifCurrent(newCalendarGeneration) {
+                calendarBoundary?.experience?.onConnectivityRecovered()
             }
-        }.also { it.start() }
+        }
+        calendarRecoveryFence = recoveryFence
+        networkObserver = NetworkChangeObserver(
+            appContext = appContext,
+            onChange = {
+                chatComponent?.let {
+                    log.info("network-changed → ensureConnected")
+                    it.ensureConnected()
+                }
+            },
+            onConnectivityRecovered = recoveryFence::signalIfActive,
+        ).also { it.start() }
 
         return component
     }
@@ -579,6 +607,8 @@ class UserSessionManager(
     fun shutdown() {
         log.info("shutdown")
         presence?.unbind()
+        calendarRecoveryFence?.close()
+        calendarRecoveryFence = null
         networkObserver?.stop()
         networkObserver = null
 

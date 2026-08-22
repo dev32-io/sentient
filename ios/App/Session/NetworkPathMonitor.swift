@@ -11,17 +11,41 @@
 import Foundation
 import Network
 
-final class NetworkPathMonitor: @unchecked Sendable {
+protocol NetworkPathMonitoring: AnyObject {
+    func start()
+    func cancel()
+}
+
+struct NetworkPathMonitorFactory {
+    let make: (@escaping @Sendable (_ recovered: Bool) -> Void) -> any NetworkPathMonitoring
+
+    static let live = NetworkPathMonitorFactory { NetworkPathMonitor(onChange: $0) }
+}
+
+struct ConnectivityRecoveryEdge {
+    private var available: Bool?
+
+    mutating func update(available: Bool) -> (changed: Bool, recovered: Bool) {
+        defer { self.available = available }
+        guard let previous = self.available, previous != available else {
+            return (changed: false, recovered: false)
+        }
+        return (changed: true, recovered: !previous && available)
+    }
+}
+
+final class NetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "io.sentient.app.net-path-monitor")
-    private let onChange: @Sendable () -> Void
+    private let onChange: @Sendable (_ recovered: Bool) -> Void
     private let log = AppLog("net-path-monitor")
-    /// Single-writer (the monitor queue) flag: skip the initial path snapshot.
+    /// Single-writer on the monitor queue; the initial snapshot is ignored.
+    private var recoveryEdge = ConnectivityRecoveryEdge()
     private var sawFirstPath = false
     /// Main-actor-confined (set only from start/cancel, called by UserSession on MainActor).
     private var started = false
 
-    init(onChange: @escaping @Sendable () -> Void) {
+    init(onChange: @escaping @Sendable (_ recovered: Bool) -> Void) {
         self.onChange = onChange
     }
 
@@ -31,14 +55,16 @@ final class NetworkPathMonitor: @unchecked Sendable {
         log.info("start")
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
-            let status = path.status == .satisfied ? "satisfied" : "unsatisfied"
-            if !self.sawFirstPath {
+            let available = path.status == .satisfied
+            let status = available ? "satisfied" : "unsatisfied"
+            let transition = self.recoveryEdge.update(available: available)
+            guard self.sawFirstPath else {
                 self.sawFirstPath = true
-                self.log.info("initial-path status=\(status) (skip)")
+                self.log.info("path-snapshot status=\(status) (skip)")
                 return
             }
-            self.log.info("path-changed → ensureConnected status=\(status)")
-            self.onChange()
+            self.log.info("path-changed status=\(status)")
+            self.onChange(transition.recovered)
         }
         monitor.start(queue: queue)
     }

@@ -1,7 +1,7 @@
 appId: io.dev32.sentient.debug
 tags: [helper, fault-armed]
 ---
-# Gateway/network is DOWN. Relaunch and revisit Calendar to prove cached content
+# The native network path is unavailable. Relaunch and revisit Calendar to prove cached content
 # appears with offline state and without a blank loading replacement.
 - runFlow: _calendar/open-calendar.yaml
 - extendedWaitUntil:

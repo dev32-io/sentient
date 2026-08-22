@@ -130,6 +130,49 @@ struct CalendarSessionLifecycleTests {
         #expect(first?.isClosed == true)
     }
 
+    @Test func connectivityEdgeOnlyMarksUnavailableToAvailableAsRecovery() {
+        var edge = ConnectivityRecoveryEdge()
+
+        #expect(edge.update(available: true).changed == false)
+        #expect(edge.update(available: true).changed == false)
+        let unavailable = edge.update(available: false)
+        #expect(unavailable.changed && !unavailable.recovered)
+        #expect(edge.update(available: false).changed == false)
+        let recovered = edge.update(available: true)
+        #expect(recovered.changed && recovered.recovered)
+        #expect(edge.update(available: true).changed == false)
+    }
+
+    @Test @MainActor func sessionForwardsOneRecoveryAndFencesCallbacksAfterShutdown() async {
+        let monitor = FakeNetworkPathMonitor()
+        var recoveries = 0
+        let session = UserSession(
+            gatewayWsUrl: "ws://localhost/api/v1/ws",
+            allowSelfSignedDevHost: true,
+            authenticatedUserId: "recovery-user",
+            onLoggedOut: {},
+            networkMonitorFactory: NetworkPathMonitorFactory { handler in
+                monitor.handler = handler
+                return monitor
+            },
+            calendarRecoverySignal: { _ in recoveries += 1 }
+        )
+        await session.awaitCalendarLifecycle()
+        #expect(monitor.starts == 1)
+
+        monitor.emit(recovered: false)
+        monitor.emit(recovered: true)
+        await Task.yield()
+        #expect(recoveries == 1)
+
+        session.shutdown()
+        await session.awaitCalendarLifecycle()
+        #expect(monitor.cancels == 1)
+        monitor.emit(recovered: true)
+        await Task.yield()
+        #expect(recoveries == 1)
+    }
+
     @Test @MainActor func swiftUserSessionRetainsCalendarAboveRouteLifetime() async {
         let session = UserSession(
             gatewayWsUrl: "ws://localhost/api/v1/ws",
@@ -177,4 +220,14 @@ struct CalendarSessionLifecycleTests {
         second.close()
         try? await second.awaitCalendarLifecycle()
     }
+}
+
+private final class FakeNetworkPathMonitor: NetworkPathMonitoring, @unchecked Sendable {
+    var handler: (@Sendable (Bool) -> Void)?
+    private(set) var starts = 0
+    private(set) var cancels = 0
+
+    func start() { starts += 1 }
+    func cancel() { cancels += 1 }
+    func emit(recovered: Bool) { handler?(recovered) }
 }

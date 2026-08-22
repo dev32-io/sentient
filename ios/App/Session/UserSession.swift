@@ -22,13 +22,31 @@ import Foundation
 import MobileData
 
 @MainActor
+final class SessionConnectivityRecoveryFence {
+    private var active = true
+
+    func forwardPathChange(
+        recovered: Bool,
+        onChange: () -> Void,
+        onRecovery: () -> Void
+    ) {
+        guard active else { return }
+        onChange()
+        if recovered { onRecovery() }
+    }
+
+    func close() { active = false }
+}
+
+@MainActor
 final class UserSession: ObservableObject {
     /// The KMP User-scope holder: SDK + ChatComponent + session scope.
     private let inner: IosUserSession
     private let log = AppLog("user-session")
     /// Persistent network-path observer: a path change (VPN→WiFi, etc.) re-checks the
     /// socket so a queued send is never stranded on a dead-but-"READY" connection.
-    private var networkMonitor: NetworkPathMonitor?
+    private var networkMonitor: (any NetworkPathMonitoring)?
+    private let calendarRecoveryFence = SessionConnectivityRecoveryFence()
 
     /// The shared usecase layer for this login. Chat + history VMs resolve their
     /// usecases / passthroughs from here — never the SDK directly.
@@ -78,7 +96,11 @@ final class UserSession: ObservableObject {
         gatewayWsUrl: String,
         allowSelfSignedDevHost: Bool,
         authenticatedUserId: String,
-        onLoggedOut: @escaping @MainActor () -> Void = {}
+        onLoggedOut: @escaping @MainActor () -> Void = {},
+        networkMonitorFactory: NetworkPathMonitorFactory = .live,
+        calendarRecoverySignal: @escaping (CalendarExperience) -> Void = {
+            _ = $0.onConnectivityRecovered()
+        }
     ) {
         // AccountUseCases can invoke this callback without the explicit root
         // logout button. Close the same session before clearing auth state so a
@@ -109,14 +131,24 @@ final class UserSession: ObservableObject {
         log.info("init — open")
         // Background connect: the chat UI is usable immediately; reconnect is the SDK's.
         inner.open()
-        // Start the network-path observer: on a path change, verify the socket.
-        let monitor = NetworkPathMonitor(onChange: { [weak self] in
+        // Verify chat on each real path transition. Only unavailable→available
+        // forwards the shared calendar recovery intent; shared KMP owns policy.
+        let monitor = networkMonitorFactory.make { [weak self] recovered in
             Task { @MainActor in
                 guard let self else { return }
-                self.log.info("network-changed → ensureConnected")
-                self.component.ensureConnected()
+                self.calendarRecoveryFence.forwardPathChange(
+                    recovered: recovered,
+                    onChange: {
+                        self.log.info("network-changed → ensureConnected")
+                        self.component.ensureConnected()
+                    },
+                    onRecovery: {
+                        guard let experience = self.calendarExperience else { return }
+                        calendarRecoverySignal(experience)
+                    }
+                )
             }
-        })
+        }
         monitor.start()
         self.networkMonitor = monitor
         self.calendarLifecycleTask = Task { [weak self] in
@@ -176,6 +208,7 @@ final class UserSession: ObservableObject {
         log.info("shutdown")
         calendarLifecycleTask?.cancel()
         calendarLifecycleTask = nil
+        calendarRecoveryFence.close()
         networkMonitor?.cancel()
         networkMonitor = nil
         close()

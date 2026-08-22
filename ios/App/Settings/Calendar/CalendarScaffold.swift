@@ -224,8 +224,6 @@ struct CalendarStatusView: View {
                     Label("Refreshing calendar…", systemImage: "arrow.clockwise").statusStyle()
                 } else if state.freshness == .stale {
                     Label("Calendar may be out of date", systemImage: "clock").statusStyle()
-                } else {
-                    Label("Calendar is up to date", systemImage: "checkmark").statusStyle()
                 }
             }
         }
