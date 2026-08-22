@@ -1,0 +1,9 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, conflict]
+---
+# Leaves the fixture editor open. The direct agent then advances the event
+# revision through the local adapter before invoking 05b-conflict-resolve.yaml.
+- runFlow: "00-open.yaml"
+- tapOn: { id: "${CALENDAR_CONFLICT_EVENT_TAG}" }
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-sheet" }

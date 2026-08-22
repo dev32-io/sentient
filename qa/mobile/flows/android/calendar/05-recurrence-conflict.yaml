@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, recurrence]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "${CALENDAR_RECURRING_EVENT_TAG}" }
+- tapOn: { text: "Edit" }
+- scrollUntilVisible:
+    element: { id: "calendar-scope-this_occurrence" }
+    direction: DOWN
+- tapOn: { id: "calendar-scope-this_occurrence" }
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
