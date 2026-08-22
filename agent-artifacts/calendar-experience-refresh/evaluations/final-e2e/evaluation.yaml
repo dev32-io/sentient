@@ -10,11 +10,37 @@ attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: awaiting_manager
+  state: fixing
   iteration: 0
   maxIterations: 6
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
+  managerPrompt: "Resolve all six blocking final-E2E findings; do not weaken
+    selectors, assertions, or the approved matrix. (1) Android route
+    recreation/relaunch must restore the persisted shared view/date/filter state
+    without a native default overwriting cache-first state; add production-path
+    regression coverage and make the direct flow wait on stable shared
+    readiness. (2) For an authorized adult with a valid draft, Android must
+    expose functional `calendar-editor-save`, preview Edit, recurrence, delete,
+    and temporal controls with stable semantics/identifiers; capability gating
+    and shared validation must drive visibility/enabled state. (3) Diagnose the
+    actual web Calendar V2 responses for all-day household and recurring
+    creates, then correct payload/wire mapping so both succeed while preserving
+    raw dates/offsets, scope, recurrence, and drafts on genuine failure. (4)
+    Make adjacent-window prefetch/cache and unavailable→available recovery
+    observable in production: adjacent cached events survive offline navigation,
+    one recovery edge revalidates automatically without blanking, and updated
+    fixture content appears; fix implementation or deterministic fixture timing
+    rather than relaxing flows. (5) Diagnose the freshly built iOS
+    session/navigation path and ensure the production Calendar screen reaches
+    the `calendar-surface` for a valid authenticated session, with typed
+    unavailable UI only for real protected-database failures; rerun on the
+    explicitly selected iOS simulator. (6) Restore web focus after
+    Add/Edit/cancel/delete/preview close to the stable originating control or
+    deterministic mounted fallback, never BODY/unnamed. Preserve sequential
+    Android→iOS execution, unique disposable fixtures and cleanup. Run focused
+    checks, then rerun all 14 E2E cases and exact viewport evidence through the
+    managed loop."
 findings:
   - id: E2E-MAJOR-001
     severity: high
