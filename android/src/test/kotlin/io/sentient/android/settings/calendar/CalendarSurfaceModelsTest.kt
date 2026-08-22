@@ -1,8 +1,11 @@
 package io.sentient.android.settings.calendar
 
+import io.sentient.mobiledata.cache.CalendarCacheFreshness
 import io.sentient.mobiledata.calendar.CalendarDateCell
 import io.sentient.mobiledata.calendar.CalendarFacetOptions
+import io.sentient.mobiledata.calendar.CalendarExperienceState
 import io.sentient.mobiledata.calendar.CalendarFilters
+import io.sentient.mobiledata.calendar.CalendarOfflineState
 import io.sentient.mobiledata.calendar.CalendarView
 import io.sentient.mobiledata.calendar.CalendarYearMonthSummary
 import io.sentient.mobiledata.calendar.CalendarYearProjection
@@ -61,6 +64,25 @@ class CalendarSurfaceModelsTest {
     }
 
     @Test
+    fun `freshness semantics distinguish online cached and unavailable states`() {
+        fun description(freshness: CalendarCacheFreshness, offline: CalendarOfflineState) =
+            calendarFreshnessDescription(
+                CalendarExperienceState(
+                    anchorDate = "2026-04-18",
+                    selectedDate = "2026-04-18",
+                    todayDate = "2026-04-18",
+                    freshness = freshness,
+                    offline = offline,
+                ).toAndroidUiState(),
+            )
+
+        assertEquals("Up to date", description(CalendarCacheFreshness.FRESH, CalendarOfflineState.ONLINE))
+        assertEquals("May be out of date", description(CalendarCacheFreshness.STALE, CalendarOfflineState.ONLINE))
+        assertEquals("Offline, showing saved calendar", description(CalendarCacheFreshness.CACHED_OFFLINE, CalendarOfflineState.OFFLINE))
+        assertEquals("Unavailable offline", description(CalendarCacheFreshness.UNAVAILABLE_OFFLINE, CalendarOfflineState.UNAVAILABLE))
+    }
+
+    @Test
     fun `reviewed calendar geometry remains pinned`() {
         assertEquals(58, CalendarSurfaceLayout.TOP_BAR_DP)
         assertEquals(16, CalendarSurfaceLayout.HORIZONTAL_INSET_DP)
@@ -78,7 +100,7 @@ class CalendarSurfaceModelsTest {
         onBack = {}, onAdd = {}, onToday = {}, onPrevious = {}, onNext = {},
         onDateSelected = onDateSelected, onMonthSelected = { _, _ -> }, onViewSelected = {},
         onScopeSelected = {}, onGroupToggled = {}, onTagToggled = {}, onImportanceSelected = {},
-        onSearchChanged = {}, onEventSelected = {}, onRetry = {},
+        onSearchChanged = {}, onEventSelected = { _, _ -> }, onRetry = {},
     )
 
     private fun yearProjection(year: Int, complete: Boolean): CalendarYearProjection = CalendarYearProjection(

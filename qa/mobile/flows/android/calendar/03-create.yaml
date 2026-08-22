@@ -1,0 +1,16 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, crud]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-add" }
+- extendedWaitUntil:
+    visible: { id: "calendar-editor-sheet" }
+    timeout: 5000
+- tapOn: { id: "calendar-editor-title" }
+- inputText: "calendar-agent-created"
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { id: "calendar-sheet-close" }
+- assertVisible: { id: "calendar-screen" }

@@ -1,0 +1,22 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, views, preferences]
+---
+- runFlow: "00-open.yaml"
+- tapOn: { id: "calendar-view-day" }
+- assertVisible: { id: "calendar-view-day" }
+- takeScreenshot: "calendar-day"
+- tapOn: { id: "calendar-view-week" }
+- assertVisible: { id: "calendar-canvas" }
+- takeScreenshot: "calendar-week"
+- tapOn: { id: "calendar-view-month" }
+- assertVisible: { id: "calendar-canvas" }
+- takeScreenshot: "calendar-month"
+- tapOn: { id: "calendar-view-year" }
+- assertVisible: { id: "calendar-canvas" }
+- takeScreenshot: "calendar-year"
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible: { id: "calendar-view-year" }
+    timeout: 10000
+- assertVisible: { id: "calendar-view-year" }

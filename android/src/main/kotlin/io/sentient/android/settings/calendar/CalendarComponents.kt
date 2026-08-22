@@ -48,10 +48,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
@@ -100,7 +103,7 @@ data class CalendarSurfaceCallbacks(
     val onTagToggled: (String) -> Unit,
     val onImportanceSelected: (Importance?) -> Unit,
     val onSearchChanged: (String) -> Unit,
-    val onEventSelected: (CalendarProjectedEvent) -> Unit,
+    val onEventSelected: (CalendarProjectedEvent, FocusRequester) -> Unit,
     val onRetry: () -> Unit,
 )
 
@@ -116,6 +119,7 @@ fun CalendarScaffold(
     callbacks: CalendarSurfaceCallbacks,
     modifier: Modifier = Modifier,
     agendaSections: List<CalendarAgendaSection> = state.agendaRows,
+    addFocusRequester: FocusRequester? = null,
 ) {
     val reduceMotion = LocalInspectionMode.current || LocalCalendarReducedMotion.current
     CompositionLocalProvider(LocalCalendarReducedMotion provides reduceMotion) {
@@ -130,9 +134,15 @@ fun CalendarScaffold(
                     canAdd = state.mutationAvailability.canCreate && !state.isSubmitting,
                     onBack = callbacks.onBack,
                     onAdd = callbacks.onAdd,
+                    addFocusRequester = addFocusRequester,
                 )
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize()
+                        .testTag(CalendarTestTags.FRESHNESS)
+                        .semantics {
+                            liveRegion = LiveRegionMode.Polite
+                            stateDescription = calendarFreshnessDescription(state)
+                        },
                     contentPadding = PaddingValues(
                         bottom = CalendarSurfaceLayout.SCROLL_BOTTOM_CLEARANCE_DP.dp,
                     ),
@@ -203,16 +213,18 @@ fun CalendarTopBar(
     onBack: () -> Unit,
     onAdd: () -> Unit,
     modifier: Modifier = Modifier,
+    addFocusRequester: FocusRequester? = null,
 ) {
     Row(
         modifier
             .fillMaxWidth()
+            .testTag(CalendarTestTags.TOP_BAR)
             .height(CalendarSurfaceLayout.TOP_BAR_DP.dp)
             .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant)
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CalendarTextButton("‹", "Back", onBack)
+        CalendarTextButton("‹", "Back", onBack, Modifier.testTag(CalendarTestTags.BACK))
         Text(
             "Calendar",
             modifier = Modifier.padding(start = 5.dp).weight(1f),
@@ -220,7 +232,12 @@ fun CalendarTopBar(
             fontWeight = FontWeight.Medium,
             fontSize = 20.sp,
         )
-        CalendarActionButton("Add", "Add event", canAdd, onAdd)
+        CalendarActionButton(
+            "Add", "Add event", canAdd, onAdd,
+            Modifier.testTag(CalendarTestTags.ADD).then(
+                if (addFocusRequester != null) Modifier.focusRequester(addFocusRequester) else Modifier,
+            ),
+        )
     }
 }
 
@@ -236,6 +253,7 @@ fun CalendarHeading(
     Row(
         modifier
             .fillMaxWidth()
+            .testTag(CalendarTestTags.HEADING)
             .padding(start = 16.dp, end = 16.dp, top = 18.dp),
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -250,17 +268,17 @@ fun CalendarHeading(
                 modifier = Modifier.padding(top = 5.dp),
             )
         }
-        CalendarTextButton("Today", "Go to today", onToday)
-        CalendarTextButton("‹", "Previous period", onPrevious)
-        CalendarTextButton("›", "Next period", onNext)
+        CalendarTextButton("Today", "Go to today", onToday, Modifier.testTag(CalendarTestTags.TODAY))
+        CalendarTextButton("‹", "Previous period", onPrevious, Modifier.testTag(CalendarTestTags.PREVIOUS))
+        CalendarTextButton("›", "Next period", onNext, Modifier.testTag(CalendarTestTags.NEXT))
     }
 }
 
 @Composable
-private fun CalendarTextButton(text: String, label: String, onClick: () -> Unit) {
+private fun CalendarTextButton(text: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(LocalTokens.current.radii.md)
     Box(
-        Modifier
+        modifier
             .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
@@ -274,10 +292,10 @@ private fun CalendarTextButton(text: String, label: String, onClick: () -> Unit)
 }
 
 @Composable
-private fun CalendarActionButton(text: String, label: String, enabled: Boolean, onClick: () -> Unit) {
+private fun CalendarActionButton(text: String, label: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(LocalTokens.current.radii.md)
     Box(
-        Modifier
+        modifier
             .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
             .clip(shape)
             .background(if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainer)
@@ -306,7 +324,7 @@ fun CalendarFilterRails(
     modifier: Modifier = Modifier,
 ) {
     val retained = retainedCalendarFacets(filters, facets)
-    Column(modifier.fillMaxWidth().padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+    Column(modifier.fillMaxWidth().testTag(CalendarTestTags.FILTERS).padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -363,6 +381,7 @@ private fun CalendarFilterChip(
     Box(
         Modifier
             .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
+            .testTag(calendarFilterTag("option", label))
             .semantics {
                 this.selected = selected
                 stateDescription = if (selected) "Selected" else "Not selected"
@@ -404,6 +423,7 @@ private fun CalendarSearchField(value: String, onValueChange: (String) -> Unit) 
         modifier = Modifier
             .width(132.dp)
             .height(44.dp)
+            .testTag(CalendarTestTags.SEARCH)
             .clip(shape)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
             .semantics { contentDescription = "Search calendar events" }
@@ -435,7 +455,8 @@ fun CalendarCompactCanvas(
     if (!calendarShowsCompactCanvas(view)) return
     val shape = RoundedCornerShape(LocalTokens.current.radii.lg)
     Surface(
-        modifier = modifier.padding(horizontal = 16.dp, vertical = 18.dp).fillMaxWidth(),
+        modifier = modifier.padding(horizontal = 16.dp, vertical = 18.dp).fillMaxWidth()
+            .testTag(CalendarTestTags.CANVAS),
         shape = shape,
         color = MaterialTheme.colorScheme.surfaceContainer,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -471,6 +492,7 @@ private fun CalendarWeekDay(day: CalendarDateCell, weekday: String, onDateSelect
             .clip(shape)
             .background(if (day.isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
             .clickable(role = Role.Button) { onDateSelected(day.date) }
+            .testTag(calendarDateTag(day.date))
             .semantics {
                 contentDescription = day.accessibilityLabel
                 selected = day.isSelected
@@ -517,6 +539,7 @@ private fun MonthCalendarDay(day: CalendarDateCell, onDateSelected: (String) -> 
             .border(.5.dp, MaterialTheme.colorScheme.outlineVariant)
             .background(if (day.isOutsideMonth) MaterialTheme.colorScheme.background.copy(alpha = .34f) else Color.Transparent)
             .clickable(role = Role.Button) { onDateSelected(day.date) }
+            .testTag(calendarDateTag(day.date))
             .semantics {
                 contentDescription = day.accessibilityLabel
                 selected = day.isSelected
@@ -588,6 +611,7 @@ fun YearCalendarView(
                             .defaultMinSize(minHeight = 110.dp)
                             .border(.5.dp, MaterialTheme.colorScheme.outlineVariant)
                             .clickable(role = Role.Button) { onMonthSelected(month.year, month.month) }
+                            .testTag("calendar-month-${month.year}-${month.month.toString().padStart(2, '0')}")
                             .semantics { contentDescription = month.accessibilityLabel }
                             .padding(8.dp),
                     ) {
@@ -607,6 +631,7 @@ fun YearCalendarView(
                                                     .height(8.dp)
                                                     .clip(CircleShape)
                                                     .background(if (day.hasEvents) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface.copy(alpha = .08f))
+                                                    .testTag(calendarDateTag(day.date))
                                                     .semantics { contentDescription = day.accessibilityLabel },
                                             )
                                         }
@@ -633,10 +658,10 @@ private fun CalendarCanvasUnavailable(modifier: Modifier = Modifier) {
 @Composable
 fun CalendarAgendaSection(
     section: CalendarAgendaSection,
-    onEventSelected: (CalendarProjectedEvent) -> Unit,
+    onEventSelected: (CalendarProjectedEvent, FocusRequester) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Column(modifier.fillMaxWidth().testTag(CalendarTestTags.AGENDA).padding(horizontal = 16.dp)) {
         val parsed = java.time.LocalDate.parse(section.date)
         Row(
             Modifier.padding(start = 2.dp, top = 12.dp, bottom = 8.dp),
@@ -664,7 +689,12 @@ fun CalendarAgendaSection(
             )
         } else {
             section.events.forEach { event ->
-                CalendarAgendaRow(event, { onEventSelected(event) }, Modifier.padding(bottom = 8.dp))
+                val focusRequester = androidx.compose.runtime.remember(event.actionIdentity.stableKey) { FocusRequester() }
+                CalendarAgendaRow(
+                    event,
+                    { onEventSelected(event, focusRequester) },
+                    Modifier.padding(bottom = 8.dp).focusRequester(focusRequester),
+                )
             }
         }
     }
@@ -686,6 +716,7 @@ fun CalendarAgendaRow(event: CalendarProjectedEvent, onClick: () -> Unit, modifi
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
             .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+            .testTag(calendarEventTag(event))
             .semantics { contentDescription = event.accessibilityLabel }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -740,6 +771,13 @@ fun CalendarStateNotice(state: CalendarUiState, onRetry: () -> Unit, modifier: M
     Row(
         modifier
             .fillMaxWidth()
+            .testTag(
+                when {
+                    state.contentState == CalendarContentState.UNAVAILABLE_OFFLINE -> CalendarTestTags.UNAVAILABLE_OFFLINE
+                    state.isOffline -> CalendarTestTags.OFFLINE
+                    else -> CalendarTestTags.STATUS
+                },
+            )
             .semantics { liveRegion = LiveRegionMode.Polite }
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -750,7 +788,7 @@ fun CalendarStateNotice(state: CalendarUiState, onRetry: () -> Unit, modifier: M
         }
         Text(message, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (state.contentState == CalendarContentState.ERROR || state.contentState == CalendarContentState.UNAVAILABLE_OFFLINE) {
-            CalendarTextButton("Retry", "Retry loading calendar", onRetry)
+            CalendarTextButton("Retry", "Retry loading calendar", onRetry, Modifier.testTag(CalendarTestTags.RETRY))
         }
     }
 }
@@ -763,7 +801,7 @@ fun FloatingViewBar(
 ) {
     val shape = RoundedCornerShape(999.dp)
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().testTag(CalendarTestTags.VIEW_BAR),
         shape = shape,
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .96f),
         shadowElevation = 16.dp,
@@ -789,6 +827,7 @@ fun FloatingViewBar(
                     .background(background)
                     .then(if (active) Modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape) else Modifier)
                     .clickable(role = Role.Tab) { onViewSelected(view) }
+                    .testTag(calendarViewTag(view))
                     .semantics {
                         this.selected = active
                         stateDescription = if (active) "Selected" else "Not selected"

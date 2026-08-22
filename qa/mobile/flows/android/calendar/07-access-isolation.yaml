@@ -1,0 +1,11 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, child, isolation]
+---
+# Direct agent logs in as the disposable child/account selected for this phase.
+- runFlow: "00-open.yaml"
+- assertNotVisible: { id: "${CALENDAR_RESTRICTED_EVENT_TAG}" }
+- tapOn: { id: "calendar-filter-search" }
+- inputText: "calendar-evidence"
+- assertNotVisible: { id: "${CALENDAR_RESTRICTED_EVENT_TAG}" }
+- eraseText
+- assertNotVisible: { id: "${CALENDAR_OTHER_ACCOUNT_EVENT_TAG}" }

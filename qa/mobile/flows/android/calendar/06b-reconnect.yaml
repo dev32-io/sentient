@@ -1,0 +1,9 @@
+appId: io.dev32.sentient.debug
+tags: [calendar, recovery]
+---
+# Invoke only after the direct agent restores networking.
+- extendedWaitUntil:
+    notVisible:
+      id: "calendar-offline|calendar-unavailable-offline"
+    timeout: 20000
+- assertVisible: { id: "calendar-freshness" }

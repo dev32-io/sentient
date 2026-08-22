@@ -107,7 +107,7 @@ private val previewCallbacks = CalendarSurfaceCallbacks(
     onBack = {}, onAdd = {}, onToday = {}, onPrevious = {}, onNext = {},
     onDateSelected = {}, onMonthSelected = { _, _ -> }, onViewSelected = {},
     onScopeSelected = {}, onGroupToggled = {}, onTagToggled = {},
-    onImportanceSelected = {}, onSearchChanged = {}, onEventSelected = {}, onRetry = {},
+    onImportanceSelected = {}, onSearchChanged = {}, onEventSelected = { _, _ -> }, onRetry = {},
 )
 
 private fun previewState(view: CalendarView, contentState: CalendarContentState, offline: Boolean): CalendarUiState {
