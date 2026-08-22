@@ -4,7 +4,7 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: passed
+status: failed
 required: true
 attempt: 5
 methods:
@@ -12,7 +12,7 @@ methods:
 loop:
   iteration: 4
   maxIterations: 6
-  state: passed
+  state: fixing
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: 96874ddc6889184d641e3b6417baeffba50b815d
   managerPrompt: "Preserve every resolved finding and repair only E2E-MAJOR-004.
@@ -89,6 +89,6 @@ findings:
     summary: iOS Save remains reachable above the active keyboard.
     blocking: false
 result:
-  verdict: pass
+  verdict: fail
   report: report.md
   evidence: ../../evidence/final-e2e/manifest.yaml

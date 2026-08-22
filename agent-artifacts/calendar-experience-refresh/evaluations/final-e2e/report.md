@@ -10,8 +10,8 @@ No qualified criteria declared.
 
 ## Observations
 
-MERGE: YES_WITH_RISK
-Iteration 4 re-review of the bounded repair at 96874ddc6889184d641e3b6417baeffba50b815d. E2E-MAJOR-004 is resolved. The exact deferred-seed recovery sequence passed on Android with the direct local fixture: authenticated all-scope verification passed, cache prime/offline state passed, airplane-mode unavailable→available reached recovery-ready and UP_TO_DATE, the sentinel became visible, and duplicate recovery was coalesced. The focused shared integration test, Android/shared builds, gateway typecheck, current iOS build, and fixture cleanup passed. All 14 matrix cases are recorded exactly once; incomplete pre-existing cross-platform subflows remain explicitly blocked in the evidence and are not claimed successful.
+MERGE: NO
+The recorded attempt is not a valid final-E2E pass: its case-results artifact has blocked platform subflows and lacks the required current native visual matrix. A complete fresh Android→iOS→web run has not superseded it, so this required checkpoint remains failed. The prior Android recovery observations remain useful bounded evidence but cannot substitute for executing every required case on every applicable platform.
 
 ## Evidence
 
@@ -34,7 +34,7 @@ Iteration 4 re-review of the bounded repair at 96874ddc6889184d641e3b6417baeffba
 
 ## Verdict
 
-pass
+fail
 
 ## Residual Risk
 
