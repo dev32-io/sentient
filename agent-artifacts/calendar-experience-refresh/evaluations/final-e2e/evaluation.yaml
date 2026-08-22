@@ -4,14 +4,14 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 3
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: fixing
-  iteration: 2
+  state: rereviewing
+  iteration: 3
   maxIterations: 6
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
