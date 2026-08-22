@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-overlays
 title: Build Android calendar preview and editor sheets
-status: submitted
+status: awaiting_ci
 dependsOn:
   - android-calendar-viewmodel
 execution:
