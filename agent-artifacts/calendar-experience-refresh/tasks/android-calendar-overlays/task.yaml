@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-overlays
 title: Build Android calendar preview and editor sheets
-status: contribution_complete
+status: merged
 dependsOn:
   - android-calendar-viewmodel
 execution:
@@ -28,3 +28,4 @@ runtime:
   baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
   lastRunId: 28c918f9-5433-417c-9192-4e7a64f7ec17
   completedCommit: d5a4aaf9beb310e194e96c1297b8ba0161e96ef5
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0
