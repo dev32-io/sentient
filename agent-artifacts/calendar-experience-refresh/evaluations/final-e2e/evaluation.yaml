@@ -4,14 +4,14 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
@@ -41,6 +41,7 @@ loop:
     Android→iOS execution, unique disposable fixtures and cleanup. Run focused
     checks, then rerun all 14 E2E cases and exact viewport evidence through the
     managed loop."
+  fixerAgentId: 7abeb8da-2940-4616-980e-ed5a711ad7be
 findings:
   - id: E2E-MAJOR-001
     severity: high
