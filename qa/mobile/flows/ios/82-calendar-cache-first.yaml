@@ -1,0 +1,13 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Agent delays local revalidation after first priming this disposable namespace.
+- runFlow: _calendar/open-calendar.yaml
+- assertVisible: { id: "calendar-surface" }
+- assertVisible: { id: "calendar-event-.*" }
+- assertVisible: { id: "calendar-freshness", optional: true }
+- takeScreenshot: "calendar-cache-first"
+- extendedWaitUntil:
+    notVisible: { text: "Refreshing calendar…" }
+    timeout: 15000

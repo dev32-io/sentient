@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Agent selects exact 390x844 or 430x932 profile plus requested Dynamic Type and motion settings.
+- runFlow: _calendar/open-calendar.yaml
+- assertVisible: { id: "calendar-scroll-region" }
+- assertVisible: { id: "calendar-floating-view-bar-46" }
+- takeScreenshot: "calendar-visual-profile"
+- tapOn: { id: "calendar-event-.*" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- takeScreenshot: "calendar-overlay-profile"
+- tapOn: { id: "calendar-overlay-close" }
+- assertNotVisible: { id: "calendar-preview-sheet" }

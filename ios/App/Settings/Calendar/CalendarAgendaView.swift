@@ -5,6 +5,7 @@ struct CalendarAgendaView: View {
     let sections: [CalendarAgendaSlice]
     let locale: CalendarLocale
     let emptyMessage: String
+    let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding
     let onEvent: (CalendarProjectedEvent) -> Void
 
     var body: some View {
@@ -30,7 +31,7 @@ struct CalendarAgendaView: View {
                         .accessibilityAddTraits(.isHeader)
 
                         ForEach(section.events, id: \.actionIdentity.stableKey) { event in
-                            CalendarAgendaRow(event: event) { onEvent(event) }
+                            CalendarAgendaRow(event: event, openerFocus: openerFocus) { onEvent(event) }
                         }
                     }
                 }
@@ -43,6 +44,7 @@ struct CalendarAgendaView: View {
 
 struct CalendarAgendaRow: View {
     let event: CalendarProjectedEvent
+    let openerFocus: AccessibilityFocusState<CalendarOverlayOrigin?>.Binding
     let action: () -> Void
 
     var body: some View {
@@ -80,6 +82,7 @@ struct CalendarAgendaRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(event.accessibilityLabel)
         .accessibilityHint("Opens event preview")
+        .accessibilityFocused(openerFocus, equals: .event(event.actionIdentity.stableKey))
         .accessibilityIdentifier("calendar-event-\(event.actionIdentity.stableKey)")
     }
 

@@ -1,0 +1,22 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+- runFlow: _calendar/open-calendar.yaml
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { id: "calendar-event-.*" }
+- assertVisible: { id: "calendar-preview-sheet" }
+- tapOn: { text: "Edit" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- tapOn: { id: "calendar-editor-delete" }
+- assertVisible: { id: "calendar-delete-sheet" }
+- tapOn: { text: "Cancel" }
+- assertNotVisible: { id: "calendar-delete-sheet" }
+- tapOn: { id: "calendar-editor-delete" }
+- tapOn: { id: "calendar-scope-entire_series", optional: true }
+- tapOn: { id: "calendar-confirmation-delete" }
+- extendedWaitUntil:
+    visible: { id: "calendar-outcome-sheet" }
+    timeout: 10000
+- tapOn: { text: "Done" }
+- assertNotVisible: { id: "calendar-outcome-sheet" }

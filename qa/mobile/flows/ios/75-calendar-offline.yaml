@@ -1,0 +1,14 @@
+appId: io.dev32.sentient.debug
+tags:
+  - helper
+---
+# Invoke after the agent observes gateway/network unready; do not add sleeps here.
+- runFlow: _calendar/open-calendar.yaml
+- extendedWaitUntil:
+    visible: { id: "calendar-freshness-offline" }
+    timeout: 15000
+- assertVisible: { id: "calendar-surface" }
+- takeScreenshot: "calendar-cached-offline"
+- tapOn: { id: "calendar-add" }
+- assertVisible: { text: "Connection required.*" }
+- tapOn: { text: "Cancel" }

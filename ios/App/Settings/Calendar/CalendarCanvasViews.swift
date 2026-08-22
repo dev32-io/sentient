@@ -59,6 +59,7 @@ struct CalendarWeekCanvas: View {
                 .accessibilityLabel(CalendarSurfaceText.dateCellLabel(day))
                 .accessibilityValue(day.isSelected ? "Selected, week view remains active" : "Week view remains active")
                 .accessibilityAddTraits(day.isSelected ? .isSelected : [])
+                .accessibilityIdentifier("calendar-date-\(day.date)")
             }
         }
         .padding(Space.sm)
@@ -109,6 +110,7 @@ struct CalendarMonthCanvas: View {
                     .accessibilityLabel(CalendarSurfaceText.dateCellLabel(cell))
                     .accessibilityHint("Opens day view")
                     .accessibilityAddTraits(cell.isSelected ? .isSelected : [])
+                    .accessibilityIdentifier("calendar-date-\(cell.date)")
                 }
             }
         }
@@ -186,6 +188,7 @@ private struct CalendarIndicatorRow: View {
                     .font(CalendarFont.mono(8))
                     .foregroundStyle(DuskColors.ink2)
                     .accessibilityLabel(overflow.accessibilityLabel)
+                    .accessibilityIdentifier("calendar-overflow")
             }
         }
         .frame(minHeight: 8)

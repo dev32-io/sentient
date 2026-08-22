@@ -183,7 +183,9 @@ struct CalendarPreviewSheet: View {
             }
             HStack(spacing: Space.sm) {
                 CalendarSecondaryButton(title: "Close", action: onClose)
+                    .accessibilityIdentifier("calendar-preview-close")
                 CalendarPrimaryButton(title: "Edit", disabled: !canEdit || isOffline, action: onEdit)
+                    .accessibilityIdentifier("calendar-preview-edit")
             }
         }
         .onAppear { headingFocused = true }
@@ -277,6 +279,7 @@ struct CalendarEditorSheet: View {
             }
             HStack(spacing: Space.sm) {
                 CalendarSecondaryButton(title: "Cancel", disabled: isSubmitting, action: onCancel)
+                    .accessibilityIdentifier("calendar-editor-cancel")
                 CalendarPrimaryButton(title: isSubmitting ? "Saving…" : "Save",
                                       disabled: !canSave || isOffline || isSubmitting) { onSave(draft) }
                     .accessibilityIdentifier("calendar-editor-save")
@@ -361,6 +364,7 @@ private struct CalendarDraftFields: View {
             }
             Toggle("All-day", isOn: $allDay)
                 .tint(DuskColors.accent)
+                .accessibilityIdentifier("calendar-editor-all-day")
                 .onChange(of: allDay) { _, _ in emit() }
             CalendarLabeledField("Starts") {
                 DatePicker("Starts", selection: $startDate,
@@ -424,6 +428,7 @@ private struct CalendarDraftFields: View {
     @ViewBuilder private var recurrenceFields: some View {
         Toggle("Repeats", isOn: $repeats)
             .tint(DuskColors.accent)
+            .accessibilityIdentifier("calendar-editor-recurrence")
             .onChange(of: repeats) { _, enabled in
                 if enabled {
                     if !hasCount && !hasUntil { hasCount = true }
@@ -467,6 +472,7 @@ private struct CalendarDraftFields: View {
             if hasUntil {
                 DatePicker("Recurrence end date", selection: $untilDate, displayedComponents: .date)
                     .environment(\.timeZone, zone)
+                    .accessibilityIdentifier("calendar-editor-recurrence-until")
                     .onChange(of: untilDate) { _, _ in emit() }
             }
         }
@@ -615,11 +621,13 @@ struct CalendarDeleteSheet: View {
             }
             HStack(spacing: Space.sm) {
                 CalendarSecondaryButton(title: "Cancel", disabled: isSubmitting, action: onCancel)
+                    .accessibilityIdentifier("calendar-confirmation-cancel")
                 CalendarDestructiveButton(title: isSubmitting ? "Deleting…" : "Delete",
                     disabled: isOffline || isSubmitting ||
                         (confirmation.applicableScopes.count > 1 && confirmation.selectedScope == nil)) {
                         onDelete(confirmation.selectedScope)
                     }
+                    .accessibilityIdentifier("calendar-confirmation-delete")
             }
         }
         .interactiveDismissDisabled(true)
@@ -649,14 +657,17 @@ struct CalendarConflictSheet: View {
             if conflict.authoritativeEvent == nil {
                 CalendarPrimaryButton(title: conflict.rereadInFlight ? "Rereading…" : "Reread event",
                                       disabled: conflict.rereadInFlight, action: onReread)
+                    .accessibilityIdentifier("calendar-conflict-reread")
             } else if !conflict.reviewed {
                 CalendarPrimaryButton(title: "Review my changes", disabled: false) {
                     onReview(conflict.draft)
                 }
+                .accessibilityIdentifier("calendar-conflict-review")
             } else {
                 CalendarStatusNotice(kind: .success, message: "Latest version reviewed. You can save again.")
             }
             CalendarSecondaryButton(title: "Cancel", action: onCancel)
+                .accessibilityIdentifier("calendar-conflict-cancel")
         }
         .interactiveDismissDisabled(true)
         .onAppear { headingFocused = true }

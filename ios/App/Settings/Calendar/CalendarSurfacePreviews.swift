@@ -7,10 +7,15 @@ private struct CalendarSurfacePreview: View {
     var variant: PreviewVariant = .dense
     var width: CGFloat = 390
     var height: CGFloat = 844
+    @AccessibilityFocusState private var openerFocus: CalendarOverlayOrigin?
 
     var body: some View {
-        CalendarScaffold(state: PreviewCalendarFactory.state(view: view, variant: variant), actions: .preview)
-            .frame(width: width, height: height)
+        CalendarScaffold(
+            state: PreviewCalendarFactory.state(view: view, variant: variant),
+            actions: .preview,
+            openerFocus: $openerFocus
+        )
+        .frame(width: width, height: height)
     }
 }
 
