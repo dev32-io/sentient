@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: native-calendar-components
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
     :android:assembleDebug
@@ -29,11 +29,11 @@ criteria:
     semantic accessibility inspection is required but an actual
     assistive-technology session is not a stage gate
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: passed
   reviewerAgentId: e184954f-9a37-4d26-ba46-976d4f074b12
-  reviewedCommit: 2a49b8333aec3abd67d5599864a9b31427a8b835
+  reviewedCommit: 31933631a190de946571f29b9bb6833fb8475c7b
   managerPrompt: "Resolve all six findings. Remove the separate styled Day canvas
     on Android and iOS so Day is the focused agenda presentation specified by
     the mobile reference. Delete native Month-to-Day policy duplication: Android
@@ -55,58 +55,50 @@ loop:
 findings:
   - id: F-001
     severity: high
-    status: open
-    criterion: Day view is a focused agenda without an empty canvas shell
-    location: android/.../CalendarComponents.kt:161-175,438-466;
-      ios/.../CalendarScaffold.swift:52-68;
-      ios/.../CalendarCanvasViews.swift:9-48
-    summary: Both native Day views render a separate styled canvas before the agenda.
-    blocking: true
+    status: resolved
+    criterion: Focused agenda Day view
+    location: Android CalendarComponents.kt; iOS CalendarScaffold.swift
+    summary: Separate Day canvases removed.
+    blocking: false
   - id: F-002
     severity: high
-    status: open
-    criterion: No duplicated shared calendar policy in composables
-    location: android/.../CalendarSurfaceModels.kt:29-33;
-      android/.../CalendarComponents.kt:169-172
-    summary: Android duplicates Month-to-Day policy and emits redundant date plus
-      view callbacks.
-    blocking: true
+    status: resolved
+    criterion: No native duplication of shared navigation policy
+    location: Android CalendarComponents.kt; CalendarSurfaceModels.kt
+    summary: Android now emits one date callback and relies on shared navigation.
+    blocking: false
   - id: F-003
     severity: high
-    status: open
-    criterion: Android enabled/disabled editor actions are correct
-    location: android/.../CalendarOverlayModels.kt:39-50;
-      android/.../CalendarOverlays.kt:247-320,529-605
-    summary: Save enablement ignores blank/invalid drafts and required
-      recurrence-scope selection.
-    blocking: true
+    status: resolved
+    criterion: Authoritative Android Save validation
+    location: CalendarMutations.kt; Android CalendarOverlayModels.kt
+    summary: Save consumes shared command-builder validation, including required
+      edit scope.
+    blocking: false
   - id: F-004
     severity: high
-    status: open
-    criterion: iOS controls reflect role-specific mutation availability
-    location: ios/.../CalendarOverlayModels.swift:39-50;
-      ios/.../CalendarOverlays.swift:57-70
-    summary: Save uses aggregate isAvailable instead of canCreate/canEdit for the
-      active editor mode.
-    blocking: true
+    status: resolved
+    criterion: Mode-specific iOS mutation permission
+    location: iOS CalendarOverlayModels.swift
+    summary: Save selects canCreate versus canEdit by editor mode.
+    blocking: false
   - id: F-005
     severity: high
-    status: open
-    criterion: Submitting state remains stable
-    location: ios/.../CalendarOverlays.swift:244-280;
-      shared/.../CalendarExperience.kt:475-505
-    summary: Draft controls remain enabled while submitting and can reset shared
-      phase to EDITING, allowing racing submissions.
-    blocking: true
+    status: resolved
+    criterion: Submission race hardening
+    location: iOS CalendarOverlays.swift; Android CalendarOverlays.kt;
+      CalendarExperience.kt
+    summary: Mutating/dismissal controls are disabled and shared intents are ignored
+      during submission.
+    blocking: false
   - id: F-006
     severity: low
-    status: open
-    criterion: Android overlays honor reduced motion
-    location: android/.../CalendarOverlays.kt:762-770
-    summary: Overlay press scale always uses a timed tween without consulting
-      LocalCalendarReducedMotion.
+    status: resolved
+    criterion: Android overlay reduced motion
+    location: Android CalendarOverlays.kt
+    summary: Reduced motion uses immediate snap feedback.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-native-calendar-components-review/manifest.yaml
