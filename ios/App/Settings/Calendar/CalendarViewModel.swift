@@ -91,6 +91,9 @@ struct CalendarUiState {
 /// production implementation below proves and uses SKIE's AsyncSequence bridge.
 @MainActor
 protocol CalendarExperienceStateSource: AnyObject {
+    /// Activates the session-owned cache observation/revalidation path. The
+    /// shared experience coalesces equivalent starts across route recreation.
+    func activate()
     func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async
     func dispatch(_ intent: any CalendarExperienceIntent)
 }
@@ -101,6 +104,12 @@ private final class SkieCalendarExperienceStateSource: CalendarExperienceStateSo
 
     init(experience: CalendarExperience) {
         self.experience = experience
+    }
+
+    func activate() {
+        // StateFlow collection alone does not start CalendarExperience. Starting
+        // the current shared window is idempotent and leaves its work session-owned.
+        experience.start(window: experience.visibleWindow)
     }
 
     func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async {
@@ -151,6 +160,10 @@ final class CalendarViewModel {
         collectionGeneration += 1
         let generation = collectionGeneration
         collectionTask?.cancel()
+        // Activation is synchronous and precedes creation of the SKIE collector,
+        // so cache observation/revalidation cannot be skipped by a cold StateFlow.
+        // CalendarExperience owns and idempotently coalesces that session work.
+        source.activate()
         collectionTask = Task { [weak self, source] in
             await source.collect { [weak self] sharedState in
                 guard let self,

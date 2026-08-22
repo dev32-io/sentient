@@ -60,20 +60,64 @@ struct CalendarViewModelTests {
         }
     }
 
-    @Test func cacheFirstThenRefreshStateKeepsSharedContent() async {
+    @Test func calendarOpenActivatesBeforeCollectionAndMapsCacheThenRevalidation() async {
         let source = CalendarExperienceSourceSpy()
         let vm = CalendarViewModel(source: source)
         let cached = makeState(freshness: .stale, loading: .idle)
         let refreshing = makeState(freshness: .refreshing, loading: .refreshing)
+        let fresh = makeState(freshness: .fresh, loading: .idle)
 
         await source.waitUntilStarted()
+        #expect(source.activationCount == 1)
+        #expect(source.lifecycleEvents == ["activate", "collect"])
+
         source.emit(cached)
+        await source.waitForEmissions(1)
+        #expect(vm.state?.freshness == .stale)
+        #expect(vm.state?.content == .content)
+
         source.emit(refreshing)
         await source.waitForEmissions(2)
-
-        #expect(vm.state?.projection != nil)
         #expect(vm.state?.isRefreshing == true)
         #expect(vm.state?.content == .content)
+
+        source.emit(fresh)
+        await source.waitForEmissions(3)
+        #expect(vm.state?.freshness == .fresh)
+        #expect(vm.state?.isRefreshing == false)
+        #expect(vm.state?.projection != nil)
+    }
+
+    @Test func routeRecreationCoalescesSessionActivationAndDisposalCancelsOnlyOwnedCollector() async {
+        let source = RouteRecreationSourceSpy()
+        let first = CalendarViewModel(source: source)
+        let second = CalendarViewModel(source: source)
+
+        await source.waitForCollectors(2)
+        #expect(source.activationCalls == 2)
+        #expect(source.activationWorkStarts == 1)
+        #expect(source.sessionWorkActive)
+
+        source.emit(makeState(view: .month))
+        await source.waitForDeliveries(2)
+        #expect(first.state?.view == .month)
+        #expect(second.state?.view == .month)
+
+        first.dispose()
+        await source.waitForCancellations(1)
+        #expect(source.activeCollectorCount == 1)
+        #expect(source.sessionWorkActive)
+
+        source.emit(makeState(view: .year))
+        await source.waitForDeliveries(3)
+        #expect(first.state?.view == .month)
+        #expect(second.state?.view == .year)
+        #expect(source.activationWorkStarts == 1)
+
+        second.dispose()
+        await source.waitForCancellations(2)
+        #expect(source.activeCollectorCount == 0)
+        #expect(source.sessionWorkActive)
     }
 
     @Test func forwardsNavigationFilterAndRefreshIntentsExactly() async {
@@ -236,6 +280,8 @@ private final class CalendarExperienceSourceSpy: CalendarExperienceStateSource {
     private let stream: AsyncStream<CalendarExperienceState>
     private let continuation: AsyncStream<CalendarExperienceState>.Continuation
     private(set) var intents: [any CalendarExperienceIntent] = []
+    private(set) var activationCount = 0
+    private(set) var lifecycleEvents: [String] = []
     private(set) var collectionCancelled = false
     private var collectionStarted = false
     private var startWaiters: [CheckedContinuation<Void, Never>] = []
@@ -249,7 +295,13 @@ private final class CalendarExperienceSourceSpy: CalendarExperienceStateSource {
         continuation = captured
     }
 
+    func activate() {
+        activationCount += 1
+        lifecycleEvents.append("activate")
+    }
+
     func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async {
+        lifecycleEvents.append("collect")
         collectionStarted = true
         startWaiters.forEach { $0.resume() }
         startWaiters.removeAll()
@@ -284,6 +336,91 @@ private final class CalendarExperienceSourceSpy: CalendarExperienceStateSource {
     func waitUntilCancelled() async {
         if collectionCancelled { return }
         await withCheckedContinuation { cancelWaiters.append($0) }
+    }
+}
+
+/// Models multiple route collectors over one session-owned experience. The
+/// activation work intentionally outlives every collector, matching KMP ownership.
+@MainActor
+private final class RouteRecreationSourceSpy: CalendarExperienceStateSource {
+    private var collectors: [UUID: AsyncStream<CalendarExperienceState>.Continuation] = [:]
+    private var collectorWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var cancellationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var deliveryWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private(set) var activationCalls = 0
+    private(set) var activationWorkStarts = 0
+    private(set) var sessionWorkActive = false
+    private(set) var cancellationCount = 0
+    private(set) var deliveryCount = 0
+
+    var activeCollectorCount: Int { collectors.count }
+
+    func activate() {
+        activationCalls += 1
+        guard !sessionWorkActive else { return }
+        sessionWorkActive = true
+        activationWorkStarts += 1
+    }
+
+    func collect(_ receive: @MainActor @escaping (CalendarExperienceState) -> Void) async {
+        let id = UUID()
+        var captured: AsyncStream<CalendarExperienceState>.Continuation!
+        let stream = AsyncStream<CalendarExperienceState> { captured = $0 }
+        collectors[id] = captured
+        resumeCollectorWaiters()
+
+        await withTaskCancellationHandler {
+            for await state in stream {
+                receive(state)
+                deliveryCount += 1
+                resumeDeliveryWaiters()
+            }
+        } onCancel: {
+            captured.finish()
+        }
+
+        collectors.removeValue(forKey: id)
+        cancellationCount += 1
+        resumeCancellationWaiters()
+    }
+
+    func dispatch(_ intent: any CalendarExperienceIntent) {}
+
+    func emit(_ state: CalendarExperienceState) {
+        collectors.values.forEach { $0.yield(state) }
+    }
+
+    func waitForCollectors(_ count: Int) async {
+        if collectors.count >= count { return }
+        await withCheckedContinuation { collectorWaiters.append((count, $0)) }
+    }
+
+    func waitForCancellations(_ count: Int) async {
+        if cancellationCount >= count { return }
+        await withCheckedContinuation { cancellationWaiters.append((count, $0)) }
+    }
+
+    func waitForDeliveries(_ count: Int) async {
+        if deliveryCount >= count { return }
+        await withCheckedContinuation { deliveryWaiters.append((count, $0)) }
+    }
+
+    private func resumeCollectorWaiters() {
+        let ready = collectorWaiters.filter { $0.0 <= collectors.count }
+        collectorWaiters.removeAll { $0.0 <= collectors.count }
+        ready.forEach { $0.1.resume() }
+    }
+
+    private func resumeCancellationWaiters() {
+        let ready = cancellationWaiters.filter { $0.0 <= cancellationCount }
+        cancellationWaiters.removeAll { $0.0 <= cancellationCount }
+        ready.forEach { $0.1.resume() }
+    }
+
+    private func resumeDeliveryWaiters() {
+        let ready = deliveryWaiters.filter { $0.0 <= deliveryCount }
+        deliveryWaiters.removeAll { $0.0 <= deliveryCount }
+        ready.forEach { $0.1.resume() }
     }
 }
 
