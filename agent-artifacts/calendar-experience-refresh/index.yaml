@@ -2,8 +2,8 @@ schemaVersion: 1
 id: calendar-experience-refresh
 kind: story
 title: Cross-platform family calendar experience
-phase: evaluation
-state: active
+phase: complete
+state: complete
 planning:
   revision: 81
 artifacts:
@@ -27,6 +27,10 @@ artifacts:
     path: e2e-matrix/calendar-experience-e2e.md
     status: approved
     narrativeSchemaVersion: 2
+  - id: outcome
+    type: outcome
+    path: outcome.md
+    status: complete
 tasks:
   - id: mobile-sqldelight-foundation
     path: tasks/mobile-sqldelight-foundation/task.yaml
