@@ -89,9 +89,12 @@ export async function cleanupCalendarE2E(
 ): Promise<CalendarCleanupReport> {
   const paths = users
     ? [
-        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace).privateCalendarDb,
-        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.child.userId, users.runNamespace).privateCalendarDb,
-        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace).householdCalendarDb,
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace)
+          .privateCalendarDb,
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.child.userId, users.runNamespace)
+          .privateCalendarDb,
+        calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, users.adult.userId, users.runNamespace)
+          .householdCalendarDb,
       ]
     : [];
   const report: CalendarCleanupReport = { removed: [], failures: [] };
@@ -475,17 +478,18 @@ export async function cleanupLocalCalendarFixture(
       },
 ): Promise<CalendarFixtureCleanupReport> {
   assertLocalCalendarFixtureTarget(deps.targetUrl, { targetEnvironment: deps.targetEnvironment });
-  const sanitizedUsers: DisposableCalendarUsers = "users" in value
-    ? value.users
-    : {
-        runNamespace: value.runId,
-        adult: { userId: value.adultId } as DisposableCalendarUsers["adult"],
-        child: { userId: value.childId } as DisposableCalendarUsers["child"],
-        paths: {
-          adult: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.adultId, value.runId),
-          child: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.childId, value.runId),
-        },
-      };
+  const sanitizedUsers: DisposableCalendarUsers =
+    "users" in value
+      ? value.users
+      : {
+          runNamespace: value.runId,
+          adult: { userId: value.adultId } as DisposableCalendarUsers["adult"],
+          child: { userId: value.childId } as DisposableCalendarUsers["child"],
+          paths: {
+            adult: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.adultId, value.runId),
+            child: calendarE2EPaths(deps.userDataRoot, deps.sharedDataRoot, value.childId, value.runId),
+          },
+        };
   const seeded =
     "seeded" in value
       ? value.seeded

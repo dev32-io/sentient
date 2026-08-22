@@ -73,7 +73,9 @@ describe("orchestratorConfigSchema", () => {
   it("keeps the proactive output limit strictly below the generic 20000-character backstop", () => {
     const c = orchestratorConfigSchema.parse({ ...base, calendar: { output: { max_result_chars: 19_999 } } });
     expect(c.calendar.output.max_result_chars).toBe(19_999);
-    expect(() => orchestratorConfigSchema.parse({ ...base, calendar: { output: { max_result_chars: 20_000 } } })).toThrow();
+    expect(() =>
+      orchestratorConfigSchema.parse({ ...base, calendar: { output: { max_result_chars: 20_000 } } }),
+    ).toThrow();
   });
   it("rejects a non-url base_url", () => {
     expect(() =>

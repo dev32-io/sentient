@@ -296,9 +296,7 @@ export const orchestratorConfigSchema = z.object({
           max_days: z.number().int().min(1).max(366).default(366),
         })
         .default({}),
-      nudge: z
-        .object({ max_per_day: z.number().int().min(1).max(1000).default(10) })
-        .default({}),
+      nudge: z.object({ max_per_day: z.number().int().min(1).max(1000).default(10) }).default({}),
       default_event_tz_id: z.string().min(1).default("household"),
     })
     .default({}),

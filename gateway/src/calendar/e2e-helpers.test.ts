@@ -178,7 +178,9 @@ describe("calendar E2E helpers", () => {
       ...f.deps,
       targetUrl: "http://localhost:8799",
       seedEvent: async () => ({ eventId: `event-${++seededCount}` }),
-      deleteEvent: async (_principalId: string, eventId: string) => { deleted.push(eventId); },
+      deleteEvent: async (_principalId: string, eventId: string) => {
+        deleted.push(eventId);
+      },
     };
     try {
       const value = await provisionLocalCalendarFixture(deps, input, { deferredCases: ["recovery"] });

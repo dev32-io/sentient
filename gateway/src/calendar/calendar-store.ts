@@ -1,31 +1,31 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { UserRole } from "@sentient/protocol";
 import { z } from "zod";
 import type { Capability, ResourceClass } from "../access/capability.js";
-import type { UserRole } from "@sentient/protocol";
+import { DEFAULT_RECURRENCE_LIMITS, expandRecurrence } from "./expand-recurrence.js";
+import { CALENDAR_DDL, CALENDAR_SCHEMA_VERSION } from "./schema.js";
 import {
-  DEFAULT_EVENT_TIME_ZONE,
-  isAdult,
   type CalendarConfig,
+  type CalendarEventId,
+  type CalendarEventPatch,
   type CalendarPersistenceBaseEvent,
   type CalendarPersistenceChildren,
   type CalendarPersistenceEvent,
-  type CalendarEventId,
-  type CalendarEventPatch,
-  type CalendarRevision,
   type CalendarResult,
+  type CalendarRevision,
   type CalendarStore,
   type CalendarTime,
+  DEFAULT_EVENT_TIME_ZONE,
   type EventTimeZoneId,
   type ExceptionOverride,
   type LocalDate,
   type Occurrence,
   type StoredCalendarEvent,
   type UtcInstant,
+  isAdult,
 } from "./types.js";
-import { CALENDAR_DDL, CALENDAR_SCHEMA_VERSION } from "./schema.js";
-import { DEFAULT_RECURRENCE_LIMITS, expandRecurrence } from "./expand-recurrence.js";
 import { wireCalendarTimeSchema, wireRRuleSchema } from "./types.js";
 
 export const ACCEPTED_CLASSES: ReadonlySet<ResourceClass> = new Set(["calendar-private", "calendar-household"]);
@@ -107,32 +107,56 @@ interface EventRow {
 }
 
 const recurrenceSchema = z.object({ rrule: z.string().min(1), rule: wireRRuleSchema }).strict();
-const persistedUtcInstantSchema = z.string().datetime({ offset: true }).refine((value) => Number.isFinite(Date.parse(value)));
-const overrideSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().nullable().optional(),
-  start: wireCalendarTimeSchema.nullable().optional(),
-  end: wireCalendarTimeSchema.nullable().optional(),
-  visibility: z.enum(["everyone", "adults"]).nullable().optional(),
-  importance: z.enum(["normal", "important", "pinned"]).nullable().optional(),
-  group: z.string().nullable().optional(),
-  tags: z.array(z.string()).nullable().optional(),
-}).strict();
+const persistedUtcInstantSchema = z
+  .string()
+  .datetime({ offset: true })
+  .refine((value) => Number.isFinite(Date.parse(value)));
+const overrideSchema = z
+  .object({
+    title: z.string().optional(),
+    description: z.string().nullable().optional(),
+    start: wireCalendarTimeSchema.nullable().optional(),
+    end: wireCalendarTimeSchema.nullable().optional(),
+    visibility: z.enum(["everyone", "adults"]).nullable().optional(),
+    importance: z.enum(["normal", "important", "pinned"]).nullable().optional(),
+    group: z.string().nullable().optional(),
+    tags: z.array(z.string()).nullable().optional(),
+  })
+  .strict();
 
-function storedTime(instant: string | null, zone: string | null, allDay: number, date: string | null): CalendarTime | undefined {
+function storedTime(
+  instant: string | null,
+  zone: string | null,
+  allDay: number,
+  date: string | null,
+): CalendarTime | undefined {
   if (allDay) return date ? { kind: "all-day", date: date as LocalDate } : undefined;
   return instant
-    ? { kind: "timed", instant: instant as UtcInstant, timeZoneId: (zone ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId }
+    ? {
+        kind: "timed",
+        instant: instant as UtcInstant,
+        timeZoneId: (zone ?? DEFAULT_EVENT_TIME_ZONE) as EventTimeZoneId,
+      }
     : undefined;
 }
 function normalizeTime(time: CalendarTime, defaultEventTimeZoneId = DEFAULT_EVENT_TIME_ZONE): CalendarTime {
-  return time.kind === "timed" && !time.timeZoneId ? { ...time, timeZoneId: defaultEventTimeZoneId as EventTimeZoneId } : time;
+  return time.kind === "timed" && !time.timeZoneId
+    ? { ...time, timeZoneId: defaultEventTimeZoneId as EventTimeZoneId }
+    : time;
 }
 function timeColumns(time: CalendarTime | undefined): [string | null, string | null, number, string | null] {
-  return time?.kind === "timed" ? [time.instant, time.timeZoneId, 0, null] : time ? [null, null, 1, time.date] : [null, null, 0, null];
+  return time?.kind === "timed"
+    ? [time.instant, time.timeZoneId, 0, null]
+    : time
+      ? [null, null, 1, time.date]
+      : [null, null, 0, null];
 }
-function json(value: unknown): string { return JSON.stringify(value); }
-function timeKey(value: CalendarTime): string { return json({ occurrence: value }); }
+function json(value: unknown): string {
+  return JSON.stringify(value);
+}
+function timeKey(value: CalendarTime): string {
+  return json({ occurrence: value });
+}
 function parseJson<T>(value: string, schema: z.ZodType<T>): T | undefined {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -143,11 +167,16 @@ function parseJson<T>(value: string, schema: z.ZodType<T>): T | undefined {
   }
 }
 function exceptionKey(value: unknown): CalendarTime | undefined {
-  const result = z.union([
-    z.object({ occurrence: wireCalendarTimeSchema }).strict().transform((v) => v.occurrence),
-    wireCalendarTimeSchema,
-  ]).safeParse(value);
-  return result.success ? result.data as unknown as CalendarTime : undefined;
+  const result = z
+    .union([
+      z
+        .object({ occurrence: wireCalendarTimeSchema })
+        .strict()
+        .transform((v) => v.occurrence),
+      wireCalendarTimeSchema,
+    ])
+    .safeParse(value);
+  return result.success ? (result.data as unknown as CalendarTime) : undefined;
 }
 function sortedTags(tags: readonly string[]): string[] {
   return [...new Set(tags)].sort((a, b) => a.localeCompare(b));
@@ -157,13 +186,21 @@ function keyForTime(value: CalendarTime): string {
 }
 
 class TransactionAbort extends Error {
-  constructor(readonly result: CalendarResult<never>) { super("calendar transaction aborted"); }
+  constructor(readonly result: CalendarResult<never>) {
+    super("calendar transaction aborted");
+  }
 }
 
 /** Opens only the fresh V2 database at `<root>/calendar-v2/calendar.db`. */
-export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, deps: CalendarStoreDeps = {}): CalendarPersistence {
+export function openCalendarPersistence(
+  cap: Capability,
+  _cfg: CalendarConfig,
+  deps: CalendarStoreDeps = {},
+): CalendarPersistence {
   if (!ACCEPTED_CLASSES.has(cap.resource)) {
-    throw new Error(`openCalendarPersistence: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`);
+    throw new Error(
+      `openCalendarPersistence: wrong resource class "${cap.resource}" — expected calendar-private or calendar-household`,
+    );
   }
   const calendarRoot = join(cap.rootPath, "calendar-v2");
   const dbPath = join(calendarRoot, "calendar.db");
@@ -188,7 +225,11 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
   };
   const usable = <T>(operation: () => CalendarResult<T>): CalendarResult<T> => {
     if (closed) return { ok: false, error: "closed" };
-    try { return operation(); } catch { return { ok: false, error: "io-error" }; }
+    try {
+      return operation();
+    } catch {
+      return { ok: false, error: "io-error" };
+    }
   };
 
   const rowToBase = (row: EventRow): CalendarResult<CalendarPersistenceBaseEvent> => {
@@ -205,7 +246,8 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
     const createdAt = persistedUtcInstantSchema.safeParse(row.created_at);
     const updatedAt = persistedUtcInstantSchema.safeParse(row.updated_at);
     if (!createdAt.success || !updatedAt.success) return { ok: false, error: "invalid" };
-    const notification = row.notification_policy === null ? undefined : parseJson(row.notification_policy, z.record(z.unknown()));
+    const notification =
+      row.notification_policy === null ? undefined : parseJson(row.notification_policy, z.record(z.unknown()));
     if (row.notification_policy !== null && !notification) return { ok: false, error: "invalid" };
     const base: CalendarPersistenceBaseEvent = {
       id: row.id as CalendarEventId,
@@ -222,13 +264,26 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
       createdAt: createdAt.data as UtcInstant,
       updatedAt: updatedAt.data as UtcInstant,
     } as CalendarPersistenceBaseEvent;
-    if (!z.object({
-      id: z.string().min(1), revision: z.number().int().positive(), title: z.string().min(1),
-      description: z.string().optional(), start: wireCalendarTimeSchema, end: wireCalendarTimeSchema.optional(),
-      recurrence: recurrenceSchema.optional(), visibility: z.enum(["everyone", "adults"]), importance: z.enum(["normal", "important", "pinned"]),
-      group: z.string().optional(), notification: z.record(z.unknown()).optional(),
-      createdAt: persistedUtcInstantSchema, updatedAt: persistedUtcInstantSchema,
-    }).safeParse(base).success) return { ok: false, error: "invalid" };
+    if (
+      !z
+        .object({
+          id: z.string().min(1),
+          revision: z.number().int().positive(),
+          title: z.string().min(1),
+          description: z.string().optional(),
+          start: wireCalendarTimeSchema,
+          end: wireCalendarTimeSchema.optional(),
+          recurrence: recurrenceSchema.optional(),
+          visibility: z.enum(["everyone", "adults"]),
+          importance: z.enum(["normal", "important", "pinned"]),
+          group: z.string().optional(),
+          notification: z.record(z.unknown()).optional(),
+          createdAt: persistedUtcInstantSchema,
+          updatedAt: persistedUtcInstantSchema,
+        })
+        .safeParse(base).success
+    )
+      return { ok: false, error: "invalid" };
     return { ok: true, value: base };
   };
 
@@ -237,9 +292,11 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
     return row ? rowToBase(row) : { ok: false, error: "not-found" };
   };
   const readChildren = (id: CalendarEventId): CalendarResult<CalendarPersistenceChildren> => {
-    const exceptionRows = db.query<{ occurrence_key: string; cancelled: number; override_json: string | null }, [string]>(
-      "SELECT occurrence_key, cancelled, override_json FROM exceptions WHERE event_id = ? ORDER BY occurrence_key",
-    ).all(id);
+    const exceptionRows = db
+      .query<{ occurrence_key: string; cancelled: number; override_json: string | null }, [string]>(
+        "SELECT occurrence_key, cancelled, override_json FROM exceptions WHERE event_id = ? ORDER BY occurrence_key",
+      )
+      .all(id);
     const exceptions: ExceptionOverride[] = [];
     const cancelledKeys = new Set<string>();
     for (const row of exceptionRows) {
@@ -248,15 +305,23 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
       if (!occurrence) return { ok: false, error: "invalid" };
       const override = row.override_json === null ? {} : parseJson(row.override_json, overrideSchema);
       if (row.override_json !== null && !override) return { ok: false, error: "invalid" };
-      const sparseOverride = Object.fromEntries(Object.entries(override ?? {}).filter(([, value]) => value !== undefined));
+      const sparseOverride = Object.fromEntries(
+        Object.entries(override ?? {}).filter(([, value]) => value !== undefined),
+      );
       const key = keyForTime(occurrence);
       if (cancelledKeys.has(key)) return { ok: false, error: "invalid" };
       if (row.cancelled) cancelledKeys.add(key);
-      exceptions.push({ occurrence, ...(row.cancelled ? { cancelled: true } : {}), ...sparseOverride } as ExceptionOverride);
+      exceptions.push({
+        occurrence,
+        ...(row.cancelled ? { cancelled: true } : {}),
+        ...sparseOverride,
+      } as ExceptionOverride);
     }
-    const exclusionRows = db.query<{ occurrence_key: string }, [string]>(
-      "SELECT occurrence_key FROM exclusions WHERE event_id = ? ORDER BY occurrence_key",
-    ).all(id);
+    const exclusionRows = db
+      .query<{ occurrence_key: string }, [string]>(
+        "SELECT occurrence_key FROM exclusions WHERE event_id = ? ORDER BY occurrence_key",
+      )
+      .all(id);
     const exclusions: CalendarTime[] = [];
     const exclusionKeys = new Set<string>();
     for (const row of exclusionRows) {
@@ -268,7 +333,10 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
       exclusionKeys.add(key);
       exclusions.push(occurrence);
     }
-    const tags = db.query<{ tag: string }, [string]>("SELECT tag FROM tags WHERE event_id = ? ORDER BY tag").all(id).map((r) => r.tag);
+    const tags = db
+      .query<{ tag: string }, [string]>("SELECT tag FROM tags WHERE event_id = ? ORDER BY tag")
+      .all(id)
+      .map((r) => r.tag);
     if (tags.some((tag) => typeof tag !== "string")) return { ok: false, error: "invalid" };
     return { ok: true, value: { exceptions, exclusions, tags } };
   };
@@ -302,146 +370,194 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
   };
   const ensureEvent = (id: CalendarEventId): CalendarResult<void> => {
     const result = readBase(id);
-    return result.ok ? { ok: true, value: undefined } : result as CalendarResult<void>;
+    return result.ok ? { ok: true, value: undefined } : (result as CalendarResult<void>);
   };
   const validateBase = (event: CalendarPersistenceBaseEvent): CalendarResult<void> => {
     if (event.revision < 1 || !z.string().min(1).safeParse(event.title).success) return { ok: false, error: "invalid" };
-    if (!wireCalendarTimeSchema.safeParse(event.start).success || (event.end !== undefined && !wireCalendarTimeSchema.safeParse(event.end).success)) return { ok: false, error: "invalid" };
-    if (event.recurrence !== undefined && !recurrenceSchema.safeParse(event.recurrence).success) return { ok: false, error: "invalid" };
-    if (!z.enum(["everyone", "adults"]).safeParse(event.visibility).success || !z.enum(["normal", "important", "pinned"]).safeParse(event.importance).success) return { ok: false, error: "invalid" };
+    if (
+      !wireCalendarTimeSchema.safeParse(event.start).success ||
+      (event.end !== undefined && !wireCalendarTimeSchema.safeParse(event.end).success)
+    )
+      return { ok: false, error: "invalid" };
+    if (event.recurrence !== undefined && !recurrenceSchema.safeParse(event.recurrence).success)
+      return { ok: false, error: "invalid" };
+    if (
+      !z.enum(["everyone", "adults"]).safeParse(event.visibility).success ||
+      !z.enum(["normal", "important", "pinned"]).safeParse(event.importance).success
+    )
+      return { ok: false, error: "invalid" };
     return { ok: true, value: undefined };
   };
 
-  const transaction = <T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T> => usable(() => {
-    try {
-      const result = db.transaction(() => {
-        // This check is deliberately inside the SQLite transaction. Callers
-        // cannot bypass the household write gate through a new transaction.
-        if (cap.resource === "calendar-household" && !isAdult(cap.role)) throw new TransactionAbort({ ok: false, error: "forbidden" });
-        const tx: CalendarPersistenceTransaction = {
-          readBaseEvent: (id) => readBase(id),
-          getBaseEvent: (id) => readBase(id),
-          readChildState: (id) => readChildren(id),
-          getChildState: (id) => readChildren(id),
-          readEvent: (id) => authorized(id, false),
-          insertBaseEvent: (event) => {
-            touch("insert-base-event");
-            const valid = validateBase(event);
-            if (!valid.ok || event.revision !== 1) return { ok: false, error: "invalid" };
-            const exists = db.query("SELECT 1 FROM events WHERE id = ?").get(event.id);
-            if (exists) return { ok: false, error: "already-exists" };
-            const s = timeColumns(event.start), e = timeColumns(event.end);
-            db.query("INSERT INTO events (id,revision,title,description,start_instant,start_time_zone_id,start_all_day,start_date,end_instant,end_time_zone_id,end_all_day,end_date,recurrence,visibility,importance,\"group\",notification_policy,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-              .run(event.id, 1, event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.createdAt, event.updatedAt);
-            return { ok: true, value: undefined };
-          },
-          insertSuccessor: (event) => {
-            touch("insert-successor");
-            return tx.insertBaseEvent(event);
-          },
-          replaceBaseEvent: (event) => {
-            touch("replace-base-event");
-            const valid = validateBase(event);
-            if (!valid.ok) return valid;
-            const exists = ensureEvent(event.id);
-            if (!exists.ok) return exists;
-            const s = timeColumns(event.start), e = timeColumns(event.end);
-            db.query("UPDATE events SET title=?,description=?,start_instant=?,start_time_zone_id=?,start_all_day=?,start_date=?,end_instant=?,end_time_zone_id=?,end_all_day=?,end_date=?,recurrence=?,visibility=?,importance=?,\"group\"=?,notification_policy=?,created_at=?,updated_at=? WHERE id=?")
-              .run(event.title, event.description ?? null, ...s, ...e, event.recurrence ? json(event.recurrence) : null, event.visibility, event.importance, event.group ?? null, event.notification ? json(event.notification) : null, event.createdAt, event.updatedAt, event.id);
-            return { ok: true, value: undefined };
-          },
-          compareAndSwapRevision: (id, expectedRevision) => {
-            touch("compare-and-swap-revision");
-            const current = readBase(id);
-            if (!current.ok) return current as CalendarResult<CalendarRevision>;
-            if (current.value.revision !== expectedRevision) return { ok: false, error: "conflict" };
-            const next = expectedRevision + 1;
-            const changed = db.query("UPDATE events SET revision = ? WHERE id = ? AND revision = ?").run(next, id, expectedRevision);
-            if (changed.changes !== 1) return { ok: false, error: "conflict" };
-            return { ok: true, value: next as CalendarRevision };
-          },
-          compareAndSwapBaseRevision: (id, expectedRevision) => tx.compareAndSwapRevision(id, expectedRevision),
-          replaceExceptions: (id, exceptions) => {
-            const exists = ensureEvent(id);
-            if (!exists.ok) return exists;
-            const current = readChildren(id);
-            if (!current.ok) return current;
-            const checked = validateChildren({ ...current.value, exceptions });
-            if (!checked.ok) return checked;
-            touch("replace-exceptions");
-            db.query("DELETE FROM exceptions WHERE event_id = ?").run(id);
-            for (const exception of exceptions) {
-              const { occurrence, cancelled, ...override } = exception;
-              const overrideJson = Object.keys(override).length ? json(override) : null;
-              db.query("INSERT INTO exceptions (event_id,occurrence_key,cancelled,override_json) VALUES (?,?,?,?)")
-                .run(id, timeKey(occurrence), cancelled ? 1 : 0, overrideJson);
-            }
-            return { ok: true, value: undefined };
-          },
-          replaceExclusions: (id, exclusions) => {
-            const exists = ensureEvent(id);
-            if (!exists.ok) return exists;
-            const current = readChildren(id);
-            if (!current.ok) return current;
-            const checked = validateChildren({ ...current.value, exclusions });
-            if (!checked.ok) return checked;
-            touch("replace-exclusions");
-            db.query("DELETE FROM exclusions WHERE event_id = ?").run(id);
-            for (const exclusion of exclusions) db.query("INSERT INTO exclusions (event_id,occurrence_key) VALUES (?,?)").run(id, timeKey(exclusion));
-            return { ok: true, value: undefined };
-          },
-          replaceTags: (id, tags) => {
-            const exists = ensureEvent(id);
-            if (!exists.ok) return exists;
-            const current = readChildren(id);
-            if (!current.ok) return current;
-            const checked = validateChildren({ ...current.value, tags });
-            if (!checked.ok) return checked;
-            touch("replace-tags");
-            db.query("DELETE FROM tags WHERE event_id = ?").run(id);
-            for (const tag of sortedTags(tags)) db.query("INSERT INTO tags (event_id,tag) VALUES (?,?)").run(id, tag);
-            return { ok: true, value: undefined };
-          },
-          replaceChildren: (id, children) => {
-            const checked = validateChildren(children);
-            if (!checked.ok) return checked;
-            const exists = ensureEvent(id);
-            if (!exists.ok) return exists;
-            const exceptions = tx.replaceExceptions(id, children.exceptions);
-            if (!exceptions.ok) return exceptions;
-            const exclusions = tx.replaceExclusions(id, children.exclusions);
-            if (!exclusions.ok) return exclusions;
-            return tx.replaceTags(id, children.tags);
-          },
-          deleteSegment: (id) => {
-            touch("delete-segment");
-            const exists = ensureEvent(id);
-            if (!exists.ok) return exists;
-            db.query("DELETE FROM events WHERE id = ?").run(id);
-            return { ok: true, value: undefined };
-          },
-        };
-        const result = work(tx);
-        if (!result.ok) throw new TransactionAbort(result as CalendarResult<never>);
-        touch("commit");
+  const transaction = <T>(work: (tx: CalendarPersistenceTransaction) => CalendarResult<T>): CalendarResult<T> =>
+    usable(() => {
+      try {
+        const result = db.transaction(() => {
+          // This check is deliberately inside the SQLite transaction. Callers
+          // cannot bypass the household write gate through a new transaction.
+          if (cap.resource === "calendar-household" && !isAdult(cap.role))
+            throw new TransactionAbort({ ok: false, error: "forbidden" });
+          const tx: CalendarPersistenceTransaction = {
+            readBaseEvent: (id) => readBase(id),
+            getBaseEvent: (id) => readBase(id),
+            readChildState: (id) => readChildren(id),
+            getChildState: (id) => readChildren(id),
+            readEvent: (id) => authorized(id, false),
+            insertBaseEvent: (event) => {
+              touch("insert-base-event");
+              const valid = validateBase(event);
+              if (!valid.ok || event.revision !== 1) return { ok: false, error: "invalid" };
+              const exists = db.query("SELECT 1 FROM events WHERE id = ?").get(event.id);
+              if (exists) return { ok: false, error: "already-exists" };
+              const s = timeColumns(event.start);
+              const e = timeColumns(event.end);
+              db.query(
+                'INSERT INTO events (id,revision,title,description,start_instant,start_time_zone_id,start_all_day,start_date,end_instant,end_time_zone_id,end_all_day,end_date,recurrence,visibility,importance,"group",notification_policy,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+              ).run(
+                event.id,
+                1,
+                event.title,
+                event.description ?? null,
+                ...s,
+                ...e,
+                event.recurrence ? json(event.recurrence) : null,
+                event.visibility,
+                event.importance,
+                event.group ?? null,
+                event.notification ? json(event.notification) : null,
+                event.createdAt,
+                event.updatedAt,
+              );
+              return { ok: true, value: undefined };
+            },
+            insertSuccessor: (event) => {
+              touch("insert-successor");
+              return tx.insertBaseEvent(event);
+            },
+            replaceBaseEvent: (event) => {
+              touch("replace-base-event");
+              const valid = validateBase(event);
+              if (!valid.ok) return valid;
+              const exists = ensureEvent(event.id);
+              if (!exists.ok) return exists;
+              const s = timeColumns(event.start);
+              const e = timeColumns(event.end);
+              db.query(
+                'UPDATE events SET title=?,description=?,start_instant=?,start_time_zone_id=?,start_all_day=?,start_date=?,end_instant=?,end_time_zone_id=?,end_all_day=?,end_date=?,recurrence=?,visibility=?,importance=?,"group"=?,notification_policy=?,created_at=?,updated_at=? WHERE id=?',
+              ).run(
+                event.title,
+                event.description ?? null,
+                ...s,
+                ...e,
+                event.recurrence ? json(event.recurrence) : null,
+                event.visibility,
+                event.importance,
+                event.group ?? null,
+                event.notification ? json(event.notification) : null,
+                event.createdAt,
+                event.updatedAt,
+                event.id,
+              );
+              return { ok: true, value: undefined };
+            },
+            compareAndSwapRevision: (id, expectedRevision) => {
+              touch("compare-and-swap-revision");
+              const current = readBase(id);
+              if (!current.ok) return current as CalendarResult<CalendarRevision>;
+              if (current.value.revision !== expectedRevision) return { ok: false, error: "conflict" };
+              const next = expectedRevision + 1;
+              const changed = db
+                .query("UPDATE events SET revision = ? WHERE id = ? AND revision = ?")
+                .run(next, id, expectedRevision);
+              if (changed.changes !== 1) return { ok: false, error: "conflict" };
+              return { ok: true, value: next as CalendarRevision };
+            },
+            compareAndSwapBaseRevision: (id, expectedRevision) => tx.compareAndSwapRevision(id, expectedRevision),
+            replaceExceptions: (id, exceptions) => {
+              const exists = ensureEvent(id);
+              if (!exists.ok) return exists;
+              const current = readChildren(id);
+              if (!current.ok) return current;
+              const checked = validateChildren({ ...current.value, exceptions });
+              if (!checked.ok) return checked;
+              touch("replace-exceptions");
+              db.query("DELETE FROM exceptions WHERE event_id = ?").run(id);
+              for (const exception of exceptions) {
+                const { occurrence, cancelled, ...override } = exception;
+                const overrideJson = Object.keys(override).length ? json(override) : null;
+                db.query(
+                  "INSERT INTO exceptions (event_id,occurrence_key,cancelled,override_json) VALUES (?,?,?,?)",
+                ).run(id, timeKey(occurrence), cancelled ? 1 : 0, overrideJson);
+              }
+              return { ok: true, value: undefined };
+            },
+            replaceExclusions: (id, exclusions) => {
+              const exists = ensureEvent(id);
+              if (!exists.ok) return exists;
+              const current = readChildren(id);
+              if (!current.ok) return current;
+              const checked = validateChildren({ ...current.value, exclusions });
+              if (!checked.ok) return checked;
+              touch("replace-exclusions");
+              db.query("DELETE FROM exclusions WHERE event_id = ?").run(id);
+              for (const exclusion of exclusions)
+                db.query("INSERT INTO exclusions (event_id,occurrence_key) VALUES (?,?)").run(id, timeKey(exclusion));
+              return { ok: true, value: undefined };
+            },
+            replaceTags: (id, tags) => {
+              const exists = ensureEvent(id);
+              if (!exists.ok) return exists;
+              const current = readChildren(id);
+              if (!current.ok) return current;
+              const checked = validateChildren({ ...current.value, tags });
+              if (!checked.ok) return checked;
+              touch("replace-tags");
+              db.query("DELETE FROM tags WHERE event_id = ?").run(id);
+              for (const tag of sortedTags(tags)) db.query("INSERT INTO tags (event_id,tag) VALUES (?,?)").run(id, tag);
+              return { ok: true, value: undefined };
+            },
+            replaceChildren: (id, children) => {
+              const checked = validateChildren(children);
+              if (!checked.ok) return checked;
+              const exists = ensureEvent(id);
+              if (!exists.ok) return exists;
+              const exceptions = tx.replaceExceptions(id, children.exceptions);
+              if (!exceptions.ok) return exceptions;
+              const exclusions = tx.replaceExclusions(id, children.exclusions);
+              if (!exclusions.ok) return exclusions;
+              return tx.replaceTags(id, children.tags);
+            },
+            deleteSegment: (id) => {
+              touch("delete-segment");
+              const exists = ensureEvent(id);
+              if (!exists.ok) return exists;
+              db.query("DELETE FROM events WHERE id = ?").run(id);
+              return { ok: true, value: undefined };
+            },
+          };
+          const result = work(tx);
+          if (!result.ok) throw new TransactionAbort(result as CalendarResult<never>);
+          touch("commit");
+          return result;
+        })();
         return result;
-      })();
-      return result;
-    } catch (error) {
-      if (error instanceof TransactionAbort) return error.result as CalendarResult<T>;
-      return { ok: false, error: "io-error" };
-    }
-  });
+      } catch (error) {
+        if (error instanceof TransactionAbort) return error.result as CalendarResult<T>;
+        return { ok: false, error: "io-error" };
+      }
+    });
 
-  const readBaseCandidates = (limit: number, window: CalendarCandidateWindow): CalendarResult<CalendarCandidateBatch> => usable(() => {
-    if (!Number.isInteger(limit) || limit < 1) return { ok: false, error: "invalid" };
-    const timedFrom = window.timedFrom ?? "9999-12-31T23:59:59.999Z";
-    const timedTo = window.timedTo ?? "0001-01-01T00:00:00.000Z";
-    const allDayFrom = window.allDayFrom ?? "9999-12-31";
-    const allDayTo = window.allDayTo ?? "0001-01-01";
-    // Recurring rows can begin before the window; exception rows are included
-    // conservatively because an override may move an occurrence into it.
-    const rows = db.query<{ id: string }, [string, string, string, string, string, string, number]>(`
+  const readBaseCandidates = (limit: number, window: CalendarCandidateWindow): CalendarResult<CalendarCandidateBatch> =>
+    usable(() => {
+      if (!Number.isInteger(limit) || limit < 1) return { ok: false, error: "invalid" };
+      const timedFrom = window.timedFrom ?? "9999-12-31T23:59:59.999Z";
+      const timedTo = window.timedTo ?? "0001-01-01T00:00:00.000Z";
+      const allDayFrom = window.allDayFrom ?? "9999-12-31";
+      const allDayTo = window.allDayTo ?? "0001-01-01";
+      // Recurring rows can begin before the window; exception rows are included
+      // conservatively because an override may move an occurrence into it.
+      const rows = db
+        .query<{ id: string }, [string, string, string, string, string, string, number]>(`
       SELECT id FROM events
       WHERE (
         (start_instant BETWEEN ? AND ? OR (recurrence IS NOT NULL AND start_instant <= ?))
@@ -450,15 +566,16 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
       )
       ORDER BY id
       LIMIT ?
-    `).all(timedFrom, timedTo, timedTo, allDayFrom, allDayTo, allDayTo, limit + 1);
-    return {
-      ok: true,
-      value: {
-        ids: rows.slice(0, limit).map((row) => row.id as CalendarEventId),
-        overflow: rows.length > limit,
-      },
-    };
-  });
+    `)
+        .all(timedFrom, timedTo, timedTo, allDayFrom, allDayTo, allDayTo, limit + 1);
+      return {
+        ok: true,
+        value: {
+          ids: rows.slice(0, limit).map((row) => row.id as CalendarEventId),
+          overflow: rows.length > limit,
+        },
+      };
+    });
 
   return {
     scope: cap.resource === "calendar-household" ? "household" : "private",
@@ -469,7 +586,12 @@ export function openCalendarPersistence(cap: Capability, _cfg: CalendarConfig, d
     readRaw: (id) => usable(() => authorized(id, true)),
     transaction,
     withTransaction: transaction,
-    close: () => { if (!closed) { closed = true; db.close(); } },
+    close: () => {
+      if (!closed) {
+        closed = true;
+        db.close();
+      }
+    },
   };
 }
 
@@ -493,7 +615,11 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
   let closed = false;
   const usable = <T>(operation: () => CalendarResult<T>): CalendarResult<T> => {
     if (closed) return { ok: false, error: "closed" };
-    try { return operation(); } catch { return { ok: false, error: "io-error" }; }
+    try {
+      return operation();
+    } catch {
+      return { ok: false, error: "io-error" };
+    }
   };
   const gate = <T>(operation: () => CalendarResult<T>): CalendarResult<T> =>
     cap.resource === "calendar-household" && !isAdult(cap.role) ? { ok: false, error: "forbidden" } : operation();
@@ -512,7 +638,10 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
       revision: 1 as CalendarRevision,
     };
     const children: CalendarPersistenceChildren = {
-      exceptions: (event.exceptions ?? []).map((value) => ({ ...value, occurrence: normalizeTime(value.occurrence, defaultEventTimeZoneId) })),
+      exceptions: (event.exceptions ?? []).map((value) => ({
+        ...value,
+        occurrence: normalizeTime(value.occurrence, defaultEventTimeZoneId),
+      })),
       exclusions: (event.exdates ?? []).map((value) => normalizeTime(value, defaultEventTimeZoneId)),
       tags: [...event.tags],
     };
@@ -534,52 +663,103 @@ export function openCalendarStore(cap: Capability, cfg: CalendarConfig, deps: Ca
     if (!result.ok) return result;
     return { ok: true, value: { ...event, start: normalizedStart, ...(normalizedEnd ? { end: normalizedEnd } : {}) } };
   };
-  const list = (window: { from: CalendarTime; to: CalendarTime; group?: string; tags?: readonly string[]; importance?: StoredCalendarEvent["importance"] }): CalendarResult<Occurrence[]> => {
+  const list = (window: {
+    from: CalendarTime;
+    to: CalendarTime;
+    group?: string;
+    tags?: readonly string[];
+    importance?: StoredCalendarEvent["importance"];
+  }): CalendarResult<Occurrence[]> => {
     if (window.from.kind !== window.to.kind) return { ok: false, error: "invalid" };
     const candidateLimit = cfg.query?.maxOccurrences ?? cfg.recurrence?.maxOccurrences ?? 1000;
-    const candidates = persistence.readBaseCandidates(candidateLimit, window.from.kind === "timed"
-      ? { timedFrom: window.from.instant, timedTo: window.to.kind === "timed" ? window.to.instant : window.from.instant }
-      : { allDayFrom: window.from.date, allDayTo: window.to.kind === "all-day" ? window.to.date : window.from.date });
+    const candidates = persistence.readBaseCandidates(
+      candidateLimit,
+      window.from.kind === "timed"
+        ? {
+            timedFrom: window.from.instant,
+            timedTo: window.to.kind === "timed" ? window.to.instant : window.from.instant,
+          }
+        : { allDayFrom: window.from.date, allDayTo: window.to.kind === "all-day" ? window.to.date : window.from.date },
+    );
     if (!candidates.ok) return candidates;
     if (candidates.value.overflow) return { ok: false, error: "recurrence-limit" };
     const occurrences: Occurrence[] = [];
     for (const id of candidates.value.ids) {
       const result = read(id);
-      if (!result.ok) { if (result.error === "not-found") continue; return result; }
+      if (!result.ok) {
+        if (result.error === "not-found") continue;
+        return result;
+      }
       const event = result.value;
       if (window.group !== undefined && event.group !== window.group) continue;
       if (window.importance !== undefined && event.importance !== window.importance) continue;
       if (window.tags !== undefined && !window.tags.every((tag) => event.tags.has(tag))) continue;
       if (event.start.kind !== window.from.kind) continue;
-      const eventWindow = event.start.kind === "timed"
-        ? { from: { kind: "timed" as const, instant: window.from.kind === "timed" ? window.from.instant : "" as UtcInstant, timeZoneId: event.start.timeZoneId }, to: { kind: "timed" as const, instant: window.to.kind === "timed" ? window.to.instant : "" as UtcInstant, timeZoneId: event.start.timeZoneId } }
-        : { from: window.from, to: window.to };
+      const eventWindow =
+        event.start.kind === "timed"
+          ? {
+              from: {
+                kind: "timed" as const,
+                instant: window.from.kind === "timed" ? window.from.instant : ("" as UtcInstant),
+                timeZoneId: event.start.timeZoneId,
+              },
+              to: {
+                kind: "timed" as const,
+                instant: window.to.kind === "timed" ? window.to.instant : ("" as UtcInstant),
+                timeZoneId: event.start.timeZoneId,
+              },
+            }
+          : { from: window.from, to: window.to };
       const expanded = expandRecurrence(event, eventWindow.from, eventWindow.to, recurrenceLimits);
-      if (!expanded.ok) return { ok: false, error: expanded.error.code === "recurrence-limit" || expanded.error.code === "unbounded-rrule" ? "recurrence-limit" : "invalid" };
+      if (!expanded.ok)
+        return {
+          ok: false,
+          error:
+            expanded.error.code === "recurrence-limit" || expanded.error.code === "unbounded-rrule"
+              ? "recurrence-limit"
+              : "invalid",
+        };
       occurrences.push(...expanded.value);
     }
-    occurrences.sort((a, b) => (a.start.kind === "all-day" ? Date.parse(`${a.start.date}T00:00:00Z`) : Date.parse(a.start.instant)) - (b.start.kind === "all-day" ? Date.parse(`${b.start.date}T00:00:00Z`) : Date.parse(b.start.instant)) || a.occurrenceId.localeCompare(b.occurrenceId));
+    occurrences.sort(
+      (a, b) =>
+        (a.start.kind === "all-day" ? Date.parse(`${a.start.date}T00:00:00Z`) : Date.parse(a.start.instant)) -
+          (b.start.kind === "all-day" ? Date.parse(`${b.start.date}T00:00:00Z`) : Date.parse(b.start.instant)) ||
+        a.occurrenceId.localeCompare(b.occurrenceId),
+    );
     return { ok: true, value: occurrences };
   };
   const store: CalendarStore = {
     get: (id) => usable(() => read(id)),
     list: (window) => usable(() => list(window)),
     create: (event) => usable(() => gate(() => write(event, "create"))),
-    update: ((idOrEvent: CalendarEventId | StoredCalendarEvent, patch?: CalendarEventPatch) => usable(() => gate(() => {
-      const id = typeof idOrEvent === "string" ? idOrEvent : idOrEvent.id;
-      const current = read(id);
-      if (!current.ok) return current;
-      const event = typeof idOrEvent === "string" ? { ...current.value, ...patch, id } as StoredCalendarEvent : idOrEvent;
-      return write(event, "update");
-    }))) as CalendarStore["update"],
-    delete: (id) => usable(() => gate(() => {
-      const found = read(id);
-      if (!found.ok) return found;
-      const result = persistence.transaction((tx) => tx.deleteSegment(id));
-      if (!result.ok) return result;
-      return { ok: true, value: undefined };
-    })),
-    close: () => { if (!closed) { closed = true; persistence.close(); } },
+    update: ((idOrEvent: CalendarEventId | StoredCalendarEvent, patch?: CalendarEventPatch) =>
+      usable(() =>
+        gate(() => {
+          const id = typeof idOrEvent === "string" ? idOrEvent : idOrEvent.id;
+          const current = read(id);
+          if (!current.ok) return current;
+          const event =
+            typeof idOrEvent === "string" ? ({ ...current.value, ...patch, id } as StoredCalendarEvent) : idOrEvent;
+          return write(event, "update");
+        }),
+      )) as CalendarStore["update"],
+    delete: (id) =>
+      usable(() =>
+        gate(() => {
+          const found = read(id);
+          if (!found.ok) return found;
+          const result = persistence.transaction((tx) => tx.deleteSegment(id));
+          if (!result.ok) return result;
+          return { ok: true, value: undefined };
+        }),
+      ),
+    close: () => {
+      if (!closed) {
+        closed = true;
+        persistence.close();
+      }
+    },
   };
   return store;
 }

@@ -88,10 +88,12 @@ async function localFetch(target: string, path: string, init: RequestInit = {}):
 async function json<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const code = z.union([
-      z.object({ body: z.object({ code: z.string() }) }).transform((value) => value.body.code),
-      z.object({ error: z.object({ code: z.string() }) }).transform((value) => value.error.code),
-    ]).safeParse(body);
+    const code = z
+      .union([
+        z.object({ body: z.object({ code: z.string() }) }).transform((value) => value.body.code),
+        z.object({ error: z.object({ code: z.string() }) }).transform((value) => value.error.code),
+      ])
+      .safeParse(body);
     throw new Error(
       `local fixture control failed with HTTP ${response.status}${code.success ? ` (${code.data})` : ""}`,
     );
@@ -101,14 +103,16 @@ async function json<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
 
 const authSchema = z.object({ token: z.string().min(1), user: z.object({ userId: z.string().min(1) }).passthrough() });
 const userSchema = z.object({
-  user: z.object({
-    userId: z.string().min(1),
-    displayName: z.string(),
-    role: z.enum(["admin", "adult", "child", "guest"]),
-    isAdmin: z.boolean(),
-    avatarTint: z.enum(["terra", "sage", "amber", "clay"]),
-    createdAt: z.string(),
-  }).passthrough(),
+  user: z
+    .object({
+      userId: z.string().min(1),
+      displayName: z.string(),
+      role: z.enum(["admin", "adult", "child", "guest"]),
+      isAdmin: z.boolean(),
+      avatarTint: z.enum(["terra", "sage", "amber", "clay"]),
+      createdAt: z.string(),
+    })
+    .passthrough(),
 });
 const calendarCreateSchema = z.object({ body: z.object({ eventId: z.string().min(1) }).passthrough() }).passthrough();
 
@@ -179,10 +183,7 @@ async function dependencies(target: string): Promise<{
 }> {
   const adminToken = await login(target, required("CALENDAR_E2E_ADMIN_USER_ID"), required("CALENDAR_E2E_ADMIN_PIN"));
   const profile = profileV1Schema.parse(
-    await json(
-      await localFetch(target, "/api/v1/profile/me", { headers: bearer(adminToken) }),
-      profileV1Schema,
-    ),
+    await json(await localFetch(target, "/api/v1/profile/me", { headers: bearer(adminToken) }), profileV1Schema),
   );
   const adultPin = required("CALENDAR_E2E_ADULT_PIN");
   let adultId: string | null = null;
@@ -201,8 +202,12 @@ async function dependencies(target: string): Promise<{
     // are deleted explicitly by event ID. These roots are run-local metadata only.
     userDataRoot: resolve("/tmp/sentient-calendar-fixture-control/users"),
     sharedDataRoot: resolve("/tmp/sentient-calendar-fixture-control/shared"),
-    makeDirectory: async (path) => { await mkdir(path, { recursive: true }); },
-    remove: async (path) => { await rm(path, { force: true }); },
+    makeDirectory: async (path) => {
+      await mkdir(path, { recursive: true });
+    },
+    remove: async (path) => {
+      await rm(path, { force: true });
+    },
     userProvisioner: {
       createUser: async (input) => {
         const response = await localFetch(target, "/api/v1/admin/users", {
@@ -292,40 +297,50 @@ async function main(): Promise<void> {
 
   if (command === "provision") {
     await stat(statePath).then(
-      () => { throw new Error("fixture state file already exists"); },
+      () => {
+        throw new Error("fixture state file already exists");
+      },
       () => undefined,
     );
     const suffix = crypto.randomUUID().slice(0, 8);
-    const value = await provisionLocalCalendarFixture(deps, {
-      adult: {
-        displayName: `Calendar Adult ${suffix}`,
-        pin: required("CALENDAR_E2E_ADULT_PIN"),
-        profile: local.profile,
+    const value = await provisionLocalCalendarFixture(
+      deps,
+      {
+        adult: {
+          displayName: `Calendar Adult ${suffix}`,
+          pin: required("CALENDAR_E2E_ADULT_PIN"),
+          profile: local.profile,
+        },
+        child: {
+          displayName: `Calendar Child ${suffix}`,
+          pin: required("CALENDAR_E2E_CHILD_PIN"),
+          profile: local.profile,
+        },
       },
-      child: {
-        displayName: `Calendar Child ${suffix}`,
-        pin: required("CALENDAR_E2E_CHILD_PIN"),
-        profile: local.profile,
-      },
-    }, { deferredCases: ["recovery"] });
+      { deferredCases: ["recovery"] },
+    );
     try {
       const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
-      const cases = Object.fromEntries(await Promise.all(
-        Object.entries(value.cases).map(async ([caseName, references]) => [
-          caseName,
-          await Promise.all(references.map(async (reference) => {
-            const identities = await listFixtureIdentities(target, adultToken, reference.eventId);
-            if (identities.length === 0) {
-              throw new Error(`fixture case ${caseName} was not returned by the authenticated all-scope query`);
-            }
-            return {
-              ...reference,
-              occurrenceIds: identities.map((identity) => identity.occurrenceId),
-              eventTags: identities.map(occurrenceTag),
-            };
-          })),
-        ]),
-      )) as DisposableCalendarFixture["cases"];
+      const cases = Object.fromEntries(
+        await Promise.all(
+          Object.entries(value.cases).map(async ([caseName, references]) => [
+            caseName,
+            await Promise.all(
+              references.map(async (reference) => {
+                const identities = await listFixtureIdentities(target, adultToken, reference.eventId);
+                if (identities.length === 0) {
+                  throw new Error(`fixture case ${caseName} was not returned by the authenticated all-scope query`);
+                }
+                return {
+                  ...reference,
+                  occurrenceIds: identities.map((identity) => identity.occurrenceId),
+                  eventTags: identities.map(occurrenceTag),
+                };
+              }),
+            ),
+          ]),
+        ),
+      ) as DisposableCalendarFixture["cases"];
       const hydrated: DisposableCalendarFixture = { ...value, cases };
       await mkdir(dirname(statePath), { recursive: true });
       await writeFile(statePath, `${JSON.stringify(hydrated, null, 2)}\n`, { flag: "wx" });
@@ -391,8 +406,10 @@ async function main(): Promise<void> {
     const expectedIds = [...reference.occurrenceIds].sort();
     const eventTags = identities.map(occurrenceTag).sort();
     const expectedTags = [...(reference.eventTags ?? [])].sort();
-    if (JSON.stringify(occurrenceIds) !== JSON.stringify(expectedIds) ||
-        JSON.stringify(eventTags) !== JSON.stringify(expectedTags)) {
+    if (
+      JSON.stringify(occurrenceIds) !== JSON.stringify(expectedIds) ||
+      JSON.stringify(eventTags) !== JSON.stringify(expectedTags)
+    ) {
       throw new Error("recovery fixture identity changed in the authenticated all-scope window query");
     }
     process.stdout.write(`${statePath}\n`);
@@ -412,7 +429,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  throw new Error("usage: calendar:fixture <provision|seed-recovery|verify-recovery|cleanup> --target <loopback-url> --state <file>");
+  throw new Error(
+    "usage: calendar:fixture <provision|seed-recovery|verify-recovery|cleanup> --target <loopback-url> --state <file>",
+  );
 }
 
 await main();

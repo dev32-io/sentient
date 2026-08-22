@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CalendarApi, CalendarOccurrence } from "../../services/calendar-api.ts";
-import { createMemoryCalendarPreferenceStore } from "./calendar-preferences.ts";
 import {
   CalendarController,
+  type CalendarProjectionDelegates,
   createCalendarController,
   loadCompleteCalendarInterval,
-  type CalendarProjectionDelegates,
 } from "./calendar-controller.ts";
+import { createMemoryCalendarPreferenceStore } from "./calendar-preferences.ts";
 
 function occurrence(id: string, title = id, date = "2026-08-10"): CalendarOccurrence {
   return {
@@ -38,13 +38,15 @@ const options = {
 describe("loadCompleteCalendarInterval", () => {
   it("requests authorized all scope on every page and deduplicates occurrence identities", async () => {
     const calls: Array<Record<string, unknown>> = [];
-    const api = apiFor(vi.fn(async (_token, request) => {
-      calls.push(request as Record<string, unknown>);
-      if (request.cursor === undefined) {
-        return { ok: true as const, value: { events: [occurrence("one")], nextCursor: "page-2" } };
-      }
-      return { ok: true as const, value: { events: [occurrence("one"), occurrence("two", "Two", "2026-08-11")] } };
-    }));
+    const api = apiFor(
+      vi.fn(async (_token, request) => {
+        calls.push(request as Record<string, unknown>);
+        if (request.cursor === undefined) {
+          return { ok: true as const, value: { events: [occurrence("one")], nextCursor: "page-2" } };
+        }
+        return { ok: true as const, value: { events: [occurrence("one"), occurrence("two", "Two", "2026-08-11")] } };
+      }),
+    );
 
     const result = await loadCompleteCalendarInterval(api, "token", { from: "2026-08-01", to: "2026-08-31" });
 
@@ -56,10 +58,12 @@ describe("loadCompleteCalendarInterval", () => {
   });
 
   it("rejects a repeated continuation cursor without returning a partial aggregate", async () => {
-    const api = apiFor(vi.fn(async (_token, request) => ({
-      ok: true as const,
-      value: { events: [occurrence(String(request.cursor ?? "first"))], nextCursor: "same" },
-    })));
+    const api = apiFor(
+      vi.fn(async (_token, request) => ({
+        ok: true as const,
+        value: { events: [occurrence(String(request.cursor ?? "first"))], nextCursor: "same" },
+      })),
+    );
 
     const result = await loadCompleteCalendarInterval(api, "token", { from: "2026-08-01", to: "2026-08-31" });
 
@@ -68,9 +72,12 @@ describe("loadCompleteCalendarInterval", () => {
   });
 
   it("does not expose an incomplete result when a later page fails", async () => {
-    const api = apiFor(vi.fn()
-      .mockResolvedValueOnce({ ok: true as const, value: { events: [occurrence("one")], nextCursor: "page-2" } })
-      .mockResolvedValueOnce({ ok: false as const, error: { status: 503, code: "io_error" } }));
+    const api = apiFor(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true as const, value: { events: [occurrence("one")], nextCursor: "page-2" } })
+        .mockResolvedValueOnce({ ok: false as const, error: { status: 503, code: "io_error" } }),
+    );
 
     const result = await loadCompleteCalendarInterval(api, "token", { from: "2026-08-01", to: "2026-08-31" });
 
@@ -80,9 +87,16 @@ describe("loadCompleteCalendarInterval", () => {
   it("stops aggregation when cancelled and never reports a complete partial page", async () => {
     const abort = new AbortController();
     let resolvePage!: (value: Awaited<ReturnType<CalendarApi["list"]>>) => void;
-    const deferred = new Promise<Awaited<ReturnType<CalendarApi["list"]>>>((resolve) => { resolvePage = resolve; });
+    const deferred = new Promise<Awaited<ReturnType<CalendarApi["list"]>>>((resolve) => {
+      resolvePage = resolve;
+    });
     const api = apiFor(vi.fn<CalendarApi["list"]>(() => deferred));
-    const pending = loadCompleteCalendarInterval(api, "token", { from: "2026-08-01", to: "2026-08-31" }, { signal: abort.signal });
+    const pending = loadCompleteCalendarInterval(
+      api,
+      "token",
+      { from: "2026-08-01", to: "2026-08-31" },
+      { signal: abort.signal },
+    );
     abort.abort();
     resolvePage({ ok: true, value: { events: [occurrence("one")] } });
 
@@ -102,13 +116,25 @@ describe("CalendarController", () => {
     });
     await first.ready;
     await first.setView("week");
-    first.setFilters({ scopes: ["private"], groups: ["family"], tags: ["dinner"], importance: "important", search: "dinner" });
+    first.setFilters({
+      scopes: ["private"],
+      groups: ["family"],
+      tags: ["dinner"],
+      importance: "important",
+      search: "dinner",
+    });
     first.dispose();
 
     const restored = createCalendarController({ ...options, api, preferenceStore: store, initialView: "day" });
     await restored.ready;
     expect(restored.state.selectedView).toBe("week");
-    expect(restored.state.selectedFilters).toMatchObject({ scopes: ["private"], groups: ["family"], tags: ["dinner"], importance: "important", search: "dinner" });
+    expect(restored.state.selectedFilters).toMatchObject({
+      scopes: ["private"],
+      groups: ["family"],
+      tags: ["dinner"],
+      importance: "important",
+      search: "dinner",
+    });
     restored.dispose();
 
     const otherAccount = createCalendarController({ ...options, accountId: "account-b", api, preferenceStore: store });
@@ -152,8 +178,16 @@ describe("CalendarController", () => {
   });
 
   it("preserves alias-shaped scope, group, and text filters for local intersection", async () => {
-    const privateEvent = { ...occurrence("private", "Dentist appointment"), group: "health", description: "Annual dentist visit" };
-    const householdEvent = { ...occurrence("household", "Dentist school meeting"), scope: "household" as const, group: "school" };
+    const privateEvent = {
+      ...occurrence("private", "Dentist appointment"),
+      group: "health",
+      description: "Annual dentist visit",
+    };
+    const householdEvent = {
+      ...occurrence("household", "Dentist school meeting"),
+      scope: "household" as const,
+      group: "school",
+    };
     const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [privateEvent, householdEvent] } })));
     const controller = createCalendarController({ ...options, api });
     await controller.ready;
@@ -201,9 +235,15 @@ describe("CalendarController", () => {
   });
 
   it("retains the previous complete content and exposes typed stale status after refresh failure", async () => {
-    const api = apiFor(vi.fn()
-      .mockResolvedValueOnce({ ok: true as const, value: { events: [occurrence("one")] } })
-      .mockResolvedValueOnce({ ok: false as const, error: { status: 503, code: "io_error", reason: "must not be surfaced" } }));
+    const api = apiFor(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true as const, value: { events: [occurrence("one")] } })
+        .mockResolvedValueOnce({
+          ok: false as const,
+          error: { status: 503, code: "io_error", reason: "must not be surfaced" },
+        }),
+    );
     const controller = createCalendarController({ ...options, api });
     await controller.ready;
     expect(controller.state.completeOccurrences.map((event) => event.occurrenceId)).toEqual(["one"]);
@@ -221,7 +261,13 @@ describe("CalendarController", () => {
     const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [occurrence("one")] } })));
     const filter = vi.fn(() => [occurrence("filtered")]);
     const facets = vi.fn(() => ({ scopes: ["all"] as const, groups: [], tags: [], importance: [] as const }));
-    const project = vi.fn((_view, interval, all, filtered) => ({ view: "month" as const, interval, occurrences: all, filteredOccurrences: filtered, count: filtered.length }));
+    const project = vi.fn((_view, interval, all, filtered) => ({
+      view: "month" as const,
+      interval,
+      occurrences: all,
+      filteredOccurrences: filtered,
+      count: filtered.length,
+    }));
     const projections: CalendarProjectionDelegates = {
       filterCalendarOccurrences: filter,
       deriveCalendarFacets: facets,

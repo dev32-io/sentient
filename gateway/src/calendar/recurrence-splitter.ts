@@ -1,20 +1,20 @@
 import {
+  DEFAULT_RECURRENCE_LIMITS,
+  type RecurrenceExpansionLimits,
   canonicalOriginalKey,
   canonicalizeRecurrence,
   enumerateGeneratedSlots,
-  verifyGeneratedSlot,
   isGeneratedSlot,
-  type RecurrenceExpansionLimits,
-  DEFAULT_RECURRENCE_LIMITS,
+  verifyGeneratedSlot,
 } from "./expand-recurrence.js";
 import type {
   CalendarRecurrenceInput,
   CalendarTime,
-  Recurrence,
+  ExceptionOverride,
   RRule,
+  Recurrence,
   StoredCalendarEvent,
   UtcInstant,
-  ExceptionOverride,
 } from "./types.js";
 import { DEFAULT_EVENT_TIME_ZONE, WEEKDAYS, parseRRule } from "./types.js";
 
@@ -192,9 +192,10 @@ export function splitRecurrence(
   const parsed = parseRRule(event.recurrence.rrule);
   if (!parsed.ok) return failure("invalid-rrule", "malformed RRULE");
   const oldRule = parsed.value;
-  const eventZone = event.start.kind === "timed" && event.start.timeZoneId !== DEFAULT_EVENT_TIME_ZONE
-    ? event.start.timeZoneId
-    : limits.timeZoneId;
+  const eventZone =
+    event.start.kind === "timed" && event.start.timeZoneId !== DEFAULT_EVENT_TIME_ZONE
+      ? event.start.timeZoneId
+      : limits.timeZoneId;
   const normalized = normalizeSuccessorRecurrence(proposedSuccessorRecurrence, eventZone);
   if (!normalized.ok) return normalized;
 
@@ -290,8 +291,12 @@ export function splitRecurrence(
       state: {
         prefix: { exceptions: exceptions.past, exdates: exdates.past },
         successor: {
-          exceptions: !reanchored ? exceptions.future : remappedExceptions.filter((entry): entry is ExceptionOverride => entry !== undefined),
-          exdates: !reanchored ? exdates.future : remappedExdates.filter((entry): entry is CalendarTime => entry !== undefined),
+          exceptions: !reanchored
+            ? exceptions.future
+            : remappedExceptions.filter((entry): entry is ExceptionOverride => entry !== undefined),
+          exdates: !reanchored
+            ? exdates.future
+            : remappedExdates.filter((entry): entry is CalendarTime => entry !== undefined),
         },
       },
     },

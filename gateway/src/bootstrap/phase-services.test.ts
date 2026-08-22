@@ -1,6 +1,6 @@
+import { rmSync } from "node:fs";
 import type { OrchestratorConfig } from "@sentient/config";
 import { afterEach, describe, expect, it } from "vitest";
-import { rmSync } from "node:fs";
 import { createAccessManager } from "../access/access-manager.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
 import { buildSessionCalendar, resolveCalendarConfig, resolveDreamerModel } from "./phase-services.js";
@@ -52,7 +52,12 @@ describe("calendar bootstrap", () => {
 
   it("does not mint calendar capabilities when the session path is disabled", () => {
     let grants = 0;
-    const access = { grant: () => { grants++; throw new Error("unexpected grant"); } } as never;
+    const access = {
+      grant: () => {
+        grants++;
+        throw new Error("unexpected grant");
+      },
+    } as never;
     const principal = createUserPrincipal("u_12345678", "adult", "home");
     expect(buildSessionCalendar(calendarCfg(false), access, principal)).toBeNull();
     expect(grants).toBe(0);
@@ -63,7 +68,13 @@ describe("calendar bootstrap", () => {
     tempRoots.push(root);
     const access = createAccessManager({ userDataRoot: root });
     const principal = createUserPrincipal("u_12345678", "adult", "home");
-    const session = buildSessionCalendar(calendarCfg(), access, principal, resolveCalendarConfig(calendarCfg(), "UTC"), "UTC");
+    const session = buildSessionCalendar(
+      calendarCfg(),
+      access,
+      principal,
+      resolveCalendarConfig(calendarCfg(), "UTC"),
+      "UTC",
+    );
     expect(session?.tools.filter((tool) => tool.definition.productGroup === "calendar")).toHaveLength(6);
     session?.close();
     session?.close();

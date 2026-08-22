@@ -10,7 +10,7 @@ import type {
   CalendarYearProjection,
   ProjectedCalendarOccurrence,
 } from "./calendar-projection-types.ts";
-import type { CalendarFilters as CalendarWorkspaceFilters, CalendarViewMode } from "./calendar-projections.ts";
+import type { CalendarViewMode, CalendarFilters as CalendarWorkspaceFilters } from "./calendar-projections.ts";
 import type { CalendarDate } from "./calendar-time.ts";
 
 /**

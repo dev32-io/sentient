@@ -4,30 +4,30 @@ import type {
   CalendarListOptions,
   CalendarOccurrence,
 } from "../../services/calendar-api.ts";
-import type { CalendarDate } from "./calendar-time.ts";
 import {
+  type CalendarPreferenceStore,
+  type CalendarPreferences,
+  type CalendarViewMode,
   calendarPreferenceNamespace,
   createCalendarPreferenceStore,
   defaultCalendarPreferences,
   isCalendarDate,
   normalizeCalendarBackendIdentity,
-  type CalendarPreferenceStore,
-  type CalendarPreferences,
-  type CalendarViewMode,
   validateCalendarPreferences,
 } from "./calendar-preferences.ts";
 import {
+  type CalendarFacets,
+  type CalendarFilters,
+  type CalendarInterval,
+  type CalendarViewProjection,
   calendarIntervalFor,
   deriveCalendarFacets,
   filterCalendarOccurrences,
   projectCalendarInterval,
   selectCalendarDate as selectProjectedCalendarDate,
   stepCalendarAnchor,
-  type CalendarFacets,
-  type CalendarFilters,
-  type CalendarInterval,
-  type CalendarViewProjection,
 } from "./calendar-projections.ts";
+import type { CalendarDate } from "./calendar-time.ts";
 
 export type { CalendarFilters, CalendarInterval, CalendarViewMode } from "./calendar-projections.ts";
 
@@ -242,9 +242,7 @@ function occurrenceKey(event: CalendarOccurrence): string {
   if (typeof event.occurrenceId === "string" && event.occurrenceId.length > 0) return event.occurrenceId;
   const eventId = event.eventId ?? event.baseEventId ?? event.id ?? "unknown-event";
   const original = event.originalStart ?? event.occurrenceStart ?? event.start;
-  const value = isRecord(original)
-    ? original.kind === "all-day" ? original.date : original.instant
-    : "unknown-start";
+  const value = isRecord(original) ? (original.kind === "all-day" ? original.date : original.instant) : "unknown-start";
   return `${eventId}:${String(value)}`;
 }
 
@@ -266,18 +264,29 @@ function normalizedCode(value: unknown): string {
 
 function messageFor(code: string): string {
   switch (code) {
-    case "cursor-loop": return "Calendar pagination could not complete.";
-    case "invalid-page": return "Calendar returned an invalid page.";
-    case "pagination-limit": return "Calendar pagination could not complete.";
-    case "cancelled": return "Calendar refresh was cancelled.";
-    case "request-failed": return "Calendar could not be loaded.";
-    default: return "Calendar could not be loaded.";
+    case "cursor-loop":
+      return "Calendar pagination could not complete.";
+    case "invalid-page":
+      return "Calendar returned an invalid page.";
+    case "pagination-limit":
+      return "Calendar pagination could not complete.";
+    case "cancelled":
+      return "Calendar refresh was cancelled.";
+    case "request-failed":
+      return "Calendar could not be loaded.";
+    default:
+      return "Calendar could not be loaded.";
   }
 }
 
 function controllerError(code: string, status = 0): CalendarControllerError {
   const safe = normalizedCode(code);
-  return { code: safe, kind: safe, status: Number.isFinite(status) && status >= 0 ? status : 0, message: messageFor(safe) };
+  return {
+    code: safe,
+    kind: safe,
+    status: Number.isFinite(status) && status >= 0 ? status : 0,
+    message: messageFor(safe),
+  };
 }
 
 function apiError(error: unknown): CalendarControllerError {
@@ -299,7 +308,8 @@ function cancelled(): CalendarPageAggregationResult {
 
 function validPage(value: unknown): value is { events: CalendarOccurrence[]; nextCursor?: string } {
   if (!isRecord(value) || !Array.isArray(value.events)) return false;
-  if (value.nextCursor !== undefined && (typeof value.nextCursor !== "string" || value.nextCursor.length === 0)) return false;
+  if (value.nextCursor !== undefined && (typeof value.nextCursor !== "string" || value.nextCursor.length === 0))
+    return false;
   return true;
 }
 
@@ -342,7 +352,12 @@ export async function loadCompleteCalendarInterval(
     if (!validPage(result.value)) return { ok: false, error: controllerError("invalid-page") };
 
     for (const event of result.value.events) {
-      if (!event || typeof event !== "object" || typeof event.occurrenceId !== "string" || event.occurrenceId.length === 0) {
+      if (
+        !event ||
+        typeof event !== "object" ||
+        typeof event.occurrenceId !== "string" ||
+        event.occurrenceId.length === 0
+      ) {
         return { ok: false, error: controllerError("invalid-page") };
       }
       const key = occurrenceKey(event);
@@ -390,10 +405,7 @@ function canonicalFilterInput(value: Partial<CalendarFilters> | undefined): Reco
   return result;
 }
 
-function safeFilters(
-  fallback: CalendarPreferences,
-  value: Partial<CalendarFilters> | undefined,
-): CalendarPreferences {
+function safeFilters(fallback: CalendarPreferences, value: Partial<CalendarFilters> | undefined): CalendarPreferences {
   if (!value) return fallback;
   return validateCalendarPreferences({ ...fallback, ...canonicalFilterInput(value) }, fallback);
 }
@@ -407,9 +419,11 @@ function viewLabel(view: CalendarViewMode): string {
 }
 
 function initialBackendId(options: CalendarControllerOptions): string | null {
-  return normalizeCalendarBackendIdentity(options.backendId)
-    ?? normalizeCalendarBackendIdentity(options.backendUrl)
-    ?? normalizeCalendarBackendIdentity(options.baseUrl);
+  return (
+    normalizeCalendarBackendIdentity(options.backendId) ??
+    normalizeCalendarBackendIdentity(options.backendUrl) ??
+    normalizeCalendarBackendIdentity(options.baseUrl)
+  );
 }
 
 function initialAccountId(options: CalendarControllerOptions): string {
@@ -460,9 +474,10 @@ export class CalendarController {
     this.token = options.token;
     this.accountId = initialAccountId(options);
     this.backendId = initialBackendId(options);
-    this.namespace = this.backendId === null
-      ? null
-      : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
+    this.namespace =
+      this.backendId === null
+        ? null
+        : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
     this.preferenceStore = options.preferenceStore ?? createCalendarPreferenceStore();
     this.now = options.now ?? (() => new Date());
     this.weekStartsOn = options.weekStartsOn ?? 1;
@@ -470,13 +485,18 @@ export class CalendarController {
 
     const today = safeToday(this.now);
     const fallback = defaultCalendarPreferences(options.initialAnchorDate ?? options.initialDate ?? today);
-    this.preferences = validateCalendarPreferences({
-      ...fallback,
-      ...(options.initialView !== undefined ? { view: options.initialView } : {}),
-      ...(options.initialAnchorDate !== undefined ? { anchorDate: options.initialAnchorDate } : {}),
-      ...(options.initialDate !== undefined ? { selectedDate: options.initialDate, anchorDate: options.initialDate } : {}),
-      ...canonicalFilterInput(options.initialFilters),
-    }, fallback);
+    this.preferences = validateCalendarPreferences(
+      {
+        ...fallback,
+        ...(options.initialView !== undefined ? { view: options.initialView } : {}),
+        ...(options.initialAnchorDate !== undefined ? { anchorDate: options.initialAnchorDate } : {}),
+        ...(options.initialDate !== undefined
+          ? { selectedDate: options.initialDate, anchorDate: options.initialDate }
+          : {}),
+        ...canonicalFilterInput(options.initialFilters),
+      },
+      fallback,
+    );
     this.preparePreferenceRead();
     this.phase = this.token ? "loading" : "idle";
     this.projectionFunctions = {
@@ -571,22 +591,29 @@ export class CalendarController {
   /** Select a canvas date, entering the focused Day agenda from Month. */
   public selectDate(date: string): Promise<void> {
     if (this.disposed || !isCalendarDate(date)) return Promise.resolve();
-    const next = selectProjectedCalendarDate({
-      view: this.preferences.view,
-      anchorDate: this.preferences.anchorDate as CalendarDate,
-      selectedDate: this.preferences.selectedDate as CalendarDate,
-    }, date as CalendarDate);
+    const next = selectProjectedCalendarDate(
+      {
+        view: this.preferences.view,
+        anchorDate: this.preferences.anchorDate as CalendarDate,
+        selectedDate: this.preferences.selectedDate as CalendarDate,
+      },
+      date as CalendarDate,
+    );
     if (
       this.preferences.view === next.view &&
       this.preferences.anchorDate === next.anchorDate &&
       this.preferences.selectedDate === next.selectedDate
-    ) return Promise.resolve();
-    this.preferences = validateCalendarPreferences({
-      ...this.preferences,
-      view: next.view,
-      anchorDate: next.anchorDate,
-      selectedDate: next.selectedDate,
-    }, this.preferences);
+    )
+      return Promise.resolve();
+    this.preferences = validateCalendarPreferences(
+      {
+        ...this.preferences,
+        view: next.view,
+        anchorDate: next.anchorDate,
+        selectedDate: next.selectedDate,
+      },
+      this.preferences,
+    );
     this.persistPreferences();
     this.emit();
     return this.refresh();
@@ -594,15 +621,24 @@ export class CalendarController {
 
   /** Year month selection is a single intent: move the anchor and enter Month. */
   public selectMonth(year: number, month: number): Promise<void> {
-    if (this.disposed || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return Promise.resolve();
+    if (this.disposed || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12)
+      return Promise.resolve();
     const date = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`;
-    if (this.preferences.view === "month" && this.preferences.anchorDate === date && this.preferences.selectedDate === date) return Promise.resolve();
-    this.preferences = validateCalendarPreferences({
-      ...this.preferences,
-      view: "month",
-      anchorDate: date,
-      selectedDate: date,
-    }, this.preferences);
+    if (
+      this.preferences.view === "month" &&
+      this.preferences.anchorDate === date &&
+      this.preferences.selectedDate === date
+    )
+      return Promise.resolve();
+    this.preferences = validateCalendarPreferences(
+      {
+        ...this.preferences,
+        view: "month",
+        anchorDate: date,
+        selectedDate: date,
+      },
+      this.preferences,
+    );
     this.persistPreferences();
     this.emit();
     return this.refresh();
@@ -625,7 +661,10 @@ export class CalendarController {
   private setCalendarDates(date: string): Promise<void> {
     if (this.disposed || !isCalendarDate(date)) return Promise.resolve();
     if (this.preferences.anchorDate === date && this.preferences.selectedDate === date) return Promise.resolve();
-    this.preferences = validateCalendarPreferences({ ...this.preferences, anchorDate: date, selectedDate: date }, this.preferences);
+    this.preferences = validateCalendarPreferences(
+      { ...this.preferences, anchorDate: date, selectedDate: date },
+      this.preferences,
+    );
     this.persistPreferences();
     this.emit();
     return this.refresh();
@@ -690,12 +729,14 @@ export class CalendarController {
     this.api = input.api ?? this.api;
     this.token = input.token;
     this.accountId = input.accountId?.trim() || input.userId?.trim() || "";
-    this.backendId = normalizeCalendarBackendIdentity(input.backendId)
-      ?? normalizeCalendarBackendIdentity(input.backendUrl)
-      ?? normalizeCalendarBackendIdentity(input.baseUrl);
-    this.namespace = this.backendId === null
-      ? null
-      : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
+    this.backendId =
+      normalizeCalendarBackendIdentity(input.backendId) ??
+      normalizeCalendarBackendIdentity(input.backendUrl) ??
+      normalizeCalendarBackendIdentity(input.baseUrl);
+    this.namespace =
+      this.backendId === null
+        ? null
+        : calendarPreferenceNamespace({ accountId: this.accountId, backendId: this.backendId });
     this.completeOccurrences = [];
     this.completeInterval = null;
     this.hasCompleteData = false;
@@ -824,22 +865,24 @@ export class CalendarController {
     const isRefreshing = this.phase === "refreshing";
     const isStale = this.hasCompleteData && (isRefreshing || this.phase === "error");
     const isFresh = this.hasCompleteData && this.phase === "ready";
-    const freshness: CalendarFreshness = this.phase === "ready"
-      ? "fresh"
-      : this.phase === "error"
-        ? "error"
-        : this.phase === "refreshing"
-          ? "refreshing"
-          : this.phase === "loading"
-            ? "loading"
-            : "idle";
+    const freshness: CalendarFreshness =
+      this.phase === "ready"
+        ? "fresh"
+        : this.phase === "error"
+          ? "error"
+          : this.phase === "refreshing"
+            ? "refreshing"
+            : this.phase === "loading"
+              ? "loading"
+              : "idle";
     const safeCount = filteredOccurrences.length;
     const noun = safeCount === 1 ? "event" : "events";
-    const text = this.phase === "loading" && !this.hasCompleteData
-      ? `Loading ${viewLabel(this.preferences.view)} calendar.`
-      : this.phase === "error" && !this.hasCompleteData
-        ? `${viewLabel(this.preferences.view)} calendar is unavailable.`
-        : `${safeCount} ${noun} in ${viewLabel(this.preferences.view)} view.`;
+    const text =
+      this.phase === "loading" && !this.hasCompleteData
+        ? `Loading ${viewLabel(this.preferences.view)} calendar.`
+        : this.phase === "error" && !this.hasCompleteData
+          ? `${viewLabel(this.preferences.view)} calendar is unavailable.`
+          : `${safeCount} ${noun} in ${viewLabel(this.preferences.view)} view.`;
     const loadStatus: CalendarLoadStatus = {
       phase: this.phase,
       freshness,

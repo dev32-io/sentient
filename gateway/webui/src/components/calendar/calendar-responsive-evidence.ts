@@ -42,22 +42,25 @@ export function measureCalendarResponsiveEvidence(document: Document): CalendarR
   const canvas = document.querySelector<HTMLElement>("[data-calendar-canvas]");
   const month = document.querySelector<HTMLElement>(".calendar-month-grid");
   const week = document.querySelector<HTMLElement>(".calendar-week-grid");
-  const grid = month?.querySelector<HTMLElement>(".calendar-month-grid__grid")
-    ?? week?.querySelector<HTMLElement>(".calendar-week-grid__grid");
-  const row = month?.querySelector<HTMLElement>(".calendar-month-grid__row") ?? week?.querySelector<HTMLElement>(".calendar-week-grid__grid");
-  const columns = row && view
-    ? view.getComputedStyle(row).gridTemplateColumns.split(" ").filter(Boolean).length
-    : 0;
-  const targets = [...document.querySelectorAll<HTMLElement>(INTERACTIVE_TARGET_SELECTOR)]
-    .map((element) => element.getBoundingClientRect());
+  const grid =
+    month?.querySelector<HTMLElement>(".calendar-month-grid__grid") ??
+    week?.querySelector<HTMLElement>(".calendar-week-grid__grid");
+  const row =
+    month?.querySelector<HTMLElement>(".calendar-month-grid__row") ??
+    week?.querySelector<HTMLElement>(".calendar-week-grid__grid");
+  const columns = row && view ? view.getComputedStyle(row).gridTemplateColumns.split(" ").filter(Boolean).length : 0;
+  const targets = [...document.querySelectorAll<HTMLElement>(INTERACTIVE_TARGET_SELECTOR)].map((element) =>
+    element.getBoundingClientRect(),
+  );
   const documentElement = document.documentElement;
   const body = document.body;
-  const minimumInteractiveTarget = targets.length === 0
-    ? null
-    : {
-        width: Math.min(...targets.map((rect) => rect.width)),
-        height: Math.min(...targets.map((rect) => rect.height)),
-      };
+  const minimumInteractiveTarget =
+    targets.length === 0
+      ? null
+      : {
+          width: Math.min(...targets.map((rect) => rect.width)),
+          height: Math.min(...targets.map((rect) => rect.height)),
+        };
   const compact = document.querySelector(".calendar-workspace__compact");
   const sidebar = document.querySelector("[data-calendar-filter-sidebar]");
   const viewportWidth = view?.innerWidth ?? documentElement.clientWidth;

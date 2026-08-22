@@ -2,18 +2,31 @@ import { describe, expect, test } from "bun:test";
 import { expandRecurrence } from "./expand-recurrence.js";
 import type { StoredCalendarEvent, UtcInstant } from "./types.js";
 
-const timed = (instant: string, timeZoneId = "UTC") => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: timeZoneId as never });
+const timed = (instant: string, timeZoneId = "UTC") => ({
+  kind: "timed" as const,
+  instant: instant as UtcInstant,
+  timeZoneId: timeZoneId as never,
+});
 const event = (start: StoredCalendarEvent["start"], recurrence: string): StoredCalendarEvent => ({
-  id: "family" as StoredCalendarEvent["id"], title: "event", start,
+  id: "family" as StoredCalendarEvent["id"],
+  title: "event",
+  start,
   recurrence: { rrule: recurrence, rule: undefined as never },
-  visibility: "everyone", importance: "normal", tags: new Set(),
-  createdAt: "2026-01-01T00:00:00.000Z" as UtcInstant, updatedAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
+  visibility: "everyone",
+  importance: "normal",
+  tags: new Set(),
+  createdAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
+  updatedAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
 });
 
 describe("expandRecurrence", () => {
   test("expands COUNT weekly BYDAY with inclusive bounds", () => {
     const e = event(timed("2026-01-05T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10");
-    const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z", "America/Toronto"), timed("2026-03-31T23:59:59.000Z", "America/Toronto"));
+    const result = expandRecurrence(
+      e,
+      timed("2026-01-01T00:00:00.000Z", "America/Toronto"),
+      timed("2026-03-31T23:59:59.000Z", "America/Toronto"),
+    );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toHaveLength(10);
   });
@@ -29,7 +42,9 @@ describe("expandRecurrence", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toHaveLength(2);
-      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(true);
+      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(
+        true,
+      );
     }
   });
 
@@ -51,19 +66,24 @@ describe("expandRecurrence", () => {
     const e = event(timed("2026-01-07T14:00:00.000Z", "UTC"), "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR;COUNT=6");
     const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-03-01T00:00:00.000Z"));
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
-      "2026-01-07T14:00:00.000Z" as UtcInstant,
-      "2026-01-09T14:00:00.000Z" as UtcInstant,
-      "2026-01-19T14:00:00.000Z" as UtcInstant,
-      "2026-01-21T14:00:00.000Z" as UtcInstant,
-      "2026-01-23T14:00:00.000Z" as UtcInstant,
-      "2026-02-02T14:00:00.000Z" as UtcInstant,
-    ]);
+    if (result.ok)
+      expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+        "2026-01-07T14:00:00.000Z" as UtcInstant,
+        "2026-01-09T14:00:00.000Z" as UtcInstant,
+        "2026-01-19T14:00:00.000Z" as UtcInstant,
+        "2026-01-21T14:00:00.000Z" as UtcInstant,
+        "2026-01-23T14:00:00.000Z" as UtcInstant,
+        "2026-02-02T14:00:00.000Z" as UtcInstant,
+      ]);
   });
 
   test("does not count pre-DTSTART BYDAY candidates", () => {
     const e = event(timed("2026-08-05T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO,FR;COUNT=10");
-    const result = expandRecurrence(e, timed("2026-08-01T00:00:00.000Z", "America/Toronto"), timed("2026-10-31T23:59:59.000Z", "America/Toronto"));
+    const result = expandRecurrence(
+      e,
+      timed("2026-08-01T00:00:00.000Z", "America/Toronto"),
+      timed("2026-10-31T23:59:59.000Z", "America/Toronto"),
+    );
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value).toHaveLength(10);
   });
@@ -98,20 +118,28 @@ describe("expandRecurrence", () => {
     const e = event(timed("2026-01-01T14:00:00.125Z", "UTC"), "FREQ=DAILY;COUNT=3");
     const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-10T00:00:00.000Z"));
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
-      "2026-01-01T14:00:00.125Z" as UtcInstant,
-      "2026-01-02T14:00:00.125Z" as UtcInstant,
-      "2026-01-03T14:00:00.125Z" as UtcInstant,
-    ]);
+    if (result.ok)
+      expect(result.value.map((item) => item.originalStart.kind === "timed" && item.originalStart.instant)).toEqual([
+        "2026-01-01T14:00:00.125Z" as UtcInstant,
+        "2026-01-02T14:00:00.125Z" as UtcInstant,
+        "2026-01-03T14:00:00.125Z" as UtcInstant,
+      ]);
   });
 
   test("keeps a timed event at its local hour across DST", () => {
     const e = event(timed("2026-03-02T14:00:00.000Z", "America/Toronto"), "FREQ=WEEKLY;BYDAY=MO;COUNT=3");
-    const result = expandRecurrence(e, timed("2026-03-01T00:00:00.000Z", "America/Toronto"), timed("2026-03-31T23:59:59.000Z", "America/Toronto"));
+    const result = expandRecurrence(
+      e,
+      timed("2026-03-01T00:00:00.000Z", "America/Toronto"),
+      timed("2026-03-31T23:59:59.000Z", "America/Toronto"),
+    );
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.map((x) => x.start.kind === "timed" && x.start.instant)).toEqual([
-      "2026-03-02T14:00:00.000Z" as UtcInstant, "2026-03-09T13:00:00.000Z" as UtcInstant, "2026-03-16T13:00:00.000Z" as UtcInstant,
-    ]);
+    if (result.ok)
+      expect(result.value.map((x) => x.start.kind === "timed" && x.start.instant)).toEqual([
+        "2026-03-02T14:00:00.000Z" as UtcInstant,
+        "2026-03-09T13:00:00.000Z" as UtcInstant,
+        "2026-03-16T13:00:00.000Z" as UtcInstant,
+      ]);
   });
 
   test("projects rich overrides without changing the original identity", () => {
@@ -121,7 +149,18 @@ describe("expandRecurrence", () => {
     e.end = timed("2026-01-05T15:00:00.000Z");
     e.group = "old";
     e.tags = new Set(["old"]);
-    e.exceptions = [{ occurrence: original, title: "changed", description: "details", start: timed("2026-01-09T16:00:00.000Z"), visibility: "adults", importance: "pinned", group: "new", tags: new Set(["new"]) }];
+    e.exceptions = [
+      {
+        occurrence: original,
+        title: "changed",
+        description: "details",
+        start: timed("2026-01-09T16:00:00.000Z"),
+        visibility: "adults",
+        importance: "pinned",
+        group: "new",
+        tags: new Set(["new"]),
+      },
+    ];
     const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-31T00:00:00.000Z"));
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -142,6 +181,10 @@ describe("expandRecurrence", () => {
     e.exceptions = [{ occurrence: cancelled, cancelled: true }];
     const result = expandRecurrence(e, timed("2026-01-01T00:00:00.000Z"), timed("2026-01-31T00:00:00.000Z"));
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.map((x) => x.originalStart?.kind === "timed" && x.originalStart.instant)).toEqual(["2026-01-05T14:00:00.000Z" as UtcInstant, "2026-01-07T14:00:00.000Z" as UtcInstant]);
+    if (result.ok)
+      expect(result.value.map((x) => x.originalStart?.kind === "timed" && x.originalStart.instant)).toEqual([
+        "2026-01-05T14:00:00.000Z" as UtcInstant,
+        "2026-01-07T14:00:00.000Z" as UtcInstant,
+      ]);
   });
 });

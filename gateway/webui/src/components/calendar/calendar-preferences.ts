@@ -84,7 +84,10 @@ function cleanValues(value: unknown, maxLength: number): string[] {
   return result;
 }
 
-function cleanScopes(value: unknown, fallback: readonly CalendarReadScope[] = DEFAULT_CALENDAR_SCOPES): CalendarReadScope[] {
+function cleanScopes(
+  value: unknown,
+  fallback: readonly CalendarReadScope[] = DEFAULT_CALENDAR_SCOPES,
+): CalendarReadScope[] {
   if (!Array.isArray(value)) return [...fallback];
   const result: CalendarReadScope[] = [];
   for (const item of value) {
@@ -113,27 +116,17 @@ export function validateCalendarPreferences(value: unknown, fallback: CalendarPr
   const raw = isRecord(value) ? value : {};
   const anchorDate = cleanDate(raw.anchorDate, fallback.anchorDate);
   const selectedDate = cleanDate(raw.selectedDate, anchorDate);
-  const importance = raw.importance === null || raw.importance === undefined || isImportance(raw.importance)
-    ? (raw.importance === undefined ? fallback.importance : raw.importance)
-    : fallback.importance;
-  const scopeValue = raw.scopes !== undefined
-    ? raw.scopes
-    : raw.scope === undefined
-      ? undefined
-      : [raw.scope];
-  const groupValue = raw.groups !== undefined
-    ? raw.groups
-    : raw.group === undefined
-      ? undefined
-      : [raw.group];
-  const searchValue = raw.search !== undefined
-    ? raw.search
-    : raw.text !== undefined
-      ? raw.text
-      : raw.query;
-  const search = typeof searchValue === "string" && searchValue.length <= MAX_SEARCH_LENGTH
-    ? searchValue.trim()
-    : fallback.search;
+  const importance =
+    raw.importance === null || raw.importance === undefined || isImportance(raw.importance)
+      ? raw.importance === undefined
+        ? fallback.importance
+        : raw.importance
+      : fallback.importance;
+  const scopeValue = raw.scopes !== undefined ? raw.scopes : raw.scope === undefined ? undefined : [raw.scope];
+  const groupValue = raw.groups !== undefined ? raw.groups : raw.group === undefined ? undefined : [raw.group];
+  const searchValue = raw.search !== undefined ? raw.search : raw.text !== undefined ? raw.text : raw.query;
+  const search =
+    typeof searchValue === "string" && searchValue.length <= MAX_SEARCH_LENGTH ? searchValue.trim() : fallback.search;
   return {
     version: 1,
     view: isView(raw.view) ? raw.view : fallback.view,
@@ -179,7 +172,10 @@ export function normalizeCalendarBackendIdentity(value: unknown): string | null 
       parsed.username = "";
       parsed.password = "";
       parsed.hostname = parsed.hostname.toLowerCase();
-      if ((parsed.protocol === "http:" && parsed.port === "80") || (parsed.protocol === "https:" && parsed.port === "443")) {
+      if (
+        (parsed.protocol === "http:" && parsed.port === "80") ||
+        (parsed.protocol === "https:" && parsed.port === "443")
+      ) {
         parsed.port = "";
       }
       parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";

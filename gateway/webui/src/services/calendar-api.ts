@@ -327,11 +327,21 @@ function isStructuredRecurrence(value: unknown): value is CalendarRecurrence {
   if (!isRecord(value)) return false;
   const allowed = new Set(["frequency", "interval", "weekdays", "count", "until"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) return false;
-  if (!(["daily", "weekly", "monthly", "yearly"] as const).includes(value.frequency as CalendarRecurrence["frequency"])) return false;
-  if (value.interval !== undefined && (!Number.isInteger(value.interval) || (value.interval as number) < 1)) return false;
-  if (value.weekdays !== undefined && (!Array.isArray(value.weekdays) || value.weekdays.some((day) =>
-    !(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const).includes(day as CalendarWeekday),
-  ))) return false;
+  if (!(["daily", "weekly", "monthly", "yearly"] as const).includes(value.frequency as CalendarRecurrence["frequency"]))
+    return false;
+  if (value.interval !== undefined && (!Number.isInteger(value.interval) || (value.interval as number) < 1))
+    return false;
+  if (
+    value.weekdays !== undefined &&
+    (!Array.isArray(value.weekdays) ||
+      value.weekdays.some(
+        (day) =>
+          !(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const).includes(
+            day as CalendarWeekday,
+          ),
+      ))
+  )
+    return false;
   if (value.count !== undefined && (!Number.isInteger(value.count) || (value.count as number) < 1)) return false;
   if (value.until !== undefined && typeof value.until !== "string") return false;
   return (value.count === undefined) !== (value.until === undefined);

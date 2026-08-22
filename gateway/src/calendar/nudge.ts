@@ -2,7 +2,7 @@ import type { UserRole } from "@sentient/protocol";
 import { formatStamp } from "../context/message-time.js";
 import type { CalendarQueryService } from "./calendar-query.js";
 import { queryEffectiveOccurrences } from "./calendar-query.js";
-import type { CalendarStore, CalendarTime, CalendarOccurrenceProjection, Occurrence } from "./types.js";
+import type { CalendarOccurrenceProjection, CalendarStore, CalendarTime, Occurrence } from "./types.js";
 import { isAdult } from "./types.js";
 
 export interface CalendarNudgeBudget {
@@ -13,8 +13,12 @@ export interface CalendarNudgeBudget {
 const DEFAULT_BUDGET: CalendarNudgeBudget = { maxChars: 4000, maxLines: 40 };
 
 function localDate(ms: number, zone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" })
-    .formatToParts(new Date(ms));
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ms));
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
@@ -42,7 +46,14 @@ function localMidnight(date: string, zone: string): number {
   });
   const parts: Record<string, string> = {};
   for (const part of formatter.formatToParts(new Date(guess))) parts[part.type] = part.value;
-  const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+  const represented = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
   return guess + (guess - represented);
 }
 
@@ -59,13 +70,14 @@ type NudgeOccurrence = Pick<Occurrence, "occurrenceId" | "title" | "visibility" 
 };
 
 function occurrenceMs(occurrence: NudgeOccurrence): number {
-  return occurrence.start.kind === "timed" ? Date.parse(occurrence.start.instant) : Date.parse(`${occurrence.start.date}T00:00:00Z`);
+  return occurrence.start.kind === "timed"
+    ? Date.parse(occurrence.start.instant)
+    : Date.parse(`${occurrence.start.date}T00:00:00Z`);
 }
 
 function renderLine(occurrence: NudgeOccurrence, zone: string): string {
-  const stamp = occurrence.start.kind === "timed"
-    ? formatStamp(Date.parse(occurrence.start.instant), zone)
-    : occurrence.start.date;
+  const stamp =
+    occurrence.start.kind === "timed" ? formatStamp(Date.parse(occurrence.start.instant), zone) : occurrence.start.date;
   return `- ${stamp} ${occurrence.title}`;
 }
 
@@ -182,7 +194,11 @@ export function composeCalendarNudge(
     const nextMidnight = localMidnight(dateAdd(today, 1), householdTz);
     const timedResult = source.list({
       from: { kind: "timed", instant: new Date(timedStart).toISOString() as never, timeZoneId: householdTz as never },
-      to: { kind: "timed", instant: new Date(nextMidnight - 1).toISOString() as never, timeZoneId: householdTz as never },
+      to: {
+        kind: "timed",
+        instant: new Date(nextMidnight - 1).toISOString() as never,
+        timeZoneId: householdTz as never,
+      },
     });
     const allDayResult = source.list({
       from: { kind: "all-day", date: today as never },
@@ -196,13 +212,22 @@ export function composeCalendarNudge(
     .filter((item, index, all) => all.findIndex((candidate) => candidate.occurrenceId === item.occurrenceId) === index);
   if (occurrences.length === 0) return null;
 
-  const todayItems = occurrences.filter((item) => item.start.kind === "all-day" ? item.start.date === today : localDate(occurrenceMs(item), householdTz) === today);
+  const todayItems = occurrences.filter((item) =>
+    item.start.kind === "all-day" ? item.start.date === today : localDate(occurrenceMs(item), householdTz) === today,
+  );
   const weeklyItems = occurrences.filter((item) => {
     const date = item.start.kind === "all-day" ? item.start.date : localDate(occurrenceMs(item), householdTz);
-    return date >= weekStart && date <= weekEnd && !todayItems.includes(item) && (item.importance === "important" || item.importance === "pinned");
+    return (
+      date >= weekStart &&
+      date <= weekEnd &&
+      !todayItems.includes(item) &&
+      (item.importance === "important" || item.importance === "pinned")
+    );
   });
-  const sort = (a: NudgeOccurrence, b: NudgeOccurrence) => occurrenceMs(a) - occurrenceMs(b) || a.occurrenceId.localeCompare(b.occurrenceId);
-  todayItems.sort(sort); weeklyItems.sort(sort);
+  const sort = (a: NudgeOccurrence, b: NudgeOccurrence) =>
+    occurrenceMs(a) - occurrenceMs(b) || a.occurrenceId.localeCompare(b.occurrenceId);
+  todayItems.sort(sort);
+  weeklyItems.sort(sort);
   // The store may contain only events outside this week; those do not create a
   // block. Normal weekly items are overflow-only: they are never allowed to
   // displace today's events or important/pinned weekly events.

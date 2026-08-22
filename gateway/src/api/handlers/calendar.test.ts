@@ -170,15 +170,16 @@ describe("calendar V2 REST handler", () => {
   });
 
   it("threads the REST query parameter into effective occurrence filtering", async () => {
-    const privateStore = fakePersistence([persisted("private-match", "2026-08-01"), persisted("private-other", "2026-08-02")], "private");
+    const privateStore = fakePersistence(
+      [persisted("private-match", "2026-08-01"), persisted("private-other", "2026-08-02")],
+      "private",
+    );
     const householdStore = fakePersistence([persisted("household-match", "2026-08-03")], "household");
     const api = createCalendarHandler(
       deps((cap) => (cap.resource === "calendar-private" ? privateStore : householdStore)),
     );
 
-    const response = await api(
-      request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&scope=all&query=match"),
-    );
+    const response = await api(request("/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&scope=all&query=match"));
     expect(response.status).toBe(200);
     expect((await response.json()) as { body: { events: Array<{ eventId: string }> } }).toMatchObject({
       body: { events: [{ eventId: "private-match" }, { eventId: "household-match" }] },
@@ -233,10 +234,14 @@ describe("calendar V2 REST handler", () => {
     if (!firstBody.body.nextCursor) throw new Error("expected continuation cursor");
 
     const second = await api(
-      request(`/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&cursor=${encodeURIComponent(firstBody.body.nextCursor)}`),
+      request(
+        `/api/v1/calendar/events?from=2026-08-01&to=2026-08-31&cursor=${encodeURIComponent(firstBody.body.nextCursor)}`,
+      ),
     );
     expect(second.status).toBe(200);
-    expect((await second.json()) as { body: { events: Array<{ eventId: string }>; nextCursor?: string } }).toMatchObject({
+    expect(
+      (await second.json()) as { body: { events: Array<{ eventId: string }>; nextCursor?: string } },
+    ).toMatchObject({
       body: { events: [{ eventId: "c" }] },
     });
   });

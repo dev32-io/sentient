@@ -20,10 +20,10 @@ import { migrateWebToolsEnabled } from "../admin/web-tools-migrator.js";
 import { createApplyDeps } from "../apply/apply-deps.js";
 import type { ApplyDeps } from "../apply/orchestrator.js";
 import { renderAndWrite } from "../apply/orchestrator.js";
+import { createCalendarQueryService } from "../calendar/calendar-query.js";
 import { openCalendarPersistence } from "../calendar/calendar-store.js";
 import type { CalendarPersistence } from "../calendar/calendar-store.js";
 import { capCalendarNudge, composeCalendarNudge } from "../calendar/nudge.js";
-import { createCalendarQueryService } from "../calendar/calendar-query.js";
 import type { CalendarConfig } from "../calendar/types.js";
 import { resolveAssetRoot } from "../config/asset-root.ts";
 import type { StartupConfig } from "../config/startup-config.ts";
@@ -404,8 +404,22 @@ export function buildSessionCalendar(
       maxLines: Math.max(1, orchestratorCfg.calendar.nudge.max_per_day + 4),
     };
     const nudgeNow = Date.now();
-    const privateNudge = composeCalendarNudge(queryService, principal.role, householdZone, nudgeNow, nudgeBudget, "private");
-    const householdNudge = composeCalendarNudge(queryService, principal.role, householdZone, nudgeNow, nudgeBudget, "household");
+    const privateNudge = composeCalendarNudge(
+      queryService,
+      principal.role,
+      householdZone,
+      nudgeNow,
+      nudgeBudget,
+      "private",
+    );
+    const householdNudge = composeCalendarNudge(
+      queryService,
+      principal.role,
+      householdZone,
+      nudgeNow,
+      nudgeBudget,
+      "household",
+    );
     const nudge = capCalendarNudge(
       [privateNudge, householdNudge].filter((value): value is string => value !== null).join("\n") || null,
       nudgeBudget,
@@ -421,15 +435,31 @@ export function buildSessionCalendar(
       close: () => {
         if (closed) return;
         closed = true;
-        try { privateHandle.close(); } catch { /* best effort */ }
-        try { householdHandle.close(); } catch { /* best effort */ }
+        try {
+          privateHandle.close();
+        } catch {
+          /* best effort */
+        }
+        try {
+          householdHandle.close();
+        } catch {
+          /* best effort */
+        }
       },
     };
   } catch (error) {
     // Construction can fail after either handle has been opened (including
     // provider validation and nudge projection). Never leak the first handle.
-    try { privateStore?.close(); } catch { /* best effort */ }
-    try { householdStore?.close(); } catch { /* best effort */ }
+    try {
+      privateStore?.close();
+    } catch {
+      /* best effort */
+    }
+    try {
+      householdStore?.close();
+    } catch {
+      /* best effort */
+    }
     throw error;
   }
 }
@@ -698,14 +728,7 @@ export async function runPhaseServices(input: PhaseServicesInput): Promise<Phase
     delegatedNativeTools,
     startDreamScheduler,
     stopDreamScheduler,
-  } = await buildOrchestratorServices(
-    cfg,
-    secretsStore,
-    profileStore,
-    auth,
-    calendarConfig,
-    calendarHouseholdTimeZone,
-  );
+  } = await buildOrchestratorServices(cfg, secretsStore, profileStore, auth, calendarConfig, calendarHouseholdTimeZone);
 
   const applyDeps: ApplyDeps = createApplyDeps({
     profileStore,
@@ -1082,7 +1105,8 @@ export async function buildOrchestratorServices(
   });
 
   const sessionCalendarHouseholdTimeZone = calendarHouseholdTimeZone ?? resolveTimeZone().zone();
-  const sessionCalendarConfig = calendarConfig ?? resolveCalendarConfig(orchestratorCfg, sessionCalendarHouseholdTimeZone);
+  const sessionCalendarConfig =
+    calendarConfig ?? resolveCalendarConfig(orchestratorCfg, sessionCalendarHouseholdTimeZone);
   const createSessionRuntime = buildCreateSessionRuntime({
     orchestratorCfg,
     calendarConfig: sessionCalendarConfig,

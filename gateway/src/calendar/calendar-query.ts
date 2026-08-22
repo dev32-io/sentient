@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import type { UserRole } from "@sentient/protocol";
+import type { CalendarCandidateWindow, CalendarPersistence } from "./calendar-store.js";
+import { normalizeCalendarQuery, normalizeCalendarTime } from "./calendar-temporal.js";
+import { type RecurrenceExpansionLimits, expandRecurrence } from "./expand-recurrence.js";
 import {
   type CalendarConfig,
   type CalendarError,
@@ -17,9 +20,6 @@ import {
   type UtcInstant,
   isAdult,
 } from "./types.js";
-import type { CalendarCandidateWindow, CalendarPersistence } from "./calendar-store.js";
-import { expandRecurrence, type RecurrenceExpansionLimits } from "./expand-recurrence.js";
-import { normalizeCalendarQuery, normalizeCalendarTime } from "./calendar-temporal.js";
 
 /** A domain result; adapter/store errors never cross the query boundary. */
 export type CalendarQueryResult<T> =
@@ -91,9 +91,11 @@ function failure(code: CalendarError["code"], message: string): CalendarQueryRes
   return { ok: false, error: { code, message } };
 }
 function errorForStorage(error: string): CalendarQueryResult<never> {
-  if (error === "closed" || error === "io-error") return failure("io_error", "Calendar storage is unavailable. Retry the request.");
+  if (error === "closed" || error === "io-error")
+    return failure("io_error", "Calendar storage is unavailable. Retry the request.");
   if (error === "forbidden") return failure("forbidden", "Calendar access is not available for this request.");
-  if (error === "invalid" || error === "recurrence-limit") return failure("result_too_large", `The calendar result cannot be expanded safely. ${GUIDANCE}`);
+  if (error === "invalid" || error === "recurrence-limit")
+    return failure("result_too_large", `The calendar result cannot be expanded safely. ${GUIDANCE}`);
   return failure("io_error", "Calendar storage returned an invalid result. Retry the request.");
 }
 function serializedFailure(): CalendarQueryResult<never> {
@@ -116,7 +118,12 @@ function asInput(value: CalendarTime): CalendarTimeInput {
   return (value.kind === "all-day" ? value.date : value.instant) as CalendarTimeInput;
 }
 function compareTuple(a: SortTuple, b: SortTuple): number {
-  return a.start - b.start || a.scope - b.scope || a.eventId.localeCompare(b.eventId) || a.originalStart.localeCompare(b.originalStart);
+  return (
+    a.start - b.start ||
+    a.scope - b.scope ||
+    a.eventId.localeCompare(b.eventId) ||
+    a.originalStart.localeCompare(b.originalStart)
+  );
 }
 function tupleFor(row: InternalRow): SortTuple {
   return {
@@ -141,21 +148,48 @@ function queryHash(query: NormalizedQuery, operation: "list" | "search"): string
   return createHash("sha256").update(shape).digest("hex").slice(0, 32);
 }
 function encodeCursor(query: NormalizedQuery, operation: "list" | "search", tuple: SortTuple): string {
-  const payload: CursorPayload = { v: CURSOR_VERSION, q: queryHash(query, operation), t: [tuple.start, tuple.scope, tuple.eventId, tuple.originalStart] };
+  const payload: CursorPayload = {
+    v: CURSOR_VERSION,
+    q: queryHash(query, operation),
+    t: [tuple.start, tuple.scope, tuple.eventId, tuple.originalStart],
+  };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
-function decodeCursor(cursor: string, query: NormalizedQuery, operation: "list" | "search"): CalendarQueryResult<SortTuple> {
+function decodeCursor(
+  cursor: string,
+  query: NormalizedQuery,
+  operation: "list" | "search",
+): CalendarQueryResult<SortTuple> {
   try {
-    if (cursor.length > 1024) return failure("invalid_range", "The continuation cursor is malformed; restart the query without it.");
+    if (cursor.length > 1024)
+      return failure("invalid_range", "The continuation cursor is malformed; restart the query without it.");
     const parsed: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
     if (!parsed || typeof parsed !== "object") throw new Error("cursor");
     const value = parsed as Partial<CursorPayload>;
-    if (value.v !== CURSOR_VERSION || value.q !== queryHash(query, operation) || !Array.isArray(value.t) || value.t.length !== 4) throw new Error("cursor");
+    if (
+      value.v !== CURSOR_VERSION ||
+      value.q !== queryHash(query, operation) ||
+      !Array.isArray(value.t) ||
+      value.t.length !== 4
+    )
+      throw new Error("cursor");
     const [start, scope, eventId, originalStart] = value.t;
-    if (typeof start !== "number" || !Number.isFinite(start) || (scope !== 0 && scope !== 1) || typeof eventId !== "string" || !eventId || typeof originalStart !== "string" || !originalStart) throw new Error("cursor");
+    if (
+      typeof start !== "number" ||
+      !Number.isFinite(start) ||
+      (scope !== 0 && scope !== 1) ||
+      typeof eventId !== "string" ||
+      !eventId ||
+      typeof originalStart !== "string" ||
+      !originalStart
+    )
+      throw new Error("cursor");
     return { ok: true, value: { start, scope, eventId, originalStart } };
   } catch {
-    return failure("invalid_range", "The continuation cursor is malformed or does not match this query; restart without it.");
+    return failure(
+      "invalid_range",
+      "The continuation cursor is malformed or does not match this query; restart without it.",
+    );
   }
 }
 
@@ -163,16 +197,23 @@ function validScope(value: unknown): value is CalendarReadScope | undefined {
   return value === undefined || value === "private" || value === "household" || value === "all";
 }
 function normalizeInput(input: unknown, config: CalendarConfig): CalendarQueryResult<NormalizedQuery> {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return failure("invalid_range", "from and to are required; provide both bounds and retry.");
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    return failure("invalid_range", "from and to are required; provide both bounds and retry.");
   const raw = input as Record<string, unknown>;
   const allowed = new Set(["from", "to", "query", "scope", "cursor", "limit", "group", "tags", "importance"]);
-  if (Object.keys(raw).some((key) => !allowed.has(key))) return failure("invalid_range", "The calendar query contains an unsupported field; remove it and retry.");
+  if (Object.keys(raw).some((key) => !allowed.has(key)))
+    return failure("invalid_range", "The calendar query contains an unsupported field; remove it and retry.");
   if (!validScope(raw.scope)) return failure("invalid_scope", "scope must be private, household, or all.");
-  if (raw.query === "") return failure("invalid_range", "query must not be empty; provide a search term or omit query.");
-  if (raw.limit !== undefined && typeof raw.limit === "number" && raw.limit > 100) return failure("invalid_range", "limit must not exceed 100.");
-  if (raw.importance !== undefined && !["normal", "important", "pinned"].includes(String(raw.importance))) return failure("invalid_range", "importance is invalid; correct it and retry.");
-  if (raw.cursor !== undefined && (typeof raw.cursor !== "string" || raw.cursor.length === 0)) return failure("invalid_range", "The continuation cursor is malformed; restart the query without it.");
-  if (raw.limit !== undefined && (typeof raw.limit !== "number" || !Number.isInteger(raw.limit) || raw.limit < 1)) return failure("invalid_range", "limit must be a positive integer.");
+  if (raw.query === "")
+    return failure("invalid_range", "query must not be empty; provide a search term or omit query.");
+  if (raw.limit !== undefined && typeof raw.limit === "number" && raw.limit > 100)
+    return failure("invalid_range", "limit must not exceed 100.");
+  if (raw.importance !== undefined && !["normal", "important", "pinned"].includes(String(raw.importance)))
+    return failure("invalid_range", "importance is invalid; correct it and retry.");
+  if (raw.cursor !== undefined && (typeof raw.cursor !== "string" || raw.cursor.length === 0))
+    return failure("invalid_range", "The continuation cursor is malformed; restart the query without it.");
+  if (raw.limit !== undefined && (typeof raw.limit !== "number" || !Number.isInteger(raw.limit) || raw.limit < 1))
+    return failure("invalid_range", "limit must be a positive integer.");
   const normalized = normalizeCalendarQuery(input, config);
   if (!normalized.ok) return { ok: false, error: normalized.error };
   return {
@@ -184,9 +225,9 @@ function normalizeInput(input: unknown, config: CalendarConfig): CalendarQueryRe
       ...(typeof raw.query === "string" ? { query: raw.query } : {}),
       ...(typeof raw.group === "string" ? { group: raw.group } : {}),
       ...(Array.isArray(raw.tags) ? { tags: raw.tags as string[] } : {}),
-      ...(["normal", "important", "pinned"] as const).includes(raw.importance as "normal" | "important" | "pinned")
+      ...((["normal", "important", "pinned"] as const).includes(raw.importance as "normal" | "important" | "pinned")
         ? { importance: raw.importance as "normal" | "important" | "pinned" }
-        : {},
+        : {}),
       ...(typeof raw.cursor === "string" ? { cursor: raw.cursor } : {}),
       ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
     },
@@ -194,7 +235,12 @@ function normalizeInput(input: unknown, config: CalendarConfig): CalendarQueryRe
 }
 
 function localDateForInstant(ms: number, zone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(ms));
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ms));
   const values: Record<string, string> = {};
   for (const part of parts) values[part.type] = part.value;
   return `${values.year}-${values.month}-${values.day}`;
@@ -208,16 +254,36 @@ function addDate(date: string, days: number): string {
 function localMidnight(date: string, zone: string): number {
   const guess = Date.parse(`${date}T00:00:00.000Z`);
   try {
-    const formatter = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
     const parts: Record<string, string> = {};
     for (const part of formatter.formatToParts(new Date(guess))) parts[part.type] = part.value;
-    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+    const represented = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
     return guess + (guess - represented);
   } catch {
     return guess;
   }
 }
-function timedWindow(query: NormalizedQuery, zone: string, eventZone: string): { from: CalendarTime; to: CalendarTime } {
+function timedWindow(
+  query: NormalizedQuery,
+  zone: string,
+  eventZone: string,
+): { from: CalendarTime; to: CalendarTime } {
   if (query.from.kind === "timed" && query.to.kind === "timed") {
     return {
       from: { ...query.from, timeZoneId: eventZone as never },
@@ -227,13 +293,24 @@ function timedWindow(query: NormalizedQuery, zone: string, eventZone: string): {
   const fromDate = query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone);
   const toDate = query.to.kind === "all-day" ? query.to.date : localDateForInstant(timeMillis(query.to), zone);
   return {
-    from: { kind: "timed", instant: new Date(localMidnight(fromDate, zone)).toISOString() as UtcInstant, timeZoneId: eventZone as never },
-    to: { kind: "timed", instant: new Date(localMidnight(addDate(toDate, 1), zone) - 1).toISOString() as UtcInstant, timeZoneId: eventZone as never },
+    from: {
+      kind: "timed",
+      instant: new Date(localMidnight(fromDate, zone)).toISOString() as UtcInstant,
+      timeZoneId: eventZone as never,
+    },
+    to: {
+      kind: "timed",
+      instant: new Date(localMidnight(addDate(toDate, 1), zone) - 1).toISOString() as UtcInstant,
+      timeZoneId: eventZone as never,
+    },
   };
 }
 function allDayWindow(query: NormalizedQuery, zone: string): { from: CalendarTime; to: CalendarTime } {
   if (query.from.kind === "all-day" && query.to.kind === "all-day") return { from: query.from, to: query.to };
-  return { from: { kind: "all-day", date: localDateForInstant(timeMillis(query.from), zone) as never }, to: { kind: "all-day", date: localDateForInstant(timeMillis(query.to), zone) as never } };
+  return {
+    from: { kind: "all-day", date: localDateForInstant(timeMillis(query.from), zone) as never },
+    to: { kind: "all-day", date: localDateForInstant(timeMillis(query.to), zone) as never },
+  };
 }
 function candidateWindow(query: NormalizedQuery, zone: string): CalendarCandidateWindow {
   if (query.from.kind === "timed" && query.to.kind === "timed") {
@@ -244,18 +321,26 @@ function candidateWindow(query: NormalizedQuery, zone: string): CalendarCandidat
       allDayTo: localDateForInstant(timeMillis(query.to), zone) as never,
     };
   }
-  const from = localMidnight(query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone), zone);
+  const from = localMidnight(
+    query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone),
+    zone,
+  );
   const toDate = query.to.kind === "all-day" ? query.to.date : localDateForInstant(timeMillis(query.to), zone);
   const to = localMidnight(addDate(toDate, 1), zone) - 1;
   return {
     timedFrom: new Date(from).toISOString() as UtcInstant,
     timedTo: new Date(to).toISOString() as UtcInstant,
-    allDayFrom: query.from.kind === "all-day" ? query.from.date : localDateForInstant(timeMillis(query.from), zone) as never,
+    allDayFrom:
+      query.from.kind === "all-day" ? query.from.date : (localDateForInstant(timeMillis(query.from), zone) as never),
     allDayTo: toDate as never,
   };
 }
 function withinWindow(value: CalendarTime, window: { from: CalendarTime; to: CalendarTime }): boolean {
-  return value.kind === window.from.kind && timeMillis(value) >= timeMillis(window.from) && timeMillis(value) <= timeMillis(window.to);
+  return (
+    value.kind === window.from.kind &&
+    timeMillis(value) >= timeMillis(window.from) &&
+    timeMillis(value) <= timeMillis(window.to)
+  );
 }
 /**
  * A moved exception can have an original slot outside the requested window.
@@ -271,27 +356,40 @@ function expandEffective(
 ): ReturnType<typeof expandRecurrence> {
   let broad = window;
   for (const exception of event.exceptions ?? []) {
-    if (!exception.start || exception.start.kind !== window.from.kind || exception.occurrence.kind !== window.from.kind) continue;
+    if (!exception.start || exception.start.kind !== window.from.kind || exception.occurrence.kind !== window.from.kind)
+      continue;
     const effectiveMatches = withinWindow(exception.start, window);
-    const originalMatches = requestedOriginal !== undefined && timeKey(exception.occurrence) === timeKey(requestedOriginal);
+    const originalMatches =
+      requestedOriginal !== undefined && timeKey(exception.occurrence) === timeKey(requestedOriginal);
     if (!effectiveMatches && !originalMatches) continue;
     const from = Math.min(timeMillis(broad.from), timeMillis(exception.occurrence));
     const to = Math.max(timeMillis(broad.to), timeMillis(exception.occurrence));
-    broad = exception.occurrence.kind === "timed"
-      ? {
-          from: { ...broad.from as Extract<CalendarTime, { kind: "timed" }>, instant: new Date(from).toISOString() as UtcInstant },
-          to: { ...broad.to as Extract<CalendarTime, { kind: "timed" }>, instant: new Date(to).toISOString() as UtcInstant },
-        }
-      : {
-          from: { kind: "all-day", date: new Date(from).toISOString().slice(0, 10) as never },
-          to: { kind: "all-day", date: new Date(to).toISOString().slice(0, 10) as never },
-        };
+    broad =
+      exception.occurrence.kind === "timed"
+        ? {
+            from: {
+              ...(broad.from as Extract<CalendarTime, { kind: "timed" }>),
+              instant: new Date(from).toISOString() as UtcInstant,
+            },
+            to: {
+              ...(broad.to as Extract<CalendarTime, { kind: "timed" }>),
+              instant: new Date(to).toISOString() as UtcInstant,
+            },
+          }
+        : {
+            from: { kind: "all-day", date: new Date(from).toISOString().slice(0, 10) as never },
+            to: { kind: "all-day", date: new Date(to).toISOString().slice(0, 10) as never },
+          };
   }
   const expanded = expandRecurrence(event, broad.from, broad.to, limits);
   if (!expanded.ok) return expanded;
   return {
     ok: true,
-    value: expanded.value.filter((occurrence) => withinWindow(occurrence.start, window) || (requestedOriginal !== undefined && timeKey(occurrence.originalStart) === timeKey(requestedOriginal))),
+    value: expanded.value.filter(
+      (occurrence) =>
+        withinWindow(occurrence.start, window) ||
+        (requestedOriginal !== undefined && timeKey(occurrence.originalStart) === timeKey(requestedOriginal)),
+    ),
   };
 }
 
@@ -305,7 +403,15 @@ function frequency(value: string): "daily" | "weekly" | "monthly" | "yearly" {
 function recurrenceInput(event: StoredCalendarEvent): Record<string, unknown> | undefined {
   const rule = event.recurrence?.rule;
   if (!rule) return undefined;
-  const weekdays: Record<string, string> = { MO: "monday", TU: "tuesday", WE: "wednesday", TH: "thursday", FR: "friday", SA: "saturday", SU: "sunday" };
+  const weekdays: Record<string, string> = {
+    MO: "monday",
+    TU: "tuesday",
+    WE: "wednesday",
+    TH: "thursday",
+    FR: "friday",
+    SA: "saturday",
+    SU: "sunday",
+  };
   return {
     frequency: frequency(rule.freq),
     ...(rule.interval !== undefined ? { interval: rule.interval } : {}),
@@ -329,7 +435,11 @@ function projectedFields(event: StoredCalendarEvent): Record<string, unknown> {
 }
 
 /** Project an effective occurrence without exposing exception or exclusion rows. */
-export function projectOccurrence(row: Occurrence, scope: CalendarScope, revision: CalendarRevision): CalendarOccurrenceProjection {
+export function projectOccurrence(
+  row: Occurrence,
+  scope: CalendarScope,
+  revision: CalendarRevision,
+): CalendarOccurrenceProjection {
   return {
     eventId: row.eventId,
     occurrenceId: row.occurrenceId,
@@ -341,7 +451,11 @@ export function projectOccurrence(row: Occurrence, scope: CalendarScope, revisio
   } as unknown as CalendarOccurrenceProjection;
 }
 /** Project a full effective event for get; internal child rows are never returned. */
-export function projectEvent(event: StoredCalendarEvent, scope: CalendarScope, revision: CalendarRevision): {
+export function projectEvent(
+  event: StoredCalendarEvent,
+  scope: CalendarScope,
+  revision: CalendarRevision,
+): {
   eventId: string;
   revision: CalendarRevision;
   scope: CalendarScope;
@@ -363,9 +477,13 @@ export class CalendarQueryService {
 
   private sources(scope: CalendarReadScope): Array<[CalendarPersistence, CalendarScope]> | CalendarQueryResult<never> {
     if (scope === "private") return [[this.deps.private, "private"]];
-    if (!this.deps.household) return failure("io_error", "Household calendar storage is unavailable. Retry the request.");
+    if (!this.deps.household)
+      return failure("io_error", "Household calendar storage is unavailable. Retry the request.");
     if (scope === "household") return [[this.deps.household, "household"]];
-    return [[this.deps.private, "private"], [this.deps.household, "household"]];
+    return [
+      [this.deps.private, "private"],
+      [this.deps.household, "household"],
+    ];
   }
 
   private collect(query: NormalizedQuery, signal?: AbortSignal): CalendarQueryResult<{ rows: InternalRow[] }> {
@@ -392,16 +510,22 @@ export class CalendarQueryService {
           return errorForStorage(raw.error);
         }
         const event = materialize(raw.value);
-        const windows = event.start.kind === "timed"
-          ? timedWindow(query, this.zone, event.start.timeZoneId)
-          : allDayWindow(query, this.zone);
+        const windows =
+          event.start.kind === "timed"
+            ? timedWindow(query, this.zone, event.start.timeZoneId)
+            : allDayWindow(query, this.zone);
         const expanded = expandEffective(event, windows, expansionLimits);
-        if (!expanded.ok) return errorForStorage(expanded.error.code === "recurrence-limit" ? "recurrence-limit" : "invalid");
+        if (!expanded.ok)
+          return errorForStorage(expanded.error.code === "recurrence-limit" ? "recurrence-limit" : "invalid");
         for (const occurrence of expanded.value) {
           if (!isAdult(this.deps.role) && occurrence.visibility === "adults") continue;
           if (query.query !== undefined) {
             const needle = query.query.toLocaleLowerCase();
-            if (!occurrence.title.toLocaleLowerCase().includes(needle) && !(occurrence.description ?? "").toLocaleLowerCase().includes(needle)) continue;
+            if (
+              !occurrence.title.toLocaleLowerCase().includes(needle) &&
+              !(occurrence.description ?? "").toLocaleLowerCase().includes(needle)
+            )
+              continue;
           }
           if (query.group !== undefined && occurrence.group !== query.group) continue;
           if (query.importance !== undefined && occurrence.importance !== query.importance) continue;
@@ -417,7 +541,11 @@ export class CalendarQueryService {
     return { ok: true, value: { rows } };
   }
 
-  private page(input: unknown, operation: "list" | "search", options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
+  private page(
+    input: unknown,
+    operation: "list" | "search",
+    options: CalendarQueryOptions = {},
+  ): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
     const normalized = normalizeInput(input, this.deps.config);
     if (!normalized.ok) return normalized;
     const query = normalized.value;
@@ -445,40 +573,69 @@ export class CalendarQueryService {
     // REST consumers receive bounded pages and may traverse the complete
     // aggregate with the cursor. The model-result character budget applies to
     // complete tool results, not to the REST aggregate (or its pages).
-    const page: CalendarPage = { events, ...(hasMore && last ? { nextCursor: encodeCursor(query, operation, tupleFor(last)) } : {}) };
+    const page: CalendarPage = {
+      events,
+      ...(hasMore && last ? { nextCursor: encodeCursor(query, operation, tupleFor(last)) } : {}),
+    };
     return { ok: true, value: page };
   }
 
   /** REST-shaped bounded page. */
   public list(input: unknown): CalendarQueryResult<CalendarPage>;
   public list(input: unknown, options: { readonly mode: "tool" }): CalendarQueryResult<CalendarCompleteResult>;
-  public list(input: unknown, options?: CalendarQueryOptions): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
+  public list(
+    input: unknown,
+    options?: CalendarQueryOptions,
+  ): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
     const result = this.page(input, "list", options);
     return result;
   }
   /** REST-shaped bounded search page. */
   public search(input: unknown): CalendarQueryResult<CalendarPage>;
   public search(input: unknown, options: { readonly mode: "tool" }): CalendarQueryResult<CalendarCompleteResult>;
-  public search(input: unknown, options?: CalendarQueryOptions): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
+  public search(
+    input: unknown,
+    options?: CalendarQueryOptions,
+  ): CalendarQueryResult<CalendarPage | CalendarCompleteResult> {
     const result = this.page(input, "search", options);
     return result;
   }
-  public listPage(input: unknown): CalendarQueryResult<CalendarPage> { return this.list(input); }
-  public searchPage(input: unknown): CalendarQueryResult<CalendarPage> { return this.search(input); }
+  public listPage(input: unknown): CalendarQueryResult<CalendarPage> {
+    return this.list(input);
+  }
+  public searchPage(input: unknown): CalendarQueryResult<CalendarPage> {
+    return this.search(input);
+  }
   public listComplete(input: unknown, options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarCompleteResult> {
     const result = this.page(input, "list", { ...options, mode: "tool" });
     return result.ok ? { ok: true, value: result.value as CalendarCompleteResult } : result;
   }
-  public searchComplete(input: unknown, options: CalendarQueryOptions = {}): CalendarQueryResult<CalendarCompleteResult> {
+  public searchComplete(
+    input: unknown,
+    options: CalendarQueryOptions = {},
+  ): CalendarQueryResult<CalendarCompleteResult> {
     const result = this.page(input, "search", { ...options, mode: "tool" });
     return result.ok ? { ok: true, value: result.value as CalendarCompleteResult } : result;
   }
 
   /** Resolve one event/occurrence only inside the requested scope. */
-  public get(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope, options: CalendarGetOptions = {}): CalendarQueryResult<CalendarGetResult> {
+  public get(
+    input: CalendarGetInput | string,
+    originalStart?: CalendarTimeInput,
+    requestedScope?: CalendarReadScope,
+    options: CalendarGetOptions = {},
+  ): CalendarQueryResult<CalendarGetResult> {
     if (options.signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
-    const target: CalendarGetInput = typeof input === "string" ? { eventId: input, ...(originalStart !== undefined ? { originalStart } : {}), ...(requestedScope !== undefined ? { scope: requestedScope } : {}) } : input;
-    if (!target || typeof target.eventId !== "string" || target.eventId.length === 0) return failure("not_found", "The requested calendar event was not found.");
+    const target: CalendarGetInput =
+      typeof input === "string"
+        ? {
+            eventId: input,
+            ...(originalStart !== undefined ? { originalStart } : {}),
+            ...(requestedScope !== undefined ? { scope: requestedScope } : {}),
+          }
+        : input;
+    if (!target || typeof target.eventId !== "string" || target.eventId.length === 0)
+      return failure("not_found", "The requested calendar event was not found.");
     if (!validScope(target.scope)) return failure("invalid_scope", "scope must be private, household, or all.");
     const scope = target.scope ?? "private";
     const sources = this.sources(scope);
@@ -490,7 +647,8 @@ export class CalendarQueryService {
       normalizedOriginal = parsed.value;
     }
     for (const [persistence, storeScope] of sources) {
-      if (options.signal?.aborted) return failure("aborted", "The calendar operation was cancelled; retry the request.");
+      if (options.signal?.aborted)
+        return failure("aborted", "The calendar operation was cancelled; retry the request.");
       const raw = persistence.readRaw(target.eventId as CalendarEventId);
       if (!raw.ok) {
         if (raw.error === "not-found") continue;
@@ -503,27 +661,50 @@ export class CalendarQueryService {
         if (!serializeWithinBudget(result, this.deps.config.output.maxResultChars)) return serializedFailure();
         return { ok: true, value: result };
       }
-      const broad = normalizedOriginal.kind === "timed"
-        ? timedWindow({ from: normalizedOriginal, to: normalizedOriginal, scope: storeScope }, this.zone, event.start.kind === "timed" ? event.start.timeZoneId : normalizedOriginal.timeZoneId)
-        : allDayWindow({ from: normalizedOriginal, to: normalizedOriginal, scope: storeScope }, this.zone);
-      const expanded = event.start.kind === normalizedOriginal.kind
-        ? expandEffective(event, broad, this.recurrenceLimits, normalizedOriginal)
-        : { ok: true as const, value: [] as Occurrence[] };
-      if (!expanded.ok) return errorForStorage(expanded.error.code === "recurrence-limit" ? "recurrence-limit" : "invalid");
-      const occurrence = expanded.value.find((candidate) => timeKey(candidate.originalStart) === timeKey(normalizedOriginal));
+      const broad =
+        normalizedOriginal.kind === "timed"
+          ? timedWindow(
+              { from: normalizedOriginal, to: normalizedOriginal, scope: storeScope },
+              this.zone,
+              event.start.kind === "timed" ? event.start.timeZoneId : normalizedOriginal.timeZoneId,
+            )
+          : allDayWindow({ from: normalizedOriginal, to: normalizedOriginal, scope: storeScope }, this.zone);
+      const expanded =
+        event.start.kind === normalizedOriginal.kind
+          ? expandEffective(event, broad, this.recurrenceLimits, normalizedOriginal)
+          : { ok: true as const, value: [] as Occurrence[] };
+      if (!expanded.ok)
+        return errorForStorage(expanded.error.code === "recurrence-limit" ? "recurrence-limit" : "invalid");
+      const occurrence = expanded.value.find(
+        (candidate) => timeKey(candidate.originalStart) === timeKey(normalizedOriginal),
+      );
       if (!occurrence || (!isAdult(this.deps.role) && occurrence.visibility === "adults")) continue;
       const result = projectOccurrence(occurrence, storeScope, raw.value.revision);
       if (!serializeWithinBudget(result, this.deps.config.output.maxResultChars)) return serializedFailure();
       return { ok: true, value: result };
     }
-    return failure(normalizedOriginal ? "occurrence_not_found" : "not_found", normalizedOriginal ? "The requested calendar occurrence was not found." : "The requested calendar event was not found.");
+    return failure(
+      normalizedOriginal ? "occurrence_not_found" : "not_found",
+      normalizedOriginal
+        ? "The requested calendar occurrence was not found."
+        : "The requested calendar event was not found.",
+    );
   }
 
-  public getEvent(input: CalendarGetInput | string, originalStart?: CalendarTimeInput, requestedScope?: CalendarReadScope, options?: CalendarGetOptions): CalendarQueryResult<CalendarGetResult> {
+  public getEvent(
+    input: CalendarGetInput | string,
+    originalStart?: CalendarTimeInput,
+    requestedScope?: CalendarReadScope,
+    options?: CalendarGetOptions,
+  ): CalendarQueryResult<CalendarGetResult> {
     return this.get(input, originalStart, requestedScope, options);
   }
-  public listEvents(input: unknown): CalendarQueryResult<CalendarPage> { return this.list(input); }
-  public searchEvents(input: unknown): CalendarQueryResult<CalendarPage> { return this.search(input); }
+  public listEvents(input: unknown): CalendarQueryResult<CalendarPage> {
+    return this.list(input);
+  }
+  public searchEvents(input: unknown): CalendarQueryResult<CalendarPage> {
+    return this.search(input);
+  }
 }
 
 export function createCalendarQueryService(deps: CalendarQuerySources): CalendarQueryService {

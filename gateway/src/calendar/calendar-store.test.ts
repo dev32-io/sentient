@@ -1,12 +1,20 @@
-import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Capability } from "../access/capability.js";
 import { openCalendarPersistence, openCalendarStore } from "./calendar-store.js";
 import { CALENDAR_SCHEMA_VERSION } from "./schema.js";
-import type { CalendarConfig, CalendarPersistenceBaseEvent, StoredCalendarEvent, CalendarEventId, CalendarRevision, EventTimeZoneId, UtcInstant } from "./types.js";
+import type {
+  CalendarConfig,
+  CalendarEventId,
+  CalendarPersistenceBaseEvent,
+  CalendarRevision,
+  EventTimeZoneId,
+  StoredCalendarEvent,
+  UtcInstant,
+} from "./types.js";
 
 const cfg = { defaultEventTimeZoneId: "America/Toronto" } as CalendarConfig;
 const roots: string[] = [];
@@ -18,7 +26,11 @@ function root(): string {
   roots.push(value);
   return value;
 }
-function event(id: string, start: StoredCalendarEvent["start"], extra: Partial<StoredCalendarEvent> = {}): StoredCalendarEvent {
+function event(
+  id: string,
+  start: StoredCalendarEvent["start"],
+  extra: Partial<StoredCalendarEvent> = {},
+): StoredCalendarEvent {
   return {
     id: id as CalendarEventId,
     title: id,
@@ -51,7 +63,9 @@ describe("CalendarStore factory", () => {
     );
     expect(db.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode).toBe("wal");
     expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'events'").get()).toBeTruthy();
-    expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'exclusions'").get()).toBeTruthy();
+    expect(
+      db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'exclusions'").get(),
+    ).toBeTruthy();
     expect(db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE name = 'exdates'").get()).toBeNull();
     expect(
       db
@@ -126,21 +140,35 @@ describe("CalendarStore factory", () => {
   });
 
   it("returns recurrence-limit instead of partial occurrences for an oversized bounded rule", () => {
-    const store = openCalendarStore(cap(root()), Object.freeze({
-      query: Object.freeze({ maxDays: 30, maxOccurrences: 3, pageSize: 10 }),
-      input: Object.freeze({ maxTitleChars: 64, maxDescriptionChars: 256, maxQueryChars: 64, maxGroupChars: 32, maxTagChars: 16, maxTags: 4 }),
-      output: Object.freeze({ maxResultChars: 4000 }),
-      recurrence: Object.freeze({ maxOccurrences: 3, maxDays: 366 }),
-      nudge: Object.freeze({ maxPerDay: 10 }),
-      defaultEventTimeZoneId: "UTC",
-    }));
-    const recurring = event("oversized", {
-      kind: "timed",
-      instant: "2026-01-01T14:00:00.000Z" as UtcInstant,
-      timeZoneId: "UTC" as EventTimeZoneId,
-    }, {
-      recurrence: { rrule: "FREQ=DAILY;COUNT=10", rule: { freq: "DAILY", count: 10 } },
-    });
+    const store = openCalendarStore(
+      cap(root()),
+      Object.freeze({
+        query: Object.freeze({ maxDays: 30, maxOccurrences: 3, pageSize: 10 }),
+        input: Object.freeze({
+          maxTitleChars: 64,
+          maxDescriptionChars: 256,
+          maxQueryChars: 64,
+          maxGroupChars: 32,
+          maxTagChars: 16,
+          maxTags: 4,
+        }),
+        output: Object.freeze({ maxResultChars: 4000 }),
+        recurrence: Object.freeze({ maxOccurrences: 3, maxDays: 366 }),
+        nudge: Object.freeze({ maxPerDay: 10 }),
+        defaultEventTimeZoneId: "UTC",
+      }),
+    );
+    const recurring = event(
+      "oversized",
+      {
+        kind: "timed",
+        instant: "2026-01-01T14:00:00.000Z" as UtcInstant,
+        timeZoneId: "UTC" as EventTimeZoneId,
+      },
+      {
+        recurrence: { rrule: "FREQ=DAILY;COUNT=10", rule: { freq: "DAILY", count: 10 } },
+      },
+    );
     expect(store.create(recurring).ok).toBe(true);
     const result = store.list({
       from: { kind: "timed", instant: "2026-01-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
@@ -152,13 +180,17 @@ describe("CalendarStore factory", () => {
 
   it("expands recurring events stored with the household timezone sentinel", () => {
     const store = openCalendarStore(cap(root()), cfg);
-    const recurring = event("household-recurring", {
-      kind: "timed",
-      instant: "2026-08-05T14:00:00.000Z" as UtcInstant,
-      timeZoneId: "household" as EventTimeZoneId,
-    }, {
-      recurrence: { rrule: "FREQ=DAILY;COUNT=2", rule: { freq: "DAILY", count: 2 } },
-    });
+    const recurring = event(
+      "household-recurring",
+      {
+        kind: "timed",
+        instant: "2026-08-05T14:00:00.000Z" as UtcInstant,
+        timeZoneId: "household" as EventTimeZoneId,
+      },
+      {
+        recurrence: { rrule: "FREQ=DAILY;COUNT=2", rule: { freq: "DAILY", count: 2 } },
+      },
+    );
     expect(store.create(recurring).ok).toBe(true);
     const result = store.list({
       from: { kind: "timed", instant: "2026-08-01T00:00:00.000Z" as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId },
@@ -167,7 +199,9 @@ describe("CalendarStore factory", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value).toHaveLength(2);
-      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(true);
+      expect(result.value.every((item) => item.start.kind === "timed" && item.start.timeZoneId === "household")).toBe(
+        true,
+      );
     }
     store.close();
   });
@@ -368,14 +402,29 @@ describe("CalendarStore factory", () => {
     const created = event("revisioned", { kind: "all-day", date: "2026-04-01" });
     const baseEvent = { ...created, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent;
     expect(persistence.transaction((tx) => tx.insertBaseEvent(baseEvent))).toEqual({ ok: true, value: undefined });
-    expect(persistence.transaction((tx) => tx.replaceChildren(created.id, {
-      exceptions: [{ occurrence: created.start, description: null }], exclusions: [], tags: ["z", "a"],
-    }))).toEqual({ ok: true, value: undefined });
-    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 9 as CalendarRevision))).toEqual({ ok: false, error: "conflict" });
+    expect(
+      persistence.transaction((tx) =>
+        tx.replaceChildren(created.id, {
+          exceptions: [{ occurrence: created.start, description: null }],
+          exclusions: [],
+          tags: ["z", "a"],
+        }),
+      ),
+    ).toEqual({ ok: true, value: undefined });
+    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 9 as CalendarRevision))).toEqual({
+      ok: false,
+      error: "conflict",
+    });
     const unchanged = persistence.read(created.id);
     expect(unchanged).toMatchObject({ ok: true, value: { revision: 1, tags: ["a", "z"] } });
-    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 1 as CalendarRevision))).toEqual({ ok: true, value: 2 as CalendarRevision });
-    expect(persistence.read(created.id)).toMatchObject({ ok: true, value: { revision: 2, exceptions: [{ description: null }] } });
+    expect(persistence.transaction((tx) => tx.compareAndSwapRevision(created.id, 1 as CalendarRevision))).toEqual({
+      ok: true,
+      value: 2 as CalendarRevision,
+    });
+    expect(persistence.read(created.id)).toMatchObject({
+      ok: true,
+      value: { revision: 2, exceptions: [{ description: null }] },
+    });
     persistence.close();
   });
 
@@ -383,13 +432,22 @@ describe("CalendarStore factory", () => {
     const base = root();
     const created = event("rollback-prefix", { kind: "all-day", date: "2026-05-01" });
     const adult = openCalendarPersistence(cap(base), cfg);
-    expect(adult.transaction((tx) => tx.insertBaseEvent({ ...created, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({ ok: true, value: undefined });
+    expect(
+      adult.transaction((tx) =>
+        tx.insertBaseEvent({ ...created, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent),
+      ),
+    ).toEqual({ ok: true, value: undefined });
     const failing = openCalendarPersistence(cap(base), cfg, {
-      fault: (operation) => { if (operation === "replace-tags") throw new Error("injected sqlite failure"); },
+      fault: (operation) => {
+        if (operation === "replace-tags") throw new Error("injected sqlite failure");
+      },
     });
     const successor = event("rollback-successor", { kind: "all-day", date: "2026-06-01" });
     const result = failing.transaction((tx) => {
-      const inserted = tx.insertSuccessor({ ...successor, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent);
+      const inserted = tx.insertSuccessor({
+        ...successor,
+        revision: 1 as CalendarRevision,
+      } as CalendarPersistenceBaseEvent);
       if (!inserted.ok) return inserted;
       const revision = tx.compareAndSwapRevision(created.id, 1 as CalendarRevision);
       if (!revision.ok) return revision;
@@ -406,7 +464,11 @@ describe("CalendarStore factory", () => {
     const base = root();
     const adult = openCalendarPersistence(cap(base), cfg);
     const hidden = event("raw-hidden", { kind: "all-day", date: "2026-07-01" }, { visibility: "adults" });
-    expect(adult.transaction((tx) => tx.insertBaseEvent({ ...hidden, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({ ok: true, value: undefined });
+    expect(
+      adult.transaction((tx) =>
+        tx.insertBaseEvent({ ...hidden, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent),
+      ),
+    ).toEqual({ ok: true, value: undefined });
     adult.close();
     const child = openCalendarPersistence({ ...cap(base), role: "child" }, cfg);
     expect(child.read(hidden.id)).toEqual({ ok: false, error: "not-found" });
@@ -421,14 +483,22 @@ describe("CalendarStore factory", () => {
     const base = root();
     const initial = openCalendarPersistence(cap(base), cfg);
     const stored = event("invalid-persisted-time", { kind: "all-day", date: "2026-08-01" });
-    expect(initial.transaction((tx) => tx.insertBaseEvent({ ...stored, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent))).toEqual({
+    expect(
+      initial.transaction((tx) =>
+        tx.insertBaseEvent({ ...stored, revision: 1 as CalendarRevision } as CalendarPersistenceBaseEvent),
+      ),
+    ).toEqual({
       ok: true,
       value: undefined,
     });
     initial.close();
 
     const db = new Database(join(base, "calendar-v2", "calendar.db"));
-    db.query("UPDATE events SET created_at = ?, updated_at = ? WHERE id = ?").run("not-an-instant", "2026-99-99", stored.id);
+    db.query("UPDATE events SET created_at = ?, updated_at = ? WHERE id = ?").run(
+      "not-an-instant",
+      "2026-99-99",
+      stored.id,
+    );
     db.close();
 
     const reopened = openCalendarPersistence(cap(base), cfg);

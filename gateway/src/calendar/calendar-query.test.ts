@@ -1,20 +1,42 @@
 import { describe, expect, it } from "vitest";
+import { CalendarQueryService } from "./calendar-query.js";
 import type { CalendarPersistence } from "./calendar-store.js";
 import type { CalendarPersistenceEvent } from "./types.js";
-import { CalendarQueryService } from "./calendar-query.js";
-import type { CalendarConfig, CalendarEventId, CalendarRevision, EventTimeZoneId, StoredCalendarEvent, UtcInstant } from "./types.js";
+import type {
+  CalendarConfig,
+  CalendarEventId,
+  CalendarRevision,
+  EventTimeZoneId,
+  StoredCalendarEvent,
+  UtcInstant,
+} from "./types.js";
 
 const config: CalendarConfig = {
   query: { maxDays: 31, maxOccurrences: 10, pageSize: 2 },
-  input: { maxTitleChars: 80, maxDescriptionChars: 200, maxQueryChars: 40, maxGroupChars: 20, maxTagChars: 20, maxTags: 5 },
+  input: {
+    maxTitleChars: 80,
+    maxDescriptionChars: 200,
+    maxQueryChars: 40,
+    maxGroupChars: 20,
+    maxTagChars: 20,
+    maxTags: 5,
+  },
   output: { maxResultChars: 4000 },
   recurrence: { maxOccurrences: 100, maxDays: 366 },
   nudge: { maxPerDay: 10 },
   defaultEventTimeZoneId: "UTC",
 };
-const timed = (instant: string) => ({ kind: "timed" as const, instant: instant as UtcInstant, timeZoneId: "UTC" as EventTimeZoneId });
+const timed = (instant: string) => ({
+  kind: "timed" as const,
+  instant: instant as UtcInstant,
+  timeZoneId: "UTC" as EventTimeZoneId,
+});
 const day = (date: string) => ({ kind: "all-day" as const, date: date as never });
-function event(id: string, start: ReturnType<typeof timed> | ReturnType<typeof day>, extra: Partial<StoredCalendarEvent> = {}): CalendarPersistenceEvent {
+function event(
+  id: string,
+  start: ReturnType<typeof timed> | ReturnType<typeof day>,
+  extra: Partial<StoredCalendarEvent> = {},
+): CalendarPersistenceEvent {
   const value: StoredCalendarEvent = {
     id: id as CalendarEventId,
     title: id,
@@ -26,24 +48,41 @@ function event(id: string, start: ReturnType<typeof timed> | ReturnType<typeof d
     updatedAt: "2026-01-01T00:00:00.000Z" as UtcInstant,
     ...extra,
   };
-  return { ...value, revision: 1 as CalendarRevision, exceptions: value.exceptions ?? [], exclusions: value.exdates ?? [], tags: [...value.tags] };
+  return {
+    ...value,
+    revision: 1 as CalendarRevision,
+    exceptions: value.exceptions ?? [],
+    exclusions: value.exdates ?? [],
+    tags: [...value.tags],
+  };
 }
 function persistence(events: CalendarPersistenceEvent[], fail = false): CalendarPersistence {
   const map = new Map(events.map((value) => [value.id, value]));
   return {
-    readBaseCandidates: (limit) => fail
-      ? { ok: false, error: "io-error" }
-      : { ok: true, value: { ids: [...map.keys()].slice(0, limit), overflow: map.size > limit } },
-    readRaw: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
-    read: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
-    get: (id) => map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" },
+    readBaseCandidates: (limit) =>
+      fail
+        ? { ok: false, error: "io-error" }
+        : { ok: true, value: { ids: [...map.keys()].slice(0, limit), overflow: map.size > limit } },
+    readRaw: (id) => (map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" }),
+    read: (id) => (map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" }),
+    get: (id) => (map.has(id) ? { ok: true, value: map.get(id)! } : { ok: false, error: "not-found" }),
     transaction: () => ({ ok: false, error: "not-implemented" }),
     withTransaction: () => ({ ok: false, error: "not-implemented" }),
     close: () => {},
   } as CalendarPersistence;
 }
-function service(privateEvents: CalendarPersistenceEvent[], householdEvents: CalendarPersistenceEvent[] = [], role: "child" | "adult" = "adult", output = config.output.maxResultChars) {
-  return new CalendarQueryService({ private: persistence(privateEvents), household: persistence(householdEvents), role, config: { ...config, output: { maxResultChars: output } } });
+function service(
+  privateEvents: CalendarPersistenceEvent[],
+  householdEvents: CalendarPersistenceEvent[] = [],
+  role: "child" | "adult" = "adult",
+  output = config.output.maxResultChars,
+) {
+  return new CalendarQueryService({
+    private: persistence(privateEvents),
+    household: persistence(householdEvents),
+    role,
+    config: { ...config, output: { maxResultChars: output } },
+  });
 }
 const range = { from: "2026-08-01", to: "2026-08-10" };
 
@@ -53,7 +92,12 @@ describe("CalendarQueryService", () => {
       title: "stale",
       exceptions: [{ occurrence: timed("2026-08-02T12:00:00.000Z"), title: "Dinner", group: "food", tags: ["family"] }],
     });
-    const result = service([moved, event("day", day("2026-08-03"))]).search({ ...range, query: "dinner", group: "food", tags: ["family"] });
+    const result = service([moved, event("day", day("2026-08-03"))]).search({
+      ...range,
+      query: "dinner",
+      group: "food",
+      tags: ["family"],
+    });
     const listWithQuery = service([moved, event("day", day("2026-08-03"))]).list({ ...range, query: "dinner" });
     expect(listWithQuery.ok && listWithQuery.value.events.map((row) => row.eventId)).toEqual(["base"]);
     expect(result.ok).toBe(true);
@@ -87,7 +131,11 @@ describe("CalendarQueryService", () => {
   });
 
   it("sorts the complete candidate set instead of trusting source order", () => {
-    const query = service([event("late", day("2026-08-03")), event("early", day("2026-08-01")), event("middle", day("2026-08-02"))]);
+    const query = service([
+      event("late", day("2026-08-03")),
+      event("early", day("2026-08-01")),
+      event("middle", day("2026-08-02")),
+    ]);
     const result = query.list({ ...range, limit: 3 });
     expect(result.ok && result.value.events.map((row) => row.eventId)).toEqual(["early", "middle"]);
     expect(result.ok && result.value.nextCursor).toBeDefined();
@@ -123,17 +171,27 @@ describe("CalendarQueryService", () => {
   });
 
   it("rejects a tool result that needs a REST page even below maxOccurrences", () => {
-    const query = service([event("a", day("2026-08-01")), event("b", day("2026-08-02")), event("c", day("2026-08-03"))]);
+    const query = service([
+      event("a", day("2026-08-01")),
+      event("b", day("2026-08-02")),
+      event("c", day("2026-08-03")),
+    ]);
     expect(query.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
   });
 
   it("rejects candidate overflow before reading or expanding a base event", () => {
-    const events = Array.from({ length: config.query.maxOccurrences + 1 }, (_, index) => event(`event-${index}`, day("2026-08-01")));
+    const events = Array.from({ length: config.query.maxOccurrences + 1 }, (_, index) =>
+      event(`event-${index}`, day("2026-08-01")),
+    );
     expect(service(events).list(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
   });
 
   it("uses deterministic cursors and refuses a cursor for a changed filter shape", () => {
-    const query = service([event("a", day("2026-08-01")), event("b", day("2026-08-02")), event("c", day("2026-08-03"))]);
+    const query = service([
+      event("a", day("2026-08-01")),
+      event("b", day("2026-08-02")),
+      event("c", day("2026-08-03")),
+    ]);
     const first = query.list(range);
     expect(first.ok).toBe(true);
     if (!first.ok || !first.value.nextCursor) throw new Error("expected cursor");
@@ -144,13 +202,22 @@ describe("CalendarQueryService", () => {
   });
 
   it("fails all-scope reads without returning a partial aggregate", () => {
-    const query = new CalendarQueryService({ private: persistence([event("private", day("2026-08-01"))]), household: persistence([], true), role: "adult", config });
+    const query = new CalendarQueryService({
+      private: persistence([event("private", day("2026-08-01"))]),
+      household: persistence([], true),
+      role: "adult",
+      config,
+    });
     expect(query.list({ ...range, scope: "all" })).toMatchObject({ ok: false, error: { code: "io_error" } });
   });
 
   it("returns result_too_large for complete aggregate and serialized overflow without partial JSON", () => {
     const events = [event("a", day("2026-08-01")), event("b", day("2026-08-02")), event("c", day("2026-08-03"))];
-    const bounded = new CalendarQueryService({ private: persistence(events), role: "adult", config: { ...config, query: { ...config.query, maxOccurrences: 2 } } });
+    const bounded = new CalendarQueryService({
+      private: persistence(events),
+      role: "adult",
+      config: { ...config, query: { ...config.query, maxOccurrences: 2 } },
+    });
     expect(bounded.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });
     const serialized = service([event("very-long", day("2026-08-01"), { title: "x".repeat(20) })], [], "adult", 10);
     expect(serialized.listComplete(range)).toMatchObject({ ok: false, error: { code: "result_too_large" } });

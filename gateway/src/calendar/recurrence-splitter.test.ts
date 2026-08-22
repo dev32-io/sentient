@@ -105,10 +105,16 @@ describe("splitRecurrence", () => {
     const event = recurring("FREQ=DAILY;UNTIL=20260105T235959Z", {
       start: { kind: "all-day", date: "2026-01-01" },
     });
-    expect(splitRecurrence(event, { kind: "all-day", date: "2026-01-03" }, {
-      frequency: "daily",
-      until: "2026-01-05" as never,
-    })).toMatchObject({ ok: false, error: { code: "missing-timezone" } });
+    expect(
+      splitRecurrence(
+        event,
+        { kind: "all-day", date: "2026-01-03" },
+        {
+          frequency: "daily",
+          until: "2026-01-05" as never,
+        },
+      ),
+    ).toMatchObject({ ok: false, error: { code: "missing-timezone" } });
   });
 
   test("uses the non-UTC household timezone for all-day UNTIL split and expansion", () => {
@@ -123,13 +129,19 @@ describe("splitRecurrence", () => {
       recurrence: canonical.value,
     });
     const limits = { ...DEFAULT_RECURRENCE_LIMITS, timeZoneId: "America/Toronto" };
-    const expanded = expandRecurrence(event, { kind: "all-day", date: "2026-01-01" }, { kind: "all-day", date: "2026-01-10" }, limits);
-    expect(expanded.ok).toBe(true);
-    if (expanded.ok) expect(expanded.value.map((item) => item.originalStart)).toEqual([
+    const expanded = expandRecurrence(
+      event,
       { kind: "all-day", date: "2026-01-01" },
-      { kind: "all-day", date: "2026-01-02" },
-      { kind: "all-day", date: "2026-01-03" },
-    ]);
+      { kind: "all-day", date: "2026-01-10" },
+      limits,
+    );
+    expect(expanded.ok).toBe(true);
+    if (expanded.ok)
+      expect(expanded.value.map((item) => item.originalStart)).toEqual([
+        { kind: "all-day", date: "2026-01-01" },
+        { kind: "all-day", date: "2026-01-02" },
+        { kind: "all-day", date: "2026-01-03" },
+      ]);
     const split = splitRecurrence(event, { kind: "all-day", date: "2026-01-02" }, undefined, limits);
     expect(split.ok).toBe(true);
     if (split.ok) {
