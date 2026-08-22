@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -32,11 +32,11 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
-  reviewedCommit: f8f8209366422fb341430964323d8ecf0a6c52c3
+  reviewedCommit: 444d2a1e3cc89794fc68c70212dbaace15d6f129
   managerPrompt: Resolve all four findings. On iOS, observe the current device
     locale, first-weekday setting, and time-zone identifier and forward changes
     into the shared CalendarExperience projection context on open and whenever
@@ -61,36 +61,38 @@ loop:
 findings:
   - id: CAL-DELIVERY-001
     severity: high
-    status: open
+    status: resolved
     criterion: AC-001, AC-004, AC-013
-    location: ios/App/Settings/Calendar/CalendarScreen.swift:46-70
-    summary: iOS does not forward device locale/time zone, leaving shared
-      projections at default en-US/UTC.
-    blocking: true
+    location: ios/App/Settings/Calendar/CalendarScreen.swift
+    summary: iOS device projection context forwarding is implemented without
+      synthesizing an event IANA zone.
+    blocking: false
   - id: CAL-DELIVERY-002
     severity: high
     status: open
     criterion: Assembly boundary proof; CAL-UX-001..014
-    location: qa/mobile/flows/android/calendar/README.md:25;
-      qa/mobile/flows/ios/CALENDAR.md:13
-    summary: Committed direct-Maestro flows omit required persisted matrix cases and
-      cannot drive CAL-UX-001..014 as accepted.
+    location: qa/mobile/flows/ios/80-calendar-timezone-dst.yaml;
+      qa/mobile/flows/ios/77-calendar-reconnect.yaml;
+      qa/mobile/flows/android/calendar/09-cache-first.yaml
+    summary: Committed direct-Maestro flows still contain an undefined iOS
+      identifier and do not observably drive reconnect/cache-first acceptance
+      cases.
     blocking: true
   - id: CAL-DELIVERY-003
     severity: high
-    status: open
+    status: resolved
     criterion: AC-002, AC-004, AC-014
-    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:196-202;
-      ios/App/Settings/Calendar/CalendarSurfaceSupport.swift:130-139
-    summary: Android and iOS Month agendas both diverge from the authoritative
-      four-day mobile runtime behavior.
-    blocking: true
+    location: shared/mobile-data CalendarProjection and native mappings
+    summary: Shared authoritative four-day Month agenda is consumed by both native
+      clients.
+    blocking: false
   - id: CAL-DELIVERY-004
     severity: low
-    status: open
+    status: resolved
     criterion: AC-001 accessibility live freshness updates
-    location: ios/App/Settings/Calendar/CalendarSurfaceSupport.swift:110-116
-    summary: iOS omits a live announcement when freshness returns to up-to-date.
+    location: ios CalendarScaffold and CalendarSurfaceSupport
+    summary: Freshness recovery announcement is implemented with initial/duplicate
+      suppression.
     blocking: false
 result:
   verdict: fail

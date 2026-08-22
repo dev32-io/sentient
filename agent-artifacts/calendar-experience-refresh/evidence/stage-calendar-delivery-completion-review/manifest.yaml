@@ -1,21 +1,27 @@
 schemaVersion: 1
 evaluation: stage-calendar-delivery-completion-review
-recordedAt: 2026-08-22T01:23:41.909Z
+recordedAt: 2026-08-22T01:35:53.616Z
 entries:
   - result: BUILD SUCCESSFUL
     command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
       :android:testDebugUnitTest :android:assembleDebug
-    path: files/1-stage-calendar-android.log
-    checksum: sha256:4f4c8f7468816c0b902035b09a48fb099fca871db3f5fa6e4cc9e71198237c08
+    path: files/1-calendar-rereview1-android.log
+    checksum: sha256:587a8a5c61452a89472d4edf8f50b93da1cf66c36cb17223fbf3d1dbe46219b7
   - result: BUILD SUCCESSFUL; project generated
     command: source scripts/env.sh && scripts/ios-setup.sh
-    path: files/2-stage-calendar-ios-setup.log
-    checksum: sha256:bf1e24892ab4fe4f47b2e18172d0990e7144937557491d516c426785771a2a68
-  - result: TEST SUCCEEDED; 101 tests passed
+    path: files/2-calendar-rereview1-ios-setup.log
+    checksum: sha256:c93ec5d6f66839a0621d7602292bdbb6dccccbda34db8debda9e9ffad8574086
+  - result: TEST SUCCEEDED; 104 tests passed
     command: source scripts/env.sh && xcodebuild test -project
       ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
       Simulator,name=iPhone 16,OS=latest'
-    path: files/3-stage-calendar-xcode.log
-    checksum: sha256:955d29ac6d9c404c8830fb85896b8392ed366b8d1caebf1589f1fac6499c0531
+    path: files/3-calendar-rereview1-xcode.log
+    checksum: sha256:a5e18776414608c9946db4a1755f159dc90ee437bc3d10189a871c5393f357db
   - result: Clean
     command: source scripts/env.sh && git diff --check
+  - result: No production definition found
+    command: rg -l 'accessibilityIdentifier\("calendar-canvas"\)'
+      ios/App/Settings/Calendar
+  - result: Reconnect flow reopens Calendar at line 6
+    command: "rg -n 'runFlow: _calendar/open-calendar.yaml'
+      qa/mobile/flows/ios/77-calendar-reconnect.yaml"
