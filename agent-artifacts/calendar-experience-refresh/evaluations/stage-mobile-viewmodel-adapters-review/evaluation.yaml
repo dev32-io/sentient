@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-viewmodel-adapters
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
     :android:assembleDebug
@@ -27,11 +27,11 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js is representable
     without prototype data
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: passed
   reviewerAgentId: 19a95521-14d0-45fe-bf6c-cf8d750d16c7
-  reviewedCommit: b840c803a2d979bef9d3d024bc443b1ed226af9a
+  reviewedCommit: 73745a9c7b747780004aedf23ea2d71ff6a1edf7
   managerPrompt: Resolve MVA-001. When the iOS calendar adapter opens, explicitly
     activate/start the session-scoped CalendarExperience cache observation and
     revalidation path before or atomically with SKIE state collection; merely
@@ -45,15 +45,15 @@ loop:
     stage checks and return for automatic re-review.
   fixerAgentId: dc383fb1-0b06-4c82-877f-11cb428e9eb0
 findings:
-  - id: MVA-001
-    severity: medium
+  - id: MVA-002
+    severity: low
     status: open
-    criterion: iOS calendar-open cache-first shared-state consumption
-    location: ios/App/Settings/Calendar/CalendarViewModel.swift:99-115,130-137
-    summary: iOS collects an unstarted CalendarExperience, so opening Calendar does
-      not initiate cache observation/revalidation.
-    blocking: true
+    criterion: Repair test Swift concurrency compatibility
+    location: ios/Tests/CalendarViewModelTests.swift:367-379
+    summary: Repair-added test uses a mutable captured continuation that becomes an
+      error in Swift 6 mode.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-mobile-viewmodel-adapters-review/manifest.yaml

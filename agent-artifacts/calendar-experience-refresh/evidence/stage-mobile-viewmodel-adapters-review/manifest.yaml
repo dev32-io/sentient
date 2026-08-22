@@ -1,21 +1,30 @@
 schemaVersion: 1
 evaluation: stage-mobile-viewmodel-adapters-review
-recordedAt: 2026-08-22T00:34:47.219Z
+recordedAt: 2026-08-22T00:39:25.734Z
 entries:
   - result: PASS
     command: source scripts/env.sh && ./gradlew :android:testDebugUnitTest
-      --rerun-tasks && ./gradlew :android:assembleDebug
-  - result: PASS; 84 tests passed
-    command: source scripts/env.sh && scripts/ios-setup.sh && xcodebuild test
-      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
-      'platform=iOS Simulator,name=iPhone 16,OS=latest'
+      :android:assembleDebug
+    path: files/1-stage-mobile-viewmodel-adapters-rereview-android.log
+    checksum: sha256:9ac98bc1a53f1d1164200949b38558a21919aecff9ce7b5d65c51dab21383add
+  - result: PASS
+    command: source scripts/env.sh && scripts/ios-setup.sh
+    path: files/2-stage-mobile-viewmodel-adapters-rereview-ios-setup.log
+    checksum: sha256:ad40c50206d816b1b3dcba859a99284230ebfd42f3df4c4d46eca9a76144f16e
+  - result: PASS; 85 tests passed
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    path: files/3-stage-mobile-viewmodel-adapters-rereview-xcode.log
+    checksum: sha256:36756f6f823172dbc530d1ac525fa002a9690fe7ca14bc40d4236cab288b1507
   - result: PASS
     command: source scripts/env.sh && git diff --check
-  - result: Production adapter only reads state and dispatches intents.
-    description: Collection is started, but CalendarExperience observation is not activated.
-    path: files/4-CalendarViewModel.swift
-    checksum: sha256:5de68e8c38ea94315304cf3eadca1654dbf0d0f9b801a5f5e9992c822f175a81
-  - result: Cache observation/revalidation begins in observe()/start().
-    description: Shared observation startup boundary.
-    path: files/5-CalendarExperience.kt
-    checksum: sha256:f843fc0a1790b3988cae6ac78adeb24e951fe840a0c4aae735b0e36b7108654b
+  - result: MVA-001 resolved
+    description: Shared activation precedes SKIE collection.
+    path: files/5-CalendarViewModel.swift
+    checksum: sha256:cde926d4f6963725f8c6b09c73c584951a8d774447dbc405f4dfce16177e7d82
+  - result: Non-blocking Swift 6 compatibility risk
+    description: Compiler warns about mutable continuation capture in concurrent
+      cancellation handler.
+    path: files/6-CalendarViewModelTests.swift
+    checksum: sha256:71803e4eddbf4b6b2dd729b5a680c0bc233efda7082930a28453dc1d0b74f44d
