@@ -4,15 +4,15 @@ type: e2e
 checkpoint: final-e2e
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: passed
 required: true
 attempt: 5
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
-  state: fixing
   iteration: 4
   maxIterations: 6
+  state: passed
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: 96874ddc6889184d641e3b6417baeffba50b815d
   managerPrompt: "Preserve every resolved finding and repair only E2E-MAJOR-004.
@@ -35,6 +35,7 @@ loop:
     cleanup; do not infer incomplete cases as passing and record only individual
     file evidence paths."
   fixerAgentId: 7abeb8da-2940-4616-980e-ed5a711ad7be
+  acceptedRisks: []
 findings:
   - id: E2E-MAJOR-001
     severity: high
@@ -89,6 +90,7 @@ findings:
     summary: iOS Save remains reachable above the active keyboard.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/final-e2e/manifest.yaml
+  riskAcceptance: risk-acceptance.md
