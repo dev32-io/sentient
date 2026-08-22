@@ -385,6 +385,17 @@ class DomainPolicy:
             runner(["chown", "-R", CODE_OWNER, str(release)], check=True)
             runner(["chmod", "-R", CODE_MODE, str(release)], check=True)
 
+    def prepare_code_removal(self, runner, release: Path) -> None:
+        """Make an obsolete release removable under the active domain policy.
+
+        GUI hardening removes write permission from every directory in the
+        operator-owned release. Restore owner write access only after pruning
+        has selected that release for deletion; retained releases stay hardened.
+        System installs run as root and need no permission change.
+        """
+        if self.is_gui:
+            runner(["chmod", "-R", "u+w", str(release)], check=True)
+
     def harden_plist(self, runner, target: Path) -> None:
         """Set plist ownership and permissions.
 
@@ -664,6 +675,7 @@ class RealFs:
         for release in ordered:
             if release.name in keeping:
                 continue
+            self._policy.prepare_code_removal(self._run, release)
             shutil.rmtree(release)
 
 

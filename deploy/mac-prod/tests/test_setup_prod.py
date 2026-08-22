@@ -1140,6 +1140,50 @@ def test_prune_does_not_mistake_the_current_symlink_for_a_release(tmp_path):
     assert (opt / "releases" / "1.13.0" / "bin").is_dir(), "must not have deleted through the symlink"
 
 
+def test_gui_prune_removes_hardened_release_without_unhardening_retained_versions(tmp_path):
+    """GUI releases are operator-owned but recursively a-w after staging.
+
+    Pruning must restore write permission only on an obsolete release before
+    deleting nested native-service venvs. The live and rollback releases remain
+    immutable throughout cleanup.
+    """
+    policy = setup_prod.DomainPolicy(
+        setup_prod.DOMAIN_GUI, "operator", tmp_path / "home"
+    )
+    fs = RealFs(policy.release_root, domain_policy=policy)
+    versions = ("1.13.1", "1.14.1", "1.15.0")
+
+    for index, version in enumerate(versions):
+        release = fs.release_dir(version)
+        (release / "bin").mkdir(parents=True)
+        (release / "bin" / "sentient-gateway").write_text("binary")
+        if version == "1.13.1":
+            mlx_lm = (
+                release / "deep-memory" / "venv" / "lib" /
+                "python3.14" / "site-packages" / "mlx_lm"
+            )
+            mlx_lm.mkdir(parents=True)
+            (mlx_lm / "__init__.py").write_text("")
+        os.utime(release, (index + 1, index + 1))
+        fs.harden_release(version)
+
+    fs.point_current_at("1.15.0")
+
+    try:
+        fs.prune(keep=1, protect=("1.14.1",))
+
+        assert fs.has_version("1.13.1") is False
+        for retained in ("1.14.1", "1.15.0"):
+            mode = fs.release_dir(retained).stat().st_mode
+            assert mode & stat.S_IWUSR == 0
+        assert fs.current == "1.15.0"
+    finally:
+        if policy.release_root.exists():
+            subprocess.run(
+                ["chmod", "-R", "u+w", str(policy.release_root)], check=False
+            )
+
+
 # --- domain flag (gui vs system) -----------------------------------------------
 #
 # `--domain gui` (default) installs a LaunchAgent in ~/Library/LaunchAgents,
