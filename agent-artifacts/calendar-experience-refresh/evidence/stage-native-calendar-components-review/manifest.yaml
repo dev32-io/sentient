@@ -1,0 +1,27 @@
+schemaVersion: 1
+evaluation: stage-native-calendar-components-review
+recordedAt: 2026-08-22T00:57:41.015Z
+entries:
+  - result: Bounded stage implementation is 22 files / 5,105 insertions; diff check
+      passed.
+    command: git diff --stat deaca6ed372c2b551be081a08887aabab6a23d47
+      d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0 && git diff --check
+  - result: Passed (BUILD SUCCESSFUL).
+    command: source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+      :android:assembleDebug
+  - result: Passed; iOS project and XCFramework setup completed.
+    command: source scripts/env.sh && scripts/ios-setup.sh
+  - result: Passed; 98 tests in 15 suites. Result bundle is outside the repository
+      under Xcode DerivedData.
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+  - result: Lines 80-88 implement the shared transition.
+    description: SelectDate owns Month-to-Day and Week-retention policy.
+    path: files/5-CalendarNavigation.kt
+    checksum: sha256:eb38adc8a7d0c8167e10da3df3bd3d475273f8da96b05ec16944a1417cea9ccd
+  - result: Lines 475-505 reset mutation phase to EDITING/CONFLICT without a
+      submitting guard.
+    description: UpdateDraft phase behavior.
+    path: files/6-CalendarExperience.kt
+    checksum: sha256:f843fc0a1790b3988cae6ac78adeb24e951fe840a0c4aae735b0e36b7108654b

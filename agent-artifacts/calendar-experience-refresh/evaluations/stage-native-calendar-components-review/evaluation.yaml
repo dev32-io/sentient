@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: native-calendar-components
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
     :android:assembleDebug
@@ -29,6 +29,66 @@ criteria:
     semantic accessibility inspection is required but an actual
     assistive-technology session is not a stage gate
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: e184954f-9a37-4d26-ba46-976d4f074b12
+  reviewedCommit: 2a49b8333aec3abd67d5599864a9b31427a8b835
+findings:
+  - id: F-001
+    severity: high
+    status: open
+    criterion: Day view is a focused agenda without an empty canvas shell
+    location: android/.../CalendarComponents.kt:161-175,438-466;
+      ios/.../CalendarScaffold.swift:52-68;
+      ios/.../CalendarCanvasViews.swift:9-48
+    summary: Both native Day views render a separate styled canvas before the agenda.
+    blocking: true
+  - id: F-002
+    severity: high
+    status: open
+    criterion: No duplicated shared calendar policy in composables
+    location: android/.../CalendarSurfaceModels.kt:29-33;
+      android/.../CalendarComponents.kt:169-172
+    summary: Android duplicates Month-to-Day policy and emits redundant date plus
+      view callbacks.
+    blocking: true
+  - id: F-003
+    severity: high
+    status: open
+    criterion: Android enabled/disabled editor actions are correct
+    location: android/.../CalendarOverlayModels.kt:39-50;
+      android/.../CalendarOverlays.kt:247-320,529-605
+    summary: Save enablement ignores blank/invalid drafts and required
+      recurrence-scope selection.
+    blocking: true
+  - id: F-004
+    severity: high
+    status: open
+    criterion: iOS controls reflect role-specific mutation availability
+    location: ios/.../CalendarOverlayModels.swift:39-50;
+      ios/.../CalendarOverlays.swift:57-70
+    summary: Save uses aggregate isAvailable instead of canCreate/canEdit for the
+      active editor mode.
+    blocking: true
+  - id: F-005
+    severity: high
+    status: open
+    criterion: Submitting state remains stable
+    location: ios/.../CalendarOverlays.swift:244-280;
+      shared/.../CalendarExperience.kt:475-505
+    summary: Draft controls remain enabled while submitting and can reset shared
+      phase to EDITING, allowing racing submissions.
+    blocking: true
+  - id: F-006
+    severity: low
+    status: open
+    criterion: Android overlays honor reduced motion
+    location: android/.../CalendarOverlays.kt:762-770
+    summary: Overlay press scale always uses a timed tween without consulting
+      LocalCalendarReducedMotion.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-native-calendar-components-review/manifest.yaml
