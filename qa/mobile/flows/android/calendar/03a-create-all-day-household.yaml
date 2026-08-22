@@ -5,6 +5,10 @@ tags: [calendar, crud, all-day]
 - tapOn: { id: "calendar-add" }
 - tapOn: { id: "calendar-editor-title" }
 - inputText: "${CALENDAR_ALL_DAY_TITLE}"
+- hideKeyboard
+- scrollUntilVisible:
+    element: { text: "All-day event" }
+    direction: DOWN
 - tapOn: { text: "All-day event" }
 - scrollUntilVisible:
     element: { text: "Household" }

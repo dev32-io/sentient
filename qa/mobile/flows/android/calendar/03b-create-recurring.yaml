@@ -5,6 +5,7 @@ tags: [calendar, crud, recurrence]
 - tapOn: { id: "calendar-add" }
 - tapOn: { id: "calendar-editor-title" }
 - inputText: "${CALENDAR_RECURRING_TITLE}"
+- hideKeyboard
 - scrollUntilVisible:
     element: { text: "Repeats" }
     direction: DOWN

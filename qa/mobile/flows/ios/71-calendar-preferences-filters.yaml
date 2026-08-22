@@ -4,8 +4,8 @@ tags: [helper]
 - runFlow: _calendar/open-calendar.yaml
 - tapOn: { id: "calendar-view-week" }
 - tapOn: { id: "calendar-filter-scope-household" }
-- tapOn: { text: "${CALENDAR_GROUP}" }
-- tapOn: { text: "${CALENDAR_TAG}" }
+- tapOn: { text: "Group: ${CALENDAR_GROUP}" }
+- tapOn: { text: "#${CALENDAR_TAG}" }
 - tapOn: { text: "Important" }
 - tapOn: { id: "calendar-filter-search" }
 - inputText: "${CALENDAR_FILTER_TEXT}"
@@ -13,8 +13,8 @@ tags: [helper]
 - assertVisible: { id: "${CALENDAR_FILTERED_EVENT_TAG}" }
 - takeScreenshot: "calendar-filters"
 - tapOn: { text: "Next period" }
-- assertVisible: { text: "${CALENDAR_GROUP}" }
-- tapOn: { text: "${CALENDAR_GROUP}" }
+- assertVisible: { text: "Group: ${CALENDAR_GROUP}" }
+- tapOn: { text: "Group: ${CALENDAR_GROUP}" }
 - tapOn: { id: "calendar-back" }
 - tapOn: { id: "settings-cat-calendar" }
 - extendedWaitUntil:

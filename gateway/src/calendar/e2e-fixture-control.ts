@@ -41,6 +41,7 @@ const calendarPageSchema = z.object({
   }),
 });
 
+const FIXTURE_WINDOW = { from: "2026-01-01", to: "2027-01-01" } as const;
 const RECOVERY_WINDOW = { from: "2026-07-26", to: "2026-09-06" } as const;
 const fixtureSchema = z.object({
   runId: z.string().startsWith("calendar-e2e-").max(128),
@@ -133,16 +134,17 @@ function occurrenceTag(identity: z.infer<typeof occurrenceIdentitySchema>): stri
   return `calendar-event-${createHash("sha256").update(stableKey).digest("hex").slice(0, 24)}`;
 }
 
-async function listRecoveryIdentities(
+async function listFixtureIdentities(
   target: string,
   token: string,
   eventId: string,
+  window: { readonly from: string; readonly to: string } = FIXTURE_WINDOW,
 ): Promise<readonly z.infer<typeof occurrenceIdentitySchema>[]> {
   const occurrences: z.infer<typeof occurrenceIdentitySchema>[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < 100; page += 1) {
-    const query = new URLSearchParams({ ...RECOVERY_WINDOW, scope: "all" });
+    const query = new URLSearchParams({ ...window, scope: "all" });
     if (cursor) query.set("cursor", cursor);
     const result = await json(
       await localFetch(target, `/api/v1/calendar/events?${query}`, { headers: bearer(token) }),
@@ -307,8 +309,26 @@ async function main(): Promise<void> {
       },
     }, { deferredCases: ["recovery"] });
     try {
+      const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
+      const cases = Object.fromEntries(await Promise.all(
+        Object.entries(value.cases).map(async ([caseName, references]) => [
+          caseName,
+          await Promise.all(references.map(async (reference) => {
+            const identities = await listFixtureIdentities(target, adultToken, reference.eventId);
+            if (identities.length === 0) {
+              throw new Error(`fixture case ${caseName} was not returned by the authenticated all-scope query`);
+            }
+            return {
+              ...reference,
+              occurrenceIds: identities.map((identity) => identity.occurrenceId),
+              eventTags: identities.map(occurrenceTag),
+            };
+          })),
+        ]),
+      )) as DisposableCalendarFixture["cases"];
+      const hydrated: DisposableCalendarFixture = { ...value, cases };
       await mkdir(dirname(statePath), { recursive: true });
-      await writeFile(statePath, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+      await writeFile(statePath, `${JSON.stringify(hydrated, null, 2)}\n`, { flag: "wx" });
     } catch (error) {
       await cleanupLocalCalendarFixture(deps, value);
       throw error;
@@ -329,7 +349,7 @@ async function main(): Promise<void> {
     let identities: readonly z.infer<typeof occurrenceIdentitySchema>[];
     try {
       const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
-      identities = await listRecoveryIdentities(target, adultToken, seeded.eventId);
+      identities = await listFixtureIdentities(target, adultToken, seeded.eventId, RECOVERY_WINDOW);
       if (identities.length !== 1 || identities[0]?.scope !== event.scope) {
         throw new Error("recovery fixture was not returned by the authenticated all-scope window query");
       }
@@ -366,7 +386,7 @@ async function main(): Promise<void> {
     const reference = value.cases.recovery[0];
     if (!reference) throw new Error("recovery fixture has not been seeded");
     const adultToken = await login(target, value.adultId, required("CALENDAR_E2E_ADULT_PIN"));
-    const identities = await listRecoveryIdentities(target, adultToken, reference.eventId);
+    const identities = await listFixtureIdentities(target, adultToken, reference.eventId, RECOVERY_WINDOW);
     const occurrenceIds = identities.map((identity) => identity.occurrenceId).sort();
     const expectedIds = [...reference.occurrenceIds].sort();
     const eventTags = identities.map(occurrenceTag).sort();
