@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: stage-calendar-delivery-completion-review
+recordedAt: 2026-08-22T01:23:41.909Z
+entries:
+  - result: BUILD SUCCESSFUL
+    command: source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
+      :android:testDebugUnitTest :android:assembleDebug
+    path: files/1-stage-calendar-android.log
+    checksum: sha256:4f4c8f7468816c0b902035b09a48fb099fca871db3f5fa6e4cc9e71198237c08
+  - result: BUILD SUCCESSFUL; project generated
+    command: source scripts/env.sh && scripts/ios-setup.sh
+    path: files/2-stage-calendar-ios-setup.log
+    checksum: sha256:bf1e24892ab4fe4f47b2e18172d0990e7144937557491d516c426785771a2a68
+  - result: TEST SUCCEEDED; 101 tests passed
+    command: source scripts/env.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16,OS=latest'
+    path: files/3-stage-calendar-xcode.log
+    checksum: sha256:955d29ac6d9c404c8830fb85896b8392ed366b8d1caebf1589f1fac6499c0531
+  - result: Clean
+    command: source scripts/env.sh && git diff --check

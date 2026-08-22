@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :shared:mobile-data:allTests
     :android:testDebugUnitTest :android:assembleDebug
@@ -32,6 +32,46 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
+  reviewedCommit: f8f8209366422fb341430964323d8ecf0a6c52c3
+findings:
+  - id: CAL-DELIVERY-001
+    severity: high
+    status: open
+    criterion: AC-001, AC-004, AC-013
+    location: ios/App/Settings/Calendar/CalendarScreen.swift:46-70
+    summary: iOS does not forward device locale/time zone, leaving shared
+      projections at default en-US/UTC.
+    blocking: true
+  - id: CAL-DELIVERY-002
+    severity: high
+    status: open
+    criterion: Assembly boundary proof; CAL-UX-001..014
+    location: qa/mobile/flows/android/calendar/README.md:25;
+      qa/mobile/flows/ios/CALENDAR.md:13
+    summary: Committed direct-Maestro flows omit required persisted matrix cases and
+      cannot drive CAL-UX-001..014 as accepted.
+    blocking: true
+  - id: CAL-DELIVERY-003
+    severity: high
+    status: open
+    criterion: AC-002, AC-004, AC-014
+    location: android/src/main/kotlin/io/sentient/android/settings/calendar/CalendarScreen.kt:196-202;
+      ios/App/Settings/Calendar/CalendarSurfaceSupport.swift:130-139
+    summary: Android and iOS Month agendas both diverge from the authoritative
+      four-day mobile runtime behavior.
+    blocking: true
+  - id: CAL-DELIVERY-004
+    severity: low
+    status: open
+    criterion: AC-001 accessibility live freshness updates
+    location: ios/App/Settings/Calendar/CalendarSurfaceSupport.swift:110-116
+    summary: iOS omits a live announcement when freshness returns to up-to-date.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-calendar-delivery-completion-review/manifest.yaml
