@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-overlays
 title: Build iOS calendar preview and editor sheets
-status: contribution_complete
+status: merged
 dependsOn:
   - ios-calendar-viewmodel
 execution:
@@ -30,3 +30,4 @@ runtime:
   baseCommit: deaca6ed372c2b551be081a08887aabab6a23d47
   lastRunId: 57572c16-a06c-4f12-a50e-a3119fec53da
   completedCommit: 845cfdb57ca546383af9d0df0c1a2fd8cb6e2aae
+  mergedCommit: d33301d67cbe3c3bfa93ec9bb2a7b45fa88033a0
