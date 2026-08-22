@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: calendar-delivery-completion
 scope:
   workItem: calendar-experience-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -32,8 +32,8 @@ criteria:
     evidence; no qa/mobile runner extension or mandatory actual
     assistive-technology session is required
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: 1b92dc5e-71a4-4408-983e-e0719c0d1d22
   reviewedCommit: f8f8209366422fb341430964323d8ecf0a6c52c3
@@ -57,6 +57,7 @@ loop:
     accessibility announcement when freshness transitions back to up-to-date,
     suppressing noisy initial/duplicate announcements. Add focused tests, run
     all stage checks, and return for automatic re-review.
+  fixerAgentId: f3e6d81e-bc4a-4b96-a0c1-5fb175494a0c
 findings:
   - id: CAL-DELIVERY-001
     severity: high
