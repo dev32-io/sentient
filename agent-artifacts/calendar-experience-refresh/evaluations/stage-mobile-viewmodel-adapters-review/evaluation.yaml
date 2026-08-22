@@ -27,11 +27,22 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js is representable
     without prototype data
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 19a95521-14d0-45fe-bf6c-cf8d750d16c7
   reviewedCommit: b840c803a2d979bef9d3d024bc443b1ed226af9a
+  managerPrompt: Resolve MVA-001. When the iOS calendar adapter opens, explicitly
+    activate/start the session-scoped CalendarExperience cache observation and
+    revalidation path before or atomically with SKIE state collection; merely
+    iterating an unstarted StateFlow is insufficient. Make activation idempotent
+    across SwiftUI/ViewModel recreation, keep the authenticated experience alive
+    when the route collector cancels, and avoid introducing native
+    fetch/pagination policy. Add focused Swift/XCFramework tests proving
+    calendar open invokes the shared activation contract exactly as intended,
+    cached state can arrive first, revalidation follows, route recreation does
+    not duplicate work, and disposal cancels only the owned collector. Run all
+    stage checks and return for automatic re-review.
 findings:
   - id: MVA-001
     severity: medium
