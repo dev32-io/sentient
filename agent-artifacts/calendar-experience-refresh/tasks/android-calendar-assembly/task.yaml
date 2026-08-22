@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: android-calendar-assembly
 title: Assemble and verify the complete Android calendar experience
-status: submitted
+status: awaiting_ci
 dependsOn:
   - android-calendar-database-session
   - android-calendar-viewmodel
