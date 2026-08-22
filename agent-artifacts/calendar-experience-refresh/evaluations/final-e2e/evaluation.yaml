@@ -10,39 +10,30 @@ attempt: 4
 methods:
   - Execute every case in the approved E2E matrix exactly.
 loop:
+  state: fixing
   iteration: 3
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: 9b008de9-54f2-4693-822b-52f84b5dd77f
   reviewedCommit: ffd4545d2f2b33b9ee15646109afd5ea1bbee4ab
-  managerPrompt: "Preserve all verified repairs and resolve the three remaining
-    blockers, plus unblock deterministic matrix setup. (1) For Android
-    restoration, instrument the actual SQLDelight preference row and activation
-    sequence before stopApp and after process restart. Persist the final
-    view/date/filter transactionally, reconstruct CalendarExperience with the
-    same authenticated namespace, load preferences before publishing
-    shared-ready, and prevent projection-context/default intents from
-    overwriting the restored Month state. Add a real database close/reopen plus
-    ViewModel recreation test and make the flow wait for restored-state
-    readiness rather than a generic ready marker. (2) For recovery, trace the
-    complete all-scope paginated request/coalescer lifecycle and freshness
-    reducer. A request must settle out of REFRESHING on success, typed failure,
-    cancellation, namespace change, or supersession; a recovery edge
-    during/after a stale request must schedule exactly one usable revalidation
-    and publish the updated sentinel without blanking cached rows. Add
-    deterministic integration tests for cache-prime completion, reconnect while
-    refreshing, old-request completion after recovery, and refreshed occurrence
-    publication. (3) Make the iOS editor footer truly IME-safe: expose a stable
-    `calendar-editor-save` above the keyboard via safe-area inset/pinned action
-    layout, provide reliable keyboard dismissal/Done behavior, keep content
-    scrollable, and prove Save can be found and activated while the title field
-    is focused at both exact mobile profiles. (4) Make the approved local
-    fixture adapter directly invokable by the E2E agent through existing
-    local-only controls—without a new runner—so unique adult/child principals,
-    facets, recurrence/conflict/cache/recovery/temporal sentinels, and cleanup
-    are available for every remaining matrix case. Continue recording only file
-    evidence paths. Run focused regressions and all 14 cases sequentially
-    again."
+  managerPrompt: "Preserve every resolved finding and repair only E2E-MAJOR-004.
+    Reproduce the exact provision→prime→offline→deferred-seed→reconnect sequence
+    with one unique sentinel and trace it structurally across boundaries:
+    confirm the seeded occurrence is returned by the same authenticated Calendar
+    V2 scope/window query after network restoration; confirm a real
+    unavailable→available platform edge reaches the current session generation;
+    confirm CalendarExperience schedules exactly one non-stale active-window
+    revalidation even if an older request is still registered; confirm all-scope
+    pagination settles, atomically replaces the correct namespace/window, and
+    publishes the sentinel through the current filters/projection; and confirm
+    freshness leaves REFRESHING for UP_TO_DATE or a typed failure. Add sanitized
+    IDs/state transitions only—no event content. Correct whichever production
+    boundary drops the sentinel, and add a deterministic integration test using
+    the real fixture/window semantics rather than only a fake repository. Expose
+    stable recovery-ready/freshness semantics for Maestro without adding
+    diagnostic visual chrome. Then rerun the complete 14-case Android→iOS→web
+    matrix with the directly invokable disposable fixtures and guaranteed
+    cleanup; do not infer incomplete cases as passing and record only individual
+    file evidence paths."
   fixerAgentId: 7abeb8da-2940-4616-980e-ed5a711ad7be
 findings:
   - id: E2E-MAJOR-001
