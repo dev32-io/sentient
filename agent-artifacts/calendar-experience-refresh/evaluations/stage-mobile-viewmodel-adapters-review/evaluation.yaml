@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: mobile-viewmodel-adapters
 scope:
   workItem: calendar-experience-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - source scripts/env.sh && ./gradlew :android:testDebugUnitTest
     :android:assembleDebug
@@ -27,6 +27,21 @@ criteria:
     sentient-design/components/mobile/sentient-mobile.js is representable
     without prototype data
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: 19a95521-14d0-45fe-bf6c-cf8d750d16c7
+  reviewedCommit: b840c803a2d979bef9d3d024bc443b1ed226af9a
+findings:
+  - id: MVA-001
+    severity: medium
+    status: open
+    criterion: iOS calendar-open cache-first shared-state consumption
+    location: ios/App/Settings/Calendar/CalendarViewModel.swift:99-115,130-137
+    summary: iOS collects an unstarted CalendarExperience, so opening Calendar does
+      not initiate cache observation/revalidation.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-mobile-viewmodel-adapters-review/manifest.yaml

@@ -1,0 +1,21 @@
+schemaVersion: 1
+evaluation: stage-mobile-viewmodel-adapters-review
+recordedAt: 2026-08-22T00:34:47.219Z
+entries:
+  - result: PASS
+    command: source scripts/env.sh && ./gradlew :android:testDebugUnitTest
+      --rerun-tasks && ./gradlew :android:assembleDebug
+  - result: PASS; 84 tests passed
+    command: source scripts/env.sh && scripts/ios-setup.sh && xcodebuild test
+      -project ios/SentientApp.xcodeproj -scheme SentientApp -destination
+      'platform=iOS Simulator,name=iPhone 16,OS=latest'
+  - result: PASS
+    command: source scripts/env.sh && git diff --check
+  - result: Production adapter only reads state and dispatches intents.
+    description: Collection is started, but CalendarExperience observation is not activated.
+    path: files/4-CalendarViewModel.swift
+    checksum: sha256:5de68e8c38ea94315304cf3eadca1654dbf0d0f9b801a5f5e9992c822f175a81
+  - result: Cache observation/revalidation begins in observe()/start().
+    description: Shared observation startup boundary.
+    path: files/5-CalendarExperience.kt
+    checksum: sha256:f843fc0a1790b3988cae6ac78adeb24e951fe840a0c4aae735b0e36b7108654b
