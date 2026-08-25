@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: ios-identity-startup-history
+title: Integrate iOS Rive identity, readiness-gated startup, native shell, and History
+status: draft
+dependsOn:
+  - ios-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Startup/lifecycle and native asset integration are sensitive but form
+      one bounded ownership seam with deterministic clock and resource tests.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run design:avatar:verify
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.

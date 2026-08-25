@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 19
+  revision: 20
 artifacts:
   - id: intent
     type: intent
@@ -52,6 +52,8 @@ tasks:
     path: tasks/web-chat-composer/task.yaml
   - id: web-calendar-refresh
     path: tasks/web-calendar-refresh/task.yaml
+  - id: ios-identity-startup-history
+    path: tasks/ios-identity-startup-history/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/design-refresh
@@ -76,3 +78,4 @@ executionStages:
       - web-chat-messages
       - web-chat-composer
       - web-calendar-refresh
+      - ios-identity-startup-history
