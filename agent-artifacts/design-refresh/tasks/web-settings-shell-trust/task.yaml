@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: web-settings-shell-trust
+title: Refresh the Web Settings shell, account/admin panes, and Diagnostics
+  trust boundary
+status: draft
+dependsOn:
+  - web-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Settings persistence and authorization presentation must be preserved
+      across a bounded set of related panes and shell state.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run --filter '@sentient/webui' test:unit
+    - bun run --filter '@sentient/webui' typecheck
+    - bun run --filter '@sentient/webui' build
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
