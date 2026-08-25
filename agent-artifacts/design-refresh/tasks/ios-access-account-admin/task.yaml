@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: ios-access-account-admin
+title: Refresh iOS setup/login, update, account, members, and secrets surfaces
+status: draft
+dependsOn:
+  - ios-foundation-components
+  - ios-identity-startup-history
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: These access and trust surfaces share privacy/authorization
+      constraints and consume the established startup readiness seam.
+assembly:
+  stageId: ios-final-products
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
