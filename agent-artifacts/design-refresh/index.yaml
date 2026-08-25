@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 33
+  revision: 34
 artifacts:
   - id: intent
     type: intent
@@ -62,8 +62,6 @@ tasks:
     path: tasks/ios-calendar-refresh/task.yaml
   - id: ios-chat-composer
     path: tasks/ios-chat-composer/task.yaml
-  - id: refresh-integration-closure
-    path: tasks/refresh-integration-closure/task.yaml
   - id: ios-access-account-admin
     path: tasks/ios-access-account-admin/task.yaml
 integrationUnits: []
@@ -159,35 +157,6 @@ executionStages:
         - iOS Rive/startup readiness/History, native Settings/Voice/Calendar
           navigation and large Dynamic Type
         - No audio E2E, no network manipulation, and no prototype runtime imports
-  - id: integration-closure
-    tasks:
-      - refresh-integration-closure
-    checks:
-      - bun run design:foundation:check
-      - bun run design:avatar:verify
-      - bun run design:inventory:check
-      - bun run ci
-      - bun run test:int
-      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
-        :android:assembleDebug :android:testDebugUnitTest
-      - ./scripts/ios-setup.sh
-      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
-        -destination 'platform=iOS Simulator,name=iPhone 16'
-      - test -z "$(git diff --name-only 653f6cee3bd06491b547c63ec04d88f21f4f147f
-        -- android/src/main/kotlin android/src/main/res | grep . || true)"
-      - git diff --check
-    mode: sequential
-    review:
-      mode: required
-      tier: medium
-      focus:
-        - Whole-feature reachable-state completeness and removal of parallel
-          legacy visuals
-        - Static token/component boundaries, byte-identical platform-owned Rive
-          assets, and exact identity mapping
-        - Trust/privacy/no-op/task/Interrupt/session ownership contracts
-        - No Android UI changes, no production/audio/network-disruption
-          verification, and readiness for E2E-001..009
   - id: ios-final-products
     tasks:
       - ios-chat-composer
