@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: contracts-and-harness
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -25,8 +25,8 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
   reviewedCommit: 3f6491bb74dfd51dbd9734c948a6dfaffcccf78c
@@ -41,6 +41,7 @@ loop:
     JSON Schema, including schema-only constraints and negative cases. Preserve
     the reviewed no-audio/no-network-manipulation and prototype-reference-only
     boundaries."
+  fixerAgentId: d7dddfc4-97ac-4681-b2d1-ed939194f760
 findings:
   - id: STAGE-001
     severity: high
