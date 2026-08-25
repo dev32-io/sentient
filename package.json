@@ -14,6 +14,8 @@
     "calendar:fixture": "bun gateway/src/calendar/e2e-fixture-control.ts",
     "design:avatar:generate": "bash scripts/design/sentient-avatar-rive.sh generate",
     "design:avatar:verify": "bash scripts/design/sentient-avatar-rive.sh verify",
+    "design:foundation:generate": "bun scripts/design/design-foundation-v2.ts generate",
+    "design:foundation:check": "bun test scripts/design/design-foundation-v2.test.ts && bun scripts/design/design-foundation-v2.ts check",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",
