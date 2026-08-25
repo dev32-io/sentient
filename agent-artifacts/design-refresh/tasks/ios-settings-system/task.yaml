@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-settings-system
 title: Refresh iOS Settings root and system/Soul panes
-status: running
+status: submitted
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
@@ -31,3 +31,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-settings-system
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: 0b5882b0-cfda-49b1-886f-e391a5e537fc
+  completedCommit: 034dd419108606fd5f83d959b981a61076db66ba
