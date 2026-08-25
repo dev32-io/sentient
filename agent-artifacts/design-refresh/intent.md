@@ -43,7 +43,7 @@ Every reachable WebUI and iOS surface uses one coherent design contract, platfor
 
 ## Constraints
 
-- DESIGN.md is the durable design authority; reviewed prototype README and handoff files are scoped visual and interaction authorities
+- DESIGN.MD is the durable design authority; reviewed prototype README and handoff files are scoped visual and interaction authorities
 - All currently reachable surfaces must be covered; missing product-specific specimens are composed from approved primitives and common composites rather than left legacy or built inline
 - WebUI and iOS share semantic contracts and authored assets but not UI implementation code
 - Native iOS NavigationStack, navigation bars, sheets, alerts, menus, safe areas, and platform behavior remain authoritative
