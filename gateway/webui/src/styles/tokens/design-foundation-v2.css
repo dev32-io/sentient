@@ -1,0 +1,69 @@
+/* GENERATED FILE — DO NOT EDIT.
+ * Design foundation 2.0.0; contract sha256: f7799ee0711e7d8e4bd944606ab9342607f326ff109a44d905d8a2a7b91c7dc6
+ * Source: shared/mobile-sdk/design-foundation-v2.json
+ */
+:root {
+  --color-bg: #2B2621;
+  --color-bg-elev: #332D28;
+  --color-bg-sunk: #241F1B;
+  --color-paper: #39322C;
+  --color-line: #4A4138;
+  --color-line-soft: #3E362F;
+  --color-ink: #F2E8D6;
+  --color-ink-2: #D7C6AB;
+  --color-ink-3: #9E907E;
+  --color-ink-4: #706456;
+  --color-accent: #F2A06A;
+  --color-accent-soft: #5A3A28;
+  --color-accent-50: #402C22;
+  --color-amber: #E9B168;
+  --color-sage: #B9C8A6;
+  --color-sage-soft: #3A4232;
+  --color-clay: #9A5A3E;
+  --color-ok: #5F8A5B;
+  --color-warn: #C2892F;
+  --color-stop: #B8442E;
+  --font-display: Fraunces, Cormorant Garamond, Georgia, serif;
+  --font-ui: DM Sans, Inter, system-ui, -apple-system, sans-serif;
+  --font-mono: JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12.5px;
+  --font-size-base: 15px;
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
+  --font-size-display: 44px;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.55;
+  --line-height-relaxed: 1.6;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 18px;
+  --space-xl: 26px;
+  --space-2xl: 32px;
+  --space-3xl: 40px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --radius-pill: 9999px;
+  --motion-feedback: 150ms ease;
+  --motion-state: 250ms ease;
+  --motion-responding-cadence: 1550ms ease-in-out;
+  --slate-face: radial-gradient( ellipse 82% 105% at 50% 52%, color-mix(in oklab, var(--slate-base, var(--color-paper)) 80%, var(--color-bg-sunk)) 0%, color-mix(in oklab, var(--slate-base, var(--color-paper)) 88%, var(--color-bg-sunk)) 42%, transparent 76% ), linear-gradient( 180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 96%, var(--color-ink)) 0%, var(--slate-base, var(--color-paper)) 100% );
+  --slate-face-hover: radial-gradient( ellipse 82% 105% at 50% 52%, color-mix(in oklab, var(--slate-base, var(--color-paper)) 77%, var(--color-bg-sunk)) 0%, color-mix(in oklab, var(--slate-base, var(--color-paper)) 86%, var(--color-bg-sunk)) 42%, transparent 76% ), linear-gradient( 180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 94%, var(--color-ink)) 0%, color-mix(in oklab, var(--slate-base, var(--color-paper)) 97%, var(--color-accent)) 100% );
+  --slate-face-muted: radial-gradient( ellipse 82% 105% at 50% 52%, color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 84%, var(--color-bg-sunk)) 0%, transparent 74% ), linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 97%, var(--color-ink-4)), var(--slate-base, var(--color-bg-elev)));
+  --slate-top-light: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 7%, transparent);
+  --slate-contact: 0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 88%, var(--color-line));
+  --slate-cast: 0 9px 15px -10px rgba(0, 0, 0, .9);
+  --slate-ember-cast: 0 12px 20px -16px color-mix(in oklab, var(--color-accent) 42%, transparent);
+  --slate-shadow: var(--slate-top-light), var(--slate-contact), var(--slate-cast), var(--slate-ember-cast);
+  --slate-shadow-hover: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 13%, transparent), 0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 90%, var(--color-line)), 0 11px 18px -10px rgba(0, 0, 0, .94), 0 14px 22px -14px color-mix(in oklab, var(--color-accent) 48%, transparent);
+  --slate-shadow-pressed: inset 0 2px 3px color-mix(in oklab, var(--color-bg-sunk) 42%, transparent), 0 1px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 90%, var(--color-line)), 0 3px 6px -5px rgba(0, 0, 0, .88);
+  --slate-shadow-disabled: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 5%, transparent), 0 1px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 72%, var(--color-line)), 0 5px 9px -8px rgba(0, 0, 0, .7);
+  --well-face: linear-gradient( 180deg, color-mix(in oklab, var(--color-bg-sunk) 95%, black) 0%, var(--color-bg-sunk) 56%, color-mix(in oklab, var(--color-bg-sunk) 90%, var(--color-bg-elev)) 100% );
+  --well-shadow: inset 0 3px 6px -2px rgba(0, 0, 0, .72), inset 0 -1px 0 color-mix(in oklab, var(--color-ink) 7%, transparent), 0 1px 0 color-mix(in oklab, var(--color-line) 45%, transparent);
+  --well-shadow-focus: inset 0 3px 6px -2px rgba(0, 0, 0, .76), inset 0 -1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent), 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent), 0 8px 18px -14px color-mix(in oklab, var(--color-accent) 48%, transparent);
+  --plate-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 5%, transparent), 0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 78%, var(--color-line)), 0 18px 30px -22px rgba(0, 0, 0, .9);
+  --float-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 7%, transparent), 0 3px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-line)), 0 28px 58px -22px rgba(0, 0, 0, .96), 0 24px 40px -30px color-mix(in oklab, var(--color-accent) 38%, transparent);
+}
