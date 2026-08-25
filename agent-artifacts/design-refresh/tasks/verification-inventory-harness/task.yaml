@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: verification-inventory-harness
 title: Create the closed refresh inventory and safe text-only verification harness
-status: running
+status: submitted
 dependsOn: []
 execution:
   resourceClaims: []
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/verification-inventory-harness
   baseCommit: 4a9d08bc87a693f353298813088135e84a1757e7
   lastRunId: ce8c8284-bfb5-479b-9ad5-55fc87970ff2
+  completedCommit: d1dd6e3c17f4782509013bf4e317d3a1d71bbf10
