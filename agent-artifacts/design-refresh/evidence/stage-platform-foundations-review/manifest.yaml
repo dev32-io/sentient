@@ -1,0 +1,44 @@
+schemaVersion: 1
+evaluation: stage-platform-foundations-review
+recordedAt: 2026-08-25T23:03:13.361Z
+entries:
+  - result: Supports F1.
+    description: Swift material implementations showing generic flat/linear faces
+      and single shadows rather than the projected recipes.
+    path: files/001-1-DesignControls.swift
+    checksum: sha256:3e7f76758662feb089695f7c6edd058aa1e4c0d51c594461fa598d49c3b0c8cc
+  - result: Supports F2.
+    description: Terminal requests are queued on the scope-owned serialized consumer.
+    path: files/001-2-SdkVoice.kt
+    checksum: sha256:0966917e34709c99e9c2dd090ae8c920e69c6d87d47edf26ef4f73f698b1c1c0
+  - result: Supports F2.
+    description: Session close calls disconnect and then immediately cancels the SDK scope.
+    path: files/001-3-IosUserSession.ios.kt
+    checksum: sha256:955bcd7004173d77c2ea5b071b789e5131c517ea2039b3c116137c74ce143dba
+  - result: Supports F3.
+    description: Background isolation is opt-in and defaults false.
+    path: files/001-4-dialog.tsx
+    checksum: sha256:2a497cef6af365454058b915f80626b5d4dd3170b06adb38a1e489946cc15414
+  - result: Supports F4.
+    description: Compatibility props monospace and dirty are explicitly discarded.
+    path: files/001-5-textarea.tsx
+    checksum: sha256:58511b03893c6a8243bb935edc712a70e3cf3066ae9cd4b9969b3113dabd5f59
+  - result: Supports F5.
+    description: ARIA menu popup lacks menu-item and arrow-key/focus behavior.
+    path: files/001-6-select.tsx
+    checksum: sha256:8f87146c09e0e8e65d4e0e630008f8c3a11f4753e44c2b169a1906e9b2e1eaf3
+  - result: Design checks and WebUI checks passed; 236 WebUI tests passed.
+    command: bun run design:foundation:check && bun run design:avatar:verify; bun
+      install --frozen-lockfile; bun run --filter '@sentient/webui' test:unit;
+      bun run --filter '@sentient/webui' typecheck; bun run --filter
+      '@sentient/webui' build
+  - result: Passed.
+    command: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      :android:assembleDebug :android:testDebugUnitTest
+  - result: Passed; 4 XCTest and 108 Swift Testing tests.
+    command: ./scripts/ios-setup.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+  - result: Passed.
+    command: git diff --check
+      fa449dc5d0016d2f38101dfb95310472823aed3d..83ebc267d38ec0c463ec04ce4f42cc5702be7fbb
