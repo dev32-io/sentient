@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: web-foundation-components
+title: Build the WebUI foundation/common component system and Rive identity adapter
+status: draft
+dependsOn:
+  - design-foundation-v2
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: This is a broad but coherent native component-library seam with
+      deterministic visual contracts and established browser tests.
+assembly:
+  stageId: platform-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run design:foundation:check
+    - bun run design:avatar:verify
+    - bun run --filter '@sentient/webui' test:unit
+    - bun run --filter '@sentient/webui' typecheck
+    - bun run --filter '@sentient/webui' build
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.

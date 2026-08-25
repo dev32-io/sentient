@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 11
+  revision: 12
 artifacts:
   - id: intent
     type: intent
@@ -36,6 +36,8 @@ tasks:
     path: tasks/verification-inventory-harness/task.yaml
   - id: kmp-capture-semantics
     path: tasks/kmp-capture-semantics/task.yaml
+  - id: web-foundation-components
+    path: tasks/web-foundation-components/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/design-refresh
@@ -50,3 +52,4 @@ executionStages:
   - id: platform-foundations
     tasks:
       - kmp-capture-semantics
+      - web-foundation-components
