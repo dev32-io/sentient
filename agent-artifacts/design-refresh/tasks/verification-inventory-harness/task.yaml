@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: verification-inventory-harness
 title: Create the closed refresh inventory and safe text-only verification harness
-status: awaiting_ci
+status: contribution_complete
 dependsOn: []
 execution:
   resourceClaims: []
