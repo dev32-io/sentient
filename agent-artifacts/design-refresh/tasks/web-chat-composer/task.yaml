@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-chat-composer
 title: Build the Web ChatComposer and internal capture-aware VoiceCaptureControl
-status: submitted
+status: awaiting_ci
 dependsOn:
   - web-foundation-components
   - capture-protocol-gateway
