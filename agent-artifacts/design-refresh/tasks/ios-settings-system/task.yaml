@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: ios-settings-system
+title: Refresh iOS Settings root and system/Soul panes
+status: draft
+dependsOn:
+  - ios-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: These panes share native settings/application conventions and can be
+      migrated together without crossing into their backend domains.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
