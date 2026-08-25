@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-foundation-components
 title: Build the SwiftUI design-v2 projection, primitives, and common composites
-status: running
+status: submitted
 dependsOn:
   - design-foundation-v2
 execution:
@@ -31,3 +31,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-foundation-components
   baseCommit: fa449dc5d0016d2f38101dfb95310472823aed3d
   lastRunId: 81e4a52b-914e-4ee6-9ee0-f56871a4be1f
+  completedCommit: 38ddcc033ac5e6bb43532df2d5bb540356545813
