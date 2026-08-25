@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-chat-messages
 title: Refresh Web chat message chronology, bubbles, and assistant identity states
-status: running
+status: submitted
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
@@ -31,3 +31,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/web-chat-messages
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: 2650e131-15c7-4faa-97e8-f1eb60ff24a1
+  completedCommit: 56ba6773d45d3f362ca6002260d69e514baa4afe
