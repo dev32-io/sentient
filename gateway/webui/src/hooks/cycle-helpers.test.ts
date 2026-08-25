@@ -81,6 +81,28 @@ describe("cycle-helpers — one bubble per reply", () => {
     expect(deriveMessages(committed, [], undefined, "m-other")).toHaveLength(1);
   });
 
+  it("reconciles a growing live reply to its durable twin without ever rendering both", () => {
+    const committed = [assistantReply("a whole reply", 1, "t1", "m1")];
+    const live = [liveBubble("t1", "m1", "a whole reply")];
+
+    const draining = deriveMessages(committed, live, "a whole", "m1");
+    expect(draining).toHaveLength(1);
+    expect(draining[0]).toMatchObject({ id: "inflight-m1", text: "a whole", isStreaming: true });
+
+    const reconciled = deriveMessages(committed, []);
+    expect(reconciled).toHaveLength(1);
+    expect(reconciled[0]).toMatchObject({ replyId: "m1", text: "a whole reply", isStreaming: false });
+  });
+
+  it("preserves the protocol interruption distinction on the durable assistant row", () => {
+    const interrupted = {
+      ...assistantReply("partial response", 1, "t1", "m1"),
+      cutoff: { kind: "interrupt", cancelledTaskIds: [] },
+    } as const;
+
+    expect(deriveMessages([interrupted], [])[0]?.cutoff).toEqual({ kind: "interrupt", cancelledTaskIds: [] });
+  });
+
   it("keys the live bubble by reply, so two open bubbles of one turn are distinct render rows", () => {
     // Two buffers under one turnId is a real state (a mid-turn rotation). A
     // turn-keyed render id makes them Preact siblings with the same key.

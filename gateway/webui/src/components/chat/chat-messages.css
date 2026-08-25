@@ -1,0 +1,318 @@
+/* Chat message product composite. Prototype files are review input only; this
+   stylesheet consumes the generated Web foundation tokens and native identity. */
+
+.chat-view {
+  padding-inline: clamp(12px, 3vw, 34px);
+}
+
+.chat-view__content {
+  max-width: 840px;
+}
+
+.message-list {
+  gap: 26px;
+}
+
+.message-list--empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+}
+
+.message-list__placeholder {
+  max-width: 44ch;
+  margin: 0;
+  color: var(--color-ink-2);
+  font: var(--font-size-base) / var(--line-height-normal) var(--font-ui);
+}
+
+.message-list--error .message-list__placeholder {
+  color: color-mix(in oklab, var(--color-clay) 70%, var(--color-ink));
+}
+
+.day-divider {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--space-md);
+  margin: 0;
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) / 1.25 var(--font-mono);
+}
+.day-divider::before,
+.day-divider::after {
+  content: "";
+  height: 1px;
+  background: var(--color-line-soft);
+}
+
+.message-bubble {
+  width: min(100%, 840px);
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  margin-right: auto;
+}
+
+.message-bubble--continuation {
+  margin-top: -18px;
+}
+
+.message-bubble--user {
+  grid-template-columns: minmax(0, 1fr) 44px;
+  margin-right: 0;
+  margin-left: auto;
+}
+
+.message-bubble > .avatar,
+.message-bubble__avatar-spacer {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.message-bubble--user > .avatar {
+  grid-column: 2;
+}
+
+.message-bubble__body {
+  min-width: 0;
+  grid-column: 2;
+  grid-row: 1;
+  gap: 0;
+}
+
+.message-bubble--user .message-bubble__body {
+  width: min(100%, 58ch);
+  grid-column: 1;
+  justify-self: end;
+  align-items: stretch;
+}
+
+.message-bubble__meta {
+  min-height: 20px;
+  gap: 6px;
+  margin: 0 0 7px;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.message-bubble--user .message-bubble__meta {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
+.message-bubble__name {
+  max-width: min(100%, 38ch);
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-bubble__meta time {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.message-bubble__text-wrap {
+  position: relative;
+  isolation: isolate;
+  width: fit-content;
+  max-width: min(100%, 62ch);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__text-wrap,
+.message-bubble[data-message-state="responding"] .message-bubble__text-wrap {
+  width: min(100%, 62ch);
+}
+
+.message-bubble--user .message-bubble__text-wrap {
+  max-width: 100%;
+  margin-left: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.message-bubble__surface {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 8px var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  background:
+    radial-gradient(ellipse 90% 120% at 50% 55%, color-mix(in oklab, var(--color-paper) 84%, var(--color-bg-sunk)), transparent 78%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-paper) 97%, var(--color-ink-2)), var(--color-paper));
+  box-shadow: var(--plate-shadow);
+  pointer-events: none;
+}
+
+.message-bubble--user .message-bubble__surface {
+  border-color: color-mix(in oklab, var(--color-accent) 18%, var(--color-line-soft));
+  border-radius: var(--radius-lg) 8px var(--radius-lg) var(--radius-lg);
+  background:
+    radial-gradient(ellipse 90% 120% at 50% 55%, color-mix(in oklab, var(--color-accent-50) 78%, var(--color-bg-sunk)), transparent 78%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-accent-50) 90%, var(--color-paper)), var(--color-accent-50));
+  box-shadow: var(--plate-shadow), 0 14px 22px -18px color-mix(in oklab, var(--color-accent) 34%, transparent);
+}
+
+.message-bubble[data-message-state="thinking"] .message-bubble__surface,
+.message-bubble[data-message-state="responding"] .message-bubble__surface {
+  border-color: color-mix(in oklab, var(--color-accent) 22%, var(--color-line-soft));
+  background:
+    radial-gradient(circle at 10% 50%, color-mix(in oklab, var(--color-accent) 8%, transparent), transparent 42%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)), var(--color-paper));
+  box-shadow: var(--plate-shadow), 0 15px 24px -18px color-mix(in oklab, var(--color-accent) 52%, transparent);
+}
+
+.message-bubble[data-message-state="interrupted"] .message-bubble__surface {
+  border-color: color-mix(in oklab, var(--color-clay) 28%, var(--color-line-soft));
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-paper) 92%, var(--color-clay)), var(--color-paper));
+}
+
+.message-bubble__text-inner {
+  position: relative;
+  min-width: 0;
+  padding: 13px 16px;
+}
+
+.bubble-text {
+  font-size: var(--font-size-base);
+  line-height: 1.62;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.bubble-text__md {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.bubble-text__md h1,
+.bubble-text__md h2,
+.bubble-text__md h3,
+.bubble-text__md h4,
+.bubble-text__md h5,
+.bubble-text__md h6 {
+  margin: .7em 0 .4em;
+  font: 500 var(--font-size-lg) / 1.3 var(--font-display);
+}
+
+.bubble-text__md pre {
+  max-width: 100%;
+  padding: 12px 13px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  white-space: pre;
+}
+
+.bubble-text__md code {
+  font-family: var(--font-mono);
+}
+
+.bubble-text__md a {
+  text-underline-offset: 3px;
+}
+
+.bubble-text__md a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.bubble-text__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: var(--color-accent);
+  animation: bubble-streaming-caret 780ms steps(1) infinite;
+}
+
+@keyframes bubble-streaming-caret {
+  50% { opacity: 0; }
+}
+
+.bubble-speaking-wave {
+  background-size: 220% 100%;
+  animation: speaking-wave var(--motion-responding-cadence) infinite;
+}
+
+.interrupt-chip {
+  width: fit-content;
+  min-height: 28px;
+  height: auto;
+  margin: 12px 0 0;
+  padding: 5px 9px;
+  gap: 7px;
+  background: var(--well-face);
+  color: var(--color-ink-2);
+  box-shadow: var(--well-shadow);
+  font: var(--font-size-sm) / 1.3 var(--font-mono);
+}
+
+.interrupt-chip > span {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--color-clay);
+  box-shadow: 0 0 7px -2px var(--color-clay);
+}
+
+@media (max-width: 620px) {
+  .message-list { gap: 22px; }
+  .message-bubble {
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .message-bubble--continuation { margin-top: -15px; }
+  .message-bubble--user { grid-template-columns: minmax(0, 1fr) 28px; }
+  .message-bubble > .avatar {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+    font-size: 12px;
+  }
+  .message-bubble > .avatar .sentient-identity,
+  .message-bubble > .avatar canvas,
+  .message-bubble > .avatar img {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  .message-bubble--user .message-bubble__body { width: min(100%, 88%); }
+  .message-bubble__meta { min-height: 18px; margin-bottom: 6px; }
+  .message-bubble__text-inner { padding: 12px 13px; }
+  .bubble-text { font-size: var(--font-size-base); line-height: 1.58; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble-text__pulse-dot,
+  .bubble-text__caret,
+  .bubble-speaking-wave {
+    animation: none;
+  }
+  .bubble-text__pulse-dot { opacity: 1; transform: none; }
+  .bubble-text__caret { display: none; }
+  .bubble-speaking-wave { background-position: 50% 0; }
+}
+
+@media (prefers-contrast: more) {
+  .message-bubble__surface { border-color: var(--color-ink-3); }
+  .interrupt-chip { outline: 1px solid var(--color-ink-3); }
+}

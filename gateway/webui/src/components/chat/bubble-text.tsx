@@ -38,6 +38,7 @@ export function BubbleText({ text, isStreaming, cutoff }: BubbleTextProps): JSX.
       ) : (
         <div class="bubble-text__md" dangerouslySetInnerHTML={htmlProp} />
       )}
+      {isStreaming && text.length > 0 && <span class="bubble-text__caret" aria-hidden="true" />}
       {cutoff && <InterruptChip variant="inline" cutoffKind={cutoff.kind} />}
     </div>
   );

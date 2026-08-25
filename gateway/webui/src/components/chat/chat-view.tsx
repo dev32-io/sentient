@@ -2,24 +2,26 @@ import { useRef } from "preact/hooks";
 import type { JSX, RefObject } from "preact";
 import type { ChatMessage } from "../../types.ts";
 import { useFollowLatest } from "../../hooks/use-follow-latest.ts";
-import type { SentientMarkMode } from "../common/sentient-mark.tsx";
+import type { SentientIdentityState } from "../common/sentient-identity.tsx";
 import type { CurrentUser } from "./message-bubble.tsx";
-import { MessageList } from "./message-list.tsx";
+import { MessageList, type MessageListStatus } from "./message-list.tsx";
 
 export interface ChatViewProps {
   messages: readonly ChatMessage[];
   transcript: string;
   currentTurnId: string | null;
-  activeCycleMode: SentientMarkMode;
+  activeCycleState: SentientIdentityState;
   currentUser: CurrentUser;
+  status?: MessageListStatus;
 }
 
 export function ChatView({
   messages,
   transcript,
   currentTurnId,
-  activeCycleMode,
+  activeCycleState,
   currentUser,
+  status = "ready",
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLElement>(null);
@@ -29,13 +31,14 @@ export function ChatView({
   });
 
   return (
-    <section class="chat-view" ref={scrollRef}>
+    <section class="chat-view" ref={scrollRef} aria-label="Conversation content">
       <div class="chat-view__content" ref={contentRef as unknown as RefObject<HTMLDivElement>}>
         <MessageList
           messages={messages}
           currentTurnId={currentTurnId}
-          activeCycleMode={activeCycleMode}
+          activeCycleState={activeCycleState}
           currentUser={currentUser}
+          status={status}
         />
         {transcript && (
           <div class="chat-view__transcript" aria-label="Live transcript">
