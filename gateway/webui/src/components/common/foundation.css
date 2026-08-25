@@ -210,6 +210,8 @@
   transition: border-color var(--motion-feedback), box-shadow var(--motion-state), background var(--motion-feedback);
 }
 .snt-textarea { min-height: 104px; resize: vertical; line-height: var(--line-height-normal); }
+.snt-textarea--mono { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.snt-textarea--dirty { border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-line)); }
 .snt-input::placeholder,
 .snt-textarea::placeholder { color: var(--color-ink-3); }
 @media (hover: hover) and (pointer: fine) {

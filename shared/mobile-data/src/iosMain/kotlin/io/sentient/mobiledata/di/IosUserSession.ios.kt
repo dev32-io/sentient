@@ -288,12 +288,13 @@ class IosUserSession(
         calendarDisposalJob = IosCalendarLifecycleQueue.enqueue {
             disposeRuntime(runtimeAtClose)
             calendarScope.cancel()
+            // Keep the authenticated transport and serialized SDK scope alive until capture
+            // cancellation has stopped/joined its producer and emitted the terminal control.
+            sdk.disconnect(clearSession = true)
+            component.close()
+            scope.cancel()
+            settingsHttpClient.close()
         }
-
-        sdk.disconnect(clearSession = true)
-        component.close()
-        scope.cancel()
-        settingsHttpClient.close()
     }
 
     /** Await the background open or disposal in tests and lifecycle coordinators. */

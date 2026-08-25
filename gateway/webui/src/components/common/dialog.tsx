@@ -13,10 +13,7 @@ export interface DialogProps {
   onClose(): void;
   width?: number;
   initialFocusRef?: { current: HTMLElement | null };
-  /**
-   * Opt-in background isolation. Existing Dialog consumers intentionally keep
-   * their historical behavior when this is omitted.
-   */
+  /** Background isolation is on by default; false is retained only as a compatibility escape hatch. */
   inertBackground?: boolean;
   /** Source-compatible spelling for callers that describe the backdrop. */
   backgroundInert?: boolean;
@@ -212,7 +209,7 @@ export function Dialog({
   }, [initialFocusRef]);
 
   useEffect(() => {
-    if (!(inertBackground ?? backgroundInert ?? false)) return;
+    if (!(inertBackground ?? backgroundInert ?? true)) return;
     const scrim = scrimRef.current;
     const parent = scrim?.parentElement;
     if (!parent || !scrim) return;

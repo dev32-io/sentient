@@ -24,6 +24,7 @@ class UserAudioInputConnector(
     private data class Active(val token: CaptureToken, var phase: Phase)
 
     private var active: Active? = null
+    internal val hasActiveCapture: Boolean get() = active != null
     private var nextGeneration = 0L
     private val usedIds = mutableSetOf<String>()
 

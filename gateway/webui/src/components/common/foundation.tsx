@@ -137,13 +137,16 @@ export interface TextAreaProps {
   maxLength?: number | undefined;
   spellcheck?: boolean | undefined;
   className?: string | undefined;
+  inputClassName?: string | undefined;
+  monospace?: boolean | undefined;
+  dirty?: boolean | undefined;
   onInput?: (event: JSX.TargetedEvent<HTMLTextAreaElement, InputEvent>) => void | undefined;
 }
 
-export function TextArea({ label, hint, error, id, className, ...input }: TextAreaProps): JSX.Element {
+export function TextArea({ label, hint, error, id, className, inputClassName, monospace = false, dirty = false, ...input }: TextAreaProps): JSX.Element {
   return (
     <FieldShell label={label} hint={hint} error={error} id={id} className={className}>
-      {({ id: inputId, describedBy }) => <textarea {...input} id={inputId} aria-describedby={describedBy} class="snt-textarea" aria-invalid={Boolean(error) || undefined} />}
+      {({ id: inputId, describedBy }) => <textarea {...input} id={inputId} aria-describedby={describedBy} class={classes("snt-textarea", monospace && "snt-textarea--mono", dirty && "snt-textarea--dirty", inputClassName)} data-dirty={dirty || undefined} aria-invalid={Boolean(error) || undefined} />}
     </FieldShell>
   );
 }

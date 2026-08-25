@@ -190,7 +190,7 @@ enum DesignMetrics {
     static let minimumTarget: CGFloat = 44
     static let hairline: CGFloat = 1
     static let focusRing: CGFloat = 3
-    static let pressedDepth: CGFloat = 2
+    static let pressedDepth: CGFloat = 1
     static let narrowPreviewWidth: CGFloat = 320
     static let padPreviewWidth: CGFloat = 768
 }

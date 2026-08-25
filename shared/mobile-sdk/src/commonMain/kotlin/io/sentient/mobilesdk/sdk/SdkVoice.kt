@@ -70,6 +70,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -190,6 +191,9 @@ class SdkVoice internal constructor(
             val terminalBegun: Boolean = false,
             val ack: CompletableDeferred<Boolean>? = null,
         ) : Cmd
+
+        /** FIFO fence used by teardown to await every prior start/frame-stop/terminal action. */
+        data class Barrier(val ack: CompletableDeferred<Unit>) : Cmd
     }
 
     // UNLIMITED (never CONFLATED): every toggle is preserved FIFO. A CONFLATED
@@ -205,6 +209,7 @@ class SdkVoice internal constructor(
     // Submission-side ownership. Clearing this before queuing a terminal makes the first
     // terminal intent win and lets Hold→Auto reserve its successor without overlap on apply.
     private var requestedCapture: CaptureToken? = null
+    @Volatile private var acceptsCaptureRequests = true
     private var nextCaptureGeneration = 0L
     private val allocatedCaptureIds = mutableSetOf<String>()
 
@@ -217,7 +222,14 @@ class SdkVoice internal constructor(
         // ONE consumer on the orchestrator scope: pulls commands sequentially, so a
         // Configure fully completes (engine reconfigured, collect job started or
         // stopped, control frames sent) before the next runs — serial + ordered.
-        scope.launch { for (cmd in commands) handle(cmd) }
+        scope.launch {
+            for (cmd in commands) {
+                when (cmd) {
+                    is Cmd.Configure -> handle(cmd)
+                    is Cmd.Barrier -> cmd.ack.complete(Unit)
+                }
+            }
+        }
     }
 
     /** THE serialized reconfig entry. Non-suspend; runs FIFO on the single consumer. [turnMode]
@@ -273,7 +285,7 @@ class SdkVoice internal constructor(
     fun requestStart(turnMode: TurnMode? = null) = requestStart(turnMode ?: TurnMode.Semantic, playbackOn)
 
     private fun requestStart(turnMode: TurnMode, playback: Boolean) {
-        if (requestedCapture != null) return
+        if (!acceptsCaptureRequests || requestedCapture != null) return
         val id = createCaptureId()
         if (id.isBlank() || !allocatedCaptureIds.add(id)) return
         val token = CaptureToken(id, ++nextCaptureGeneration)
@@ -284,6 +296,27 @@ class SdkVoice internal constructor(
     /** Existing release semantics commit; explicit cancellation is distinct. */
     fun requestStop() = requestTerminal(CaptureTerminal.Commit, playbackOn)
     fun requestCancel() = requestTerminal(CaptureTerminal.Cancel, playbackOn)
+
+    /**
+     * Terminal SDK/session teardown fence. Cancellation is submitted on the same FIFO lane
+     * as start and frame production, then the barrier waits until stop/join and the matching
+     * terminal control have completed. Callers may tear down transport/scope only after this.
+     */
+    fun beginTeardown() {
+        acceptsCaptureRequests = false
+    }
+
+    fun resumeAfterTeardown() {
+        acceptsCaptureRequests = true
+    }
+
+    suspend fun cancelCaptureAndAwait() {
+        beginTeardown()
+        requestCancel()
+        val ack = CompletableDeferred<Unit>()
+        commands.send(Cmd.Barrier(ack))
+        ack.await()
+    }
 
     private fun requestTerminal(terminal: CaptureTerminal, playback: Boolean) {
         val token = requestedCapture ?: return
@@ -345,8 +378,7 @@ class SdkVoice internal constructor(
     // Edge ordering: mic false→true → onUplinkStart → configure → pipeline.start
     // (audio.start before frames); mic true→false → pipeline.stop → configure →
     // onUplinkStop (audio.end after uplink down + configure settled — no late frame).
-    private suspend fun handle(cmd: Cmd) {
-        val c = cmd as Cmd.Configure
+    private suspend fun handle(c: Cmd.Configure) {
         // Resolve the mic axis HERE, at apply time: an explicit value is used verbatim; the
         // NULL sentinel (playback-axis-only arm / disarm) reads the LIVE micOn now — so a
         // playback command enqueued behind a mic toggle applies against the already-advanced

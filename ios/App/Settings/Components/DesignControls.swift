@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum DesignControlState: Equatable {
     case normal, loading, error(String), disabled
@@ -13,25 +14,80 @@ enum DesignButtonRole { case action, destructive, quiet }
 
 enum DesignNoticeKind { case loading, empty, error, success, warning }
 
+/// Native projection of the reviewed v2 material recipes. Values mirror the named KMP
+/// effects; SwiftUI layers replace CSS multi-background/inset-shadow primitives.
+enum DesignMaterialMetrics {
+    static let slateRadialScale = CGSize(width: 0.82, height: 1.05)
+    static let slateRadialCenterY = 0.52
+    static let slateCenterStop = 0.42
+    static let slateFadeStop = 0.76
+    static let slateCenterSunk = 0.20
+    static let slateRingSunk = 0.12
+    static let slateTopLight = 0.07
+    static let slateContactY: CGFloat = 2
+    static let slateCastY: CGFloat = 9
+    static let slateCastBlur: CGFloat = 15
+    static let slateEmberY: CGFloat = 12
+    static let slateEmberBlur: CGFloat = 20
+    static let wellMiddleStop = 0.56
+    static let wellTopBlack = 0.05
+    static let wellBottomElevated = 0.10
+    static let wellInsetOpacity = 0.72
+    static let plateCastY: CGFloat = 18
+    static let plateCastBlur: CGFloat = 30
+    static let floatCastY: CGFloat = 28
+    static let floatCastBlur: CGFloat = 58
+}
+
+private struct SlateFace: View {
+    let role: DesignButtonRole
+    let muted: Bool
+
+    private var base: Color {
+        if muted { return DuskColors.bgElev }
+        switch role {
+        case .action: return DuskColors.accent
+        case .destructive: return DuskColors.paper
+        case .quiet: return DuskColors.bgElev
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            base
+            if role == .destructive && !muted { DuskColors.stop.opacity(0.38) }
+            if muted { DuskColors.ink4.opacity(0.08) }
+            LinearGradient(colors: [DuskColors.ink.opacity(muted ? 0.03 : 0.04), .clear], startPoint: .top, endPoint: .bottom)
+            RadialGradient(
+                stops: [
+                    .init(color: DuskColors.bgSunk.opacity(muted ? 0.16 : DesignMaterialMetrics.slateCenterSunk), location: 0),
+                    .init(color: DuskColors.bgSunk.opacity(DesignMaterialMetrics.slateRingSunk), location: DesignMaterialMetrics.slateCenterStop),
+                    .init(color: .clear, location: muted ? 0.74 : DesignMaterialMetrics.slateFadeStop),
+                ],
+                center: UnitPoint(x: 0.5, y: DesignMaterialMetrics.slateRadialCenterY),
+                startRadius: 0,
+                endRadius: 80
+            )
+            .scaleEffect(x: DesignMaterialMetrics.slateRadialScale.width, y: DesignMaterialMetrics.slateRadialScale.height)
+        }
+    }
+}
+
 private struct PlateSurface: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
     let elevated: Bool
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
         content
-            .background(elevated ? DuskColors.paper : DuskColors.bgElev)
-            .clipShape(RoundedRectangle(cornerRadius: Radii.lg, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
-                    .stroke(contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                            lineWidth: DesignMetrics.hairline)
-            }
-            .shadow(color: .black.opacity(contrast == .increased ? 0.65 : 0.48), radius: 15, y: 9)
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
-                    .stroke(DuskColors.ink.opacity(contrast == .increased ? 0.12 : 0.05), lineWidth: 1)
-                    .mask(alignment: .top) { Rectangle().frame(height: 1) }
-            }
+            .background(DuskColors.paper)
+            .clipShape(shape)
+            .overlay { shape.stroke(contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft, lineWidth: DesignMetrics.hairline) }
+            .overlay(alignment: .top) { DuskColors.ink.opacity(contrast == .increased ? 0.10 : 0.05).frame(height: DesignMetrics.hairline).clipShape(shape) }
+            // plate-shadow contact + directional cast; elevated plates use float depth.
+            .shadow(color: DuskColors.line.opacity(elevated ? 0.86 : 0.45), radius: 0, y: elevated ? 3 : 2)
+            .shadow(color: .black.opacity(elevated ? 0.96 : 0.90), radius: elevated ? DesignMaterialMetrics.floatCastBlur : DesignMaterialMetrics.plateCastBlur, y: elevated ? DesignMaterialMetrics.floatCastY : DesignMaterialMetrics.plateCastY)
+            .shadow(color: DuskColors.accent.opacity(elevated ? 0.38 : 0), radius: elevated ? 40 : 0, y: elevated ? 24 : 0)
     }
 }
 
@@ -41,73 +97,102 @@ private struct WellSurface: ViewModifier {
     let error: Bool
 
     func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         content
             .background(
-                LinearGradient(colors: [.black.opacity(0.28), DuskColors.bgSunk, DuskColors.bgElev.opacity(0.25)],
-                               startPoint: .top, endPoint: .bottom)
+                LinearGradient(
+                    stops: [
+                        .init(color: DuskColors.bgSunk.overlaying(.black, opacity: DesignMaterialMetrics.wellTopBlack), location: 0),
+                        .init(color: DuskColors.bgSunk, location: DesignMaterialMetrics.wellMiddleStop),
+                        .init(color: DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: DesignMaterialMetrics.wellBottomElevated), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
-            .clipShape(RoundedRectangle(cornerRadius: Radii.md, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
-                    .stroke(error ? DuskColors.stop : focused ? DuskColors.accent : (contrast == .increased ? DuskColors.ink3 : DuskColors.line),
-                            lineWidth: focused || error ? DesignMetrics.focusRing : DesignMetrics.hairline)
-            }
-            .shadow(color: .black.opacity(0.55), radius: 4, y: -2)
+            .clipShape(shape)
+            // well-shadow inset top recess and lower reflected highlight.
+            .overlay(alignment: .top) { LinearGradient(colors: [.black.opacity(DesignMaterialMetrics.wellInsetOpacity), .clear], startPoint: .top, endPoint: .bottom).frame(height: 6).clipShape(shape) }
+            .overlay(alignment: .bottom) { DuskColors.ink.opacity(focused ? 0.08 : 0.07).frame(height: DesignMetrics.hairline).clipShape(shape) }
+            .overlay { shape.stroke(error ? DuskColors.stop : focused ? DuskColors.accent.overlaying(DuskColors.line, opacity: 0.44) : (contrast == .increased ? DuskColors.ink3 : DuskColors.line), lineWidth: DesignMetrics.hairline) }
+            .shadow(color: DuskColors.line.opacity(0.45), radius: 0, y: 1)
+            .shadow(color: focused ? DuskColors.accent.opacity(0.18) : .clear, radius: DesignMetrics.focusRing)
+            .shadow(color: focused ? DuskColors.accent.opacity(0.48) : .clear, radius: 18, y: 8)
     }
+}
+
+private extension Color {
+    /// Alpha-composite helper used to express the contract's color-mix weights natively.
+    func overlaying(_ overlay: Color, opacity: Double) -> Color {
+        // Layering in a ZStack is the native equivalent and keeps semantic colors adaptive.
+        // This method is used only where ShapeStyle requires one color, so interpolate in sRGB.
+        UIColor(self).mixed(with: UIColor(overlay), overlayWeight: opacity).swiftUIColor
+    }
+}
+
+private extension UIColor {
+    func mixed(with other: UIColor, overlayWeight: Double) -> UIColor {
+        var r1: CGFloat = 0; var g1: CGFloat = 0; var b1: CGFloat = 0; var a1: CGFloat = 0
+        var r2: CGFloat = 0; var g2: CGFloat = 0; var b2: CGFloat = 0; var a2: CGFloat = 0
+        getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        let weight = CGFloat(overlayWeight)
+        return UIColor(red: r1 * (1 - weight) + r2 * weight, green: g1 * (1 - weight) + g2 * weight, blue: b1 * (1 - weight) + b2 * weight, alpha: a1 * (1 - weight) + a2 * weight)
+    }
+
+    var swiftUIColor: Color { Color(self) }
 }
 
 extension View {
     func designPlate(elevated: Bool = false) -> some View { modifier(PlateSurface(elevated: elevated)) }
-    func designWell(focused: Bool = false, error: Bool = false) -> some View {
-        modifier(WellSurface(focused: focused, error: error))
-    }
+    func designFloat() -> some View { modifier(PlateSurface(elevated: true)) }
+    func designWell(focused: Bool = false, error: Bool = false) -> some View { modifier(WellSurface(focused: focused, error: error)) }
 }
 
 struct DesignButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isFocused) private var focused
     let role: DesignButtonRole
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
+        let shape = RoundedRectangle(cornerRadius: DesignV2.Radius.sm, style: .continuous)
         configuration.label
             .font(Typo.ui(TypeScale.base, .semibold))
             .foregroundStyle(foreground)
             .frame(minHeight: DesignMetrics.minimumTarget)
             .padding(.horizontal, Space.lg)
-            .background(face(pressed: pressed))
-            .clipShape(RoundedRectangle(cornerRadius: Radii.md, style: .continuous))
+            .background { SlateFace(role: role, muted: !isEnabled) }
+            .clipShape(shape)
             .overlay(alignment: .top) {
-                Rectangle().fill(DuskColors.ink.opacity(contrast == .increased ? 0.18 : 0.07))
-                    .frame(height: DesignMetrics.hairline)
+                (pressed ? DuskColors.bgSunk.opacity(0.42) : DuskColors.ink.opacity(contrast == .increased ? 0.13 : DesignMaterialMetrics.slateTopLight))
+                    .frame(height: pressed ? 3 : DesignMetrics.hairline).clipShape(shape)
             }
-            .overlay {
-                RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
-                    .stroke(border, lineWidth: DesignMetrics.hairline)
-            }
-            .shadow(color: .black.opacity(pressed ? 0.34 : 0.72), radius: pressed ? 3 : 8, y: pressed ? 1 : 5)
+            .overlay { shape.stroke(border, lineWidth: DesignMetrics.hairline) }
+            .overlay { shape.stroke(focused ? DuskColors.accent : .clear, lineWidth: 2).padding(-3) }
+            .shadow(color: contact(pressed: pressed), radius: 0, y: pressed ? 1 : DesignMaterialMetrics.slateContactY)
+            .shadow(color: .black.opacity(isEnabled ? (pressed ? 0.88 : 0.90) : 0.70), radius: pressed ? 6 : DesignMaterialMetrics.slateCastBlur, y: pressed ? 3 : DesignMaterialMetrics.slateCastY)
+            .shadow(color: glow.opacity(isEnabled && !pressed ? (role == .action ? 0.58 : role == .destructive ? 0.72 : 0.42) : 0), radius: DesignMaterialMetrics.slateEmberBlur, y: DesignMaterialMetrics.slateEmberY)
             .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
-            .opacity(isEnabled ? 1 : 0.52)
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
     }
 
     private var foreground: Color {
-        role == .action ? DuskColors.bgSunk : role == .destructive ? DuskColors.stop : DuskColors.ink
+        if !isEnabled { return DuskColors.ink4 }
+        return role == .action ? DuskColors.bgSunk : role == .quiet ? DuskColors.ink2 : DuskColors.ink
     }
 
     private var border: Color {
-        role == .destructive ? DuskColors.stop : role == .action ? DuskColors.accent : DuskColors.line
+        if !isEnabled { return DuskColors.lineSoft.opacity(0.74) }
+        return role == .destructive ? DuskColors.stop.opacity(0.76) : role == .action ? DuskColors.accent.opacity(0.64) : DuskColors.line
     }
 
-    private func face(pressed: Bool) -> some ShapeStyle {
-        LinearGradient(
-            colors: role == .action
-                ? [DuskColors.accent.opacity(pressed ? 0.76 : 1), DuskColors.amber.opacity(0.72)]
-                : [DuskColors.paper.opacity(pressed ? 0.72 : 1), DuskColors.bgElev],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
+    private func contact(pressed: Bool) -> Color {
+        if role == .destructive { return DuskColors.stop.opacity(pressed ? 0.30 : 0.38) }
+        return DuskColors.bgSunk.opacity(pressed ? 0.90 : 0.88)
     }
 }
 

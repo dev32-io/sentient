@@ -18,7 +18,7 @@ describe("Dialog", () => {
     const onClose = vi.fn();
 
     const { unmount } = render(
-      <Dialog title="Calendar" onClose={onClose} inertBackground>
+      <Dialog title="Calendar" onClose={onClose}>
         <button type="button">First action</button>
       </Dialog>,
       { container: document.body },
@@ -31,6 +31,24 @@ describe("Dialog", () => {
     unmount();
     expect(opener.hasAttribute("inert")).toBe(false);
     expect(opener.getAttribute("aria-hidden")).toBe("false");
+  });
+
+  it("keeps background isolated until repeated dialogs have both closed", () => {
+    const background = document.createElement("main");
+    background.setAttribute("aria-hidden", "false");
+    document.body.append(background);
+    const first = render(<Dialog title="First" onClose={() => {}} />, { container: document.body });
+    const secondHost = document.createElement("div");
+    document.body.append(secondHost);
+    const second = render(<Dialog title="Second" onClose={() => {}} />, { container: secondHost });
+
+    expect(background.getAttribute("aria-hidden")).toBe("true");
+    expect(background.hasAttribute("inert")).toBe(true);
+    second.unmount();
+    expect(background.getAttribute("aria-hidden")).toBe("true");
+    first.unmount();
+    expect(background.getAttribute("aria-hidden")).toBe("false");
+    expect(background.hasAttribute("inert")).toBe(false);
   });
 
   it("routes safe backdrop and Escape requests without silently closing", () => {

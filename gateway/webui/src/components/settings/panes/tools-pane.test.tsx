@@ -58,7 +58,7 @@ describe("ToolsPane product groups", () => {
     const row = screen.getByText("skill_create").closest(".tool-row");
     if (!row) throw new Error("missing row");
     fireEvent.click(within(row as HTMLElement).getByRole("button", { name: /ask/i }));
-    fireEvent.click(screen.getByRole("button", { name: /deny/i }));
+    fireEvent.click(screen.getByRole("option", { name: /deny/i }));
     expect(onDraftTools).toHaveBeenCalledWith(expect.objectContaining({ permissions: { skills: { skill_create: "deny" } } }));
   });
 });

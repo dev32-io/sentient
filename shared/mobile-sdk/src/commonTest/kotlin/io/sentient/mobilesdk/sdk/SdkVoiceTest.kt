@@ -7,10 +7,13 @@ import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 /**
  * The [SdkVoice] constructor takes both [scope] (the command-consumer coroutine's
@@ -155,6 +158,39 @@ class SdkVoiceTest {
             ),
             sent,
         )
+    }
+
+    @Test
+    fun teardown_awaits_cancel_terminal_and_leaves_no_active_capture_or_late_frames() = runTest {
+        val controls = mutableListOf<ClientMessage>()
+        val frames = mutableListOf<ByteArray>()
+        val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = { frames += it })
+        val voice = SdkVoice(
+            voiceAudio = null,
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            scope = backgroundScope,
+            uplinkDispatcher = StandardTestDispatcher(testScheduler),
+            createCaptureId = { "teardown-id" },
+        )
+
+        voice.requestStart(TurnMode.Manual)
+        val teardown = backgroundScope.launch { voice.cancelCaptureAndAwait() }
+        advanceUntilIdle()
+        teardown.join()
+        connector.sendAudioFrame(byteArrayOf(1, 2, 3))
+        voice.requestStart(TurnMode.Semantic)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(ClientMessage.AudioStart("teardown-id", "manual"), ClientMessage.AudioCancel("teardown-id")),
+            controls,
+        )
+        assertFalse(connector.hasActiveCapture, "awaited teardown must not retain a streaming/terminating capture")
+        assertEquals(emptyList(), frames, "no binary frame may be accepted after the terminal control")
     }
 
     @Test

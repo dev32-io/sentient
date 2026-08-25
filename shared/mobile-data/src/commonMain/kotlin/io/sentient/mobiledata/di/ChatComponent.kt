@@ -197,7 +197,7 @@ open class ChatComponent(
      * Tear down the WS + loops. [clearSession] true clears the in-session slice
      * (logout); false keeps the user in session (idle/pause).
      */
-    fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
+    suspend fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
 
     /**
      * Connection-scope teardown (logout). No-op today — the SDK + its scope are owned

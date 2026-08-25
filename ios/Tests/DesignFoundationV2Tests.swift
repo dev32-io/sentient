@@ -29,6 +29,16 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertTrue(DesignV2.MaterialRole.allCases.allSatisfy { !$0.contractRecipe.isEmpty })
         XCTAssertTrue(DesignV2.MaterialRole.slateFace.contractRecipe.contains("radial-gradient"))
         XCTAssertTrue(DesignV2.MaterialRole.wellFace.contractRecipe.contains("linear-gradient"))
+        XCTAssertEqual(DesignMaterialMetrics.slateRadialScale, CGSize(width: 0.82, height: 1.05))
+        XCTAssertEqual(DesignMaterialMetrics.slateRadialCenterY, 0.52)
+        XCTAssertEqual(DesignMaterialMetrics.slateCenterStop, 0.42)
+        XCTAssertEqual(DesignMaterialMetrics.slateFadeStop, 0.76)
+        XCTAssertEqual(DesignMaterialMetrics.wellMiddleStop, 0.56)
+        XCTAssertEqual(DesignMaterialMetrics.plateCastY, 18)
+        XCTAssertEqual(DesignMaterialMetrics.plateCastBlur, 30)
+        XCTAssertEqual(DesignMaterialMetrics.floatCastY, 28)
+        XCTAssertEqual(DesignMaterialMetrics.floatCastBlur, 58)
+        XCTAssertEqual(DesignMetrics.pressedDepth, 1)
     }
 
     func testControlSemanticsAndAccessibilityMetricsAreStable() {

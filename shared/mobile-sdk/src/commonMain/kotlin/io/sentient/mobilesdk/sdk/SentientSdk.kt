@@ -415,6 +415,7 @@ class SentientSdk(
             return
         }
         consumerDisconnected = false
+        voice.resumeAfterTeardown()
         reconnectController.reset()
         when (val result = lifecycle.attemptConnect()) {
             is ConnectResult.Success -> log.info("connect.ready")
@@ -430,13 +431,16 @@ class SentientSdk(
      *   teardown) keeps the user "in session" (gate stays on chat; SDK
      *   auto-reconnects on the next presence signal).
      */
-    fun disconnect(clearSession: Boolean = true) {
+    suspend fun disconnect(clearSession: Boolean = true) {
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
-        // Teardown is a genuine capture loss. Reset shared TalkMode before disposing the
-        // engine so native presentation adapters converge without sending a second stop.
+        voice.beginTeardown()
+        // Teardown is a genuine capture loss. Reset shared TalkMode, then fence the voice
+        // lane before transport/audio disposal. This guarantees producer stop/join and the
+        // matching Cancel control complete while both the socket and SDK scope still exist.
         talkModeController.lifecycleCancel("disconnect")
         syncVoiceMode()
+        voice.cancelCaptureAndAwait()
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
