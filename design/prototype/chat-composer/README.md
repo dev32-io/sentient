@@ -8,14 +8,14 @@ Approved implementation handoff: [`handoff.md`](./handoff.md)
 
 ## Boundary
 
-- The supplied legacy composer in `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html` remains the composition authority: one frame, transparent auto-growing text field, attachment, spoken-response toggle, contextual Stop, and one shared microphone/send action.
+- This prototype is the consolidated composer authority: one frame, transparent auto-growing text field, attachment, spoken-response toggle, contextual Stop, and one shared microphone/send action.
 - Stop is present only while Sentient is actively responding.
 - The shared action displays the microphone when the draft is empty and becomes Send when text exists.
 - Enter sends and Shift+Enter inserts a newline.
 - Task pills, one-at-a-time detail expansion, attachment selection feedback, TTS state, focus response, action morph, and Reduced Motion behavior remain represented.
 - The raised composer surface uses a darker concave center, asymmetric warm shoulder, and directional ember cast. The textarea has no independent face or focus outline; the composer owns focus emphasis.
 - Pointer input anywhere on the composer face other than an interactive control immediately focuses the textarea and places the caret at the end of the draft.
-- Composer controls are purpose-built for this composite rather than direct foundation button instances. They still use the current Dusk palette, established typography, elevated-slate physics, visible focus, minimum type floors, and current accessibility language from `DESIGN.md`.
+- Composer controls are purpose-built for this composite rather than direct foundation button instances. They still use the current Dusk palette, established typography, elevated-slate physics, visible focus, minimum type floors, and current accessibility language from `DESIGN.MD`.
 - The review-state controls and mobile frame are prototype tooling, not production chrome.
 - Current production code informs implementation feasibility and wire behavior but does not override this approved visual direction.
 - This bounded prototype excludes chat messages, navigation, permission-dialog design, attachment upload implementation, partial STT text, and production audio transport.

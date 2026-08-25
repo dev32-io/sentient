@@ -76,9 +76,9 @@ interval, weekdays, count/until). Identity, revision, recurrence mutation scopes
 conflict policy, and online write gates remain shared-owned. Unsupported prototype
 place, reminder, member-owner, and color semantics are intentionally absent.
 
-Visual review uses the exact served reference at
-`sentient-design/design/mobile/calendar.html`, whose implementation is
-`sentient-design/components/mobile/sentient-mobile.js`, at both 390×844 and 430×932.
+Visual review uses the consolidated served reference at
+`design/prototype/calendar/index.html`, with `calendar.css` and `calendar.js` from
+that directory, at both 390×844 and 430×932.
 Open `CalendarOverlayPreviews.kt` and compare preview, Add, timed/all-day Edit,
 recurrence scope, delete confirmation, conflict, offline, permission/error, and
 large-font previews directly against those viewports. The adapted native contract keeps

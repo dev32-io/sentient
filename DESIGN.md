@@ -6,10 +6,10 @@ Sentient should feel like a calm, capable presence in the home: warm without bei
 
 ## Authority and adoption
 
-- `DESIGN.md` owns the durable product character, material model, semantic roles, cross-platform behavior, and accessibility baseline.
+- `DESIGN.MD` owns the durable product character, material model, semantic roles, cross-platform behavior, and accessibility baseline.
 - Current production token files own implementation values and must stay aligned across web and shared mobile code.
-- `design/prototype/foundation-components/` is the reviewed visual contract for the foundation subset it demonstrates, not a production dependency or a mandate for pixel-identical rendering.
-- Older explorations under `sentient-design/` are non-authoritative reference material unless this document names a specific asset as canonical.
+- Reviewed prototypes under `design/prototype/` are scoped visual and interaction contracts, not production dependencies or mandates for pixel-identical rendering.
+- Temporary legacy explorations are not retained as authority; the consolidated prototypes and handoffs under `design/prototype/` replace them.
 - Platform implementations express the same roles through native Preact, SwiftUI, and Compose behavior. Material conflicts must be resolved here rather than with page-local styling.
 
 ## Brand character
@@ -116,7 +116,7 @@ Spacing follows the existing `4, 8, 12, 18, 26, 32, 40` foundation. Prefer fewer
 
 Product icons use quiet geometric monoline construction: 24 × 24 view box, approximately 1.7 stroke, round caps and joins, and no embedded color.
 
-The Sentient mark is identity, not a generic loading spinner. Canonical idle, thinking, and responding artwork under `sentient-design/avatars/` preserves the same nucleus and orbital structure and owns its internal motion. State changes use the supplied crossfade, scale, and rotation transition; local components must not redraw, recolor, or independently animate the identity artwork. Listening and composer-specific expression remain a later composition decision.
+The Sentient mark is identity, not a generic loading spinner. Canonical identity source and generated runtime artwork live under `design/prototype/foundation-components/assets/avatars/`: `sentient-avatar.rive.json` is the reviewable authored source, `sentient-avatar.riv` is the generated cross-platform runtime asset, and the colocated SVG/JavaScript files remain fidelity references and static fallbacks. The Rive asset owns idle, thinking, responding, their internal motion, Reduced Motion variants, and interruptible crossfade/scale/rotation transitions; local components must not redraw, recolor, or independently animate it. Voice listening is composer state and is never an avatar state.
 
 User avatars are compact elevated-slate identity surfaces rather than flat tint circles or chat composites. The shared sizes are `28`, `44`, and `56`; each circular face keeps the shallow concave center, softened dark shoulder, contact shadow, and directional cast while terra, sage, amber, and clay provide restrained semantic tint. Avatar elevation must not use a sharp bright perimeter rim. Fallback, selected, and disabled states remain explicit. Image avatars, when introduced, use the same circular size and state boundary.
 
@@ -229,9 +229,10 @@ Before accepting a component or screen:
 ## Implementation and review sources
 
 - `design/prototype/foundation-components/` — reviewed responsive foundation subset and implementation handoff
+- `design/prototype/foundation-components/assets/avatars/` — canonical Sentient identity source, generated Rive runtime asset, fidelity references, and deterministic generation manifest
+- `scripts/design/sentient-avatar-rive.sh` — pinned generation, validation, transition, Reduced Motion, and SVG-parity verification
 - `gateway/webui/src/styles/tokens/` — canonical web token values
 - `shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/design/DesignTokens.kt` — shared mobile token mirror
-- `sentient-design/avatars/` — canonical Sentient identity artwork and supplied state transition
 
 ## Locked foundation decisions
 
@@ -247,5 +248,5 @@ Before accepting a component or screen:
 
 - Confirm float-tier elevation when menus, popovers, dialogs, and sheets receive their dedicated review.
 - Confirm shared semantic component names before implementation libraries are refreshed.
-- Design listening and composer-specific identity expression with the future chat-composer work.
+- Voice listening remains composer-owned; the Sentient identity exposes only idle, thinking, and responding.
 - Define image-avatar loading, crop, and failure behavior before image avatars ship.

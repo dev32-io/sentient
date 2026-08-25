@@ -2,7 +2,7 @@
 (() => {
   if (customElements.get('sentient-avatar')) return;
 
-  const SCRIPT_BASE = document.currentScript?.src ? new URL('.', document.currentScript.src) : new URL('./sentient-design/avatars/', document.baseURI);
+  const SCRIPT_BASE = document.currentScript?.src ? new URL('.', document.currentScript.src) : new URL('./', document.baseURI);
   const asset = (name) => new URL(name, SCRIPT_BASE).href;
   const STATES = Object.freeze({
     idle: asset('sentient-mark.svg'),

@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // SentientMark — the Sentient brand atom. ALWAYS static.
 //
-// Art is the ONE shared asset (SentientMark.imageset, rasterized from
-// gateway/webui/public/sentient-mark.svg via scripts/gen-brand-assets.sh — the
-// same SVG webui renders). No hand-drawn gradients, no animation here.
+// Current static fallback art is rasterized from
+// design/prototype/foundation-components/assets/avatars/sentient-mark.svg via
+// scripts/gen-brand-assets.sh. The design refresh will replace active identity
+// rendering with the colocated generated Rive asset.
 //
 // The "Sentient is active" ripple is NOT part of the mark — it's a separate
 // `AvatarRipple` overlay applied ONLY at the chat assistant avatar (see

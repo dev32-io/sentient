@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Regenerate the mobile brand PNGs from the ONE canonical mark SVG.
 #
-# Single source of truth: gateway/webui/public/sentient-mark.svg
-#   - webui renders that SVG directly (vector).
-#   - iOS + Android render a PNG rasterized from it (no SVG runtime lib).
+# Static fallback source: design/prototype/foundation-components/assets/avatars/sentient-mark.svg
+#   - the canonical animated identity is generated as Rive beside this SVG.
+#   - WebUI may render this SVG directly when the Rive runtime is unavailable.
+#   - iOS + Android render a PNG rasterized from it for current static/fallback use.
 #   - app icons rasterize it onto the dark app background.
 #
 # Re-run this whenever sentient-mark.svg changes. Requires: rsvg-convert, magick.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SVG="gateway/webui/public/sentient-mark.svg"
+SVG="design/prototype/foundation-components/assets/avatars/sentient-mark.svg"
 BG="#2B2621"   # --color-bg / ic_launcher_background — the app background
 
 # ── In-app mark: one transparent hi-dpi master, resized per use-site ──────────

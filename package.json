@@ -12,6 +12,8 @@
     "stack:down": "bash scripts/stack.sh down",
     "stack:status": "bash scripts/stack.sh status",
     "calendar:fixture": "bun gateway/src/calendar/e2e-fixture-control.ts",
+    "design:avatar:generate": "bash scripts/design/sentient-avatar-rive.sh generate",
+    "design:avatar:verify": "bash scripts/design/sentient-avatar-rive.sh verify",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",

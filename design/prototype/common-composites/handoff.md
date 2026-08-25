@@ -2,7 +2,7 @@
 
 ## Outcome
 
-- Implement the reviewed bounded composites as reusable native patterns for Preact, SwiftUI, and Compose under the authority of `DESIGN.md`.
+- Implement the reviewed bounded composites as reusable native patterns for Preact, SwiftUI, and Compose under the authority of `DESIGN.MD`.
 - Preserve the locked Dusk palette, established typography, elevated-slate material, recessed receivers, semantic state language, and user-friendly type floors.
 - Keep these patterns generic and composable. Do not turn the prototype into a shared runtime dependency or expand it into complete pages, chat, calendar, composer, or product-specific workflows.
 
@@ -12,7 +12,7 @@
 - Composite anatomy and responsive review styling: `design/prototype/common-composites/common-composites.css`.
 - Reference interactions and transitions: `design/prototype/common-composites/common-composites.js`.
 - Foundation snapshot: `design/prototype/common-composites/vendor/`; production implementations must consume native foundation components rather than this copied CSS or JavaScript.
-- Durable authority: `DESIGN.md`.
+- Durable authority: `DESIGN.MD`.
 - Primitive contract: `design/prototype/foundation-components/handoff.md`.
 - No checkpoint snapshot was created; the current prototype entry point is the reviewed state.
 

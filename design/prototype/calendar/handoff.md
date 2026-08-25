@@ -2,7 +2,7 @@
 
 ## Outcome
 
-- Implement the reviewed household calendar as a source-true, responsive workspace under the authority of `DESIGN.md`.
+- Implement the reviewed household calendar as a source-true, responsive workspace under the authority of `DESIGN.MD`.
 - Preserve day, week, month, and year behavior; direct filtering; readable event density; explicit preview and mutation flows; and native platform interaction conventions.
 - Keep Preact, SwiftUI, and Compose implementations native. The prototype is a visual, semantic, responsive, and interaction contract—not a shared runtime dependency.
 - Keep chat, composer, navigation, tool activity, assistant actions, reminders, places, conflict checking, and unsupported event fields outside this implementation scope.
@@ -13,10 +13,10 @@
 - Calendar composition, responsive behavior, material, overlays, and editor layout: `design/prototype/calendar/calendar.css`.
 - Fixture projection, filters, navigation, preview, overflow, and mutation demonstrations: `design/prototype/calendar/calendar.js`.
 - Foundation snapshot: `design/prototype/calendar/vendor/`; production must consume native foundation components rather than copied prototype CSS or JavaScript.
-- Durable authority: `DESIGN.md`.
+- Durable authority: `DESIGN.MD`.
 - Primitive contract: `design/prototype/foundation-components/handoff.md`.
 - Disclosure-shell contract: `design/prototype/common-composites/handoff.md`.
-- Visual inspiration only: `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html`.
+- The current Calendar prototype entry point, stylesheet, interaction simulation, and handoff are the consolidated visual and interaction authority.
 - Current web behavior and projection: `gateway/webui/src/components/calendar/calendar-shell.tsx`, `gateway/webui/src/components/calendar/calendar-canvas-primitives.tsx`, `gateway/webui/src/components/calendar/calendar-projection-types.ts`, and `gateway/webui/src/services/calendar-api.ts`.
 - No checkpoint snapshot was created; the current prototype entry point is the reviewed state.
 

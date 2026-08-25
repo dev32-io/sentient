@@ -1,0 +1,170 @@
+{
+  "manifest_version": 2,
+  "asset": "Sentient avatar canonical Rive asset",
+  "fidelity_references": [
+    "sentient-mark.svg",
+    "sentient-avatar-thinking.svg",
+    "sentient-avatar-responding.svg",
+    "sentient-avatar.js"
+  ],
+  "source_sha256": {
+    "sentient-mark.svg": "4a50a4b3a05fc7e5bf3d094b1e3b7b517a978d8ec74dc7d66695cc0041a074f1",
+    "sentient-avatar-thinking.svg": "3fc089c7087d881c757b94ab490eb379b290f0e83607f222631493884436ba69",
+    "sentient-avatar-responding.svg": "1df132f6ac50e0cf552e4a1b087251c14974fd8b0818cd7e5304ddc0dbcb55fa",
+    "sentient-avatar.js": "7d1e9cc730e036efd6ab0b8259907c5b38c1bd12238d5e81ea3184d803b43737"
+  },
+  "generated_asset": {
+    "scene": "sentient-avatar.rive.json",
+    "scene_sha256": "c1acf7542e6fa9663771bf8d41f235e7762d851a29e94e720f1b02bcf7dfbb1e",
+    "riv": "sentient-avatar.riv",
+    "riv_sha256": "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b"
+  },
+  "generator": {
+    "repository": "https://github.com/George-RD/rive-rs-cli.git",
+    "commit": "cc10173318409571926f6d1d37c796f52e5232e2",
+    "cargo_lock_sha256": "30566259e6f2d6c49d572c34b849f98bb7334ac25b45c397dc9bc2a36e710528",
+    "rust_toolchain": "1.98.0",
+    "build": "cargo build --release --locked",
+    "version": "rive-cli 0.1.0"
+  },
+  "runtime_contract": {
+    "artboard": "SentientAvatar",
+    "state_machine": "Avatar",
+    "states": [
+      "idle",
+      "thinking",
+      "responding"
+    ],
+    "initial_state": "idle",
+    "inputs": {
+      "idle": {
+        "name": "toIdle",
+        "type": "trigger"
+      },
+      "thinking": {
+        "name": "toThinking",
+        "type": "trigger"
+      },
+      "responding": {
+        "name": "toResponding",
+        "type": "trigger"
+      },
+      "reduced_motion": {
+        "name": "reducedMotion",
+        "type": "bool",
+        "default": false
+      }
+    },
+    "state_change": "Set reducedMotion to the current accessibility preference, then fire the trigger for the latest desired state. A newer distinct trigger interrupts and replaces the in-flight transition; repeating the current request is visually stable.",
+    "transition_duration_ms": 250,
+    "transition_choreography": {
+      "outgoing": {
+        "times_ms": [
+          0,
+          138,
+          250
+        ],
+        "opacity": [
+          1,
+          0.44,
+          0
+        ],
+        "scale": [
+          1,
+          0.94,
+          0.88
+        ]
+      },
+      "incoming": {
+        "times_ms": [
+          0,
+          120,
+          250
+        ],
+        "opacity": [
+          0,
+          0.74,
+          1
+        ],
+        "scale": [
+          0.78,
+          1.06,
+          1
+        ],
+        "rotation_degrees": [
+          -5,
+          1,
+          0
+        ]
+      },
+      "ownership": "Directed one-shot states on the Avatar state machine; host applications only set reducedMotion and fire desired-state triggers."
+    },
+    "reduced_motion": "With reducedMotion=true, each desired-state trigger immediately selects a complete authored static variant. Static variants have fixed electrons and no loop, orbit travel, aperture travel, pulse, or wave travel."
+  },
+  "source_motion_periods_seconds": {
+    "thinking": {
+      "thought_field": 1.35,
+      "field_scan": 2.1,
+      "aperture_a": 2.7,
+      "aperture_b": 3.8,
+      "electrons": [
+        2.15,
+        2.75,
+        3.25
+      ],
+      "electron_begin_offsets": [
+        -0.35,
+        -1.25,
+        -2.1
+      ]
+    },
+    "responding": {
+      "voice_and_rim": 1.55,
+      "waves": 2.4,
+      "wave_offsets": [
+        0,
+        0.8,
+        1.6
+      ],
+      "electrons": [
+        3.4,
+        4.1,
+        4.8
+      ],
+      "electron_begin_offsets": [
+        -0.4,
+        -1.9,
+        -3.2
+      ]
+    },
+    "implementation": "Concurrent nested linear-animation players retain each source period and phase independently."
+  },
+  "visual_implementation": {
+    "artboard_size": [
+      64,
+      64
+    ],
+    "blur_fallback": "Layered low-opacity rim strokes replace unsupported SVG Gaussian blur/feather.",
+    "thinking_aperture": "Independent trimmed circular arcs approximate SVG dash arrays.",
+    "electron_paths": "Scaled rotating nodes reproduce the three elliptical SVG motion paths and direction-specific phase offsets.",
+    "dynamic_strokes": "Scale, opacity, color, and layered fixed-width strokes approximate unsupported animated stroke width.",
+    "wave_startup": "Perpetual Rive wave loops use the source 0/.8/1.6 second phase spacing; the SVG's one-time initial animation-delay hold is represented as steady-state phase offset."
+  },
+  "verification": {
+    "command": "scripts/design/sentient-avatar-rive.sh verify",
+    "render_output": "/tmp/sentient-rive-render",
+    "background": "#17120F",
+    "svg_reference_times_seconds": {
+      "idle": 0,
+      "thinking": 1,
+      "responding": 2
+    },
+    "image_comparison_bounds": {
+      "normalized_rgb_mae_max": 0.15,
+      "foreground_iou_min": 0.42
+    },
+    "rapid_transition_schedule": "toThinking@10, toResponding@20, toIdle@30",
+    "deterministic_generations": 2,
+    "deterministic_svg_captures": 2
+  }
+}

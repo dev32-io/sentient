@@ -10,8 +10,8 @@ Open `index.html` through the Visual Companion or a local static server. See `ha
 - Excludes chat bubbles, chat composer controls, calendar, product-specific flows, and complete pages.
 - `common-composites.css` owns composite anatomy and the review-page layout.
 - `common-composites.js` provides bounded specimen interactions and meaningful state transitions, with static Reduced Motion fallbacks.
-- Visible copy follows the user-friendly type floors and casing rules in `DESIGN.md`; the mockup does not use all-caps styling.
+- Visible copy follows the user-friendly type floors and casing rules in `DESIGN.MD`; the mockup does not use all-caps styling.
 - Dropdowns use the mock listbox shell rather than the browser’s native expanded menu so the reviewed float material and interaction remain visible.
 - `vendor/` is a self-contained snapshot of the reviewed `foundation-components` primitive library and identity assets so this prototype can be served in isolation.
 
-This is a design review artifact, not a production dependency. Production implementation remains native to Preact, SwiftUI, and Compose and follows `DESIGN.md`.
+This is a design review artifact, not a production dependency. Production implementation remains native to Preact, SwiftUI, and Compose and follows `DESIGN.MD`.

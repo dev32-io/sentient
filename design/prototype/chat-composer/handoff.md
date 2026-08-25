@@ -13,7 +13,7 @@
 - Component and responsive styling: `design/prototype/chat-composer/chat-composer.css`
 - Interaction reference: `design/prototype/chat-composer/chat-composer.js`
 - Foundation snapshot used by the review shell: `design/prototype/chat-composer/vendor/`
-- Durable visual authority: `DESIGN.md`
+- Durable visual authority: `DESIGN.MD`
 - Existing implementation references:
   - `gateway/webui/src/components/dock/composer.tsx`
   - `gateway/webui/src/components/dock/mic-corner.tsx`

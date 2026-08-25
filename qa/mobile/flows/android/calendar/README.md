@@ -2,12 +2,14 @@
 
 These are reusable direct Maestro steps for the final E2E agent, not additions to `qa/mobile/run-e2e.sh`. Run Android and iOS sequentially. The exact comparison authority is:
 
-- `sentient-design/HANDOFF.md`
-- `sentient-design/brand-spec.md`
-- `sentient-design/design/mobile/calendar.html`
-- `sentient-design/components/mobile/sentient-mobile.js`
-- reference URL: `http://127.0.0.1:8799/design/mobile/calendar.html`
-- reference command: `python3 -m http.server 8799 --directory sentient-design`
+- `DESIGN.MD`
+- `design/prototype/calendar/README.md`
+- `design/prototype/calendar/handoff.md`
+- `design/prototype/calendar/index.html`
+- `design/prototype/calendar/calendar.css`
+- `design/prototype/calendar/calendar.js`
+- reference URL: `http://127.0.0.1:8799/index.html`
+- reference command: `python3 -m http.server 8799 --directory design/prototype/calendar`
 
 ## Fixture and network boundary
 

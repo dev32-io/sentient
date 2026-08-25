@@ -9,7 +9,7 @@ Implementation handoff: [`handoff.md`](./handoff.md).
 ## Boundary
 
 - Covers the source-supported day, week, month, and year views; previous/next/Today navigation; local search; scope, group, tag, and importance filters; dense-cell overflow; event preview; add/edit; recurrence indication; recurring mutation scope; delete confirmation; and responsive desktop/mobile composition.
-- Draws spatial inspiration from `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html`, while `DESIGN.md` and current production calendar code remain authoritative.
+- This consolidated prototype and handoff define the reviewed Calendar composition under `DESIGN.MD`; current production Calendar code remains authoritative for domain behavior.
 - Uses only supported V2 event fields: scope, title, description, start/end, recurrence, visibility, importance, group, and tags. Prototype-only category, conflict-check, reminder, place, and assistant-action fields are deliberately excluded.
 - Search matches title and description only, mirroring `gateway/webui/src/components/calendar/calendar-filters.ts`.
 - Month density adapts the number of directly visible events to the available cell height and keeps the remainder reachable through `+N more`; the complete six-row month remains visible without an internal vertical drag. Compact phone month cells retain accessible event buttons while displaying importance dots.
@@ -20,4 +20,4 @@ Implementation handoff: [`handoff.md`](./handoff.md).
 - The local fixture date is for visual review only. Production date identity, time-zone projection, pagination, authorization, optimistic conflict handling, and persistence remain owned by the existing controller and API contracts.
 - `vendor/` is a self-contained snapshot of the reviewed foundation component styles.
 
-This is a responsive visual review artifact, not production code. Production implementations remain native to Preact, SwiftUI, and Compose and follow `DESIGN.md`.
+This is a responsive visual review artifact, not production code. Production implementations remain native to Preact, SwiftUI, and Compose and follow `DESIGN.MD`.

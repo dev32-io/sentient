@@ -2,10 +2,12 @@
 
 Compared against:
 
-- `sentient-design/HANDOFF.md`
-- `sentient-design/brand-spec.md`
-- `sentient-design/design/mobile/calendar.html`
-- `sentient-design/components/mobile/sentient-mobile.js`
+- `DESIGN.MD`
+- `design/prototype/calendar/README.md`
+- `design/prototype/calendar/handoff.md`
+- `design/prototype/calendar/index.html`
+- `design/prototype/calendar/calendar.css`
+- `design/prototype/calendar/calendar.js`
 
 The adapter intentionally carries semantics only; geometry, colors, and prototype-only fields are excluded.
 

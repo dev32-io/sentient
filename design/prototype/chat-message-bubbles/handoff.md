@@ -2,7 +2,7 @@
 
 ## Outcome
 
-- Implement the reviewed assistant and user message language as a calm, readable conversation surface under the authority of `DESIGN.md`.
+- Implement the reviewed assistant and user message language as a calm, readable conversation surface under the authority of `DESIGN.MD`.
 - Preserve clear role, identity, chronology, streaming, completion, and interruption without turning messages into generic cards or attaching unrelated tool activity.
 - Keep Preact, SwiftUI, and Compose implementations native. The prototype is a visual, semantic, responsive, and motion contract—not a shared runtime dependency.
 - Keep composer controls, task strips, tool details, permissions, navigation, and complete-page layout outside this implementation scope.
@@ -13,9 +13,9 @@
 - Message anatomy, material, responsive behavior, and motion: `design/prototype/chat-message-bubbles/chat-message-bubbles.css`.
 - Interactive state and streaming simulation: `design/prototype/chat-message-bubbles/chat-message-bubbles.js`.
 - Foundation snapshot: `design/prototype/chat-message-bubbles/vendor/`; production must consume native foundation components and canonical identity assets rather than copied prototype code.
-- Durable authority: `DESIGN.md`.
+- Durable authority: `DESIGN.MD`.
 - Primitive contract: `design/prototype/foundation-components/handoff.md`.
-- Visual inspiration only: `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html`.
+- The current prototype entry point, stylesheet, interaction simulation, and handoff are the consolidated message review authority.
 - Current web behavior: `gateway/webui/src/components/chat/message-bubble.tsx`, `gateway/webui/src/components/chat/bubble-text.tsx`, and `gateway/webui/src/components/chat/interrupt-chip.tsx`.
 - Current cross-platform reveal contract: `shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/usecase/RevealReducer.kt`.
 - No checkpoint snapshot was created; the current prototype entry point is the reviewed state.
@@ -38,7 +38,7 @@
 
 ## Decisions
 
-- The older `sentient-design/` prototypes provide composition inspiration only. Current Dusk tokens, type floors, casing, elevated-slate construction, identity assets, and accessibility rules come from `DESIGN.md`.
+- Current Dusk tokens, type floors, casing, elevated-slate construction, identity assets, and accessibility rules come from `DESIGN.MD`.
 - Bubble faces are stable plates, not keys. They do not move or gain an interaction outline on hover.
 - User and assistant roles are distinguished by alignment, corner geometry, material tint, identity, and metadata—not color alone.
 - The responding face grows vertically only. Width expansion during typing was rejected because it creates visual instability and performs poorly on narrow screens.
