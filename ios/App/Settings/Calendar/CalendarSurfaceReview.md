@@ -37,3 +37,16 @@ Only the corrections named in the reviewed task contract are applied:
 5. Shared full-date, today, selected, outside-month, event, and overflow
    semantics are exposed to VoiceOver; reduced motion removes nonessential
    transitions.
+
+## Intentional native adaptations
+
+- SwiftUI `DatePicker`, `Picker`, `Toggle`, text fields, keyboard toolbar, modal
+  focus, and accessibility escape actions replace the prototype HTML controls.
+- Scope is shown as direct Private and Household checkbox-style targets with no
+  synthetic All target. The existing shared `CalendarScope` has no neither value,
+  so deselecting the final scope keeps it selected; selecting both maps to shared
+  `.all`. This preserves the session-owned filter/API contract instead of adding
+  an iOS-only projection state.
+- Calendar-specific canvas and sheet geometry remains in named structural
+  constants. Typography, color, spacing, radii, motion, wells, plates, and
+  decisive controls consume the iOS v2 foundation/common components.
