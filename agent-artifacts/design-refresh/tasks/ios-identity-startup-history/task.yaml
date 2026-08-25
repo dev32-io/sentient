@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-identity-startup-history
 title: Integrate iOS Rive identity, readiness-gated startup, native shell, and History
-status: submitted
+status: awaiting_ci
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
