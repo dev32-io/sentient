@@ -23,8 +23,8 @@ struct DangerButton: View {
             Text(title)
                 .font(.system(size: TypeScale.base, weight: .semibold))
                 .foregroundStyle(DuskColors.stop)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Space.sm)
+                .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
+                .padding(.horizontal, Space.md)
                 .overlay(
                     RoundedRectangle(cornerRadius: Radii.md)
                         .stroke(DuskColors.stop, lineWidth: 1)

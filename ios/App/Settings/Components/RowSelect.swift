@@ -40,7 +40,7 @@ struct RowSelect: View {
         HStack(spacing: Space.lg) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(label)
-                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .font(Typo.ui(TypeScale.base, .medium))
                     .foregroundStyle(DuskColors.ink)
                 if let sub {
                     Text(sub)
@@ -79,13 +79,14 @@ struct RowSelect: View {
             .opacity(isEnabled ? 1 : 0.5)
             .accessibilityIdentifier(accessibilityId)
         }
+        .frame(minHeight: DesignMetrics.minimumTarget)
         .padding(.vertical, Space.sm)
     }
 
     private var menuLabel: some View {
         HStack(spacing: Space.xs) {
             Text(currentLabel)
-                .font(Typo.mono(TypeScale.sm))
+                .font(Typo.mono(TypeScale.base))
                 .foregroundStyle(DuskColors.ink)
                 .lineLimit(1)
             Image(systemName: "chevron.up.chevron.down")

@@ -18,23 +18,7 @@ struct SettingsPageScaffold<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Space.lg) {
-                content()
-            }
-            .padding(.horizontal, Space.lg)
-            .padding(.top, Space.md)
-            .padding(.bottom, Space.xl)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-        }
-        .background(DuskColors.bg)
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(DuskColors.bg, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .accessibilityIdentifier(screenId)
-        .duskTheme()
+        DesignPageChrome(title: title, accessibilityId: screenId, content: content)
     }
 }
 
