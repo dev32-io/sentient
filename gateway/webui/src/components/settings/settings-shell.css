@@ -1,59 +1,88 @@
-/* gateway/webui/src/components/settings/settings-shell.css */
-
+/* Settings shell and task-owned pane layouts. Visual values come from the shared foundation. */
 .settings-v2 {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  min-height: calc(100vh - 56px); /* topbar height; adjust if it differs */
-  background: var(--color-bg);
-  color: var(--color-ink);
-  font-family: var(--font-ui);
+  grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+  min-height: calc(100vh - 3.5rem);
 }
-
 .settings-v2 .s-side {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   border-right: 1px solid var(--color-line-soft);
 }
-
 .settings-v2 .s-main {
-  padding: 32px 40px 140px;
-  overflow-y: auto;
   min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-xl) var(--space-2xl) 9rem;
 }
-
-.settings-v2 .s-pane {
-  width: 100%;
+.settings-v2 .s-pane,
+.settings-v2 .owned-pane { width: 100%; }
+.settings-v2 .s-narrow-back { display: none; }
+.settings-v2 .owned-inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-sm);
+  min-width: min(24rem, 100%);
+}
+.settings-v2 .owned-fields,
+.settings-v2 .owned-secret-edit,
+.settings-v2 .owned-member-list {
+  display: grid;
+  gap: var(--space-md);
+}
+.settings-v2 .owned-actions {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-  animation: pane-fade .18s ease-out;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
 }
-
-@keyframes pane-fade {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 1; transform: translateY(0); }
+.settings-v2 .owned-member-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--color-line-soft);
 }
-
-@media (max-width: 1100px) {
-  .settings-v2 .s-main { padding: 28px 32px 140px; }
+.settings-v2 .owned-member-row:first-child { border-top: 0; }
+.settings-v2 .owned-member-name { color: var(--color-ink-2); }
+.settings-v2 .owned-member-name strong { color: var(--color-ink); }
+.settings-v2 .role-pill {
+  display: inline-flex;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink-2);
+  font: var(--font-size-xs) / var(--line-height-normal) var(--font-mono);
 }
+.settings-v2 .role-pill--admin { border-color: var(--color-accent); color: var(--color-accent); }
+.settings-v2 .owned-download-code {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-sm);
+  margin: var(--space-lg) 0 0;
+}
+.settings-v2 .owned-download-code img {
+  max-width: 100%;
+  height: auto;
+  padding: var(--space-sm);
+  background: var(--color-paper);
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+}
+.settings-v2 .owned-download-code figcaption { max-width: 100%; overflow-wrap: anywhere; }
 
-@media (max-width: 880px) {
-  /* minmax(0, 1fr), NOT a bare 1fr: a plain 1fr track keeps an implicit
-     min-width:min-content, so the wide horizontal nav strip would blow the
-     column out past the viewport (content clipped by app-shell, not scrolled).
-     minmax(0,…) + min-width:0 lets the column shrink to the viewport and the
-     strip scroll internally; panes then wrap correctly. */
-  .settings-v2 { grid-template-columns: minmax(0, 1fr); }
-  .settings-v2 .s-side {
-    min-width: 0;
-    border-right: 0;
-    border-bottom: 1px solid var(--color-line-soft);
-    /* keep the strip pinned + scrollable on narrow screens */
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: var(--color-bg);
-  }
-  .settings-v2 .s-main { padding: 20px 16px 140px; }
+@media (max-width: 55rem) {
+  .settings-v2 { display: block; }
+  .settings-v2 .s-side { border-right: 0; }
+  .settings-v2 .s-main { display: none; padding: var(--space-md) var(--space-md) 8rem; }
+  .settings-v2[data-narrow-pane-open="true"] .s-side { display: none; }
+  .settings-v2[data-narrow-pane-open="true"] .s-main { display: block; }
+  .settings-v2 .s-narrow-back { display: block; margin-bottom: var(--space-md); }
+  .settings-v2 .owned-member-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .settings-v2 .owned-member-row > .snt-action-row { grid-column: 1 / -1; justify-content: flex-end; }
+  .settings-v2 .owned-inline-field { grid-template-columns: minmax(0, 1fr); }
+  .settings-v2[data-narrow-pane-open="false"] .apply-bar { display: none; }
 }

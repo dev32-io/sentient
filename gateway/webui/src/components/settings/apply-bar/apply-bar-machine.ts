@@ -18,6 +18,7 @@ export type ApplyBarState =
   | { phase: "saving"; pending: PendingOp[] }
   | { phase: "restarting"; pending: PendingOp[] }
   | { phase: "ready"; elapsedMs: number }
+  | { phase: "already-applying" }
   | { phase: "failed"; errorMessage: string };
 
 /** True when at least one pending op is dirty. */
@@ -47,7 +48,7 @@ export interface SaveResult {
 }
 
 export interface RestartWaitResult {
-  state: "ready" | "failed";
+  state: "ready" | "already-applying" | "failed";
   elapsedMs: number;
 }
 
@@ -109,8 +110,13 @@ export async function runApply(
 
   onState({ phase: "restarting", pending });
   const restart = await deps.waitForRestart();
+  if (restart.state === "already-applying") {
+    const msg = "Another apply is already in progress.";
+    onState({ phase: "already-applying" });
+    return { ok: false, errorMessage: msg };
+  }
   if (restart.state === "failed") {
-    const msg = "Your assistant didn't come back up. Try again.";
+    const msg = "Changes could not be applied. Try again.";
     onState({ phase: "failed", errorMessage: msg });
     return { ok: false, errorMessage: msg };
   }
