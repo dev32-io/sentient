@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { inventorySchema } from "./contracts.ts";
-import { findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
+import { discoverReachability, findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
 import { assertLoopbackFixtureTarget, withDisposableUser } from "./fixture.ts";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -24,9 +24,9 @@ afterEach(async () => {
 describe("design refresh inventory checker", () => {
   it("rejects a missing reachable row", async () => {
     const raw = await current("inventory.json");
-    const required = (await current("reachability.json")).requiredIds as string[];
+    const reachability = await discoverReachability(repoRoot);
     raw.rows = raw.rows.slice(1);
-    await expect(validateInventory(repoRoot, raw, required)).rejects.toThrow("missing reachable inventory rows");
+    await expect(validateInventory(repoRoot, raw, reachability)).rejects.toThrow("missing reachable inventory rows");
   });
 
   it("rejects a duplicate final E2E mapping", async () => {
@@ -36,12 +36,26 @@ describe("design refresh inventory checker", () => {
     await expect(validateMatrix(matrix, inventory)).rejects.toThrow("duplicate E2E cases");
   });
 
-  it("rejects production runtime imports from prototypes", async () => {
+  it("rejects multiline imports, URLs, and bundle references to prototypes", async () => {
     const root = await tempRoot();
-    const source = join(root, "gateway/webui/src/example.ts");
     await mkdir(join(root, "gateway/webui/src"), { recursive: true });
-    await writeFile(source, 'import recipe from "../../../design/prototype/calendar/calendar.js";\n');
-    await expect(findPrototypeRuntimeReferences(root)).resolves.toEqual(["gateway/webui/src/example.ts:1"]);
+    await mkdir(join(root, "ios/App"), { recursive: true });
+    await writeFile(join(root, "gateway/webui/src/example.ts"), [
+      "// design/prototype/reference-only is allowed in comments",
+      "import recipe from",
+      '  "../../../design/prototype/calendar/calendar.js";',
+      'const asset = new URL("../../../design/prototype/avatar.riv", import.meta.url);',
+    ].join("\n"));
+    await writeFile(join(root, "ios/App/Example.swift"), [
+      "let asset = Bundle.main.url(",
+      '  forResource: "design/prototype/avatar",',
+      '  withExtension: "riv")',
+    ].join("\n"));
+    await expect(findPrototypeRuntimeReferences(root)).resolves.toEqual([
+      "gateway/webui/src/example.ts:3",
+      "gateway/webui/src/example.ts:4",
+      "ios/App/Example.swift:2",
+    ]);
   });
 
   it("accepts a platform-owned asset copy with the recorded canonical hash", async () => {

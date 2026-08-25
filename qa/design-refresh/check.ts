@@ -6,7 +6,17 @@ import { e2eMatrixSchema, inventorySchema, visualManifestSchema, type Inventory,
 
 export const EXPECTED_CASES = Array.from({ length: 9 }, (_, i) => `E2E-${String(i + 1).padStart(3, "0")}`);
 const PRODUCTION_ROOTS = ["gateway/webui/src", "ios/App", "shared/mobile-sdk/src", "shared/mobile-data/src"];
+const REACHABILITY_REGISTRIES = [
+  "gateway/webui/src/design-refresh-reachability.json",
+  "ios/App/design-refresh-reachability.json",
+] as const;
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".swift", ".kt", ".kts", ".css"]);
+
+export interface ReachabilityEntry {
+  id: string;
+  implementationPath: string;
+  reachable: boolean;
+}
 const EVIDENCE_ROOTS = ["qa/web/evidence/design-refresh/", "qa/mobile/evidence/design-refresh/"];
 const EVIDENCE_EXTENSIONS = new Set([".json", ".md", ".txt", ".png", ".jpg", ".jpeg", ".mp4"]);
 const TEXT_EVIDENCE_EXTENSIONS = new Set([".json", ".md", ".txt"]);
@@ -55,19 +65,99 @@ async function walk(path: string): Promise<string[]> {
   return result;
 }
 
+function stripComments(content: string): string {
+  let result = "";
+  let state: "code" | "line" | "block" | "single" | "double" | "template" = "code";
+  for (let index = 0; index < content.length; index += 1) {
+    const char = content[index];
+    const next = content[index + 1];
+    if (state === "line") {
+      if (char === "\n") { state = "code"; result += char; } else result += " ";
+      continue;
+    }
+    if (state === "block") {
+      if (char === "*" && next === "/") { result += "  "; index += 1; state = "code"; }
+      else result += char === "\n" ? "\n" : " ";
+      continue;
+    }
+    if (state === "code" && char === "/" && next === "/") { result += "  "; index += 1; state = "line"; continue; }
+    if (state === "code" && char === "/" && next === "*") { result += "  "; index += 1; state = "block"; continue; }
+    if (state === "code" && (char === "'" || char === '"' || char === "`")) {
+      state = char === "'" ? "single" : char === '"' ? "double" : "template";
+      result += char;
+      continue;
+    }
+    if (state !== "code") {
+      result += char;
+      if (char === "\\") { result += content[index + 1] ?? ""; index += 1; continue; }
+      if ((state === "single" && char === "'") || (state === "double" && char === '"') || (state === "template" && char === "`")) state = "code";
+      continue;
+    }
+    result += char;
+  }
+  return result;
+}
+
 export async function findPrototypeRuntimeReferences(repoRoot: string): Promise<string[]> {
-  const violations: string[] = [];
-  const runtimePattern = /(?:\bimport\b[^\n]*\bfrom\s*|\bimport\s*\(|\brequire\s*\(|\bBun\.file\s*\(|\breadFile(?:Sync)?\s*\(|\bnew\s+URL\s*\(|\burl\s*\()[^\n]*design\/prototype\//;
+  const violations = new Set<string>();
+  const runtimePatterns = [
+    // ECMAScript static/dynamic imports and file/network loaders. Character
+    // classes intentionally include newlines so ordinary formatted imports are
+    // checked as one syntax form rather than line-by-line.
+    /\bimport\s+(?:type\s+)?(?:[\w*$,\s{}]+\s+from\s+)?["'`][^"'`]*design\/prototype\//g,
+    /\bexport\s+(?:\*|\{[\w,\s]+\})\s+from\s+["'`][^"'`]*design\/prototype\//g,
+    /\b(?:import|require|fetch|Bun\.file|readFile|readFileSync)\s*\(\s*["'`][^"'`]*design\/prototype\//g,
+    /\bnew\s+URL\s*\(\s*["'`][^"'`]*design\/prototype\//g,
+    /(?:\burl\s*\(|@import\s+)["'`]?[^\n;)]*design\/prototype\//g,
+    // Native resource-loading forms. The cap prevents an unrelated Bundle or
+    // resource call elsewhere in the file from claiming a reference string.
+    /\bBundle(?:\s*\.\s*\w+)*\s*\.\s*(?:url|path)\s*\([\s\S]{0,500}?design\/prototype\//g,
+    /\b(?:URL|URI|getResource|getResourceAsStream)\s*\([\s\S]{0,300}?design\/prototype\//g,
+  ];
   for (const root of PRODUCTION_ROOTS) {
     for (const absolute of await walk(resolve(repoRoot, root))) {
       if (!SOURCE_EXTENSIONS.has(extname(absolute))) continue;
-      const lines = (await readFile(absolute, "utf8")).split("\n");
-      lines.forEach((line, index) => {
-        if (runtimePattern.test(line)) violations.push(`${relative(repoRoot, absolute)}:${index + 1}`);
-      });
+      const content = stripComments(await readFile(absolute, "utf8"));
+      for (const pattern of runtimePatterns) {
+        for (const match of content.matchAll(pattern)) {
+          const pathOffset = match[0].indexOf("design/prototype/");
+          const offset = (match.index ?? 0) + pathOffset;
+          const line = content.slice(0, offset).split("\n").length;
+          violations.add(`${relative(repoRoot, absolute)}:${line}`);
+        }
+      }
     }
   }
-  return violations.sort();
+  return [...violations].sort();
+}
+
+export async function discoverReachability(repoRoot: string): Promise<ReachabilityEntry[]> {
+  const discovered: ReachabilityEntry[] = [];
+  for (const registryPath of REACHABILITY_REGISTRIES) {
+    const registry = await json(resolve(repoRoot, registryPath)) as {
+      version?: unknown;
+      platform?: unknown;
+      entries?: unknown;
+    };
+    if (registry.version !== 1 || (registry.platform !== "web" && registry.platform !== "ios") || !Array.isArray(registry.entries)) {
+      throw new Error(`invalid source reachability registry: ${registryPath}`);
+    }
+    for (const raw of registry.entries) {
+      if (!raw || typeof raw !== "object") throw new Error(`invalid reachability entry in ${registryPath}`);
+      const entry = raw as Partial<ReachabilityEntry>;
+      if (
+        typeof entry.id !== "string" || !entry.id.startsWith(`${registry.platform}.`) ||
+        typeof entry.implementationPath !== "string" || typeof entry.reachable !== "boolean"
+      ) throw new Error(`invalid reachability entry in ${registryPath}`);
+      if (!(await regularFile(repoRoot, entry.implementationPath))) {
+        throw new Error(`${entry.id}: registered implementation path is not a regular file: ${entry.implementationPath}`);
+      }
+      discovered.push(entry as ReachabilityEntry);
+    }
+  }
+  const duplicateIds = duplicates(discovered.map((entry) => entry.id));
+  if (duplicateIds.length) throw new Error(`duplicate source reachability IDs: ${duplicateIds.join(", ")}`);
+  return discovered;
 }
 
 export async function validateAssetCopy(
@@ -86,15 +176,22 @@ export async function validateAssetCopy(
   if (canonicalHash !== asset.canonicalSha256 || productionHash !== canonicalHash) throw new Error(`${ownerId}: platform asset copy hash mismatch`);
 }
 
-export async function validateInventory(repoRoot: string, raw: unknown, requiredIds: readonly string[]): Promise<Inventory> {
+export async function validateInventory(repoRoot: string, raw: unknown, reachability: readonly ReachabilityEntry[]): Promise<Inventory> {
   const inventory = inventorySchema.parse(raw);
   const ids = inventory.rows.map((row) => row.id);
   const duplicateIds = duplicates(ids);
   if (duplicateIds.length) throw new Error(`duplicate inventory IDs: ${duplicateIds.join(", ")}`);
+  const requiredIds = reachability.map((entry) => entry.id);
   const missing = requiredIds.filter((id) => !ids.includes(id));
   if (missing.length) throw new Error(`missing reachable inventory rows: ${missing.join(", ")}`);
   const unknown = ids.filter((id) => !requiredIds.includes(id));
-  if (unknown.length) throw new Error(`inventory rows absent from closed reachability contract: ${unknown.join(", ")}`);
+  if (unknown.length) throw new Error(`inventory rows absent from source reachability registries: ${unknown.join(", ")}`);
+  const inventoryById = new Map(inventory.rows.map((row) => [row.id, row]));
+  for (const entry of reachability) {
+    const row = inventoryById.get(entry.id)!;
+    if (row.implementationPath !== entry.implementationPath) throw new Error(`${entry.id}: implementation path disagrees with source registry`);
+    if (entry.reachable === (row.status === "unreachable" || row.status === "excluded")) throw new Error(`${entry.id}: reachability status disagrees with source registry`);
+  }
 
   for (const root of inventory.roots) {
     if (!(await regularFile(repoRoot, root))) throw new Error(`reachability root is not a regular file: ${root}`);
@@ -159,8 +256,8 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
 
 export async function checkRepository(repoRoot = resolve(import.meta.dir, "../.."), requireClosed = false): Promise<void> {
   const base = resolve(repoRoot, "qa/design-refresh");
-  const requiredIds = (await json(resolve(base, "reachability.json")) as { requiredIds: string[] }).requiredIds;
-  const inventory = await validateInventory(repoRoot, await json(resolve(base, "inventory.json")), requiredIds);
+  const reachability = await discoverReachability(repoRoot);
+  const inventory = await validateInventory(repoRoot, await json(resolve(base, "inventory.json")), reachability);
   await validateMatrix(await json(resolve(base, "e2e-matrix.json")), inventory);
   const visual = await validateVisualManifest(repoRoot, await json(resolve(base, "visual-review.json")), inventory);
   if (requireClosed) {

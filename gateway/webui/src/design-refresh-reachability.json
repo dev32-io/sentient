@@ -1,0 +1,791 @@
+{
+  "version": 1,
+  "platform": "web",
+  "entries": [
+    {
+      "id": "web.install.loading",
+      "implementationPath": "gateway/webui/src/app.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard",
+      "implementationPath": "gateway/webui/src/components/wizard/wizard-shell.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.unlock",
+      "implementationPath": "gateway/webui/src/components/wizard/unlock-gate.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.provider",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-provider.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.provider.testing",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-provider.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.provider.error",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-provider.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.secrets",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-secrets.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.secrets.saving",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-secrets.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.secrets.error",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-secrets.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.voice",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-voice.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.voice.unavailable",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-voice.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.bringup",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-bringup.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.bringup.running",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-bringup.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.bringup.error",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-bringup.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.bringup.success",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-bringup.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.install.wizard.finish",
+      "implementationPath": "gateway/webui/src/components/wizard/steps/step-finish.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.boot",
+      "implementationPath": "gateway/webui/src/app.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.user-list.loading",
+      "implementationPath": "gateway/webui/src/app.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.setup",
+      "implementationPath": "gateway/webui/src/components/auth/setup-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.setup.submitting",
+      "implementationPath": "gateway/webui/src/components/auth/setup-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.setup.error",
+      "implementationPath": "gateway/webui/src/components/auth/setup-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.login-picker",
+      "implementationPath": "gateway/webui/src/components/auth/login-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.pin",
+      "implementationPath": "gateway/webui/src/components/auth/login-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.pin.submitting",
+      "implementationPath": "gateway/webui/src/components/auth/login-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.pin.error",
+      "implementationPath": "gateway/webui/src/components/auth/login-screen.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.auth.failed",
+      "implementationPath": "gateway/webui/src/app.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.shell.chat",
+      "implementationPath": "gateway/webui/src/components/shell/app-shell.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.shell.topbar",
+      "implementationPath": "gateway/webui/src/components/shell/topbar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.shell.notifications-noop",
+      "implementationPath": "gateway/webui/src/components/shell/topbar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.shell.user-menu",
+      "implementationPath": "gateway/webui/src/components/shell/user-menu.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.shell.user-menu.open",
+      "implementationPath": "gateway/webui/src/components/shell/user-menu.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.closed",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.loading",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.list",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.empty",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.no-results",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.error",
+      "implementationPath": "gateway/webui/src/components/sessions/drawer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.row-menu",
+      "implementationPath": "gateway/webui/src/components/sessions/row-menu.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.rename",
+      "implementationPath": "gateway/webui/src/components/sessions/rename-dialog.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.rename.invalid",
+      "implementationPath": "gateway/webui/src/components/sessions/rename-dialog.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.rename.submitting",
+      "implementationPath": "gateway/webui/src/components/sessions/rename-dialog.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.history.delete",
+      "implementationPath": "gateway/webui/src/components/sessions/confirm-delete-dialog.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.empty",
+      "implementationPath": "gateway/webui/src/components/chat/message-list.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.user-message",
+      "implementationPath": "gateway/webui/src/components/chat/message-bubble.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.assistant-thinking",
+      "implementationPath": "gateway/webui/src/components/chat/message-bubble.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.assistant-responding",
+      "implementationPath": "gateway/webui/src/components/chat/message-bubble.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.assistant-complete",
+      "implementationPath": "gateway/webui/src/components/chat/message-bubble.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.interrupted",
+      "implementationPath": "gateway/webui/src/components/chat/interrupt-chip.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.tool-detail",
+      "implementationPath": "gateway/webui/src/components/chat/tool-inline-detail.tsx",
+      "reachable": false
+    },
+    {
+      "id": "web.chat.tasks",
+      "implementationPath": "gateway/webui/src/components/dock/composer-task-strip.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.tasks.done",
+      "implementationPath": "gateway/webui/src/components/dock/composer-task-strip.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.tasks.error",
+      "implementationPath": "gateway/webui/src/components/dock/composer-task-strip.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.connection-lost",
+      "implementationPath": "gateway/webui/src/app.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.permission",
+      "implementationPath": "gateway/webui/src/components/permission/permission-dialog.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.toast",
+      "implementationPath": "gateway/webui/src/components/common/toast.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.chat.toast.error",
+      "implementationPath": "gateway/webui/src/components/common/toast.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.idle",
+      "implementationPath": "gateway/webui/src/components/dock/composer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.draft",
+      "implementationPath": "gateway/webui/src/components/dock/composer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.reconnecting",
+      "implementationPath": "gateway/webui/src/components/dock/composer.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.interrupt",
+      "implementationPath": "gateway/webui/src/components/dock/interrupt-button.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.tts",
+      "implementationPath": "gateway/webui/src/components/dock/tts-button.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.tts.disabled",
+      "implementationPath": "gateway/webui/src/components/dock/tts-button.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.tts.applying",
+      "implementationPath": "gateway/webui/src/components/dock/tts-button.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.mic",
+      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.mic.hold",
+      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.mic.locked",
+      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.composer.mic.error",
+      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.route",
+      "implementationPath": "gateway/webui/src/components/settings/settings-view.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.loading",
+      "implementationPath": "gateway/webui/src/components/settings/settings-view.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.memory",
+      "implementationPath": "gateway/webui/src/components/settings/panes/memory-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.memory.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/memory-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.memory.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/memory-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.memory.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/memory-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.personalities",
+      "implementationPath": "gateway/webui/src/components/settings/panes/personalities-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.personalities.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/personalities-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.personalities.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/personalities-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.personalities.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/personalities-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.voice",
+      "implementationPath": "gateway/webui/src/components/voices/VoicesPanel.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.voice.loading",
+      "implementationPath": "gateway/webui/src/components/voices/VoicesPanel.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.voice.empty",
+      "implementationPath": "gateway/webui/src/components/voices/VoicesPanel.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.voice.error",
+      "implementationPath": "gateway/webui/src/components/voices/VoicesPanel.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.audio",
+      "implementationPath": "gateway/webui/src/components/settings/panes/audio-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.audio.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/audio-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.audio.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/audio-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.audio.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/audio-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.model",
+      "implementationPath": "gateway/webui/src/components/settings/panes/model-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.model.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/model-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.model.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/model-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.model.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/model-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.tools",
+      "implementationPath": "gateway/webui/src/components/settings/panes/tools-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.tools.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/tools-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.tools.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/tools-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.tools.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/tools-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.system-prompt",
+      "implementationPath": "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.system-prompt.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.system-prompt.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.system-prompt.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.advanced",
+      "implementationPath": "gateway/webui/src/components/settings/panes/advanced-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.advanced.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/advanced-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.advanced.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/advanced-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.advanced.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/advanced-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.account",
+      "implementationPath": "gateway/webui/src/components/settings/panes/account-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.account.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/account-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.account.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/account-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.account.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/account-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members",
+      "implementationPath": "gateway/webui/src/components/settings/panes/members-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/members-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/members-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/members-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.secrets",
+      "implementationPath": "gateway/webui/src/components/settings/panes/secrets-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.secrets.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/secrets-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.secrets.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/secrets-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.secrets.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/secrets-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.get-app",
+      "implementationPath": "gateway/webui/src/components/settings/panes/get-app-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.get-app.loading",
+      "implementationPath": "gateway/webui/src/components/settings/panes/get-app-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.get-app.empty",
+      "implementationPath": "gateway/webui/src/components/settings/panes/get-app-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.get-app.error",
+      "implementationPath": "gateway/webui/src/components/settings/panes/get-app-pane.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.apply.dirty",
+      "implementationPath": "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.apply.applying",
+      "implementationPath": "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.apply.success",
+      "implementationPath": "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.apply.error",
+      "implementationPath": "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.apply.discard",
+      "implementationPath": "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.add",
+      "implementationPath": "gateway/webui/src/components/account-wizard/AccountWizard.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.add.submitting",
+      "implementationPath": "gateway/webui/src/components/account-wizard/AccountWizard.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.add.error",
+      "implementationPath": "gateway/webui/src/components/account-wizard/AccountWizard.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.settings.members.add.success",
+      "implementationPath": "gateway/webui/src/components/account-wizard/AccountWizard.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.route",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-view.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.loading",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-canvas.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.empty",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-canvas-primitives.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.error",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-shell.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.error.mutation-error",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-shell.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.day",
+      "implementationPath": "gateway/webui/src/components/calendar/day-view.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.week",
+      "implementationPath": "gateway/webui/src/components/calendar/week-grid.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.month",
+      "implementationPath": "gateway/webui/src/components/calendar/month-grid.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.year",
+      "implementationPath": "gateway/webui/src/components/calendar/year-grid.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.filters",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.filters.selected",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.filters.no-match",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.preferences",
+      "implementationPath": "gateway/webui/src/components/calendar/calendar-preferences.ts",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.preview",
+      "implementationPath": "gateway/webui/src/components/calendar/event-preview.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.preview.open",
+      "implementationPath": "gateway/webui/src/components/calendar/event-preview.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.create",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.create.invalid",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.create.saving",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.create.error",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.create.success",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.edit",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.edit.dirty",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.edit.saving",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.edit.error",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.edit.success",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.editor.discard",
+      "implementationPath": "gateway/webui/src/components/calendar/event-editor.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.delete",
+      "implementationPath": "gateway/webui/src/components/calendar/delete-confirmation.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.delete.applying",
+      "implementationPath": "gateway/webui/src/components/calendar/delete-confirmation.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.delete.error",
+      "implementationPath": "gateway/webui/src/components/calendar/delete-confirmation.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.delete.success",
+      "implementationPath": "gateway/webui/src/components/calendar/delete-confirmation.tsx",
+      "reachable": true
+    },
+    {
+      "id": "web.calendar.recurrence-scope",
+      "implementationPath": "gateway/webui/src/components/calendar/mutation-scope-chooser.tsx",
+      "reachable": true
+    }
+  ]
+}

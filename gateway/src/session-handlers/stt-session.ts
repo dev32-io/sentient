@@ -277,6 +277,16 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
             eventType: event.type,
             reason: err instanceof Error ? err.message : String(err),
           });
+        } finally {
+          // An event delivered after End is the adapter's terminal response,
+          // even when dispatching that response failed or found no runtime.
+          // Never leave the capture in `committing`: it would reject every
+          // later Start forever.
+          if (eventCapture.status === "committing" && capture === eventCapture) {
+            capture = null;
+            micOpen = false;
+            bufferedBytes = 0;
+          }
         }
       }
     } catch (err: unknown) {
@@ -291,14 +301,17 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     } finally {
       if (adapter === active) {
         adapter = null;
-        if (capture?.mode === "manual") {
-          log.info("stt.manual.discarded", {
+        // Active semantic capture may recover on its next frame. Manual input
+        // cannot be reconstructed across adapters, and any capture already
+        // committing is terminal because its flush stream has ended.
+        if (capture?.mode === "manual" || capture?.status === "committing") {
+          log.info("stt.capture.discarded", {
             sessionId,
             captureId: capture.id,
             mode: capture.mode,
             bufferedBytes,
             transition: `${capture.status}->closed`,
-            reason: "adapter event stream ended before a committed transcript was delivered",
+            reason: "adapter event stream ended before commit completed",
           });
           capture = null;
           micOpen = false;
@@ -424,25 +437,30 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         const active = adapter;
         const text = current.transcripts.join(" ");
         detach("submit-manual", async () => {
-          const runtime = await getRuntimeForInput(text);
-          if (
-            adapter !== active ||
-            capture !== current ||
-            current.epoch !== uplinkEpoch ||
-            current.submitted ||
-            !runtime
-          )
-            return;
-          current.submitted = true;
-          log.info("stt.transcript.submit", {
-            sessionId,
-            captureId,
-            mode: current.mode,
-            turnIdx: null,
-            length: text.length,
-          });
-          runtime.submit({ kind: "conversational", text });
-          if (capture === current) capture = null;
+          try {
+            const runtime = await getRuntimeForInput(text);
+            if (
+              adapter !== active ||
+              capture !== current ||
+              current.epoch !== uplinkEpoch ||
+              current.submitted ||
+              !runtime
+            )
+              return;
+            current.submitted = true;
+            log.info("stt.transcript.submit", {
+              sessionId,
+              captureId,
+              mode: current.mode,
+              turnIdx: null,
+              length: text.length,
+            });
+            runtime.submit({ kind: "conversational", text });
+          } finally {
+            // Runtime lookup/submission failure is still a terminal outcome for
+            // the committed capture; otherwise no later capture can start.
+            if (capture === current) capture = null;
+          }
         });
       }
     },

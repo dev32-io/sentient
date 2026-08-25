@@ -2,8 +2,8 @@
 
 This directory is the closed accountability and local-harness contract for the WebUI and iOS refresh.
 
-- `inventory.json` contains one stable row per reachable significant surface/state and explicit rows for dormant exports. `reachability.json` is the closed required-ID set.
-- `inventory.schema.json` and `contracts.ts` define row/configuration/owner fields. `check.ts` validates files, owners, authority paths, closure, final-case mapping, asset copies, and production isolation from `design/prototype/`.
+- `inventory.json` contains one stable row per reachable significant surface/state and explicit rows for dormant exports. Platform-owned registries at `gateway/webui/src/design-refresh-reachability.json` and `ios/App/design-refresh-reachability.json` are the closed source discovery contract; the checker derives required rows and implementation paths from them.
+- `inventory.schema.json` and `contracts.ts` define row/configuration/owner fields. `check.ts` validates source-registry coverage, files, owners, authority paths, closure, final-case mapping, asset copies, and production isolation from `design/prototype/`.
 - `e2e-matrix.json` maps E2E-001 through E2E-009 exactly once and retains setup, action, outcome, evidence, and safety clauses.
 - `visual-review.json` and its schema define semantic review. Pending entries declare required configurations; reviewed entries add sanitized regular evidence files plus overflow, minimum-target, and focus measurements where applicable. No checker performs image comparison.
 - `fixture-control.ts` creates one synthetic disposable user through the existing local admin boundary. Deleting that user invokes the gateway's whole-user archival/deletion flow, which owns private profile, session, and calendar storage. State files contain generated IDs only and are mode `0600`.

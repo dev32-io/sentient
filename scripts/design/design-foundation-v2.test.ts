@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import Ajv2020 from "ajv/dist/2020.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -12,12 +13,29 @@ import {
 } from "./design-foundation-v2";
 
 describe("design foundation v2 contract", () => {
-  test("validates the schema and exact locked values", async () => {
+  test("validates the committed JSON Schema and exact locked values", async () => {
     const { contract } = await readAndValidateContract();
+    const schema = JSON.parse(await readFile(join(ROOT, "shared/mobile-sdk/design-foundation-v2.schema.json"), "utf8"));
+    const validateSchema = new Ajv2020({ strict: false }).compile(schema);
+    expect(validateSchema(contract), JSON.stringify(validateSchema.errors)).toBe(true);
     expect(() => validateContract(contract)).not.toThrow();
     expect(contract.colors.ember).toBe("#F2A06A");
     expect(contract.motion).toEqual({ feedbackMs: 150, stateTransitionMs: 250, respondingCadenceMs: 1550 });
     expect(contract.avatars.sentient.states).toEqual(["idle", "thinking", "responding"]);
+  });
+
+  test("proves schema-only additional-property and uniqueness constraints", async () => {
+    const schema = JSON.parse(await readFile(join(ROOT, "shared/mobile-sdk/design-foundation-v2.schema.json"), "utf8"));
+    const validateSchema = new Ajv2020({ strict: false }).compile(schema);
+    const additional = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
+    additional.unreviewed = true;
+    expect(validateSchema(additional)).toBe(false);
+    expect(validateSchema.errors?.some((error) => error.keyword === "additionalProperties")).toBe(true);
+
+    const duplicateState = JSON.parse(await readFile(CONTRACT_PATH, "utf8"));
+    duplicateState.componentStates.push(duplicateState.componentStates[0]);
+    expect(validateSchema(duplicateState)).toBe(false);
+    expect(validateSchema.errors?.some((error) => error.keyword === "uniqueItems")).toBe(true);
   });
 
   test("rejects a malformed or expanded avatar state contract", async () => {

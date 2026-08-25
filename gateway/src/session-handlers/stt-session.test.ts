@@ -289,6 +289,41 @@ describe("createSttSession", () => {
     session.close();
   });
 
+  it("terminalizes a committing semantic capture when its event stream fails", async () => {
+    let rejectEvents: ((error: Error) => void) | undefined;
+    const failing = fakeAdapter();
+    failing.adapter.events = async function* () {
+      await new Promise<never>((_resolve, reject) => {
+        rejectEvents = reject;
+      });
+    };
+    failing.adapter.endUtterance = () => {
+      failing.flushes += 1;
+      rejectEvents?.(new Error("final stream failed"));
+    };
+    const healthy = fakeAdapter();
+    const queue = [failing, healthy];
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => (queue.shift() ?? healthy).adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    await settle();
+
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    await settle();
+    session.pushFrame("cap-2", new Uint8Array([1]));
+    expect(healthy.sent).toHaveLength(1);
+    session.close();
+  });
+
   it("contains a rejecting event stream and re-dials on the next mic frame", async () => {
     const failing = fakeAdapter(undefined, new Error("stt socket died"));
     const healthy = fakeAdapter();

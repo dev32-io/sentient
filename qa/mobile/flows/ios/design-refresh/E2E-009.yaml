@@ -12,6 +12,17 @@ tags: [design-refresh-text-only]
 - tapOn: { id: "calendar-view-week" }
 - tapOn: { id: "calendar-view-month" }
 - tapOn: { id: "calendar-view-year" }
+# Apply a persisted representative filter, leave Calendar, and prove the
+# source-owned preference is restored when the surface is opened again.
+- tapOn: { id: "calendar-filter-scope-private" }
+- tapOn: { id: "calendar-back" }
+- tapOn: { id: "settings-cat-calendar" }
+- extendedWaitUntil:
+    visible: { id: "calendar-surface" }
+    timeout: 15000
+- assertVisible:
+    id: "calendar-filter-scope-private"
+    selected: true
 - tapOn: { id: "calendar-add" }
 - assertVisible: { id: "calendar-editor-sheet" }
 - tapOn: { id: "calendar-editor-title" }
