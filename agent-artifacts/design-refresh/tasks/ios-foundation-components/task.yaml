@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: ios-foundation-components
+title: Build the SwiftUI design-v2 projection, primitives, and common composites
+status: draft
+dependsOn:
+  - design-foundation-v2
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Native component architecture and accessibility adaptation are
+      substantial but bounded to the iOS presentation foundation.
+assembly:
+  stageId: platform-foundations
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run design:foundation:check
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - ./gradlew :android:assembleDebug
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
