@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-refresh
 title: Refresh the complete native iOS Calendar workspace and overlays
-status: ready
+status: running
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
@@ -26,3 +26,9 @@ verification:
     - bun run design:inventory:check
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/ios-calendar-refresh
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-calendar-refresh
+  baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
+  lastRunId: f7588943-c234-4397-9b27-c46766e091d5
