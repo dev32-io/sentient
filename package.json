@@ -12,8 +12,14 @@
     "stack:down": "bash scripts/stack.sh down",
     "stack:status": "bash scripts/stack.sh status",
     "calendar:fixture": "bun gateway/src/calendar/e2e-fixture-control.ts",
+    "design:fixture": "bun qa/design-refresh/fixture-control.ts",
+    "design:inventory:check": "bun qa/design-refresh/check.ts",
+    "design:e2e:web": "bash qa/design-refresh/run-web-text-only.sh",
+    "design:e2e:ios": "bash qa/design-refresh/run-ios-text-only.sh",
     "design:avatar:generate": "bash scripts/design/sentient-avatar-rive.sh generate",
     "design:avatar:verify": "bash scripts/design/sentient-avatar-rive.sh verify",
+    "design:foundation:generate": "bun scripts/design/design-foundation-v2.ts generate",
+    "design:foundation:check": "bun test scripts/design/design-foundation-v2.test.ts && bun scripts/design/design-foundation-v2.ts check",
     "test": "bun run --filter '*' test",
     "test:unit": "bun run --filter '*' test:unit",
     "test:int": "bun run --filter '*' test:int",
@@ -25,6 +31,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
     "lefthook": "^1.10.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "zod": "^3.24.0"
   }
 }

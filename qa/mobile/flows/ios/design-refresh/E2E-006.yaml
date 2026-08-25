@@ -1,0 +1,19 @@
+appId: io.dev32.sentient.debug
+tags: [design-refresh-text-only]
+---
+- runFlow: ../_helpers/login.yaml
+- stopApp
+- launchApp
+- assertVisible: { id: "splash" }
+- extendedWaitUntil:
+    notVisible: { id: "splash" }
+    timeout: 15000
+- assertVisible: { id: "chat-screen" }
+- tapOn: { id: "history-open" }
+- assertVisible: { id: "history-search" }
+- tapOn: { id: "history-new-chat" }
+- tapOn: { id: "history-open" }
+- tapOn: { id: "settings-open" }
+- assertVisible: { id: "settings-screen" }
+- back
+- assertVisible: { id: "chat-screen" }

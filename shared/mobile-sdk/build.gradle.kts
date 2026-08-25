@@ -143,6 +143,11 @@ tasks.matching { it.name.contains("compile") && it.name.contains("TestKotlin") }
     dependsOn(generateCalendarWireFixture)
 }
 
+// Stable KMP compatibility check used by the design-foundation generation harness.
+tasks.register("compileKotlinAndroid") {
+    dependsOn("compileDebugKotlinAndroid")
+}
+
 android {
     namespace = "io.sentient.mobilesdk"
     compileSdk = libs.versions.compileSdk.get().toInt()

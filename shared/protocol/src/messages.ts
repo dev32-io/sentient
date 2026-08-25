@@ -177,10 +177,11 @@ export type TurnMode = z.infer<typeof turnModeSchema>;
 export const audioStartSchema = withCommandBinding(
   z.object({
     type: z.literal("audio.start"),
+    /** Opaque client-minted identity. Omitted only by legacy clients. */
+    captureId: z.string().min(1).optional(),
     /**
-     * Optional; absent (or omitted by old clients / webui) defaults to
-     * "semantic" so back-compat is automatic — no client-side migration
-     * required. Mobile sets "manual" for a hold-to-talk press.
+     * Optional; absent defaults to "semantic" so old clients retain their
+     * existing continuous-capture behavior.
      */
     turnMode: turnModeSchema.default("semantic"),
   }),
@@ -189,6 +190,15 @@ export const audioStartSchema = withCommandBinding(
 export const audioEndSchema = withCommandBinding(
   z.object({
     type: z.literal("audio.end"),
+    /** Omitted only by legacy clients using the implicit connection capture. */
+    captureId: z.string().min(1).optional(),
+  }),
+);
+
+export const audioCancelSchema = withCommandBinding(
+  z.object({
+    type: z.literal("audio.cancel"),
+    captureId: z.string().min(1),
   }),
 );
 
@@ -265,6 +275,7 @@ export const clientMessageSchema = z.discriminatedUnion("type", [
   sessionConfigureSchema,
   audioStartSchema,
   audioEndSchema,
+  audioCancelSchema,
   textInputSchema,
   permissionResponseSchema,
   pingSchema,

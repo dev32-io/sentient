@@ -10,7 +10,8 @@
 # whole selection in order and still runs every restore even if a primary fails.
 #
 # Usage:
-#   ./qa/mobile/run-e2e.sh [android|ios|all]              # default: all
+#   ./qa/mobile/run-e2e.sh design-refresh E2E-006        # safe targeted iOS refresh path
+#   ./qa/mobile/run-e2e.sh [android|ios|all]              # legacy broad matrix; not design-refresh
 #   ./qa/mobile/run-e2e.sh android --tags settings-soul,settings-voice
 #   ./qa/mobile/run-e2e.sh android --no-slow              # drop >2min flows
 #   ./qa/mobile/run-e2e.sh android --fault-only           # only the armed flows
@@ -47,7 +48,7 @@
 #     real light in the user's house at night -- see 12-permission-confirm.yaml).
 #
 # Prerequisites:
-#   - Local gateway healthy (native: `cd gateway && bun --hot src/main.ts`; see deploy/README.md).
+#   - Local stack healthy (`bun run dev`, backed by scripts/stack.sh). Do not use in-process hot reload.
 #   - Android emulator-5554 booted; iOS simulator booted; debug apps installed.
 #   - ~/.maestro/bin/maestro on PATH (or MAESTRO=...); adb + xcrun on PATH.
 #
@@ -57,8 +58,9 @@
 # adjacent, logout last) and runs `maestro test f1 f2 ... fN` (explicit arg order
 # IS honored). Same strategy on BOTH platforms; verified on Android + iOS.
 #
-# iOS specifics: IOS_DEVICE auto-detects the booted sim (override via env). Mic
-# permission is granted with `xcrun simctl privacy`. iOS has no adb-broadcast fault
+# iOS specifics for this LEGACY broad matrix: IOS_DEVICE auto-detects the booted
+# sim and microphone/fault flows remain present. They are prohibited for the
+# design-refresh matrix, which delegates to run-ios-text-only.sh above. iOS has no adb-broadcast fault
 # channel, so its fault phase is gateway-stop orchestration (58b/60 via
 # gw_stop_or_flag; 04c continuity via gw_restart_or_flag between parts, same
 # wrappers the Android 18-auth-expired case uses) -- native process, not a container
@@ -72,6 +74,13 @@ MAESTRO="${MAESTRO:-$HOME/.maestro/bin/maestro}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FLOWS_DIR="$REPO_ROOT/qa/mobile/flows"
 FIXTURES_DIR="$REPO_ROOT/qa/mobile/fixtures"
+
+# The approved refresh matrix never enters the broad setup below: no permission
+# grant and no fault/network phase can be inherited accidentally.
+if [[ "${1:-}" == "design-refresh" ]]; then
+  shift
+  exec "$REPO_ROOT/qa/design-refresh/run-ios-text-only.sh" "$@"
+fi
 
 ANDROID_DEVICE="emulator-5554"
 # IOS_DEVICE: env override wins; otherwise auto-detect the booted sim (the old
@@ -132,11 +141,11 @@ flag() { echo -e "${YELLOW}[FLAG]${NC} $*"; }
 # -- Gateway lifecycle -----------------------------------------------------------
 # The gateway is a native host process now, not a container (native-stack
 # migration, 2026-07-29) -- there is no `sentient-gateway` to `docker ps` /
-# stop / start / restart any more. Dev: `cd gateway && bun --hot src/main.ts`
-# (see deploy/README.md "Local dev -- macOS"); prod: launchd, never touched by
-# this LOCAL-ONLY harness. These helpers manage the dev process directly: probe
-# its health endpoint, and find/signal whatever is bound to :8888 rather than a
-# container name. gw_start relaunches it exactly the documented dev way -- STT/TTS
+# stop / start / restart any more. Dev uses the restart watcher owned by
+# scripts/stack.sh; prod uses launchd and is never touched by
+# this LOCAL-ONLY legacy harness. These helpers manage the dev process directly:
+# probe its health endpoint, and find/signal whatever is bound to :8888 rather
+# than a container name. The refresh path above never calls these helpers. STT/TTS
 # keep working regardless, since the gateway dials whichever native-addon
 # processes already own their ports, independent of this restart.
 GATEWAY_HEALTH_URL="https://127.0.0.1:8888/api/v1/health"
@@ -158,7 +167,7 @@ check_gateway() {
   local code
   code=$(gateway_health_code)
   if [[ "$code" != "200" ]]; then
-    fail "the gateway is not running or not healthy at $GATEWAY_HEALTH_URL (got HTTP $code). Start it natively: cd gateway && bun --hot src/main.ts"
+    fail "the gateway is not running or not healthy at $GATEWAY_HEALTH_URL (got HTTP $code). Start the local stack: bun run dev"
     exit 1
   fi
   pass "Gateway healthy"
@@ -252,7 +261,7 @@ gw_stop() {
 }
 gw_start() {
   mkdir -p "$(dirname "$GATEWAY_DEV_LOG")"
-  ( cd "$REPO_ROOT/gateway" && nohup bun --hot src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
+  ( cd "$REPO_ROOT/gateway" && nohup bun --watch src/main.ts >>"$GATEWAY_DEV_LOG" 2>&1 & )
   gw_wait_healthy
 }
 gw_restart() { gw_stop; gw_start; }

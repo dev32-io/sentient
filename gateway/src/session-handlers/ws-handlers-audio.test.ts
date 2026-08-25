@@ -1,10 +1,3 @@
-// Pins the WS-layer voice routing (spec §6). Inbound BINARY frames are mic
-// audio and go to the STT uplink — a separate path from the outbound binary
-// TTS stream, and one that must NEVER open pre-auth (a security boundary:
-// unauthenticated bytes must not reach a service on the operator's host).
-// `audio.start` / `audio.end` are protocol frames whose payloads (turnMode)
-// must survive the hop. FakeWs double, no network.
-
 import { describe, expect, it } from "bun:test";
 import type { TurnMode } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
@@ -16,38 +9,30 @@ import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
 
 interface SpyStt {
   session: SttSession;
-  starts: TurnMode[];
-  ends: number;
-  frames: number;
-  closes: number;
-  discards: number;
+  starts: { id: string; mode: TurnMode }[];
+  ends: string[];
+  cancels: string[];
+  frames: { id: string; bytes: number }[];
 }
 
 function spyStt(): SpyStt {
   const spy: SpyStt = {
     starts: [],
-    ends: 0,
-    frames: 0,
-    closes: 0,
-    discards: 0,
+    ends: [],
+    cancels: [],
+    frames: [],
     session: {
-      start: (mode) => {
-        spy.starts.push(mode);
+      start: (id, mode) => {
+        spy.starts.push({ id, mode });
+        return true;
       },
-      end: () => {
-        spy.ends += 1;
-      },
-      pushFrame: () => {
-        spy.frames += 1;
-      },
+      end: (id) => spy.ends.push(id),
+      cancel: (id) => spy.cancels.push(id),
+      pushFrame: (id, bytes) => spy.frames.push({ id, bytes: bytes.byteLength }),
       suppressInputFor: () => {},
       buffered: 0,
-      discard: () => {
-        spy.discards += 1;
-      },
-      close: () => {
-        spy.closes += 1;
-      },
+      discard: () => {},
+      close: () => {},
     },
   };
   return spy;
@@ -75,81 +60,75 @@ function fakeWs(authed: boolean, stt: SttSession | null): FakeWs {
   return ws;
 }
 
-// Only the `stt` field is read by the branches under test.
 const noSttServices = { stt: null } as unknown as GatewayServices;
+const route = (ws: FakeWs, frame: unknown): Promise<void> =>
+  handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, JSON.stringify(frame), noSttServices);
 
-describe("ws-handlers — inbound binary (mic audio)", () => {
-  it("routes a binary frame to the STT uplink once authed", async () => {
+describe("ws-handlers — capture-aware audio", () => {
+  it("routes binary only while the identified capture is open", async () => {
     const spy = spyStt();
     const ws = fakeWs(true, spy.session);
-
+    await route(ws, { type: "audio.start", captureId: "cap-1", turnMode: "manual" });
     await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, Buffer.from([1, 2, 3]), noSttServices);
+    await route(ws, { type: "audio.cancel", captureId: "cap-1" });
+    await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, Buffer.from([4]), noSttServices);
 
-    expect(spy.frames).toBe(1);
+    expect(spy.frames).toEqual([{ id: "cap-1", bytes: 3 }]);
   });
 
-  it("drops a binary frame that arrives before auth completes", async () => {
+  it("drops binary before auth", async () => {
     const spy = spyStt();
     const ws = fakeWs(false, spy.session);
-
-    await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, Buffer.from([1, 2, 3]), noSttServices);
-
-    expect(spy.frames).toBe(0);
-    expect(ws.sent).toEqual([]);
+    await handleWebSocketMessage(ws as unknown as ServerWebSocket<SessionData>, Buffer.from([1]), noSttServices);
+    expect(spy.frames).toEqual([]);
   });
-});
 
-describe("ws-handlers — audio.start / audio.end", () => {
-  it("relays the audio.start turnMode to the STT uplink", async () => {
+  it("keeps legacy captureId-less start/end behavior and semantic default", async () => {
     const spy = spyStt();
     const ws = fakeWs(true, spy.session);
-
-    await handleWebSocketMessage(
-      ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify({ type: "audio.start", turnMode: "manual" }),
-      noSttServices,
-    );
-
-    expect(spy.starts).toEqual(["manual"]);
+    await route(ws, { type: "audio.start" });
+    const id = spy.starts[0]?.id;
+    expect(spy.starts[0]?.mode).toBe("semantic");
+    expect(id).toStartWith("legacy-");
+    await route(ws, { type: "audio.end" });
+    expect(spy.ends).toEqual([id as string]);
   });
 
-  it("defaults a turnMode-less audio.start to semantic (back-compat clients)", async () => {
+  it("manual Send commits only the matching capture", async () => {
     const spy = spyStt();
     const ws = fakeWs(true, spy.session);
-
-    await handleWebSocketMessage(
-      ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify({ type: "audio.start" }),
-      noSttServices,
-    );
-
-    expect(spy.starts).toEqual(["semantic"]);
+    await route(ws, { type: "audio.start", captureId: "manual-1", turnMode: "manual" });
+    await route(ws, { type: "audio.end", captureId: "stale" });
+    expect(spy.ends).toEqual([]);
+    await route(ws, { type: "audio.end", captureId: "manual-1" });
+    expect(spy.ends).toEqual(["manual-1"]);
   });
 
-  it("forwards audio.end to the STT uplink", async () => {
+  it("first terminal wins and stale terminal cannot affect the next capture", async () => {
     const spy = spyStt();
     const ws = fakeWs(true, spy.session);
+    await route(ws, { type: "audio.start", captureId: "old", turnMode: "manual" });
+    await route(ws, { type: "audio.cancel", captureId: "old" });
+    await route(ws, { type: "audio.end", captureId: "old" });
+    await route(ws, { type: "audio.start", captureId: "new", turnMode: "semantic" });
+    await route(ws, { type: "audio.cancel", captureId: "old" });
 
-    await handleWebSocketMessage(
-      ws as unknown as ServerWebSocket<SessionData>,
-      JSON.stringify({ type: "audio.end" }),
-      noSttServices,
-    );
-
-    expect(spy.ends).toBe(1);
+    expect(spy.cancels).toEqual(["old"]);
+    expect(spy.ends).toEqual([]);
+    expect(ws.data.audioCapture?.id).toBe("new");
   });
 
-  it("is a safe no-op when STT is not configured on this gateway", async () => {
+  it("rejects overlapping starts", async () => {
+    const spy = spyStt();
+    const ws = fakeWs(true, spy.session);
+    await route(ws, { type: "audio.start", captureId: "one" });
+    await route(ws, { type: "audio.start", captureId: "two" });
+    expect(spy.starts).toHaveLength(1);
+    expect(ws.data.audioCapture?.id).toBe("one");
+  });
+
+  it("is a safe no-op when STT is not configured", async () => {
     const ws = fakeWs(true, null);
-
-    await expect(
-      handleWebSocketMessage(
-        ws as unknown as ServerWebSocket<SessionData>,
-        JSON.stringify({ type: "audio.start", turnMode: "semantic" }),
-        noSttServices,
-      ),
-    ).resolves.toBeUndefined();
-
-    expect(ws.data.stt).toBeNull();
+    await expect(route(ws, { type: "audio.start", captureId: "cap-1" })).resolves.toBeUndefined();
   });
 });

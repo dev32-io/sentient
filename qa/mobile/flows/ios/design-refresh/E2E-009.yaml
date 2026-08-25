@@ -1,0 +1,39 @@
+appId: io.dev32.sentient.debug
+tags: [design-refresh-text-only]
+---
+- runFlow: ../_helpers/login.yaml
+- tapOn: { id: "history-open" }
+- tapOn: { id: "settings-open" }
+- tapOn: { id: "settings-cat-calendar" }
+- extendedWaitUntil:
+    visible: { id: "calendar-surface" }
+    timeout: 15000
+- tapOn: { id: "calendar-view-day" }
+- tapOn: { id: "calendar-view-week" }
+- tapOn: { id: "calendar-view-month" }
+- tapOn: { id: "calendar-view-year" }
+- tapOn: { id: "calendar-add" }
+- assertVisible: { id: "calendar-editor-sheet" }
+- tapOn: { id: "calendar-editor-title" }
+- inputText: "Synthetic refresh event"
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    notVisible: { id: "calendar-editor-sheet" }
+    timeout: 15000
+- tapOn: "Synthetic refresh event"
+- assertVisible: { id: "calendar-preview-sheet" }
+- tapOn: { id: "calendar-preview-edit" }
+- tapOn: { id: "calendar-editor-title" }
+- eraseText
+- inputText: "Synthetic refresh event updated"
+- tapOn: { id: "calendar-editor-save" }
+- extendedWaitUntil:
+    notVisible: { id: "calendar-editor-sheet" }
+    timeout: 15000
+- tapOn: "Synthetic refresh event updated"
+- tapOn: { id: "calendar-preview-edit" }
+- tapOn: { id: "calendar-editor-delete" }
+- tapOn: { id: "calendar-confirmation-delete" }
+- extendedWaitUntil:
+    notVisible: "Synthetic refresh event updated"
+    timeout: 15000

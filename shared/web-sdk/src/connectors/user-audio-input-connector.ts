@@ -1,49 +1,30 @@
 import type { TurnMode } from "@sentient/protocol";
 import type { Connector, SentientSDKInternal } from "../connector-types.ts";
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 export interface UserAudioInputConfig {
-  /**
-   * The gateway opened a turn for a USER stimulus — it has taken ownership of
-   * whatever was said, so the client's mic latch (SpeechGate) can close and
-   * stop streaming until sustained speech reopens it.
-   *
-   * This is the 2.0 replacement for the deleted `connector.transcript.final`
-   * (plan reconciliation R9). There is no live partial-transcript frame in the
-   * contract any more, so this is the earliest server signal that the utterance
-   * boundary has passed. Background-completion turns are filtered out: they
-   * arrive at arbitrary moments and must never truncate an utterance in flight.
-   */
   onTurnStarted?: () => void;
+  /** Test seam; production uses crypto.randomUUID(). */
+  createCaptureId?: () => string;
 }
 
-/**
- * Outbound `audio.start` frame. Schema parity with the gateway's
- * `audioStartSchema` (2026-07-17 hold/toggle-talk split design §4) — type
- * only. Web always omits `turnMode` (gateway defaults to "semantic"); only
- * mobile-sdk's hold-to-talk path sets it to "manual". Zero behavior change.
- */
-interface AudioStartFrame {
-  type: "audio.start";
+export interface AudioCaptureOptions {
+  /** Stable opaque identity supplied by a producer, or generated when absent. */
+  captureId?: string;
   turnMode?: TurnMode;
 }
 
-/** Turns started by a background `delegateTask` completion, not by a person. */
+interface ActiveCapture {
+  readonly id: string;
+  readonly generation: number;
+}
+
 const BACKGROUND_TRIGGER = "background-completion";
 
-// ---------------------------------------------------------------------------
-// UserAudioInputConnector — captures mic audio and streams to gateway.
-//
-// Capability: "audio.input"
-// Direction: input
-//
-// Sends: audio.start, binary audio frames, audio.end
-// Receives: turn.started (the mic-latch close signal — see onTurnStarted)
-// ---------------------------------------------------------------------------
-
+/**
+ * Owns the ordered Web audio uplink. A terminal action invalidates the active
+ * generation before its JSON control is sent, so a queued producer callback
+ * cannot put binary bytes after end/cancel or affect a subsequent capture.
+ */
 export class UserAudioInputConnector implements Connector {
   readonly capability = "audio.input";
   readonly kind = "input" as const;
@@ -51,7 +32,9 @@ export class UserAudioInputConnector implements Connector {
   private readonly config: UserAudioInputConfig;
   private sdk: SentientSDKInternal | null = null;
   private unsubTurnStarted: (() => void) | null = null;
-  private isStreaming = false;
+  private active: ActiveCapture | null = null;
+  private nextGeneration = 0;
+  private readonly usedCaptureIds = new Set<string>();
 
   constructor(config: UserAudioInputConfig = {}) {
     this.config = config;
@@ -59,7 +42,6 @@ export class UserAudioInputConnector implements Connector {
 
   attach(sdk: SentientSDKInternal): void {
     this.sdk = sdk;
-
     this.unsubTurnStarted = sdk.onMessage("turn.started", (msg: unknown) => {
       const m = msg as { trigger?: string };
       if (m.trigger === BACKGROUND_TRIGGER) return;
@@ -68,30 +50,70 @@ export class UserAudioInputConnector implements Connector {
   }
 
   detach(): void {
-    this.stopStreaming();
+    // Transport loss discards capture; it must never imply Send/commit.
+    if (this.active !== null && this.sdk !== null) this.cancelCapture(this.active.id);
     this.unsubTurnStarted?.();
     this.unsubTurnStarted = null;
     this.sdk = null;
   }
 
-  /** Begin streaming audio to the gateway. Call after mic capture is started. */
-  startStreaming(): void {
-    if (this.isStreaming || this.sdk === null) return;
-    this.isStreaming = true;
-    const frame: AudioStartFrame = { type: "audio.start" };
-    this.sdk.send(frame);
+  /** Begins one non-overlapping capture and returns its stable identity. */
+  startStreaming(options: AudioCaptureOptions = {}): string | null {
+    if (this.active !== null || this.sdk === null) return null;
+    const captureId = options.captureId ?? this.config.createCaptureId?.() ?? crypto.randomUUID();
+    if (captureId.length === 0 || this.usedCaptureIds.has(captureId)) return null;
+    this.usedCaptureIds.add(captureId);
+    this.nextGeneration += 1;
+    this.active = { id: captureId, generation: this.nextGeneration };
+    this.sdk.send({
+      type: "audio.start",
+      captureId,
+      turnMode: options.turnMode ?? "semantic",
+    });
+    return captureId;
   }
 
-  /** Stop streaming audio to the gateway. */
-  stopStreaming(): void {
-    if (!this.isStreaming || this.sdk === null) return;
-    this.isStreaming = false;
-    this.sdk.send({ type: "audio.end" });
+  /** Legacy name: stopping is an explicit Send/commit. */
+  stopStreaming(captureId: string | undefined = this.active?.id): void {
+    if (captureId !== undefined) this.commitCapture(captureId);
   }
 
-  /** Send a raw audio frame (PCM16 binary) to the gateway. */
-  sendAudioFrame(data: ArrayBuffer | Uint8Array): void {
-    if (!this.isStreaming || this.sdk === null) return;
+  /** First matching terminal wins. Stale/repeated commits are harmless. */
+  commitCapture(captureId: string): void {
+    this.terminate(captureId, "audio.end");
+  }
+
+  /** First matching terminal wins. Cancel never aliases assistant interrupt. */
+  cancelCapture(captureId: string): void {
+    this.terminate(captureId, "audio.cancel");
+  }
+
+  /**
+   * Sends PCM16 only for the named active generation. Producers should retain
+   * the id returned by startStreaming and pass it from every callback.
+   */
+  sendAudioFrame(data: ArrayBuffer | Uint8Array, captureId: string | undefined = this.active?.id): void {
+    const active = this.active;
+    if (active === null || this.sdk === null || captureId !== active.id) return;
     this.sdk.sendBinary(data);
+  }
+
+  /** A callback seam that permanently latches the generation it was made for. */
+  frameSender(captureId: string): (data: ArrayBuffer | Uint8Array) => void {
+    const generation = this.active?.id === captureId ? this.active.generation : -1;
+    return (data) => {
+      const active = this.active;
+      if (active?.id !== captureId || active.generation !== generation) return;
+      this.sendAudioFrame(data, captureId);
+    };
+  }
+
+  private terminate(captureId: string, type: "audio.end" | "audio.cancel"): void {
+    const active = this.active;
+    const sdk = this.sdk;
+    if (active === null || sdk === null || active.id !== captureId) return;
+    // Invalidate first: synchronous/re-entrant producer callbacks now see closed.
+    this.active = null;
+    sdk.send({ type, captureId });
   }
 }

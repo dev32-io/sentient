@@ -1,34 +1,27 @@
-# qa-session config — sentient web platform.
-#
-# Stack lifecycle is set to "leave it running between runs" for faster
-# iteration during the design refresh. Change `teardown.when:` to
-# `always` if you want clean shutdowns between every QA pass.
+# qa-session config — sentient WebUI.
+# The design-refresh matrix uses the real local stack and outward HTTPS door.
 
-base_url: https://localhost:8888
+base_url: https://localhost/
 
 stack:
   setup:
-    # Bring the gateway up if it isn't already. `up -d` is idempotent —
-    # if the container is already running, this is effectively a no-op.
-    - command: docker compose -f deploy/docker/docker-compose.yml up -d gateway
+    # scripts/stack.sh is the sole local-stack lifecycle authority. Start it only
+    # when the outward door is absent; never use the retired compose gateway.
+    - command: curl -skf https://localhost/api/v1/ready >/dev/null || (nohup bash scripts/stack.sh up > /tmp/sentient-qa-stack.log 2>&1 &)
       cwd: "."
   health_check:
-    url: https://localhost:8888/
-    timeout_s: 60
-    insecure: true   # gateway uses a self-signed cert on localhost
+    url: https://localhost/api/v1/ready
+    timeout_s: 90
+    insecure: true   # loopback development certificate only
   teardown:
-    - command: echo "leaving gateway running for next iteration"
+    - command: echo "leaving the scripts/stack.sh local stack running for the next charter"
       cwd: "."
-    when: never   # set to `always` to docker compose down between runs
+    when: never
 
-# Browser session budget per charter. Bump tool_calls to 200 if a
-# design-refresh charter walking many screens stops too early.
 session_budget:
   tool_calls: 100
   max_tool_calls: 200
 
-# Risk weights — defaults are reasonable. Tune `recent_recurrence`
-# higher if you want recurring bugs to dominate the schedule.
 risk_weights:
   lines_changed: 1.0
   recent_recurrence: 2.0
@@ -40,8 +33,5 @@ auto_close_after_misses: 3
 auth:
   profile_max_age_hours: 24
 
-# Empty = let detect_context.sh auto-detect (qa-session.baseBranch git
-# config → develop → newest-merge-base → fallback chain).
 parent_branch_override: ""
-
-parallelism: 3   # ignored in v1; charters run serially
+parallelism: 3

@@ -38,11 +38,13 @@ const INITIAL_TURN_MODE: TurnMode = "semantic";
 
 export interface SttSession {
   /** Client `audio.start` — ensure a connection and relay the turn mode. */
-  start(turnMode: TurnMode): void;
-  /** Client `audio.end` — force-finalize any open STT turn. */
-  end(): void;
-  /** One inbound binary WS frame (mic audio, opus or pcm16 per config). */
-  pushFrame(bytes: Uint8Array): void;
+  start(captureId: string, turnMode: TurnMode): boolean;
+  /** Matching client `audio.end` — force-finalize and commit manual text. */
+  end(captureId: string): void;
+  /** Matching client `audio.cancel` — discard without a flush or submission. */
+  cancel(captureId: string): void;
+  /** One inbound binary WS frame for the named open capture. */
+  pushFrame(captureId: string, bytes: Uint8Array): void;
   /** Echo-suppression window (ms). `0` clears it. See mic-echo-guard.ts. */
   suppressInputFor(ms: number): void;
   /**
@@ -64,9 +66,8 @@ export interface SttSession {
    *
    * Implemented by closing the STT socket, which is the only primitive the
    * adapter contract offers that abandons an open turn rather than completing
-   * it. Not terminal: `micOpen` is preserved, so the next mic frame re-dials
-   * through the existing frame-driven reconnect and the person can keep
-   * talking.
+   * it. The capture is terminal: the client must send a fresh `audio.start`
+   * before any subsequent frame can be accepted.
    */
   discard(): void;
   /** Connection teardown — idempotent. */
@@ -104,6 +105,15 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   let micOpen = false;
   let desiredTurnMode: TurnMode = INITIAL_TURN_MODE;
   let bufferedBytes = 0;
+  interface CaptureContext {
+    readonly id: string;
+    readonly mode: TurnMode;
+    readonly epoch: number;
+    status: "active" | "committing";
+    transcripts: string[];
+    submitted: boolean;
+  }
+  let capture: CaptureContext | null = null;
   // Bumped by `discard()`. A connect started before the discard must not
   // install its adapter afterwards — that would resurrect the very socket the
   // discard abandoned, complete with the open turn it was abandoning.
@@ -133,9 +143,10 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   /** [active] is the adapter this event was read from — carried in so the
    *  post-await re-check below can ask the SAME question the loop asks before
    *  dispatching, rather than a second one that could drift from it. */
-  async function dispatch(event: STTEvent, active: STTAdapter): Promise<void> {
+  async function dispatch(event: STTEvent, active: STTAdapter, eventCapture: CaptureContext): Promise<void> {
     if (event.type === "turn_dropped") {
-      log.debug("stt.turn-dropped", { sessionId, turnIdx: event.turnIdx });
+      log.debug("stt.turn-dropped", { sessionId, captureId: eventCapture.id, turnIdx: event.turnIdx });
+      if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
       return;
     }
     if (event.type === "turn_started") {
@@ -157,10 +168,21 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     }
     const text = event.text.trim();
     if (text.length === 0) {
-      log.debug("stt.transcript.blank", { sessionId, turnIdx: event.turnIdx, reason: "empty after trim" });
+      log.debug("stt.transcript.blank", {
+        sessionId,
+        captureId: eventCapture.id,
+        turnIdx: event.turnIdx,
+        reason: "empty after trim",
+      });
+      if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
       return;
     }
-    const runtime = await getRuntimeForInput(text);
+    if (eventCapture.mode === "manual") {
+      eventCapture.transcripts.push(text);
+      if (eventCapture.status !== "committing" || eventCapture.submitted) return;
+    }
+    const submittedText = eventCapture.mode === "manual" ? eventCapture.transcripts.join(" ") : text;
+    const runtime = await getRuntimeForInput(submittedText);
     // RE-CHECKED AFTER THE AWAIT, and this is the second half of the guard the
     // loop below performs before dispatching — not a duplicate of it.
     //
@@ -177,9 +199,15 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     //
     // `close()` nulls `adapter` too, so this covers a socket that went away
     // mid-mint by the same predicate.
-    if (adapter !== active) {
+    if (
+      adapter !== active ||
+      capture !== eventCapture ||
+      eventCapture.epoch !== uplinkEpoch ||
+      (eventCapture.mode === "manual" && eventCapture.submitted)
+    ) {
       log.info("stt.transcript.after-discard", {
         sessionId,
+        captureId: eventCapture.id,
         turnIdx: event.turnIdx,
         reason: "the uplink was discarded while this transcript was resolving a runtime — dropping it",
       });
@@ -193,8 +221,16 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       });
       return;
     }
-    log.info("stt.transcript.submit", { sessionId, turnIdx: event.turnIdx, length: text.length });
-    runtime.submit({ kind: "conversational", text });
+    if (eventCapture.mode === "manual") eventCapture.submitted = true;
+    log.info("stt.transcript.submit", {
+      sessionId,
+      captureId: eventCapture.id,
+      mode: eventCapture.mode,
+      turnIdx: event.turnIdx,
+      length: submittedText.length,
+    });
+    runtime.submit({ kind: "conversational", text: submittedText });
+    if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
   }
 
   async function consumeEvents(active: STTAdapter): Promise<void> {
@@ -217,6 +253,15 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         }
         // A hook throw must never kill the event loop for the rest of the
         // session — the pre-purge adapter learned this the hard way.
+        const eventCapture = capture;
+        if ((!micOpen && eventCapture?.status !== "committing") || eventCapture === null) {
+          log.info("stt.event.capture-closed", {
+            sessionId,
+            eventType: event.type,
+            reason: "no open or committing capture owns this adapter callback",
+          });
+          continue;
+        }
         try {
           // AWAITED, so the next event cannot overtake this one: a transcript
           // that has to mint a session is slower than one that does not, and
@@ -225,7 +270,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
           // `active` goes with it: the check above is only good for the instant
           // it runs, and `dispatch` suspends. It re-asks the same question on
           // the other side of its await.
-          await dispatch(event, active);
+          await dispatch(event, active, eventCapture);
         } catch (err: unknown) {
           log.warn("stt.event.dispatch-failed", {
             sessionId,
@@ -246,6 +291,19 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     } finally {
       if (adapter === active) {
         adapter = null;
+        if (capture?.mode === "manual") {
+          log.info("stt.manual.discarded", {
+            sessionId,
+            captureId: capture.id,
+            mode: capture.mode,
+            bufferedBytes,
+            transition: `${capture.status}->closed`,
+            reason: "adapter event stream ended before a committed transcript was delivered",
+          });
+          capture = null;
+          micOpen = false;
+          bufferedBytes = 0;
+        }
         log.info("stt.disconnected", { sessionId, micOpen, reason: "event stream ended" });
       }
     }
@@ -289,31 +347,144 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   }
 
   return {
-    start(turnMode) {
-      if (closed) return;
+    start(captureId, turnMode) {
+      // A committed capture remains here only while its final adapter callback
+      // is outstanding. Refusing overlap is safer than attributing that callback
+      // to a newer identity (or dropping a Send by rotating the socket).
+      if (closed || capture !== null) return false;
       micOpen = true;
       desiredTurnMode = turnMode;
       bufferedBytes = 0;
-      log.info("stt.audio-start", { sessionId, turnMode, connected: adapter !== null });
+      capture = {
+        id: captureId,
+        mode: turnMode,
+        epoch: uplinkEpoch,
+        status: "active",
+        transcripts: [],
+        submitted: false,
+      };
+      log.info("stt.audio-start", {
+        sessionId,
+        captureId,
+        mode: turnMode,
+        bufferedBytes,
+        transition: "closed->active",
+        connected: adapter !== null,
+      });
       if (adapter) {
         adapter.setTurnMode(turnMode);
-        return;
+        return true;
       }
       connect();
+      return true;
     },
 
-    end() {
+    end(captureId) {
+      const current = capture;
+      if (current === null || current.id !== captureId || current.status !== "active") return;
       micOpen = false;
-      log.info("stt.audio-end", { sessionId, connected: adapter !== null, bufferedBytes });
+      current.status = "committing";
+      log.info("stt.audio-end", {
+        sessionId,
+        captureId,
+        mode: current.mode,
+        connected: adapter !== null,
+        bufferedBytes,
+        transition: "active->committing",
+      });
       bufferedBytes = 0;
-      adapter?.endUtterance();
+      try {
+        adapter?.endUtterance();
+      } catch (err: unknown) {
+        log.warn("stt.audio-end.failed", {
+          sessionId,
+          captureId,
+          mode: current.mode,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+        this.cancel(captureId);
+        return;
+      }
+      if (!adapter) {
+        log.info("stt.capture.discarded", {
+          sessionId,
+          captureId,
+          mode: current.mode,
+          bufferedBytes,
+          transition: "committing->closed",
+          reason: "no adapter was available to flush",
+        });
+        capture = null;
+        return;
+      }
+      // A manual adapter may have finalized just before the control arrived.
+      // It was buffered rather than submitted; a successful flush now opens
+      // the commit gate for that sanitized value.
+      if (current.mode === "manual" && current.transcripts.length > 0 && !current.submitted) {
+        const active = adapter;
+        const text = current.transcripts.join(" ");
+        detach("submit-manual", async () => {
+          const runtime = await getRuntimeForInput(text);
+          if (
+            adapter !== active ||
+            capture !== current ||
+            current.epoch !== uplinkEpoch ||
+            current.submitted ||
+            !runtime
+          )
+            return;
+          current.submitted = true;
+          log.info("stt.transcript.submit", {
+            sessionId,
+            captureId,
+            mode: current.mode,
+            turnIdx: null,
+            length: text.length,
+          });
+          runtime.submit({ kind: "conversational", text });
+          if (capture === current) capture = null;
+        });
+      }
     },
 
-    pushFrame(bytes) {
+    cancel(captureId) {
+      if (capture?.id !== captureId) return;
+      uplinkEpoch += 1;
+      const current = capture;
+      const active = adapter;
+      capture = null;
+      adapter = null;
+      micOpen = false;
+      log.info("stt.audio-cancel", {
+        sessionId,
+        captureId,
+        mode: current.mode,
+        bufferedBytes,
+        transition: `${current.status}->closed`,
+        reason: "matching cancel won the terminal race — dropping without flush",
+      });
+      bufferedBytes = 0;
+      if (active) detach("cancel", () => active.close());
+    },
+
+    pushFrame(captureId, bytes) {
+      if (capture?.id !== captureId || capture.status !== "active" || !micOpen) {
+        log.debug("stt.frame-dropped", {
+          sessionId,
+          captureId,
+          byteSize: bytes.byteLength,
+          reason: "capture is not open",
+        });
+        return;
+      }
       if (!adapter) {
-        // Frame-driven reconnect: the mic is live but the socket is not.
-        if (micOpen) connect();
-        log.debug("stt.frame-dropped", { sessionId, byteSize: bytes.byteLength, reason: "no live STT socket" });
+        connect();
+        log.debug("stt.frame-dropped", {
+          sessionId,
+          captureId,
+          byteSize: bytes.byteLength,
+          reason: "no live STT socket",
+        });
         return;
       }
       bufferedBytes += bytes.byteLength;
@@ -330,21 +501,22 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
     discard() {
       if (closed) return;
-      // Bumped FIRST, so a connect already in flight sees the change and closes
-      // its socket instead of installing it.
       uplinkEpoch += 1;
       const active = adapter;
+      const discarded = capture;
       adapter = null;
+      capture = null;
+      micOpen = false;
       log.info("stt.discard", {
         sessionId,
+        captureId: discarded?.id ?? null,
+        mode: discarded?.mode ?? null,
         wasConnected: active !== null,
         bufferedBytes,
-        micOpen,
-        reason: "the uplink was aimed at a session this connection has left — dropping it without a flush",
+        transition: `${discarded?.status ?? "closed"}->closed`,
+        reason: "connection capture was discarded without a flush",
       });
       bufferedBytes = 0;
-      // `close()`, never `endUtterance()`: the point is to ABANDON the open
-      // turn, not to make the service finalize it.
       if (active) detach("discard", () => active.close());
     },
 
@@ -352,7 +524,17 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       if (closed) return;
       closed = true;
       micOpen = false;
-      log.info("stt.close", { sessionId, wasConnected: adapter !== null });
+      const closingCapture = capture;
+      capture = null;
+      log.info("stt.close", {
+        sessionId,
+        captureId: closingCapture?.id ?? null,
+        mode: closingCapture?.mode ?? null,
+        bufferedBytes,
+        transition: `${closingCapture?.status ?? "closed"}->closed`,
+        wasConnected: adapter !== null,
+      });
+      bufferedBytes = 0;
       lifetime.abort();
       const active = adapter;
       adapter = null;
