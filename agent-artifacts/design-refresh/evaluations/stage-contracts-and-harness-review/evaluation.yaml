@@ -25,22 +25,19 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
   reviewedCommit: 259d8fff9b94bf087aca87d95370c6e0baac4318
-  managerPrompt: "Fix all five findings before re-review. In particular: ensure
-    every STT stream failure/recovery path terminalizes a committing capture and
-    cannot block later captures; replace line-local prototype checks with
-    syntax/content-aware detection that catches multiline runtime
-    imports/URLs/bundle references; derive reachable inventory coverage from
-    source-owned discovery/registry rather than comparing two manually
-    maintained lists; make E2E-009 execute and assert a representative persisted
-    Calendar filter; and validate committed foundation JSON against the actual
-    JSON Schema, including schema-only constraints and negative cases. Preserve
-    the reviewed no-audio/no-network-manipulation and prototype-reference-only
-    boundaries."
+  managerPrompt: "Fix STAGE-006 without regressing STAGE-001. `turn_started` is
+    non-terminal: after semantic `End`, it must not terminalize or clear the
+    committing capture. Keep the capture eligible for the later committed
+    transcript/true terminal event, while stream failure and genuine terminal
+    events must still release it so later captures cannot wedge. Add focused
+    regressions for `End -> turn_started -> committed transcript` producing
+    exactly one committed turn, plus failure/terminal interleavings proving no
+    duplicate turn and no blocked successor capture."
   fixerAgentId: d7dddfc4-97ac-4681-b2d1-ed939194f760
 findings:
   - id: STAGE-001
