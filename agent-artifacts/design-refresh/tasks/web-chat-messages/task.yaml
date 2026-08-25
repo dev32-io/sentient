@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-chat-messages
 title: Refresh Web chat message chronology, bubbles, and assistant identity states
-status: awaiting_ci
+status: contribution_complete
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
