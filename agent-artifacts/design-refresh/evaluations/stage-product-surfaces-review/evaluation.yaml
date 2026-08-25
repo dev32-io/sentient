@@ -1,0 +1,33 @@
+schemaVersion: 1
+id: stage-product-surfaces-review
+type: combined-review
+checkpoint: stage-review
+stageId: product-surfaces
+scope:
+  workItem: design-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - bun run --filter '@sentient/webui' test:unit
+  - bun run --filter '@sentient/webui' typecheck
+  - bun run --filter '@sentient/webui' build
+  - bun run --filter '@sentient/gateway' test:unit
+  - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+  - ./scripts/ios-setup.sh
+  - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+    -destination 'platform=iOS Simulator,name=iPhone 16'
+  - bun run design:inventory:check
+  - git diff --check
+criteria:
+  - Complete reachable-state coverage, component-boundary compliance, and no
+    domain/session/persistence regressions
+  - Web text/chat/task/composer/capture separation, Settings trust cleanup,
+    Calendar behavior, keyboard and 200% zoom
+  - iOS Rive/startup readiness/History, native Settings/Voice/Calendar
+    navigation and large Dynamic Type
+  - No audio E2E, no network manipulation, and no prototype runtime imports
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
