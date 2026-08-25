@@ -278,11 +278,16 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
             reason: err instanceof Error ? err.message : String(err),
           });
         } finally {
-          // An event delivered after End is the adapter's terminal response,
-          // even when dispatching that response failed or found no runtime.
-          // Never leave the capture in `committing`: it would reject every
-          // later Start forever.
-          if (eventCapture.status === "committing" && capture === eventCapture) {
+          // Only transcript/drop events are terminal adapter responses. A
+          // post-End turn_started is onset metadata and must leave the commit
+          // gate open for the transcript that follows it. Terminal responses
+          // still release the capture after dispatch/no-runtime failure so a
+          // later Start cannot wedge.
+          if (
+            (event.type === "transcript" || event.type === "turn_dropped") &&
+            eventCapture.status === "committing" &&
+            capture === eventCapture
+          ) {
             capture = null;
             micOpen = false;
             bufferedBytes = 0;

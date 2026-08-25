@@ -31,6 +31,7 @@ const TEST_CONFIG: STTAdapterConfig = {
 interface FakeAdapter {
   adapter: STTAdapter;
   emit(event: STTEvent): void;
+  fail(error: Error): void;
   sent: Uint8Array[];
   turnModes: TurnMode[];
   flushes: number;
@@ -39,23 +40,25 @@ interface FakeAdapter {
 }
 
 function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
-  const pendingEvents: STTEvent[] = [];
-  let deliver: ((e: STTEvent | null) => void) | null = null;
+  const pendingEvents: Array<STTEvent | Error> = [];
+  let deliver: ((e: STTEvent | Error | null) => void) | null = null;
+  const enqueue = (value: STTEvent | Error): void => {
+    const d = deliver;
+    if (d) {
+      deliver = null;
+      d(value);
+      return;
+    }
+    pendingEvents.push(value);
+  };
   const f: FakeAdapter = {
     sent: [],
     turnModes: [],
     flushes: 0,
     suppressions: [],
     closes: 0,
-    emit(event) {
-      const d = deliver;
-      if (d) {
-        deliver = null;
-        d(event);
-        return;
-      }
-      pendingEvents.push(event);
-    },
+    emit: enqueue,
+    fail: enqueue,
     adapter: {
       open: async () => {
         if (openError) throw openError;
@@ -82,13 +85,15 @@ function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
         while (true) {
           const next = pendingEvents.shift();
           if (next !== undefined) {
+            if (next instanceof Error) throw next;
             yield next;
             continue;
           }
-          const awaited = await new Promise<STTEvent | null>((resolve) => {
+          const awaited = await new Promise<STTEvent | Error | null>((resolve) => {
             deliver = resolve;
           });
           if (awaited === null) return;
+          if (awaited instanceof Error) throw awaited;
           yield awaited;
         }
       },
@@ -289,18 +294,59 @@ describe("createSttSession", () => {
     session.close();
   });
 
-  it("terminalizes a committing semantic capture when its event stream fails", async () => {
-    let rejectEvents: ((error: Error) => void) | undefined;
+  it("keeps End -> turn_started eligible for one committed semantic transcript", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    fake.emit({ type: "turn_started", turnIdx: 1 });
+    await settle();
+    expect(session.start("cap-blocked", "semantic")).toBe(false);
+
+    fake.emit({ type: "transcript", turnIdx: 1, text: "commit this once" });
+    await settle();
+    fake.emit({ type: "turn_dropped", turnIdx: 1 });
+    await settle();
+
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "commit this once" }]);
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    session.close();
+  });
+
+  it("releases End -> turn_started on a true dropped terminal without submitting", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    expect(session.start("cap-1", "semantic")).toBe(true);
+    await settle();
+    session.end("cap-1");
+    fake.emit({ type: "turn_started", turnIdx: 1 });
+    fake.emit({ type: "turn_dropped", turnIdx: 1 });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(session.start("cap-2", "semantic")).toBe(true);
+    session.close();
+  });
+
+  it("terminalizes End -> turn_started when its semantic event stream fails", async () => {
     const failing = fakeAdapter();
-    failing.adapter.events = async function* () {
-      await new Promise<never>((_resolve, reject) => {
-        rejectEvents = reject;
-      });
-    };
-    failing.adapter.endUtterance = () => {
-      failing.flushes += 1;
-      rejectEvents?.(new Error("final stream failed"));
-    };
     const healthy = fakeAdapter();
     const queue = [failing, healthy];
     const stub = stubRuntime();
@@ -315,8 +361,13 @@ describe("createSttSession", () => {
     expect(session.start("cap-1", "semantic")).toBe(true);
     await settle();
     session.end("cap-1");
+    failing.emit({ type: "turn_started", turnIdx: 1 });
+    await settle();
+    expect(session.start("cap-blocked", "semantic")).toBe(false);
+    failing.fail(new Error("final stream failed"));
     await settle();
 
+    expect(stub.submitted).toEqual([]);
     expect(session.start("cap-2", "semantic")).toBe(true);
     await settle();
     session.pushFrame("cap-2", new Uint8Array([1]));
