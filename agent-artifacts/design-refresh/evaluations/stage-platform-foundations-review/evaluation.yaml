@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: platform-foundations
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -27,8 +27,8 @@ criteria:
   - KMP capture serialization, frame/terminal ordering, lifecycle cancellation,
     and unchanged Android UI
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: b043ddf8-2f5a-413f-9009-6c2df79f12ea
   reviewedCommit: 83ebc267d38ec0c463ec04ce4f42cc5702be7fbb
@@ -45,6 +45,7 @@ loop:
     compatible or implement complete ARIA menu/listbox roles and keyboard
     behavior (arrows, Home/End, Enter/Space, Escape, focus restoration); add
     focused accessibility regressions.
+  fixerAgentId: 62cd97d3-28e1-439c-acc1-aa8292f5b14c
 findings:
   - id: F1
     severity: high
