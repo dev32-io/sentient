@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-calendar-refresh
 title: Refresh the complete native iOS Calendar workspace and overlays
-status: submitted
+status: awaiting_ci
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
