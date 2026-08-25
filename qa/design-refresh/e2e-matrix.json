@@ -1,0 +1,332 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "E2E-001",
+      "platform": "web",
+      "title": "Web household member authenticates and navigates the refreshed shell and History.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "web.auth.login-picker",
+        "web.shell.chat",
+        "web.history.list"
+      ],
+      "setup": [
+        "Start the stable real local stack without modifying network connectivity.",
+        "Use a provisioned disposable account and a clean browser profile."
+      ],
+      "actions": [
+        "Authenticate through the current user and PIN flow.",
+        "Navigate Chat, Calendar, and Settings.",
+        "Open and close History.",
+        "Create a new chat and restore the prior chat."
+      ],
+      "expectedOutcomes": [
+        "Every visited route and state uses the refreshed component system.",
+        "Route state, drawer dismissal, new-chat behavior, and prior-session restoration remain coherent."
+      ],
+      "evidence": [
+        "Accessibility snapshots and sanitized desktop and narrow screenshots.",
+        "Route and session observations against the mapped production paths."
+      ],
+      "safety": [
+        "Never discover, brute-force, or record credentials.",
+        "Remove disposable session state after the case.",
+        "Do not manipulate Wi-Fi, network adapters, or connectivity."
+      ],
+      "entrypoint": "qa/design-refresh/run-web-text-only.sh"
+    },
+    {
+      "id": "E2E-002",
+      "platform": "web",
+      "title": "Web household member completes and interrupts a text-only assistant conversation.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "web.chat.user-message",
+        "web.chat.assistant-responding",
+        "web.chat.tasks",
+        "web.composer.interrupt"
+      ],
+      "setup": [
+        "Use a disposable conversation and deterministic text response on the stable local stack.",
+        "Keep microphone and TTS playback disabled."
+      ],
+      "actions": [
+        "Send text through the composer.",
+        "Observe the user message, thinking, responding, task shelf, and completed response.",
+        "Interrupt an active text response."
+      ],
+      "expectedOutcomes": [
+        "Exactly one user message and corresponding assistant response appear without duplicate projection.",
+        "Rive state progresses through correct text-driven states and returns to idle.",
+        "Streaming text remains durable and unclipped.",
+        "Task activity remains in the composer shelf and never appears as a message-bubble tool pill.",
+        "Text-response interruption returns the composer to an idle usable state without implying background-task cancellation."
+      ],
+      "evidence": [
+        "Sanitized state-transition evidence and screenshots containing only clearly synthetic disposable test text."
+      ],
+      "safety": [
+        "Use a read-only disposable prompt and delete the session afterward.",
+        "Do not activate microphone, STT, TTS playback, or audio capture."
+      ],
+      "entrypoint": "qa/design-refresh/run-web-text-only.sh"
+    },
+    {
+      "id": "E2E-003",
+      "platform": "web",
+      "title": "Web household member changes and restores one harmless setting.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "web.settings.route",
+        "web.settings.audio",
+        "web.settings.apply.dirty",
+        "web.settings.apply.applying",
+        "web.settings.apply.success"
+      ],
+      "setup": [
+        "Record the original value of one harmless setting.",
+        "Use the stable local stack and an authenticated disposable browser profile."
+      ],
+      "actions": [
+        "Change the setting.",
+        "Apply the change.",
+        "Reload and verify persistence.",
+        "Restore the original value."
+      ],
+      "expectedOutcomes": [
+        "Dirty, applying, and success states use refreshed components.",
+        "The changed value survives reload.",
+        "The original value is restored at case completion."
+      ],
+      "evidence": [
+        "Request result, visible apply state, and sanitized screenshots."
+      ],
+      "safety": [
+        "Do not assert or play audio even if the representative setting belongs to Audio.",
+        "Always restore the original value.",
+        "Do not manipulate network connectivity."
+      ],
+      "entrypoint": "qa/design-refresh/run-web-text-only.sh"
+    },
+    {
+      "id": "E2E-004",
+      "platform": "web",
+      "title": "Web household member uses the refreshed Calendar and manages one disposable event.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "web.calendar.route",
+        "web.calendar.day",
+        "web.calendar.week",
+        "web.calendar.month",
+        "web.calendar.year",
+        "web.calendar.filters",
+        "web.calendar.preview",
+        "web.calendar.editor.create",
+        "web.calendar.editor.edit",
+        "web.calendar.delete"
+      ],
+      "setup": [
+        "Provision a disposable local calendar fixture and unique event identity."
+      ],
+      "actions": [
+        "Visit Day, Week, Month, and Year views.",
+        "Apply representative filters.",
+        "Create, preview, edit, and delete one disposable event."
+      ],
+      "expectedOutcomes": [
+        "All Calendar views and overlays use the refreshed composition and remain reachable.",
+        "The disposable event is created, visibly updated, and removed successfully."
+      ],
+      "evidence": [
+        "Calendar request results, sanitized screenshots, and final fixture state."
+      ],
+      "safety": [
+        "Use only a unique disposable event.",
+        "Always delete fixture data during cleanup.",
+        "Do not touch production calendars."
+      ],
+      "entrypoint": "qa/design-refresh/run-web-text-only.sh"
+    },
+    {
+      "id": "E2E-005",
+      "platform": "web",
+      "title": "Keyboard and enlarged-content user operates critical refreshed WebUI surfaces.",
+      "classification": "edge",
+      "inventoryIds": [
+        "web.shell.user-menu",
+        "web.history.rename",
+        "web.chat.permission",
+        "web.composer.draft",
+        "web.calendar.editor.discard"
+      ],
+      "setup": [
+        "Use the stable local stack at approved desktop and narrow viewports.",
+        "Set browser zoom to 200 percent."
+      ],
+      "actions": [
+        "Navigate the shell, History drawer, text composer, one representative dialog, Settings, and Calendar using the keyboard.",
+        "Exercise Enter and Shift+Enter in the text composer.",
+        "Dismiss overlays and return focus to their invoking controls."
+      ],
+      "expectedOutcomes": [
+        "Focus remains visible and follows a usable order.",
+        "Dismissed overlays restore focus appropriately.",
+        "Essential actions remain reachable with no page-level horizontal overflow.",
+        "Enter sends text and Shift+Enter inserts a newline."
+      ],
+      "evidence": [
+        "Accessibility tree, focus trace, overflow measurements, and sanitized screenshots."
+      ],
+      "safety": [
+        "Restore browser zoom and close overlays after the case.",
+        "Do not activate voice controls or manipulate network connectivity."
+      ],
+      "entrypoint": "qa/design-refresh/run-web-text-only.sh"
+    },
+    {
+      "id": "E2E-006",
+      "platform": "ios",
+      "title": "iOS household member cold-launches and navigates the refreshed native shell.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "ios.splash.thinking",
+        "ios.shell.chat",
+        "ios.history.list",
+        "ios.settings.root"
+      ],
+      "setup": [
+        "Use the stable local stack and an authenticated disposable simulator fixture.",
+        "Cold-launch the local debug app without changing network state."
+      ],
+      "actions": [
+        "Observe the startup thinking identity.",
+        "Wait for healthy readiness resolution.",
+        "Open History and create a new chat.",
+        "Open Settings and navigate back using native navigation."
+      ],
+      "expectedOutcomes": [
+        "Thinking is visible immediately, remains for at least 1500ms, and remains until healthy readiness resolves.",
+        "The correct root surface is revealed without an idle flash.",
+        "Native navigation, back behavior, and the refreshed History drawer remain usable."
+      ],
+      "evidence": [
+        "Timestamped screen recording, sanitized screenshots, and navigation assertions."
+      ],
+      "safety": [
+        "Use the local simulator only.",
+        "Do not interrupt or manipulate network connectivity."
+      ],
+      "entrypoint": "qa/design-refresh/run-ios-text-only.sh"
+    },
+    {
+      "id": "E2E-007",
+      "platform": "ios",
+      "title": "iOS household member completes and interrupts a text-only conversation.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "ios.chat.pending",
+        "ios.chat.user-message",
+        "ios.chat.assistant-responding",
+        "ios.chat.tasks",
+        "ios.composer.interrupt"
+      ],
+      "setup": [
+        "Use a disposable local conversation and deterministic text response.",
+        "Keep microphone and TTS playback inactive."
+      ],
+      "actions": [
+        "Send a text message.",
+        "Observe queued-to-echo reconciliation, thinking, responding, task shelf, and completion.",
+        "Interrupt an active text response."
+      ],
+      "expectedOutcomes": [
+        "The optimistic message reconciles without duplicate visible messages.",
+        "Rive state reflects text-driven thinking/responding and returns to idle.",
+        "Task activity remains outside message bubbles.",
+        "The composer remains usable after interruption."
+      ],
+      "evidence": [
+        "Maestro assertions, sanitized screenshots, and sanitized state transitions."
+      ],
+      "safety": [
+        "Use text-only read-only prompts and reset the disposable session.",
+        "Do not use microphone, STT, TTS playback, or network manipulation."
+      ],
+      "entrypoint": "qa/design-refresh/run-ios-text-only.sh"
+    },
+    {
+      "id": "E2E-008",
+      "platform": "ios",
+      "title": "Larger-text iOS household member uses refreshed native Settings.",
+      "classification": "edge",
+      "inventoryIds": [
+        "ios.settings.root",
+        "ios.settings.audio",
+        "ios.settings.change-pin",
+        "ios.chat.permission"
+      ],
+      "setup": [
+        "Set the simulator to one representative accessibility Dynamic Type size.",
+        "Record the original value of one harmless setting."
+      ],
+      "actions": [
+        "Traverse grouped Settings navigation.",
+        "Change, save, and restore the representative setting.",
+        "Open one representative native sheet and alert."
+      ],
+      "expectedOutcomes": [
+        "Essential text and actions reflow without clipping.",
+        "Native navigation, back behavior, sheet actions, and alert actions remain reachable.",
+        "The setting persists and is restored."
+      ],
+      "evidence": [
+        "Maestro assertions and reviewed sanitized screenshots."
+      ],
+      "safety": [
+        "Restore the simulator text size and original setting.",
+        "Do not play audio or manipulate network connectivity."
+      ],
+      "entrypoint": "qa/design-refresh/run-ios-text-only.sh"
+    },
+    {
+      "id": "E2E-009",
+      "platform": "ios",
+      "title": "iOS household member uses the refreshed native Calendar and manages one disposable event.",
+      "classification": "golden-path",
+      "inventoryIds": [
+        "ios.calendar.route",
+        "ios.calendar.day",
+        "ios.calendar.week",
+        "ios.calendar.month",
+        "ios.calendar.year",
+        "ios.calendar.filters",
+        "ios.calendar.preview",
+        "ios.calendar.editor",
+        "ios.calendar.delete"
+      ],
+      "setup": [
+        "Provision a disposable local calendar fixture and unique event identity.",
+        "Use a stable simulator locale, time zone, and text-size configuration."
+      ],
+      "actions": [
+        "Visit Day, Week, Month, and Year views.",
+        "Apply representative filters.",
+        "Create, preview, edit, and delete one disposable event."
+      ],
+      "expectedOutcomes": [
+        "Native sheets and date controls remain reachable.",
+        "The refreshed Calendar composition matches the reviewed interaction contract.",
+        "The disposable event is created, visibly updated, and removed successfully."
+      ],
+      "evidence": [
+        "Maestro assertions, sanitized screenshots, and final fixture state."
+      ],
+      "safety": [
+        "Restore simulator state and remove the fixture event.",
+        "Never access production calendar data."
+      ],
+      "entrypoint": "qa/design-refresh/run-ios-text-only.sh"
+    }
+  ]
+}

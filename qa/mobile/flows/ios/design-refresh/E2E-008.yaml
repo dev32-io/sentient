@@ -1,0 +1,29 @@
+appId: io.dev32.sentient.debug
+tags: [design-refresh-text-only]
+---
+- runFlow: ../_helpers/login.yaml
+- tapOn: { id: "history-open" }
+- tapOn: { id: "settings-open" }
+- assertVisible: { id: "settings-screen" }
+- tapOn: { id: "settings-cat-audio" }
+- extendedWaitUntil:
+    visible: { id: "settings-audio-tts" }
+    timeout: 10000
+- tapOn: { id: "settings-audio-tts" }
+- tapOn: { id: "settings-audio-back" }
+- assertVisible: "Discard changes?"
+- tapOn: "Keep editing"
+- tapOn: { id: "settings-audio-save" }
+- extendedWaitUntil:
+    notVisible: { id: "settings-applying" }
+    timeout: 30000
+- tapOn: { id: "settings-audio-tts" }
+- tapOn: { id: "settings-audio-save" }
+- extendedWaitUntil:
+    notVisible: { id: "settings-applying" }
+    timeout: 30000
+- back
+- tapOn: { id: "settings-cat-account" }
+- tapOn: { id: "settings-account-changepin" }
+- assertVisible: { id: "settings-account-pin-cancel" }
+- tapOn: { id: "settings-account-pin-cancel" }

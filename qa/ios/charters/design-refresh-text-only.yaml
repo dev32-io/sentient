@@ -1,0 +1,19 @@
+name: design-refresh-text-only-ios
+entrypoint: qa/design-refresh/run-ios-text-only.sh
+cases: [E2E-006, E2E-007, E2E-008, E2E-009]
+target:
+  environment: local
+  platform: ios-simulator
+  signed_debug_build_required: true
+safety:
+  microphone_permission: prohibited
+  audio_capture_or_playback: prohibited
+  connectivity_mutation: prohibited
+  fault_phase: prohibited
+  production: prohibited
+cleanup:
+  disposable_user_store: required
+  disposable_calendar: required_for_E2E_009
+  restore_dynamic_type: required_after_E2E_008
+evidence_root: qa/mobile/evidence/design-refresh/
+visual_evaluation: structured_non_pixel_review
