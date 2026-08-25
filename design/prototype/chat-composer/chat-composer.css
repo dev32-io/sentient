@@ -1,0 +1,113 @@
+html { min-width: 320px; background: var(--color-bg-sunk); }
+body { min-height: 100vh; margin: 0; background: radial-gradient(circle at 50% -10%, color-mix(in oklab, var(--color-accent) 6%, transparent), transparent 34%), var(--color-bg); }
+.svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+.prototype-header { min-height: 108px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 62ch); align-items: end; gap: 32px; padding: 22px clamp(18px, 4vw, 56px); border-bottom: 1px solid var(--color-line-soft); background: color-mix(in oklab, var(--color-bg-elev) 90%, transparent); }
+.prototype-header h1 { margin: 6px 0 0; font: 400 clamp(26px, 3vw, 36px)/1.15 var(--font-display); }
+.prototype-header p { margin: 0; color: var(--color-ink-2); font-size: 14px; line-height: 1.6; text-align: right; }
+
+.composer-lab { width: min(100%, 1180px); display: grid; gap: 16px; margin: 0 auto; padding: 18px; }
+.composer-review-controls { display: grid; grid-template-columns: minmax(170px, .34fr) minmax(0, 1fr); align-items: center; gap: 18px; padding: 15px 18px; }
+.composer-review-controls h2 { margin: 4px 0 0; font: 500 var(--font-size-lg)/1.25 var(--font-display); }
+.composer-state-options { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+
+.composer-stage { position: relative; min-height: clamp(520px, calc(100dvh - 246px), 700px); overflow: hidden; border: 1px solid var(--color-line-soft); border-radius: var(--radius-lg); background: var(--color-bg-sunk); box-shadow: var(--plate-shadow); }
+.composer-context { width: min(74%, 720px); display: grid; gap: 20px; margin: 68px auto 0; opacity: .24; }
+.composer-context i { height: 12px; border-radius: var(--radius-pill); background: linear-gradient(90deg, var(--color-line-soft), color-mix(in oklab, var(--color-line-soft) 24%, transparent)); }
+.composer-context i:nth-child(2) { width: 70%; }
+.composer-context i:nth-child(3) { width: 46%; }
+
+/* The target composer intentionally follows the supplied prototype composition:
+   one float, a transparent growing text field, a five-part action row, and one
+   action that changes between microphone and send. */
+.composer-dock { position: absolute; z-index: 2; inset: auto 0 0; padding: 58px clamp(12px, 4vw, 34px) 22px; background: linear-gradient(180deg, transparent, var(--color-bg-sunk) 46%, var(--color-bg-sunk)); pointer-events: none; }
+.composer-dock__inner { width: min(100%, 900px); margin: 0 auto; pointer-events: auto; }
+.composer-frame { position: relative; filter: drop-shadow(0 22px 24px color-mix(in oklab, var(--color-bg-sunk) 82%, transparent)); transform: translateY(0); }
+
+.task-event-slot { position: relative; z-index: 0; display: grid; grid-template-rows: 1fr; margin: 0 18px -1px; opacity: 1; visibility: visible; transform: translateY(0); transform-origin: 50% 100%; transition: grid-template-rows 360ms cubic-bezier(.16,1,.3,1), opacity 220ms ease, transform 360ms cubic-bezier(.16,1,.3,1), visibility 0s linear; }
+.task-event-slot[data-visible="false"] { grid-template-rows: 0fr; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.985); pointer-events: none; transition: grid-template-rows 360ms cubic-bezier(.16,1,.3,1), opacity 180ms ease, transform 360ms cubic-bezier(.16,1,.3,1), visibility 0s linear 360ms; }
+.task-event-slot__inner { min-height: 0; overflow: hidden; }
+.task-shelf { position: relative; min-height: 0; display: flex; flex-direction: column; padding: 7px 7px 8px; overflow: hidden; border: 1px solid color-mix(in oklab, var(--color-line) 86%, var(--color-bg-sunk)); border-bottom: 0; border-radius: 14px 14px 0 0; background: color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 5%, transparent), 0 -9px 18px -17px rgba(0,0,0,.94); }
+.task-shelf::after { content: ""; position: absolute; z-index: 0; left: -1px; right: -1px; bottom: -9px; height: 10px; border-inline: 1px solid var(--color-line); background: color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper)); pointer-events: none; }
+.task-pills { position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; overflow-x: auto; padding: 0; scrollbar-width: none; }
+.task-pills::-webkit-scrollbar { display: none; }
+.task-pill { position: relative; min-height: 44px; display: inline-flex; align-items: center; gap: 9px; flex: 0 0 auto; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-ink-2); font: 500 14px var(--font-ui); box-shadow: none; transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), transform 160ms ease; }
+.task-pill[aria-expanded="true"] { z-index: 1; background: color-mix(in oklab, var(--color-paper) 79%, var(--color-bg-sunk)); color: var(--color-ink); border-color: color-mix(in oklab, var(--color-line) 88%, var(--color-bg-sunk)); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent), 0 2px 0 color-mix(in oklab, var(--color-bg-sunk) 76%, var(--color-line)), 0 6px 10px -9px rgba(0,0,0,.9); transform: translateY(1px); }
+.task-pulse { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; }
+.task-pulse--running { background: var(--color-amber); box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-amber) 16%, transparent); animation: task-pulse 1.45s ease-in-out infinite; }
+.task-pulse--done { background: var(--color-sage); }
+.task-pulse--ask { background: var(--color-accent); box-shadow: 0 0 8px color-mix(in oklab, var(--color-accent) 58%, transparent); }
+@keyframes task-pulse { 50% { opacity: .55; transform: scale(.72); } }
+.task-details { position: relative; z-index: 1; overflow: hidden; }
+.task-detail-card { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 7px; padding: 12px 13px; border: 1px solid var(--color-line-soft); border-radius: var(--radius-sm); background: color-mix(in oklab, var(--color-paper) 72%, var(--color-bg-sunk)); box-shadow: var(--plate-shadow); }
+.task-detail-card p { margin: 4px 0 0; color: var(--color-ink-2); font-size: var(--font-size-sm); line-height: 1.5; }
+.task-kicker { color: var(--color-ink-3); font: 500 var(--font-size-sm) var(--font-mono); }
+.composer-inline-action { min-height: 38px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--slate-face); color: var(--color-ink); font-size: 14px; box-shadow: var(--slate-shadow); }
+
+.composer { position: relative; z-index: 1; display: grid; gap: 10px; padding: 12px; overflow: hidden; border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: radial-gradient(ellipse 72% 115% at 50% 52%, color-mix(in oklab, var(--color-paper) 74%, var(--color-bg-sunk)) 0%, transparent 70%), radial-gradient(circle at 84% 8%, color-mix(in oklab, var(--color-accent) 5%, transparent) 0%, transparent 34%), linear-gradient(118deg, color-mix(in oklab, var(--color-paper) 94%, var(--color-ink-4)) 0%, var(--color-paper) 48%, color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)) 100%); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -25px color-mix(in oklab, var(--color-accent) 48%, transparent); cursor: text; transition: border-color var(--motion-normal), box-shadow var(--motion-normal); }
+.composer::after { content: ""; position: absolute; z-index: 0; inset: 1px; border-radius: calc(var(--radius-lg) - 1px); background: linear-gradient(108deg, transparent 0 40%, color-mix(in oklab, var(--color-ink) 2.4%, transparent) 49%, transparent 58%), radial-gradient(ellipse 44% 56% at 82% 112%, color-mix(in oklab, var(--color-accent) 8%, transparent), transparent 72%); opacity: .62; pointer-events: none; }
+.composer:focus-within { border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line)); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -20px color-mix(in oklab, var(--color-accent) 64%, transparent); }
+.composer textarea, .composer-actions { position: relative; z-index: 1; }
+.composer textarea { width: 100%; min-height: 52px; max-height: 132px; padding: 4px 5px; overflow-y: auto; border: 0; outline: 0; resize: none; background: transparent; color: var(--color-ink); font: 16px/1.55 var(--font-ui); transition: height 180ms cubic-bezier(.16,1,.3,1), color var(--motion-fast); }
+.snt-surface .composer textarea:focus-visible { border: 0; outline: 0; box-shadow: none; }
+.composer textarea::placeholder { color: var(--color-ink-3); }
+.composer-actions { display: flex; align-items: center; gap: 8px; padding-top: 0; border: 0; }
+.composer-grow { flex: 1 1 auto; }
+.voice-hint { max-width: 210px; color: var(--color-ink-3); font: var(--font-size-sm)/1.35 var(--font-mono); text-align: right; transition: color var(--motion-fast), opacity var(--motion-fast); }
+
+/* Composer controls are purpose-built for this composite. They share the
+   elevated-slate physical model but are not direct foundation button instances. */
+.composer-icon-button { --composer-key: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2)); position: relative; width: 44px; height: 44px; min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: radial-gradient(ellipse 82% 105% at 50% 52%, color-mix(in oklab, var(--composer-key) 78%, var(--color-bg-sunk)) 0%, color-mix(in oklab, var(--composer-key) 90%, var(--color-bg-sunk)) 50%, var(--composer-key) 100%); color: var(--color-ink); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 10px 16px -12px rgba(0,0,0,.96); cursor: pointer; transform: translateY(0); transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-normal), transform 90ms ease; }
+.composer-icon-button svg { width: 19px; height: 19px; }
+@media (hover:hover) and (pointer:fine) { .composer-icon-button:hover { border-color: transparent; color: var(--color-ink); box-shadow: var(--slate-shadow-hover); transform: translateY(-1px); } }
+.composer-icon-button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.composer-toggle[aria-pressed="true"], .composer-action.voice-active, .composer-action.is-send { --composer-key: var(--color-accent); color: var(--color-bg-sunk); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 12px 18px -12px color-mix(in oklab, var(--color-accent) 66%, transparent); }
+.composer-toggle[aria-pressed="true"]::after, .composer-action.voice-active::after { content: ""; position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-ink); box-shadow: 0 0 0 2px var(--color-accent); }
+.stop-response-control { --composer-key: color-mix(in oklab, var(--color-paper) 50%, var(--color-stop)); color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink)); }
+.stop-response-control[hidden] { display: none; }
+.composer[data-responding="true"] .stop-response-control { color: var(--color-ink); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 12px 18px -12px color-mix(in oklab, var(--color-stop) 62%, transparent); }
+.composer .composer-icon-button:active { box-shadow: var(--slate-shadow-pressed); transform: translateY(1px); transition-duration: 70ms; }
+.composer-action.mode-transition { animation: composer-action-swap 260ms cubic-bezier(.16,1,.3,1); }
+@keyframes composer-action-swap { 0% { transform: scale(.88); opacity: .6; } 65% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
+.composer[data-voice="hold"] .voice-hint, .composer[data-voice="locked"] .voice-hint { color: var(--color-accent); }
+
+.composer-toast { position: fixed; z-index: 90; right: 20px; bottom: 20px; max-width: min(420px, calc(100vw - 40px)); padding: 12px 15px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-paper); color: var(--color-ink); box-shadow: var(--float-shadow); font-size: 14px; }
+
+@media (max-width: 720px) {
+  .prototype-header { grid-template-columns: 1fr; gap: 8px; padding: 18px 16px; }
+  .prototype-header p { text-align: left; }
+  .composer-lab { padding: 0; gap: 0; }
+  .composer-review-controls { grid-template-columns: 1fr; gap: 12px; padding: 14px 13px; border-inline: 0; border-radius: 0; }
+  .composer-state-options { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .composer-state-options::-webkit-scrollbar { display: none; }
+  .composer-state-options .snt-chip { flex: 0 0 auto; }
+  .composer-stage { min-height: calc(100dvh - 236px); border: 0; border-radius: 0; box-shadow: none; }
+  .composer-context { margin-top: 48px; }
+  .composer-dock { padding: 60px 8px calc(8px + env(safe-area-inset-bottom)); }
+  .task-event-slot { margin-inline: 10px; }
+  .task-shelf { padding-inline: 5px; }
+  .task-pill { padding-inline: 10px; }
+  .task-detail-card { grid-template-columns: 1fr; gap: 10px; }
+  .composer { gap: 7px; padding: 9px; border-radius: 16px; }
+  .composer textarea { min-height: 42px; max-height: 108px; padding: 3px 4px; }
+  .composer-actions { display: grid; grid-template-columns: 44px 44px minmax(0,1fr) 44px 44px; gap: 6px; }
+  .composer-grow { min-width: 0; }
+  .voice-hint { max-width: 100%; font-size: var(--font-size-sm); }
+  .task-details { max-height: min(30dvh,260px); overflow-y: auto; }
+}
+
+@media (max-width: 380px) {
+  .composer-actions { gap: 4px; }
+  .voice-hint { line-height: 1.2; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-frame, .task-event-slot, .composer-icon-button { transition: none; }
+  .task-pulse--running, .composer-action.mode-transition { animation: none; }
+}
+
+@media (prefers-contrast: more) {
+  .composer, .task-shelf, .task-detail-card, .composer-icon-button { border-color: var(--color-ink-3); }
+}
