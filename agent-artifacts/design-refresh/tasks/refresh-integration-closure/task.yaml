@@ -1,0 +1,53 @@
+schemaVersion: 1
+id: refresh-integration-closure
+title: Close the refresh inventory, remove legacy visual paths, and enforce
+  migration boundaries
+status: draft
+dependsOn:
+  - design-foundation-v2
+  - capture-protocol-gateway
+  - verification-inventory-harness
+  - kmp-capture-semantics
+  - web-foundation-components
+  - ios-foundation-components
+  - web-shell-auth-history
+  - web-settings-shell-trust
+  - web-settings-soul-voice
+  - web-chat-messages
+  - web-chat-composer
+  - web-calendar-refresh
+  - ios-identity-startup-history
+  - ios-settings-system
+  - ios-access-account-admin
+  - ios-voice-library
+  - ios-calendar-refresh
+  - ios-chat-composer
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: This is a deterministic integration/legacy-removal seam after bounded
+      product work; medium is sufficient because all product decisions are
+      already fixed.
+assembly:
+  stageId: integration-closure
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run design:foundation:check
+    - bun run design:avatar:verify
+    - bun run design:inventory:check
+    - bun run ci
+    - bun run test:int
+    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      :android:assembleDebug :android:testDebugUnitTest
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - test -z "$(git diff --name-only 653f6cee3bd06491b547c63ec04d88f21f4f147f
+      -- android/src/main/kotlin android/src/main/res | grep . || true)"
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
