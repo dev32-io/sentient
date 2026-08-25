@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { ActionButton, Field } from "../common/foundation.tsx";
 
 export interface UnlockGateProps {
   onUnlocked: () => void;
@@ -37,24 +38,19 @@ export function UnlockGate({ onUnlocked }: UnlockGateProps): JSX.Element {
       <pre><code>docker compose logs sentient-gateway</code></pre>
       <p>Or run on the host:</p>
       <pre><code>cat ~/.sentient/.bootstrap-unlock</code></pre>
-      <input
+      <Field
+        label="Unlock code"
         type="text"
         inputMode="numeric"
-        pattern="\d{6}"
         maxLength={6}
-        autoFocus
         value={code}
-        onInput={e => setCode((e.target as HTMLInputElement).value.replace(/\D/g, ""))}
+        onInput={(event) => setCode(event.currentTarget.value.replace(/\D/g, ""))}
         placeholder="6-digit code"
+        error={error ?? undefined}
       />
-      {error && <p class="wizard-unlock__error">{error}</p>}
-      <button
-        type="button"
-        disabled={busy || code.length !== 6}
-        onClick={submit}
-      >
-        {busy ? "Verifying..." : "Verify and start"}
-      </button>
+      <ActionButton variant="primary" loading={busy} disabled={code.length !== 6} onClick={() => void submit()}>
+        Verify and start
+      </ActionButton>
     </section>
   );
 }

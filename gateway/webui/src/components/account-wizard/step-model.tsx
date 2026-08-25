@@ -14,6 +14,7 @@ import type { ProfileV1, ModelProvider } from "../../services/profile-api.ts";
 import type { ProvidersApi } from "../../services/providers-api.ts";
 import { ModelPane } from "../settings/panes/model-pane.tsx";
 import { Btn } from "../settings/primitives/btn.tsx";
+import { Field } from "../common/foundation.tsx";
 
 const log = createLogger(["sentient", "webui", "account-wizard", "step-model"]);
 
@@ -147,20 +148,16 @@ function FreeFormModel({ draft, onDraftModel }: FreeFormModelProps): JSX.Element
   return (
     <div class="aw-fields">
       <p class="aw-fields__label">Custom provider — enter the model ID accepted by your base URL endpoint.</p>
-      <div class="aw-field-group">
-        <label class="aw-label" htmlFor="aw-model-id">
-          Model ID
-        </label>
-        <input
-          id="aw-model-id"
-          class="aw-input"
-          type="text"
-          placeholder={placeholderFor(selectedProvider)}
-          value={draft.model.id}
-          onInput={(e) => onDraftModel({ provider: selectedProvider, id: (e.target as HTMLInputElement).value })}
-        />
-        <span class="aw-field-hint">{hintFor(selectedProvider)}</span>
-      </div>
+      <Field
+        id="aw-model-id"
+        className="aw-field-group"
+        inputClassName="aw-input"
+        label="Model ID"
+        hint={hintFor(selectedProvider)}
+        placeholder={placeholderFor(selectedProvider)}
+        value={draft.model.id}
+        onInput={(event) => onDraftModel({ provider: selectedProvider, id: event.currentTarget.value })}
+      />
     </div>
   );
 }

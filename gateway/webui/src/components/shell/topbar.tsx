@@ -1,7 +1,6 @@
 import type { JSX } from "preact";
 import { IconButton } from "../common/icon-button.tsx";
 import { SentientMark, type SentientMarkMode } from "../common/sentient-mark.tsx";
-import { StatusChip } from "../common/status-chip.tsx";
 import { UserMenu } from "./user-menu.tsx";
 import type { AuthUser } from "../../services/auth-api.ts";
 
@@ -10,13 +9,11 @@ export type TopbarRoute = "chat" | "calendar" | "settings";
 export interface TopbarProps {
   householdName: string;
   routeLabel: string;
-  deviceCount: number;
   activeRoute: TopbarRoute;
   markMode?: SentientMarkMode;
   onChatClick(): void;
   onSettingsClick(): void;
   onCalendarClick(): void;
-  onNotificationsClick(): void;
   onMenuClick?(): void;
   user?: AuthUser;
   onLogout?: () => void;
@@ -26,13 +23,11 @@ export interface TopbarProps {
 export function Topbar({
   householdName,
   routeLabel,
-  deviceCount,
   activeRoute,
   markMode = "idle",
   onChatClick,
   onSettingsClick,
   onCalendarClick,
-  onNotificationsClick,
   onMenuClick,
   user,
   onLogout,
@@ -53,29 +48,31 @@ export function Topbar({
         <span>{routeLabel}</span>
       </div>
       <div class="topbar__spacer" />
-      <StatusChip label={`${deviceCount} devices online`} indicator="live" />
-      <IconButton
-        iconName="chat"
-        title="Conversation"
-        active={activeRoute === "chat"}
-        onClick={onChatClick}
-      />
-      <IconButton
-        iconName="calendar"
-        title="Calendar"
-        active={activeRoute === "calendar"}
-        onClick={onCalendarClick}
-      />
+      <nav class="topbar__nav" aria-label="Primary">
+        <IconButton
+          iconName="chat"
+          title="Conversation"
+          active={activeRoute === "chat"}
+          onClick={onChatClick}
+        />
+        <IconButton
+          iconName="calendar"
+          title="Calendar"
+          active={activeRoute === "calendar"}
+          onClick={onCalendarClick}
+        />
+        <IconButton
+          iconName="settings"
+          title="Household"
+          active={activeRoute === "settings"}
+          onClick={onSettingsClick}
+        />
+      </nav>
       <IconButton
         iconName="bell"
-        title="Notifications"
-        onClick={onNotificationsClick}
-      />
-      <IconButton
-        iconName="settings"
-        title="Household"
-        active={activeRoute === "settings"}
-        onClick={onSettingsClick}
+        title="Notifications — coming soon"
+        disabled
+        onClick={() => undefined}
       />
       {user && onLogout && onOpenAccount && (
         <UserMenu user={user} onLogout={onLogout} onOpenAccount={onOpenAccount} />

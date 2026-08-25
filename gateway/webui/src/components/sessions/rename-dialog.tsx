@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { Dialog } from "../common/dialog.tsx";
+import { ActionButton, Field } from "../common/foundation.tsx";
 
 const TITLE_MAX = 200;
 
@@ -34,49 +35,23 @@ export function RenameDialog({
       initialFocusRef={inputRef as { current: HTMLElement | null }}
       footer={
         <>
-          <button
-            type="button"
-            class="app-dialog__btn app-dialog__btn--ghost"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            class="app-dialog__btn app-dialog__btn--primary"
-            disabled={!canSubmit}
-            onClick={submit}
-          >
-            Save
-          </button>
+          <ActionButton variant="quiet" className="app-dialog__btn app-dialog__btn--ghost" onClick={onClose}>Cancel</ActionButton>
+          <ActionButton variant="primary" className="app-dialog__btn app-dialog__btn--primary" disabled={!canSubmit} onClick={submit}>Save</ActionButton>
         </>
       }
     >
-      <div class="app-dialog__field">
-        <label class="app-dialog__label" for="rename-chat-input">
-          Title
-        </label>
-        <input
-          id="rename-chat-input"
-          ref={inputRef}
-          class="app-dialog__input"
-          type="text"
-          value={draft}
-          maxLength={TITLE_MAX}
-          onInput={(e) => setDraft((e.currentTarget as HTMLInputElement).value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") submit();
-          }}
-          aria-describedby={canSubmit ? undefined : "rename-chat-hint"}
-        />
-        {!canSubmit && (
-          <span id="rename-chat-hint" class="app-dialog__hint">
-            {trimmed.length === 0
-              ? "Title can't be empty."
-              : "Edit the title to enable Save."}
-          </span>
-        )}
-      </div>
+      <Field
+        id="rename-chat-input"
+        inputRef={inputRef}
+        className="app-dialog__field"
+        inputClassName="app-dialog__input"
+        label="Title"
+        value={draft}
+        maxLength={TITLE_MAX}
+        onInput={(event) => setDraft(event.currentTarget.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") submit(); }}
+        hint={!canSubmit ? (trimmed.length === 0 ? "Title can't be empty." : "Edit the title to enable Save.") : undefined}
+      />
     </Dialog>
   );
 }

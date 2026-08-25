@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../common/icon.tsx";
+import { Field, FoundationIconButton } from "../common/foundation.tsx";
 
 const DEBOUNCE_MS = 300;
 const QUERY_MAX = 200;
@@ -43,26 +44,21 @@ export function SessionSearchBox({
       <span class="session-search__icon" aria-hidden="true">
         <Icon name="search" size={14} />
       </span>
-      <input
-        ref={inputRef}
-        class="session-search__input"
-        type="text"
+      <Field
+        inputRef={inputRef}
+        className="session-search__field"
+        inputClassName="session-search__input"
+        type="search"
         placeholder="Search past chats"
         value={q}
         maxLength={QUERY_MAX}
-        onInput={(e) => update((e.currentTarget as HTMLInputElement).value)}
-        aria-label="Search past chats"
+        onInput={(event) => update(event.currentTarget.value)}
+        ariaLabel="Search past chats"
       />
       {q && (
-        <button
-          type="button"
-          class="session-search__clear"
-          aria-label="Clear search"
-          title="Clear"
-          onClick={clear}
-        >
+        <FoundationIconButton label="Clear search" variant="quiet" className="session-search__clear" onClick={clear}>
           <Icon name="x" size={14} />
-        </button>
+        </FoundationIconButton>
       )}
     </div>
   );

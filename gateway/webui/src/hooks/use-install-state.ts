@@ -15,21 +15,26 @@ export interface InstallState {
 export interface UseInstallStateReturn {
   state: InstallState | null;
   loading: boolean;
+  error: boolean;
   refresh: () => Promise<void>;
 }
 
 export function useInstallState(): UseInstallStateReturn {
   const [state, setState] = useState<InstallState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(false);
     try {
       const res = await fetch("/api/v1/install-state");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as InstallState;
       setState(body);
     } catch (err) {
-      log.warn("install-state.fetch-failed", { err: String(err) });
+      log.warn("install-state.fetch-failed", { errorType: err instanceof Error ? err.name : "unknown" });
+      setError(true);
       setState(null);
     } finally {
       setLoading(false);
@@ -40,5 +45,5 @@ export function useInstallState(): UseInstallStateReturn {
     refresh();
   }, [refresh]);
 
-  return { state, loading, refresh };
+  return { state, loading, error, refresh };
 }
