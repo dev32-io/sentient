@@ -1,0 +1,29 @@
+schemaVersion: 1
+id: capture-protocol-gateway
+title: Add capture-aware audio protocol, Web SDK mediation, and gateway
+  commit/cancel semantics
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: This crosses public protocol, authenticated session mediation,
+      asynchronous STT callbacks, and cancellation semantics; medium is
+      appropriate with focused state-machine tests.
+assembly:
+  stageId: contracts-and-harness
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run --filter '@sentient/protocol' test:unit
+    - bun run --filter '@sentient/web-sdk' test:unit
+    - cd gateway && bun test src/session-handlers/ws-handlers-audio.test.ts
+      src/session-handlers/stt-session.test.ts
+      src/session-handlers/command-mediator.test.ts
+    - bun run typecheck
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
