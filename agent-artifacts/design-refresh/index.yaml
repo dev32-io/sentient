@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 26
+  revision: 27
 artifacts:
   - id: intent
     type: intent
@@ -56,8 +56,6 @@ tasks:
     path: tasks/ios-identity-startup-history/task.yaml
   - id: ios-settings-system
     path: tasks/ios-settings-system/task.yaml
-  - id: ios-access-account-admin
-    path: tasks/ios-access-account-admin/task.yaml
   - id: ios-voice-library
     path: tasks/ios-voice-library/task.yaml
   - id: ios-calendar-refresh
@@ -92,7 +90,6 @@ executionStages:
       - web-calendar-refresh
       - ios-identity-startup-history
       - ios-settings-system
-      - ios-access-account-admin
       - ios-voice-library
       - ios-calendar-refresh
   - id: ios-chat-integration
