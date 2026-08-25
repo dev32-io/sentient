@@ -32,10 +32,12 @@ class TalkModeControllerTest {
         val controller = TalkModeController(
             startCapture = { tm -> captureTurnModes += tm; effects += "startCapture:${tm.name}" },
             endCapture = { effects += "endCapture" },
+            cancelCapture = { effects += "cancelCapture" },
             interrupt = { effects += "interrupt" },
             isCycleOrTtsActive = { active },
             beginHoldDefer = { effects += "beginHoldDefer" },
             endHoldDefer = { effects += "endHoldDefer" },
+            discardHoldDefer = { effects += "discardHoldDefer" },
         )
 
         /** Drive to [target] via legal intents, then clear the effect log. */
@@ -79,6 +81,24 @@ class TalkModeControllerTest {
         f.controller.releaseMic()
         assertEquals(TalkMode.Idle, f.controller.mode.value)
         assertEquals(listOf("endCapture", "endHoldDefer"), f.effects)
+    }
+
+    @Test
+    fun cancel_from_hold_discards_capture_and_deferred_audio() {
+        val f = Fakes()
+        f.driveTo(TalkMode.Hold)
+        f.controller.cancelHeld()
+        assertEquals(TalkMode.Idle, f.controller.mode.value)
+        assertEquals(listOf("cancelCapture", "discardHoldDefer"), f.effects)
+    }
+
+    @Test
+    fun lifecycle_cancel_from_auto_cancels_capture_without_aliasing_interrupt() {
+        val f = Fakes()
+        f.driveTo(TalkMode.Continuous)
+        f.controller.lifecycleCancel("view-disappear")
+        assertEquals(TalkMode.Idle, f.controller.mode.value)
+        assertEquals(listOf("cancelCapture"), f.effects)
     }
 
     @Test

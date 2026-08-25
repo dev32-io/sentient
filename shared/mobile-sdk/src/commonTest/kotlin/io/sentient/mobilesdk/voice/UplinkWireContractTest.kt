@@ -70,11 +70,14 @@ class UplinkWireContractTest {
         // stopMic order: frames stop FIRST (cancelAndJoin), audio.end LAST.
         pipe.stop()
         rec.stopStreaming()
+        mic.emit(ShortArray(8) { 8000 })
+        testScheduler.advanceUntilIdle()
 
         assertEquals(WireRecorder.START, rec.calls.first(), "calls=${rec.calls}")
         assertEquals(WireRecorder.END, rec.calls.last(), "calls=${rec.calls}")
         val middle = rec.calls.subList(1, rec.calls.size - 1)
         assertTrue(middle.isNotEmpty(), "expected ≥1 binary frame, calls=${rec.calls}")
         assertTrue(middle.all { it == WireRecorder.FRAME }, "binary-only middle, calls=${rec.calls}")
+        assertEquals(1, rec.calls.count { it == WireRecorder.END }, "no frame or duplicate terminal may follow end")
     }
 }
