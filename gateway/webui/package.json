@@ -17,6 +17,7 @@
   "dependencies": {
     "@jitsi/rnnoise-wasm": "^0.2.1",
     "@preact/signals": "^2.9.0",
+    "@rive-app/canvas": "2.40.1",
     "@sentient/config": "workspace:*",
     "@sentient/protocol": "workspace:*",
     "@sentient/web-sdk": "workspace:*",

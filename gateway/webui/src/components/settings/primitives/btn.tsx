@@ -1,4 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
+import { ActionButton } from "../../common/foundation.tsx";
 
 export interface BtnProps {
   kind?: "primary" | "secondary" | "ghost";
@@ -8,36 +9,13 @@ export interface BtnProps {
   children: ComponentChildren;
   icon?: JSX.Element;
   disabled?: boolean;
-  onClick?: (e: MouseEvent) => void;
+  loading?: boolean;
+  onClick?: (event: MouseEvent) => void;
   type?: "button" | "submit";
   title?: string;
 }
 
-export function Btn({
-  kind = "ghost",
-  size = "md",
-  danger,
-  dark,
-  children,
-  icon,
-  disabled,
-  onClick,
-  type = "button",
-  title,
-}: BtnProps): JSX.Element {
-  const cls = [
-    "btn",
-    `b-${kind}`,
-    `b-${size}`,
-    danger ? "danger" : "",
-    dark ? "on-dark" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  return (
-    <button type={type} class={cls} disabled={disabled} onClick={onClick} title={title}>
-      {icon && <span class="b-icon">{icon}</span>}
-      {children}
-    </button>
-  );
+export function Btn({ kind = "ghost", danger, children, icon, size: _size, dark: _dark, ...props }: BtnProps): JSX.Element {
+  const variant = danger ? "destructive" : kind === "primary" ? "primary" : kind === "ghost" ? "quiet" : "default";
+  return <ActionButton {...props} variant={variant}>{icon}{children}</ActionButton>;
 }

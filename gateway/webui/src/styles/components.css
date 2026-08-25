@@ -178,30 +178,6 @@ html.is-paused *::after {
   position: relative;
 }
 
-/* Active (thinking / speaking / listening): the ripple lives ONLY on the chat
-   assistant avatar wrapper (.avatar--active) — so the top bar / brand mark stays
-   static. A bright ring (#FFE1BD — brighter than the static rim) pulses out from
-   the icon's edge (scale 1 → 1.85) and fades. No steady ring. Two staggered.
-   Mirrors the native iOS/Android AvatarRipple. */
-.avatar--active::before,
-.avatar--active::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid #FFE1BD;
-  opacity: 0;
-  pointer-events: none;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .avatar--active::before { animation: avatar-ripple 1.8s ease-out infinite; }
-  .avatar--active::after  { animation: avatar-ripple 1.8s ease-out infinite; animation-delay: 0.9s; }
-}
-@keyframes avatar-ripple {
-  0%   { transform: scale(1);    opacity: 0.75; }
-  100% { transform: scale(1.85); opacity: 0; }
-}
-
 /* ─── StatusChip ─── */
 
 @keyframes status-pulse {

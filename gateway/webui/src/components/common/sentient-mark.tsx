@@ -1,30 +1,21 @@
 import type { JSX } from "preact";
+import { SentientIdentity, type SentientIdentityProps, type SentientIdentityState } from "./sentient-identity.tsx";
 
-export type SentientMarkMode = "idle" | "thinking" | "speaking" | "listening";
+/** @deprecated Use SentientIdentityState. */
+export type SentientMarkMode = SentientIdentityState;
 
 export interface SentientMarkProps {
-  size?: number;
-  mode?: SentientMarkMode;
-  className?: string;
+  size?: number | undefined;
+  mode?: SentientMarkMode | undefined;
+  className?: string | undefined;
+  label?: string | undefined;
+  riveFactory?: SentientIdentityProps["riveFactory"] | undefined;
 }
 
-/**
- * The Sentient brand atom — the ONE shared static asset (public/sentient-mark.svg,
- * the same SVG mobile renders). ALWAYS static.
- *
- * The "Sentient is active" ripple is NOT part of the mark — it lives on the chat
- * assistant avatar wrapper (.avatar--active). The top bar / any other mark stays
- * static. `mode` is accepted for call-site compatibility but does not affect
- * rendering (the old electron-spin / halo-nucleus keyframes are gone).
- */
-export function SentientMark({ size = 26, mode: _mode = "idle", className = "" }: SentientMarkProps): JSX.Element {
-  return (
-    <span
-      class={`sentient-mark${className ? ` ${className}` : ""}`}
-      style={{ width: `${size}px`, height: `${size}px` }}
-      aria-hidden="true"
-    >
-      <img src="/sentient-mark.svg" width={size} height={size} alt="" />
-    </span>
-  );
+/** Compatibility name for the production three-state identity adapter. */
+export function SentientMark({ size = 26, mode = "idle", className, label, riveFactory }: SentientMarkProps): JSX.Element {
+  return <SentientIdentity size={size} state={mode} className={className} label={label} riveFactory={riveFactory} />;
 }
+
+export { SentientIdentity };
+export type { SentientIdentityProps, SentientIdentityState };
