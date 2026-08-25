@@ -27,7 +27,7 @@ struct MessageList: View {
     /// Animation mode for the live (streaming) assistant bubble's avatar.
     /// Committed bubbles stay `.idle` — only the in-flight cycle's mark animates,
     /// mirroring the webui activeCycleMode binding + the Android activeMarkMode.
-    var activeMarkMode: MarkMode = .idle
+    var activeMarkMode: SentientIdentityState = .idle
     /// Display name shown in the meta row above user bubbles.
     var userName: String = "You"
     /// Optimistic pending outbox entries appended after committed history.
@@ -165,10 +165,10 @@ struct MessageList: View {
     /// thinking/speaking (the post-commit TTS tail, which has no streaming bubble).
     /// Mirrors canInterrupt (cognition != idle || isSpeaking). Other committed
     /// bubbles stay static (`.idle`).
-    private func avatarMode(for message: ChatMessage, at index: Int, lastAssistant: Int?) -> MarkMode {
+    private func avatarMode(for message: ChatMessage, at index: Int, lastAssistant: Int?) -> SentientIdentityState {
         guard message.role == "assistant" else { return .idle }
         if message.streaming { return activeMarkMode }
-        if index == lastAssistant, activeMarkMode == .thinking || activeMarkMode == .speaking {
+        if index == lastAssistant, activeMarkMode == .thinking || activeMarkMode == .responding {
             return activeMarkMode
         }
         return .idle

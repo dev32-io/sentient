@@ -19,12 +19,14 @@ private let rowTagPrefix = "history-row-"
 struct HistoryRow: View {
     let row: SessionRow
     let nowMs: Int64
+    let isSelected: Bool
     let onSwitch: () -> Void
     let onAskRename: () -> Void
     let onAskDelete: () -> Void
 
-    private var titleColor: Color { row.isActive ? DuskColors.accent : DuskColors.ink }
-    private var rowFill: Color { row.isActive ? DuskColors.accent50 : .clear }
+    private var active: Bool { row.isActive || isSelected }
+    private var titleColor: Color { active ? DuskColors.accent : DuskColors.ink }
+    private var rowFill: Color { active ? DuskColors.accent50 : .clear }
 
     // Relative time only. The message-count suffix was dropped: the gateway
     // session list does not populate a count (always 0 → a misleading "no
@@ -37,7 +39,7 @@ struct HistoryRow: View {
         Button(action: onSwitch) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(row.title)
-                    .font(.system(size: TypeScale.base, weight: row.isActive ? .semibold : .regular))
+                    .font(.system(size: TypeScale.base, weight: active ? .semibold : .regular))
                     .foregroundStyle(titleColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -55,6 +57,7 @@ struct HistoryRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("\(rowTagPrefix)\(row.sessionId)")
+        .accessibilityAddTraits(active ? .isSelected : [])
         .contextMenu {
             Button("Rename", action: onAskRename)
             Button("Delete", role: .destructive, action: onAskDelete)

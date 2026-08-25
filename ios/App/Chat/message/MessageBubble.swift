@@ -28,7 +28,7 @@ struct MessageBubble: View {
     let index: Int
     /// Avatar animation mode — only the live streaming assistant bubble animates;
     /// committed bubbles pass `.idle` (static), mirroring the Android avatarMode.
-    var avatarMode: MarkMode = .idle
+    var avatarMode: SentientIdentityState = .idle
     /// Display name shown in the meta row above the bubble.
     var userName: String = "You"
 
@@ -37,7 +37,7 @@ struct MessageBubble: View {
     @Environment(\.bubbleMaxWidth) private var bubbleMaxWidth
 
     private var isUser: Bool { message.role == "user" }
-    private var isSpeaking: Bool { !isUser && avatarMode == .speaking }
+    private var isSpeaking: Bool { !isUser && avatarMode == .responding }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {

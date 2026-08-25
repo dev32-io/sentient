@@ -47,6 +47,6 @@ enum Motion {
 
 enum SplashLayout {
     static let markSize: CGFloat = 96
-    static let minDisplay: Double = 2.0
+    static let minDisplay: Double = 1.5
     static let fadeOut: Double = Motion.normal
 }

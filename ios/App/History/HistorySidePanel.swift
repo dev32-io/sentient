@@ -31,6 +31,7 @@ struct HistorySidePanel: View {
     let nowMs: Int64
     let userName: String
     let household: String
+    let activeSessionId: String?
     let onSelect: (String) -> Void
     let onNewChat: () -> Void
     let onSettings: () -> Void
@@ -77,6 +78,9 @@ struct HistorySidePanel: View {
                     Spacer(minLength: 0)
                 } else if showsLoadingSpinner {
                     historyLoadingSpinner
+                    Spacer(minLength: 0)
+                } else if model.visible.isEmpty {
+                    historyEmptyState
                     Spacer(minLength: 0)
                 } else {
                     sessionList
@@ -128,6 +132,7 @@ struct HistorySidePanel: View {
                     HistoryRow(
                         row: row,
                         nowMs: nowMs,
+                        isSelected: row.sessionId == activeSessionId,
                         onSwitch: { onSelect(row.sessionId) },
                         onAskRename: { onAskRename(row) },
                         onAskDelete: { onAskDelete(row) }
@@ -138,6 +143,18 @@ struct HistorySidePanel: View {
             // Bottom padding ensures content is not occluded by the FAB.
             .padding(.bottom, fabSize + Space.lg * 2)
         }
+    }
+
+    private var historyEmptyState: some View {
+        ContentUnavailableView {
+            Label(
+                model.isSearching ? "No matching chats" : "No past chats",
+                systemImage: model.isSearching ? "magnifyingglass" : "bubble.left.and.bubble.right"
+            )
+        } description: {
+            Text(model.isSearching ? "Try another search." : "Start a new chat to see it here.")
+        }
+        .accessibilityIdentifier(model.isSearching ? "history-no-match" : "history-empty")
     }
 
     // ── History loading spinner ───────────────────────────────────────────────
@@ -218,6 +235,7 @@ private struct PanelPreviewHost: View {
             nowMs: previewNowMs,
             userName: "Kevin",
             household: "Ye Family",
+            activeSessionId: "s1",
             onSelect: { _ in },
             onNewChat: {},
             onSettings: {},

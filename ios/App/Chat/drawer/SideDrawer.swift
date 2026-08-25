@@ -22,7 +22,7 @@
 import SwiftUI
 
 /// Layout / motion constants for the drawer. No magic numbers in the body.
-private enum DrawerMetrics {
+enum DrawerMetrics {
     /// Drawer width: 86 % of screen, capped so it never spans a wide device.
     static let widthFraction: CGFloat = 0.86
     static let maxWidth: CGFloat = 320
@@ -35,6 +35,18 @@ private enum DrawerMetrics {
 
     static func width(for screenWidth: CGFloat) -> CGFloat {
         min(maxWidth, screenWidth * widthFraction)
+    }
+}
+
+enum DrawerSettlingDecision {
+    static func shouldOpen(
+        fraction: CGFloat,
+        velocityX: CGFloat,
+        snapThreshold: CGFloat = DrawerMetrics.snapThreshold,
+        velocitySnap: CGFloat = DrawerMetrics.velocitySnap
+    ) -> Bool {
+        if abs(velocityX) > velocitySnap { return velocityX > 0 }
+        return fraction > snapThreshold
     }
 }
 
@@ -149,12 +161,10 @@ struct SideDrawer<Content: View, Drawer: View>: View {
     /// the binding. Velocity wins past the fling threshold; otherwise position.
     private func snap(translationX: CGFloat, velocityX: CGFloat, drawerWidth: CGFloat) {
         let fraction = currentFraction(drawerWidth: drawerWidth)
-        let shouldOpen: Bool
-        if abs(velocityX) > DrawerMetrics.velocitySnap {
-            shouldOpen = velocityX > 0
-        } else {
-            shouldOpen = fraction > DrawerMetrics.snapThreshold
-        }
+        let shouldOpen = DrawerSettlingDecision.shouldOpen(
+            fraction: fraction,
+            velocityX: velocityX
+        )
         log.info("snap dx=\(Int(translationX)) vx=\(Int(velocityX)) frac=\(String(format: "%.2f", fraction)) → open=\(shouldOpen)")
         animateSettle(open: shouldOpen)
         reconcileBinding(open: shouldOpen)
