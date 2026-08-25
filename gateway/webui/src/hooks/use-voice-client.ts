@@ -285,6 +285,10 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     // callback forwards raw opus packets to the WS connector, which already
     // accepts ArrayBuffer (the SDK treats binary as opaque).
     let opusEncoderUnavailable = false;
+    // Rebound for every identified capture. Clearing this callback is the
+    // local generation fence: delayed encoder packets cannot cross a terminal
+    // or enter a newer capture.
+    let sendEncodedPacket: ((packet: ArrayBuffer) => void) | null = null;
     const opusEncoder = createOpusEncoder({
       sampleRate: CAPTURE_SAMPLE_RATE,
       channels: 1,
@@ -296,7 +300,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         // covers SharedArrayBuffer) keeps the connector's BufferSource happy.
         const ab = new ArrayBuffer(packet.byteLength);
         new Uint8Array(ab).set(packet);
-        audioInputConnector.sendAudioFrame(ab);
+        sendEncodedPacket?.(ab);
       },
       onUnsupported: () => {
         opusEncoderUnavailable = true;
@@ -384,6 +388,87 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     }
 
     const textInputConnector = new UserTextInputConnector();
+
+    let activeCaptureId: string | null = null;
+    let captureAcceptingStarts = true;
+    let captureQueue: Promise<unknown> = Promise.resolve();
+
+    function serializeCapture<T>(operation: () => Promise<T>): Promise<T> {
+      const next = captureQueue.then(operation, operation);
+      captureQueue = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    }
+
+    async function stopLocalCapture(): Promise<void> {
+      // Invalidate encoded and worklet callbacks before stopping hardware.
+      // Connector terminal follows only after this local fence is accepted.
+      sendEncodedPacket = null;
+      capture.stop();
+      speechGate.close();
+      denoiser?.reset();
+      playback.setAecEnabled(false);
+      voiceMode.value = "off";
+      refreshStatus();
+      // Drain packets produced before the generation fence. They are dropped
+      // locally because the sender is already null; awaiting the drain keeps a
+      // fresh capture from inheriting delayed output from this encoder epoch.
+      await opusEncoder?.flush();
+    }
+
+    async function startCapture(turnMode: "manual" | "semantic"): Promise<string> {
+      return serializeCapture(async () => {
+        if (!captureAcceptingStarts || sdkStatusRef.current !== "ready")
+          throw new Error("Voice input is unavailable while reconnecting.");
+        if (activeCaptureId !== null) throw new Error("A voice capture is already active.");
+        if (!opusEncoder || opusEncoderUnavailable || !denoiser || isRnNoiseUnavailable) {
+          throw new Error("Voice input requires a recent browser (Chrome 98+, Firefox 130+, Safari 17.2+).");
+        }
+        playback.setAecEnabled(true);
+        try {
+          await capture.start();
+          if (!captureAcceptingStarts || sdkStatusRef.current !== "ready") {
+            capture.stop();
+            playback.setAecEnabled(false);
+            throw new Error("Voice input disconnected while starting.");
+          }
+          const captureId = audioInputConnector.startStreaming({ turnMode });
+          if (captureId === null) {
+            capture.stop();
+            playback.setAecEnabled(false);
+            throw new Error("Voice capture could not be opened.");
+          }
+          activeCaptureId = captureId;
+          sendEncodedPacket = audioInputConnector.frameSender(captureId);
+          voiceMode.value = "active";
+          refreshStatus();
+          return captureId;
+        } catch (error) {
+          await stopLocalCapture();
+          throw error;
+        }
+      });
+    }
+
+    function finishCapture(captureId: string, outcome: "commit" | "cancel"): Promise<void> {
+      return serializeCapture(async () => {
+        if (activeCaptureId !== captureId) return;
+        activeCaptureId = null;
+        await stopLocalCapture();
+        if (outcome === "commit") audioInputConnector.commitCapture(captureId);
+        else audioInputConnector.cancelCapture(captureId);
+      });
+    }
+
+    function cancelCaptureForTeardown(): void {
+      captureAcceptingStarts = false;
+      const captureId = activeCaptureId;
+      activeCaptureId = null;
+      void stopLocalCapture();
+      if (captureId !== null) audioInputConnector.cancelCapture(captureId);
+    }
 
     const awaiting = createAwaitingTracker({ onChange: () => refreshStatus() });
 
@@ -699,6 +784,12 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       const pcm = new Int16Array(data);
       denoiser?.push(int16ToFloat32(pcm));
     });
+    const unsubCaptureError = capture.onError(() => {
+      const captureId = activeCaptureId;
+      if (captureId === null) return;
+      log.warn("capture-error", { captureId, reason: "audio-adapter-error" });
+      void finishCapture(captureId, "cancel");
+    });
     // Debounce playing→false so TTS prosody gaps (WebAudio queue draining
     // for ~50-200ms between chunks) don't strobe the speaking state. Fast
     // path on playing→true so the avatar pulse + button respond as soon as
@@ -769,11 +860,14 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       permissionConnector,
       awaiting,
       refreshStatus,
-      isOpusUplinkAvailable: () => !opusEncoderUnavailable && opusEncoder !== null,
-      isRnNoiseAvailable: () => !isRnNoiseUnavailable && denoiser !== null,
+      startCapture,
+      commitCapture: (captureId: string) => finishCapture(captureId, "commit"),
+      cancelCapture: (captureId: string) => finishCapture(captureId, "cancel"),
+      cancelCaptureForTeardown,
       cleanup() {
         cancelPendingFalse();
         unsubCapture();
+        unsubCaptureError();
         unsubPlayback();
         unsubPlaybackDrain();
         unsubTypewriter();
@@ -792,9 +886,8 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     };
   }, [options.wsUrl, options.token]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: voiceMode signal is stable (created once per mount)
   useEffect(() => {
-    const { sdk, capture, playback, refreshStatus } = resources;
+    const { sdk, playback, refreshStatus } = resources;
 
     sdkStatusRef.current = "connecting";
     refreshStatus();
@@ -804,12 +897,12 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
     });
 
     // AudioContext unlock is bound STRICTLY to user actions that expect a TTS
-    // response: `sendText` (Send button) and `startVoiceMode` (mic toggle).
-    // Both run inside `click` event handlers — the only DOM events that grant
-    // transient user activation per the HTML spec. Document-wide listeners on
-    // `pointerdown` / `touchstart` / `keydown` were tried earlier and are NOT
-    // activation-eligible: they construct the AudioContext during a passive
-    // touch (textarea focus, edge swipe), iOS Safari ghosts it (`state`
+    // response: `sendText` (Send button) and `startCapture` (voice control).
+    // They run directly from the activating click/pointer event before capture
+    // serialization yields, preserving the browser's transient activation.
+    // Document-wide listeners were tried earlier, but they also ran for passive
+    // actions (textarea focus, edge swipe); iOS Safari then ghosts the context
+    // (`state`
     // reports "running" but routing is dead), and every later `unlock()` finds
     // the AC already exists and short-circuits — leaving the player wedged.
     // No path produces TTS without a prior Send or Voice toggle, so this rule
@@ -827,8 +920,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       });
 
     return () => {
-      voiceMode.value = "off";
-      capture.stop();
+      // View disappearance is always discard. Fence producers and stop the
+      // AudioWorklet before connector detach/disconnect can terminalize it.
+      resources.cancelCaptureForTeardown();
       playback.destroy();
       sdk.disconnect();
       sdkStatusRef.current = "disconnected";
@@ -887,42 +981,14 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       connectionLost.value = false;
       resources.sdk.forceReconnect();
     },
-    startVoiceMode: async () => {
-      // Mic uplink encodes to opus (Phase 5.5) and gates on RNNoise speech
-      // probability (Phase 5.5 N3). Both components require modern browsers;
-      // there's no viable fallback for either — uplink is opus-only end-to-
-      // end and the gate is RNNoise-only (server-side Silero alone is too
-      // sensitive to room noise, per N4 rationale). Surface as a throw so
-      // the click handler can show a clear error to the user.
-      if (!resources.isOpusUplinkAvailable() || !resources.isRnNoiseAvailable()) {
-        const reason = !resources.isOpusUplinkAvailable() ? "opus-encoder-unavailable" : "rnnoise-unavailable";
-        const message = "Voice input requires a recent browser (Chrome 98+, Firefox 130+, Safari 17.2+).";
-        log.error("start-voice-mode-blocked", { reason });
-        throw new Error(message);
-      }
-      // TTS-expecting action: the assistant will reply with audio once mic
-      // input arrives. Unlock inside this onClick frame — `click` is one of
-      // the activation-eligible events on iOS Safari, so the AudioContext
-      // constructed here routes audio properly for the rest of the session.
+    startCapture: (mode: "manual" | "semantic") => {
+      // Must stay synchronous with the originating pointer/click event. Moving
+      // unlock behind capture serialization can ghost iOS audio routing.
       resources.playback.unlock();
-      voiceMode.value = "active";
-      // Bring up the WebRTC loopback so getUserMedia AEC subtracts TTS from
-      // mic input. Dropped on stopVoiceMode — text-only sessions never pay
-      // the PC overhead or audio-session-claim cost.
-      resources.playback.setAecEnabled(true);
-      resources.audioInputConnector.startStreaming();
-      await resources.capture.start();
-      resources.refreshStatus();
+      return resources.startCapture(mode);
     },
-    stopVoiceMode: () => {
-      voiceMode.value = "off";
-      resources.audioInputConnector.stopStreaming();
-      resources.capture.stop();
-      // reset the mic latch so a mid-utterance toggle doesn't leak stale open-state into the next session
-      resources.speechGate.close();
-      resources.playback.setAecEnabled(false);
-      resources.refreshStatus();
-    },
+    commitCapture: (captureId: string) => resources.commitCapture(captureId),
+    cancelCapture: (captureId: string) => resources.cancelCapture(captureId),
     sendText: (text: string) => {
       // TTS-expecting action: the gateway will reply with audio. Unlock
       // synchronously inside this onClick frame so the AudioContext is

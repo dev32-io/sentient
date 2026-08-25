@@ -710,361 +710,9 @@ html.is-paused *::after {
   white-space: pre-wrap;
 }
 
-.composer {
-  position: relative;
-  background: var(--color-paper);
-  border: 1px solid color-mix(in oklab, var(--color-ink) 8%, transparent);
-  border-radius: 14px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  /* Idle: ambient warm halo — directional only (y > 0). Keeping the glow
-     below the composer prevents bleed onto the last chat bubble above. */
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.18),
-    0 8px 24px -10px rgba(0, 0, 0, 0.28),
-    0 8px 26px -10px color-mix(in oklab, var(--color-accent) 22%, transparent);
-  transition: border-color var(--motion-normal), box-shadow var(--motion-normal);
-}
-.composer:focus-within {
-  border-color: color-mix(in oklab, var(--color-accent) 28%, transparent);
-  /* Focus: stronger downward halo. No radial (y=0) glow — earlier design
-     radiated upward and touched the last chat bubble. */
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 10px 30px -8px rgba(0, 0, 0, 0.32),
-    0 14px 36px -10px color-mix(in oklab, var(--color-accent) 28%, transparent);
-}
-.composer--listening {
-  border-color: color-mix(in oklab, var(--color-accent) 35%, transparent);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.2),
-    0 12px 34px -8px rgba(0, 0, 0, 0.35),
-    0 16px 48px -10px color-mix(in oklab, var(--color-accent) 40%, transparent);
-}
-.composer--streaming {
-  border-color: color-mix(in oklab, var(--color-stop) 20%, var(--color-line));
-}
-.composer--reconnecting {
-  border-color: color-mix(in oklab, var(--color-warn, #c97800) 30%, var(--color-line));
-}
-.composer__connection-pill {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--color-warn, #c97800) 14%, transparent);
-  color: color-mix(in oklab, var(--color-warn, #c97800) 90%, var(--color-ink));
-  font-family: var(--font-ui);
-  font-size: 12px;
-  line-height: 1.2;
-  font-weight: 500;
-  transition: background 180ms ease;
-}
-.composer__connection-pill--flash {
-  background: color-mix(in oklab, var(--color-warn, #c97800) 32%, transparent);
-}
-.composer__textarea {
-  width: 100%;
-  min-height: 24px;
-  max-height: 200px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--color-ink);
-  font-family: var(--font-ui);
-  /* 16px universally so iPad / iOS Safari don't auto-zoom on focus. */
-  font-size: 16px;
-  line-height: 1.55;
-  resize: none;
-  outline: none;
-}
-.composer__textarea::placeholder { color: var(--color-ink-3); }
-.composer__bottom-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-.composer__spacer { flex: 1 1 auto; }
 
-/* ─── MicCorner — hold-to-talk / drag-to-lock corner mic ───
-   A squircle tab welded onto the composer's top-right edge. Hold → mic on
-   (composer becomes a waveform), slide left past the detent to lock
-   hands-free, drag back to disengage. Ember colorway: the body stays dark,
-   the icon burns accent, a gradient trail follows the drag. */
-.composer-shell {
-  position: relative;
-  isolation: isolate;
-}
-.mic-corner-wrap {
-  position: absolute;
-  top: -18px;
-  right: 10px;
-  width: 96px;
-  height: 34px;
-  z-index: 3;
-  pointer-events: none;
-  --mic-detent-color: color-mix(in oklab, var(--color-accent) 85%, white);
-}
+/* ─── InterruptButton — foreground response control ─── */
 
-/* the button shell — transparent, positioned; visuals live on __body */
-.mic-corner {
-  pointer-events: auto;
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--color-ink-3);
-  cursor: pointer;
-  will-change: transform;
-  touch-action: none;
-  /* springy settle on release */
-  transition: transform 0.5s cubic-bezier(0.3, 1.75, 0.45, 1), color 0.2s;
-}
-.mic-corner:hover { color: var(--color-ink-2); }
-/* while dragging — track the finger raw */
-.mic-corner-wrap--dragging .mic-corner {
-  transition: color 0.2s;
-  cursor: grabbing;
-}
-
-.mic-corner__body {
-  position: absolute;
-  inset: 0;
-  background: var(--color-bg-sunk);
-  border: 1px solid var(--color-line-soft);
-  border-radius: 11px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.28);
-  transition: background 0.22s, border-color 0.22s, box-shadow 0.22s;
-}
-.mic-corner__face {
-  position: relative;
-  display: inline-flex;
-}
-
-/* press ripple */
-.mic-corner__ripple {
-  position: absolute;
-  inset: -2px;
-  border-radius: 14px;
-  pointer-events: none;
-  opacity: 0;
-}
-.mic-corner-wrap--hold .mic-corner__ripple {
-  border: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
-  animation: mic-ripple 0.5s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-}
-@keyframes mic-ripple {
-  0%   { opacity: 0.9; transform: scale(0.9); }
-  100% { opacity: 0; transform: scale(1.7); }
-}
-
-/* live (dragging or locked) — ember: dark body, accent icon + glow */
-.mic-corner-wrap--rail .mic-corner { color: var(--color-accent); }
-.mic-corner-wrap--rail .mic-corner__body {
-  border-color: color-mix(in oklab, var(--color-accent) 45%, var(--color-line));
-  box-shadow: 0 2px 10px 0 color-mix(in oklab, var(--color-accent) 30%, transparent);
-}
-/* armed: past the lock threshold — ring flares, detent lights */
-.mic-corner-wrap--armed .mic-corner__body {
-  box-shadow:
-    0 0 0 4px var(--color-accent-50),
-    0 2px 10px 0 color-mix(in oklab, var(--color-accent) 30%, transparent);
-}
-.mic-corner-wrap--locked .mic-corner__body {
-  background: linear-gradient(
-    150deg,
-    color-mix(in oklab, var(--color-accent) 45%, var(--color-bg-sunk)),
-    color-mix(in oklab, var(--color-accent) 20%, var(--color-bg-sunk))
-  );
-  animation: mic-settle 0.5s cubic-bezier(0.3, 1.75, 0.45, 1);
-}
-@keyframes mic-settle {
-  0%   { transform: scale(0.88); }
-  60%  { transform: scale(1.06); }
-  100% { transform: scale(1); }
-}
-
-/* drag trail — grows with progress along the travel axis */
-.mic-corner-wrap__trail {
-  position: absolute;
-  top: 50%;
-  right: 17px;
-  height: 4px;
-  margin-top: -2px;
-  width: calc(var(--mic-drag-progress, 0) * (100% - 34px));
-  opacity: calc(var(--mic-drag-progress, 0) * 0.9);
-  border-radius: 999px;
-  background: linear-gradient(to left, var(--color-accent), transparent);
-  pointer-events: none;
-}
-
-/* lock detent: a dot at the far end that lights when armed */
-.mic-corner-wrap__detent {
-  position: absolute;
-  left: 6px;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  margin-top: -2.5px;
-  border-radius: 50%;
-  background: color-mix(in oklab, var(--color-ink) 22%, transparent);
-  opacity: 0;
-  transition: opacity 0.2s, background 0.2s, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-  pointer-events: none;
-}
-.mic-corner-wrap--rail .mic-corner-wrap__detent { opacity: 1; }
-.mic-corner-wrap--armed .mic-corner-wrap__detent {
-  background: var(--mic-detent-color);
-  transform: scale(1.7);
-}
-.mic-corner-wrap--locked .mic-corner-wrap__detent { opacity: 0; }
-
-/* glyph bounce as it locks */
-.mic-corner-wrap--locked .mic-corner__face {
-  animation: mic-snap 0.44s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-@keyframes mic-snap {
-  0%   { transform: scale(0.62); }
-  55%  { transform: scale(1.2); }
-  100% { transform: scale(1); }
-}
-
-/* rest hint: faint breathing on the idle mic glyph */
-@media (prefers-reduced-motion: no-preference) {
-  .mic-corner-wrap--idle .mic-corner__face {
-    animation: mic-corner-breathe 3s ease-in-out infinite;
-  }
-}
-@keyframes mic-corner-breathe {
-  0%, 100% { opacity: 0.85; }
-  50%      { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .mic-corner-wrap--hold .mic-corner__ripple,
-  .mic-corner-wrap--locked .mic-corner__face,
-  .mic-corner-wrap--locked .mic-corner__body {
-    animation: none;
-  }
-}
-
-/* ─── Recording takeover — the field becomes a waveform while live ─── */
-.composer__textarea--hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-/* absolute overlay centered across the composer so it never resizes —
-   full card width, symmetric padding matching the card's own padding.
-   Draws under the bottom row, so Interrupt stays on top and tappable. */
-.composer__wave-field {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  padding: 0 14px;
-  pointer-events: none;
-  animation: wave-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both;
-}
-@keyframes wave-in {
-  from { opacity: 0; transform: translateY(5px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.ptt-bigwave {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 40px;
-  width: 100%;
-  overflow: hidden;
-}
-.ptt-bigwave i {
-  flex: 1 1 0;
-  min-width: 2px;
-  max-width: 5px;
-  border-radius: 2px;
-  background: color-mix(in oklab, var(--color-accent) 70%, var(--color-ink));
-  transform: scaleY(0.32);
-  transform-origin: center;
-  animation: ptt-wave 1s ease-in-out infinite;
-}
-@keyframes ptt-wave {
-  0%, 100% { transform: scaleY(0.24); opacity: 0.5; }
-  50%      { transform: scaleY(1); opacity: 1; }
-}
-/* keep the row height when TTS/Send unmount so the composer doesn't jump */
-.composer--live .composer__bottom-row { min-height: 32px; }
-/* live composer: gentle breathing glow while listening */
-@media (prefers-reduced-motion: no-preference) {
-  .composer--live { animation: composer-breathe 2.8s ease-in-out infinite; }
-}
-@keyframes composer-breathe {
-  0%, 100% {
-    box-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.2),
-      0 10px 30px -8px color-mix(in oklab, var(--color-accent) 30%, transparent);
-  }
-  50% {
-    box-shadow:
-      0 1px 2px rgba(0, 0, 0, 0.2),
-      0 10px 34px -6px color-mix(in oklab, var(--color-accent) 48%, transparent);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .composer__wave-field { animation: none; }
-  .ptt-bigwave i { animation: none; transform: scaleY(0.6); }
-}
-
-/* ─── TtsButton / SendButton / InterruptButton — composer dock variants ─── */
-
-.composer__bottom-row .icon-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid var(--color-line);
-  color: var(--color-ink-3);
-}
-.composer__bottom-row .icon-btn:hover {
-  background: var(--color-bg-elev);
-  color: var(--color-ink);
-}
-.composer__bottom-row .icon-btn--tts-on {
-  color: var(--color-accent);
-  background: color-mix(in oklab, var(--color-accent) 14%, var(--color-paper));
-  border-color: color-mix(in oklab, var(--color-accent) 35%, var(--color-line));
-}
-.composer__bottom-row .icon-btn--tts-off {
-  color: var(--color-ink-3);
-  background: var(--color-bg-sunk);
-  border-color: var(--color-line);
-}
-
-.send-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--color-ink);
-  color: var(--color-paper);
-  border: 0;
-  cursor: pointer;
-  transition: transform var(--motion-fast), opacity var(--motion-fast);
-}
-.send-btn:hover:not(:disabled) { transform: translateY(-1px); }
-.send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .interrupt-btn {
   width: 32px;
@@ -2585,3 +2233,96 @@ html.is-paused *::after {
   margin: 0;
 }
 
+
+/* ─── ChatComposer v2 composite ─────────────────────────────────────────── */
+.chat-composer-frame { position: relative; filter: drop-shadow(0 20px 24px color-mix(in oklab, var(--color-bg-sunk) 70%, transparent)); }
+.chat-composer-frame > .tool-strip {
+  width: auto;
+  margin: 0 14px -1px;
+  overflow: hidden;
+  border: 1px solid var(--color-line-soft);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper));
+}
+.chat-composer {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  overflow: visible;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(ellipse 72% 115% at 50% 52%, color-mix(in oklab, var(--color-paper) 74%, var(--color-bg-sunk)), transparent 70%),
+    radial-gradient(circle at 84% 8%, color-mix(in oklab, var(--color-accent) 6%, transparent), transparent 34%),
+    linear-gradient(118deg, color-mix(in oklab, var(--color-paper) 94%, var(--color-ink-4)), var(--color-paper) 48%, color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)));
+  box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -25px color-mix(in oklab, var(--color-accent) 48%, transparent);
+  cursor: text;
+  transition: border-color 250ms ease, box-shadow 250ms ease;
+}
+.chat-composer:focus-within { border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line)); }
+.chat-composer--reconnecting { border-color: color-mix(in oklab, var(--color-warn, #c97800) 34%, var(--color-line)); }
+.chat-composer__draft {
+  width: 100%; min-height: 42px; max-height: 132px; padding: 3px 4px; overflow-y: auto;
+  border: 0; outline: 0; resize: none; background: transparent; color: var(--color-ink);
+  font: 16px/1.55 var(--font-ui); transition: opacity 150ms ease, transform 250ms cubic-bezier(.16,1,.3,1), height 150ms ease;
+}
+.chat-composer__draft:focus-visible { outline: 0; box-shadow: none; }
+.chat-composer__draft::placeholder { color: var(--color-ink-3); }
+.chat-composer__draft--receded { opacity: .08; pointer-events: none; transform: translateY(3px); }
+.chat-composer__actions { position: relative; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chat-composer__grow { flex: 1 1 8px; }
+.chat-composer__actions :is(.chat-composer__attach, .icon-btn, .interrupt-btn, .chat-composer__send) { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+.chat-composer__attach, .chat-composer__send {
+  display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: var(--slate-face); color: var(--color-ink); box-shadow: var(--slate-shadow); cursor: pointer;
+  transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+}
+.chat-composer__attach:disabled { color: var(--color-ink-3); opacity: .55; cursor: not-allowed; }
+.chat-composer--hold .chat-composer__actions > :is(.chat-composer__attach, .icon-btn) { opacity: 0; transform: translateY(4px) scale(.86); pointer-events: none; }
+.chat-composer__send { background: var(--color-accent); color: var(--color-bg-sunk); }
+.chat-composer__send:disabled { opacity: .45; }
+.chat-composer__interrupt { display: inline-flex; transition: opacity 150ms ease, transform 250ms ease, width 250ms ease; }
+.chat-composer__interrupt--receded { width: 0; overflow: hidden; opacity: 0; transform: scale(.8); pointer-events: none; }
+.chat-composer__connection { justify-self: start; padding: 4px 10px; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-warn, #c97800) 14%, transparent); color: var(--color-ink-2); font-size: 12px; }
+.chat-composer__connection--flash { background: color-mix(in oklab, var(--color-warn, #c97800) 32%, transparent); }
+
+.voice-capture { position: relative; width: 44px; height: 44px; flex: 0 0 44px; transition: width 250ms cubic-bezier(.16,1,.3,1), flex-basis 250ms cubic-bezier(.16,1,.3,1), height 250ms ease; }
+.voice-capture:is(.voice-capture--hold,.voice-capture--auto,.voice-capture--transitioning) { width: 238px; height: 54px; flex-basis: 238px; }
+.voice-capture__primary {
+  position: absolute; z-index: 4; right: 0; bottom: 0; width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  overflow: hidden; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); touch-action: none;
+  background: var(--slate-face); color: var(--color-ink); box-shadow: var(--slate-shadow); cursor: pointer;
+  transition: width 250ms cubic-bezier(.16,1,.3,1), height 250ms ease, border-radius 250ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.voice-capture__primary:focus-visible, .voice-capture__choice:focus-visible, .chat-composer__send:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.voice-capture__primary:disabled { opacity: .45; cursor: not-allowed; }
+.voice-capture:is(.voice-capture--hold,.voice-capture--auto,.voice-capture--transitioning) .voice-capture__primary { width: 100%; height: 54px; border-radius: 18px 11px 11px 18px; background: linear-gradient(105deg, color-mix(in oklab, var(--color-paper) 88%, var(--color-accent-soft)), color-mix(in oklab, var(--color-paper) 88%, var(--color-accent))); }
+.voice-capture--auto .voice-capture__primary { background: color-mix(in oklab, var(--color-paper) 52%, var(--color-sage)); }
+.voice-capture__glyph { position: absolute; top: 50%; left: 50%; display: grid; place-items: center; transform: translate(-50%,-50%); transition: left 250ms cubic-bezier(.16,1,.3,1), transform 250ms ease; }
+.voice-capture:is(.voice-capture--hold,.voice-capture--auto,.voice-capture--transitioning) .voice-capture__glyph { left: calc(100% - 27px); }
+.voice-capture__wave { position: absolute; top: 50%; right: 55px; left: 18px; height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 4px; transform: translateY(-50%); }
+.voice-capture__wave i { width: 3px; height: 18px; border-radius: var(--radius-pill); background: var(--color-accent); transform: scaleY(.35); animation: chat-voice-wave 760ms ease-in-out infinite alternate; }
+.voice-capture--auto .voice-capture__wave i { background: var(--color-sage); }
+.voice-capture__wave i:nth-child(2n) { animation-delay: -210ms; } .voice-capture__wave i:nth-child(3n) { animation-delay: -430ms; }
+@keyframes chat-voice-wave { to { transform: scaleY(1); opacity: .62; } }
+.voice-capture__fan { position: absolute; z-index: 3; right: 0; bottom: calc(100% - 8px); width: 238px; height: 58px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); opacity: 0; visibility: hidden; pointer-events: none; transform: perspective(420px) translateY(17px) rotateX(-74deg) scaleX(.88); transform-origin: 50% 100%; transition: opacity 150ms ease, transform 250ms cubic-bezier(.16,1,.3,1), visibility 0s linear 250ms; }
+.voice-capture__fan--open { opacity: 1; visibility: visible; pointer-events: auto; transform: perspective(420px) translateY(0) rotateX(0) scaleX(1); transition-delay: 0s; }
+.voice-capture__choice { min-width: 0; min-height: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 5px 7px; border: 0; background: color-mix(in oklab, var(--color-paper) 90%, var(--color-bg-sunk)); color: var(--color-ink-2); font: 600 14px var(--font-ui); box-shadow: inset -1px 0 0 var(--color-line-soft); transition: transform 150ms ease, background 150ms ease, color 150ms ease; }
+.voice-capture__choice--auto { border-radius: 20px 11px 7px 16px; } .voice-capture__choice--cancel { border-radius: 14px 14px 7px 7px; } .voice-capture__choice--send { border-radius: 11px 20px 16px 7px; }
+.voice-capture__choice.is-selected { color: var(--color-bg-sunk); background: var(--color-accent); transform: translateY(-5px); }
+.voice-capture__choice--auto.is-selected { background: var(--color-sage); } .voice-capture__choice--cancel.is-selected { background: var(--color-stop); color: var(--color-ink); }
+
+@media (max-width: 480px) {
+  .dock { padding-inline: 8px; }
+  .chat-composer { padding: 9px; border-radius: 16px; }
+  .voice-capture:is(.voice-capture--hold,.voice-capture--auto,.voice-capture--transitioning), .voice-capture__fan { width: 198px; flex-basis: 198px; }
+  .chat-composer__actions { gap: 5px; }
+}
+@media (max-width: 300px) { .chat-composer__attach { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer, .chat-composer__draft, .chat-composer__interrupt, .voice-capture, .voice-capture__primary, .voice-capture__glyph, .voice-capture__fan, .voice-capture__choice { transition: none; }
+  .voice-capture__wave i { animation: none; transform: scaleY(.62); }
+}
