@@ -15,7 +15,7 @@ execution:
     rationale: Chat is behavior-rich but must remain one coherent native composition
       around shared session/outbox/task/capture invariants.
 assembly:
-  stageId: ios-chat-integration
+  stageId: ios-final-products
   intermediateState: complete
 verification:
   timing: task

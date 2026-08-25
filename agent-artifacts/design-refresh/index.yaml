@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 31
+  revision: 32
 artifacts:
   - id: intent
     type: intent
@@ -159,12 +159,27 @@ executionStages:
         - iOS Rive/startup readiness/History, native Settings/Voice/Calendar
           navigation and large Dynamic Type
         - No audio E2E, no network manipulation, and no prototype runtime imports
-  - id: ios-chat-integration
-    tasks:
-      - ios-chat-composer
   - id: integration-closure
     tasks:
       - refresh-integration-closure
   - id: ios-final-products
     tasks:
+      - ios-chat-composer
       - ios-access-account-admin
+    checks:
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - bun run design:inventory:check
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Native iOS chat projection/outbox/task/permission/composer capture
+          invariants with fake-only audio proof
+        - Setup/login/update/account/admin/secret privacy and authorization
+        - Startup readiness integration, native NavigationStack/sheets/alerts,
+          and larger Dynamic Type
