@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: design-foundation-v2
 title: Establish the additive design-foundation v2 contract and generated projections
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -30,3 +30,4 @@ runtime:
   baseCommit: 4a9d08bc87a693f353298813088135e84a1757e7
   lastRunId: 427a4c2b-3a2f-47a6-acb5-f655e6bd4839
   completedCommit: 27c334a8b40839d7a51f2df9654e5d2bf25dceb9
+  mergedCommit: 9a10d79c3589ef394555ab02f671bd8ac443eba1
