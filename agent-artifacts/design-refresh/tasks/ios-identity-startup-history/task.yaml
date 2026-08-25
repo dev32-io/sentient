@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-identity-startup-history
 title: Integrate iOS Rive identity, readiness-gated startup, native shell, and History
-status: ready
+status: running
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
@@ -26,3 +26,9 @@ verification:
     - bun run design:inventory:check
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/ios-identity-startup-history
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-identity-startup-history
+  baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
+  lastRunId: 178417fe-a5e0-445b-8c03-93cd895f9598
