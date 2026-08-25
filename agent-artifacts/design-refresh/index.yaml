@@ -1,0 +1,20 @@
+schemaVersion: 1
+id: design-refresh
+kind: story
+title: Complete WebUI and iOS design refresh
+phase: planning
+state: active
+planning:
+  revision: 1
+artifacts:
+  - id: intent
+    type: intent
+    path: intent.md
+    status: draft
+    narrativeSchemaVersion: 2
+tasks: []
+integrationUnits: []
+delivery:
+  workingBranch: feature/design-refresh
+  createdFromCommit: 653f6cee3bd06491b547c63ec04d88f21f4f147f
+evaluations: []
