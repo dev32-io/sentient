@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: web-calendar-refresh
+title: Refresh the complete Web Calendar workspace and overlays
+status: draft
+dependsOn:
+  - web-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Calendar is a large but well-bounded product composite with mature
+      controller and UI test seams.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run --filter '@sentient/webui' test:unit
+    - bun run --filter '@sentient/gateway' test:unit
+    - bun run --filter '@sentient/webui' typecheck
+    - bun run --filter '@sentient/webui' build
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
