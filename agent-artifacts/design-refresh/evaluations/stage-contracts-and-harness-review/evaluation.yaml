@@ -25,11 +25,22 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
   reviewedCommit: 3f6491bb74dfd51dbd9734c948a6dfaffcccf78c
+  managerPrompt: "Fix all five findings before re-review. In particular: ensure
+    every STT stream failure/recovery path terminalizes a committing capture and
+    cannot block later captures; replace line-local prototype checks with
+    syntax/content-aware detection that catches multiline runtime
+    imports/URLs/bundle references; derive reachable inventory coverage from
+    source-owned discovery/registry rather than comparing two manually
+    maintained lists; make E2E-009 execute and assert a representative persisted
+    Calendar filter; and validate committed foundation JSON against the actual
+    JSON Schema, including schema-only constraints and negative cases. Preserve
+    the reviewed no-audio/no-network-manipulation and prototype-reference-only
+    boundaries."
 findings:
   - id: STAGE-001
     severity: high
