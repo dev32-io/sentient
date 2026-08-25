@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: contracts-and-harness
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - bun run design:foundation:check
   - bun run design:inventory:check
@@ -25,6 +25,53 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
+  reviewedCommit: 3f6491bb74dfd51dbd9734c948a6dfaffcccf78c
+findings:
+  - id: STAGE-001
+    severity: high
+    status: open
+    criterion: Capture terminal races and recovery
+    location: gateway/src/session-handlers/stt-session.ts:291-307,350-355,382-386
+    summary: Semantic end followed by STT event-stream failure leaves a committing
+      capture forever and blocks every later capture.
+    blocking: true
+  - id: STAGE-002
+    severity: high
+    status: open
+    criterion: Prototype-reference-only enforcement
+    location: qa/design-refresh/check.ts:49-62,111-112
+    summary: Line-local prototype reference regex misses ordinary multiline
+      production imports.
+    blocking: true
+  - id: STAGE-003
+    severity: high
+    status: open
+    criterion: Closed reachable surface/state inventory
+    location: qa/design-refresh/check.ts:89-113
+    summary: Inventory completeness compares two manually maintained lists and
+      cannot detect a newly reachable source state omitted from both.
+    blocking: true
+  - id: STAGE-004
+    severity: high
+    status: open
+    criterion: Approved E2E matrix harness
+    location: qa/mobile/flows/ios/design-refresh/E2E-009.yaml:11-39
+    summary: E2E-009 does not execute its persisted representative Calendar filter
+      action.
+    blocking: true
+  - id: STAGE-005
+    severity: medium
+    status: open
+    criterion: Design contract schema validation proof
+    location: scripts/design/design-foundation-v2.test.ts:14-30
+    summary: The schema test never evaluates the committed JSON Schema and leaves
+      schema-only constraints unproved.
+    blocking: false
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-contracts-and-harness-review/manifest.yaml

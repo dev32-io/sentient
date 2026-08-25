@@ -2,7 +2,7 @@ schemaVersion: 1
 id: design-refresh
 kind: story
 title: Complete WebUI and iOS design refresh
-phase: execution
+phase: evaluation
 state: active
 planning:
   revision: 36
