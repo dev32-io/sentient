@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: contracts-and-harness
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - bun run design:foundation:check
   - bun run design:inventory:check
@@ -25,11 +25,11 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: awaiting_manager
   reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
-  reviewedCommit: 3f6491bb74dfd51dbd9734c948a6dfaffcccf78c
+  reviewedCommit: 259d8fff9b94bf087aca87d95370c6e0baac4318
   managerPrompt: "Fix all five findings before re-review. In particular: ensure
     every STT stream failure/recovery path terminalizes a committing capture and
     cannot block later captures; replace line-local prototype checks with
@@ -45,44 +45,51 @@ loop:
 findings:
   - id: STAGE-001
     severity: high
-    status: open
-    criterion: Capture terminal races and recovery
-    location: gateway/src/session-handlers/stt-session.ts:291-307,350-355,382-386
-    summary: Semantic end followed by STT event-stream failure leaves a committing
-      capture forever and blocks every later capture.
-    blocking: true
+    status: resolved
+    criterion: STT terminal failure recovery
+    location: gateway/src/session-handlers/stt-session.ts
+    summary: Original semantic stream-failure wedge is terminalized by the repair.
+    blocking: false
   - id: STAGE-002
     severity: high
-    status: open
-    criterion: Prototype-reference-only enforcement
-    location: qa/design-refresh/check.ts:49-62,111-112
-    summary: Line-local prototype reference regex misses ordinary multiline
-      production imports.
-    blocking: true
+    status: resolved
+    criterion: Prototype runtime-reference enforcement
+    location: qa/design-refresh/check.ts
+    summary: Content-aware scanner now catches tested multiline imports, URLs, and
+      native bundle references.
+    blocking: false
   - id: STAGE-003
     severity: high
-    status: open
-    criterion: Closed reachable surface/state inventory
-    location: qa/design-refresh/check.ts:89-113
-    summary: Inventory completeness compares two manually maintained lists and
-      cannot detect a newly reachable source state omitted from both.
-    blocking: true
+    status: resolved
+    criterion: Closed source reachability inventory
+    location: qa/design-refresh/check.ts;
+      gateway/webui/src/design-refresh-reachability.json;
+      ios/App/design-refresh-reachability.json
+    summary: Inventory is now checked against platform-owned source registries with
+      implementation path/status agreement.
+    blocking: false
   - id: STAGE-004
     severity: high
-    status: open
-    criterion: Approved E2E matrix harness
-    location: qa/mobile/flows/ios/design-refresh/E2E-009.yaml:11-39
-    summary: E2E-009 does not execute its persisted representative Calendar filter
-      action.
-    blocking: true
+    status: resolved
+    criterion: E2E-009 Calendar filter action
+    location: qa/mobile/flows/ios/design-refresh/E2E-009.yaml
+    summary: The flow now applies and reasserts a persisted private-scope filter.
+    blocking: false
   - id: STAGE-005
     severity: medium
-    status: open
-    criterion: Design contract schema validation proof
-    location: scripts/design/design-foundation-v2.test.ts:14-30
-    summary: The schema test never evaluates the committed JSON Schema and leaves
-      schema-only constraints unproved.
+    status: resolved
+    criterion: Committed JSON Schema validation
+    location: scripts/design/design-foundation-v2.test.ts
+    summary: AJV evaluates the committed schema and schema-only negative cases.
     blocking: false
+  - id: STAGE-006
+    severity: high
+    status: open
+    criterion: Capture commit correctness and terminal races
+    location: gateway/src/session-handlers/stt-session.ts:265-290
+    summary: Repair treats non-terminal turn_started after End as terminal and drops
+      the later committed transcript.
+    blocking: true
 result:
   verdict: fail
   report: report.md

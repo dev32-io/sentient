@@ -1,18 +1,13 @@
 schemaVersion: 1
 evaluation: stage-contracts-and-harness-review
-recordedAt: 2026-08-25T22:09:14.172Z
+recordedAt: 2026-08-25T22:16:26.535Z
 entries:
-  - result: All listed checks passed after bun install --frozen-lockfile restored
-      the lock-declared zod dependency.
+  - result: All passed.
     command: bun run design:foundation:check; bun run design:inventory:check;
-      package/gateway/QA tests; bun run typecheck; ./gradlew
-      :shared:mobile-sdk:compileKotlinAndroid; bash -n; git diff --check
-  - result: Returned [] instead of the expected production prototype-reference
-      violation.
-    command: multiline production import probe against findPrototypeRuntimeReferences
-    description: Sanitized probe output.
-    path: files/001-2-sentient-review-prototype-reference.txt
-    checksum: sha256:37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570
-  - result: No changed Android UI or v1 token files.
-    command: git diff --name-only ... -- android
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/design/DesignTokens.kt
+      protocol/Web SDK tests; focused gateway tests; bun run typecheck;
+      QA/calendar tests; Android KMP compile; shell syntax; diff check
+  - result: '{"submittedCount":0}'
+    command: semantic End -> turn_started -> transcript ordering probe
+    description: Sanitized local probe demonstrating the repair-introduced transcript loss.
+    path: files/002-2-sentient-review-stt-terminal-order.txt
+    checksum: sha256:8a760086b9bece0eeb1a66d882e86a6c0b05e96775e7d19f280947a6c9d6674a
