@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: contracts-and-harness
 scope:
   workItem: design-refresh
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - bun run design:foundation:check
   - bun run design:inventory:check
@@ -25,11 +25,11 @@ criteria:
   - Closed inventory, loopback-only fixtures, prototype-reference-only
     enforcement, and text-only E2E safety
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: passed
   reviewerAgentId: b47fa1f9-888b-407d-8238-16814e8312b7
-  reviewedCommit: 259d8fff9b94bf087aca87d95370c6e0baac4318
+  reviewedCommit: 297a95523b7fb02f0f1017e1a8f72ed0daf58cc1
   managerPrompt: "Fix STAGE-006 without regressing STAGE-001. `turn_started` is
     non-terminal: after semantic `End`, it must not terminalize or clear the
     committing capture. Keep the capture eligible for the later committed
@@ -45,49 +45,45 @@ findings:
     status: resolved
     criterion: STT terminal failure recovery
     location: gateway/src/session-handlers/stt-session.ts
-    summary: Original semantic stream-failure wedge is terminalized by the repair.
+    summary: Original semantic stream-failure wedge remains resolved.
     blocking: false
   - id: STAGE-002
     severity: high
     status: resolved
     criterion: Prototype runtime-reference enforcement
     location: qa/design-refresh/check.ts
-    summary: Content-aware scanner now catches tested multiline imports, URLs, and
-      native bundle references.
+    summary: Content-aware prototype reference enforcement remains resolved.
     blocking: false
   - id: STAGE-003
     severity: high
     status: resolved
     criterion: Closed source reachability inventory
-    location: qa/design-refresh/check.ts;
-      gateway/webui/src/design-refresh-reachability.json;
-      ios/App/design-refresh-reachability.json
-    summary: Inventory is now checked against platform-owned source registries with
-      implementation path/status agreement.
+    location: qa/design-refresh/check.ts
+    summary: Platform-owned source registry inventory closure remains resolved.
     blocking: false
   - id: STAGE-004
     severity: high
     status: resolved
     criterion: E2E-009 Calendar filter action
     location: qa/mobile/flows/ios/design-refresh/E2E-009.yaml
-    summary: The flow now applies and reasserts a persisted private-scope filter.
+    summary: Representative persisted filter action remains resolved.
     blocking: false
   - id: STAGE-005
     severity: medium
     status: resolved
     criterion: Committed JSON Schema validation
     location: scripts/design/design-foundation-v2.test.ts
-    summary: AJV evaluates the committed schema and schema-only negative cases.
+    summary: Committed schema validation proof remains resolved.
     blocking: false
   - id: STAGE-006
     severity: high
-    status: open
+    status: resolved
     criterion: Capture commit correctness and terminal races
-    location: gateway/src/session-handlers/stt-session.ts:265-290
-    summary: Repair treats non-terminal turn_started after End as terminal and drops
-      the later committed transcript.
-    blocking: true
+    location: gateway/src/session-handlers/stt-session.ts:280-294
+    summary: Non-terminal turn_started now preserves committing capture;
+      transcript/drop and stream failure terminalize safely.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-contracts-and-harness-review/manifest.yaml
