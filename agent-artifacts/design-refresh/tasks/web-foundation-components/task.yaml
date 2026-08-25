@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-foundation-components
 title: Build the WebUI foundation/common component system and Rive identity adapter
-status: ready
+status: running
 dependsOn:
   - design-foundation-v2
 execution:
@@ -25,3 +25,9 @@ verification:
     - bun run --filter '@sentient/webui' build
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/web-foundation-components
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/web-foundation-components
+  baseCommit: fa449dc5d0016d2f38101dfb95310472823aed3d
+  lastRunId: 872b52c4-5a6c-4a05-8b4b-9bc05eba2f6d
