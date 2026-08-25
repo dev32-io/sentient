@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: verification-inventory-harness
+title: Create the closed refresh inventory and safe text-only verification harness
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: The harness is safety-sensitive and cross-platform but bounded to
+      local fixtures, schemas, and deterministic checks.
+assembly:
+  stageId: contracts-and-harness
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun test qa/design-refresh gateway/src/calendar/e2e-helpers.test.ts
+    - bun run design:inventory:check
+    - bash -n qa/mobile/run-e2e.sh
+    - bun run typecheck
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
