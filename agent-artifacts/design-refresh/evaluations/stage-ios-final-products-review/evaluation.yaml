@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: stage-ios-final-products-review
+type: combined-review
+checkpoint: stage-review
+stageId: ios-final-products
+scope:
+  workItem: design-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+  - ./scripts/ios-setup.sh
+  - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+    -destination 'platform=iOS Simulator,name=iPhone 16'
+  - bun run design:inventory:check
+  - git diff --check
+criteria:
+  - Native iOS chat projection/outbox/task/permission/composer capture
+    invariants with fake-only audio proof
+  - Setup/login/update/account/admin/secret privacy and authorization
+  - Startup readiness integration, native NavigationStack/sheets/alerts, and
+    larger Dynamic Type
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6

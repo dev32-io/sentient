@@ -78,6 +78,8 @@ evaluations:
     path: evaluations/stage-platform-foundations-review/evaluation.yaml
   - id: stage-product-surfaces-review
     path: evaluations/stage-product-surfaces-review/evaluation.yaml
+  - id: stage-ios-final-products-review
+    path: evaluations/stage-ios-final-products-review/evaluation.yaml
 executionStages:
   - id: contracts-and-harness
     tasks:
