@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: platform-foundations
 scope:
   workItem: design-refresh
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - bun run design:foundation:check
   - bun run design:avatar:verify
@@ -27,11 +27,11 @@ criteria:
   - KMP capture serialization, frame/terminal ordering, lifecycle cancellation,
     and unchanged Android UI
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: passed
   reviewerAgentId: b043ddf8-2f5a-413f-9009-6c2df79f12ea
-  reviewedCommit: 83ebc267d38ec0c463ec04ce4f42cc5702be7fbb
+  reviewedCommit: 5245fc4ba2a418c12aa39ad37763019eedbd5f11
   managerPrompt: Fix F1-F5 before re-review. Implement the reviewed SwiftUI
     slate/plate/well/float material recipes with v2 tokens/effects (including
     correct recess/elevation/pressed/focus behavior) in production-owned code,
@@ -49,44 +49,40 @@ loop:
 findings:
   - id: F1
     severity: high
-    status: open
-    criterion: AC-004 / ios-foundation-components material recipe acceptance
-    location: ios/App/Settings/Components/DesignControls.swift:20-111
-    summary: SwiftUI plate, well, and button styles do not implement the required
-      reviewed material recipes.
-    blocking: true
+    status: resolved
+    criterion: AC-004 / iOS material recipes
+    location: ios/App/Settings/Components/DesignControls.swift
+    summary: SwiftUI material recipe gap repaired.
+    blocking: false
   - id: F2
     severity: high
-    status: open
-    criterion: AC-009 / kmp-capture-semantics lifecycle cancellation and ordering
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt:436-447;
-      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SdkVoice.kt:287-295
-    summary: SDK/session teardown does not await serialized capture cancellation
-      before tearing down and cancelling its scope.
-    blocking: true
+    status: resolved
+    criterion: AC-009 / capture teardown ordering
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SdkVoice.kt
+    summary: Serialized capture teardown race repaired.
+    blocking: false
   - id: F3
     severity: high
-    status: open
-    criterion: web-foundation-components Dialog accessibility acceptance
-    location: gateway/webui/src/components/common/dialog.tsx:22-39,189-199
-    summary: Most production Dialog consumers still do not inert the background.
-    blocking: true
+    status: resolved
+    criterion: Web Dialog background isolation
+    location: gateway/webui/src/components/common/dialog.tsx
+    summary: Production Dialog isolation repaired.
+    blocking: false
   - id: F4
     severity: medium
-    status: open
-    criterion: web-foundation-components compatibility migration
-    location: gateway/webui/src/components/settings/primitives/textarea.tsx:3-5
-    summary: Textarea compatibility wrapper silently drops monospace and dirty states.
+    status: resolved
+    criterion: Textarea compatibility
+    location: gateway/webui/src/components/settings/primitives/textarea.tsx
+    summary: Monospace and dirty forwarding repaired.
     blocking: false
   - id: F5
     severity: medium
-    status: open
-    criterion: web-foundation-components keyboard/native semantics acceptance
-    location: gateway/webui/src/components/settings/primitives/select.tsx:10-20
-    summary: Compatibility Select declares a menu but does not implement menu
-      keyboard or item semantics.
+    status: resolved
+    criterion: Select keyboard semantics
+    location: gateway/webui/src/components/settings/primitives/select.tsx
+    summary: Listbox semantics and keyboard behavior repaired.
     blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-platform-foundations-review/manifest.yaml

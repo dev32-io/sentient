@@ -1,44 +1,29 @@
 schemaVersion: 1
 evaluation: stage-platform-foundations-review
-recordedAt: 2026-08-25T23:03:13.361Z
+recordedAt: 2026-08-25T23:18:56.346Z
 entries:
-  - result: Supports F1.
-    description: Swift material implementations showing generic flat/linear faces
-      and single shadows rather than the projected recipes.
-    path: files/001-1-DesignControls.swift
-    checksum: sha256:3e7f76758662feb089695f7c6edd058aa1e4c0d51c594461fa598d49c3b0c8cc
-  - result: Supports F2.
-    description: Terminal requests are queued on the scope-owned serialized consumer.
-    path: files/001-2-SdkVoice.kt
-    checksum: sha256:0966917e34709c99e9c2dd090ae8c920e69c6d87d47edf26ef4f73f698b1c1c0
-  - result: Supports F2.
-    description: Session close calls disconnect and then immediately cancels the SDK scope.
-    path: files/001-3-IosUserSession.ios.kt
-    checksum: sha256:955bcd7004173d77c2ea5b071b789e5131c517ea2039b3c116137c74ce143dba
-  - result: Supports F3.
-    description: Background isolation is opt-in and defaults false.
-    path: files/001-4-dialog.tsx
-    checksum: sha256:2a497cef6af365454058b915f80626b5d4dd3170b06adb38a1e489946cc15414
-  - result: Supports F4.
-    description: Compatibility props monospace and dirty are explicitly discarded.
-    path: files/001-5-textarea.tsx
-    checksum: sha256:58511b03893c6a8243bb935edc712a70e3cf3066ae9cd4b9969b3113dabd5f59
-  - result: Supports F5.
-    description: ARIA menu popup lacks menu-item and arrow-key/focus behavior.
-    path: files/001-6-select.tsx
-    checksum: sha256:8f87146c09e0e8e65d4e0e630008f8c3a11f4753e44c2b169a1906e9b2e1eaf3
-  - result: Design checks and WebUI checks passed; 236 WebUI tests passed.
-    command: bun run design:foundation:check && bun run design:avatar:verify; bun
-      install --frozen-lockfile; bun run --filter '@sentient/webui' test:unit;
-      bun run --filter '@sentient/webui' typecheck; bun run --filter
-      '@sentient/webui' build
-  - result: Passed.
-    command: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
-      :android:assembleDebug :android:testDebugUnitTest
-  - result: Passed; 4 XCTest and 108 Swift Testing tests.
-    command: ./scripts/ios-setup.sh && xcodebuild test -project
-      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-      Simulator,name=iPhone 16'
-  - result: Passed.
-    command: git diff --check
-      fa449dc5d0016d2f38101dfb95310472823aed3d..83ebc267d38ec0c463ec04ce4f42cc5702be7fbb
+  - result: All declared stage checks passed; worktree clean.
+    description: Sanitized fresh verification summary for re-review iteration 1.
+    path: files/002-1-stage-platform-foundations-rereview-1.txt
+    checksum: sha256:b3cdffb3f2e74cf424b3389e96801dbaef4a0d74b8779006bf8c783775beeb49
+  - result: F1 resolved by source inspection and passing iOS tests.
+    description: Bounded F1 repair implementing native material layers and state variants.
+    path: files/002-2-DesignControls.swift
+    checksum: sha256:766d9ad437ac1c2737925b9857e495f40a3eada366bdd40290b0d3c2803fea07
+  - result: F2 resolved by source inspection and mobile tests.
+    description: Serialized teardown barrier and capture request gate.
+    path: files/002-3-SdkVoice.kt
+    checksum: sha256:86fd70945e63b99e612a1daa9732f6aaba89aff0e92b5ac35232faf6670ac4b7
+  - result: F2 proof passed.
+    description: Teardown race regression proving matching cancel, no active
+      capture, no late frames, and no restart.
+    path: files/002-4-SdkVoiceTest.kt
+    checksum: sha256:d13e388e8b9430afacad066360f6a18c8658c1b2ccc9d03f017403223af939b8
+  - result: F3 resolved.
+    description: Default registry-backed inert and aria-hidden background isolation.
+    path: files/002-5-dialog.tsx
+    checksum: sha256:2ea92875c9b1b3eddabd815796fd25c31e97ee0d089d91ae82f11e8771de2cad
+  - result: F4 and F5 proof passed.
+    description: Textarea compatibility and complete Select keyboard regressions.
+    path: files/002-6-compatibility-accessibility.test.tsx
+    checksum: sha256:32f3a62430b8303eafea1920c1c55299f90a212d26f1e6de8923ed83cde2d865
