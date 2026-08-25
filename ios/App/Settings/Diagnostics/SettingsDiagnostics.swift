@@ -37,18 +37,24 @@ struct SettingsDiagnostics: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(diagnosticsLabel)
-                .font(.system(size: TypeScale.xs, weight: .semibold))
+                .font(Typo.ui(TypeScale.base, .semibold))
                 .foregroundStyle(DuskColors.ink3)
 
             sendLogsButton
 
             if expanded {
-                if model.sessions.isEmpty {
-                    Text(labelNoSessions)
-                        .font(.system(size: TypeScale.sm))
-                        .foregroundStyle(DuskColors.ink3)
+                switch model.loadPhase {
+                case .loading:
+                    DesignProgress(title: "Loading diagnostic sessions")
+                        .accessibilityIdentifier("settings-log-loading")
+                case .failed:
+                    AsyncNotice(kind: .error, title: "Couldn't load diagnostic sessions") {
+                        Task { await model.load() }
+                    }
+                case .ready where model.sessions.isEmpty:
+                    AsyncNotice(kind: .empty, title: labelNoSessions)
                         .accessibilityIdentifier("settings-log-empty")
-                } else {
+                case .ready:
                     sessionRows
                 }
             }
@@ -64,17 +70,9 @@ struct SettingsDiagnostics: View {
             expanded.toggle()
             if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
         } label: {
-            Text(sendLogsLabel)
-                .font(.system(size: TypeScale.base, weight: .semibold))
-                .foregroundStyle(DuskColors.ink)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Space.sm)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radii.md)
-                        .stroke(DuskColors.line, lineWidth: 1)
-                )
+            Text(sendLogsLabel).frame(maxWidth: .infinity)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DesignButtonStyle(role: .quiet))
         .accessibilityIdentifier("settings-send-logs")
     }
 
@@ -102,7 +100,7 @@ struct SettingsDiagnostics: View {
 
 #Preview("empty") {
     SettingsDiagnostics(
-        model: SendLogsViewModel(),
+        model: SendLogsViewModel(initialLoadPhase: .ready),
         nowMs: Int64(Date().timeIntervalSince1970 * 1000)
     )
     .padding()
@@ -123,7 +121,7 @@ private struct SessionUploadRow: View {
     var body: some View {
         HStack(spacing: Space.sm) {
             Text((info.crashed ? crashFlag : "") + label)
-                .font(.system(size: TypeScale.sm, weight: selected ? .semibold : .regular))
+                .font(Typo.ui(TypeScale.sm, selected ? .semibold : .regular))
                 .foregroundStyle(selected ? DuskColors.accent : DuskColors.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
             UploadControl(
@@ -157,7 +155,7 @@ private struct UploadControl: View {
                 .accessibilityIdentifier("settings-log-progress")
         case let (_, _, .sent(ref)):
             Text(ref.isEmpty ? labelSent : "\(sentRefPrefix)\(ref)")
-                .font(.system(size: TypeScale.xs))
+                .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.accent)
                 .accessibilityIdentifier("settings-log-sent")
         case (_, _, .failed):
@@ -181,16 +179,10 @@ private struct UploadControl: View {
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: TypeScale.xs, weight: .semibold))
+                .font(Typo.ui(TypeScale.sm, .semibold))
                 .foregroundStyle(tint)
-                .padding(.horizontal, Space.sm)
-                .padding(.vertical, Space.xs)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Radii.sm)
-                        .stroke(tint.opacity(0.6), lineWidth: 1)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DesignButtonStyle(role: .quiet))
         .accessibilityIdentifier(id)
     }
 }

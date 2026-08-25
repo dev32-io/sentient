@@ -20,7 +20,7 @@ struct ToolsScreen: View {
 
     @State private var vm: ToolsViewModel
     @State private var openServers: Set<String> = []
-    @State private var hermesOpen = true
+    @State private var builtInsOpen = true
     @State private var showDiscard = false
 
     init(settings: SettingsComponent, onBack: @escaping () -> Void) {
@@ -35,11 +35,13 @@ struct ToolsScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load capabilities", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 saveBanner
                 groupsSection
-                hermesCard
+                builtInCard
             }
         }
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
@@ -72,6 +74,7 @@ struct ToolsScreen: View {
         case .saving: SoulApplyingBanner(text: "Saving…")
         case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
@@ -79,9 +82,12 @@ struct ToolsScreen: View {
     @ViewBuilder
     private var groupsSection: some View {
         if vm.groupIds.isEmpty {
-            Text("No tools configured. An admin can add them in gateway/config.yaml#mcp_catalog.")
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink3)
+            AsyncNotice(
+                kind: .empty,
+                title: "No connected capabilities",
+                detail: "Built-in capabilities are still available below."
+            )
+            .accessibilityIdentifier("settings-tools-empty")
         } else {
             ForEach(vm.groupIds, id: \.self) { id in
                 if let entry = vm.catalog?.groups[id] {
@@ -104,8 +110,7 @@ struct ToolsScreen: View {
         let activeCount = rows.filter { $0.permission != .off }.count
         return ToolsServerCard(
             id: id,
-            serverDescription: entry.description_.map { "\($0) · Default exposure: \(entry.defaultExposure == .advanced ? "advanced" : "standard")" }
-                ?? "Default exposure: \(entry.defaultExposure == .advanced ? "advanced" : "standard")",
+            serverDescription: entry.description_ ?? "Choose which capabilities are available.",
             masterOn: vm.isGroupMasterOn(id, entry),
             isOpen: openServers.contains(id),
             activeCount: activeCount,
@@ -118,32 +123,33 @@ struct ToolsScreen: View {
     }
 
     @ViewBuilder
-    private var hermesCard: some View {
+    private var builtInCard: some View {
         let builtins = (vm.catalog?.hermesBuiltins ?? []).sorted {
             $0.toolset == $1.toolset ? $0.name < $1.name : $0.toolset < $1.toolset
         }
         SettingsCard(
-            title: "Hermes built-in tools",
-            sub: "Toggles operate on toolset groups — flipping any tool flips its whole group."
+            title: "Built-in capabilities",
+            sub: "Related capabilities may be enabled or disabled together."
         ) {
             HStack {
-                Text("\(vm.hermesActiveCount(builtins))/\(builtins.count) tools")
-                    .font(Typo.ui(TypeScale.xs))
+                Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
+                    .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink3)
                 Spacer()
-                Button(action: { hermesOpen.toggle() }) {
-                    Image(systemName: hermesOpen ? "chevron.down" : "chevron.right")
-                        .font(.system(size: TypeScale.xs, weight: .semibold))
+                Button(action: { builtInsOpen.toggle() }) {
+                    Image(systemName: builtInsOpen ? "chevron.down" : "chevron.right")
+                        .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
                         .foregroundStyle(DuskColors.ink3)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(builtInsOpen ? "Collapse built-in capabilities" : "Expand built-in capabilities")
                 .accessibilityIdentifier("settings-tools-hermes-expand")
             }
             .padding(.vertical, Space.sm)
-            if hermesOpen {
+            if builtInsOpen {
                 ForEach(builtins, id: \.name) { tool in
                     RowToggle(
-                        label: tool.name,
+                        label: capabilityName(tool.name),
                         sub: tool.description.isEmpty ? tool.toolset : "\(tool.description) · \(tool.toolset)",
                         isOn: vm.isToolsetOn(tool.toolset),
                         accessibilityId: "settings-tools-builtin-\(tool.name)",

@@ -26,6 +26,7 @@ final class PersonalitiesViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -42,6 +43,11 @@ final class PersonalitiesViewModel {
     }
 
     var isBusy: Bool { op == .saving || op == .restarting }
+    var operationError: String? {
+        if case .failed(let message) = op { return message }
+        if case .alreadyApplying = op { return "Another change is already applying. Try again in a moment." }
+        return nil
+    }
 
     func load() async {
         log.info("load")
@@ -86,7 +92,7 @@ final class PersonalitiesViewModel {
         }
         log.info("create nameLen=\(trimmed.count)")
         await run(ProfileMutationCreatePersonality(name: trimmed, body: body), label: "create")
-        return op == .idle
+        return op == .applied
     }
 
     /// Fold one mutation's FSM; refetch the list on Ready. Never throws across the
@@ -98,9 +104,9 @@ final class PersonalitiesViewModel {
             case .saving: op = .saving
             case .restarting: op = .restarting
             case .ready:
-                op = .idle
                 log.info("\(label).ready")
                 await load()
+                op = .applied
             case .alreadyApplying:
                 op = .alreadyApplying
                 log.warn("\(label).already-applying")

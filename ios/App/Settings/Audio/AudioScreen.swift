@@ -36,7 +36,9 @@ struct AudioScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load audio settings", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 saveBanner
                 outputCard
@@ -71,6 +73,7 @@ struct AudioScreen: View {
         case .idle: EmptyView()
         case .saving, .restarting: SoulApplyingBanner(text: "Saving…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
@@ -78,7 +81,7 @@ struct AudioScreen: View {
     private var outputCard: some View {
         SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
             RowToggle(
-                label: "Speak responses (TTS)",
+                label: "Speak responses",
                 sub: "When off, replies are silent — text still streams to chat.",
                 isOn: vm.ttsEnabled,
                 accessibilityId: "settings-audio-tts",
@@ -110,7 +113,7 @@ struct AudioScreen: View {
         SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
             SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
                 RowToggle(
-                    label: "Speak responses (TTS)",
+                    label: "Speak responses",
                     sub: "When off, replies are silent — text still streams to chat.",
                     isOn: true, accessibilityId: "settings-audio-tts", onChange: { _ in }
                 )

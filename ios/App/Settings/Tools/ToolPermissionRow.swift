@@ -28,7 +28,7 @@ struct ToolPermissionRow: View {
 
     var body: some View {
         RowSelect(
-            label: row.name,
+            label: capabilityName(row.name),
             sub: row.description.isEmpty ? nil : row.description,
             options: ToolPermission.selectOptions,
             selectedId: row.permission.wireValue,
@@ -53,7 +53,7 @@ struct ToolPermissionRow: View {
         )
         ToolPermissionRow(
             row: ToolPermissionRowModel(
-                id: "delegateTask", name: "delegateTask", description: "Hand a task to Hermes.",
+                id: "delegateTask", name: "delegateTask", description: "Hand a task to a background assistant.",
                 permission: .ask, settable: false
             ),
             accessibilityId: "settings-tools-native-delegateTask",

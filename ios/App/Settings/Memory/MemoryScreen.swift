@@ -11,8 +11,8 @@ import SwiftUI
 import MobileData
 
 private let slotOptions: [SegmentOption] = [
-    SegmentOption(id: "memory", label: "MEMORY.md"),
-    SegmentOption(id: "user", label: "USER.md"),
+    SegmentOption(id: "memory", label: "Shared notes"),
+    SegmentOption(id: "user", label: "About you"),
 ]
 
 private let viewOptions: [SegmentOption] = [
@@ -21,8 +21,8 @@ private let viewOptions: [SegmentOption] = [
 ]
 
 private let slotExplain: [MemoryViewModel.Slot: String] = [
-    .memory: "Hermes-managed notes about the world. The agent writes and prunes this; hand-edit to seed or correct a fact.",
-    .user: "Your profile: preferences and expectations the agent infers over time. Edit to seed or correct what it believes about you.",
+    .memory: "Notes the assistant can maintain over time. Edit them to seed or correct a fact.",
+    .user: "Preferences and expectations the assistant has learned about you. Edit them to seed or correct a detail.",
 ]
 
 struct MemoryScreen: View {
@@ -81,6 +81,7 @@ struct MemoryScreen: View {
         case .saving: SoulApplyingBanner(text: "Saving…")
         case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
@@ -92,7 +93,9 @@ struct MemoryScreen: View {
             if !state.loaded {
                 SoulLoadingRow()
             } else if let loadError = state.loadError {
-                SoulInlineError(message: loadError)
+                AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
+                    Task { await vm.retry(slot) }
+                }
             } else {
                 editor(state)
             }
@@ -111,7 +114,7 @@ struct MemoryScreen: View {
             if viewMode == "edit" {
                 MonoEditor(
                     text: state.draft,
-                    placeholder: "No \(slot.label) yet — Hermes will write here over time, or seed it now.",
+                    placeholder: "Nothing here yet. Add a note now or let the assistant build this over time.",
                     maxLength: state.charLimit > 0 ? state.charLimit : nil,
                     accessibilityId: "settings-memory-editor",
                     onChange: { vm.setDraft($0, for: slot) }
@@ -145,7 +148,7 @@ struct MemoryScreen: View {
                 options: slotOptions, selectedId: "memory",
                 accessibilityId: "settings-memory-slot", onSelect: { _ in }
             )
-            SettingsCard(title: "MEMORY.md", sub: slotExplain[.memory]) {
+            SettingsCard(title: "Shared notes", sub: slotExplain[.memory]) {
                 MonoEditor(
                     text: "The kitchen light is on circuit 3.",
                     maxLength: 4000,
