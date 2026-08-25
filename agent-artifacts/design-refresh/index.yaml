@@ -71,7 +71,9 @@ delivery:
   workingBranch: feature/design-refresh
   createdFromCommit: 653f6cee3bd06491b547c63ec04d88f21f4f147f
   executionStartCommit: d662a65baa030e8f29757bac0a260b3b1f948a7f
-evaluations: []
+evaluations:
+  - id: stage-contracts-and-harness-review
+    path: evaluations/stage-contracts-and-harness-review/evaluation.yaml
 executionStages:
   - id: contracts-and-harness
     tasks:

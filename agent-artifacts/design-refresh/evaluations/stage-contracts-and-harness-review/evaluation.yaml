@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: stage-contracts-and-harness-review
+type: combined-review
+checkpoint: stage-review
+stageId: contracts-and-harness
+scope:
+  workItem: design-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - bun run design:foundation:check
+  - bun run design:inventory:check
+  - bun run --filter '@sentient/protocol' test:unit
+  - bun run --filter '@sentient/web-sdk' test:unit
+  - cd gateway && bun test src/session-handlers/ws-handlers-audio.test.ts
+    src/session-handlers/stt-session.test.ts
+    src/session-handlers/command-mediator.test.ts
+  - bun run typecheck
+  - git diff --check
+criteria:
+  - Exact v2 values/projection determinism and Android v1 compatibility
+  - Capture commit/cancel security, terminal races, legacy wire compatibility,
+    and content-free logs
+  - Closed inventory, loopback-only fixtures, prototype-reference-only
+    enforcement, and text-only E2E safety
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6
