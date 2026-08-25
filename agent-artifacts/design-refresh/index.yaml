@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 30
+  revision: 31
 artifacts:
   - id: intent
     type: intent
@@ -136,6 +136,29 @@ executionStages:
       - ios-settings-system
       - ios-voice-library
       - ios-calendar-refresh
+    checks:
+      - bun run --filter '@sentient/webui' test:unit
+      - bun run --filter '@sentient/webui' typecheck
+      - bun run --filter '@sentient/webui' build
+      - bun run --filter '@sentient/gateway' test:unit
+      - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      - ./scripts/ios-setup.sh
+      - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+        -destination 'platform=iOS Simulator,name=iPhone 16'
+      - bun run design:inventory:check
+      - git diff --check
+    mode: concurrent
+    review:
+      mode: required
+      tier: medium
+      focus:
+        - Complete reachable-state coverage, component-boundary compliance, and
+          no domain/session/persistence regressions
+        - Web text/chat/task/composer/capture separation, Settings trust
+          cleanup, Calendar behavior, keyboard and 200% zoom
+        - iOS Rive/startup readiness/History, native Settings/Voice/Calendar
+          navigation and large Dynamic Type
+        - No audio E2E, no network manipulation, and no prototype runtime imports
   - id: ios-chat-integration
     tasks:
       - ios-chat-composer
