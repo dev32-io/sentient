@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-refresh
 title: Refresh the complete Web Calendar workspace and overlays
-status: ready
+status: running
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
@@ -26,3 +26,9 @@ verification:
     - bun run design:inventory:check
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/web-calendar-refresh
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/web-calendar-refresh
+  baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
+  lastRunId: b718084d-d892-4aa3-a4f3-4cc66afa7bd9
