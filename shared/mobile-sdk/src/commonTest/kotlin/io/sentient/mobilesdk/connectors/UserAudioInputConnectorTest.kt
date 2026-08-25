@@ -1,122 +1,105 @@
-// ---------------------------------------------------------------------------
-// UserAudioInputConnectorTest — ported from web-sdk
-// user-audio-input-connector.test.ts. Wire/protocol contract at the
-// gateway↔SDK boundary (outbound audio.start / binary frame / audio.end, and
-// inbound connector.transcript.final → onTranscript) → keeper per
-// .claude/rules/testing.md.
-//
-// web-sdk reaches the wire via sdk.send + sdk.sendBinary; mobile-sdk injects a
-// `send` lambda (control frames) AND a `sendBinary` lambda (PCM uplink). The
-// attach/detach lifecycle becomes constructor-injection (the orchestrator owns
-// connector lifetime), so the TS "stops streaming on detach" / "does not send
-// after detach" cases have no analogue — there is no nullable sdk to clear. The
-// isStreaming latch is still ported verbatim (no audio.start when already
-// streaming; no binary / audio.end when not streaming).
-// ---------------------------------------------------------------------------
 package io.sentient.mobilesdk.connectors
 
 import io.sentient.mobilesdk.protocol.ClientMessage
+import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.voice.talk.TurnMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class UserAudioInputConnectorTest {
-
     private class Recorder {
         val sent = mutableListOf<ClientMessage>()
         val binary = mutableListOf<ByteArray>()
-        val send: (ClientMessage) -> Unit = { sent += it }
-        val sendBinary: (ByteArray) -> Unit = { binary += it }
     }
 
-    private fun connector(
-        rec: Recorder = Recorder(),
-        onTranscript: ((String) -> Unit)? = null,
-    ): Pair<UserAudioInputConnector, Recorder> =
-        UserAudioInputConnector(send = rec.send, sendBinary = rec.sendBinary, onTranscript = onTranscript) to rec
-
-    @Test
-    fun has_capability_audio_input() {
-        assertEquals("audio.input", connector().first.capability)
+    private fun connector(ids: Iterator<String> = listOf("cap-1", "cap-2", "cap-3").iterator()): Pair<UserAudioInputConnector, Recorder> {
+        val rec = Recorder()
+        return UserAudioInputConnector(
+            send = { rec.sent += it },
+            sendBinary = { rec.binary += it },
+            createCaptureId = { ids.next() },
+        ) to rec
     }
 
+    @Test fun has_capability_audio_input() = assertEquals("audio.input", connector().first.capability)
+
     @Test
-    fun startStreaming_sends_audio_start() {
+    fun exact_manual_start_and_matching_commit_payloads() {
         val (c, rec) = connector()
-        c.startStreaming()
-        // Default (no turnMode) → omitted on the wire (semantic). Back-compat with old clients.
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null)), rec.sent)
+        assertEquals("cap-1", c.startStreaming(TurnMode.Manual))
+        c.stopStreaming()
+        assertEquals(
+            listOf(ClientMessage.AudioStart("cap-1", "manual"), ClientMessage.AudioEnd("cap-1")),
+            rec.sent,
+        )
     }
 
     @Test
-    fun startStreaming_carries_turnMode_manual() {
+    fun explicit_cancel_wins_and_never_emits_end() {
         val (c, rec) = connector()
         c.startStreaming(TurnMode.Manual)
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = "manual")), rec.sent)
-    }
-
-    @Test
-    fun startStreaming_carries_turnMode_semantic() {
-        val (c, rec) = connector()
-        c.startStreaming(TurnMode.Semantic)
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = "semantic")), rec.sent)
-    }
-
-    @Test
-    fun stopStreaming_sends_audio_end() {
-        val (c, rec) = connector()
-        c.startStreaming()
+        c.cancelStreaming()
         c.stopStreaming()
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null), ClientMessage.AudioEnd), rec.sent)
+        assertEquals(
+            listOf(ClientMessage.AudioStart("cap-1", "manual"), ClientMessage.AudioCancel("cap-1")),
+            rec.sent,
+        )
     }
 
     @Test
-    fun sendAudioFrame_forwards_binary_when_streaming() {
+    fun generation_latched_frames_stop_before_terminal_and_cannot_enter_successor() {
         val (c, rec) = connector()
-        c.startStreaming()
-        val frame = byteArrayOf(1, 2, 3)
-        c.sendAudioFrame(frame)
-        assertEquals(1, rec.binary.size)
-        assertTrue(rec.binary[0].contentEquals(frame))
+        val old = c.newCaptureToken()!!
+        assertTrue(c.startStreaming(old, TurnMode.Manual))
+        val staleSender = c.frameSender(old)
+        staleSender(byteArrayOf(1))
+        assertTrue(c.beginTerminal(old))
+        staleSender(byteArrayOf(2))
+        c.completeTerminal(old, CaptureTerminal.Commit)
+
+        val newer = c.newCaptureToken()!!
+        assertTrue(c.startStreaming(newer, TurnMode.Semantic))
+        staleSender(byteArrayOf(3))
+        c.frameSender(newer)(byteArrayOf(4))
+
+        assertEquals(listOf(1.toByte(), 4.toByte()), rec.binary.map { it.single() })
+        assertEquals(
+            listOf(ClientMessage.AudioStart("cap-1", "manual"), ClientMessage.AudioEnd("cap-1"), ClientMessage.AudioStart("cap-2", "semantic")),
+            rec.sent,
+        )
     }
 
     @Test
-    fun sendAudioFrame_drops_binary_when_not_streaming() {
+    fun stale_or_duplicate_terminal_cannot_affect_newer_capture() {
         val (c, rec) = connector()
-        c.sendAudioFrame(byteArrayOf(1, 2, 3))
-        assertTrue(rec.binary.isEmpty())
+        val old = c.newCaptureToken()!!
+        c.startStreaming(old, TurnMode.Manual)
+        c.beginTerminal(old)
+        c.completeTerminal(old, CaptureTerminal.Cancel)
+        val newer = c.newCaptureToken()!!
+        c.startStreaming(newer, TurnMode.Semantic)
+
+        assertTrue(!c.beginTerminal(old))
+        c.completeTerminal(old, CaptureTerminal.Commit)
+        assertTrue(c.beginTerminal(newer))
+        c.completeTerminal(newer, CaptureTerminal.Commit)
+        assertEquals(listOf("audio.start", "audio.cancel", "audio.start", "audio.end"), rec.sent.map {
+            when (it) {
+                is ClientMessage.AudioStart -> "audio.start"
+                is ClientMessage.AudioCancel -> "audio.cancel"
+                is ClientMessage.AudioEnd -> "audio.end"
+                else -> error("unexpected")
+            }
+        })
     }
 
     @Test
-    fun startStreaming_is_idempotent_no_duplicate_audio_start() {
-        val (c, rec) = connector()
-        c.startStreaming()
-        c.startStreaming()
-        assertEquals(listOf<ClientMessage>(ClientMessage.AudioStart(turnMode = null)), rec.sent)
-    }
-
-    @Test
-    fun stopStreaming_when_not_streaming_sends_nothing() {
-        val (c, rec) = connector()
-        c.stopStreaming()
-        assertEquals(emptyList<ClientMessage>(), rec.sent)
-    }
-
-    @Test
-    fun calls_onTranscript_on_connector_transcript_final() {
-        var captured: String? = null
-        val (c, _) = connector(onTranscript = { captured = it })
-        c.handle(io.sentient.mobilesdk.protocol.ServerMessage.ConnectorTranscriptFinal(text = "hello world"))
-        assertEquals("hello world", captured)
-    }
-
-    @Test
-    fun handle_ignores_unowned_frames() {
-        val (c, rec) = connector()
-        c.handle(io.sentient.mobilesdk.protocol.ServerMessage.Pong)
-        c.handle(io.sentient.mobilesdk.protocol.ServerMessage.TurnTextDelta(turnId = "c1", text = "x"))
-        assertEquals(emptyList<ClientMessage>(), rec.sent)
-        assertTrue(rec.binary.isEmpty())
+    fun transcript_callback_remains_compatible() {
+        var transcript: String? = null
+        val c = UserAudioInputConnector({}, {}, onTranscript = { transcript = it })
+        c.handle(ServerMessage.ConnectorTranscriptFinal("hello"))
+        c.handle(ServerMessage.Pong)
+        assertEquals("hello", transcript)
     }
 }

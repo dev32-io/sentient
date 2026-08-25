@@ -49,6 +49,8 @@ package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audio.opus.LazyOpusEncoderPort
 import io.sentient.mobilesdk.audio.opus.OpusUplinkEncoder
+import io.sentient.mobilesdk.connectors.CaptureTerminal
+import io.sentient.mobilesdk.connectors.CaptureToken
 import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.voice.VoiceUplinkPipeline
@@ -69,6 +71,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.uuid.ExperimentalUuidApi
+import kotlin.uuid.Uuid
 
 /**
  * Constructs and owns the voice-uplink pipeline (Task 9), serializing mic start/stop
@@ -86,13 +90,15 @@ import kotlin.coroutines.cancellation.CancellationException
  * @param scope Orchestrator scope: the pipeline's collect job AND the single command
  *   consumer are launched from it, so terminal teardown is scope-cancel.
  */
-class SdkVoice(
+class SdkVoice internal constructor(
     private val voiceAudio: VoiceAudio?,
     audioConfig: AudioPipelineConfig,
-    audioInput: () -> UserAudioInputConnector,
-    private val onUplinkStart: (TurnMode?) -> Unit,
-    private val onUplinkStop: () -> Unit,
+    private val audioInput: () -> UserAudioInputConnector,
+    private val onUplinkStart: (CaptureToken, TurnMode) -> Boolean,
+    private val onUplinkBeginTerminal: (CaptureToken) -> Boolean,
+    private val onUplinkTerminal: (CaptureToken, CaptureTerminal) -> Unit,
     scope: CoroutineScope,
+    private val createCaptureId: () -> String = { randomCaptureId() },
     // Dedicated SERIAL dispatcher OFF the orchestrator scope: guarantees the
     // non-thread-safe Framer + Opus encoder are never accessed concurrently.
     // limitedParallelism(1) over Dispatchers.Default is commonMain-safe and needs
@@ -101,6 +107,26 @@ class SdkVoice(
     // production uses the default and is unchanged.
     uplinkDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
 ) {
+    /** Source-compatible test/host seam; existing Android behavior still treats stop as commit. */
+    internal constructor(
+        voiceAudio: VoiceAudio?,
+        audioConfig: AudioPipelineConfig,
+        audioInput: () -> UserAudioInputConnector,
+        onUplinkStart: (TurnMode?) -> Unit,
+        onUplinkStop: () -> Unit,
+        scope: CoroutineScope,
+        uplinkDispatcher: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1),
+    ) : this(
+        voiceAudio = voiceAudio,
+        audioConfig = audioConfig,
+        audioInput = audioInput,
+        onUplinkStart = { _, mode -> onUplinkStart(mode); true },
+        onUplinkBeginTerminal = { true },
+        onUplinkTerminal = { _, _ -> onUplinkStop() },
+        scope = scope,
+        uplinkDispatcher = uplinkDispatcher,
+    )
+
     private val log = createLogger("sdk", "voice")
 
     /** Reactive engine state for the UI (Idle unless a real VoiceAudio is wired). */
@@ -159,6 +185,9 @@ class SdkVoice(
             // [handle] resolves null to currentPath AT APPLY TIME, so a flush-arm enqueued
             // behind a turn-open lands on the APPLIED path, never the stale pre-lock path.
             val path: VoiceAudioPath? = null,
+            val capture: CaptureToken? = null,
+            val terminal: CaptureTerminal? = null,
+            val terminalBegun: Boolean = false,
             val ack: CompletableDeferred<Boolean>? = null,
         ) : Cmd
     }
@@ -172,6 +201,12 @@ class SdkVoice(
     // identical configures are a no-op (idempotent) — collapse the 5×(true) hammer.
     private var micOn = false
     private var playbackOn = false
+
+    // Submission-side ownership. Clearing this before queuing a terminal makes the first
+    // terminal intent win and lets Hold→Auto reserve its successor without overlap on apply.
+    private var requestedCapture: CaptureToken? = null
+    private var nextCaptureGeneration = 0L
+    private val allocatedCaptureIds = mutableSetOf<String>()
 
     // Last-applied VoiceAudioPath (mirrors micOn/playbackOn — updated only inside
     // [handle] once a Configure actually settles). Duplex is the idle baseline: today's
@@ -189,12 +224,13 @@ class SdkVoice(
      *  rides a mic-RISING edge only (audio.start); null ⇒ semantic. The VoiceAudioPath hint
      *  is derived via [derivePath] — see its KDoc for the mic-rising-vs-tracked distinction. */
     fun requestConfigure(mic: Boolean, playback: Boolean, turnMode: TurnMode? = null) {
-        val path = derivePath(mic, turnMode)
-        log.info(
-            "requestConfigure",
-            mapOf("mic" to mic, "playback" to playback, "turnMode" to (turnMode?.wireValue ?: "absent"), "path" to path.name),
-        )
-        commands.trySend(Cmd.Configure(mic, playback, turnMode, path))
+        if (mic && requestedCapture == null) {
+            requestStart(turnMode ?: TurnMode.Semantic, playback)
+        } else if (mic) {
+            commands.trySend(Cmd.Configure(mic = true, playback = playback, path = currentPath))
+        } else {
+            requestTerminal(CaptureTerminal.Commit, playback)
+        }
     }
 
     /**
@@ -234,10 +270,30 @@ class SdkVoice(
 
     /** Convenience for startMic (mic axis only; keeps current playback). [turnMode] is carried
      *  on the audio.start emitted for the mic-rising edge — Manual (hold) / Semantic (continuous). */
-    fun requestStart(turnMode: TurnMode? = null) = requestConfigure(mic = true, playback = playbackOn, turnMode = turnMode)
+    fun requestStart(turnMode: TurnMode? = null) = requestStart(turnMode ?: TurnMode.Semantic, playbackOn)
 
-    /** Convenience for stopMic (mic axis only; keeps current playback). */
-    fun requestStop() = requestConfigure(mic = false, playback = playbackOn)
+    private fun requestStart(turnMode: TurnMode, playback: Boolean) {
+        if (requestedCapture != null) return
+        val id = createCaptureId()
+        if (id.isBlank() || !allocatedCaptureIds.add(id)) return
+        val token = CaptureToken(id, ++nextCaptureGeneration)
+        requestedCapture = token
+        commands.trySend(Cmd.Configure(mic = true, playback = playback, turnMode = turnMode, path = derivePath(true, turnMode), capture = token))
+    }
+
+    /** Existing release semantics commit; explicit cancellation is distinct. */
+    fun requestStop() = requestTerminal(CaptureTerminal.Commit, playbackOn)
+    fun requestCancel() = requestTerminal(CaptureTerminal.Cancel, playbackOn)
+
+    private fun requestTerminal(terminal: CaptureTerminal, playback: Boolean) {
+        val token = requestedCapture ?: return
+        requestedCapture = null // first accepted terminal wins; duplicates/stale calls are no-ops
+        // If start already applied, invalidate its generation synchronously. This closes the
+        // frame gate even when lifecycle teardown follows immediately; pipeline stop/join and
+        // terminal serialization still remain ordered on the command lane.
+        val begun = onUplinkBeginTerminal(token)
+        commands.trySend(Cmd.Configure(mic = false, playback = playback, path = currentPath, capture = token, terminal = terminal, terminalBegun = begun))
+    }
 
     /**
      * Playback axis only (keeps the current mic axis) — the disarm entry the downlink
@@ -317,10 +373,15 @@ class SdkVoice(
         runCatching {
             val micRising = targetMic && !micOn
             val micFalling = !targetMic && micOn
-            // audio.start BEFORE the engine + uplink come up (wire order: start→frames→end).
-            // Carries this edge's TurnMode (Manual=hold / Semantic=continuous / null=semantic).
-            if (micRising) onUplinkStart(c.turnMode)
-            // Stop the uplink collect when mic goes away (before configure tears the tap).
+            val capture = c.capture
+            // audio.start BEFORE the engine + uplink come up. A start command without its
+            // reserved generation is invalid and resolves locally without touching the engine.
+            if (micRising && (capture == null || !onUplinkStart(capture, c.turnMode ?: TurnMode.Semantic))) {
+                if (requestedCapture == capture) requestedCapture = null
+                return@runCatching
+            }
+            // Invalidate callbacks first, then stop+join before the terminal control.
+            if (micFalling && (capture == null || (!c.terminalBegun && !onUplinkBeginTerminal(capture)))) return@runCatching
             if (micFalling) pipeline?.stop()
             // THE single engine reconfig — VPIO flips iff the (mic,playback) cell changes.
             // Path-carrying overload: platform actuals that don't yet implement path-split
@@ -341,20 +402,40 @@ class SdkVoice(
             val phase = voiceAudio?.state?.value?.phase
             if (phase == Phase.Error) {
                 log.warn("configure-error-reset-lane", mapOf("mic" to targetMic, "playback" to c.playback, "path" to targetPath.name, "reason" to (voiceAudio?.state?.value?.errorReason ?: "unknown")))
+                if (micRising && capture != null && onUplinkBeginTerminal(capture)) {
+                    onUplinkTerminal(capture, CaptureTerminal.Cancel)
+                } else if (micFalling && capture != null) {
+                    onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Cancel)
+                }
                 micOn = false; playbackOn = false; currentPath = VoiceAudioPath.Duplex
+                if (requestedCapture == capture) requestedCapture = null
                 c.ack?.complete(false)
                 return@runCatching
             }
-            // Start the uplink collect once the mic tap is live.
-            if (micRising) pipeline?.start()
+            // Start the uplink collect once the mic tap is live, with a generation-latched sink.
+            if (micRising && capture != null) pipeline?.start { packet -> audioInput().sendAudioFrame(packet, capture) }
             micOn = targetMic; playbackOn = c.playback; currentPath = targetPath
-            // audio.end AFTER the uplink is down + configure settled (no late frame past end).
-            if (micFalling) onUplinkStop()
+            // Terminal AFTER the uplink is down + configure settled (no late frame past it).
+            if (micFalling && capture != null) onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Commit)
             c.ack?.complete(c.playback)
         }.onFailure { err ->
             if (err is CancellationException) { c.ack?.complete(false); throw err }
+            c.capture?.let { capture ->
+                if (c.terminalBegun) {
+                    onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Cancel)
+                } else if (onUplinkBeginTerminal(capture)) {
+                    onUplinkTerminal(capture, CaptureTerminal.Cancel)
+                }
+                if (requestedCapture == capture) requestedCapture = null
+            }
+            micOn = false; playbackOn = false; currentPath = VoiceAudioPath.Duplex
             log.warn("command-failed", mapOf("cmd" to "Configure", "code" to "voice-command-failure"))
             c.ack?.complete(false)
         }
+    }
+
+    companion object {
+        @OptIn(ExperimentalUuidApi::class)
+        private fun randomCaptureId(): String = Uuid.random().toString()
     }
 }

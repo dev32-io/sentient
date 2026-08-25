@@ -54,10 +54,12 @@ import kotlinx.coroutines.flow.asStateFlow
 class TalkModeController(
     private val startCapture: (TurnMode) -> Unit,
     private val endCapture: () -> Unit,
+    private val cancelCapture: () -> Unit = endCapture,
     private val interrupt: () -> Unit,
     private val isCycleOrTtsActive: () -> Boolean,
     private val beginHoldDefer: () -> Unit,
     private val endHoldDefer: () -> Unit,
+    private val discardHoldDefer: () -> Unit = endHoldDefer,
     private val log: Log = createLogger("voice", "talk-mode"),
 ) {
     private val _mode = MutableStateFlow(TalkMode.Idle)
@@ -95,6 +97,15 @@ class TalkModeController(
         commit(from, TalkMode.Idle, "releaseMic")
     }
 
+    /** Hold → Idle without submitting speech or restoring deferred assistant audio. */
+    fun cancelHeld() {
+        val from = _mode.value
+        if (from != TalkMode.Hold) return illegal("cancelHeld", from)
+        cancelCapture()
+        discardHoldDefer()
+        commit(from, TalkMode.Idle, "cancelHeld")
+    }
+
     /**
      * Hold → Continuous. Lock finalizes the manual segment and re-opens as a semantic turn
      * back-to-back (`audio.end` + `audio.start(turnMode=semantic)`); frames keep flowing. The
@@ -127,6 +138,21 @@ class TalkModeController(
         val from = _mode.value
         if (from == TalkMode.Idle) return
         commit(from, TalkMode.Idle, "captureLost:$reason")
+    }
+
+    /** Public iOS-facing names; legacy Android callbacks remain aliases below them. */
+    fun holdStart() = pressMic()
+    fun sendHeld() = releaseMic()
+    fun enterAuto() = lockMic()
+    fun exitAuto() = stopContinuous()
+
+    /** Permission/view/session/SDK teardown: cancel user capture, never assistant work. */
+    fun lifecycleCancel(reason: String) {
+        val from = _mode.value
+        if (from == TalkMode.Idle) return
+        cancelCapture()
+        if (from == TalkMode.Hold) discardHoldDefer()
+        commit(from, TalkMode.Idle, "lifecycleCancel:$reason")
     }
 
     private fun commit(from: TalkMode, to: TalkMode, trigger: String) {
