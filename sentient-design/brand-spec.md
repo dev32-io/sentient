@@ -1,67 +1,95 @@
-# Sentient Dusk design system
+# Sentient Dusk — elevated slate material
 
-Sentient uses the dark-only Dusk system: smoked household surfaces, warm ink, a restrained terra action color, and semantic sage, amber, clay, and status roles.
+Sentient uses the existing fixed warm-dark Dusk palette. The design refresh does not introduce a second palette. Its new material concept is **elevated slate**: thin warm-graphite faces, compact directional depth, and localized ember light around attention, activity, focus, and commitment.
 
-## Canonical source
+## Canonical Dusk tokens
 
-The implementation contract is synchronized from:
+The implementation values remain synchronized across:
 
-- Web tokens: `gateway/webui/src/styles/tokens/`
-- Cross-platform tokens: `shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/design/DesignTokens.kt`
-- Native projections: `ios/App/Theme/` and `android/src/main/kotlin/io/sentient/android/theme/`
-
-The exact source colors are hex values. The six Open Design aliases below are exact OKLch conversions of their canonical Dusk counterparts, not independently chosen colors.
+- `gateway/webui/src/styles/tokens/`
+- `shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/design/DesignTokens.kt`
+- `ios/App/Theme/`
+- `android/src/main/kotlin/io/sentient/android/theme/`
 
 ```css
 :root {
-  --bg: oklch(0.272364 0.011712 67.302);       /* #2B2621 · color-bg */
-  --surface: oklch(0.322552 0.014464 62.899);  /* #39322C · color-paper */
-  --fg: oklch(0.934070 0.026255 82.384);       /* #F2E8D6 · color-ink */
-  --muted: oklch(0.660636 0.030802 74.137);    /* #9E907E · color-ink-3 */
-  --border: oklch(0.339009 0.016490 63.430);   /* #3E362F · color-line-soft */
-  --accent: oklch(0.775997 0.120213 53.416);   /* #F2A06A · color-accent */
-  --font-display: "Fraunces", "Cormorant Garamond", Georgia, serif;
-  --font-body: "DM Sans", "Inter", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-bg: #2B2621;
+  --color-bg-elev: #332D28;
+  --color-bg-sunk: #241F1B;
+  --color-paper: #39322C;
+  --color-line: #4A4138;
+  --color-line-soft: #3E362F;
+  --color-ink: #F2E8D6;
+  --color-ink-2: #D7C6AB;
+  --color-ink-3: #9E907E;
+  --color-ink-4: #706456;
+  --color-accent: #F2A06A;
+  --color-accent-soft: #5A3A28;
+  --color-accent-50: #402C22;
+  --color-amber: #E9B168;
+  --color-sage: #B9C8A6;
+  --color-sage-soft: #3A4232;
+  --color-clay: #9A5A3E;
+  --color-ok: #5F8A5B;
+  --color-warn: #C2892F;
+  --color-stop: #B8442E;
 }
 ```
 
-## Complete Dusk palette
+## Existing typography and scales
 
-| Role | Token | Value |
-|---|---|---|
-| Base canvas | `--color-bg` | `#2B2621` |
-| Elevated canvas | `--color-bg-elev` | `#332D28` |
-| Sunken canvas | `--color-bg-sunk` | `#241F1B` |
-| Paper / component surface | `--color-paper` | `#39322C` |
-| Strong line | `--color-line` | `#4A4138` |
-| Quiet line | `--color-line-soft` | `#3E362F` |
-| Primary ink | `--color-ink` | `#F2E8D6` |
-| Secondary ink | `--color-ink-2` | `#D7C6AB` |
-| Muted ink | `--color-ink-3` | `#9E907E` |
-| Disabled / quiet ink | `--color-ink-4` | `#706456` |
-| Primary terra | `--color-accent` | `#F2A06A` |
-| Terra soft | `--color-accent-soft` | `#5A3A28` |
-| Terra selected surface | `--color-accent-50` | `#402C22` |
-| Amber semantic | `--color-amber` | `#E9B168` |
-| Sage semantic | `--color-sage` | `#B9C8A6` |
-| Sage surface | `--color-sage-soft` | `#3A4232` |
-| Clay semantic | `--color-clay` | `#9A5A3E` |
-| Success | `--color-ok` | `#5F8A5B` |
-| Warning | `--color-warn` | `#C2892F` |
-| Destructive / stop | `--color-stop` | `#B8442E` |
+- Display: `"Fraunces", "Cormorant Garamond", Georgia, serif`
+- Body/UI: `"DM Sans", "Inter", system-ui, -apple-system, sans-serif`
+- Mono: `"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace`
+- Type: `11, 12.5, 15, 18, 22, 44`; line heights `1.25, 1.55, 1.6`
+- Spacing: `4, 8, 12, 18, 26, 32, 40`
+- Radius: `8, 12, 18, 26`, plus pill
+- Motion: `150ms` direct feedback; `250ms` state/surface change
 
-## Foundation scales
+Component work uses this existing hierarchy. Prototype-local type sizes and heading substitutions are not authoritative.
 
-- Spacing: `4, 8, 12, 18, 26, 32, 40px`; message padding `18px`, message gap `32px`, message maximum `720px`.
-- Radius: `8, 12, 18, 26px`, plus pill `999px`.
-- Type: `11, 12.5, 15, 18, 22, 44px`; line heights `1.25, 1.55, 1.6`.
-- Motion: `150ms ease` for direct feedback, `250ms ease` for state changes, `3.4s` for waveform cycles, and `1s steps(2)` for cursors.
+## Elevated slate construction
 
-## Visual rules
+### Raised slate
 
-- Dusk is dark-only. Use `bg → bg-elev → paper` for depth; fixed surfaces stay tonal and floating layers alone receive strong elevation.
-- Fraunces is reserved for brand, page, and section hierarchy; DM Sans carries UI and body content; JetBrains Mono carries metadata, dates, numerics, and tool output.
-- Terra is the decisive-action and active-control color. Sage, amber, and clay are semantic or persona roles, never competing decoration.
-- Use `line-soft` for routine dividers and `line` only when a boundary needs additional clarity.
-- Motion communicates state—thinking, speaking, listening, sending, opening, or interruption—and stops under reduced motion. Canonical avatar SVGs own all assistant artwork and internal animation.
+Buttons, the moving selected slate inside segmented controls, unselected chips, and other actionable keys share one construction:
+
+1. a thin warm-graphite face with a shallow inward bow: the center is slightly darker than the perimeter, never brighter or outwardly puffed;
+2. a narrow top inner highlight that reads as a cut edge rather than surface puffiness;
+3. a compact dark contact shadow immediately beneath the face;
+4. a restrained downward cast, with ember added only for focus, activity, selection, or commitment.
+
+Primary, secondary, quiet, destructive, and disabled keys remain members of the same material family. A semantic variant changes the face tint, edge, ink, and glow—it does not become visually flat. Destructive actions use an unmistakable clay-red face and red cast at both text-button and compact icon sizes.
+
+Hover uses a slight magnetic motion, stronger inward face tension, or localized glow. It never adds or brightens an outline; the resting edge may soften into the face instead. Press moves the face down about 1px and collapses the cast. Disabled keys remain seated with shallow neutral depth and no ember response. Keyboard focus remains visibly indicated independently of hover.
+
+### Recessed well
+
+Inputs, text areas, toggle tracks, segmented-control beds, and slider tracks are receiving surfaces. They use:
+
+1. a darker `color-bg-sunk` receiver;
+2. an inset upper occlusion shadow;
+3. a faint lower inner highlight reflected from the slate edge;
+4. a clear focus edge and localized ember focus ring.
+
+An input must not read as a flat dark rectangle. Its well treatment should be visibly related to the toggle track and segmented-control bed. A selected label chip stays pressed into this receiving material and adds a compact ember marker; a segmented group visibly glides one continuous selected slate between choices rather than switching faces instantaneously.
+
+### Identity surfaces
+
+User avatars are circular elevated-slate identity surfaces at `28`, `44`, and `56`. Their shallow concave face, softened dark shoulder, contact shadow, and directional cast remain consistent with raised slates without adding a sharp bright perimeter rim. Initial fallbacks use Fraunces over restrained terra, sage, amber, and clay Dusk tints; fallback, selected, and disabled states remain explicit and never depend on initials or color alone.
+
+The Sentient avatar uses the canonical assets under `sentient-design/avatars/`: idle, thinking, and responding. Those SVGs own their nucleus, orbital artwork, and internal animation. The accompanying custom element owns the supplied crossfade, scale, and rotation transition between states and provides reduced-motion behavior. Product surfaces size and label this primitive but do not redraw or recolor it.
+
+### Plate and float
+
+Plates group stable content at low elevation. Menus, dialogs, sheets, and permission prompts are floating slates with a stronger directional cast. Broad content surfaces do not receive active ember glow unless the whole surface is genuinely live.
+
+## Material rules
+
+1. Ordinary surfaces remain low-chroma Dusk; warmth is not spread across every fill.
+2. Ember is reserved for primary actions, focus, selected controls, responding/listening identity, current-time emphasis, and genuine activity.
+3. Every raised control keeps the slate face/contact/cast construction, including quiet, destructive, and disabled variants.
+4. Every receiving control keeps the recessed-well construction, including text inputs, text areas, toggle tracks, segmented beds, and slider tracks.
+5. Use `color-ink-2`, not muted `color-ink-3`, for normal-size supporting text on `color-paper` when AA contrast is required.
+6. Calendar and category colors use narrow semantic markers rather than coating entire plates.
+7. Avoid pale perimeter rims, thick bevels, detached underplates, omnidirectional glow, and shadow that does not explain interaction.

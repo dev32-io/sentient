@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2B2621">
+  <link rel="icon" href="data:,">
+  <title>Sentient · Common interface composites</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&amp;family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./vendor/foundation-components.css">
+  <link rel="stylesheet" href="./common-composites.css">
+  <script src="./vendor/assets/avatars/sentient-avatar.js" defer></script>
+  <script src="./vendor/foundation-components.js" defer></script>
+  <script src="./common-composites.js" defer></script>
+</head>
+<body class="snt-surface">
+  <svg class="icon-defs" aria-hidden="true">
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 3.8 19h16.4L12 4Z"/><path d="M12 9v4.5M12 16.5v.1"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.1"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.6-4.1 3-6.2 7-6.2s6.4 2.1 7 6.2"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h7M15 7h5M4 17h4M12 17h8"/><circle cx="13" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="8" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="17" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="1" fill="currentColor" stroke="none"/></symbol>
+  </svg>
+
+  <header class="lab-topbar">
+    <div class="lab-brand">
+      <sentient-avatar state="idle" label="Sentient"></sentient-avatar>
+      <span><strong>Sentient</strong><small>Common composites</small></span>
+    </div>
+    <span class="lab-badge">Dusk · responsive review</span>
+  </header>
+
+  <main class="lab-main">
+    <header class="lab-intro">
+      <div>
+        <span class="snt-kicker">Composite library · 01</span>
+        <h1 class="snt-page-title">Common interface compositions</h1>
+        <p class="snt-page-subtitle">Reusable arrangements built from the reviewed foundation: page chrome, rows, settings groups, state feedback, disclosure, menus, and overlay shells. Meaningful state changes preserve spatial continuity.</p>
+      </div>
+      <div class="lab-scope"><span>Included</span><strong>Common, reusable, bounded</strong><small>No chat, composer, calendar, or complete pages</small></div>
+    </header>
+
+    <section class="lab-section" aria-labelledby="chrome-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Structure</span><h2 id="chrome-title">Page and navigation fragments</h2></div><p>Headers and local navigation establish place without imposing one cross-platform page shell.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7">
+          <div class="cmp-pane-head">
+            <div><span class="cmp-eyebrow">Household</span><h3>Preferences</h3><p>Control shared defaults and personal behavior.</p></div>
+            <button class="snt-button snt-button--primary">Save changes</button>
+          </div>
+          <nav class="cmp-tabs" aria-label="Preference sections" data-cmp-tabs>
+            <button aria-selected="true">General</button><button aria-selected="false">Privacy</button><button aria-selected="false">Advanced</button>
+          </nav>
+          <div class="cmp-crumb-bar"><span>Settings</span><svg><use href="#i-chevron"/></svg><strong>Preferences</strong><span class="cmp-status-text cmp-status-text--ready"><i aria-hidden="true"></i><span>All changes saved</span></span></div>
+        </article>
+
+        <article class="snt-plate specimen span-5">
+          <div class="cmp-mobile-head">
+            <button class="snt-icon-button snt-button--quiet" aria-label="Back"><svg><use href="#i-arrow-left"/></svg></button>
+            <div><h3>Privacy</h3><p>Household visibility</p></div>
+            <button class="snt-icon-button snt-button--quiet" aria-label="More options"><svg><use href="#i-more"/></svg></button>
+          </div>
+          <div class="cmp-sidebar-sample" data-cmp-nav>
+            <button aria-current="page"><svg><use href="#i-sliders"/></svg><span>General<small>Defaults and behavior</small></span><i class="cmp-dirty" aria-label="Unsaved changes"></i></button>
+            <button><svg><use href="#i-lock"/></svg><span>Privacy<small>Scope and permissions</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+            <button><svg><use href="#i-user"/></svg><span>Account<small>Identity and access</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="settings-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Configuration</span><h2 id="settings-title">Settings groups and rows</h2></div><p>Rows align explanation with a trailing decision; longer input expands vertically instead of compressing the copy.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7">
+          <header class="cmp-card-head"><div><h3>General</h3><p>Ordinary preference rows with shared rhythm.</p></div><span class="cmp-count">4 settings</span></header>
+          <div class="cmp-settings-list">
+            <div class="cmp-setting-row"><div><strong>Automatic updates</strong><span>Install trusted updates when the household is idle.</span></div><button class="snt-toggle" type="button" role="switch" aria-label="Automatic updates" aria-checked="true" data-snt-toggle></button></div>
+            <div class="cmp-setting-row"><div><strong>Language</strong><span>Used for interface labels and spoken responses.</span></div><div class="cmp-select" data-cmp-select><button class="cmp-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span data-cmp-select-value>English</span><svg><use href="#i-chevron"/></svg></button><div class="cmp-select-options" role="listbox" aria-label="Language" hidden><button role="option" aria-selected="true" data-value="English"><span>English</span><svg><use href="#i-check"/></svg></button><button role="option" aria-selected="false" data-value="Spanish"><span>Spanish</span><svg><use href="#i-check"/></svg></button><button role="option" aria-selected="false" data-value="French"><span>French</span><svg><use href="#i-check"/></svg></button></div></div></div>
+            <div class="cmp-setting-row"><div><strong>Detail level</strong><span>Choose how much supporting information appears.</span></div><div class="snt-segmented" data-snt-segmented aria-label="Detail level"><button class="snt-segment" aria-pressed="true">Default</button><button class="snt-segment" aria-pressed="false">Expert</button></div></div>
+            <label class="cmp-setting-row cmp-setting-row--range"><div><strong>Interface scale</strong><span>Preview changes before applying them.</span></div><div class="cmp-range snt-range-row"><input class="snt-range" type="range" min="0" max="100" value="62" aria-label="Interface scale"><output>62%</output></div></label>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-5" data-cmp-editor>
+          <header class="cmp-card-head"><div><h3>Vertical editor row</h3><p>Use when the field needs the full measure.</p></div><span class="cmp-dirty-label">Unsaved</span></header>
+          <div class="cmp-editor-body">
+            <label class="snt-field"><span class="snt-field__label">Household label</span><input class="snt-input" value="Home"></label>
+            <label class="snt-field"><span class="snt-field__label">Description</span><textarea class="snt-textarea">A short explanation that helps people understand the effect of this setting.</textarea></label>
+          </div>
+          <footer class="cmp-card-actions"><button class="snt-button snt-button--quiet">Reset</button><button class="snt-button snt-button--primary" data-cmp-save>Save</button></footer>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="cards-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Reusable surfaces</span><h2 id="cards-title">Image and icon cards</h2></div><p>A single dominant visual and a short label form one immediate action. Login identity is the current use; the same anatomy may later hold imagery or a feature icon.</p></header>
+      <article class="snt-plate specimen">
+        <header class="cmp-card-head"><div><h3>Dominant visual cards</h3><p>Activation continues immediately, so the card has no persistent selected state.</p></div></header>
+        <div class="cmp-media-card-grid">
+          <button class="cmp-media-card"><span class="cmp-media-card__visual"><span class="snt-avatar snt-avatar--user snt-avatar--xl snt-avatar--terra" aria-hidden="true"><span>M</span></span></span><span><strong>Maya</strong><small>Household owner</small></span></button>
+          <button class="cmp-media-card"><span class="cmp-media-card__visual"><span class="snt-avatar snt-avatar--user snt-avatar--xl snt-avatar--sage" aria-hidden="true"><span>A</span></span></span><span><strong>Alex</strong><small>Household member</small></span></button>
+          <button class="cmp-media-card"><span class="cmp-media-card__visual cmp-media-card__visual--icon"><svg><use href="#i-lock"/></svg></span><span><strong>Private space</strong><small>Feature icon variant</small></span></button>
+          <button class="cmp-media-card"><span class="cmp-media-card__visual cmp-media-card__visual--image" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>Shared album</strong><small>Image variant</small></span></button>
+        </div>
+      </article>
+    </section>
+
+    <section class="lab-section" aria-labelledby="access-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Identity and access</span><h2 id="access-title">Pin and verification entry</h2></div><p>Code entry is reusable outside login: clear progress, keyboard parity, deletion, submission, error recovery, and rate-limit states belong to one contract.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7">
+          <header class="cmp-card-head"><div><h3>Pin keypad</h3><p>Four digits submit when complete without hiding recovery.</p></div><span class="cmp-count">Secure entry</span></header>
+          <div class="cmp-pin" data-cmp-pin data-length="4" tabindex="-1">
+            <div class="cmp-pin-progress" role="status" aria-live="polite" aria-label="No digits entered"><i></i><i></i><i></i><i></i></div>
+            <p class="cmp-pin-status" data-cmp-pin-status>Enter your four-digit Pin.</p>
+            <div class="cmp-numpad" aria-label="Pin keypad">
+              <button type="button" data-digit="1">1</button><button type="button" data-digit="2">2</button><button type="button" data-digit="3">3</button>
+              <button type="button" data-digit="4">4</button><button type="button" data-digit="5">5</button><button type="button" data-digit="6">6</button>
+              <button type="button" data-digit="7">7</button><button type="button" data-digit="8">8</button><button type="button" data-digit="9">9</button>
+              <span aria-hidden="true"></span><button type="button" data-digit="0">0</button><button type="button" data-delete aria-label="Delete last digit">⌫</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-5">
+          <header class="cmp-card-head"><div><h3>Verification code</h3><p>Paste, autofill, keyboard entry, and explicit submission.</p></div></header>
+          <div class="cmp-code-panel">
+            <label for="verification-code">Six-digit code</label>
+            <input id="verification-code" class="cmp-code-input" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" aria-describedby="code-hint">
+            <p id="code-hint">Use the code shown on your trusted device.</p>
+            <button class="snt-button snt-button--primary">Verify code</button>
+          </div>
+          <div class="cmp-lock-state"><svg><use href="#i-lock"/></svg><span><strong>Too many attempts</strong><small>Try again in 28 seconds. Your entered code is preserved.</small></span></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="rows-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Collections</span><h2 id="rows-title">List and selection rows</h2></div><p>Stable grouped plates contain rows; selection, metadata, and trailing actions remain distinguishable without turning every item into a floating card.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-6">
+          <header class="cmp-card-head"><div><h3>Grouped list</h3><p>Identity, metadata, and row action.</p></div><button class="snt-button snt-button--quiet">Manage</button></header>
+          <div class="cmp-list-section" data-cmp-list><span class="cmp-group-label">Household</span>
+            <button class="cmp-list-row" aria-pressed="true"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--terra" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span><span><strong>Maya Chen</strong><small>Owner · Active now</small></span><span class="cmp-row-state"><svg><use href="#i-check"/></svg>Selected</span></button>
+            <button class="cmp-list-row" aria-pressed="false"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--sage" role="img" aria-label="Alex Chen"><span aria-hidden="true">A</span></span><span><strong>Alex Chen</strong><small>Adult · Yesterday</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+            <button class="cmp-list-row" aria-pressed="false"><span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--fallback" role="img" aria-label="Pending invitation"><span aria-hidden="true">?</span></span><span><strong>Pending invitation</strong><small>Expires in 3 days</small></span><span class="cmp-row-meta">Invited</span></button>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-6">
+          <header class="cmp-card-head"><div><h3>Text rows with overflow action</h3><p>The row action and its more-options button remain independent targets.</p></div></header>
+          <div class="cmp-action-list">
+            <div class="cmp-action-row"><button class="cmp-action-row__main"><span><strong>Household instructions</strong><small>Edited two hours ago</small></span></button><div class="cmp-row-menu-anchor" data-cmp-row-menu><button class="snt-icon-button snt-button--quiet" aria-label="More options for household instructions" aria-haspopup="menu" aria-expanded="false" data-cmp-row-menu-trigger><svg><use href="#i-more"/></svg></button><div class="cmp-menu cmp-row-menu" role="menu" hidden><button role="menuitem">Rename</button><button role="menuitem">Duplicate</button><span role="separator"></span><button role="menuitem" class="is-destructive">Delete</button></div></div></div>
+            <div class="cmp-action-row"><button class="cmp-action-row__main"><span><strong>Current profile</strong><small>Active on this device</small></span><span class="cmp-row-state"><svg><use href="#i-check"/></svg>Current</span></button><div class="cmp-row-menu-anchor" data-cmp-row-menu><button class="snt-icon-button snt-button--quiet" aria-label="More options for current profile" aria-haspopup="menu" aria-expanded="false" data-cmp-row-menu-trigger><svg><use href="#i-more"/></svg></button><div class="cmp-menu cmp-row-menu" role="menu" hidden><button role="menuitem">View details</button><button role="menuitem">Make a copy</button></div></div></div>
+            <div class="cmp-action-row"><button class="cmp-action-row__main"><span><strong>A long item title truncates before it reaches the action</strong><small>Supporting metadata remains readable</small></span></button><div class="cmp-row-menu-anchor" data-cmp-row-menu><button class="snt-icon-button snt-button--quiet" aria-label="More options for long item" aria-haspopup="menu" aria-expanded="false" data-cmp-row-menu-trigger><svg><use href="#i-more"/></svg></button><div class="cmp-menu cmp-row-menu" role="menu" hidden><button role="menuitem">Open</button><button role="menuitem">Archive</button></div></div></div>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-12">
+          <header class="cmp-card-head"><div><h3>Reorderable list</h3><p>Drag the elevated handle, or focus it and use the arrow keys.</p></div><span class="cmp-count">Order saved locally</span></header>
+          <p class="sr-only" id="reorder-help">Use the up and down arrow keys to move the focused item.</p>
+          <div class="cmp-reorder-list" data-cmp-reorder role="list">
+            <div class="cmp-reorder-row" role="listitem"><button class="cmp-drag-handle" draggable="true" aria-label="Reorder morning routine" aria-describedby="reorder-help"><svg><use href="#i-grip"/></svg></button><span><strong>Morning routine</strong><small>Runs first</small></span><span class="cmp-order-number">1</span></div>
+            <div class="cmp-reorder-row" role="listitem"><button class="cmp-drag-handle" draggable="true" aria-label="Reorder school reminders" aria-describedby="reorder-help"><svg><use href="#i-grip"/></svg></button><span><strong>School reminders</strong><small>Runs second</small></span><span class="cmp-order-number">2</span></div>
+            <div class="cmp-reorder-row" role="listitem"><button class="cmp-drag-handle" draggable="true" aria-label="Reorder evening quiet time" aria-describedby="reorder-help"><svg><use href="#i-grip"/></svg></button><span><strong>Evening quiet time</strong><small>Runs third</small></span><span class="cmp-order-number">3</span></div>
+          </div>
+          <div class="cmp-reorder-status" role="status" aria-live="polite" data-cmp-reorder-status>Current order is saved.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="filters-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Find and narrow</span><h2 id="filters-title">Search and filter bars</h2></div><p>Search, sort, and tags form one responsive tool cluster without becoming permanent page chrome.</p></header>
+      <article class="snt-plate specimen">
+        <div class="cmp-filter-bar">
+          <label class="cmp-search"><svg><use href="#i-search"/></svg><input class="snt-input" type="search" placeholder="Search items" aria-label="Search items"></label>
+          <div class="cmp-select cmp-select--sort" data-cmp-select><span class="sr-only">Sort by</span><button class="cmp-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false"><span data-cmp-select-value>Recently used</span><svg><use href="#i-chevron"/></svg></button><div class="cmp-select-options" role="listbox" aria-label="Sort by" hidden><button role="option" aria-selected="true" data-value="Recently used"><span>Recently used</span><svg><use href="#i-check"/></svg></button><button role="option" aria-selected="false" data-value="Name"><span>Name</span><svg><use href="#i-check"/></svg></button><button role="option" aria-selected="false" data-value="Status"><span>Status</span><svg><use href="#i-check"/></svg></button></div></div>
+          <div class="cmp-filter-chips" aria-label="Filters"><button class="snt-chip" aria-pressed="true" data-snt-chip>All</button><button class="snt-chip" aria-pressed="false" data-snt-chip>Ready</button><button class="snt-chip" aria-pressed="false" data-snt-chip>Shared</button><button class="snt-chip" aria-pressed="false" data-snt-chip>Offline</button></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="lab-section" aria-labelledby="feedback-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">System feedback</span><h2 id="feedback-title">Notices and async states</h2></div><p>State is named directly, preserves useful content when possible, and offers the next safe action.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7">
+          <div class="cmp-notice cmp-notice--info"><svg><use href="#i-info"/></svg><div><strong>Changes apply to this device</strong><p>Other household devices keep their current preference.</p></div></div>
+          <div class="cmp-notice cmp-notice--warning"><svg><use href="#i-alert"/></svg><div><strong>Permission required</strong><p>Review the requested scope before continuing.</p></div><button class="snt-button snt-button--quiet">Review</button></div>
+          <div class="cmp-notice cmp-notice--error"><svg><use href="#i-alert"/></svg><div><strong>Couldn’t save changes</strong><p>Your edits are still here. Try again when the connection returns.</p></div><button class="snt-button">Retry</button></div>
+        </article>
+
+        <article class="snt-plate specimen span-5">
+          <div class="cmp-state-grid">
+            <div class="cmp-state"><span class="cmp-spinner" aria-hidden="true"></span><strong>Loading</strong><small>Fetching current settings…</small></div>
+            <div class="cmp-state"><span class="cmp-state-mark">＋</span><strong>Nothing here yet</strong><small>Add an item when you’re ready.</small><button class="snt-button snt-button--quiet">Add item</button></div>
+          </div>
+          <div class="cmp-stale-banner"><span><strong>Showing saved results</strong><small>Couldn’t refresh just now.</small></span><button class="snt-button snt-button--quiet" data-cmp-retry>Retry</button></div>
+        </article>
+
+        <article class="snt-plate specimen span-12">
+          <header class="cmp-card-head"><div><h3>Status text</h3><p>A compact elevated light pairs with plain status language and never relies on color alone.</p></div></header>
+          <div class="cmp-status-text-grid">
+            <span class="cmp-status-text cmp-status-text--ready"><i aria-hidden="true"></i><span>Ready</span></span>
+            <span class="cmp-status-text cmp-status-text--attention"><i aria-hidden="true"></i><span>Needs attention</span></span>
+            <span class="cmp-status-text cmp-status-text--live"><i aria-hidden="true"></i><span>In progress</span></span>
+            <span class="cmp-status-text cmp-status-text--error"><i aria-hidden="true"></i><span>Failed</span></span>
+            <span class="cmp-status-text cmp-status-text--offline"><i aria-hidden="true"></i><span>Offline</span></span>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-12">
+          <div class="cmp-apply-bar" data-cmp-apply><span><i></i><strong>3 unsaved changes</strong><small>Review before applying to the household.</small></span><div><button class="snt-button snt-button--quiet">Discard</button><button class="snt-button snt-button--primary" data-cmp-apply-button>Apply changes</button></div></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="disclosure-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Progressive disclosure</span><h2 id="disclosure-title">Disclosure and overlay shells</h2></div><p>Secondary detail stays quiet until requested; menus and dialogs use the highest slate tier and predictable dismissal.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-6">
+          <div class="cmp-disclosures">
+            <details open><summary><span><strong>Advanced options</strong><small>Additional controls for experienced users</small></span><svg><use href="#i-chevron"/></svg></summary><div class="cmp-disclosure-body"><label class="cmp-setting-row"><div><strong>Detailed diagnostics</strong><span>Show sanitized identifiers and state transitions.</span></div><button class="snt-toggle" type="button" role="switch" aria-label="Detailed diagnostics" aria-checked="false" data-snt-toggle></button></label></div></details>
+            <details><summary><span><strong>Data and storage</strong><small>Retention and local cache</small></span><svg><use href="#i-chevron"/></svg></summary><div class="cmp-disclosure-body"><p>Storage controls belong here when defined.</p></div></details>
+          </div>
+        </article>
+
+        <article class="snt-plate specimen span-6">
+          <div class="cmp-overlay-demo">
+            <div class="cmp-menu-anchor">
+              <button class="snt-button" aria-haspopup="menu" aria-expanded="true" data-cmp-menu-button>Open menu</button>
+              <div class="cmp-menu" role="menu" data-cmp-menu>
+                <button role="menuitem"><svg><use href="#i-user"/></svg>View details</button>
+                <button role="menuitem"><svg><use href="#i-sliders"/></svg>Edit settings</button>
+                <span role="separator"></span>
+                <button role="menuitem" class="is-destructive"><svg><use href="#i-alert"/></svg>Remove item</button>
+              </div>
+            </div>
+            <div class="cmp-overlay-actions"><span class="cmp-tooltip-anchor"><button class="snt-icon-button snt-button--quiet" aria-describedby="tooltip-help"><svg><use href="#i-info"/></svg></button><span class="cmp-tooltip" role="tooltip" id="tooltip-help">Supporting help appears on hover or focus.</span></span><button class="snt-button snt-button--primary" data-cmp-dialog-open>Open dialog</button><button class="snt-button snt-button--quiet" data-cmp-toast-open>Show toast</button></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="forms-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Input and editing</span><h2 id="forms-title">Form groups and inline editors</h2></div><p>Validation, hints, counters, secrets, and recoverable submission states stay attached to the field they explain.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7">
+          <header class="cmp-card-head"><div><h3>Validated field group</h3><p>Pristine, complete, and invalid fields in one bounded form fragment.</p></div><span class="cmp-dirty-label">Draft saved</span></header>
+          <form class="cmp-form-group">
+            <label class="snt-field"><span class="snt-field__label">Display name</span><input class="snt-input" value="Maya Chen" autocomplete="name"><span class="snt-field__hint">Shown to members of this household.</span></label>
+            <label class="snt-field cmp-field--valid"><span class="snt-field__label">Recovery phrase</span><input class="snt-input" value="warm ember" aria-describedby="phrase-status"><span class="cmp-field-status" id="phrase-status"><svg><use href="#i-check"/></svg>Available</span></label>
+            <label class="snt-field cmp-field--error"><span class="snt-field__label">Confirmation</span><input class="snt-input" value="warm emb" aria-invalid="true" aria-describedby="confirm-error"><span class="cmp-field-status" id="confirm-error"><svg><use href="#i-alert"/></svg>The values do not match.</span></label>
+            <label class="snt-field"><span class="snt-field__label">Supporting note</span><textarea class="snt-textarea" maxlength="160">A concise note that helps others understand this choice.</textarea><span class="cmp-field-counter">58 of 160 characters</span></label>
+          </form>
+          <footer class="cmp-card-actions"><button class="snt-button snt-button--quiet" type="button">Cancel</button><button class="snt-button snt-button--primary" type="button">Save details</button></footer>
+        </article>
+
+        <article class="snt-plate specimen span-5">
+          <header class="cmp-card-head"><div><h3>Inline secret editor</h3><p>Read-only context transitions into an editor without losing place.</p></div></header>
+          <div class="cmp-inline-editor" data-cmp-inline-editor>
+            <div class="cmp-inline-editor__read"><span><strong>Access key</strong><small>Last updated three days ago</small></span><code>•••• •••• •••• 7k2m</code><button class="snt-button" type="button" data-cmp-edit>Edit</button></div>
+            <div class="cmp-inline-editor__form" hidden><label class="snt-field"><span class="snt-field__label">New access key</span><input class="snt-input" type="password" value="temporary-key"></label><p>Secret values are never written to logs or decorative diagnostics.</p><div><button class="snt-button snt-button--quiet" type="button" data-cmp-edit-cancel>Cancel</button><button class="snt-button snt-button--primary" type="button" data-cmp-edit-save>Save key</button></div></div>
+          </div>
+          <div class="cmp-inline-editor is-disabled"><div class="cmp-inline-editor__read"><span><strong>Managed value</strong><small>Controlled by the household owner</small></span><code>Unavailable</code><button class="snt-button" disabled>Edit</button></div></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="workflow-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Staged work</span><h2 id="workflow-title">Steppers, upload, and progress</h2></div><p>Multi-step and long-running work shows what changed, what remains, and how to recover without becoming a complete workflow screen.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7" data-cmp-stepper>
+          <header class="cmp-card-head"><div><h3>Step progress</h3><p>Completed, current, upcoming, and blocked steps.</p></div><span class="cmp-count" data-cmp-step-count>Step 2 of 4</span></header>
+          <ol class="cmp-stepper">
+            <li data-state="complete"><i><svg><use href="#i-check"/></svg></i><span><strong>Identity</strong><small>Complete</small></span></li>
+            <li data-state="current" aria-current="step"><i>2</i><span><strong>Preferences</strong><small>Current step</small></span></li>
+            <li data-state="upcoming"><i>3</i><span><strong>Review</strong><small>Not started</small></span></li>
+            <li data-state="upcoming"><i>4</i><span><strong>Finish</strong><small>Not started</small></span></li>
+          </ol>
+          <footer class="cmp-card-actions"><button class="snt-button snt-button--quiet" type="button" data-cmp-step-back>Back</button><button class="snt-button snt-button--primary" type="button" data-cmp-step-next>Continue</button></footer>
+        </article>
+
+        <article class="snt-plate specimen span-5" data-cmp-upload>
+          <header class="cmp-card-head"><div><h3>File and upload states</h3><p>Picker, drop target, selected file, progress, and retry.</p></div></header>
+          <div class="cmp-drop-zone" data-cmp-drop-zone tabindex="0" role="button" aria-label="Choose or drop a file"><span class="cmp-state-mark">＋</span><strong>Choose a file</strong><small>Or drop it here. A browse fallback is always available.</small><input type="file" hidden data-cmp-file></div>
+          <div class="cmp-file-row"><span class="cmp-row-icon">F</span><span><strong data-cmp-file-name>household-export.zip</strong><small>18.4 megabytes</small><span class="cmp-progress"><i style="width: 64%"></i></span></span><span class="cmp-row-meta">64%</span></div>
+          <footer class="cmp-card-actions"><button class="snt-button snt-button--quiet" type="button">Remove</button><button class="snt-button snt-button--primary" type="button" data-cmp-upload-button>Upload</button></footer>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="results-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Collections at scale</span><h2 id="results-title">Results, loading, and pagination</h2></div><p>Counts, no-match recovery, incremental loading, and skeletons keep large collections understandable.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-7" data-cmp-results>
+          <header class="cmp-results-head"><span><strong>24 results</strong><small>Filtered by ready and shared</small></span><button class="snt-button snt-button--quiet">Clear filters</button></header>
+          <div class="cmp-result-list">
+            <button><span class="cmp-row-icon">A</span><span><strong>Household profile</strong><small>Ready · Used today</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+            <button><span class="cmp-row-icon cmp-row-icon--sage">B</span><span><strong>Quiet profile</strong><small>Shared · Used yesterday</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+            <button><span class="cmp-row-icon">C</span><span><strong>Travel profile</strong><small>Offline · Updated last week</small></span><svg class="cmp-chevron"><use href="#i-chevron"/></svg></button>
+          </div>
+          <footer class="cmp-pagination"><button class="snt-button snt-button--quiet" disabled>Previous</button><span>Page 1 of 8</span><button class="snt-button" data-cmp-load-more>Load more</button></footer>
+        </article>
+
+        <article class="snt-plate specimen span-5">
+          <header class="cmp-card-head"><div><h3>Skeleton and no-match states</h3><p>Loading structure mirrors the content without pretending it is available.</p></div></header>
+          <div class="cmp-skeleton-list" aria-hidden="true"><div><i></i><span><b></b><b></b></span></div><div><i></i><span><b></b><b></b></span></div><div><i></i><span><b></b><b></b></span></div></div>
+          <div class="cmp-no-results"><span class="cmp-state-mark"><svg><use href="#i-search"/></svg></span><span><strong>No matching results</strong><small>Try a broader term or clear one of the filters.</small></span><button class="snt-button snt-button--quiet">Clear filters</button></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="lab-section" aria-labelledby="bulk-title">
+      <header class="lab-section-head"><div><span class="snt-kicker">Dense collections</span><h2 id="bulk-title">Bulk selection and data rows</h2></div><p>Future administrative collections keep selection, sorting, responsive fallback, and row actions explicit without forcing a desktop table onto small screens.</p></header>
+      <div class="lab-grid">
+        <article class="snt-plate specimen span-5" data-cmp-bulk>
+          <header class="cmp-bulk-head"><label class="snt-checkbox"><input type="checkbox" data-cmp-select-all><span class="snt-checkbox__box" aria-hidden="true"></span><span>Select all</span></label><span data-cmp-selection-count>0 selected</span></header>
+          <div class="cmp-bulk-list">
+            <label class="snt-checkbox cmp-bulk-item"><input type="checkbox" value="Maya"><span class="snt-checkbox__box" aria-hidden="true"></span><span><strong>Maya Chen</strong><small>Owner</small></span></label>
+            <label class="snt-checkbox cmp-bulk-item"><input type="checkbox" value="Alex"><span class="snt-checkbox__box" aria-hidden="true"></span><span><strong>Alex Chen</strong><small>Adult</small></span></label>
+            <label class="snt-checkbox cmp-bulk-item"><input type="checkbox" value="Jordan"><span class="snt-checkbox__box" aria-hidden="true"></span><span><strong>Jordan Chen</strong><small>Teen</small></span></label>
+            <label class="snt-checkbox cmp-bulk-item"><input type="checkbox" disabled><span class="snt-checkbox__box" aria-hidden="true"></span><span><strong>Pending invitation</strong><small>Unavailable</small></span></label>
+          </div>
+          <footer class="cmp-bulk-actions"><span>Choose items to reveal bulk actions.</span><div><button class="snt-button snt-button--quiet" disabled data-cmp-bulk-action>Move</button><button class="snt-button snt-button--destructive" disabled data-cmp-bulk-action>Remove</button></div></footer>
+        </article>
+
+        <article class="snt-plate specimen span-7">
+          <header class="cmp-card-head"><div><h3>Responsive data rows</h3><p>Column structure becomes labeled stacked rows when width is constrained.</p></div><button class="snt-button snt-button--quiet">Export</button></header>
+          <div class="cmp-data-table" role="table" aria-label="Device status">
+            <div class="cmp-data-row cmp-data-row--head" role="row"><span role="columnheader">Device</span><span role="columnheader">Status</span><span role="columnheader">Updated</span><span></span></div>
+            <div class="cmp-data-row" role="row"><span role="cell" data-label="Device"><strong>Kitchen display</strong></span><span role="cell" data-label="Status"><span class="cmp-status-text cmp-status-text--ready"><i aria-hidden="true"></i><span>Ready</span></span></span><span role="cell" data-label="Updated">Just now</span><button class="snt-icon-button snt-button--quiet" aria-label="More options for kitchen display"><svg><use href="#i-more"/></svg></button></div>
+            <div class="cmp-data-row" role="row"><span role="cell" data-label="Device"><strong>Hallway speaker</strong></span><span role="cell" data-label="Status"><span class="cmp-status-text cmp-status-text--attention"><i aria-hidden="true"></i><span>Needs attention</span></span></span><span role="cell" data-label="Updated">12 minutes ago</span><button class="snt-icon-button snt-button--quiet" aria-label="More options for hallway speaker"><svg><use href="#i-more"/></svg></button></div>
+            <div class="cmp-data-row" role="row"><span role="cell" data-label="Device"><strong>Bedroom display</strong></span><span role="cell" data-label="Status"><span class="cmp-status-text cmp-status-text--offline"><i aria-hidden="true"></i><span>Offline</span></span></span><span role="cell" data-label="Updated">Yesterday</span><button class="snt-icon-button snt-button--quiet" aria-label="More options for bedroom display"><svg><use href="#i-more"/></svg></button></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <footer class="lab-footer">Review artifact · Built from the approved foundation subset; common composites only.</footer>
+  </main>
+
+  <dialog class="cmp-dialog" data-cmp-dialog aria-labelledby="dialog-title">
+    <form method="dialog">
+      <header><span class="snt-kicker">Confirm change</span><h2 id="dialog-title">Apply to this device?</h2><p>This changes the local preference. Other household devices are unaffected.</p></header>
+      <div class="cmp-dialog-detail"><span>Target</span><strong>This device</strong><span>Change</span><strong>Enable automatic updates</strong></div>
+      <footer><button class="snt-button snt-button--quiet" value="cancel">Cancel</button><button class="snt-button snt-button--primary" value="confirm">Apply change</button></footer>
+    </form>
+  </dialog>
+
+  <div class="cmp-toast" role="status" aria-live="polite" aria-atomic="true" data-cmp-toast hidden><svg><use href="#i-check"/></svg><span><strong>Changes saved</strong><small>Your preference is up to date.</small></span><button aria-label="Dismiss notification" data-cmp-toast-close>×</button></div>
+</body>
+</html>

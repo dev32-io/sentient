@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sentient chat message bubbles</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&amp;family=Fraunces:opsz,wght@9..144,400;9..144,500&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./vendor/foundation-components.css">
+  <link rel="stylesheet" href="./chat-message-bubbles.css">
+  <script src="./vendor/avatars/sentient-avatar.js" defer></script>
+  <script src="./vendor/foundation-components.js" defer></script>
+  <script src="./chat-message-bubbles.js" defer></script>
+</head>
+<body class="snt-surface">
+  <header class="prototype-header">
+    <div class="prototype-brand"><span class="prototype-mark"><sentient-avatar state="idle" label="Sentient"></sentient-avatar></span><span><strong>Sentient</strong><small>Message bubble study</small></span></div>
+    <p>Conversation content only. Composer, task activity, permissions, and complete-page chrome remain outside this prototype.</p>
+  </header>
+
+  <main>
+    <section class="review-section" aria-labelledby="rhythm-title">
+      <header class="review-heading"><div><span class="snt-kicker">Conversation rhythm</span><h1 id="rhythm-title">Messages stay calm and readable</h1></div><p>Identity, chronology, and role remain clear while related messages form one continuous exchange.</p></header>
+      <div class="chat-canvas" role="log" aria-live="polite" aria-label="Conversation message examples">
+        <div class="chat-day-divider"><span>Today</span></div>
+
+        <article class="chat-message chat-message--user" aria-label="Maya message">
+          <span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--terra chat-message__avatar" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span>
+          <div class="chat-message__body">
+            <header class="chat-message__meta"><strong>Maya</strong><span aria-hidden="true">·</span><time datetime="2026-03-19T18:41:00">6:41 pm</time></header>
+            <div class="chat-bubble"><p>Can you review tomorrow, flag any conflicts, and suggest the safest adjustment?</p></div>
+          </div>
+        </article>
+
+        <article class="chat-message chat-message--assistant" aria-label="Sentient message">
+          <span class="snt-avatar snt-avatar--sentient snt-avatar--lg chat-message__avatar"><sentient-avatar state="idle" label="Sentient"></sentient-avatar></span>
+          <div class="chat-message__body">
+            <header class="chat-message__meta"><strong>Sentient</strong><span aria-hidden="true">·</span><time datetime="2026-03-19T18:42:00">6:42 pm</time></header>
+            <div class="chat-bubble"><p>I found one conflict. The appointment overlaps with school pickup, but the appointment can stay unchanged.</p></div>
+          </div>
+        </article>
+
+        <article class="chat-message chat-message--assistant chat-message--continuation" aria-label="Sentient follow-up message">
+          <span class="chat-message__avatar-spacer" aria-hidden="true"></span>
+          <div class="chat-message__body">
+            <div class="chat-bubble"><p>Moving pickup to <strong>3:40 pm</strong> preserves a comfortable travel buffer before rehearsal.</p></div>
+          </div>
+        </article>
+
+        <article class="chat-message chat-message--user" aria-label="Maya message">
+          <span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--terra chat-message__avatar" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span>
+          <div class="chat-message__body">
+            <header class="chat-message__meta"><strong>Maya</strong><span aria-hidden="true">·</span><time datetime="2026-03-19T18:43:00">6:43 pm</time></header>
+            <div class="chat-bubble"><p>That works. Keep the appointment where it is.</p></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="review-section" aria-labelledby="state-title">
+      <header class="review-heading"><div><span class="snt-kicker">Visible state</span><h2 id="state-title">One response, four meaningful states</h2></div><p>State changes preserve the message’s position. Motion is localized to the identity, progress signal, and streaming caret.</p></header>
+      <div class="state-review snt-plate">
+        <div class="state-review__controls">
+          <div><strong>Assistant response state</strong><p>Use the controls to review the same message without a layout jump.</p></div>
+          <div class="snt-segmented state-segments" data-snt-segmented data-chat-state-control aria-label="Assistant response state">
+            <button class="snt-segment" aria-pressed="true" data-chat-state="thinking">Thinking</button>
+            <button class="snt-segment" aria-pressed="false" data-chat-state="streaming">Responding</button>
+            <button class="snt-segment" aria-pressed="false" data-chat-state="complete">Complete</button>
+            <button class="snt-segment" aria-pressed="false" data-chat-state="interrupted">Interrupted</button>
+          </div>
+        </div>
+        <div class="state-review__canvas">
+          <article class="chat-message chat-message--assistant chat-message--thinking" aria-label="Sentient message" data-chat-state-demo>
+            <span class="snt-avatar snt-avatar--sentient snt-avatar--lg chat-message__avatar"><sentient-avatar state="thinking" label="Sentient is thinking" data-chat-state-avatar></sentient-avatar></span>
+            <div class="chat-message__body">
+              <header class="chat-message__meta"><strong>Sentient</strong><span aria-hidden="true">·</span><time data-chat-state-time>Now</time></header>
+              <div class="chat-bubble" data-chat-state-content><div class="thinking-line" role="status"><span>Reviewing the schedule and travel time</span><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="review-section" aria-labelledby="content-title">
+      <header class="review-heading"><div><span class="snt-kicker">Content range</span><h2 id="content-title">Rich answers and long requests</h2></div><p>Markdown remains readable inside the same material system, while long user content stays clearly attributed and bounded.</p></header>
+      <div class="content-grid">
+        <article class="content-specimen snt-plate">
+          <header class="content-specimen__head"><strong>Rich assistant response</strong><span>Headings, lists, links, and code</span></header>
+          <div class="content-specimen__body">
+            <article class="chat-message chat-message--assistant" aria-label="Sentient rich message">
+              <span class="snt-avatar snt-avatar--sentient snt-avatar--lg chat-message__avatar"><sentient-avatar state="idle" label="Sentient"></sentient-avatar></span>
+              <div class="chat-message__body">
+                <header class="chat-message__meta"><strong>Sentient</strong><span aria-hidden="true">·</span><time datetime="2026-03-19T18:44:00">6:44 pm</time></header>
+                <div class="chat-bubble chat-bubble--rich">
+                  <h3>The easiest adjustment</h3>
+                  <p>Move school pickup to <strong>3:40 pm</strong>. This keeps the appointment unchanged and leaves a comfortable buffer.</p>
+                  <ul><li>Appointment remains at 3:00 pm</li><li>Pickup moves by twenty minutes</li><li>Rehearsal remains unaffected</li></ul>
+                  <p><a href="#rich-reference">Review the proposed schedule</a> before anything changes.</p>
+                  <pre><code>Pickup · 3:40 pm
+Rehearsal · 5:00 pm</code></pre>
+                </div>
+              </div>
+            </article>
+          </div>
+        </article>
+
+        <article class="content-specimen snt-plate">
+          <header class="content-specimen__head"><strong>Long user request</strong><span>Wrapping, measure, and narrow screens</span></header>
+          <div class="content-specimen__body content-specimen__body--user">
+            <article class="chat-message chat-message--user" aria-label="Maya message">
+              <span class="snt-avatar snt-avatar--user snt-avatar--lg snt-avatar--terra chat-message__avatar" role="img" aria-label="Maya Chen"><span aria-hidden="true">M</span></span>
+              <div class="chat-message__body">
+                <header class="chat-message__meta"><strong>Maya Chen with a longer display name</strong><span aria-hidden="true">·</span><time datetime="2026-03-19T18:45:00">6:45 pm</time></header>
+                <div class="chat-bubble"><p>Please compare the school calendar with our shared appointments, preserve anything marked private, and explain any conflict before suggesting a change. Do not update anything yet.</p></div>
+              </div>
+            </article>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="prototype-footer"><p>Tool activity remains outside message bubbles because it may not have a stable owning message. This artifact is a visual review surface, not production code.</p></footer>
+</body>
+</html>
