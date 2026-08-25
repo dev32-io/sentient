@@ -1,139 +1,45 @@
-/* gateway/webui/src/components/settings/sidebar/sidebar.css */
-/* Ported from sentient-webui-design-v2/styles.css; namespaced under .settings-v2 */
-
 .settings-v2 .s-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 28px 14px 18px;
-  background: var(--color-bg);
+  display: grid;
+  gap: var(--space-lg);
+  padding: var(--space-xl) var(--space-md);
 }
-
-.settings-v2 .s-nav-group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+.settings-v2 .s-nav-group { display: grid; gap: var(--space-xs); }
 .settings-v2 .s-nav-h {
-  font-size: var(--font-size-xs);
-  letter-spacing: 0.12em;
-  color: var(--color-ink-4);
-  padding: 0 10px 6px;
+  margin: 0;
+  padding: 0 var(--space-sm) var(--space-xs);
+  color: var(--color-ink-3);
+  font: 500 var(--font-size-xs) / var(--line-height-normal) var(--font-mono);
 }
-
 .settings-v2 .s-nav-i {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--radius-md);
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 2.75rem;
   color: var(--color-ink-2);
-  text-align: left;
-  position: relative;
 }
-
-.settings-v2 .s-nav-i:hover {
-  background: var(--color-bg-sunk);
-  color: var(--color-ink);
-}
-
 .settings-v2 .s-nav-i.active {
-  background: var(--color-accent-50);
+  --slate-base: var(--color-accent-soft);
+  --slate-border: var(--color-accent);
   color: var(--color-accent);
 }
-
 .settings-v2 .s-nav-i .dot-dirty {
-  position: absolute;
-  right: 12px;
-  top: 14px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-amber);
-}
-
-.settings-v2 .s-side-foot {
-  margin-top: auto;
-  padding: 22px 22px 28px;
-  background: var(--color-bg);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.settings-v2 .s-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
-}
-
-.settings-v2 .s-side-meta {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.settings-v2 .s-side-meta li {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 11px;
-  color: var(--color-ink-4);
-}
-.settings-v2 .s-side-meta li > span {
-  letter-spacing: 0.02em;
-}
-.settings-v2 .s-side-meta code {
-  background: transparent;
-  padding: 0;
-  color: var(--color-ink-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.02em;
-}
-
-.settings-v2 .ok-dot,
-.settings-v2 .status-dot-unavailable {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.settings-v2 .ok-dot {
-  background: var(--color-ok);
-  box-shadow: 0 0 0 3px rgba(95, 138, 91, 0.18);
-}
-
-.settings-v2 .status-dot-unavailable {
+  width: var(--space-xs);
+  height: var(--space-xs);
+  margin-left: auto;
+  border-radius: var(--radius-pill);
   background: var(--color-warn);
 }
+.settings-v2 .s-side-foot {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: auto;
+  padding: var(--space-lg);
+  color: var(--color-ink-2);
+  font-size: var(--font-size-xs);
+}
+.settings-v2 .s-side-foot p { margin: 0; line-height: var(--line-height-normal); }
 
-@media (max-width: 880px) {
-  .settings-v2 .s-nav {
-    flex-direction: row;
-    flex-wrap: nowrap;
-    gap: 6px;
-    padding: 10px 12px;
-    min-width: 0; /* allow the strip to shrink to the column so overflow-x clips, not expands */
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  /* groups flatten into one scroll row; hide the "User"/"Admin" headers */
-  .settings-v2 .s-nav-group { flex-direction: row; gap: 6px; }
-  .settings-v2 .s-nav-h { display: none; }
-  .settings-v2 .s-nav-i {
-    flex: 0 0 auto;
-    white-space: nowrap;
-    padding: 8px 12px;
-    border: 1px solid var(--color-line-soft);
-  }
-  /* dirty dot would overlap the chip edge — re-anchor it */
-  .settings-v2 .s-nav-i .dot-dirty { right: 6px; top: 6px; }
-  /* the side footer/status block is desktop-only chrome */
+@media (max-width: 55rem) {
+  .settings-v2 .s-nav { padding: var(--space-md); }
+  .settings-v2 .s-nav-i { min-height: 3rem; }
   .settings-v2 .s-side-foot { display: none; }
 }

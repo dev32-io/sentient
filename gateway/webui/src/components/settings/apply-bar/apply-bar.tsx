@@ -2,7 +2,7 @@
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
-import { Btn } from "../primitives/btn.tsx";
+import { ActionButton } from "../../common/foundation.tsx";
 import { runApply, type ApplyBarState, type ApplyDeps, type PendingOpWithPayload } from "./apply-bar-machine.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "apply-bar"]);
@@ -46,16 +46,17 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
         </span>
         <span class="ab-sub">{subtextFor(state)}</span>
       </div>
-      <Btn kind="ghost" size="sm" onClick={onDiscard} disabled={isBusy}>
+      <ActionButton variant="quiet" onClick={onDiscard} disabled={isBusy}>
         Discard
-      </Btn>
-      <Btn kind="primary" size="sm" onClick={handleApply} disabled={isBusy}>
-        {state.phase === "saving" && <><span class="spin-mini" /> Saving…</>}
-        {state.phase === "restarting" && <><span class="spin-mini" /> Applying…</>}
+      </ActionButton>
+      <ActionButton variant="primary" onClick={() => void handleApply()} disabled={isBusy} loading={isBusy}>
+        {state.phase === "saving" && <>Saving…</>}
+        {state.phase === "restarting" && <>Applying…</>}
         {state.phase === "ready" && <>Done</>}
+        {state.phase === "already-applying" && <>Retry</>}
         {state.phase === "failed" && <>Retry</>}
         {state.phase === "idle" && label}
-      </Btn>
+      </ActionButton>
     </div>
   );
 }
@@ -65,6 +66,8 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
 // Both branches read the same because there is no distinct slow-op UX left
 // to describe; keep the phase-based failure branch since that IS distinct.
 function subtextFor(state: ApplyBarState): string {
+  if (state.phase === "already-applying") return "Another apply is already in progress";
   if (state.phase === "failed") return state.errorMessage;
+  if (state.phase === "ready") return "Changes applied";
   return "Changes will apply instantly";
 }

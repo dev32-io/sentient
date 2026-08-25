@@ -1,32 +1,18 @@
-// gateway/webui/src/components/settings/sidebar/sidebar-status.tsx
 import type { JSX } from "preact";
-import { useServiceVersions } from "../../../hooks/use-service-versions.ts";
 import { useSystemReadiness } from "../../../hooks/use-system-readiness.ts";
+import { StatusChip } from "../../common/status-chip.tsx";
 
 export interface SidebarStatusProps {
   token: string | null;
 }
 
-function fmt(raw: string): string {
-  if (!raw || raw === "unknown") return "—";
-  return raw.startsWith("v") ? raw : `v${raw}`;
-}
-
 export function SidebarStatus({ token }: SidebarStatusProps): JSX.Element {
-  const v = useServiceVersions(token);
   const ready = useSystemReadiness(token !== null);
-  const statusLabel = ready === null ? "Checking services…" : ready ? "All required services online" : "Required services unavailable";
+  const label = ready === null ? "Checking household status" : ready ? "Household services ready" : "Household services need attention";
   return (
-    <div class="s-side-foot">
-      <div class="s-status">
-        <span class={ready ? "ok-dot" : "status-dot-unavailable"} /> {statusLabel}
-      </div>
-      <ul class="s-side-meta">
-        <li><span>Sentient</span> <code>{v ? fmt(v.gateway) : "…"}</code></li>
-        <li><span>Hermes</span> <code>{v ? fmt(v.hermes) : "…"}</code></li>
-        <li><span>STT</span> <code>{v ? fmt(v.stt_service) : "…"}</code></li>
-        <li><span>TTS</span> <code>{v ? fmt(v.tts_service) : "…"}</code></li>
-      </ul>
+    <div class="s-side-foot" data-testid="settings-household-status">
+      <StatusChip label={label} indicator={ready === null ? "idle" : ready ? "live" : "off"} />
+      <p>Technical details are available in Diagnostics.</p>
     </div>
   );
 }

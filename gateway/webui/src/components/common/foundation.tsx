@@ -110,16 +110,17 @@ export interface FieldProps {
   autoComplete?: string | undefined;
   inputMode?: JSX.HTMLAttributes<HTMLInputElement>["inputMode"] | undefined;
   maxLength?: number | undefined;
+  ariaLabel?: string | undefined;
   className?: string | undefined;
   inputClassName?: string | undefined;
   onInput?: (event: JSX.TargetedEvent<HTMLInputElement, InputEvent>) => void | undefined;
   onChange?: (event: JSX.TargetedEvent<HTMLInputElement, Event>) => void | undefined;
 }
 
-export function Field({ label, hint, error, id, className, inputClassName, ...input }: FieldProps): JSX.Element {
+export function Field({ label, hint, error, id, className, inputClassName, ariaLabel, ...input }: FieldProps): JSX.Element {
   return (
     <FieldShell label={label} hint={hint} error={error} id={id} className={className}>
-      {({ id: inputId, describedBy }) => <input {...input} id={inputId} aria-describedby={describedBy} class={classes("snt-input", inputClassName)} aria-invalid={Boolean(error) || undefined} />}
+      {({ id: inputId, describedBy }) => <input {...input} id={inputId} aria-label={ariaLabel} aria-describedby={describedBy} class={classes("snt-input", inputClassName)} aria-invalid={Boolean(error) || undefined} />}
     </FieldShell>
   );
 }
