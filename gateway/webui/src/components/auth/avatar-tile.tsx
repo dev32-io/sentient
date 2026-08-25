@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import type { AvatarTint } from "../common/avatar.tsx";
+import { ActionButton } from "../common/foundation.tsx";
 
 export interface AvatarTileProps {
   userId: string;
@@ -18,21 +19,18 @@ export function AvatarTile({
 
   const handleClick = (): void => onSelect(userId);
 
-  const handleKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === "Enter") onSelect(userId);
-  };
-
   return (
-    <button
-      class="avatar-tile"
+    <ActionButton
+      className="avatar-tile"
+      variant="quiet"
       onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      aria-label={displayName}
+      ariaLabel={`Continue as ${displayName}`}
+      title={`Continue as ${displayName}`}
     >
       <span class={`avatar-tile__circle avatar-tile__circle--tint-${avatarTint}`}>
         {initial}
       </span>
       <span class="avatar-tile__name">{displayName}</span>
-    </button>
+    </ActionButton>
   );
 }

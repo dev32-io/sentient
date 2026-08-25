@@ -286,6 +286,7 @@ html.is-paused *::after {
   background: var(--color-ink-4);
 }
 .topbar__spacer { flex: 1; }
+.topbar__nav { display: flex; align-items: center; gap: 8px; }
 
 /* ─── ChatView — scrolling wrap centered to messages column ─── */
 
@@ -1152,7 +1153,9 @@ html.is-paused *::after {
     padding: 10px 14px;
   }
   .topbar__crumbs { display: none; }
-  .topbar__brand-name { font-size: var(--font-size-base); }
+  .topbar__brand-name { display: none; }
+  .topbar__nav { gap: 0; }
+  .user-menu__name { display: none; }
   .topbar__mark,
   .topbar__mark svg { width: 22px; height: 22px; }
   .status-chip {
@@ -1275,6 +1278,13 @@ html.is-paused *::after {
     padding: 5px 10px;
     font-size: 12px;
   }
+}
+
+/* At 200% browser zoom a 390px phone exposes roughly a 195px CSS viewport.
+   Put primary routes on their own row instead of overflowing the shell. */
+@media (max-width: 360px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar__nav { order: 10; width: 100%; justify-content: center; }
 }
 
 /* ─── AvatarTile ─── */
@@ -1401,6 +1411,20 @@ html.is-paused *::after {
   font-size: var(--font-size-base);
   color: var(--color-ink-3);
 }
+
+/* ─── Shared setup/auth gates ─── */
+.auth-gate {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(var(--space-md), 5vw, var(--space-3xl));
+  background:
+    radial-gradient(700px 420px at 15% 5%, color-mix(in oklab, var(--color-accent) 15%, transparent), transparent 65%),
+    radial-gradient(600px 440px at 90% 100%, color-mix(in oklab, var(--color-sage) 12%, transparent), transparent 65%),
+    var(--color-bg);
+}
+.auth-gate__card { width: min(100%, 560px); padding: clamp(var(--space-lg), 5vw, var(--space-2xl)); }
 
 /* ─── LoginScreen ─── */
 
@@ -1557,7 +1581,7 @@ html.is-paused *::after {
 .user-menu {
   position: relative;
 }
-.user-menu__trigger {
+.user-menu__trigger.snt-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;

@@ -1,6 +1,8 @@
 import type { JSX } from "preact";
 import { useCallback, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
+import { ActionButton, Field, Plate, Surface } from "../common/foundation.tsx";
+import { Notice } from "../common/composites.tsx";
 
 const log = createLogger(["sentient", "webui", "auth", "setup-screen"]);
 
@@ -49,7 +51,7 @@ export function SetupScreen({ auth }: SetupScreenProps): JSX.Element {
 
     const trimmedName = displayName.trim();
     const userId = generateUserId();
-    log.debug("setup-submit", { userId, displayName: trimmedName });
+    log.debug("setup-submit", { userId });
 
     setSubmitting(true);
     setError(null);
@@ -75,65 +77,47 @@ export function SetupScreen({ auth }: SetupScreenProps): JSX.Element {
   }, [canSubmit, displayName, pin, auth]);
 
   return (
-    <div class="setup-screen">
-      <div class="setup-screen__card">
+    <Surface className="setup-screen auth-gate">
+      <Plate className="setup-screen__card auth-gate__card">
         <h1 class="setup-screen__title">Welcome to Sentient</h1>
-        <p class="setup-screen__subtitle">
-          This is the first account on this device. You'll be the admin.
-        </p>
+        <p class="setup-screen__subtitle">Create the first household profile. This profile will be an admin.</p>
         <form class="setup-screen__form" onSubmit={handleSubmit}>
-          <label class="setup-screen__label">
-            Display Name
-            <input
-              type="text"
-              class="setup-screen__input"
-              value={displayName}
-              onInput={(e) => setDisplayName((e.target as HTMLInputElement).value)}
-              placeholder="Your name"
-              disabled={submitting}
-              aria-label="Display name"
-            />
-          </label>
-          <label class="setup-screen__label">
-            PIN
-            <input
-              type="password"
-              inputMode="numeric"
-              pattern="\d{4}"
-              class="setup-screen__input"
-              value={pin}
-              onInput={(e) => setPin((e.target as HTMLInputElement).value)}
-              placeholder="4-digit PIN"
-              maxLength={4}
-              disabled={submitting}
-              aria-label="PIN"
-            />
-          </label>
-          <label class="setup-screen__label">
-            Confirm PIN
-            <input
-              type="password"
-              inputMode="numeric"
-              pattern="\d{4}"
-              class="setup-screen__input"
-              value={confirmPin}
-              onInput={(e) => setConfirmPin((e.target as HTMLInputElement).value)}
-              placeholder="Re-enter PIN"
-              maxLength={4}
-              disabled={submitting}
-              aria-label="Confirm PIN"
-            />
-          </label>
-          {error && <p class="setup-screen__error">{error}</p>}
-          <button
-            type="submit"
-            class="setup-screen__submit"
-            disabled={!canSubmit}
-          >
-            {submitting ? "Creating..." : "Create Admin"}
-          </button>
+          <Field
+            label="Display name"
+            value={displayName}
+            onInput={(event) => setDisplayName(event.currentTarget.value)}
+            placeholder="Your name"
+            disabled={submitting}
+            required
+          />
+          <Field
+            label="4-digit PIN"
+            type="password"
+            inputMode="numeric"
+            value={pin}
+            onInput={(event) => setPin(event.currentTarget.value.replace(/\D/g, ""))}
+            maxLength={4}
+            disabled={submitting}
+            error={pin.length > 0 && !isPinValid ? "Enter four digits." : undefined}
+            required
+          />
+          <Field
+            label="Confirm PIN"
+            type="password"
+            inputMode="numeric"
+            value={confirmPin}
+            onInput={(event) => setConfirmPin(event.currentTarget.value.replace(/\D/g, ""))}
+            maxLength={4}
+            disabled={submitting}
+            error={confirmPin.length > 0 && !pinsMatch ? "PINs do not match." : undefined}
+            required
+          />
+          {error && <Notice tone="error">{error}</Notice>}
+          <ActionButton type="submit" variant="primary" loading={submitting} disabled={!canSubmit} className="setup-screen__submit">
+            Create admin
+          </ActionButton>
         </form>
-      </div>
-    </div>
+      </Plate>
+    </Surface>
   );
 }

@@ -13,6 +13,7 @@ import type { AvatarTint } from "./components/common/avatar.tsx";
 import type { SentientMarkMode } from "./components/common/sentient-mark.tsx";
 import { Composer } from "./components/dock/composer.tsx";
 import { LoginScreen } from "./components/auth/login-screen.tsx";
+import { markAuthExpired, takeAuthExpired } from "./components/auth/auth-expiry.ts";
 import { SetupScreen } from "./components/auth/setup-screen.tsx";
 import { PermissionDialog } from "./components/permission/permission-dialog.tsx";
 import { Drawer } from "./components/sessions/drawer.tsx";
@@ -20,6 +21,9 @@ import { SettingsView } from "./components/settings/settings-view.tsx";
 import { CalendarView } from "./components/calendar/calendar-view.tsx";
 import { AppShell } from "./components/shell/app-shell.tsx";
 import { ToastHost } from "./components/common/toast.tsx";
+import { GateState } from "./components/common/gate-state.tsx";
+import { ConnectionBanner } from "./components/shell/connection-banner.tsx";
+import { loadStoredRoute, storeRoute } from "./components/shell/route-state.ts";
 import { Topbar, type TopbarRoute } from "./components/shell/topbar.tsx";
 import { SessionsProvider } from "./context/sessions.tsx";
 import { createUseSessions, type UseSessions } from "./hooks/use-sessions.ts";
@@ -35,19 +39,11 @@ const SUGGESTIONS: readonly string[] = [
   "Lower the kitchen lights 30%",
 ];
 
-const ROUTE_STORAGE_KEY = "sentient:route";
 const ROUTE_LABELS: Record<TopbarRoute, string> = {
   chat: "Conversation",
   settings: "Household",
   calendar: "Calendar",
 };
-const DEVICE_COUNT = 14; // fixture; wire to real telemetry once available
-
-function loadInitialRoute(): TopbarRoute {
-  if (typeof sessionStorage === "undefined") return "chat";
-  const saved = sessionStorage.getItem(ROUTE_STORAGE_KEY);
-  return saved === "settings" || saved === "calendar" ? saved : "chat";
-}
 
 // ---------------------------------------------------------------------------
 // Api context — provides AuthApi to child components (testable injection)
@@ -66,7 +62,7 @@ function useApi(): AuthApi {
 function AppInner() {
   const auth = useAuth();
   const api = useApi();
-  const [route, setRoute] = useState<TopbarRoute>(loadInitialRoute);
+  const [route, setRoute] = useState<TopbarRoute>(loadStoredRoute);
   // Tracks the prior auth status so we can detect a fresh interactive login
   // (anonymous|authenticating → authenticated) vs a silent hydrate from stored
   // token on page load (boot → authenticated). Fresh logins always land on chat;
@@ -80,11 +76,7 @@ function AppInner() {
 
   const onRouteChange = (r: TopbarRoute) => {
     setRoute(r);
-    try {
-      sessionStorage.setItem(ROUTE_STORAGE_KEY, r);
-    } catch {
-      /* storage disabled */
-    }
+    storeRoute(r);
   };
 
   const onOpenAccount = () => {
@@ -108,13 +100,7 @@ function AppInner() {
   // call destroys their stage + error state, which makes wrong-PIN handling
   // kick the user back to the avatar grid.
   if (auth.status === "boot") {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Restoring your session" message="Preparing Sentient…" />;
   }
 
   // ── Anonymous OR authenticating: route to login/setup screens; the
@@ -130,15 +116,13 @@ function AppInner() {
   // ── Failed: show error with retry ──
   if (auth.status === "failed") {
     return (
-      <div class="login-screen">
-        <div class="login-screen__card">
-          <div class="login-screen__title">Authentication Failed</div>
-          <p class="login-screen__error">{auth.reason}</p>
-          <button class="login-screen__back" onClick={() => window.location.reload()}>
-            Try Again
-          </button>
-        </div>
-      </div>
+      <GateState
+        state="error"
+        title="Authentication failed"
+        message={auth.reason}
+        actionLabel="Try again"
+        onAction={() => window.location.reload()}
+      />
     );
   }
 
@@ -243,6 +227,7 @@ function AppInner() {
   useEffect(() => {
     if (!authExpired) return;
     log.warn("auth-expired → forcing logout");
+    try { markAuthExpired(sessionStorage); } catch { /* storage disabled */ }
     void auth.logout();
   }, [authExpired, auth]);
 
@@ -264,7 +249,6 @@ function AppInner() {
           <Topbar
             householdName="My Home"
             routeLabel={ROUTE_LABELS[route]}
-            deviceCount={DEVICE_COUNT}
             activeRoute={route}
             markMode={topbarMarkMode}
             onChatClick={() => onRouteChange("chat")}
@@ -274,9 +258,6 @@ function AppInner() {
               onRouteChange("settings");
             }}
             onCalendarClick={() => onRouteChange("calendar")}
-            onNotificationsClick={() => {
-              /* WIP no-op */
-            }}
             onMenuClick={() => setDrawerOpen(true)}
             user={user}
             onLogout={() => auth.logout()}
@@ -363,27 +344,12 @@ function AppInner() {
         }
       />
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
-      {connectionLost && <ConnectionLostBanner onReconnect={client.reconnect} />}
+      {connectionLost && <ConnectionBanner onReconnect={client.reconnect} />}
       {client.permissionRequest.value && (
         <PermissionDialog request={client.permissionRequest.value} onRespond={client.respondToPermission} />
       )}
       <ToastHost />
     </SessionsProvider>
-  );
-}
-
-interface ConnectionLostBannerProps {
-  onReconnect: () => void;
-}
-
-function ConnectionLostBanner({ onReconnect }: ConnectionLostBannerProps) {
-  return (
-    <div class="connection-lost-banner" role="alert">
-      <span class="connection-lost-banner__text">Connection lost.</span>
-      <button class="connection-lost-banner__btn" type="button" onClick={onReconnect}>
-        Tap to reconnect
-      </button>
-    </div>
   );
 }
 
@@ -398,31 +364,35 @@ interface AnonymousGateProps {
 
 function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
   const [hasAnyUser, setHasAnyUser] = useState<boolean | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [checkNonce, setCheckNonce] = useState(0);
+  const [expiredNotice] = useState(() => {
+    try { return takeAuthExpired(sessionStorage); } catch { return false; }
+  });
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoadError(false);
       const result = await apiRef.listUsers();
       if (cancelled) return;
       if (!result.ok) {
         log.warn("list-users-failed", { code: result.error.code });
-        setHasAnyUser(null);
+        setLoadError(true);
         return;
       }
       setHasAnyUser(result.value.length > 0);
     })();
     return () => { cancelled = true; };
-  }, [apiRef]);
+  }, [apiRef, checkNonce]);
+
+  if (loadError) {
+    return <GateState state="error" title="Could not check profiles" message="Check your connection and try again." actionLabel="Try again" onAction={() => setCheckNonce((value) => value + 1)} />;
+  }
 
   // Still loading
   if (hasAnyUser === null) {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Finding your household" message="Checking available profiles…" />;
   }
 
   // No users -> first-time setup
@@ -431,7 +401,7 @@ function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
   }
 
   // Users exist -> login
-  return <LoginScreen api={apiRef} auth={auth} />;
+  return <LoginScreen api={apiRef} auth={auth} notice={expiredNotice ? "Your session expired. Enter your PIN to continue." : undefined} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,15 +409,12 @@ function AnonymousGate({ api: apiRef, auth }: AnonymousGateProps) {
 // ---------------------------------------------------------------------------
 
 function InstallGate({ children }: { children: ComponentChildren }) {
-  const { state, loading, refresh } = useInstallState();
+  const { state, loading, error, refresh } = useInstallState();
   if (loading) {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Starting setup" message="Checking this installation…" />;
+  }
+  if (error) {
+    return <GateState state="error" title="Could not check setup" message="Check your connection and try again." actionLabel="Try again" onAction={() => void refresh()} />;
   }
   if (state && !state.bootstrap_complete) {
     return <WizardShell state={state} onChange={refresh} />;

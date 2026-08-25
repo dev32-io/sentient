@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import type { SessionRow as Row } from "@sentient/protocol";
 import { RowMenu } from "./row-menu.tsx";
+import { ActionButton } from "../common/foundation.tsx";
 
 export interface SessionRowProps {
   row: Row;
@@ -23,14 +24,14 @@ export function SessionRow({
 
   return (
     <div class={cls}>
-      <button
-        type="button"
-        class="session-row__main"
+      <ActionButton
+        variant="quiet"
+        className="session-row__main"
         onClick={onSwitch}
         title={row.title}
       >
         <span class="session-row__title">{row.title}</span>
-      </button>
+      </ActionButton>
       <RowMenu onRename={onAskRename} onDelete={onAskDelete} />
     </div>
   );
