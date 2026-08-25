@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-chat-composer
 title: Build the Web ChatComposer and internal capture-aware VoiceCaptureControl
-status: running
+status: submitted
 dependsOn:
   - web-foundation-components
   - capture-protocol-gateway
@@ -32,3 +32,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/web-chat-composer
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: 5f1345da-a5ff-44a7-9ed3-181a1c0e3747
+  completedCommit: 1ea00d85b4f03fe2e4daf3f60cea4c7cfea15e21
