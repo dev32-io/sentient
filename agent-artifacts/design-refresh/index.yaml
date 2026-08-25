@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 24
+  revision: 25
 artifacts:
   - id: intent
     type: intent
@@ -62,6 +62,8 @@ tasks:
     path: tasks/ios-voice-library/task.yaml
   - id: ios-calendar-refresh
     path: tasks/ios-calendar-refresh/task.yaml
+  - id: ios-chat-composer
+    path: tasks/ios-chat-composer/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/design-refresh
@@ -91,3 +93,6 @@ executionStages:
       - ios-access-account-admin
       - ios-voice-library
       - ios-calendar-refresh
+  - id: ios-chat-integration
+    tasks:
+      - ios-chat-composer

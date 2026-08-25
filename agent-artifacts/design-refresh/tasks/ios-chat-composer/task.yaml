@@ -1,0 +1,30 @@
+schemaVersion: 1
+id: ios-chat-composer
+title: Refresh the native iOS chat, messages, task shelf, and capture-aware composer
+status: draft
+dependsOn:
+  - ios-foundation-components
+  - ios-identity-startup-history
+  - kmp-capture-semantics
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Chat is behavior-rich but must remain one coherent native composition
+      around shared session/outbox/task/capture invariants.
+assembly:
+  stageId: ios-chat-integration
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - ./scripts/ios-setup.sh
+    - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
