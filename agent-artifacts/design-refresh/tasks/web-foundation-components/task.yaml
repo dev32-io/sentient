@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-foundation-components
 title: Build the WebUI foundation/common component system and Rive identity adapter
-status: awaiting_ci
+status: contribution_complete
 dependsOn:
   - design-foundation-v2
 execution:
