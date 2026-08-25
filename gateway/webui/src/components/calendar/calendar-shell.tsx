@@ -1,6 +1,14 @@
 import { cloneElement, isValidElement } from "preact";
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useMemo, useRef, useState } from "preact/hooks";
+import { Dialog } from "../common/dialog.tsx";
+import {
+  ActionButton,
+  CheckboxControl,
+  ChipControl,
+  SearchFilterBar,
+  SegmentedControl,
+} from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import type { CalendarImportance, CalendarReadScope } from "../../services/calendar-api.ts";
 import type { CalendarFacets, CalendarFilters, CalendarViewMode } from "./calendar-projections.ts";
@@ -25,7 +33,7 @@ export const CALENDAR_SIDEBAR_BREAKPOINT = CALENDAR_SIDEBAR_COLLAPSE_BREAKPOINT;
 export const CALENDAR_SIDEBAR_WIDTH = 244;
 
 export const CALENDAR_VIEW_MODES: readonly CalendarViewMode[] = ["day", "week", "month", "year"];
-export const CALENDAR_SUPPORTED_SCOPES: readonly CalendarReadScope[] = ["private", "household", "all"];
+export const CALENDAR_SUPPORTED_SCOPES: readonly CalendarReadScope[] = ["private", "household"];
 export const CALENDAR_IMPORTANCE_VALUES: readonly CalendarImportance[] = ["normal", "important", "pinned"];
 
 const DEFAULT_DATE = "1970-01-01" as CalendarDate;
@@ -40,7 +48,7 @@ const DEFAULT_FILTERS: CalendarFilters = {
 const SCOPE_LABELS: Record<CalendarReadScope, string> = {
   private: "Private",
   household: "Household",
-  all: "All calendars",
+  all: "Private and Household",
 };
 
 const IMPORTANCE_LABELS: Record<CalendarImportance, string> = {
@@ -135,6 +143,8 @@ export interface CalendarDateNavigationProps {
   readonly onToday?: () => void;
   readonly onDateChange?: (date: string) => void;
   readonly onAnchorDateChange?: (date: string) => void;
+  readonly onAddEvent?: () => void;
+  readonly addEventDisabled?: boolean;
 }
 
 export interface FloatingViewBarProps {
@@ -223,7 +233,7 @@ function isCalendarImportance(value: string): value is CalendarImportance {
 }
 
 function isCalendarScope(value: string): value is CalendarReadScope {
-  return CALENDAR_SUPPORTED_SCOPES.includes(value as CalendarReadScope);
+  return value === "all" || CALENDAR_SUPPORTED_SCOPES.includes(value as CalendarReadScope);
 }
 
 function uniqueStrings<T extends string>(values: readonly T[]): T[] {
@@ -232,9 +242,9 @@ function uniqueStrings<T extends string>(values: readonly T[]): T[] {
 
 function filterState(filters?: CalendarFilters): CalendarFilters {
   const source = filters ?? DEFAULT_FILTERS;
-  const rawScopes = source.scopes ?? (source.scope === undefined ? [] : [source.scope]);
+  const rawScopes = source.scopes ?? (source.scope === undefined ? ["all"] : [source.scope]);
   const scopes = uniqueStrings(rawScopes.filter(isCalendarScope));
-  const normalizedScopes: CalendarReadScope[] = scopes.includes("all") ? ["all"] : scopes.length > 0 ? scopes : ["all"];
+  const normalizedScopes: CalendarReadScope[] = scopes.includes("all") ? ["all"] : scopes;
   const rawGroups = source.groups ?? (source.group === undefined ? [] : [source.group]);
   const importanceSource: readonly CalendarImportance[] =
     source.importanceValues ??
@@ -296,7 +306,7 @@ export function removeCalendarFilter(
   const current = filterState(filters);
   if (key === "scope" && value !== undefined) {
     const scopes = (current.scopes ?? []).filter((scope) => scope !== value);
-    return filterState({ ...current, scopes: scopes.length > 0 ? scopes : ["all"] });
+    return filterState({ ...current, scopes });
   }
   if (key === "group" && value !== undefined) {
     return filterState({ ...current, groups: (current.groups ?? []).filter((group) => group !== value) });
@@ -399,31 +409,22 @@ function optionLabel(value: string): string {
   return value.length > 0 ? value : "Unnamed";
 }
 
-function FilterToggle({
+function FilterChip({
   label,
   selected,
   count,
   onClick,
-  className = "",
 }: {
   readonly label: string;
   readonly selected: boolean;
   readonly count?: number;
   readonly onClick: () => void;
-  readonly className?: string;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      class={`calendar-filter-option ${className}`.trim()}
-      aria-pressed={selected}
-      aria-label={count === undefined ? label : `${label}, ${count} events`}
-      onClick={onClick}
-    >
-      <span class="calendar-filter-option__mark" aria-hidden="true">{selected ? "✓" : ""}</span>
+    <ChipControl selected={selected} onClick={onClick}>
       <span class="calendar-filter-option__label">{label}</span>
       {count !== undefined && <span class="calendar-filter-option__count" aria-hidden="true">{count}</span>}
-    </button>
+    </ChipControl>
   );
 }
 
@@ -445,7 +446,7 @@ function FilterSection({
 }
 
 function CalendarFilterPanel({
-  idPrefix,
+  idPrefix: _idPrefix,
   className = "",
   includeSummary = true,
   ...props
@@ -468,21 +469,22 @@ function CalendarFilterPanel({
     filters.scopes ?? ["all"],
     CALENDAR_SUPPORTED_SCOPES,
   );
-  const selectedScopes = new Set<CalendarReadScope>(filters.scopes ?? ["all"]);
+  const selectedScopeValues = filters.scopes ?? ["all"];
+  const selectedScopes = new Set<CalendarReadScope>(
+    selectedScopeValues.includes("all") ? CALENDAR_SUPPORTED_SCOPES : selectedScopeValues,
+  );
   const selectedGroups = new Set(filters.groups ?? []);
   const selectedTags = new Set(filters.tags ?? []);
   const selectedImportance = selectedCalendarImportance(filters);
-  const searchId = `${idPrefix}-search`;
 
-  const setScopes = (scope: CalendarReadScope): void => {
-    const next: CalendarReadScope[] = scope === "all"
-      ? ["all" as CalendarReadScope]
-      : (selectedScopes.has("all") ? [] : [...selectedScopes]).filter((value) => value !== "all");
-    if (scope !== "all") {
-      if (selectedScopes.has(scope)) next.splice(next.indexOf(scope), 1);
-      else next.push(scope);
-    }
-    emitFilterChange(props, updateFilterState(filters, { scopes: next.length > 0 ? next : ["all" as CalendarReadScope] }));
+  const setScope = (scope: CalendarReadScope, checked: boolean): void => {
+    const next = new Set(selectedScopes);
+    if (checked) next.add(scope);
+    else next.delete(scope);
+    const values = CALENDAR_SUPPORTED_SCOPES.filter((value) => next.has(value));
+    emitFilterChange(props, updateFilterState(filters, {
+      scopes: values.length === CALENDAR_SUPPORTED_SCOPES.length ? ["all"] : values,
+    }));
   };
 
   const setGroup = (group: string): void => {
@@ -510,99 +512,52 @@ function CalendarFilterPanel({
 
   return (
     <div class={`calendar-filter-panel ${className}`.trim()}>
-      <FilterSection label="Scope">
-        <div class="calendar-filter-options" role="group" aria-label="Calendar scope">
+      <FilterSection label="Calendars">
+        <div class="calendar-scope-options" role="group" aria-label="Calendar scope">
           {scopes.map((option) => {
             const value = option.value as CalendarReadScope;
             return (
-              <FilterToggle
+              <CheckboxControl
                 key={value}
-                label={SCOPE_LABELS[value]}
-                selected={selectedScopes.has(value)}
-                {...(option.count === undefined ? {} : { count: option.count })}
-                onClick={() => setScopes(value)}
-                className="calendar-filter-option--scope"
+                checked={selectedScopes.has(value)}
+                onChange={(checked) => setScope(value, checked)}
+                label={<><span>{SCOPE_LABELS[value]}</span>{option.count !== undefined && <small aria-hidden="true">{option.count}</small>}</>}
               />
             );
           })}
         </div>
-      </FilterSection>
-
-      <FilterSection label="Groups">
-        {groups.length > 0 ? (
-          <div class="calendar-filter-options" role="group" aria-label="Calendar groups">
-            {groups.map((option) => (
-              <FilterToggle
-                key={option.value}
-                label={optionLabel(option.value)}
-                selected={selectedGroups.has(option.value)}
-                {...(option.count === undefined ? {} : { count: option.count })}
-                onClick={() => setGroup(option.value)}
-              />
-            ))}
-          </div>
-        ) : (
-          <p class="calendar-filter-empty">No groups available</p>
-        )}
-      </FilterSection>
-
-      <FilterSection label="Tags">
-        {tags.length > 0 ? (
-          <div class="calendar-filter-tags" role="group" aria-label="Calendar tags">
-            {tags.map((option) => (
-              <button
-                type="button"
-                key={option.value}
-                class="calendar-filter-tag"
-                aria-pressed={selectedTags.has(option.value)}
-                aria-label={option.count === undefined ? `Tag ${optionLabel(option.value)}` : `Tag ${optionLabel(option.value)}, ${option.count} events`}
-                onClick={() => setTag(option.value)}
-              >
-                {optionLabel(option.value)}
-                {option.count !== undefined && <span class="calendar-filter-tag__count" aria-hidden="true">{option.count}</span>}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p class="calendar-filter-empty">No tags available</p>
-        )}
       </FilterSection>
 
       <FilterSection label="Importance">
-        <div class="calendar-filter-options" role="group" aria-label="Calendar importance">
+        <div class="calendar-chip-cloud" role="group" aria-label="Calendar importance">
           {importance.map((option) => {
             const value = option.value as CalendarImportance;
-            return (
-              <FilterToggle
-                key={value}
-                label={IMPORTANCE_LABELS[value]}
-                selected={selectedImportance === value}
-                {...(option.count === undefined ? {} : { count: option.count })}
-                onClick={() => setImportance(value)}
-              />
-            );
+            return <FilterChip key={value} label={IMPORTANCE_LABELS[value]} selected={selectedImportance === value} {...(option.count === undefined ? {} : { count: option.count })} onClick={() => setImportance(value)} />;
           })}
         </div>
       </FilterSection>
 
-      <FilterSection label="Search" className="calendar-filter-section--search">
-        <label class="calendar-filter-search" for={searchId}>
-          <span class="calendar-filter-search__label">Search calendar events</span>
-          <span class="calendar-filter-search__field">
-            <Icon name="search" size={15} />
-            <input
-              id={searchId}
-              type="search"
-              value={filters.search ?? ""}
-              placeholder="Search events"
-              onInput={(event) => {
-                const value = (event.currentTarget as HTMLInputElement).value;
-                emitFilterChange(props, updateFilterState(filters, { search: value }));
-              }}
-            />
-          </span>
-        </label>
-      </FilterSection>
+      <div class="calendar-filter-disclosures">
+        <details class="calendar-filter-disclosure">
+          <summary><span><strong>Groups</strong><small>{selectedGroups.size ? `${selectedGroups.size} selected` : "None selected"}</small></span><Icon name="chevron" size={17} /></summary>
+          <div class="calendar-chip-cloud">
+            {groups.length > 0 ? groups.map((option) => <FilterChip key={option.value} label={optionLabel(option.value)} selected={selectedGroups.has(option.value)} {...(option.count === undefined ? {} : { count: option.count })} onClick={() => setGroup(option.value)} />) : <p class="calendar-filter-empty">No groups available</p>}
+          </div>
+        </details>
+        <details class="calendar-filter-disclosure">
+          <summary><span><strong>Tags</strong><small>{selectedTags.size ? `${selectedTags.size} selected` : "None selected"}</small></span><Icon name="chevron" size={17} /></summary>
+          <div class="calendar-chip-cloud">
+            {tags.length > 0 ? tags.map((option) => <FilterChip key={option.value} label={optionLabel(option.value)} selected={selectedTags.has(option.value)} {...(option.count === undefined ? {} : { count: option.count })} onClick={() => setTag(option.value)} />) : <p class="calendar-filter-empty">No tags available</p>}
+          </div>
+        </details>
+      </div>
+
+      <SearchFilterBar
+        value={filters.search ?? ""}
+        label="Search calendar events"
+        placeholder="Search events"
+        onChange={(value) => emitFilterChange(props, updateFilterState(filters, { search: value }))}
+      />
 
       {includeSummary && (
         <CalendarActiveFilterSummary
@@ -618,42 +573,15 @@ function CalendarFilterPanel({
 export function CalendarActiveFilterSummary({
   filters,
   selectedFilters,
-  onRemoveFilter,
-  onRemove,
   onClearFilters,
   className = "",
 }: CalendarActiveFilterSummaryProps): JSX.Element {
   const active = activeCalendarFilters(selectedFilters ?? filters);
-  const remove = onRemoveFilter ?? onRemove;
+  const status = active.length === 0 ? "No active filters" : `${active.length} active ${active.length === 1 ? "filter" : "filters"}`;
   return (
     <section class={`calendar-active-filters ${className}`.trim()} aria-label="Active calendar filters">
-      <div class="calendar-active-filters__head">
-        <h3>Active filters</h3>
-        {active.length > 0 && (
-          <button type="button" class="calendar-active-filters__clear" onClick={onClearFilters}>
-            Clear all
-          </button>
-        )}
-      </div>
-      {active.length > 0 ? (
-        <div class="calendar-active-filters__list" aria-live="polite">
-          {active.map((item) => (
-            <span class="calendar-active-filter" key={`${item.key}:${item.value ?? "search"}`}>
-              <span class="calendar-active-filter__label">{item.label}</span>
-              <button
-                type="button"
-                class="calendar-active-filter__remove"
-                aria-label={`Remove ${item.label} filter`}
-                onClick={() => remove?.(item.key, item.value)}
-              >
-                <Icon name="x" size={12} />
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p class="calendar-active-filters__empty">No filters applied</p>
-      )}
+      <p class="calendar-active-filters__status" aria-live="polite" title={active.map((item) => item.label).join(", ")}>{status}</p>
+      {active.length > 0 && <ActionButton variant="quiet" className="calendar-active-filters__clear" onClick={() => onClearFilters?.()}>Clear filters</ActionButton>}
     </section>
   );
 }
@@ -665,16 +593,13 @@ export function CalendarFilterSidebar({
   ...props
 }: CalendarFilterSidebarProps): JSX.Element {
   return (
-    <aside class="calendar-filter-sidebar" data-calendar-filter-sidebar aria-label="Calendar filters">
-      <button type="button" class="calendar-add-event" data-calendar-add-event onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
-        <Icon name="plus" size={16} />
-        <span>{addEventLabel}</span>
-      </button>
+    <aside class="snt-plate calendar-filter-sidebar" data-calendar-filter-sidebar aria-label="Calendar filters">
       <header class="calendar-filter-sidebar__head">
         <h2>Filters</h2>
-        <p>Show the calendars and details that matter now.</p>
+        <CalendarActiveFilterSummary filters={resolvedFilters(props)} {...(props.onClearFilters === undefined ? {} : { onClearFilters: props.onClearFilters })} />
       </header>
-      <CalendarFilterPanel {...props} idPrefix="calendar-sidebar" />
+      <CalendarFilterPanel {...props} idPrefix="calendar-sidebar" includeSummary={false} />
+      {onAddEvent && <span hidden data-calendar-add-event-available={!addEventDisabled} data-calendar-add-event-label={addEventLabel} />}
     </aside>
   );
 }
@@ -693,13 +618,10 @@ export function CalendarCompactControls({
 }: CalendarCompactControlsProps): JSX.Element {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const wasOpen = useRef(false);
   const popoverId = useMemo(() => {
     compactPopoverSequence += 1;
     return `calendar-compact-filter-popover-${compactPopoverSequence}`;
   }, []);
-  const headingId = `${popoverId}-heading`;
   const isOpen = open ?? uncontrolledOpen;
   const filters = resolvedFilters(props);
   const activeCount = activeCalendarFilterCount(filters);
@@ -709,41 +631,10 @@ export function CalendarCompactControls({
     onOpenChange?.(next);
   };
 
-  useEffect(() => {
-    if (isOpen && !wasOpen.current) {
-      const first = panelRef.current?.querySelector<HTMLElement>(
-        "input:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex='-1'])",
-      );
-      first?.focus();
-    } else if (!isOpen && wasOpen.current) {
-      triggerRef.current?.focus();
-    }
-    wasOpen.current = isOpen;
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return undefined;
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (panelRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [isOpen]);
-
-  const closeOnEscape = (event: KeyboardEvent): void => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
-    setOpen(false);
-  };
-
   return (
     <section class="calendar-compact-controls" data-calendar-compact-controls aria-label="Compact calendar controls">
       <div class="calendar-compact-controls__row">
-        <button type="button" class="calendar-add-event" data-calendar-add-event onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
+        <button type="button" class="snt-button snt-button--primary calendar-add-event" data-calendar-add-event onClick={() => onAddEvent?.()} disabled={addEventDisabled}>
           <Icon name="plus" size={16} />
           <span>{addEventLabel}</span>
         </button>
@@ -751,7 +642,7 @@ export function CalendarCompactControls({
           <button
             ref={triggerRef}
             type="button"
-            class="calendar-filter-trigger"
+            class="snt-button calendar-filter-trigger"
             aria-haspopup="dialog"
             aria-expanded={isOpen}
             aria-controls={popoverId}
@@ -763,26 +654,18 @@ export function CalendarCompactControls({
             {activeCount > 0 && <span class="calendar-filter-trigger__count" aria-label={`${activeCount} active`}>{activeCount}</span>}
           </button>
           {isOpen && (
-            <div
-              ref={panelRef}
-              id={popoverId}
-              class="calendar-filter-popover"
-              role="dialog"
-              aria-modal="false"
-              aria-labelledby={headingId}
-              onKeyDown={closeOnEscape}
+            <Dialog
+              title="Calendar filters"
+              description="Choose calendars, importance, groups, tags, and search."
+              width={360}
+              onClose={() => setOpen(false)}
+              inertBackground
+              footer={<ActionButton variant="quiet" onClick={() => setOpen(false)}>Done</ActionButton>}
             >
-              <header class="calendar-filter-popover__head">
-                <div>
-                  <h2 id={headingId}>Calendar filters</h2>
-                  <p>Choose supported calendars, facets, and text.</p>
-                </div>
-                <button type="button" class="calendar-filter-popover__close" aria-label="Close calendar filters" onClick={() => setOpen(false)}>
-                  <Icon name="x" size={16} />
-                </button>
-              </header>
-              <CalendarFilterPanel {...props} idPrefix={popoverId} includeSummary />
-            </div>
+              <div id={popoverId} class="calendar-filter-popover">
+                <CalendarFilterPanel {...props} idPrefix={popoverId} includeSummary />
+              </div>
+            </Dialog>
           )}
         </div>
       </div>
@@ -836,6 +719,8 @@ export function DateNavigation({
   onToday,
   onDateChange,
   onAnchorDateChange,
+  onAddEvent,
+  addEventDisabled = false,
 }: CalendarDateNavigationProps): JSX.Element {
   const view = selectedView ?? suppliedView ?? "month";
   const anchorDate = safeDate(suppliedAnchorDate ?? date);
@@ -848,21 +733,18 @@ export function DateNavigation({
         <p>{description}</p>
       </div>
       <div class="calendar-date-navigation__actions" role="group" aria-label="Date navigation">
-        <button type="button" class="calendar-today-button" onClick={onToday}>Today</button>
         <button type="button" class="calendar-nav-button" aria-label="Previous period" onClick={onPrevious}>
           <Icon name="chevron" size={17} />
         </button>
+        <button type="button" class="calendar-today-button" onClick={onToday}>Today</button>
         <button type="button" class="calendar-nav-button calendar-nav-button--next" aria-label="Next period" onClick={onNext}>
           <Icon name="chevron" size={17} />
         </button>
-        {dateChange && (
-          <input
-            class="calendar-date-navigation__picker"
-            type="date"
-            aria-label="Choose calendar date"
-            value={anchorDate}
-            onChange={(event) => dateChange((event.currentTarget as HTMLInputElement).value)}
-          />
+        {dateChange && <span hidden data-calendar-date-navigation-owned="true" />}
+        {onAddEvent && (
+          <button type="button" class="snt-button snt-button--primary calendar-toolbar-add" data-calendar-add-event disabled={addEventDisabled} onClick={onAddEvent}>
+            <span><Icon name="plus" size={16} /> Add event</span>
+          </button>
         )}
       </div>
     </header>
@@ -880,18 +762,12 @@ export function FloatingViewBar({
   const change = onViewChange ?? onChange;
   return (
     <nav class="calendar-floating-view-bar" data-calendar-floating-view-bar aria-label={label}>
-      {CALENDAR_VIEW_MODES.map((option) => (
-        <button
-          type="button"
-          key={option}
-          class={`calendar-view-button ${view === option ? "calendar-view-button--active" : ""}`.trim()}
-          aria-pressed={view === option}
-          aria-label={`${VIEW_LABELS[option]} view`}
-          onClick={() => change?.(option)}
-        >
-          {VIEW_LABELS[option]}
-        </button>
-      ))}
+      <SegmentedControl
+        label={label}
+        value={view}
+        options={CALENDAR_VIEW_MODES.map((option) => ({ value: option, label: VIEW_LABELS[option] }))}
+        onChange={(value) => change?.(value as CalendarViewMode)}
+      />
     </nav>
   );
 }
@@ -1080,7 +956,7 @@ export function CalendarWorkspace({
     ...(onChange === undefined ? {} : { onChange }),
     ...(onClearFilters === undefined ? {} : { onClearFilters }),
   };
-  const rootClass = ["calendar-workspace", className].filter(Boolean).join(" ");
+  const rootClass = ["snt-plate", "calendar-workspace", className].filter(Boolean).join(" ");
   return (
     <div
       class={rootClass}
@@ -1104,6 +980,8 @@ export function CalendarWorkspace({
           {...(onNext === undefined ? {} : { onNext })}
           {...(onToday === undefined ? {} : { onToday })}
           {...(anchorDateChange === undefined ? {} : { onDateChange: anchorDateChange })}
+          {...(onAddEvent === undefined ? {} : { onAddEvent })}
+          addEventDisabled={addEventDisabled}
         />
         <div class="calendar-workspace__compact">
           <CalendarCompactControls

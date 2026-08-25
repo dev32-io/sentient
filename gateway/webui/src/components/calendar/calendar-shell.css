@@ -719,6 +719,170 @@
   }
 }
 
+/* Reviewed Calendar composition ----------------------------------------- */
+.calendar-filter-section__label,
+.calendar-active-filters__head h3 {
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.calendar-scope-options {
+  display: grid;
+  gap: var(--space-xs);
+}
+
+.calendar-scope-options .snt-checkbox {
+  width: 100%;
+  min-height: 44px;
+}
+
+.calendar-scope-options .snt-checkbox > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.calendar-scope-options small,
+.calendar-chip-cloud .calendar-filter-option__count {
+  margin-left: auto;
+  color: var(--color-ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.calendar-chip-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.calendar-chip-cloud .snt-chip {
+  min-height: 44px;
+}
+
+.calendar-filter-disclosures {
+  display: grid;
+}
+
+.calendar-filter-disclosure {
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.calendar-filter-disclosure summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 54px;
+  align-items: center;
+  gap: var(--space-md);
+  cursor: pointer;
+  list-style: none;
+}
+
+.calendar-filter-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.calendar-filter-disclosure summary > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-xs);
+}
+
+.calendar-filter-disclosure summary strong {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.calendar-filter-disclosure summary small {
+  overflow: hidden;
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-filter-disclosure summary svg {
+  color: var(--color-ink-3);
+  transition: transform var(--motion-normal);
+}
+
+.calendar-filter-disclosure[open] summary svg {
+  color: var(--color-accent);
+  transform: rotate(90deg);
+}
+
+.calendar-filter-disclosure[open] {
+  padding: 0 var(--space-sm) var(--space-md);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+}
+
+.calendar-active-filters {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding-top: 0;
+  border-top: 0;
+}
+
+.calendar-active-filters__status {
+  min-width: 0;
+  margin: 0;
+  color: var(--color-ink-3);
+  font-size: var(--font-size-xs);
+}
+
+.calendar-active-filters__clear {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.calendar-filter-popover {
+  position: static;
+  width: auto;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+}
+
+.calendar-floating-view-bar {
+  width: max-content;
+  max-width: calc(100% - 2 * var(--space-lg));
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.calendar-floating-view-bar > .snt-segmented {
+  width: max-content;
+  max-width: 100%;
+}
+
+.calendar-date-navigation__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.calendar-toolbar-add svg {
+  margin-right: var(--space-sm);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .calendar-workspace *,
   .calendar-workspace *::before,

@@ -905,8 +905,8 @@ export function EventEditor({
   return (
     <>
       <Dialog
-        title={mode === "create" ? "Add to the family calendar" : "Edit calendar event"}
-        description={mode === "create" ? "Sentient will check household conflicts before saving." : "Update the supported event details without losing its calendar identity."}
+        title={mode === "create" ? "Add event" : "Edit event"}
+        description={mode === "create" ? "Add the details needed to place this event on the right calendar." : "Update supported event details without changing its calendar identity."}
         width={650}
         inertBackground
         safeClose
@@ -968,43 +968,45 @@ export function EventEditor({
             />
           </div>
 
-          <div class="calendar-editor__all-day">
-            <label class="calendar-editor__check" for={`${formId.current}-all-day`}>
-              <input
-                id={`${formId.current}-all-day`}
-                type="checkbox"
-                checked={draft.allDay}
-                onChange={(e) => toggleAllDay(e.currentTarget.checked)}
-              />
-              <span>All day</span>
-            </label>
+          <section class="calendar-editor__date-time" aria-labelledby={`${formId.current}-date-time`}>
+            <header>
+              <strong id={`${formId.current}-date-time`}>Date and time</strong>
+              <label class="calendar-editor__check" for={`${formId.current}-all-day`}>
+                <input
+                  id={`${formId.current}-all-day`}
+                  type="checkbox"
+                  checked={draft.allDay}
+                  onChange={(e) => toggleAllDay(e.currentTarget.checked)}
+                />
+                <span>All day</span>
+              </label>
+            </header>
             <span class="calendar-editor__hint">{draft.allDay ? "Date-only event" : `Times use ${draft.inputTimeZoneId}`}</span>
-          </div>
-
-          <div class="calendar-editor__date-grid">
-            <div class="calendar-editor__field">
-              <label class="app-dialog__label" for={`${formId.current}-start`}>{draft.allDay ? "Start date" : "Start"}</label>
-              <input
-                id={`${formId.current}-start`}
-                class="app-dialog__input"
-                type={draft.allDay ? "date" : "datetime-local"}
-                value={draft.start}
-                required
-                onInput={(e) => setDraftValue({ start: e.currentTarget.value })}
-              />
+            <div class="calendar-editor__date-grid">
+              <div class="calendar-editor__field">
+                <label class="app-dialog__label" for={`${formId.current}-start`}>{draft.allDay ? "Start date" : "Start"}</label>
+                <input
+                  id={`${formId.current}-start`}
+                  class="app-dialog__input"
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  value={draft.start}
+                  required
+                  onInput={(e) => setDraftValue({ start: e.currentTarget.value })}
+                />
+              </div>
+              <div class="calendar-editor__field">
+                <label class="app-dialog__label" for={`${formId.current}-end`}>{draft.allDay ? "End date" : "End"}</label>
+                <input
+                  id={`${formId.current}-end`}
+                  class="app-dialog__input"
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  value={draft.end}
+                  aria-label={draft.allDay ? "End date (optional)" : "End (optional)"}
+                  onInput={(e) => setDraftValue({ end: e.currentTarget.value })}
+                />
+              </div>
             </div>
-            <div class="calendar-editor__field">
-              <label class="app-dialog__label" for={`${formId.current}-end`}>{draft.allDay ? "End date" : "End"}</label>
-              <input
-                id={`${formId.current}-end`}
-                class="app-dialog__input"
-                type={draft.allDay ? "date" : "datetime-local"}
-                value={draft.end}
-                aria-label={draft.allDay ? "End date (optional)" : "End (optional)"}
-                onInput={(e) => setDraftValue({ end: e.currentTarget.value })}
-              />
-            </div>
-          </div>
+          </section>
 
           <div class="calendar-editor__field">
             <label class="app-dialog__label" for={`${formId.current}-scope`}>Calendar</label>
