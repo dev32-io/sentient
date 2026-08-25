@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-calendar-refresh
 title: Refresh the complete Web Calendar workspace and overlays
-status: draft
+status: blocked
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness

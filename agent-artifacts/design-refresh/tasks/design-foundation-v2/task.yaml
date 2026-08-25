@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: design-foundation-v2
 title: Establish the additive design-foundation v2 contract and generated projections
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

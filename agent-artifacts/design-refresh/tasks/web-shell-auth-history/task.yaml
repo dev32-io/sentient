@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-shell-auth-history
 title: Refresh the Web gates, shell, authentication, History, and global overlays
-status: draft
+status: blocked
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness

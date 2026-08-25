@@ -2,7 +2,7 @@ schemaVersion: 1
 id: web-settings-shell-trust
 title: Refresh the Web Settings shell, account/admin panes, and Diagnostics
   trust boundary
-status: draft
+status: blocked
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness

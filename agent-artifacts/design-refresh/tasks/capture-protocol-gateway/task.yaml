@@ -2,7 +2,7 @@ schemaVersion: 1
 id: capture-protocol-gateway
 title: Add capture-aware audio protocol, Web SDK mediation, and gateway
   commit/cancel semantics
-status: draft
+status: ready
 dependsOn: []
 execution:
   resourceClaims: []

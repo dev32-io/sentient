@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-foundation-components
 title: Build the SwiftUI design-v2 projection, primitives, and common composites
-status: draft
+status: blocked
 dependsOn:
   - design-foundation-v2
 execution:
