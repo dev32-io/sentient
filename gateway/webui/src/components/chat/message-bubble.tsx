@@ -24,7 +24,7 @@ function formatTime(ts: number): string {
 }
 
 function MessageBubbleInner({ message, avatarMode, currentUser }: MessageBubbleProps): JSX.Element {
-  const isSpeaking = avatarMode === "speaking";
+  const isSpeaking = avatarMode === "responding";
   const { role, text, timestamp, isStreaming, cutoff } = message;
   const name = role === "user" ? currentUser.displayName : ASSISTANT_NAME;
   const userInitial = currentUser.displayName.charAt(0).toUpperCase() || "?";

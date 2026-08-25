@@ -26,33 +26,15 @@ struct RowSegmented: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
+        Picker("Selection", selection: Binding(get: { selectedId }, set: onSelect)) {
             ForEach(options) { option in
-                segmentButton(option)
+                Text(option.label).tag(option.id)
             }
         }
-        .padding(segmentTrackPadding)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-        .accessibilityElement(children: .contain)
+        .pickerStyle(.segmented)
+        .font(Typo.ui(TypeScale.base))
+        .frame(minHeight: DesignMetrics.minimumTarget)
         .accessibilityIdentifier(accessibilityId)
-    }
-
-    private func segmentButton(_ option: SegmentOption) -> some View {
-        let isOn = option.id == selectedId
-        return Button {
-            onSelect(option.id)
-        } label: {
-            Text(option.label)
-                .font(Typo.ui(TypeScale.sm, isOn ? .semibold : .regular))
-                .foregroundStyle(isOn ? DuskColors.ink : DuskColors.ink2)
-                .padding(.horizontal, Space.md)
-                .frame(maxWidth: .infinity, minHeight: segmentHeight)
-                .background(isOn ? DuskColors.paper : Color.clear, in: RoundedRectangle(cornerRadius: segmentInnerRadius))
-                .shadow(color: isOn ? .black.opacity(0.18) : .clear, radius: 2, y: 1)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("\(accessibilityId)-\(option.id)")
     }
 }
 

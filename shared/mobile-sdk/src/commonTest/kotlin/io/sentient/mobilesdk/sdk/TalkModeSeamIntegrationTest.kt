@@ -21,7 +21,9 @@
 package io.sentient.mobilesdk.sdk
 
 import io.sentient.mobilesdk.audioio.AudioPipeline
+import io.sentient.mobilesdk.connectors.UserAudioInputConnector
 import io.sentient.mobilesdk.fakes.FakeOpusDecoderPort
+import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.talk.TalkModeController
@@ -49,18 +51,28 @@ class TalkModeSeamIntegrationTest {
         val scope = CoroutineScope(dispatcher + Job())
         val va = FakeVoiceAudio()
 
-        /** Ordered control-frame log: "audio.start:<turnMode>" / "audio.end". */
-        val wire = mutableListOf<String>()
+        val controls = mutableListOf<ClientMessage>()
+        val connector = UserAudioInputConnector(send = { controls += it }, sendBinary = {})
+        private val ids = listOf("capture-1", "capture-2", "capture-3").iterator()
+        val wire: List<String> get() = controls.map {
+            when (it) {
+                is ClientMessage.AudioStart -> "audio.start:${it.turnMode}"
+                is ClientMessage.AudioEnd -> "audio.end"
+                is ClientMessage.AudioCancel -> "audio.cancel"
+                else -> error("unexpected control")
+            }
+        }
 
         val voice = SdkVoice(
             voiceAudio = va,
             audioConfig = AudioPipelineConfig(),
-            // Never deref'd: the fake emits no mic frames, so the uplink collect never sends.
-            audioInput = { throw IllegalStateException("uplink connector not used in this test") },
-            onUplinkStart = { tm -> wire += "audio.start:${tm?.wireValue ?: "semantic"}" },
-            onUplinkStop = { wire += "audio.end" },
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
             scope = scope,
             uplinkDispatcher = dispatcher,
+            createCaptureId = { ids.next() },
         )
 
         val pipeline = AudioPipeline(
@@ -79,10 +91,12 @@ class TalkModeSeamIntegrationTest {
         val controller = TalkModeController(
             startCapture = { tm -> voice.requestStart(tm) },
             endCapture = { voice.requestStop() },
+            cancelCapture = { voice.requestCancel() },
             interrupt = {},
             isCycleOrTtsActive = { false },
             beginHoldDefer = { pipeline.beginHold() },
             endHoldDefer = { pipeline.endHold() },
+            discardHoldDefer = { pipeline.discardHold() },
         )
     }
 
@@ -210,6 +224,34 @@ class TalkModeSeamIntegrationTest {
             "currentPath stayed Duplex — subsequent disarm/arm route Duplex, not Manual; after=$after",
         )
         h.scope.cancel()
+    }
+
+    @Test
+    fun hold_to_auto_uses_two_ids_and_cancel_is_not_end() = runTest {
+        val auto = Harness(testScheduler)
+        auto.controller.pressMic()
+        auto.controller.lockMic()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(
+                ClientMessage.AudioStart("capture-1", "manual"),
+                ClientMessage.AudioEnd("capture-1"),
+                ClientMessage.AudioStart("capture-2", "semantic"),
+            ),
+            auto.controls,
+        )
+        auto.scope.cancel()
+
+        val cancelled = Harness(testScheduler)
+        cancelled.controller.pressMic()
+        advanceUntilIdle()
+        cancelled.controller.cancelHeld()
+        advanceUntilIdle()
+        assertEquals(
+            listOf(ClientMessage.AudioStart("capture-1", "manual"), ClientMessage.AudioCancel("capture-1")),
+            cancelled.controls,
+        )
+        cancelled.scope.cancel()
     }
 
     // ── Regression guard: the plain press/release flow is unchanged ──

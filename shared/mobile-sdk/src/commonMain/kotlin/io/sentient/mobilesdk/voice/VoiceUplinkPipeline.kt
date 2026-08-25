@@ -36,11 +36,13 @@ class VoiceUplinkPipeline(
 ) {
     private val log = createLogger("voice", "uplink")
     private var job: Job? = null
+    private var capturePacketSink: ((ByteArray) -> Unit)? = null
     private var framesIn = 0
     private var packetsOut = 0
 
-    suspend fun start() {
+    suspend fun start(packetSink: ((ByteArray) -> Unit)? = null) {
         if (job?.isActive == true) return
+        capturePacketSink = packetSink ?: sendPacket
         framer.reset(); onset.reset(); encoder.reset(); framesIn = 0; packetsOut = 0
         // No mic.start() — VoiceAudio.configure owns mic activation; micFrames is hot
         // ONLY while micActive, so the collect job simply forwards what the engine emits.
@@ -54,6 +56,7 @@ class VoiceUplinkPipeline(
         // dispatcher thread to finish before encoder.reset(), so reset() can never
         // race a concurrent encode of the non-thread-safe encoder/Framer.
         job?.cancelAndJoin(); job = null
+        capturePacketSink = null
         encoder.reset()
         // No mic.stop() — configure(mic=false) owns teardown.
     }
@@ -63,7 +66,7 @@ class VoiceUplinkPipeline(
             framesIn += 1
             if (onset.observe(frame)) onOnset()
             for (packet in encoder.encode(frame)) {
-                sendPacket(packet)
+                capturePacketSink?.invoke(packet)
                 packetsOut += 1
             }
         }

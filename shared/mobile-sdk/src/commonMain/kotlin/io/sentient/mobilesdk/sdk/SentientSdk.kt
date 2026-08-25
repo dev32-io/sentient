@@ -202,8 +202,9 @@ class SentientSdk(
         // Control-frame senders ride the SAME serialized lane as pipeline start/stop
         // (audio.start before frames, audio.end after). Lazily deref'd — connectors
         // is only deref'd when the consumer invokes these, exactly like audioInput.
-        onUplinkStart = { turnMode -> connectors.audioInput.startStreaming(turnMode) },
-        onUplinkStop = { connectors.audioInput.stopStreaming() },
+        onUplinkStart = { capture, turnMode -> connectors.audioInput.startStreaming(capture, turnMode) },
+        onUplinkBeginTerminal = { capture -> connectors.audioInput.beginTerminal(capture) },
+        onUplinkTerminal = { capture, terminal -> connectors.audioInput.completeTerminal(capture, terminal) },
         scope = scope,
     )
 
@@ -225,10 +226,12 @@ class SentientSdk(
     private val talkModeController = TalkModeController(
         startCapture = { turnMode -> voice.requestStart(turnMode) },
         endCapture = { voice.requestStop() },
+        cancelCapture = { voice.requestCancel() },
         interrupt = { interrupt() },
         isCycleOrTtsActive = { deriver.cognition != CognitionState.IDLE || deriver.isSpeaking },
         beginHoldDefer = { audio.pipeline.beginHold() },
         endHoldDefer = { audio.pipeline.endHold() },
+        discardHoldDefer = { audio.pipeline.discardHold() },
     )
 
     /** Talk mode (Idle | Hold | Continuous), owned by [talkModeController]. Hot StateFlow per
@@ -250,7 +253,7 @@ class SentientSdk(
                     (state.phase == VoiceAudioState.Phase.Idle && previousPhase != null && previousPhase != VoiceAudioState.Phase.Idle)
                 previousPhase = state.phase
                 if (genuineLoss) {
-                    talkModeController.captureLost(
+                    talkModeController.lifecycleCancel(
                         if (state.phase == VoiceAudioState.Phase.Error) "audio-error" else "audio-teardown",
                     )
                     syncVoiceMode()
@@ -334,6 +337,9 @@ class SentientSdk(
      */
     private fun clearConversationScopedState(trigger: String) {
         log.info("conversation.scope.clear", mapOf("trigger" to trigger))
+        talkModeController.lifecycleCancel("session-replacement")
+        audio.pipeline.suspendPlayback()
+        syncVoiceMode()
         connectors.delegation.clear()
         connectors.tasks.clear()
     }
@@ -429,7 +435,7 @@ class SentientSdk(
         consumerDisconnected = true
         // Teardown is a genuine capture loss. Reset shared TalkMode before disposing the
         // engine so native presentation adapters converge without sending a second stop.
-        talkModeController.captureLost("disconnect")
+        talkModeController.lifecycleCancel("disconnect")
         syncVoiceMode()
         reconnectController.cancel()
         connectors.sessions.reset()
@@ -537,6 +543,13 @@ class SentientSdk(
         talkModeController.stopContinuous()
         syncVoiceMode()
     }
+
+    fun holdStart() = pressMic()
+    fun sendHeld() = releaseMic()
+    fun cancelHeld() { talkModeController.cancelHeld(); syncVoiceMode() }
+    fun enterAuto() = lockMic()
+    fun exitAuto() = stopContinuous()
+    fun lifecycleCancel(reason: String = "system") { talkModeController.lifecycleCancel(reason); syncVoiceMode() }
 
     /** Project the controller's TalkMode onto the voice-axis mirror: the mic is on
      *  (voiceMode ACTIVE) in Hold OR Continuous, off in Idle. Computed from the FINAL mode
@@ -802,6 +815,8 @@ class SentientSdk(
     }
 
     private fun onConnectionDrop() {
+        lifecycleCancel("transport-drop")
+        audio.suspendForReconnect()
         // Guard against a second loop: a non-clean signal may arrive while the
         // loop launched by a prior drop is already recovering.
         if (deriver.status == SdkStatus.RECONNECTING) {

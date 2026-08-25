@@ -33,15 +33,13 @@ struct SettingsCard<Content: View>: View {
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, Space.sm)
         }
-        .background(DuskColors.paper)
-        .clipShape(RoundedRectangle(cornerRadius: Radii.md))
-        .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft, lineWidth: 1))
+        .designPlate()
     }
 
     private func header(title: String, sub: String?) -> some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
-                .font(Typo.ui(TypeScale.sm, .semibold))
+                .font(Typo.ui(TypeScale.base, .semibold))
                 .foregroundStyle(DuskColors.ink)
             if let sub {
                 Text(sub)

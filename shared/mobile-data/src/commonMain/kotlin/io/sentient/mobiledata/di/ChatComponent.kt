@@ -135,6 +135,14 @@ open class ChatComponent(
     /** Continuous → Idle: tap-to-stop hands-free. */
     fun stopContinuous() = sdk.stopContinuous()
 
+    // iOS VoiceCaptureControl intent vocabulary. Screens never construct wire frames.
+    fun holdStart() = sdk.holdStart()
+    fun sendHeld() = sdk.sendHeld()
+    fun cancelHeld() = sdk.cancelHeld()
+    fun enterAuto() = sdk.enterAuto()
+    fun exitAuto() = sdk.exitAuto()
+    fun lifecycleCancel() = sdk.lifecycleCancel()
+
     /** Patch TTS on/off; the gateway echoes the change via session preferences. */
     suspend fun setTtsEnabled(enabled: Boolean) = sdk.setTtsEnabled(enabled)
 

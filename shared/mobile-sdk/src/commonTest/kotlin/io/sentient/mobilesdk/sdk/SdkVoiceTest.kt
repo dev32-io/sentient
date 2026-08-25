@@ -1,5 +1,7 @@
 package io.sentient.mobilesdk.sdk
 
+import io.sentient.mobilesdk.connectors.UserAudioInputConnector
+import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.voice.io.FakeVoiceAudio
 import io.sentient.mobilesdk.voice.io.VoiceAudioPath
 import io.sentient.mobilesdk.voice.talk.TurnMode
@@ -107,7 +109,7 @@ class SdkVoiceTest {
     }
 
     @Test
-    fun requestStart_default_turnMode_is_null_semantic() = runTest {
+    fun requestStart_default_turnMode_is_explicit_semantic() = runTest {
         val va = FakeVoiceAudio()
         val turnModes = mutableListOf<TurnMode?>()
         val voice = SdkVoice(
@@ -119,10 +121,40 @@ class SdkVoiceTest {
             scope = CoroutineScope(Dispatchers.Unconfined),
             uplinkDispatcher = Dispatchers.Unconfined,
         )
-        // The pre-existing continuous path (startMic → requestStart()) is unchanged: null
-        // turnMode ⇒ audio.start omits the field ⇒ gateway defaults to semantic.
+        // New capture-aware clients make semantic mode explicit on every start.
         voice.requestStart(); advanceUntilIdle()
-        assertEquals(listOf<TurnMode?>(null), turnModes)
+        assertEquals(listOf<TurnMode?>(TurnMode.Semantic), turnModes)
+    }
+
+    @Test
+    fun hold_to_auto_serializes_matching_end_before_fresh_semantic_start_and_first_terminal_wins() = runTest {
+        val sent = mutableListOf<ClientMessage>()
+        val connector = UserAudioInputConnector(send = { sent += it }, sendBinary = {})
+        val ids = listOf("manual-id", "auto-id").iterator()
+        val voice = SdkVoice(
+            voiceAudio = FakeVoiceAudio(),
+            audioConfig = AudioPipelineConfig(),
+            audioInput = { connector },
+            onUplinkStart = { capture, mode -> connector.startStreaming(capture, mode) },
+            onUplinkBeginTerminal = { connector.beginTerminal(it) },
+            onUplinkTerminal = { capture, terminal -> connector.completeTerminal(capture, terminal) },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            uplinkDispatcher = Dispatchers.Unconfined,
+            createCaptureId = { ids.next() },
+        )
+        voice.requestStart(TurnMode.Manual)
+        voice.requestStop()
+        voice.requestCancel() // duplicate terminal cannot replace the accepted commit
+        voice.requestStart(TurnMode.Semantic)
+        advanceUntilIdle()
+        assertEquals(
+            listOf(
+                ClientMessage.AudioStart("manual-id", "manual"),
+                ClientMessage.AudioEnd("manual-id"),
+                ClientMessage.AudioStart("auto-id", "semantic"),
+            ),
+            sent,
+        )
     }
 
     @Test

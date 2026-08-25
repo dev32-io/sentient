@@ -28,7 +28,7 @@ struct CategoryRow: View {
                     .frame(width: iconSlotWidth, alignment: .center)
 
                 Text(title)
-                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .font(Typo.ui(TypeScale.base, .medium))
                     .foregroundStyle(DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -36,6 +36,7 @@ struct CategoryRow: View {
                     .font(.system(size: TypeScale.xs, weight: .semibold))
                     .foregroundStyle(DuskColors.ink3)
             }
+            .frame(minHeight: DesignMetrics.minimumTarget)
             .padding(.vertical, Space.sm)
             .contentShape(Rectangle())
         }

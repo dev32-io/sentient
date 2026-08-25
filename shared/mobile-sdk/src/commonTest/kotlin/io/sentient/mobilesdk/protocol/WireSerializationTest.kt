@@ -12,6 +12,13 @@ class WireSerializationTest {
         assertTrue(json.contains("\"token\":\"tok123\""))
     }
 
+    @Test fun capture_audio_controls_match_gateway_wire_exactly() {
+        fun encode(message: ClientMessage) = WireJson.instance.encodeToString(ClientMessage.serializer(), message)
+        assertEquals("{\"type\":\"audio.start\",\"captureId\":\"opaque-1\",\"turnMode\":\"manual\"}", encode(ClientMessage.AudioStart("opaque-1", "manual")))
+        assertEquals("{\"type\":\"audio.end\",\"captureId\":\"opaque-1\"}", encode(ClientMessage.AudioEnd("opaque-1")))
+        assertEquals("{\"type\":\"audio.cancel\",\"captureId\":\"opaque-1\"}", encode(ClientMessage.AudioCancel("opaque-1")))
+    }
+
     @Test fun text_input_round_trips() {
         val msg: ClientMessage = ClientMessage.TextInput("hi")
         val s = WireJson.instance.encodeToString(ClientMessage.serializer(), msg)
