@@ -1,0 +1,32 @@
+schemaVersion: 1
+id: stage-platform-foundations-review
+type: combined-review
+checkpoint: stage-review
+stageId: platform-foundations
+scope:
+  workItem: design-refresh
+status: planned
+required: true
+attempt: 0
+methods:
+  - bun run design:foundation:check
+  - bun run design:avatar:verify
+  - bun run --filter '@sentient/webui' test:unit
+  - bun run --filter '@sentient/webui' typecheck
+  - bun run --filter '@sentient/webui' build
+  - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+    :android:assembleDebug :android:testDebugUnitTest
+  - ./scripts/ios-setup.sh
+  - xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+    -destination 'platform=iOS Simulator,name=iPhone 16'
+  - git diff --check
+criteria:
+  - Web and Swift native component semantics, accessibility, exact material
+    recipes, and no prototype runtime dependencies
+  - Platform-owned Rive packaging/fallback and exact three-state adapter
+  - KMP capture serialization, frame/terminal ordering, lifecycle cancellation,
+    and unchanged Android UI
+loop:
+  state: planned
+  iteration: 0
+  maxIterations: 6

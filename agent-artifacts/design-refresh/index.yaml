@@ -74,6 +74,8 @@ delivery:
 evaluations:
   - id: stage-contracts-and-harness-review
     path: evaluations/stage-contracts-and-harness-review/evaluation.yaml
+  - id: stage-platform-foundations-review
+    path: evaluations/stage-platform-foundations-review/evaluation.yaml
 executionStages:
   - id: contracts-and-harness
     tasks:
