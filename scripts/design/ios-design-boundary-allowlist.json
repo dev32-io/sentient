@@ -39,13 +39,6 @@
     "ios/App/Settings/Personalities/PersonalityCreateSheet.swift",
     "ios/App/Settings/Secrets/SecretRowView.swift",
     "ios/App/Settings/Secrets/SecretsScreen.swift",
-    "ios/App/Settings/Voice/VoiceAddScreen.swift",
-    "ios/App/Settings/Voice/VoiceFilterBarView.swift",
-    "ios/App/Settings/Voice/VoiceFishScreen.swift",
-    "ios/App/Settings/Voice/VoiceRecordSection.swift",
-    "ios/App/Settings/Voice/VoiceRowView.swift",
-    "ios/App/Settings/Voice/VoiceScreen.swift",
-    "ios/App/Settings/Voice/VoiceTagField.swift",
     "ios/App/Update/UpdateBanner.swift"
   ]
 }

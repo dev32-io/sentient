@@ -1,75 +1,69 @@
-// ---------------------------------------------------------------------------
-// VoiceRowView — the one list-row shared by the local voice-pack list and the
-// Fish browse list, mirroring the webui `VoiceRow` (used by both VoicePackTile and
-// fish-voice-tile). A left play/pause button, a name, an info line (language badge
-// + source + description) and a tag line, with an optional trailing control
-// (active chip / check marker / delete). Tapping the row = select (pick/clone);
-// the play button is isolated so it never triggers select.
-//
-// Presentational only: state + closures in, no VM, no I/O — a stateless leaf per
-// the SwiftUI state-hoisting rule.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
-/// Trailing accessory on a voice row.
 enum VoiceRowAccessory: Equatable {
-    case none
-    /// "Active" pill — the picked local pack.
-    case activePill
-    /// Checkmark — the selected Fish entry to clone.
-    case check
+    case none, activePill, check
 }
 
 struct VoiceRowView: View {
     let name: String
-    /// 2-letter language code; "" hides the badge.
     var lang: String = ""
-    /// "Built-in" | "Yours" | nil (Fish rows pass nil).
     var source: String?
     var description: String = ""
     var tags: [String] = []
-    var isPlaying: Bool = false
-    var isLoading: Bool = false
-    var playDisabled: Bool = false
-    var isSelected: Bool = false
+    var isPlaying = false
+    var isLoading = false
+    var playDisabled = false
+    var isSelected = false
     var accessory: VoiceRowAccessory = .none
     let accessibilityId: String
     let onSelect: () -> Void
     let onPlay: () -> Void
-    /// User-pack delete (hover-reveal in webui; always-visible trailing button here). nil hides it.
     var onDelete: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: Space.md) {
-            playButton
-            meta
-            Spacer(minLength: Space.xs)
+            iconButton(
+                playIcon, label: isPlaying ? "Stop preview" : "Play preview",
+                disabled: playDisabled || isLoading, action: onPlay
+            )
+            .accessibilityIdentifier("\(accessibilityId)-play")
+            Button(action: onSelect) {
+                meta
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .accessibilityLabel(name)
             accessoryView
-            deleteButton
+            if let onDelete {
+                iconButton("trash", label: "Delete \(name)", tint: DuskColors.stop, action: onDelete)
+                    .accessibilityIdentifier("\(accessibilityId)-delete")
+            }
         }
         .padding(Space.md)
-        .background(isSelected ? DuskColors.accent50 : DuskColors.paper, in: RoundedRectangle(cornerRadius: Radii.md))
-        .overlay(
-            RoundedRectangle(cornerRadius: Radii.md)
-                .stroke(isSelected ? DuskColors.accent : DuskColors.lineSoft, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
+        .designPlate()
+        .overlay {
+            RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
+                .stroke(isSelected ? DuskColors.accent : .clear, lineWidth: DesignMetrics.hairline)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)
     }
 
-    private var playButton: some View {
-        Button(action: onPlay) {
-            Image(systemName: playIcon)
-                .font(.system(size: TypeScale.base))
-                .foregroundStyle(isPlaying ? DuskColors.accent : DuskColors.ink2)
-                .frame(width: 34, height: 34)
-                .background(DuskColors.bgElev, in: Circle())
+    private func iconButton(
+        _ systemName: String, label: String, tint: Color = DuskColors.ink2,
+        disabled: Bool = false, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .foregroundStyle(tint)
+                .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(playDisabled || isLoading)
-        .accessibilityIdentifier("\(accessibilityId)-play")
+        .disabled(disabled)
+        .accessibilityLabel(label)
     }
 
     private var playIcon: String {
@@ -81,101 +75,76 @@ struct VoiceRowView: View {
     private var meta: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(name)
-                .font(Typo.ui(TypeScale.sm, .semibold))
+                .font(Typo.ui(TypeScale.base, .semibold))
                 .foregroundStyle(DuskColors.ink)
-                .lineLimit(1)
-            infoLine
+                .lineLimit(2)
+            if !lang.isEmpty || source?.isEmpty == false {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Space.xs) { metadata }
+                    VStack(alignment: .leading, spacing: Space.xs) { metadata }
+                }
+            }
             if !description.isEmpty {
                 Text(description)
-                    .font(Typo.ui(TypeScale.xs))
+                    .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink3)
-                    .lineLimit(2)
+                    .lineLimit(3)
             }
             if !tags.isEmpty {
-                tagLine
-            }
-        }
-    }
-
-    private var infoLine: some View {
-        HStack(spacing: Space.xs) {
-            if !lang.isEmpty {
-                chip(lang.uppercased(), tint: DuskColors.accent)
-            }
-            if let source, !source.isEmpty {
-                chip(source, tint: DuskColors.ink3)
-            }
-        }
-    }
-
-    private var tagLine: some View {
-        HStack(spacing: Space.xs) {
-            ForEach(tags.prefix(4), id: \.self) { tag in
-                Text(tag)
-                    .font(Typo.ui(TypeScale.xs))
+                Text(tags.prefix(VoiceSurfaceLayout.visibleTagLimit).joined(separator: " · "))
+                    .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink2)
-                    .padding(.horizontal, Space.xs)
-                    .padding(.vertical, 1)
-                    .background(DuskColors.bgElev, in: Capsule())
+                    .lineLimit(2)
             }
+        }
+        .multilineTextAlignment(.leading)
+    }
+
+    @ViewBuilder private var metadata: some View {
+        if !lang.isEmpty {
+            Text(lang.uppercased()).foregroundStyle(DuskColors.accent)
+        }
+        if let source, !source.isEmpty {
+            Text(source).foregroundStyle(DuskColors.ink3)
         }
     }
 
-    @ViewBuilder
-    private var accessoryView: some View {
+    @ViewBuilder private var accessoryView: some View {
         switch accessory {
-        case .none:
-            EmptyView()
+        case .none: EmptyView()
         case .activePill:
-            chip("Active", tint: DuskColors.accent)
+            Text("Active")
+                .font(Typo.ui(TypeScale.sm, .semibold))
+                .foregroundStyle(DuskColors.accent)
+                .accessibilityLabel("Active voice")
         case .check:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(DuskColors.accent)
+                .accessibilityLabel("Selected")
         }
-    }
-
-    @ViewBuilder
-    private var deleteButton: some View {
-        if let onDelete {
-            Button(action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: TypeScale.sm))
-                    .foregroundStyle(DuskColors.stop)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("\(accessibilityId)-delete")
-        }
-    }
-
-    private func chip(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(Typo.ui(TypeScale.xs, .medium))
-            .foregroundStyle(tint)
-            .padding(.horizontal, Space.xs)
-            .padding(.vertical, 1)
-            .overlay(Capsule().stroke(tint.opacity(0.5), lineWidth: 1))
     }
 }
 
-#Preview {
+enum VoiceSurfaceLayout {
+    static let visibleTagLimit = 4
+}
+
+#Preview("Voice cards — long content") {
     VStack(spacing: Space.md) {
         VoiceRowView(
-            name: "Dad", lang: "en", source: "Yours", description: "Warm, low register",
-            tags: ["male", "calm"], isSelected: true, accessory: .activePill,
-            accessibilityId: "settings-voice-row-dad", onSelect: {}, onPlay: {}, onDelete: {}
+            name: "A very long family voice name that intentionally wraps", lang: "en", source: "Yours",
+            description: "Warm, low register with a description that can reflow at larger text sizes.",
+            tags: ["calm", "bright", "storytelling", "soft"], isSelected: true, accessory: .activePill,
+            accessibilityId: "settings-voice-row-preview", onSelect: {}, onPlay: {}, onDelete: {}
         )
         VoiceRowView(
-            name: "Narrator", lang: "en", source: "Built-in", description: "Neutral reference",
-            tags: ["neutral"], isPlaying: true, accessibilityId: "settings-voice-row-narrator",
-            onSelect: {}, onPlay: {}
-        )
-        VoiceRowView(
-            name: "Fish Voice", lang: "zh", source: nil, description: "Cloneable sample",
-            tags: ["bright"], accessory: .check, accessibilityId: "settings-voice-fish-row-1",
-            onSelect: {}, onPlay: {}
+            name: "Preview loading", lang: "zh", tags: ["sample"], isLoading: true,
+            accessibilityId: "settings-voice-row-loading", onSelect: {}, onPlay: {}
         )
     }
     .padding(Space.lg)
     .background(DuskColors.bg)
+    .environment(\.dynamicTypeSize, .accessibility3)
+    .transaction { $0.disablesAnimations = true }
     .preferredColorScheme(.dark)
 }
