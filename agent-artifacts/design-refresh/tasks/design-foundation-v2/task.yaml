@@ -1,0 +1,25 @@
+schemaVersion: 1
+id: design-foundation-v2
+title: Establish the additive design-foundation v2 contract and generated projections
+status: draft
+dependsOn: []
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Cross-platform generation and compatibility require careful
+      implementation, but the contract and outputs are deterministic and
+      bounded.
+assembly:
+  stageId: contracts-and-harness
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run design:foundation:check
+    - ./gradlew :shared:mobile-sdk:compileKotlinAndroid
+    - bun run --filter '@sentient/webui' typecheck
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.
