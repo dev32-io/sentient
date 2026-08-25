@@ -1,4 +1,4 @@
-import type { ClientType } from "@sentient/protocol";
+import type { ClientType, TurnMode } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { UserPrincipal } from "../identity/user-principal.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
@@ -175,6 +175,8 @@ export interface SessionData {
    * (ws-handlers.ts) and its transcript events land on `runtime.submit`.
    */
   stt: SttSession | null;
+  /** The one capture currently allowed to feed this connection's STT uplink. */
+  audioCapture: { readonly id: string; readonly mode: TurnMode; readonly legacy: boolean; bytes: number } | null;
   /**
    * This connection's live audio/voice preferences (spec §6). Minted with the
    * runtime in `handleSessionConfigure` and held here so
@@ -222,6 +224,7 @@ export function createEmptySessionData(): SessionData {
     attachment: null,
     runtime: null,
     stt: null,
+    audioCapture: null,
     journal: null,
     epoch: 0,
   };

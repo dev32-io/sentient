@@ -507,9 +507,11 @@ export function detachSession(
   // connection LEAVES — so nothing is ever refused and the mediator never sees
   // it. Every leave funnels through this function.
   //
-  // `discard()`, never `close()`: the person is still holding the talk button
-  // (`micOpen` survives, `uplinkEpoch` disowns an in-flight connect, the next
-  // frame re-dials). They changed conversation, not their mind about speaking.
+  // `discard()`, never `end()`: leaving a session abandons the identified
+  // capture without flushing. The client must establish a fresh capture after
+  // the switch; old producer callbacks remain harmless because this WS gate is
+  // cleared before the STT uplink is discarded.
+  ws.data.audioCapture = null;
   ws.data.stt?.discard();
   ws.data.attachment = null;
   ws.data.runtime = null;
