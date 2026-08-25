@@ -22,7 +22,7 @@ struct RowToggle: View {
         HStack(alignment: .center, spacing: Space.lg) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(label)
-                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .font(Typo.ui(TypeScale.base, .medium))
                     .foregroundStyle(DuskColors.ink)
                 if let sub {
                     Text(sub)
@@ -35,6 +35,7 @@ struct RowToggle: View {
                 .labelsHidden()
                 .tint(DuskColors.accent)
         }
+        .frame(minHeight: DesignMetrics.minimumTarget)
         .padding(.vertical, Space.sm)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityId)

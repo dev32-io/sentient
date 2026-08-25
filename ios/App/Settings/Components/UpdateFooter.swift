@@ -99,11 +99,11 @@ struct UpdateFooter: View {
                     ProgressView().tint(tint)
                 }
                 Text(title)
-                    .font(Typo.ui(TypeScale.sm, .semibold))
+                    .font(Typo.ui(TypeScale.base, .semibold))
                     .foregroundStyle(filled ? DuskColors.bg : tint)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, Space.sm)
+            .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
+            .padding(.horizontal, Space.md)
             .background(filled ? tint : Color.clear, in: RoundedRectangle(cornerRadius: Radii.md))
             .overlay {
                 if !filled {

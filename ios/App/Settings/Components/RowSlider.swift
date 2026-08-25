@@ -24,11 +24,11 @@ struct RowSlider: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             HStack {
                 Text(label)
-                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .font(Typo.ui(TypeScale.base, .medium))
                     .foregroundStyle(DuskColors.ink)
                 Spacer(minLength: Space.sm)
                 Text(format(value))
-                    .font(Typo.mono(TypeScale.sm))
+                    .font(Typo.mono(TypeScale.base))
                     .foregroundStyle(DuskColors.ink)
                     .padding(.horizontal, Space.sm)
                     .padding(.vertical, Space.xs)
@@ -38,6 +38,7 @@ struct RowSlider: View {
             Slider(value: Binding(get: { value }, set: onChange), in: range, step: step)
                 .tint(DuskColors.accent)
         }
+        .frame(minHeight: DesignMetrics.minimumTarget)
         .padding(.vertical, Space.sm)
         .accessibilityIdentifier(accessibilityId)
     }

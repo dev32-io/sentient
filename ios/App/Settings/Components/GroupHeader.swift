@@ -17,9 +17,9 @@ struct GroupHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: TypeScale.xs, weight: .semibold))
+            .font(Typo.ui(TypeScale.base, .semibold))
             .foregroundStyle(DuskColors.ink3)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget, alignment: .leading)
     }
 }
 
