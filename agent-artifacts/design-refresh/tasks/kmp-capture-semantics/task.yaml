@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: kmp-capture-semantics
 title: Implement capture-aware KMP voice uplink and talk-state semantics
-status: running
+status: submitted
 dependsOn:
   - capture-protocol-gateway
 execution:
@@ -29,3 +29,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/kmp-capture-semantics
   baseCommit: fa449dc5d0016d2f38101dfb95310472823aed3d
   lastRunId: 7aa7888e-34d0-4c31-996d-4b055680dffe
+  completedCommit: d56311ac9b9ec6b135e81296bc4c692611059bb2
