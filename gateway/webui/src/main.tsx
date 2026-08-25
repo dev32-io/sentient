@@ -1,5 +1,7 @@
 import { render } from "preact";
 import "./styles/tokens/index.css";
+import "./styles/tokens/design-foundation-v2.css";
+import "./components/common/foundation.css";
 import "./components/settings/settings-shell.css";
 import "./components/settings/sidebar/sidebar.css";
 import "./components/settings/apply-bar/apply-bar.css";

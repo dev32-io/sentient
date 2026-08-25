@@ -175,7 +175,6 @@ function AppInner() {
   // settings pane's voice-preview gate can subscribe without SettingsView
   // itself re-rendering on every cycle-status change.
   const assistantSpeaking = useComputed(() => client.cycleStatus.value === "speaking");
-  const voiceMode = client.voiceMode.value;
   const tasks = client.tasks.value;
   const runningTasks = tasks.filter((t) => t.status === "running").length;
   const canInterrupt = cycleStatus !== "idle" || runningTasks > 0;
@@ -184,12 +183,9 @@ function AppInner() {
   // The "..." pulse-dot era falls under streaming since the cycle starts
   // with empty text until the first delta lands.
   const activeCycleMode: SentientMarkMode =
-    cycleStatus === "speaking" ? "speaking" : cycleStatus === "streaming" ? "thinking" : "idle";
-  // Topbar mark: listening takes priority (mic open), then speaking, then
-  // thinking. Static (idle) when nothing is happening — per design intent
-  // the brand mark must not animate at rest.
-  const topbarMarkMode: SentientMarkMode =
-    voiceMode === "active" ? "listening" : activeCycleMode;
+    cycleStatus === "speaking" ? "responding" : cycleStatus === "streaming" ? "thinking" : "idle";
+  // Listening is composer-owned and never activates the identity adapter.
+  const topbarMarkMode: SentientMarkMode = activeCycleMode;
   const sdkStatus = client.sdkStatus.value;
   const connectionLost = client.connectionLost.value;
   const authExpired = client.authExpired.value;

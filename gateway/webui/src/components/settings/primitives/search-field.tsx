@@ -1,17 +1,6 @@
 import type { JSX } from "preact";
-
-export interface SearchFieldProps {
-  value: string;
-  onChange: (e: Event) => void;
-  placeholder?: string;
-  fullWidth?: boolean;
-}
-
-export function SearchField({ value, onChange, placeholder, fullWidth }: SearchFieldProps): JSX.Element {
-  return (
-    <div class={["srch", fullWidth && "full"].filter(Boolean).join(" ")}>
-      <span class="srch-icon" aria-hidden="true">⌕</span>
-      <input value={value} onInput={onChange} placeholder={placeholder} />
-    </div>
-  );
+import { SearchFilterBar } from "../../common/composites.tsx";
+export interface SearchFieldProps { value: string; onChange: (event: Event) => void; placeholder?: string; fullWidth?: boolean; }
+export function SearchField({ value, onChange, placeholder }: SearchFieldProps): JSX.Element {
+  return <SearchFilterBar value={value} placeholder={placeholder} onChange={(next) => onChange({ target: { value: next }, currentTarget: { value: next } } as unknown as Event)} />;
 }

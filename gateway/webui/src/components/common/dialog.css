@@ -23,10 +23,7 @@
   background: var(--color-paper);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-xl);
-  box-shadow:
-    0 1px 0 rgba(0, 0, 0, 0.25),
-    0 24px 64px -16px rgba(0, 0, 0, 0.55),
-    0 8px 24px -10px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--float-shadow);
   display: flex;
   flex-direction: column;
   max-height: calc(100vh - var(--space-2xl));
@@ -64,7 +61,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background var(--motion-fast), color var(--motion-fast);
+  transition: background var(--motion-feedback), color var(--motion-feedback);
 }
 .app-dialog__close:hover {
   background: var(--color-bg-elev);
@@ -108,8 +105,6 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--color-ink-3);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 .app-dialog__input {
   width: 100%;
@@ -122,7 +117,7 @@
   font-family: var(--font-ui);
   font-size: var(--font-size-base);
   outline: none;
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast);
+  transition: border-color var(--motion-feedback), box-shadow var(--motion-feedback), background var(--motion-feedback);
   box-sizing: border-box;
 }
 .app-dialog__input:focus {
@@ -144,7 +139,7 @@
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback);
 }
 .app-dialog__btn:disabled {
   opacity: 0.55;
@@ -223,4 +218,7 @@
     border-radius: 999px;
     background: var(--color-line);
   }
+}
+@media (hover: none), (pointer: coarse) {
+  .app-dialog__close { width: 44px; height: 44px; }
 }

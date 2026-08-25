@@ -1,77 +1,22 @@
 import type { JSX } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
-import { ChevronIcon } from "../../common/icons/chevron.tsx";
-import { CheckIcon } from "../../common/icons/check.tsx";
-
-export interface SelectOption {
-  value: string;
-  label: string;
-  icon?: JSX.Element;
-  tag?: string;
-}
-
-export interface SelectProps {
-  value: string;
-  onChange: (v: string) => void;
-  options: SelectOption[];
-  placeholder?: string;
-  disabled?: boolean;
-}
-
-export function Select({ value, onChange, options, placeholder, disabled }: SelectProps): JSX.Element {
+import { useEffect, useId, useRef, useState } from "preact/hooks";
+export interface SelectOption { value: string; label: string; icon?: JSX.Element; tag?: string; }
+export interface SelectProps { value: string; onChange: (value: string) => void; options: SelectOption[]; placeholder?: string; disabled?: boolean; }
+export function Select({ value, onChange, options, placeholder = "Select…", disabled }: SelectProps): JSX.Element {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+  const current = options.find((option) => option.value === value);
   useEffect(() => {
     if (!open) return;
-    const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
+    const dismiss = (event: MouseEvent): void => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent): void => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", dismiss);
+    window.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", dismiss); window.removeEventListener("keydown", escape); };
   }, [open]);
-
-  const cur = options.find((o) => o.value === value);
-
-  return (
-    <div class={["sel", open && "open"].filter(Boolean).join(" ")} ref={ref}>
-      <button
-        type="button"
-        class="sel-btn"
-        onClick={() => setOpen((o) => !o)}
-        disabled={disabled}
-      >
-        {cur ? (
-          <span class="sel-cur">
-            {cur.icon}
-            <span class="sel-l">{cur.label}</span>
-            {cur.tag && <span class="sel-tag">{cur.tag}</span>}
-          </span>
-        ) : (
-          <span class="sel-ph">{placeholder ?? "Select…"}</span>
-        )}
-        <ChevronIcon size={12} />
-      </button>
-      {open && (
-        <div class="sel-menu">
-          {options.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              class={["sel-opt", o.value === value && "on"].filter(Boolean).join(" ")}
-              onClick={() => {
-                onChange(o.value);
-                setOpen(false);
-              }}
-            >
-              {o.icon}
-              <span class="sel-l">{o.label}</span>
-              {o.tag && <span class="sel-tag">{o.tag}</span>}
-              {o.value === value && <CheckIcon size={12} />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return <div ref={rootRef} class="snt-select-menu">
+    <button type="button" class="snt-button snt-menu-trigger" aria-haspopup="menu" aria-expanded={open} aria-controls={menuId} disabled={disabled} onClick={() => setOpen((value) => !value)}>{current?.icon}<span>{current?.label ?? placeholder}</span><span aria-hidden="true">⌄</span></button>
+    {open && <div id={menuId} class="snt-select-menu__options snt-float" role="menu">{options.map((option) => <button key={option.value} type="button" class="snt-button snt-button--quiet" aria-pressed={option.value === value} onClick={() => { onChange(option.value); setOpen(false); }}>{option.icon}<span>{option.label}</span>{option.tag && <span class="snt-kicker">{option.tag}</span>}</button>)}</div>}
+  </div>;
 }
