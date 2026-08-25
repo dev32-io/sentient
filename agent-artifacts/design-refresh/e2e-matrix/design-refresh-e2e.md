@@ -155,7 +155,7 @@
 #### Evidence
 
 - Accessibility tree, focus trace, overflow measurements, and sanitized screenshots.
-- Source references: DESIGN.md and all reviewed handoffs under design/prototype/.
+- Source references: DESIGN.MD and all reviewed handoffs under design/prototype/.
 
 #### Safety
 
@@ -250,7 +250,7 @@
 #### Evidence
 
 - Maestro assertions and reviewed sanitized screenshots.
-- Source references: ios/App/Theme/Typo.swift, ios/App/Settings/, and DESIGN.md.
+- Source references: ios/App/Theme/Typo.swift, ios/App/Settings/, and DESIGN.MD.
 
 #### Safety
 
