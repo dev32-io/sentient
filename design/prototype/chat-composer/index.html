@@ -18,11 +18,13 @@
     <symbol id="i-volume-off" viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6l-5 4zM3 3l18 18"/></symbol>
     <symbol id="i-attach" viewBox="0 0 24 24"><path d="m9 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l8-8"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8"/></symbol>
+    <symbol id="i-cancel" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
   </svg>
 
   <header class="prototype-header">
     <div><span class="snt-kicker">Composer workspace</span><h1>Message or speak to Sentient</h1></div>
-    <p>A direct reconstruction of the supplied responsive composer, expressed with Sentient’s current Dusk material language.</p>
+    <p>The supplied composer anatomy with a compact voice control that blooms from the microphone itself.</p>
   </header>
 
   <main class="composer-lab" data-composer-lab>
@@ -34,15 +36,15 @@
         <button class="snt-chip" type="button" aria-pressed="false" data-review-state="tasks">Tasks</button>
         <button class="snt-chip" type="button" aria-pressed="false" data-review-state="responding">Responding</button>
         <button class="snt-chip" type="button" aria-pressed="false" data-review-state="hold">Hold to talk</button>
-        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="locked">Hands-free</button>
+        <button class="snt-chip" type="button" aria-pressed="false" data-review-state="auto">Auto</button>
       </div>
     </section>
 
-    <section class="composer-stage" aria-label="Responsive chat composer review">
+    <section class="composer-stage" aria-label="Desktop chat composer review">
       <div class="composer-context" aria-hidden="true"><i></i><i></i><i></i></div>
       <footer class="composer-dock">
         <div class="composer-dock__inner">
-          <div class="composer-frame" data-composer-frame>
+          <div class="composer-frame" data-composer-instance>
             <div class="task-event-slot" data-task-event-slot data-visible="false" aria-hidden="true" inert>
               <div class="task-event-slot__inner">
                 <div class="task-shelf">
@@ -60,22 +62,70 @@
               </div>
             </div>
 
-            <form class="composer" id="composer" data-voice="idle" data-composer>
-              <label class="sr-only" for="composer-input">Message Sentient</label>
-              <textarea id="composer-input" placeholder="Message or speak to Sentient" rows="1" data-composer-input></textarea>
+            <form class="composer" data-composer data-voice="idle">
+              <label class="sr-only" for="desktop-composer-input">Message Sentient</label>
+              <textarea id="desktop-composer-input" placeholder="Message or speak to Sentient" rows="1" data-composer-input></textarea>
               <div class="composer-actions">
                 <button type="button" class="composer-icon-button" data-attach aria-label="Attach files" title="Attach files"><svg><use href="#i-attach"/></svg></button>
-                <input id="attachment-input" type="file" multiple hidden data-attachment-input>
+                <input type="file" multiple hidden data-attachment-input>
                 <button type="button" class="composer-icon-button composer-toggle" data-tts aria-label="Spoken responses on; turn off" title="Spoken responses on" aria-pressed="true"><svg><use href="#i-volume"/></svg></button>
                 <span class="composer-grow"></span>
-                <span class="voice-hint" data-composer-hint>Tap to talk · hold while speaking</span>
-                <button type="button" class="composer-icon-button stop-response-control" data-stop-response aria-label="Stop Sentient response" title="Stop response" hidden><svg><use href="#i-stop"/></svg></button>
-                <button type="button" class="composer-icon-button composer-action" data-composer-action aria-label="Tap for hands-free voice, or hold to talk" title="Talk to Sentient"><svg><use href="#i-mic"/></svg></button>
+                <div class="composer-end-actions">
+                  <button type="button" class="composer-icon-button stop-response-control" data-stop-response aria-label="Stop Sentient response" title="Stop response" hidden><svg><use href="#i-stop"/></svg></button>
+                  <div class="voice-control" data-voice-control data-open="false">
+                    <div class="voice-child-deck" aria-hidden="true">
+                      <button class="voice-child voice-child--cancel" type="button" data-voice-target="cancel" tabindex="-1"><svg><use href="#i-cancel"/></svg><span>Cancel</span></button>
+                      <button class="voice-child voice-child--auto" type="button" data-voice-target="auto" tabindex="-1"><svg><use href="#i-auto"/></svg><span>Auto</span></button>
+                      <button class="voice-child voice-child--send" type="button" data-voice-target="send" tabindex="-1"><svg><use href="#i-send"/></svg><span>Send</span></button>
+                    </div>
+                    <button type="button" class="composer-icon-button composer-action" data-composer-action aria-label="Tap for Auto or hold to talk" title="Talk to Sentient">
+                      <span class="mic-glyph"><svg><use href="#i-mic"/></svg><span class="mic-morph-core" aria-hidden="true"></span></span>
+                      <span class="inline-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </form>
           </div>
         </div>
       </footer>
+    </section>
+
+    <section class="mobile-showcase snt-plate" aria-labelledby="mobile-showcase-title">
+      <div class="mobile-showcase__copy"><span class="snt-kicker">Touch composition</span><h2 id="mobile-showcase-title">Same mini component, phone-sized</h2><p>The child slates rise from the capture pod without becoming a second composer or crowding the phone.</p></div>
+      <div class="phone-frame">
+        <div class="phone-status" aria-hidden="true"><span>9:41</span><span>● ●●</span></div>
+        <div class="phone-thread" aria-hidden="true"><strong>Kitchen plan</strong><i></i><i></i><i></i></div>
+        <div class="phone-composer-anchor">
+          <div class="composer-frame composer-frame--mobile" data-composer-instance>
+            <form class="composer" data-composer data-voice="idle">
+              <label class="sr-only" for="mobile-composer-input">Message Sentient</label>
+              <textarea id="mobile-composer-input" placeholder="Message or speak" rows="1" data-composer-input></textarea>
+              <div class="composer-actions">
+                <button type="button" class="composer-icon-button" data-attach aria-label="Attach files"><svg><use href="#i-attach"/></svg></button>
+                <input type="file" multiple hidden data-attachment-input>
+                <button type="button" class="composer-icon-button composer-toggle" data-tts aria-label="Spoken responses on; turn off" aria-pressed="true"><svg><use href="#i-volume"/></svg></button>
+                <span class="composer-grow"></span>
+                <div class="composer-end-actions">
+                  <button type="button" class="composer-icon-button stop-response-control" data-stop-response aria-label="Stop Sentient response" hidden><svg><use href="#i-stop"/></svg></button>
+                  <div class="voice-control" data-voice-control data-open="false">
+                    <div class="voice-child-deck" aria-hidden="true">
+                      <button class="voice-child voice-child--cancel" type="button" data-voice-target="cancel" tabindex="-1"><svg><use href="#i-cancel"/></svg><span>Cancel</span></button>
+                      <button class="voice-child voice-child--auto" type="button" data-voice-target="auto" tabindex="-1"><svg><use href="#i-auto"/></svg><span>Auto</span></button>
+                      <button class="voice-child voice-child--send" type="button" data-voice-target="send" tabindex="-1"><svg><use href="#i-send"/></svg><span>Send</span></button>
+                    </div>
+                    <button type="button" class="composer-icon-button composer-action" data-composer-action aria-label="Tap for Auto or hold to talk">
+                      <span class="mic-glyph"><svg><use href="#i-mic"/></svg><span class="mic-morph-core" aria-hidden="true"></span></span>
+                      <span class="inline-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div class="phone-home" aria-hidden="true"></div>
+      </div>
     </section>
   </main>
 

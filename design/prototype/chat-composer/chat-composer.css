@@ -46,7 +46,7 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .task-kicker { color: var(--color-ink-3); font: 500 var(--font-size-sm) var(--font-mono); }
 .composer-inline-action { min-height: 38px; margin-top: 8px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--slate-face); color: var(--color-ink); font-size: 14px; box-shadow: var(--slate-shadow); }
 
-.composer { position: relative; z-index: 1; display: grid; gap: 10px; padding: 12px; overflow: hidden; border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: radial-gradient(ellipse 72% 115% at 50% 52%, color-mix(in oklab, var(--color-paper) 74%, var(--color-bg-sunk)) 0%, transparent 70%), radial-gradient(circle at 84% 8%, color-mix(in oklab, var(--color-accent) 5%, transparent) 0%, transparent 34%), linear-gradient(118deg, color-mix(in oklab, var(--color-paper) 94%, var(--color-ink-4)) 0%, var(--color-paper) 48%, color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)) 100%); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -25px color-mix(in oklab, var(--color-accent) 48%, transparent); cursor: text; transition: border-color var(--motion-normal), box-shadow var(--motion-normal); }
+.composer { position: relative; z-index: 1; display: grid; gap: 10px; padding: 12px; overflow: visible; border: 1px solid var(--color-line); border-radius: var(--radius-lg); background: radial-gradient(ellipse 72% 115% at 50% 52%, color-mix(in oklab, var(--color-paper) 74%, var(--color-bg-sunk)) 0%, transparent 70%), radial-gradient(circle at 84% 8%, color-mix(in oklab, var(--color-accent) 5%, transparent) 0%, transparent 34%), linear-gradient(118deg, color-mix(in oklab, var(--color-paper) 94%, var(--color-ink-4)) 0%, var(--color-paper) 48%, color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)) 100%); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -25px color-mix(in oklab, var(--color-accent) 48%, transparent); cursor: text; transition: border-color var(--motion-normal), box-shadow var(--motion-normal); }
 .composer::after { content: ""; position: absolute; z-index: 0; inset: 1px; border-radius: calc(var(--radius-lg) - 1px); background: linear-gradient(108deg, transparent 0 40%, color-mix(in oklab, var(--color-ink) 2.4%, transparent) 49%, transparent 58%), radial-gradient(ellipse 44% 56% at 82% 112%, color-mix(in oklab, var(--color-accent) 8%, transparent), transparent 72%); opacity: .62; pointer-events: none; }
 .composer:focus-within { border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line)); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 18px 32px -20px rgba(0,0,0,.97), 4px 19px 32px -20px color-mix(in oklab, var(--color-accent) 64%, transparent); }
 .composer textarea, .composer-actions { position: relative; z-index: 1; }
@@ -55,8 +55,6 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .composer textarea::placeholder { color: var(--color-ink-3); }
 .composer-actions { display: flex; align-items: center; gap: 8px; padding-top: 0; border: 0; }
 .composer-grow { flex: 1 1 auto; }
-.voice-hint { max-width: 210px; color: var(--color-ink-3); font: var(--font-size-sm)/1.35 var(--font-mono); text-align: right; transition: color var(--motion-fast), opacity var(--motion-fast); }
-
 /* Composer controls are purpose-built for this composite. They share the
    elevated-slate physical model but are not direct foundation button instances. */
 .composer-icon-button { --composer-key: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2)); position: relative; width: 44px; height: 44px; min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: radial-gradient(ellipse 82% 105% at 50% 52%, color-mix(in oklab, var(--composer-key) 78%, var(--color-bg-sunk)) 0%, color-mix(in oklab, var(--composer-key) 90%, var(--color-bg-sunk)) 50%, var(--composer-key) 100%); color: var(--color-ink); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 10px 16px -12px rgba(0,0,0,.96); cursor: pointer; transform: translateY(0); transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-normal), transform 90ms ease; }
@@ -64,16 +62,87 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 @media (hover:hover) and (pointer:fine) { .composer-icon-button:hover { border-color: transparent; color: var(--color-ink); box-shadow: var(--slate-shadow-hover); transform: translateY(-1px); } }
 .composer-icon-button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
 .composer-toggle[aria-pressed="true"], .composer-action.voice-active, .composer-action.is-send { --composer-key: var(--color-accent); color: var(--color-bg-sunk); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 12px 18px -12px color-mix(in oklab, var(--color-accent) 66%, transparent); }
-.composer-toggle[aria-pressed="true"]::after, .composer-action.voice-active::after { content: ""; position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-ink); box-shadow: 0 0 0 2px var(--color-accent); }
-.stop-response-control { --composer-key: color-mix(in oklab, var(--color-paper) 50%, var(--color-stop)); color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink)); }
+.composer-toggle[aria-pressed="true"]::after { content: ""; position: absolute; right: 4px; top: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-ink); box-shadow: 0 0 0 2px var(--color-accent); }
+.stop-response-control { --composer-key: color-mix(in oklab, var(--color-paper) 50%, var(--color-stop)); color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink)); overflow: hidden; transition: opacity 160ms ease, width 240ms cubic-bezier(.16,1,.3,1), min-width 240ms cubic-bezier(.16,1,.3,1), transform 220ms cubic-bezier(.16,1,.3,1), box-shadow var(--motion-normal); }
 .stop-response-control[hidden] { display: none; }
 .composer[data-responding="true"] .stop-response-control { color: var(--color-ink); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 12px 18px -12px color-mix(in oklab, var(--color-stop) 62%, transparent); }
 .composer .composer-icon-button:active { box-shadow: var(--slate-shadow-pressed); transform: translateY(1px); transition-duration: 70ms; }
 .composer-action.mode-transition { animation: composer-action-swap 260ms cubic-bezier(.16,1,.3,1); }
 @keyframes composer-action-swap { 0% { transform: scale(.88); opacity: .6; } 65% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); } }
-.composer[data-voice="hold"] .voice-hint, .composer[data-voice="locked"] .voice-hint { color: var(--color-accent); }
+.composer-end-actions { display: flex; align-items: center; gap: 8px; transition: gap 220ms cubic-bezier(.16,1,.3,1); }
+.composer:is([data-voice="hold"],[data-voice="auto"]) .composer-end-actions { gap: 0; }
+.composer:is([data-voice="hold"],[data-voice="auto"]) .stop-response-control { width: 0; min-width: 0; border-width: 0; opacity: 0; pointer-events: none; transform: translateY(4px) scale(.82); }
+.voice-control { position: relative; z-index: 5; width: 44px; height: 44px; flex: 0 0 44px; cursor: default; transition: width 360ms cubic-bezier(.16,1,.3,1), flex-basis 360ms cubic-bezier(.16,1,.3,1), height 260ms cubic-bezier(.16,1,.3,1); }
+.voice-control[data-listening="true"] { width: 238px; height: 54px; flex-basis: 238px; }
+.voice-control .composer-action { position: absolute; z-index: 6; inset: auto 0 0 auto; width: 44px; height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; overflow: hidden; transition: width 360ms cubic-bezier(.16,1,.3,1), height 260ms cubic-bezier(.16,1,.3,1), border-radius 280ms cubic-bezier(.16,1,.3,1), background var(--motion-fast), color var(--motion-fast), box-shadow var(--motion-normal), transform 90ms ease; }
+.voice-control[data-listening="true"] .composer-action { width: 100%; height: 54px; border-radius: 18px 11px 11px 18px; background: radial-gradient(ellipse 70% 120% at 46% 54%, color-mix(in oklab, var(--color-paper) 68%, var(--color-bg-sunk)), transparent 72%), linear-gradient(105deg, color-mix(in oklab, var(--color-paper) 88%, var(--color-accent-soft)), color-mix(in oklab, var(--color-paper) 88%, var(--color-accent)) 100%); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 13px 22px -12px color-mix(in oklab, var(--color-accent) 68%, transparent); }
+.voice-child-deck { position: absolute; z-index: 4; right: 0; bottom: calc(100% - 3px); width: 238px; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px; padding: 0 4px 8px; opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(16px) scale(.82); transform-origin: 100% 100%; transition: opacity 140ms ease, transform 340ms cubic-bezier(.16,1,.3,1), visibility 0s linear 340ms; }
+.voice-child-deck::after { content: ""; position: absolute; z-index: 0; right: 13px; bottom: 0; left: 13px; height: 10px; border: 1px solid color-mix(in oklab, var(--color-line) 78%, var(--color-bg-sunk)); border-bottom: 0; border-radius: 9px 9px 0 0; background: color-mix(in oklab, var(--color-paper) 72%, var(--color-bg-sunk)); box-shadow: inset 0 2px 5px -3px rgba(0,0,0,.82); }
+.voice-control[data-open="true"] .voice-child-deck { opacity: 1; visibility: visible; transform: translateY(0) scale(1); transition: opacity 140ms ease, transform 340ms cubic-bezier(.16,1,.3,1), visibility 0s; }
+.voice-control[data-mode="auto"] .voice-child-deck { pointer-events: auto; }
+.voice-child { --child-face: var(--color-paper); position: relative; z-index: 1; min-width: 0; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; border: 1px solid var(--color-line); border-radius: 11px 11px 6px 6px; background: radial-gradient(ellipse 88% 112% at 50% 52%, color-mix(in oklab, var(--child-face) 77%, var(--color-bg-sunk)), var(--child-face)); color: var(--color-ink-2); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 9px 14px -11px rgba(0,0,0,.94); font: 600 14px var(--font-ui); opacity: 0; transform: translateY(12px) scale(.9); transition: opacity 130ms ease, transform 320ms cubic-bezier(.16,1,.3,1), color var(--motion-fast), box-shadow var(--motion-fast), background var(--motion-fast); }
+.voice-child svg { width: 15px; height: 15px; }
+.voice-child--cancel { transition-delay: 0ms; }
+.voice-child--auto { transition-delay: 32ms; }
+.voice-child--send { transition-delay: 64ms; }
+.voice-control[data-open="true"] .voice-child { opacity: 1; transform: translateY(0) scale(1); }
+.voice-child[data-active="true"] { --child-face: var(--color-accent); color: var(--color-bg-sunk); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 11px 18px -11px color-mix(in oklab, var(--color-accent) 68%, transparent); transform: translateY(2px) scale(.98); }
+.voice-child--cancel[data-active="true"] { --child-face: var(--color-stop); color: var(--color-ink); box-shadow: var(--slate-top-light), 0 2px 0 -1px var(--color-bg-sunk), 0 11px 18px -11px color-mix(in oklab, var(--color-stop) 72%, transparent); }
+.voice-child:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.voice-child:active { box-shadow: var(--slate-shadow-pressed); transform: translateY(2px); transition-duration: 70ms; }
+.mic-glyph { position: absolute; z-index: 3; left: 50%; top: 50%; width: 22px; height: 22px; display: grid; place-items: center; transform: translate(-50%,-50%); transition: left 360ms cubic-bezier(.16,1,.3,1), transform 260ms cubic-bezier(.16,1,.3,1); }
+.mic-glyph svg { width: 20px; height: 20px; opacity: 1; transform: rotate(0) scale(1); transition: opacity 130ms ease, transform 240ms cubic-bezier(.16,1,.3,1); }
+.mic-morph-core { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--color-accent); box-shadow: 0 0 0 0 transparent; opacity: 0; transform: rotate(0) scale(.4); transition: opacity 120ms ease, width 220ms cubic-bezier(.16,1,.3,1), height 220ms cubic-bezier(.16,1,.3,1), border-radius 220ms ease, transform 260ms cubic-bezier(.16,1,.3,1), box-shadow 240ms ease; }
+.voice-control[data-listening="true"] .mic-glyph { left: calc(100% - 27px); }
+.voice-control[data-listening="true"] .mic-glyph svg { opacity: 0; transform: rotate(-70deg) scale(.28); }
+.voice-control[data-listening="true"] .mic-morph-core { width: 11px; height: 11px; border-radius: 3px; opacity: 1; transform: rotate(45deg) scale(1); box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-accent) 13%, transparent), 0 0 15px color-mix(in oklab, var(--color-accent) 56%, transparent); }
+.voice-control[data-mode="auto"] .mic-morph-core { border-radius: 50%; transform: rotate(0) scale(1); box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-accent) 16%, transparent), 0 0 17px color-mix(in oklab, var(--color-accent) 62%, transparent); }
+.inline-wave { position: absolute; z-index: 2; top: 50%; right: 55px; left: 18px; height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 4px; opacity: 0; transform: translateY(-50%) translateX(28px) scaleX(.25); transform-origin: 100% 50%; transition: opacity 140ms ease 70ms, transform 360ms cubic-bezier(.16,1,.3,1) 40ms; }
+.inline-wave i { width: 3px; height: 18px; border-radius: var(--radius-pill); background: linear-gradient(180deg, var(--color-accent), color-mix(in oklab, var(--color-accent) 54%, var(--color-accent-soft))); box-shadow: 0 0 8px -3px color-mix(in oklab, var(--color-accent) 58%, transparent); transform: scaleY(.34); animation: inline-wave 760ms ease-in-out infinite alternate; }
+.inline-wave i:nth-child(2n) { animation-delay: -210ms; }
+.inline-wave i:nth-child(3n) { animation-delay: -430ms; }
+.inline-wave i:nth-child(5n) { animation-delay: -590ms; }
+@keyframes inline-wave { to { transform: scaleY(1); opacity: .62; } }
+.voice-control[data-listening="true"] .inline-wave { opacity: 1; transform: translateY(-50%) translateX(0) scaleX(1); }
+.composer:is([data-voice="hold"],[data-voice="auto"]) textarea { opacity: .08; transform: translateY(3px); pointer-events: none; }
+.composer:is([data-voice="hold"],[data-voice="auto"]) .composer-actions > :is([data-attach],.composer-toggle) { opacity: 0; transform: translateY(4px) scale(.86); pointer-events: none; }
+.composer:is([data-voice="hold"],[data-voice="auto"])::after { opacity: .9; }
+.composer textarea, .composer-actions > :is([data-attach],.composer-toggle) { transition: opacity 180ms ease, transform 240ms cubic-bezier(.16,1,.3,1), height 180ms cubic-bezier(.16,1,.3,1), color var(--motion-fast); }
+
+.mobile-showcase { display: grid; grid-template-columns: minmax(250px,.72fr) minmax(340px,420px); align-items: center; gap: 34px; padding: 24px; overflow: visible; }
+.mobile-showcase__copy { align-self: start; padding: 12px 6px; }
+.mobile-showcase__copy h2 { margin: 6px 0 8px; font: 500 22px/1.25 var(--font-display); }
+.mobile-showcase__copy p { max-width: 48ch; margin: 0; color: var(--color-ink-2); font-size: 14px; line-height: 1.6; }
+.phone-frame { position: relative; width: min(390px,100%); height: 700px; justify-self: end; overflow: hidden; border: 1px solid var(--color-line); border-radius: 32px; background: var(--color-bg-sunk); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 7%, transparent), 0 24px 44px -28px rgba(0,0,0,.96); }
+.phone-status { height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; color: var(--color-ink-2); font: var(--font-size-sm) var(--font-mono); }
+.phone-thread { padding: 16px 18px; }
+.phone-thread strong { display: block; margin-bottom: 46px; font: 500 var(--font-size-lg) var(--font-display); }
+.phone-thread i { width: 76%; height: 10px; display: block; margin-bottom: 16px; border-radius: var(--radius-pill); background: linear-gradient(90deg,var(--color-line-soft),transparent); opacity: .42; }
+.phone-thread i:nth-of-type(2) { width: 54%; }
+.phone-thread i:nth-of-type(3) { width: 64%; margin-top: 78px; margin-left: auto; }
+.phone-composer-anchor { position: absolute; z-index: 3; right: 9px; bottom: 28px; left: 9px; }
+.composer-frame--mobile { filter: none; }
+.composer-frame--mobile .composer { gap: 7px; padding: 9px; border-radius: 16px; }
+.composer-frame--mobile .composer textarea { min-height: 42px; max-height: 96px; padding: 3px 4px; }
+.composer-frame--mobile .composer-actions { display: grid; grid-template-columns: 44px 44px minmax(0,1fr) auto; gap: 5px; }
+.composer-frame--mobile .composer-grow { min-width: 0; }
+.composer-frame--mobile .composer-end-actions { gap: 6px; }
+.composer-frame--mobile .voice-control { width: 48px; height: 48px; flex-basis: 48px; }
+.composer-frame--mobile .composer-action { width: 48px; height: 48px; min-width: 48px; min-height: 48px; border-radius: 14px; }
+.composer-frame--mobile .voice-control[data-listening="true"] { width: 210px; height: 52px; flex-basis: 210px; }
+.composer-frame--mobile .voice-control[data-listening="true"] .composer-action { width: 100%; height: 52px; border-radius: 17px 10px 10px 17px; }
+.composer-frame--mobile .voice-child-deck { width: 210px; gap: 3px; padding-inline: 3px; }
+.composer-frame--mobile .voice-child { gap: 4px; padding-inline: 4px; font-size: 13px; }
+.composer-frame--mobile .inline-wave { right: 52px; left: 15px; gap: 3px; }
+.phone-home { position: absolute; z-index: 8; bottom: 8px; left: 50%; width: 116px; height: 4px; border-radius: var(--radius-pill); background: var(--color-ink-3); opacity: .68; transform: translateX(-50%); }
 
 .composer-toast { position: fixed; z-index: 90; right: 20px; bottom: 20px; max-width: min(420px, calc(100vw - 40px)); padding: 12px 15px; border: 1px solid var(--color-line); border-radius: var(--radius-md); background: var(--color-paper); color: var(--color-ink); box-shadow: var(--float-shadow); font-size: 14px; }
+
+@media (max-width: 900px) {
+  .mobile-showcase { grid-template-columns: 1fr; }
+  .mobile-showcase__copy { padding-bottom: 0; }
+  .phone-frame { justify-self: center; }
+}
 
 @media (max-width: 720px) {
   .prototype-header { grid-template-columns: 1fr; gap: 8px; padding: 18px 16px; }
@@ -92,22 +161,26 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
   .task-detail-card { grid-template-columns: 1fr; gap: 10px; }
   .composer { gap: 7px; padding: 9px; border-radius: 16px; }
   .composer textarea { min-height: 42px; max-height: 108px; padding: 3px 4px; }
-  .composer-actions { display: grid; grid-template-columns: 44px 44px minmax(0,1fr) 44px 44px; gap: 6px; }
+  .composer-actions { display: grid; grid-template-columns: 44px 44px minmax(0,1fr) auto; gap: 6px; }
   .composer-grow { min-width: 0; }
-  .voice-hint { max-width: 100%; font-size: var(--font-size-sm); }
+  .mobile-showcase { padding: 18px 10px; border-inline: 0; border-radius: 0; }
+  .phone-frame { width: min(390px,100%); }
   .task-details { max-height: min(30dvh,260px); overflow-y: auto; }
 }
 
 @media (max-width: 380px) {
   .composer-actions { gap: 4px; }
-  .voice-hint { line-height: 1.2; }
+  .phone-frame { border-inline: 0; border-radius: 0; }
+  .composer-frame--mobile .voice-control[data-listening="true"] { width: 198px; flex-basis: 198px; }
+  .composer-frame--mobile .voice-child-deck { width: 198px; }
+  .composer-frame--mobile .voice-child { font-size: var(--font-size-sm); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-frame, .task-event-slot, .composer-icon-button { transition: none; }
-  .task-pulse--running, .composer-action.mode-transition { animation: none; }
+  .composer-frame, .task-event-slot, .composer-icon-button, .voice-control, .voice-child-deck, .voice-child, .mic-glyph, .mic-glyph svg, .mic-morph-core, .inline-wave { transition: none; }
+  .task-pulse--running, .composer-action.mode-transition, .inline-wave i { animation: none; }
 }
 
 @media (prefers-contrast: more) {
-  .composer, .task-shelf, .task-detail-card, .composer-icon-button { border-color: var(--color-ink-3); }
+  .composer, .task-shelf, .task-detail-card, .composer-icon-button, .voice-child, .phone-frame { border-color: var(--color-ink-3); }
 }

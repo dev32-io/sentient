@@ -2,22 +2,36 @@
 
 ID: `chat-composer`
 
-Open `index.html` through the Visual Companion or a local static server.
+Open `index.html` through the Visual Companion or a local static server. It is the single review surface for the composer, including the wide composition and simulated `390px` phone frame.
 
 ## Boundary
 
-- This first-pass mockup intentionally treats the supplied legacy composer in `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html` as the composition and interaction authority.
-- It directly preserves the prototype anatomy: composer frame, optional task shelf joined above the frame, transparent auto-growing text field, attachment, spoken-response toggle, flexible voice hint, contextual Stop, and one shared microphone/send action. Stop is present only while Sentient is actively responding.
-- The shared action displays the microphone when the draft is empty and becomes Send when text exists. Tap toggles hands-free listening; holding for roughly 420ms enters hold-to-talk; release completes the voice-note demonstration.
-- Enter sends and Shift+Enter inserts a newline, matching the supplied web prototype.
-- Task pills, one-at-a-time detail expansion, attachment selection feedback, TTS state, focus lift, action morph, and Reduced Motion behavior follow the supplied prototype.
-- Compact layouts retain the prototype’s five-column `44px 44px 1fr 44px 44px` action row and single-column task detail.
-- The current surface keeps the raised composer silhouette but adds a darker concave center, asymmetric warm shoulder, and directional ember cast so the broad graphite face has character without becoming another nested input well. Focus changes only the composer’s single directional glow; the inner text field remains visually integrated with the face.
-- Pointer input anywhere on the composer face other than an interactive control immediately focuses the text area and places the caret at the end of the draft.
-- Composer controls are purpose-built for this composite rather than direct foundation button instances. They still use the current Dusk palette, Fraunces/DM Sans/JetBrains Mono hierarchy, elevated-slate key physics, visible focus, minimum type floors, and current accessibility language from `DESIGN.md`.
-- The review-state controls above the stage are prototype tooling only and are not part of the production composer.
-- Current production composer code remains useful for later implementation feasibility and wire behavior, but it does not override this approved visual direction in the mockup.
-- This bounded prototype does not include chat messages, navigation, complete-page chrome, permission-dialog design, attachment upload implementation, partial STT text, or production audio transport.
-- `vendor/` is a self-contained snapshot used only by the review shell; the target composer controls are defined in `chat-composer.css`.
+- The supplied legacy composer in `sentient-design/sentient-responsive-prototype.html` and `sentient-design/sentient-responsive-mobile- prototype.html` remains the composition authority: one frame, transparent auto-growing text field, attachment, spoken-response toggle, contextual Stop, and one shared microphone/send action.
+- Stop is present only while Sentient is actively responding.
+- The shared action displays the microphone when the draft is empty and becomes Send when text exists.
+- Enter sends and Shift+Enter inserts a newline.
+- Task pills, one-at-a-time detail expansion, attachment selection feedback, TTS state, focus response, action morph, and Reduced Motion behavior remain represented.
+- The raised composer surface uses a darker concave center, asymmetric warm shoulder, and directional ember cast. The textarea has no independent face or focus outline; the composer owns focus emphasis.
+- Pointer input anywhere on the composer face other than an interactive control immediately focuses the textarea and places the caret at the end of the draft.
+- Composer controls are purpose-built for this composite rather than direct foundation button instances. They still use the current Dusk palette, established typography, elevated-slate physics, visible focus, minimum type floors, and current accessibility language from `DESIGN.md`.
+- The review-state controls and mobile frame are prototype tooling, not production chrome.
+- Current production code informs implementation feasibility and wire behavior but does not override this approved visual direction.
+- This bounded prototype excludes chat messages, navigation, permission-dialog design, attachment upload implementation, partial STT text, and production audio transport.
+- `vendor/` is a self-contained foundation snapshot used by the review shell.
 
-This is an intentionally faithful visual reconstruction for review, not production code. A handoff will be written only after the composer direction is approved.
+## Microphone mini component
+
+The microphone, waveform, and voice choices behave as one compact internal component:
+
+- Capture begins immediately on pointer-down.
+- The microphone slate morphs from a compact square into a wider, sharply cut capture pod; the microphone glyph contracts into a state-shaped ember nucleus while an inline waveform expands through the new space.
+- After a brief reveal delay, Auto, Send, and Cancel rise as a compact deck of child slates sharing the parent pod’s upper contact edge.
+- A quick tap latches Auto and keeps listening.
+- A held press defaults to Send on release; dragging may choose Auto or Cancel.
+- In Auto, the attached child slates remain available so Send and Cancel are explicit terminal actions while Auto remains a persistent mode.
+- The textarea, attachment, TTS, and contextual Stop controls recede while capture is active so the morphing pod owns attention without replacing the composer.
+- Staggered child-slate movement, target magnetism, waveform motion, shape morphing, pressed depth, and restrained haptic ticks create continuity without turning the mini component into a separate composer.
+- Wide and phone compositions use the same component and state model with touch-safe targets.
+- This deliberately changes current production semantics, which use a left/right drag rail and do not yet implement tap-to-latch Auto. Implementation requires a reviewed state-machine change, not a visual-only swap.
+
+This is an exploratory visual and interaction study, not production code. A handoff will be written only after the composer direction is approved.
