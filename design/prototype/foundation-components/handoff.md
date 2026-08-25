@@ -23,8 +23,8 @@
 - Raised keys use a shallow concave face, compact contact shadow, and downward cast. Press closes the air gap; hover may tighten the face, move slightly, or glow but must not add a bright outline.
 - Wells use upper inner occlusion and a lower reflected edge. Toggle tracks, segmented beds, text inputs, text areas, and pressed chips share this receiving-surface model.
 - Preserve applicable rest, precise-pointer hover, visible keyboard focus, pressed, selected/on, destructive, and disabled states. Loading and error are not demonstrated here.
-- The segmented control moves one continuous selected slate. Chips remain visibly pressed and add a non-color marker when selected.
-- Checkboxes retain native input semantics: the empty state is a recessed receiver; checked and mixed states seat a compact ember slate with a visible check or bar. The entire text label is the target, and disabled state remains explicit.
+- The segmented control moves one continuous selected slate. Selected chips remain visibly pressed without inserting a marker, adding a highlight outline, changing width, or changing their equal left/right label padding.
+- Checkboxes retain native input semantics: the empty state is a recessed receiver; checked and mixed states seat a compact ember slate with a visible check or bar. Checked hover uses the raised-key response; the slammed treatment appears only during press. The entire text label is the target, and disabled state remains explicit.
 - Range controls retain native keyboard semantics while using a recessed dark track, restrained ember progress, and an elevated graphite thumb. Do not use a white remainder rail or bright thumb rim.
 - Sentient identity uses the supplied idle, thinking, and responding artwork. The artwork owns internal motion; the wrapper owns state crossfade/scale/rotation and falls back to a static change under Reduced Motion.
 - User avatars use the reviewed elevated-slate face at the shared size tiers, with terra/sage/amber/clay tint roles, initials fallback, selected, and disabled states. Keep the concave center, dark softened shoulder, contact shadow, and cast; do not add a sharp bright perimeter rim.

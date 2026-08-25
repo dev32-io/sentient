@@ -496,7 +496,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0;
+  gap: 7px;
   padding: 0 12px;
   border: 1px solid var(--slate-border);
   border-radius: var(--radius-pill);
@@ -504,18 +504,7 @@
   color: var(--color-ink-2);
   font-size: 14px;
   box-shadow: var(--slate-top-light), 0 1px 0 -1px var(--color-bg-sunk), 0 7px 12px -10px rgba(0, 0, 0, .9);
-  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), gap var(--motion-fast), transform 120ms ease;
-}
-.snt-chip::before {
-  content: "";
-  width: 0;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  box-shadow: 0 0 0 transparent;
-  opacity: 0;
-  transform: scale(.4);
-  transition: width var(--motion-fast), opacity var(--motion-fast), transform var(--motion-fast), box-shadow var(--motion-fast);
+  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast), transform 120ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
   .snt-chip:hover {
@@ -527,19 +516,12 @@
   }
 }
 .snt-chip[aria-pressed="true"] {
-  --slate-border: color-mix(in oklab, var(--color-accent) 46%, var(--color-line));
-  gap: 7px;
-  border-color: var(--slate-border);
+  --slate-border: transparent;
+  border-color: transparent;
   background: var(--well-face);
   color: var(--color-accent);
   box-shadow: var(--well-shadow), 0 8px 16px -14px color-mix(in oklab, var(--color-accent) 58%, transparent);
   transform: translateY(1px);
-}
-.snt-chip[aria-pressed="true"]::before {
-  width: 6px;
-  opacity: 1;
-  transform: scale(1);
-  box-shadow: 0 0 8px color-mix(in oklab, var(--color-accent) 72%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   .snt-chip[aria-pressed="true"]:hover {
@@ -556,7 +538,7 @@
 /* Checkbox: a native semantic input with a recessed receiver and compact selected slate. */
 .snt-checkbox { position: relative; min-height: 44px; display: inline-flex; align-items: center; gap: 10px; color: var(--color-ink-2); font-size: 14px; cursor: pointer; }
 .snt-checkbox > input { position: absolute; top: 50%; left: 0; width: 22px; height: 22px; margin: 0; opacity: 0; transform: translateY(-50%); }
-.snt-checkbox__box { position: relative; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--well-face); box-shadow: var(--well-shadow); transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-normal); }
+.snt-checkbox__box { position: relative; width: 22px; height: 22px; flex: 0 0 22px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--well-face); box-shadow: var(--well-shadow); transform: translateY(0); transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-normal), transform 90ms ease; }
 .snt-checkbox__box::before { content: ""; position: absolute; top: 4px; left: 7px; width: 5px; height: 9px; border-right: 2px solid var(--color-bg-sunk); border-bottom: 2px solid var(--color-bg-sunk); opacity: 0; transform: rotate(42deg) scale(.7); transition: opacity var(--motion-fast), transform var(--motion-fast); }
 .snt-checkbox__box::after { content: ""; position: absolute; top: 9px; left: 5px; width: 10px; height: 2px; border-radius: var(--radius-pill); background: var(--color-bg-sunk); opacity: 0; transform: scaleX(.6); transition: opacity var(--motion-fast), transform var(--motion-fast); }
 .snt-checkbox > input:checked + .snt-checkbox__box,
@@ -568,7 +550,13 @@
 .snt-checkbox:has(input:disabled) { color: var(--color-ink-4); cursor: not-allowed; }
 .snt-checkbox > input:disabled + .snt-checkbox__box { border-color: color-mix(in oklab, var(--color-line-soft) 74%, var(--color-bg)); background: var(--slate-face-muted); box-shadow: var(--slate-shadow-disabled); }
 @media (hover: hover) and (pointer: fine) {
-  .snt-checkbox:not(:has(input:disabled)):hover .snt-checkbox__box { border-color: color-mix(in oklab, var(--color-accent) 26%, var(--color-line)); box-shadow: var(--well-shadow), 0 0 12px -8px var(--color-accent); }
+  .snt-checkbox:not(:has(input:disabled)):hover input:not(:checked):not(:indeterminate) + .snt-checkbox__box { border-color: color-mix(in oklab, var(--color-accent) 26%, var(--color-line)); box-shadow: var(--well-shadow), 0 0 12px -8px var(--color-accent); }
+  .snt-checkbox:not(:has(input:disabled)):hover input:is(:checked, :indeterminate) + .snt-checkbox__box { border-color: transparent; box-shadow: var(--slate-shadow-hover), 0 10px 16px -12px color-mix(in oklab, var(--color-accent) 56%, transparent); transform: translateY(-1px); }
+}
+.snt-checkbox:not(:has(input:disabled)):active .snt-checkbox__box { transform: translateY(1px); box-shadow: var(--slate-shadow-pressed); transition-duration: 70ms; }
+@media (hover: hover) and (pointer: fine) {
+  .snt-checkbox:not(:has(input:disabled)):hover:active input:is(:checked, :indeterminate) + .snt-checkbox__box,
+  .snt-checkbox:not(:has(input:disabled)):hover:active input:not(:checked):not(:indeterminate) + .snt-checkbox__box { transform: translateY(1px); box-shadow: var(--slate-shadow-pressed); }
 }
 
 /* Identity is a leaf primitive. User initials sit on a quiet Dusk surface;

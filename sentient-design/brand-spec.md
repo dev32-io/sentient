@@ -72,7 +72,7 @@ Inputs, text areas, toggle tracks, segmented-control beds, and slider tracks are
 3. a faint lower inner highlight reflected from the slate edge;
 4. a clear focus edge and localized ember focus ring.
 
-An input must not read as a flat dark rectangle. Its well treatment should be visibly related to the toggle track and segmented-control bed. A selected label chip stays pressed into this receiving material and adds a compact ember marker; a segmented group visibly glides one continuous selected slate between choices rather than switching faces instantaneously.
+An input must not read as a flat dark rectangle. Its well treatment should be visibly related to the toggle track and segmented-control bed. A selected label chip stays pressed into this receiving material without inserting a marker, adding a selected outline, or changing its width; its label keeps equal inline padding in every state. A segmented group visibly glides one continuous selected slate between choices rather than switching faces instantaneously.
 
 ### Identity surfaces
 
