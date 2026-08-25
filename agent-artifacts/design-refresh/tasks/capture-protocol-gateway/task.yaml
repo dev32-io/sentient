@@ -2,7 +2,7 @@ schemaVersion: 1
 id: capture-protocol-gateway
 title: Add capture-aware audio protocol, Web SDK mediation, and gateway
   commit/cancel semantics
-status: ready
+status: running
 dependsOn: []
 execution:
   resourceClaims: []
@@ -27,3 +27,9 @@ verification:
     - bun run typecheck
     - git diff --check
   rationale: Verify the contribution at its declared task boundary.
+runtime:
+  executionMode: worktree
+  branch: harness/design-refresh/capture-protocol-gateway
+  worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/capture-protocol-gateway
+  baseCommit: 4a9d08bc87a693f353298813088135e84a1757e7
+  lastRunId: de4a7887-f549-47a5-a96e-28c90ff4aafc
