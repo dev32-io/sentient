@@ -1,0 +1,27 @@
+schemaVersion: 1
+id: web-settings-soul-voice
+title: Refresh Web Soul settings and voice-library product surfaces
+status: draft
+dependsOn:
+  - web-foundation-components
+  - verification-inventory-harness
+execution:
+  resourceClaims: []
+  assignment:
+    agent: implementer
+    tier: medium
+    rationale: Many panes share one settings data/application seam and can be
+      migrated coherently without changing backend behavior.
+assembly:
+  stageId: product-surfaces
+  intermediateState: complete
+verification:
+  timing: task
+  methods: []
+  taskChecks:
+    - bun run --filter '@sentient/webui' test:unit
+    - bun run --filter '@sentient/webui' typecheck
+    - bun run --filter '@sentient/webui' build
+    - bun run design:inventory:check
+    - git diff --check
+  rationale: Verify the contribution at its declared task boundary.

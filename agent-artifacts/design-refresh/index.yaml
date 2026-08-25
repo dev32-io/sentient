@@ -5,7 +5,7 @@ title: Complete WebUI and iOS design refresh
 phase: planning
 state: active
 planning:
-  revision: 15
+  revision: 16
 artifacts:
   - id: intent
     type: intent
@@ -44,6 +44,8 @@ tasks:
     path: tasks/web-shell-auth-history/task.yaml
   - id: web-settings-shell-trust
     path: tasks/web-settings-shell-trust/task.yaml
+  - id: web-settings-soul-voice
+    path: tasks/web-settings-soul-voice/task.yaml
 integrationUnits: []
 delivery:
   workingBranch: feature/design-refresh
@@ -64,3 +66,4 @@ executionStages:
     tasks:
       - web-shell-auth-history
       - web-settings-shell-trust
+      - web-settings-soul-voice
