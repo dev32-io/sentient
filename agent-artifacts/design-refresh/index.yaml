@@ -82,6 +82,8 @@ evaluations:
     path: evaluations/stage-ios-final-products-review/evaluation.yaml
   - id: stage-integration-closure-review
     path: evaluations/stage-integration-closure-review/evaluation.yaml
+  - id: final-branch-review
+    path: evaluations/final-branch-review/evaluation.yaml
 executionStages:
   - id: contracts-and-harness
     tasks:
