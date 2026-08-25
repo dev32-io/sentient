@@ -2,7 +2,7 @@ schemaVersion: 1
 id: capture-protocol-gateway
 title: Add capture-aware audio protocol, Web SDK mediation, and gateway
   commit/cancel semantics
-status: contribution_complete
+status: merged
 dependsOn: []
 execution:
   resourceClaims: []
@@ -34,3 +34,4 @@ runtime:
   baseCommit: 4a9d08bc87a693f353298813088135e84a1757e7
   lastRunId: de4a7887-f549-47a5-a96e-28c90ff4aafc
   completedCommit: d59a9e1ba1633e8754c7bb0a296db1c944e12a2c
+  mergedCommit: 9a10d79c3589ef394555ab02f671bd8ac443eba1
