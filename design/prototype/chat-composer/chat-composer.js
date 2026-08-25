@@ -104,9 +104,10 @@
       composer.dataset.responding = String(responding);
       voiceControl.dataset.listening = String(listening);
       voiceControl.dataset.mode = voice;
+      const stopSuppressed = voice === "hold";
       stopResponse.hidden = !responding;
-      stopResponse.tabIndex = listening ? -1 : 0;
-      stopResponse.setAttribute("aria-hidden", String(!responding || listening));
+      stopResponse.tabIndex = stopSuppressed ? -1 : 0;
+      stopResponse.setAttribute("aria-hidden", String(!responding || stopSuppressed));
       input.readOnly = listening;
       action.classList.toggle("is-send", hasText);
       action.classList.toggle("voice-active", listening);
@@ -116,10 +117,10 @@
         action.setAttribute("aria-label", "Send message");
         action.title = "Send message";
       } else {
-        setActionIcon("mic");
+        setActionIcon(voice === "auto" ? "auto" : "mic");
         if (voice === "auto") {
-          action.setAttribute("aria-label", "Auto listening is active; choose Send or Cancel in the child controls");
-          action.title = "Auto listening";
+          action.setAttribute("aria-label", "Auto listening is on; tap to turn it off");
+          action.title = "Turn off Auto listening";
         } else if (voice === "hold") {
           action.setAttribute("aria-label", "Listening while held; drag to choose and release");
           action.title = "Listening";
@@ -151,10 +152,22 @@
       clearTimeout(fanTimer);
       voice = "auto";
       setTarget("auto", false);
-      setFan(true, true);
+      setFan(false, false);
       sync();
       if (!fromHold) softlyTick();
-      showToast("Auto is listening · choose Send or Cancel");
+      showToast("Auto listening is on · tap the Auto pod to turn it off");
+    }
+
+    function disableAuto() {
+      voice = "idle";
+      setFan(false, false);
+      leaves.forEach((leaf) => {
+        leaf.dataset.active = "false";
+        if (leaf.dataset.voiceTarget === "auto") leaf.setAttribute("aria-pressed", "false");
+      });
+      activeTarget = null;
+      sync();
+      showToast("Auto listening is off");
     }
 
     function finishVoice(result) {
@@ -214,7 +227,7 @@
       input.value = next === "text" ? sampleDraft : "";
       voice = next === "hold" ? "hold" : next === "auto" ? "auto" : "idle";
       if (voice === "hold") { setTarget("send", false); setFan(true, false); }
-      else if (voice === "auto") { setTarget("auto", false); setFan(true, true); }
+      else if (voice === "auto") { setTarget("auto", false); setFan(false, false); }
       else setFan(false, false);
       sync();
     }
@@ -250,15 +263,6 @@
       if (target.closest("[data-review-permission]")) showToast("Approval review belongs in its own permission surface.");
     });
 
-    leaves.forEach((leaf) => {
-      leaf.addEventListener("click", () => {
-        if (voice !== "auto") return;
-        const result = leaf.dataset.voiceTarget;
-        if (result === "auto") { showToast("Auto is still listening"); return; }
-        finishVoice(result);
-      });
-    });
-
     input.addEventListener("input", sync);
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submitText(); }
@@ -290,8 +294,8 @@
     action.addEventListener("click", (event) => {
       if (suppressClick) { event.preventDefault(); return; }
       if (input.value.trim()) { submitText(); return; }
-      if (event.detail === 0 && voice === "idle") enterAuto(false);
-      else if (voice === "auto") showToast("Choose Send or Cancel from the child controls");
+      if (voice === "auto") disableAuto();
+      else if (event.detail === 0 && voice === "idle") enterAuto(false);
     });
     action.addEventListener("animationend", () => action.classList.remove("mode-transition"));
 
