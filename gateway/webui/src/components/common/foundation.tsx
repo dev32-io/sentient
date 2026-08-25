@@ -30,10 +30,13 @@ export interface ActionButtonProps {
   loading?: boolean | undefined;
   className?: string | undefined;
   title?: string | undefined;
+  "aria-expanded"?: boolean | undefined;
+  "aria-controls"?: string | undefined;
+  "aria-pressed"?: boolean | undefined;
   onClick?: (event: MouseEvent) => void | undefined;
 }
 
-export function ActionButton({ children, variant = "default", type = "button", disabled, loading, className, title, onClick }: ActionButtonProps): JSX.Element {
+export function ActionButton({ children, variant = "default", type = "button", disabled, loading, className, title, onClick, ...aria }: ActionButtonProps): JSX.Element {
   return (
     <button
       type={type}
@@ -42,6 +45,7 @@ export function ActionButton({ children, variant = "default", type = "button", d
       aria-busy={loading || undefined}
       title={title}
       onClick={onClick}
+      {...aria}
     >
       {loading && <span class="snt-button__spinner" aria-hidden="true" />}
       <span>{children}</span>

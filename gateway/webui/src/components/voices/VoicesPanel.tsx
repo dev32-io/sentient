@@ -7,8 +7,7 @@ import { createUseVoicePreview } from "../../hooks/use-voice-preview.ts";
 import { useServiceVersions } from "../../hooks/use-service-versions.ts";
 import { useToast } from "../../hooks/use-toast.tsx";
 import { createFishApi } from "../../services/fish-api.ts";
-import { PaneHead } from "../settings/primitives/pane-head.tsx";
-import { Btn } from "../settings/primitives/btn.tsx";
+import { ActionButton, PaneChrome } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import { VoiceFilterBar } from "./VoiceFilterBar.tsx";
 import { VoicePackGrid } from "./VoicePackGrid.tsx";
@@ -87,16 +86,11 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
   }
 
   return (
-    <>
-      <PaneHead
-        title="Voices"
-        sub="Record or upload a clip to clone a voice for Sentient's replies."
-        action={
-          <Btn kind="ghost" size="sm" icon={<Icon name="plus" size={11} />} onClick={() => setAddOpen(true)}>
-            Add voice
-          </Btn>
-        }
-      />
+    <PaneChrome
+      title="Voices"
+      subtitle="Choose a reply voice, or create one from a recording or supported audio file."
+      action={<ActionButton variant="quiet" onClick={() => setAddOpen(true)}><Icon name="plus" size={14} /> Add voice</ActionButton>}
+    >
 
       <VoiceFilterBar
         q={q}
@@ -134,6 +128,6 @@ export function VoicesPanel(props: VoicesPanelProps): JSX.Element {
         fishBrowseEnabled={fishBrowseEnabled}
         onCloneFromFish={handlers.handleCloneFromFish}
       />
-    </>
+    </PaneChrome>
   );
 }

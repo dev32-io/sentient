@@ -8,6 +8,7 @@
 
 import type { JSX } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
+import { ChipControl, FoundationIconButton } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 
 // Constant hover-marquee scroll speed (px/sec). The scroll DURATION is derived
@@ -34,10 +35,11 @@ function useConstantSpeedMarquee() {
       scroller.style.setProperty("--v-marquee-ms", `${ms}ms`);
     };
     apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(viewport);
-    ro.observe(scroller);
-    return () => ro.disconnect();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(apply);
+    observer.observe(viewport);
+    observer.observe(scroller);
+    return () => observer.disconnect();
   }, []);
   return ref;
 }
@@ -105,19 +107,13 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
         onSelect();
       }}
     >
-      <button
-        type="button"
-        class={["v-play", playing && "v-play-on"].filter(Boolean).join(" ")}
-        aria-label={playing ? `Stop preview for ${name}` : `Preview ${name}`}
-        aria-pressed={playing}
+      <FoundationIconButton
+        className={["v-play", playing && "v-play-on"].filter(Boolean).join(" ")}
+        label={playing ? `Stop preview for ${name}` : playLoading ? `Loading preview for ${name}` : `Preview ${name}`}
+        pressed={playing}
         disabled={playDisabled || playLoading}
-        onClick={(e) => {
-          e.stopPropagation();
-          onPlay();
-        }}
-      >
-        <Icon name={playIcon} size={14} />
-      </button>
+        onClick={(event) => { event.stopPropagation(); onPlay(); }}
+      ><Icon name={playIcon} size={14} /></FoundationIconButton>
       <div class="v-meta">
         <div class="v-name">{name}</div>
         <div class="v-info">
@@ -137,17 +133,7 @@ export function VoiceRow(props: VoiceRowProps): JSX.Element {
             <div class="v-scroll" ref={tagsScrollRef}>
               {tags.map((t) =>
                 onTagClick ? (
-                  <button
-                    key={t}
-                    type="button"
-                    class="v-tag"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onTagClick(t);
-                    }}
-                  >
-                    {t}
-                  </button>
+                  <span key={t} onClick={(event) => event.stopPropagation()}><ChipControl onClick={() => onTagClick(t)}>{t}</ChipControl></span>
                 ) : (
                   <span key={t} class="v-tag">
                     {t}

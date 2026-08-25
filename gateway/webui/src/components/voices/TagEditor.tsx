@@ -1,8 +1,7 @@
 // gateway/webui/src/components/voices/TagEditor.tsx
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
-import { TextField } from "../settings/primitives/text-field.tsx";
-import { Chip } from "../settings/primitives/chip.tsx";
+import { ChipControl, Field } from "../common/index.ts";
 
 const SUGGESTED_TAGS = ["warm", "calm", "deep", "bright", "family", "kids", "news", "soft"];
 
@@ -48,9 +47,9 @@ export function TagEditor({ tags, onChange, disabled = false }: TagEditorProps):
       {tags.length > 0 && (
         <div class="voices-tag-row">
           {tags.map((t) => (
-            <Chip key={t} active onClick={() => removeTag(t)} disabled={disabled}>
+            <ChipControl key={t} selected onClick={() => removeTag(t)} disabled={disabled}>
               {t} ×
-            </Chip>
+            </ChipControl>
           ))}
         </div>
       )}
@@ -58,9 +57,9 @@ export function TagEditor({ tags, onChange, disabled = false }: TagEditorProps):
       {suggestions.length > 0 && (
         <div class="voices-tag-row">
           {suggestions.map((t) => (
-            <Chip key={t} active={false} onClick={() => addTag(t)} disabled={disabled || atCap}>
+            <ChipControl key={t} onClick={() => addTag(t)} disabled={disabled || atCap}>
               {t}
-            </Chip>
+            </ChipControl>
           ))}
         </div>
       )}
@@ -72,11 +71,12 @@ export function TagEditor({ tags, onChange, disabled = false }: TagEditorProps):
           addTag(draft);
         }}
       >
-        <TextField
+        <Field
+          label="Add a tag"
           value={draft}
-          onChange={(e) => setDraft((e.target as HTMLInputElement).value.slice(0, TAG_MAX_LEN))}
-          placeholder={atCap ? `Max ${MAX_TAGS} tags` : "Add a tag, press Enter"}
-          fullWidth
+          maxLength={TAG_MAX_LEN}
+          onInput={(event) => setDraft(event.currentTarget.value.slice(0, TAG_MAX_LEN))}
+          placeholder={atCap ? `Maximum ${MAX_TAGS} tags` : "Type a tag and press Enter"}
           disabled={disabled || atCap}
         />
       </form>
