@@ -27,11 +27,24 @@ criteria:
   - KMP capture serialization, frame/terminal ordering, lifecycle cancellation,
     and unchanged Android UI
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: b043ddf8-2f5a-413f-9009-6c2df79f12ea
   reviewedCommit: 83ebc267d38ec0c463ec04ce4f42cc5702be7fbb
+  managerPrompt: Fix F1-F5 before re-review. Implement the reviewed SwiftUI
+    slate/plate/well/float material recipes with v2 tokens/effects (including
+    correct recess/elevation/pressed/focus behavior) in production-owned code,
+    without prototype runtime dependencies. Make SDK/session teardown serialize
+    and await capture cancellation/terminal emission before transport/scope
+    shutdown, with teardown-race tests proving no frames after terminal and no
+    surviving active capture. Make every production Dialog path inert/aria-hide
+    the application background while open and reliably restore it/focus on
+    close, including nested/repeated cases. Preserve and forward Textarea
+    monospace and dirty semantics. For Select, use native select semantics where
+    compatible or implement complete ARIA menu/listbox roles and keyboard
+    behavior (arrows, Home/End, Enter/Space, Escape, focus restoration); add
+    focused accessibility regressions.
 findings:
   - id: F1
     severity: high
