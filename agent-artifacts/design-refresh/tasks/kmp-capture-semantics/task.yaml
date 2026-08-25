@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: kmp-capture-semantics
 title: Implement capture-aware KMP voice uplink and talk-state semantics
-status: submitted
+status: awaiting_ci
 dependsOn:
   - capture-protocol-gateway
 execution:
