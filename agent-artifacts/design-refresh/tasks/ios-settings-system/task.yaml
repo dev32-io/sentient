@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-settings-system
 title: Refresh iOS Settings root and system/Soul panes
-status: submitted
+status: awaiting_ci
 dependsOn:
   - ios-foundation-components
   - verification-inventory-harness
