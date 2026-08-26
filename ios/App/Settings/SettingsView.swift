@@ -123,6 +123,7 @@ private struct SettingsRootView: View {
     let onLogout: () -> Void
     let onCheck: () async -> UpdateStatus
     let onInstall: () -> Void
+    @State private var isConfirmingLogout = false
 
     var body: some View {
         ScrollView {
@@ -133,7 +134,11 @@ private struct SettingsRootView: View {
                 if access.isAdmin { group(groupAdmin, adminItems) }
                 group(groupSupport, supportItems)
 
-                DangerButton(title: logoutLabel, accessibilityId: "settings-logout", action: onLogout)
+                DangerButton(
+                    title: logoutLabel,
+                    accessibilityId: "settings-logout",
+                    action: { isConfirmingLogout = true }
+                )
                     .padding(.top, Space.sm)
 
                 UpdateFooter(
@@ -158,6 +163,16 @@ private struct SettingsRootView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .accessibilityIdentifier("settings-screen")
+        .confirmationDialog(
+            "Log out of Sentient?",
+            isPresented: $isConfirmingLogout,
+            titleVisibility: .visible
+        ) {
+            Button("Log out", role: .destructive, action: onLogout)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll need your household PIN to sign in again.")
+        }
         .duskTheme()
     }
 

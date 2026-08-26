@@ -29,16 +29,23 @@ import MobileData
 /// Which OTA affordance to show, or none. Derived from the model's UpdateStatus
 /// into an Equatable value so SwiftUI can animate the transition (the bridged
 /// KMP `UpdateStatusAvailable` is not Swift-Equatable).
-private enum GateState: Equatable {
+enum UpdateGateState: Equatable {
     case clear
     case banner(String)
     case forced(String)
+}
+
+func updateGateState(version: String?, mandatory: Bool, bannerDismissed: Bool) -> UpdateGateState {
+    guard let version else { return .clear }
+    if mandatory { return .forced(version) }
+    return bannerDismissed ? .clear : .banner(version)
 }
 
 struct UpdateGate: View {
     private let appConfig: AppConfig
     @StateObject private var model: UpdateModel
     @State private var bannerDismissed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let log = AppLog("update", "gate")
 
     init(appConfig: AppConfig) {
@@ -51,10 +58,15 @@ struct UpdateGate: View {
 
     /// Map the live status to the affordance to render. Banner is suppressed once
     /// dismissed; the force gate can never be dismissed.
-    private var gateState: GateState {
-        guard let available = model.status as? UpdateStatusAvailable else { return .clear }
-        if available.mandatory { return .forced(available.versionName) }
-        return bannerDismissed ? .clear : .banner(available.versionName)
+    var gateState: UpdateGateState {
+        guard let available = model.status as? UpdateStatusAvailable else {
+            return updateGateState(version: nil, mandatory: false, bannerDismissed: bannerDismissed)
+        }
+        return updateGateState(
+            version: available.versionName,
+            mandatory: available.mandatory,
+            bannerDismissed: bannerDismissed
+        )
     }
 
     var body: some View {
@@ -79,7 +91,7 @@ struct UpdateGate: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.easeInOut(duration: Motion.normal), value: gateState)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: gateState)
             // COLD-START one-shot: independent of the WS connect path, so it runs at
             // launch (no cold-start-skip) to block a below-min build immediately.
             .task {

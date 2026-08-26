@@ -311,6 +311,39 @@ struct DesignSecureField: View {
     }
 }
 
+/// Secure entry that never offers a reveal action. Use for PINs and write-only
+/// credentials whose raw value must not return to display.
+struct DesignMaskedField: View {
+    let title: String
+    var prompt: String = ""
+    @Binding var text: String
+    var error: String? = nil
+    var accessibilityId: String? = nil
+    var keyboard: UIKeyboardType = .default
+    var autoFocus = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title).font(Typo.ui(TypeScale.base, .medium))
+            SecureField(prompt, text: $text)
+                .font(Typo.ui(TypeScale.base))
+                .textFieldStyle(.plain)
+                .keyboardType(keyboard)
+                .padding(.horizontal, Space.md)
+                .frame(minHeight: DesignMetrics.minimumTarget)
+                .designWell(focused: focused, error: error != nil)
+                .focused($focused)
+                .accessibilityIdentifier(accessibilityId ?? "")
+            if let error {
+                Label(error, systemImage: "exclamationmark.circle.fill")
+                    .font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.stop)
+            }
+        }
+        .task { if autoFocus { focused = true } }
+    }
+}
+
 struct DesignMultilineEditor: View {
     let title: String
     @Binding var text: String

@@ -44,6 +44,8 @@ final class SecretsViewModel {
 
     private(set) var status: SecretsStatus?
     private(set) var isError = false
+    private(set) var isNotAdmin = false
+    private(set) var mutationError: String?
     private(set) var editing: EditTarget = .none
     private(set) var isSavingKey = false
     private(set) var apply: ApplyPhase = .hidden
@@ -60,15 +62,19 @@ final class SecretsViewModel {
 
     /// Load presence status. Idempotent; safe on each `.task`.
     func load() async {
+        isError = false
+        isNotAdmin = false
         do {
             let result = try await admin.getSecretsStatus()
             switch onEnum(of: result) {
             case .success(let s):
                 status = s.data
                 isError = false
+                isNotAdmin = false
                 log.info("secrets.loaded active=\(s.data.llm.active)")
             case .failure(let f):
-                isError = true
+                isNotAdmin = isAuthorizationFailure(kindName: f.error.kind.name)
+                isError = !isNotAdmin
                 log.warn("secrets.load.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
@@ -79,8 +85,8 @@ final class SecretsViewModel {
         }
     }
 
-    func startEditKey(_ provider: Provider) { editing = .key(provider) }
-    func startEditBaseUrl() { editing = .customBaseUrl }
+    func startEditKey(_ provider: Provider) { mutationError = nil; editing = .key(provider) }
+    func startEditBaseUrl() { mutationError = nil; editing = .customBaseUrl }
     func cancelEdit() { editing = .none }
 
     /// Save a provider key (value never logged), refetch, then raise the restart notice.
@@ -141,16 +147,25 @@ final class SecretsViewModel {
             switch onEnum(of: result) {
             case .success:
                 editing = .none
+                mutationError = nil
                 log.info(label)
                 await load()
                 apply = .notice
             case .failure(let f):
+                if isAuthorizationFailure(kindName: f.error.kind.name) {
+                    isNotAdmin = true
+                    status = nil
+                    editing = .none
+                } else {
+                    mutationError = f.error.userMessage
+                }
                 log.warn("secrets.mutate.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
             }
         } catch is CancellationError {
         } catch {
+            mutationError = "Couldn't save this change. Please try again."
             log.warn("secrets.mutate.threw")
         }
     }
