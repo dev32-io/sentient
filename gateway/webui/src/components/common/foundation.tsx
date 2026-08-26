@@ -35,10 +35,13 @@ export interface ActionButtonProps {
   buttonRef?: { current: HTMLButtonElement | null } | undefined;
   expanded?: boolean | undefined;
   hasPopup?: "menu" | "dialog" | boolean | undefined;
+  "aria-expanded"?: boolean | undefined;
+  "aria-controls"?: string | undefined;
+  "aria-pressed"?: boolean | undefined;
   onClick?: (event: MouseEvent) => void | undefined;
 }
 
-export function ActionButton({ children, variant = "default", type = "button", disabled, loading, className, title, role, ariaLabel, buttonRef, expanded, hasPopup, onClick }: ActionButtonProps): JSX.Element {
+export function ActionButton({ children, variant = "default", type = "button", disabled, loading, className, title, role, ariaLabel, buttonRef, expanded, hasPopup, "aria-expanded": ariaExpanded, "aria-controls": ariaControls, "aria-pressed": ariaPressed, onClick }: ActionButtonProps): JSX.Element {
   return (
     <button
       {...(buttonRef ? { ref: buttonRef } : {})}
@@ -49,7 +52,9 @@ export function ActionButton({ children, variant = "default", type = "button", d
       title={title}
       role={role}
       aria-label={ariaLabel}
-      aria-expanded={expanded}
+      aria-expanded={ariaExpanded ?? expanded}
+      aria-controls={ariaControls}
+      aria-pressed={ariaPressed}
       aria-haspopup={hasPopup}
       onClick={onClick}
     >

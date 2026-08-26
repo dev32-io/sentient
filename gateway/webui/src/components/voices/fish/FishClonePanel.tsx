@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { normalizeLanguage } from "@sentient/config";
 import { createFishApi, type FishVoiceEntry } from "../../../services/fish-api.ts";
-import { Btn } from "../../settings/primitives/btn.tsx";
+import { ActionButton, AsyncState, Notice } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 import { FishToolbar } from "./fish-toolbar.tsx";
 import { VoiceTile } from "./fish-voice-tile.tsx";
@@ -72,6 +72,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
   const [visibleCount, setVisibleCount] = useState(PAGE_INCREMENT);
   const [vibesExpanded, setVibesExpanded] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMoreFromServer, setHasMoreFromServer] = useState(false);
@@ -93,6 +94,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
   };
 
   const togglePreview = (v: FishVoiceEntry) => {
+    setPreviewError(null);
     if (!v.previewAudioUrl) return;
     if (playingId === v.id) {
       stopPreview();
@@ -106,8 +108,9 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
       if (audioRef.current === audio) stopPreview();
     });
     audio.play().catch((err) => {
-      log.warn("preview.play.failed", { id: v.id, err: String(err) });
+      log.warn("preview.play.failed", { id: v.id, reason: err instanceof Error ? err.name : "unknown" });
       stopPreview();
+      setPreviewError("Couldn't play this preview.");
     });
   };
 
@@ -184,13 +187,8 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
     void loadMoreFromServer();
   };
 
-  if (loadError) {
-    return <p class="pane-error">{loadError}</p>;
-  }
-
-  if (!voices) {
-    return <div class="pane-skeleton" aria-hidden="true" />;
-  }
+  if (loadError) return <AsyncState state="error" title={loadError} message="Close and reopen the library to retry." />;
+  if (!voices) return <AsyncState state="loading" title="Loading public voices" />;
 
   const handleSelect = (v: FishVoiceEntry) => {
     if (busy) return;
@@ -229,6 +227,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
         setVibesExpanded={setVibesExpanded}
       />
 
+      {previewError && <Notice tone="error">{previewError}</Notice>}
       <div class="v-results">
         <span class="v-result-count">
           {searching && debouncedQ !== ""
@@ -236,9 +235,7 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
             : `${filtered.length} ${filtered.length === 1 ? "voice" : "voices"}`}
         </span>
         {filterActive && (
-          <button type="button" class="v-clear" onClick={() => setFilters(DEFAULT_FILTERS)}>
-            Clear all
-          </button>
+          <ActionButton variant="quiet" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear all</ActionButton>
         )}
       </div>
 
@@ -255,26 +252,13 @@ export function FishClonePanel({ token, busy, onClone }: FishClonePanelProps): J
           />
         ))}
         {visible.length === 0 && (
-          <div class="empty-pad">
-            No voices match these filters.
-            {filterActive && (
-              <>
-                {" "}
-                <button type="button" class="v-clear" onClick={() => setFilters(DEFAULT_FILTERS)}>
-                  Clear all
-                </button>
-              </>
-            )}
-          </div>
+          <AsyncState state="empty" title="No voices match these filters" action={filterActive ? <ActionButton variant="quiet" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear all</ActionButton> : undefined} />
         )}
       </div>
 
       {(hasClientMore || hasMoreFromServer) && (
         <div class="v-loadmore">
-          <Btn kind="secondary" size="sm" disabled={loadingMore} onClick={handleLoadMore}>
-            {loadMoreLabel}
-            <Icon name="chevron" size={12} />
-          </Btn>
+          <ActionButton loading={loadingMore} onClick={handleLoadMore}>{loadMoreLabel}<Icon name="chevron" size={14} /></ActionButton>
         </div>
       )}
     </>

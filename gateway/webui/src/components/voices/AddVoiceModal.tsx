@@ -3,12 +3,7 @@ import type { JSX } from "preact";
 import { useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { LANGUAGE_DISPLAY, SUPPORTED_LANGUAGES } from "@sentient/config";
-import { Modal } from "../settings/primitives/modal.tsx";
-import { Segmented } from "../settings/primitives/segmented.tsx";
-import { TextField } from "../settings/primitives/text-field.tsx";
-import { Textarea } from "../settings/primitives/textarea.tsx";
-import { Select } from "../settings/primitives/select.tsx";
-import { Btn } from "../settings/primitives/btn.tsx";
+import { ActionButton, ActionRow, Dialog, Field, SegmentedControl, SelectControl, TextArea } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import { VoiceCapture } from "./VoiceCapture.tsx";
 import { FishClonePanel, type FishClonePickInput } from "./fish/FishClonePanel.tsx";
@@ -179,39 +174,22 @@ export function AddVoiceModal({
     name.trim().length > 0 && !busy && (mode === "fish" ? fishVoiceId !== null : Boolean(audio));
 
   return (
-    <Modal
+    <Dialog
       title="Add a voice"
       width={MODAL_WIDTH}
       onClose={resetAndClose}
-      footer={
-        <>
-          <Btn kind="ghost" size="sm" onClick={resetAndClose} disabled={busy}>
-            Cancel
-          </Btn>
-          {showEditor && (
-            <Btn kind="primary" size="sm" onClick={() => void handleSubmit()} disabled={!canSubmit}>
-              {busy ? "Cloning…" : "Clone voice"}
-            </Btn>
-          )}
-        </>
-      }
+      closeOnBackdrop={!busy}
+      closeOnEscape={!busy}
+      footer={<ActionRow><ActionButton variant="quiet" onClick={resetAndClose} disabled={busy}>Cancel</ActionButton>{showEditor && <ActionButton variant="primary" loading={busy} onClick={() => void handleSubmit()} disabled={!canSubmit}>Clone voice</ActionButton>}</ActionRow>}
     >
       <div class="voices-add-body">
-        <Segmented value={mode} onChange={handleModeChange} options={modeOptions} disabled={busy} />
+        <SegmentedControl label="Voice source" value={mode} onChange={handleModeChange} options={modeOptions} disabled={busy} />
 
         {mode === "record" && <VoiceCapture onBlob={handleCaptured} disabled={busy} />}
 
         {mode === "upload" && (
           <div class="voices-rec">
-            <Btn
-              kind="secondary"
-              size="sm"
-              icon={<Icon name="plus" size={12} />}
-              disabled={busy}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {audio ? "Replace file" : "Choose file"}
-            </Btn>
+            <ActionButton disabled={busy} onClick={() => fileInputRef.current?.click()}><Icon name="plus" size={14} />{audio ? "Replace file" : "Choose file"}</ActionButton>
             <input
               ref={fileInputRef}
               class="voices-upload-input"
@@ -239,38 +217,16 @@ export function AddVoiceModal({
 
         {showEditor && (
           <>
-            <label class="lst-field">
-              <span class="lst-field-l">Name</span>
-              <TextField
-                value={name}
-                onChange={(e) => setName((e.target as HTMLInputElement).value)}
-                placeholder="e.g. Dad"
-                fullWidth
-                disabled={busy}
-              />
-            </label>
+            <Field label="Name" value={name} onInput={(event) => setName(event.currentTarget.value)} placeholder="For example: Dad" disabled={busy} />
 
-            <label class="lst-field">
-              <span class="lst-field-l">Description</span>
-              <Textarea
-                value={description}
-                onChange={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
-                placeholder="Optional — how this voice sounds or when to use it"
-                rows={3}
-                maxLength={DESCRIPTION_MAX_LEN}
-                disabled={busy}
-              />
-            </label>
+            <TextArea label="Description" value={description} onInput={(event) => setDescription(event.currentTarget.value)} placeholder="Optional — how this voice sounds or when to use it" rows={3} maxLength={DESCRIPTION_MAX_LEN} disabled={busy} />
 
-            <label class="lst-field">
-              <span class="lst-field-l">Language</span>
-              <Select value={language} onChange={setLanguage} options={LANG_OPTIONS} disabled={busy} />
-            </label>
+            <SelectControl label="Language" value={language} onChange={setLanguage} options={LANG_OPTIONS} disabled={busy} />
 
             <TagEditor tags={tags} onChange={setTags} disabled={busy} />
           </>
         )}
       </div>
-    </Modal>
+    </Dialog>
   );
 }

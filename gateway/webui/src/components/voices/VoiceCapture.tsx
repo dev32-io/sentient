@@ -5,7 +5,7 @@ import { createLogger } from "@sentient/web-sdk";
 import { createWebAudioCapture } from "../../adapters/web-audio-capture.ts";
 import { encodeWav } from "../../audio/wav-encoder.ts";
 import { CAPTURE_SAMPLE_RATE } from "../../constants.ts";
-import { Btn } from "../settings/primitives/btn.tsx";
+import { ActionButton, ActionRow, Notice } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 
 const log = createLogger(["sentient", "webui", "voices", "capture"]);
@@ -98,9 +98,7 @@ export function VoiceCapture({ onBlob, disabled = false }: VoiceCaptureProps): J
   if (state === "denied") {
     return (
       <div class="voices-rec voices-rec--denied">
-        <p class="pane-error">
-          {deniedMessage ?? "Microphone access denied."} Use the Upload tab instead.
-        </p>
+        <Notice tone="error">{deniedMessage ?? "Microphone access denied."} Use Upload instead.</Notice>
       </div>
     );
   }
@@ -109,14 +107,14 @@ export function VoiceCapture({ onBlob, disabled = false }: VoiceCaptureProps): J
     return (
       <div class="voices-rec">
         <p class="voices-rec-hint">Recorded {(elapsedMs / MS_PER_SECOND).toFixed(1)}s.</p>
-        <div class="voices-rec-row">
-          <Btn kind="secondary" size="sm" onClick={reset} disabled={disabled}>
+        <ActionRow>
+          <ActionButton onClick={reset} disabled={disabled}>
             Re-record
-          </Btn>
-          <Btn kind="primary" size="sm" onClick={useThisTake} disabled={disabled}>
+          </ActionButton>
+          <ActionButton variant="primary" onClick={useThisTake} disabled={disabled}>
             Use this take
-          </Btn>
-        </div>
+          </ActionButton>
+        </ActionRow>
       </div>
     );
   }
@@ -128,19 +126,18 @@ export function VoiceCapture({ onBlob, disabled = false }: VoiceCaptureProps): J
       <div class="voices-rec voices-rec--live">
         <span class="voices-rec-dot" aria-hidden="true" />
         <span class="voices-rec-time">{seconds.toFixed(1)}s</span>
-        <Btn kind="primary" size="sm" onClick={finishRecording} disabled={!canFinish}>
+        <ActionButton variant="primary" onClick={finishRecording} disabled={!canFinish}>
           Use recording
-        </Btn>
-        <Btn
-          kind="ghost"
-          size="sm"
+        </ActionButton>
+        <ActionButton
+          variant="quiet"
           onClick={() => {
             stopCapture();
             reset();
           }}
         >
           Cancel
-        </Btn>
+        </ActionButton>
         {!canFinish && (
           <span class="voices-rec-hint">Record at least {MIN_RECORDING_SECONDS}s to continue.</span>
         )}
@@ -150,15 +147,13 @@ export function VoiceCapture({ onBlob, disabled = false }: VoiceCaptureProps): J
 
   return (
     <div class="voices-rec">
-      <Btn
-        kind="primary"
-        size="sm"
-        icon={<Icon name="mic" size={12} />}
+      <ActionButton
+        variant="primary"
         onClick={() => void startRecording()}
         disabled={disabled}
       >
-        Record
-      </Btn>
+        <Icon name="mic" size={14} /> Record
+      </ActionButton>
       <span class="voices-rec-hint">Record ~10–15s of clear speech.</span>
     </div>
   );

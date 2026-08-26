@@ -1,7 +1,5 @@
-/* ==========================================================
-   Panes CSS — ported from sentient-webui-design-v2/styles.css
-   All rules namespaced under .settings-v2
-   ========================================================== */
+/* Product-specific settings and voice composition.
+   Shared controls and material treatments live in common/foundation.css. */
 
 /* ---- Invented: pane-level state/utility ---- */
 .settings-v2 .pane-error {
@@ -566,8 +564,7 @@
 .settings-v2 .tc-th {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--color-ink-3);
 }
 .settings-v2 .tc-name {
@@ -1240,4 +1237,63 @@
 .settings-v2 .v-del:disabled {
   opacity: .4;
   cursor: not-allowed;
+}
+
+/* Soul and voice product surfaces use foundation controls; these rules only
+   arrange domain content and preserve reflow at narrow/zoomed widths. */
+.settings-v2 .mod.snt-button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  color: inherit;
+}
+.settings-v2 .mod.snt-button > span { display: block; width: 100%; }
+.settings-v2 .mcp-h > .mcp-h-btn { flex: 1 1 auto; min-width: 0; }
+.settings-v2 .mcp-h-btn > span {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.settings-v2 .lst-row-btn > span { display: flex; align-items: center; gap: 10px; }
+.settings-v2 .voice { height: auto; min-height: 96px; max-height: none; }
+.settings-v2 .voice-filter .snt-field { flex: 1 1 220px; }
+.settings-v2 .v-toolbar .snt-field { flex: 1 1 160px; min-width: 0; }
+.settings-v2 .v-filter-label,
+.settings-v2 .v-result-count,
+.settings-v2 .voices-rec-hint,
+.settings-v2 .mcp-desc,
+.settings-v2 .mcp-count,
+.settings-v2 .tc-desc,
+.settings-v2 .tc-placeholder,
+.settings-v2 .memory-count { font-size: max(var(--font-size-sm), 0.78125rem); }
+
+@media (max-width: 620px) {
+  .settings-v2 .tool-row,
+  .settings-v2 .tool-row.tool-row-perm {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 12px;
+  }
+  .settings-v2 .tool-row-head { display: none; }
+  .settings-v2 .mcp-h { align-items: flex-start; padding: 12px; }
+  .settings-v2 .mcp-h-btn > span { align-items: flex-start; flex-wrap: wrap; }
+  .settings-v2 .mcp-count { margin-left: 36px; }
+  .settings-v2 .lst-row-main { align-items: flex-start; flex-direction: column; }
+  .settings-v2 .voice-filter-row { align-items: stretch; flex-direction: column; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .settings-v2 .voice,
+  .settings-v2 .v-tag-toggle,
+  .settings-v2 .v-clear { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-v2 .pane-skeleton,
+  .settings-v2 .voices-rec-dot,
+  .settings-v2 .voice:hover .v-scroll { animation: none; }
+  .settings-v2 .lst-chev,
+  .settings-v2 .mcp-chev { transition: none; }
 }

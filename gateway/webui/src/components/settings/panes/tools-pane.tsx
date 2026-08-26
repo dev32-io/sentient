@@ -9,10 +9,7 @@ import type {
   ProfileApi,
   ProfileV1,
 } from "../../../services/profile-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Toggle } from "../primitives/toggle.tsx";
-import { Select, type SelectOption } from "../primitives/select.tsx";
+import { ActionButton, AsyncState, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 import {
   effectiveToolPermission,
@@ -61,9 +58,10 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
   const permissions = draft.tools.permissions;
   const toolsets = draft.tools.toolsets ?? [];
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [hermesOpen, setHermesOpen] = useState(true);
+  const [builtinsOpen, setBuiltinsOpen] = useState(true);
   const [catalog, setCatalog] = useState<McpCatalogView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     if (!token) return;
@@ -82,7 +80,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     return () => {
       cancelled = true;
     };
-  }, [api, token]);
+  }, [api, token, loadAttempt]);
 
   const handleToolPermissionChange = (serverId: string, toolName: string, permission: ToolPermission) => {
     log.debug("tools.permission.change", { serverId, toolName, permission });
@@ -112,18 +110,18 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
     });
   };
 
-  const handleToggleHermesToolset = (toolset: string) => {
+  const handleToggleBuiltinToolset = (toolset: string) => {
     const isOn = toolsets.includes(toolset);
     const next = isOn ? toolsets.filter((t) => t !== toolset) : [...toolsets, toolset];
-    log.debug("tools.toggle-hermes-toolset", { toolset, nextOn: !isOn });
+    log.debug("tools.toggle-builtin-toolset", { toolset, nextOn: !isOn });
     onDraftTools({ ...draft.tools, toolsets: next });
   };
 
   if (!catalog) {
     return (
       <>
-        <PaneHead title="Tools" sub="Loading MCP catalog…" />
-        {error && <div class="empty-pad">Failed to load catalog ({error}). Reload to retry.</div>}
+        <header class="snt-page-head"><div><h2 class="snt-page-title">Tools</h2><p class="snt-page-subtitle">Loading available capabilities…</p></div></header>
+        {error ? <AsyncState state="error" title="Couldn't load tools" message="Your permissions were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} /> : <AsyncState state="loading" title="Loading tools" />}
       </>
     );
   }
@@ -133,16 +131,13 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
   return (
     <>
-      <PaneHead
-        title="Tools"
-        sub="Pick Allow / Ask / Deny / Off per tool. A product group's master switch can hide all of its tools at once, or reset them to role defaults. Changes apply after you save settings."
-      />
+      <header class="snt-page-head"><div><h2 class="snt-page-title">Tools</h2><p class="snt-page-subtitle">Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings.</p></div></header>
 
-      <Card title="Product tools" padding={false}>
+      <SettingsCard title="Connected capabilities" padded={false}>
         <div class="mcp-list">
           {serverIds.length === 0 && (
             <div class="empty-pad">
-              No tools configured. An admin can add tools in <code>gateway/config.yaml#mcp_catalog</code>.
+              No connected capabilities are available. An admin can review system Diagnostics for setup help.
             </div>
           )}
           {serverIds.map((id) => {
@@ -170,14 +165,14 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
             );
           })}
         </div>
-      </Card>
+      </SettingsCard>
 
-      <HermesBuiltinsCard
+      <BuiltinToolsCard
         tools={catalog.hermesBuiltins}
         enabledToolsets={toolsets}
-        isOpen={hermesOpen}
-        onToggleOpen={() => setHermesOpen((v) => !v)}
-        onToggleToolset={handleToggleHermesToolset}
+        isOpen={builtinsOpen}
+        onToggleOpen={() => setBuiltinsOpen((v) => !v)}
+        onToggleToolset={handleToggleBuiltinToolset}
       />
     </>
   );
@@ -214,33 +209,13 @@ function McpServerSection(props: McpServerSectionProps): JSX.Element {
 
   return (
     <div class="mcp">
-      <div
-        class="mcp-h mcp-h-btn"
-        role="button"
-        tabIndex={0}
-        onClick={onToggleOpen}
-        onKeyDown={(e: KeyboardEvent) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggleOpen();
-          }
-        }}
-      >
-        <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}>
-          <Icon name="chevron" size={12} />
-        </span>
-        <div class="mcp-id">
-          <div class="mcp-name">
-            <code class="kbd">{id}</code>
-          </div>
-          {entry.description && <div class="mcp-desc dim">{entry.description}</div>}
-        </div>
-        <span class="mcp-count dim">
-          {toolsActive}/{toolsTotal} tools
-        </span>
-        <span onClick={(e: MouseEvent) => e.stopPropagation()}>
-          <Toggle on={masterOn} onChange={() => onMasterToggle(!masterOn)} />
-        </span>
+      <div class="mcp-h">
+        <ActionButton className="mcp-h-btn" variant="quiet" aria-expanded={isOpen} onClick={onToggleOpen}>
+          <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}><Icon name="chevron" size={14} /></span>
+          <span class="mcp-id"><span class="mcp-name"><code class="kbd">{id}</code></span>{entry.description && <span class="mcp-desc dim">{entry.description}</span>}</span>
+          <span class="mcp-count dim">{toolsActive}/{toolsTotal} tools</span>
+        </ActionButton>
+        <ToggleControl label={`Enable ${id} capabilities`} checked={masterOn} onChange={onMasterToggle} />
       </div>
       {isOpen && (
         <PermissionToolTable
@@ -259,11 +234,10 @@ function McpServerSection(props: McpServerSectionProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Hermes built-ins card (unchanged: toolset on/off, not a per-tool
-// permission — Task 6 only replaces the MCP + gateway-native controls).
+// Built-in capabilities use toolset on/off controls rather than per-tool permissions.
 // ---------------------------------------------------------------------------
 
-interface HermesBuiltinsCardProps {
+interface BuiltinToolsCardProps {
   tools: readonly HermesBuiltinToolView[];
   enabledToolsets: readonly string[];
   isOpen: boolean;
@@ -271,7 +245,7 @@ interface HermesBuiltinsCardProps {
   onToggleToolset: (toolset: string) => void;
 }
 
-function HermesBuiltinsCard(props: HermesBuiltinsCardProps): JSX.Element {
+function BuiltinToolsCard(props: BuiltinToolsCardProps): JSX.Element {
   const { tools, enabledToolsets, isOpen, onToggleOpen, onToggleToolset } = props;
   // Count tools by their toolset's current on/off state. A toolset row is
   // "on" iff its toolset name is in `profile.tools.toolsets`.
@@ -287,37 +261,14 @@ function HermesBuiltinsCard(props: HermesBuiltinsCardProps): JSX.Element {
   }, [tools]);
 
   return (
-    <Card title="Hermes built-in tools" padding={false}>
+    <SettingsCard title="Assistant capabilities" subtitle="Built-in capabilities grouped by purpose." padded={false}>
       <div class="mcp-list">
         <div class="mcp">
-          <div
-            class="mcp-h mcp-h-btn"
-            role="button"
-            tabIndex={0}
-            onClick={onToggleOpen}
-            onKeyDown={(e: KeyboardEvent) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onToggleOpen();
-              }
-            }}
-          >
-            <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}>
-              <Icon name="chevron" size={12} />
-            </span>
-            <div class="mcp-id">
-              <div class="mcp-name">
-                <code class="kbd">hermes</code>
-              </div>
-              <div class="mcp-desc dim">
-                Tools that run inside Hermes itself (memory, todo, web, browser, etc.). Toggles operate on toolset
-                groups — flipping any tool in a group flips the whole group.
-              </div>
-            </div>
-            <span class="mcp-count dim">
-              {activeCount}/{totalCount} tools
-            </span>
-          </div>
+          <ActionButton className="mcp-h mcp-h-btn" variant="quiet" aria-expanded={isOpen} onClick={onToggleOpen}>
+            <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}><Icon name="chevron" size={14} /></span>
+            <span class="mcp-id"><span class="mcp-name">Built in</span><span class="mcp-desc dim">Capabilities provided by the assistant, including memory, lists, web access, and browsing. A switch controls its entire capability group.</span></span>
+            <span class="mcp-count dim">{activeCount}/{totalCount} tools</span>
+          </ActionButton>
           {isOpen && (
             <ToggleToolTable
               rows={sorted.map((t) => ({
@@ -332,7 +283,7 @@ function HermesBuiltinsCard(props: HermesBuiltinsCardProps): JSX.Element {
           )}
         </div>
       </div>
-    </Card>
+    </SettingsCard>
   );
 }
 
@@ -364,7 +315,8 @@ function PermissionToolTable({ rows }: { rows: readonly PermissionToolRow[] }): 
       {rows.map((r) => (
         <div key={r.key} class={["tool-row", "tool-row-perm", permissionRowModifier(r.permission)].join(" ")}>
           <div class="tc-tog">
-            <Select
+            <SelectControl
+              label={`${r.name} permission`}
               value={r.permission}
               options={PERMISSION_OPTIONS}
               onChange={(v) => r.onChange(v as ToolPermission)}
@@ -382,8 +334,7 @@ function PermissionToolTable({ rows }: { rows: readonly PermissionToolRow[] }): 
 }
 
 // ---------------------------------------------------------------------------
-// Toggle tool table — the original boolean on/off table, kept for the Hermes
-// built-ins card (toolset on/off is not a 4-state permission).
+// Built-in toolsets use boolean controls rather than four-state permissions.
 // ---------------------------------------------------------------------------
 
 interface ToggleToolRow {
@@ -406,7 +357,7 @@ function ToggleToolTable({ rows }: { rows: readonly ToggleToolRow[] }): JSX.Elem
       {rows.map((r) => (
         <div key={r.key} class="tool-row">
           <div class="tc-tog">
-            <Toggle on={r.on} onChange={r.onChange} />
+            <ToggleControl label={`Enable ${r.name}`} checked={r.on} onChange={r.onChange} />
           </div>
           <div class="tc-name">
             <code class="kbd">{r.name}</code>
