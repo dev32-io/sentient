@@ -1,0 +1,16 @@
+schemaVersion: 1
+evaluation: final-branch-review
+recordedAt: 2026-08-26T01:34:45.790Z
+entries:
+  - result: Most automated checks passed; closed visual check failed with 373
+      pending entries; STT probe submitted only pre-End partial text.
+    command: design checks; focused protocol/SDK/gateway/WebUI/mobile/Android
+      checks; closed visual check; deterministic STT probe
+    description: Sanitized fresh review summary and probe outcome.
+    path: files/001-1-design-refresh-final-review-evidence.txt
+    checksum: sha256:e5b1fbe0cfd52bed47f82f6fc3f982ce135ef57ed955d5229037d3019f660dfa
+  - result: All three assets matched
+      bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b.
+    command: sha256sum gateway/webui/public/assets/sentient-avatar.riv
+      ios/App/Resources/Identity/sentient-avatar.riv
+      design/prototype/foundation-components/assets/avatars/sentient-avatar.riv

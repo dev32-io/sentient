@@ -1,0 +1,5 @@
+Reviewed boundary: d662a65baa030e8f29757bac0a260b3b1f948a7f..ed78cfb880978aa0e86950a12f5efd7af73db049
+Visual manifest status: 373 pending, 0 reviewed; implementation inventory: 371 reviewed, 2 unreachable.
+Closed visual check: FAIL — design refresh visual review is not closed (373 entries).
+Manual STT synthetic probe: pre-End transcript "partial", post-End transcript "final words"; submitted result was ["partial"].
+Fresh passing checks: design foundation; avatar verification; ordinary inventory validation; protocol/Web SDK tests; focused gateway capture tests (42); WebUI tests (277), typecheck, build; shared/mobile and Android aggregate command; Android UI diff empty; three Rive SHA-256 values matched bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b; git diff --check.

@@ -4,14 +4,47 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - Review the complete executionStartCommit..reviewedCommit feature diff as one
     integrated change for specification fit, cross-stage correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
+  reviewedCommit: ed78cfb880978aa0e86950a12f5efd7af73db049
+findings:
+  - id: FINAL-001
+    severity: high
+    status: open
+    criterion: AC-009 / manual Send commits only after successful final flush
+    location: gateway/src/session-handlers/stt-session.ts:438-469
+    summary: Manual End eagerly submits the pre-End transcript and drops the later
+      finalized callback, producing truncated turns.
+    blocking: true
+  - id: FINAL-002
+    severity: high
+    status: open
+    criterion: Content-free sanitized diagnostics
+    location: shared/protocol/src/messages.ts:177-202;
+      gateway/src/session-handlers/ws-handlers.ts:279-369;
+      gateway/src/session-handlers/stt-session.ts:148-554
+    summary: Arbitrary protocol-valid capture IDs are logged verbatim, allowing
+      untrusted content into logs.
+    blocking: true
+  - id: FINAL-003
+    severity: high
+    status: open
+    criterion: AC-004 / AC-012
+    location: qa/design-refresh/visual-review.json; qa/design-refresh/check.ts:262-276
+    summary: All 373 structured visual-review entries remain pending and the closed
+      review check fails.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/final-branch-review/manifest.yaml
