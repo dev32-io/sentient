@@ -8,6 +8,7 @@ import "./components/settings/apply-bar/apply-bar.css";
 import "./components/settings/primitives/primitives.css";
 import "./components/settings/panes/panes.css";
 import "./components/common/dialog.css";
+import "./components/chat/chat-messages.css";
 import "./components/sessions/drawer.css";
 import "./components/permission/permission-dialog.css";
 import { App } from "./app.tsx";

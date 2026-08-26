@@ -10,7 +10,7 @@ import { createAuthApi } from "./services/auth-api.js";
 import { createProfileApi } from "./services/profile-api.js";
 import { ChatView } from "./components/chat/chat-view.tsx";
 import type { AvatarTint } from "./components/common/avatar.tsx";
-import type { SentientMarkMode } from "./components/common/sentient-mark.tsx";
+import type { SentientIdentityState } from "./components/common/sentient-identity.tsx";
 import { Composer } from "./components/dock/composer.tsx";
 import { LoginScreen } from "./components/auth/login-screen.tsx";
 import { markAuthExpired, takeAuthExpired } from "./components/auth/auth-expiry.ts";
@@ -162,14 +162,21 @@ function AppInner() {
   const tasks = client.tasks.value;
   const runningTasks = tasks.filter((t) => t.status === "running").length;
   const canInterrupt = cycleStatus !== "idle" || runningTasks > 0;
-  // Avatar mode for the active cycle's bubble: speaking when audio is
-  // playing, thinking during cognition/awaiting-response, idle otherwise.
-  // The "..." pulse-dot era falls under streaming since the cycle starts
-  // with empty text until the first delta lands.
-  const activeCycleMode: SentientMarkMode =
-    cycleStatus === "speaking" ? "responding" : cycleStatus === "streaming" ? "thinking" : "idle";
-  // Listening is composer-owned and never activates the identity adapter.
-  const topbarMarkMode: SentientMarkMode = activeCycleMode;
+  const messages = client.messages.value;
+  const currentTurnId = client.currentTurnId.value;
+  const latestActiveAssistant = [...messages].reverse().find((message) =>
+    message.role === "assistant" && message.turnId === currentTurnId
+  );
+  // Cognition/action waits are thinking. The first visible assistant text and
+  // active playback are responding. Background tasks and listening do not
+  // activate a message identity; those remain composer-owned.
+  const activeCycleState: SentientIdentityState =
+    cycleStatus === "speaking" || (cycleStatus === "streaming" && Boolean(latestActiveAssistant?.text))
+      ? "responding"
+      : cycleStatus === "streaming"
+        ? "thinking"
+        : "idle";
+  const topbarMarkMode: SentientIdentityState = activeCycleState;
   const sdkStatus = client.sdkStatus.value;
   const connectionLost = client.connectionLost.value;
   const authExpired = client.authExpired.value;
@@ -267,11 +274,12 @@ function AppInner() {
         main={
           route === "chat" ? (
             <ChatView
-              messages={client.messages.value}
+              messages={messages}
               transcript={client.transcript.value}
-              currentTurnId={client.currentTurnId.value}
-              activeCycleMode={activeCycleMode}
+              currentTurnId={currentTurnId}
+              activeCycleState={activeCycleState}
               currentUser={{ displayName: user.displayName, avatarTint: user.avatarTint as AvatarTint }}
+              status={connectionLost ? "error" : connectionReady ? "ready" : "loading"}
             />
           ) : route === "calendar" ? (
             <CalendarView token={token} />
