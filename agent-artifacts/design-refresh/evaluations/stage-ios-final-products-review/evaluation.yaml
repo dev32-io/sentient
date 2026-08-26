@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: ios-final-products
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -22,8 +22,8 @@ criteria:
   - Startup readiness integration, native NavigationStack/sheets/alerts, and
     larger Dynamic Type
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: c3a92723-65db-48a1-a32d-e1c9ea5c117c
   reviewedCommit: ea022ab262853f819870ea2f39c857a9c79ace8d
@@ -39,6 +39,7 @@ loop:
     state-machine regressions for Auto + typed draft + explicit Auto exit,
     normal held release, and held system cancellation/interruption. Do not use
     microphone/STT/TTS/audio in proof.
+  fixerAgentId: 521880fc-1b68-4709-930d-f6e16b971157
 findings:
   - id: IOS-FINAL-001
     severity: high
