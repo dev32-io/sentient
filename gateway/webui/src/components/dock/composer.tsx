@@ -1,162 +1,182 @@
 import type { TaskListItem } from "@sentient/protocol";
-import type { JSX } from "preact";
+import type { JSX, RefObject } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
+import { Icon } from "../common/icon.tsx";
 import { ComposerTaskStrip } from "./composer-task-strip.tsx";
 import { InterruptButton } from "./interrupt-button.tsx";
-import { MicCorner } from "./mic-corner.tsx";
-import type { MicCornerMode } from "./mic-corner-gesture.ts";
-import { PttWave } from "./ptt-wave.tsx";
-import { SendButton } from "./send-button.tsx";
 import { SuggestionChips } from "./suggestion-chips.tsx";
 import { TtsButton } from "./tts-button.tsx";
+import { type VoiceCaptureMode, type VoiceCaptureState, VoiceCaptureControl } from "./voice-capture-control.tsx";
 
-export interface ComposerProps {
+export interface ChatComposerProps {
   cycleStatus: CycleStatus;
-  voiceMode: "off" | "active";
-  canInterrupt: boolean;
-  /**
-   * True when the SDK is in `ready` state — text submission flows. False
-   * during connect/auth/reconnect: Send button disables, submitting shows
-   * an inline pill instead of clearing the textarea.
-   */
   connectionReady: boolean;
-  /** Reflects `useVoiceClient().prefs.value.ttsEnabled` — server-of-record. */
+  captureActive: boolean;
   ttsEnabled: boolean;
   suggestions: readonly string[];
-  /** The gateway's live task list. Server-owned: the strip renders it, it never
-   *  derives which rows exist or when they leave. */
+  /** Full-state `tasklist.state`; the composer never infers row lifetime. */
   tasks: readonly TaskListItem[];
   onSendText(text: string): void;
-  /** Corner mic pressed/locked — start voice mode. Rejection resets the control. */
-  onMicStart(): Promise<void>;
-  /** Corner mic released/unlocked — stop voice mode. */
-  onMicStop(): void;
-  /** Optimistic flip + persist via profile PUT + WS preference patch. */
+  onCaptureStart(mode: VoiceCaptureMode): Promise<string>;
+  onCaptureCommit(captureId: string): Promise<void>;
+  onCaptureCancel(captureId: string): Promise<void>;
   onTtsToggle(): void;
   onInterrupt(): void;
   onSuggestionClick(text: string): void;
 }
 
-const VOICE_PLACEHOLDER = "Listening — just speak, or type here";
-const IDLE_PLACEHOLDER = "Type or speak — Sentient will listen";
-const VOICE_PLACEHOLDER_SHORT = "Listening — speak or type";
-const IDLE_PLACEHOLDER_SHORT = "Message Sentient";
-
-function placeholderFor(voiceMode: "off" | "active", short: boolean): string {
-  if (voiceMode === "active") return short ? VOICE_PLACEHOLDER_SHORT : VOICE_PLACEHOLDER;
-  return short ? IDLE_PLACEHOLDER_SHORT : IDLE_PLACEHOLDER;
-}
-
-// Stable per-mount: matched once. Two separate concerns:
-//  - touch device → blur after send (dismiss the on-screen keyboard like
-//    ChatGPT/Claude do; narrow desktop has no keyboard to dismiss)
-//  - narrow viewport → use the short placeholder copy (also catches narrow
-//    desktop windows, where the long copy wraps awkwardly)
 function isTouchDevice(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.("(hover: none) and (pointer: coarse)").matches;
+}
+
+interface DraftEditorProps {
+  value: string;
+  hidden: boolean;
+  inputRef: RefObject<HTMLTextAreaElement>;
+  onInput(value: string): void;
+  onSubmit(): void;
+}
+
+function DraftEditor({ value, hidden, inputRef, onInput, onSubmit }: DraftEditorProps): JSX.Element {
+  function resize(element: HTMLTextAreaElement): void {
+    element.style.height = "auto";
+    element.style.height = `${Math.min(132, Math.max(42, element.scrollHeight))}px`;
+  }
+
   return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(hover: none) and (pointer: coarse)").matches
+    <textarea
+      ref={inputRef}
+      class={`chat-composer__draft${hidden ? " chat-composer__draft--receded" : ""}`}
+      aria-label="Message Sentient"
+      placeholder="Message Sentient"
+      value={value}
+      onInput={(event) => {
+        const element = event.currentTarget;
+        onInput(element.value);
+        resize(element);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          onSubmit();
+        }
+      }}
+    />
   );
 }
 
-function isNarrowViewport(): boolean {
+interface ComposerActionsProps {
+  draftPresent: boolean;
+  held: boolean;
+  canInterrupt: boolean;
+  connectionReady: boolean;
+  captureActive: boolean;
+  ttsEnabled: boolean;
+  onSend(): void;
+  onTtsToggle(): void;
+  onInterrupt(): void;
+  onCaptureStart(mode: VoiceCaptureMode): Promise<string>;
+  onCaptureCommit(captureId: string): Promise<void>;
+  onCaptureCancel(captureId: string): Promise<void>;
+  onVoiceState(state: VoiceCaptureState): void;
+}
+
+function ComposerActions(props: ComposerActionsProps): JSX.Element {
   return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(max-width: 620px)").matches
+    <div class="chat-composer__actions">
+      <button class="chat-composer__attach" type="button" disabled aria-label="Attachments are not available" title="Attachments are not available">
+        <Icon name="plus" size={18} />
+      </button>
+      <TtsButton enabled={props.ttsEnabled} onToggle={props.onTtsToggle} />
+      <span class="chat-composer__grow" />
+      <span class={`chat-composer__interrupt${props.held ? " chat-composer__interrupt--receded" : ""}`}>
+        {props.canInterrupt && <InterruptButton onInterrupt={props.onInterrupt} />}
+      </span>
+      {props.draftPresent ? (
+        <button class="chat-composer__send" type="button" disabled={!props.connectionReady} aria-label="Send message" onClick={props.onSend}>
+          <Icon name="send" size={17} />
+        </button>
+      ) : (
+        <VoiceCaptureControl
+          disabled={!props.connectionReady}
+          captureActive={props.captureActive}
+          onStart={props.onCaptureStart}
+          onCommit={props.onCaptureCommit}
+          onCancel={props.onCaptureCancel}
+          onStateChange={props.onVoiceState}
+        />
+      )}
+    </div>
   );
 }
 
-export function Composer(props: ComposerProps): JSX.Element {
-  const { cycleStatus, voiceMode, canInterrupt, connectionReady, ttsEnabled, suggestions, tasks } = props;
-  const { onSendText, onMicStart, onMicStop, onTtsToggle, onInterrupt, onSuggestionClick } = props;
-
-  const [text, setText] = useState("");
-  const [submitBlockedFlash, setSubmitBlockedFlash] = useState(false);
-  // Corner-mic mode drives the recording takeover: waveform overlays the
-  // (hidden, draft-preserving) textarea and the row keeps only Interrupt.
-  const [micMode, setMicMode] = useState<MicCornerMode>("idle");
-  const areaRef = useRef<HTMLTextAreaElement>(null);
-  // Touch devices: blur after send to dismiss the on-screen keyboard so the
-  // freshly streaming reply isn't hidden behind it. Desktop keeps focus.
+export function ChatComposer(props: ChatComposerProps): JSX.Element {
+  const [draft, setDraft] = useState("");
+  const [voiceState, setVoiceState] = useState<VoiceCaptureState>(props.connectionReady ? "idle" : "reconnect-disabled");
+  const [blockedFlash, setBlockedFlash] = useState(false);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const blurAfterSend = useRef(isTouchDevice());
-  const shortPlaceholder = useRef(isNarrowViewport());
+  const held = voiceState === "hold";
+  const captureLive = voiceState === "hold" || voiceState === "auto" || voiceState === "transitioning";
+  const canInterrupt = props.cycleStatus !== "idle";
 
-  const voiceActive = voiceMode === "active";
-  const isStreaming = cycleStatus !== "idle";
-  const isLive = micMode !== "idle";
-
-  const composerClasses = [
-    "composer",
-    voiceActive ? "composer--listening" : "",
-    isLive ? "composer--live" : "",
-    isStreaming ? "composer--streaming" : "",
-    !connectionReady ? "composer--reconnecting" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  function focusEditor(): void {
+    editorRef.current?.focus();
+  }
 
   function submit(): void {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    if (!connectionReady) {
-      // Don't clear the input — surfacing the pill flash tells the user
-      // the message wasn't sent and lets them try again on reconnect.
-      setSubmitBlockedFlash(true);
-      setTimeout(() => setSubmitBlockedFlash(false), 1500);
+    const text = draft.trim();
+    if (!text) return;
+    if (!props.connectionReady) {
+      setBlockedFlash(true);
+      setTimeout(() => setBlockedFlash(false), 1500);
       return;
     }
-    onSendText(trimmed);
-    setText("");
-    if (blurAfterSend.current) areaRef.current?.blur();
-    else areaRef.current?.focus();
+    props.onSendText(text);
+    setDraft("");
+    if (blurAfterSend.current) editorRef.current?.blur();
+    else focusEditor();
   }
-
-  function handleKeyDown(e: KeyboardEvent): void {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      submit();
-    }
-  }
-
-  const sendDisabled = text.trim().length === 0 || !connectionReady;
 
   return (
     <div class="dock">
       <div class="dock-inner">
-        <div class="composer-shell">
-          <MicCorner active={voiceActive} onModeChange={setMicMode} onStart={onMicStart} onStop={onMicStop} />
-          <div class={composerClasses}>
-            <ComposerTaskStrip items={tasks} />
-            {!connectionReady && (
-              <div class={`composer__connection-pill${submitBlockedFlash ? " composer__connection-pill--flash" : ""}`}>
-                Reconnecting…
-              </div>
+        <div class="chat-composer-frame">
+          <ComposerTaskStrip items={props.tasks} />
+          <div
+            class={`chat-composer chat-composer--${voiceState}${!props.connectionReady ? " chat-composer--reconnecting" : ""}`}
+            data-voice-state={voiceState}
+            onPointerDown={(event) => {
+              if ((event.target as Element).closest("textarea,button,input,a,[role='button']")) return;
+              event.preventDefault();
+              focusEditor();
+              const length = editorRef.current?.value.length ?? 0;
+              editorRef.current?.setSelectionRange(length, length);
+            }}
+          >
+            {!props.connectionReady && (
+              <div class={`chat-composer__connection${blockedFlash ? " chat-composer__connection--flash" : ""}`} role="status">Reconnecting…</div>
             )}
-            <textarea
-              ref={areaRef}
-              class={`composer__textarea${isLive ? " composer__textarea--hidden" : ""}`}
-              placeholder={placeholderFor(voiceMode, shortPlaceholder.current)}
-              value={text}
-              onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
-              onKeyDown={handleKeyDown}
+            <DraftEditor value={draft} hidden={held} inputRef={editorRef} onInput={setDraft} onSubmit={submit} />
+            <ComposerActions
+              draftPresent={!captureLive && draft.trim().length > 0}
+              held={held}
+              canInterrupt={canInterrupt}
+              connectionReady={props.connectionReady}
+              captureActive={props.captureActive}
+              ttsEnabled={props.ttsEnabled}
+              onSend={submit}
+              onTtsToggle={() => { props.onTtsToggle(); focusEditor(); }}
+              onInterrupt={() => { props.onInterrupt(); focusEditor(); }}
+              onCaptureStart={props.onCaptureStart}
+              onCaptureCommit={props.onCaptureCommit}
+              onCaptureCancel={props.onCaptureCancel}
+              onVoiceState={setVoiceState}
             />
-            {isLive && (
-              <div class="composer__wave-field">
-                <PttWave />
-              </div>
-            )}
-            <div class="composer__bottom-row">
-              {!isLive && <TtsButton enabled={ttsEnabled} onToggle={onTtsToggle} />}
-              <span class="composer__spacer" />
-              {!isLive && <SendButton disabled={sendDisabled} onSend={submit} />}
-              {canInterrupt && <InterruptButton onInterrupt={onInterrupt} />}
-            </div>
           </div>
         </div>
-        <SuggestionChips suggestions={suggestions} onClick={onSuggestionClick} />
+        <SuggestionChips suggestions={props.suggestions} onClick={(text) => { props.onSuggestionClick(text); focusEditor(); }} />
       </div>
     </div>
   );

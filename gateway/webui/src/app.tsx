@@ -11,7 +11,7 @@ import { createProfileApi } from "./services/profile-api.js";
 import { ChatView } from "./components/chat/chat-view.tsx";
 import type { AvatarTint } from "./components/common/avatar.tsx";
 import type { SentientIdentityState } from "./components/common/sentient-identity.tsx";
-import { Composer } from "./components/dock/composer.tsx";
+import { ChatComposer } from "./components/dock/composer.tsx";
 import { LoginScreen } from "./components/auth/login-screen.tsx";
 import { markAuthExpired, takeAuthExpired } from "./components/auth/auth-expiry.ts";
 import { SetupScreen } from "./components/auth/setup-screen.tsx";
@@ -294,27 +294,25 @@ function AppInner() {
         }
         dock={
           route === "chat" ? (
-            <Composer
+            <ChatComposer
               cycleStatus={cycleStatus}
-              voiceMode={client.voiceMode.value}
-              canInterrupt={canInterrupt}
               connectionReady={connectionReady}
+              captureActive={client.voiceMode.value === "active"}
               ttsEnabled={client.prefs.value.ttsEnabled}
               suggestions={SUGGESTIONS}
               tasks={client.tasks.value}
               onSendText={client.sendText}
-              onMicStart={async () => {
+              onCaptureStart={async (mode) => {
                 try {
-                  await client.startVoiceMode();
+                  return await client.startCapture(mode);
                 } catch (err) {
-                  // Surface the reason (old browser, mic failure) and rethrow so
-                  // the corner mic control resets itself to idle.
                   const message = err instanceof Error ? err.message : "Couldn't start the microphone.";
                   toast.show(message, "error");
                   throw err;
                 }
               }}
-              onMicStop={() => client.stopVoiceMode()}
+              onCaptureCommit={client.commitCapture}
+              onCaptureCancel={client.cancelCapture}
               onTtsToggle={() => {
                 if (togglingRef.current) return;
                 togglingRef.current = true;
