@@ -112,6 +112,15 @@ struct CalendarOverlayTests {
         #expect(mapped.title == "Updated")
     }
 
+    @Test func nativeDateHelpersPreserveAllDayValuesAndDisplayRanges() throws {
+        let zone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let date = try #require(CalendarOverlayDateCodec.date(from: "2026-04-18", allDay: true, timeZone: zone))
+
+        #expect(CalendarOverlayDateCodec.wireValue(from: date, allDay: true, timeZone: zone) == "2026-04-18")
+        #expect(CalendarOverlayDateCodec.displayRange(start: "2026-04-18", end: nil) == "2026-04-18")
+        #expect(CalendarOverlayDateCodec.displayRange(start: "10:00", end: "11:30") == "10:00 – 11:30")
+    }
+
     @Test func typedErrorsUseNonDisclosingAccessibleCopy() {
         let forbidden = CalendarMutationError(
             kind: .forbidden, userMessage: "Secret event exists", code: "forbidden",
