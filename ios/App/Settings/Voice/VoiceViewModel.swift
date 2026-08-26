@@ -53,6 +53,7 @@ final class VoiceViewModel {
 
     private let settings: SettingsComponent
     private let player = VoiceSamplePlayer()
+    private var previewTask: Task<Void, Never>?
     private let log = AppLog("settings", "voice-vm")
 
     init(settings: SettingsComponent) {
@@ -61,7 +62,10 @@ final class VoiceViewModel {
     }
 
     var shownVoices: [VoiceSummary] {
-        allVoices.filter { matches($0) }
+        VoiceLibraryFiltering.apply(
+            allVoices, query: query, source: source,
+            selectedTags: selectedTags, language: language
+        )
     }
 
     var tagOptions: [String] {
@@ -131,7 +135,7 @@ final class VoiceViewModel {
             let result = try await settings.profileRepository.getProfile()
             if case .success(let s) = onEnum(of: result) {
                 activeVoiceId = s.data.voice.id
-                log.debug("active.seed id=\(activeVoiceId)")
+                log.debug("active.seed")
             }
         } catch is CancellationError {
         } catch {
@@ -147,7 +151,8 @@ final class VoiceViewModel {
             return
         }
         previewLoadingId = voice.voiceId
-        Task { await playPreview(voice) }
+        previewTask?.cancel()
+        previewTask = Task { await playPreview(voice) }
     }
 
     private func playPreview(_ voice: VoiceSummary) async {
@@ -184,7 +189,7 @@ final class VoiceViewModel {
                 switch onEnum(of: result) {
                 case .success(let s):
                     activeVoiceId = s.data.voice.id
-                    log.info("pick.ok id=\(activeVoiceId)")
+                    log.info("pick.ok")
                 case .failure(let f):
                     notice = "Couldn't switch voice"
                     log.warn("pick.failed kind=\(f.error.kind.name)")
@@ -212,7 +217,7 @@ final class VoiceViewModel {
                 switch onEnum(of: result) {
                 case .success(let s):
                     notice = s.data.warning != nil ? "Voice deleted, but the active pick may be stale." : "Voice deleted"
-                    log.info("delete.ok id=\(voice.voiceId) warning=\(s.data.warning ?? "none")")
+                    log.info("delete.ok warning=\(s.data.warning != nil)")
                     await refresh()
                     await seedActiveVoice()
                 case .failure(let f):
@@ -230,6 +235,8 @@ final class VoiceViewModel {
 
     /// Stop playback + release the audio session on screen teardown.
     func teardown() {
+        previewTask?.cancel()
+        previewTask = nil
         player.stop()
         previewingId = nil
         previewLoadingId = nil
@@ -241,15 +248,6 @@ final class VoiceViewModel {
         } else {
             selectedTags.append(tag)
         }
-    }
-
-    private func matches(_ p: VoiceSummary) -> Bool {
-        if source != "all" && p.source != source { return false }
-        if !language.isEmpty && p.language != language { return false }
-        if !selectedTags.isEmpty && !selectedTags.allSatisfy({ p.tags.contains($0) }) { return false }
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        if q.isEmpty { return true }
-        return ([p.name, p.description_] + p.tags).joined(separator: " ").lowercased().contains(q)
     }
 
     private func emptyFilter() -> VoiceFilterState {

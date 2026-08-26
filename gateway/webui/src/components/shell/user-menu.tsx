@@ -2,6 +2,7 @@ import type { JSX } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { AuthUser } from "../../services/auth-api.ts";
+import { ActionButton } from "../common/foundation.tsx";
 
 const log = createLogger(["sentient", "webui", "shell", "user-menu"]);
 
@@ -14,6 +15,7 @@ export interface UserMenuProps {
 export function UserMenu({ user, onLogout, onOpenAccount }: UserMenuProps): JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -24,6 +26,7 @@ export function UserMenu({ user, onLogout, onOpenAccount }: UserMenuProps): JSX.
       if (e.key === "Escape") {
         log.debug("escape-pressed, closing popover");
         close();
+        triggerRef.current?.focus();
       }
     }
 
@@ -61,26 +64,24 @@ export function UserMenu({ user, onLogout, onOpenAccount }: UserMenuProps): JSX.
 
   return (
     <div class="user-menu" ref={containerRef}>
-      <button
-        type="button"
-        class="user-menu__trigger"
-        aria-label={user.displayName}
-        aria-expanded={open}
+      <ActionButton
+        variant="quiet"
+        ariaLabel={`Profile: ${user.displayName}`}
+        className="user-menu__trigger"
+        expanded={open}
+        hasPopup="menu"
+        buttonRef={triggerRef}
         onClick={() => setOpen((prev) => !prev)}
       >
         <span class={`user-menu__avatar user-menu__avatar--tint-${user.avatarTint}`}>
           {initial}
         </span>
         <span class="user-menu__name">{user.displayName}</span>
-      </button>
+      </ActionButton>
       {open && (
         <div class="user-menu__popover" role="menu">
-          <button type="button" class="user-menu__item" role="menuitem" onClick={handleOpenAccount}>
-            My Account
-          </button>
-          <button type="button" class="user-menu__item" role="menuitem" onClick={handleLogout}>
-            Log out
-          </button>
+          <ActionButton variant="quiet" className="user-menu__item" role="menuitem" onClick={handleOpenAccount}>My account</ActionButton>
+          <ActionButton variant="quiet" className="user-menu__item" role="menuitem" onClick={handleLogout}>Log out</ActionButton>
         </div>
       )}
     </div>

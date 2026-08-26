@@ -92,7 +92,7 @@ describe("CalendarView", () => {
     expect(api.list).toHaveBeenCalledWith("token", expect.objectContaining({ cursor: "page-2", scope: "all" }));
 
     for (const view of ["Day", "Week", "Year"] as const) {
-      fireEvent.click(screen.getByRole("button", { name: `${view} view` }));
+      fireEvent.click(screen.getByRole("button", { name: view }));
       await waitFor(() => expect(container.querySelector(`[data-calendar-canvas-view="${view.toLowerCase()}"]`)).toBeTruthy());
     }
   });
@@ -102,7 +102,7 @@ describe("CalendarView", () => {
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Private" })[0]!);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Household" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("events in Month view"));
     expect(screen.queryByRole("button", { name: /Household dinner/i })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Next period" }));
@@ -116,7 +116,7 @@ describe("CalendarView", () => {
     const addOrigin = screen.getAllByRole("button", { name: "Add event" })[0] as HTMLButtonElement;
     addOrigin.focus();
     fireEvent.click(addOrigin);
-    const editor = screen.getByRole("dialog", { name: "Add to the family calendar" });
+    const editor = screen.getByRole("dialog", { name: "Add event" });
     fireEvent.input(within(editor).getByLabelText("Event title"), { target: { value: "New household event" } });
     fireEvent.click(within(editor).getByRole("button", { name: "Add event" }));
     await waitFor(() => expect(screen.getByText("Event added.")).toBeTruthy());
@@ -129,7 +129,7 @@ describe("CalendarView", () => {
     }));
     const submitted = (api.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Record<string, unknown>;
     expect(submitted.description).toBeUndefined();
-    expect(screen.queryByRole("dialog", { name: "Add to the family calendar" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add event" })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(addOrigin));
   });
 
@@ -147,7 +147,7 @@ describe("CalendarView", () => {
     expect(document.activeElement).toBe(preview.querySelector("button"));
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    expect(screen.getByRole("dialog", { name: "Edit calendar event" })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Edit event" })).toBeTruthy();
     fireEvent.input(screen.getByLabelText("Event title"), { target: { value: "Updated school" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.getByText("Event saved.")).toBeTruthy());
@@ -211,7 +211,7 @@ describe("CalendarView", () => {
     const { container } = render(<CalendarView api={api} {...routeOptions} />);
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Year" }));
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="year"]')).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Select August 2026" }));
     await waitFor(() => expect(container.querySelector('[data-calendar-canvas-view="month"]')).toBeTruthy());

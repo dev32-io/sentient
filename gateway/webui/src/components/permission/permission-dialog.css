@@ -1,3 +1,9 @@
+.permission-dialog__summary { padding: var(--space-md); margin-bottom: var(--space-md); }
+.permission-dialog__summary dl { display: grid; gap: var(--space-sm); margin: 0; }
+.permission-dialog__summary dl > div { display: grid; grid-template-columns: minmax(72px, .4fr) 1fr; gap: var(--space-sm); }
+.permission-dialog__summary dt { color: var(--color-ink-3); font-size: var(--font-size-xs); font-weight: 600; text-transform: uppercase; }
+.permission-dialog__summary dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
+
 .permission-dialog__tool {
   display: flex;
   align-items: baseline;

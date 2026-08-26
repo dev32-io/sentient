@@ -29,19 +29,10 @@ final class VoiceFishViewModel {
     var sort: Sort = .popular
     var filterActive: Bool { !languageFilter.isEmpty || !selectedGenders.isEmpty || !selectedAges.isEmpty || !selectedVibes.isEmpty || !query.trimmingCharacters(in: .whitespaces).isEmpty }
     var filteredEntries: [FishVoiceEntry] {
-        let language = languageFilter.lowercased()
-        let filtered = entries.filter { entry in
-            let tags = Set(entry.tags.map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
-            return (language.isEmpty || entry.languages.contains { $0.lowercased() == language }) &&
-                (selectedGenders.isEmpty || selectedGenders.contains { tags.contains($0.lowercased()) }) &&
-                (selectedAges.isEmpty || selectedAges.contains { tags.contains($0.lowercased()) }) &&
-                (selectedVibes.isEmpty || selectedVibes.contains { tags.contains($0.lowercased()) })
-        }
-        switch sort {
-        case .popular: return filtered
-        case .recent: return filtered.sorted { $0.createdAt > $1.createdAt }
-        case .az: return filtered.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        }
+        VoiceFishFiltering.apply(
+            entries, query: query, language: languageFilter,
+            genders: selectedGenders, ages: selectedAges, vibes: selectedVibes, sort: sort
+        )
     }
     var filterLanguages: [String] { Array(Set(entries.flatMap { $0.languages.map { $0.lowercased() }.filter { VoiceLanguages.normalize($0) != "" } })).sorted() }
     var filterGenders: [String] { facetOptions(["male", "female"], canonical: ["Male", "Female"]) }
@@ -132,8 +123,7 @@ final class VoiceFishViewModel {
                 switch onEnum(of: result) {
                 case .success(let s):
                     guard let page = s.value else { return }
-                    let existing = Set(entries.map { $0.id })
-                    entries += page.voices.filter { !existing.contains($0.id) }
+                    entries = VoiceFishFiltering.appendingUnique(page.voices, to: entries)
                     hasMore = page.hasMore
                     currentPage = next
                     log.info("loadMore.ok page=\(next) total=\(entries.count)")
@@ -199,7 +189,7 @@ final class VoiceFishViewModel {
         cloning = true
         player.stop()
         playingId = nil
-        log.info("clone.request nameLen=\(name.count) tags=\(cloneTags.count) lang=\(cloneLanguage)")
+        log.info("clone.request \(VoiceSafeDiagnostics.mutation(name: name, tags: cloneTags, language: cloneLanguage))")
         Task {
             defer { cloning = false }
             do {
@@ -212,7 +202,7 @@ final class VoiceFishViewModel {
                 let result = try await settings.voices.fishClone(fishVoiceId: entry.id, request: request)
                 switch onEnum(of: result) {
                 case .success(let s):
-                    log.info("clone.ok id=\(s.value?.voiceId ?? "?") warning=\(s.value?.warning ?? "none")")
+                    log.info("clone.ok warning=\(s.value?.warning != nil)")
                     NotificationCenter.default.post(name: .voiceLibraryChanged, object: nil)
                     done = true
                 case .featureDisabled:

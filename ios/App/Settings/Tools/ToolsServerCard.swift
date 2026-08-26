@@ -36,33 +36,37 @@ struct ToolsServerCard: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: Space.sm) {
-            Button(action: onToggleOpen) {
-                Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                    .font(.system(size: TypeScale.xs, weight: .semibold))
+        VStack(alignment: .leading, spacing: Space.sm) {
+            HStack(alignment: .center, spacing: Space.sm) {
+                Button(action: onToggleOpen) {
+                    HStack(spacing: Space.sm) {
+                        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                            .accessibilityHidden(true)
+                        Text(capabilityName(id))
+                            .font(Typo.ui(TypeScale.base, .semibold))
+                            .foregroundStyle(DuskColors.ink)
+                    }
+                    .frame(minHeight: DesignMetrics.minimumTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(isOpen ? "Collapse" : "Expand") \(capabilityName(id))")
+                .accessibilityIdentifier("settings-tools-server-expand-\(id)")
+
+                Spacer(minLength: Space.sm)
+                Toggle("Enable \(capabilityName(id))", isOn: Binding(get: { masterOn }, set: onToggleServer))
+                    .labelsHidden()
+                    .tint(DuskColors.accent)
+                    .accessibilityIdentifier("settings-tools-server-\(id)")
+            }
+            if let serverDescription, !serverDescription.isEmpty {
+                Text(serverDescription)
+                    .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink3)
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings-tools-server-expand-\(id)")
-
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(id)
-                    .font(Typo.mono(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink)
-                if let serverDescription, !serverDescription.isEmpty {
-                    Text(serverDescription)
-                        .font(Typo.ui(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                }
-            }
-            Spacer(minLength: Space.sm)
-            Text("\(activeCount)/\(totalCount) tools")
-                .font(Typo.ui(TypeScale.xs))
+            Text("\(activeCount) of \(totalCount) capabilities enabled")
+                .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.ink3)
-            Toggle("", isOn: Binding(get: { masterOn }, set: onToggleServer))
-                .labelsHidden()
-                .tint(DuskColors.accent)
-                .accessibilityIdentifier("settings-tools-server-\(id)")
         }
         .padding(.vertical, Space.sm)
     }
@@ -85,7 +89,7 @@ struct ToolsServerCard: View {
 
     private func placeholder(_ text: String) -> some View {
         Text(text)
-            .font(Typo.ui(TypeScale.xs))
+            .font(Typo.ui(TypeScale.sm))
             .foregroundStyle(DuskColors.ink4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, Space.sm)

@@ -4,6 +4,7 @@ import { createLogger } from "@sentient/web-sdk";
 import type { DraftAccount } from "./AccountWizard.tsx";
 import { Toggle } from "../settings/primitives/toggle.tsx";
 import { Btn } from "../settings/primitives/btn.tsx";
+import { Field } from "../common/foundation.tsx";
 
 const log = createLogger(["sentient", "webui", "account-wizard", "step-identity"]);
 
@@ -47,55 +48,9 @@ export function StepIdentity({ draft, onDraft, onNext, lockAdmin, onCancel }: St
     <section class="aw-step aw-step-identity">
       <h2 class="aw-step__title">Create account</h2>
       <div class="aw-fields">
-        <div class="aw-field-group">
-          <label class="aw-label" htmlFor="aw-display-name">
-            Display name
-          </label>
-          <input
-            id="aw-display-name"
-            class="aw-input"
-            type="text"
-            maxLength={MAX_DISPLAY_NAME_LEN}
-            placeholder="Username"
-            value={draft.displayName}
-            onInput={(e) => onDraft({ displayName: (e.target as HTMLInputElement).value })}
-            autoFocus
-          />
-        </div>
-
-        <div class="aw-field-group">
-          <label class="aw-label" htmlFor="aw-pin">
-            PIN <span class="aw-label-hint">(4–8 digits)</span>
-          </label>
-          <input
-            id="aw-pin"
-            class="aw-input"
-            type="password"
-            inputMode="numeric"
-            pattern="\d{4,8}"
-            maxLength={PIN_MAX_LEN}
-            placeholder="Enter PIN"
-            value={draft.pin}
-            onInput={(e) => onDraft({ pin: (e.target as HTMLInputElement).value.replace(/\D/g, "") })}
-          />
-        </div>
-
-        <div class="aw-field-group">
-          <label class="aw-label" htmlFor="aw-pin-confirm">
-            Confirm PIN
-          </label>
-          <input
-            id="aw-pin-confirm"
-            class="aw-input"
-            type="password"
-            inputMode="numeric"
-            pattern="\d{4,8}"
-            maxLength={PIN_MAX_LEN}
-            placeholder="Repeat PIN"
-            value={draft.pinConfirm}
-            onInput={(e) => onDraft({ pinConfirm: (e.target as HTMLInputElement).value.replace(/\D/g, "") })}
-          />
-        </div>
+        <Field id="aw-display-name" className="aw-field-group" inputClassName="aw-input" label="Display name" maxLength={MAX_DISPLAY_NAME_LEN} placeholder="Username" value={draft.displayName} onInput={(event) => onDraft({ displayName: event.currentTarget.value })} />
+        <Field id="aw-pin" className="aw-field-group" inputClassName="aw-input" label="PIN" hint="4–8 digits" type="password" inputMode="numeric" maxLength={PIN_MAX_LEN} placeholder="Enter PIN" value={draft.pin} onInput={(event) => onDraft({ pin: event.currentTarget.value.replace(/\D/g, "") })} />
+        <Field id="aw-pin-confirm" className="aw-field-group" inputClassName="aw-input" label="Confirm PIN" type="password" inputMode="numeric" maxLength={PIN_MAX_LEN} placeholder="Repeat PIN" value={draft.pinConfirm} onInput={(event) => onDraft({ pinConfirm: event.currentTarget.value.replace(/\D/g, "") })} />
 
         <div class="aw-field-group aw-toggle-row">
           <div class="aw-toggle-label">

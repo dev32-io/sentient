@@ -2,28 +2,43 @@ import Foundation
 import MobileData
 import SwiftUI
 
-enum CalendarFont {
-    static func display(_ size: CGFloat, _ weight: Font.Weight = .semibold, relativeTo style: Font.TextStyle = .headline) -> Font {
-        .custom(Fonts.shared.display, size: size, relativeTo: style).weight(weight)
-    }
-
-    static func ui(_ size: CGFloat, _ weight: Font.Weight = .regular, relativeTo style: Font.TextStyle = .body) -> Font {
-        .custom(Fonts.shared.ui, size: size, relativeTo: style).weight(weight)
-    }
-
-    static func mono(_ size: CGFloat, relativeTo style: Font.TextStyle = .caption) -> Font {
-        .custom(Fonts.shared.mono, size: size, relativeTo: style)
-    }
-}
-
+/// Calendar-specific geometry approved by the reviewed native surface. Color,
+/// typography, spacing, radii, motion, and material values come from Foundation.
 enum CalendarSurfaceLayout {
     static let topBarHeight: CGFloat = 58
     static let contentInset: CGFloat = 16
-    static let minimumTarget: CGFloat = 44
+    static let minimumTarget = DesignMetrics.minimumTarget
     static let tagVisualHeight: CGFloat = 34
     static let agendaRowHeight: CGFloat = 64
     static let viewControlHeight: CGFloat = 46
     static let floatingBarClearance: CGFloat = 78
+    static let accessibilitySentinelSize = DesignMetrics.hairline
+    static let weekDayHeight: CGFloat = 70
+    static let weekdayHeaderHeight: CGFloat = 34
+    static let monthDaySize: CGFloat = 25
+    static let monthCellHeight: CGFloat = 53
+    static let yearMonthHeight: CGFloat = 104
+    static let yearEmptyDayOpacity = 0.12
+    static let outsideMonthOpacity = 0.70
+    static let monthGridLineWidth: CGFloat = 0.5
+    static let indicatorSize: CGFloat = 5
+    static let indicatorRowHeight: CGFloat = 8
+    static let overflowTypeSize: CGFloat = 8
+    static let agendaDateInset: CGFloat = 2
+    static let agendaTimeWidth: CGFloat = 54
+    static let scopeBadgeSize: CGFloat = 28
+    static let emptyStateHeight: CGFloat = 96
+    static let filterHorizontalPadding: CGFloat = 13
+    static let tagHorizontalPadding: CGFloat = 10
+    static let floatingHorizontalInset: CGFloat = 12
+    static let floatingInnerPadding: CGFloat = 5
+    static let floatingPaperOpacity = 0.94
+    static let floatingShadowOpacity = 0.82
+    static let floatingShadowRadius: CGFloat = 28
+    static let floatingShadowY: CGFloat = 20
+    static let disabledOpacity = 0.45
+    static let pressedScale = 0.985
+    static let normalScale = 1.0
 }
 
 enum CalendarSurfaceText {
@@ -152,7 +167,7 @@ struct CalendarPressButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .scaleEffect(configuration.isPressed ? CalendarSurfaceLayout.pressedScale : CalendarSurfaceLayout.normalScale)
             .animation(reduceMotion ? nil : .easeOut(duration: Motion.fast), value: configuration.isPressed)
     }
 }

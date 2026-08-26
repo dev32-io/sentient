@@ -211,6 +211,14 @@ describe("calendar filtering, facets, and density", () => {
     }),
   ];
 
+  it("treats explicit empty calendar scopes as a recoverable no-match state and honors canonical search", () => {
+    expect(filterCalendarOccurrences(rows, { scopes: [] })).toEqual([]);
+    expect(filterCalendarOccurrences(rows, { search: "school" }).map((row) => row.eventId)).toEqual([
+      "household-school",
+    ]);
+    expect(filterCalendarOccurrences(rows).map((row) => row.eventId)).toEqual(rows.map((row) => row.eventId));
+  });
+
   it("intersects supported filters and derives facets from complete authorized data", () => {
     const filters = {
       scope: "all" as const,

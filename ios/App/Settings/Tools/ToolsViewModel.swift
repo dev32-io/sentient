@@ -43,6 +43,7 @@ final class ToolsViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -149,7 +150,10 @@ final class ToolsViewModel {
             case .loading:
                 return
             }
-            await loadCatalog()
+            if let catalogError = await loadCatalog() {
+                phase = .failed(catalogError)
+                return
+            }
             phase = .ready
             log.info("load.ready groups=\(groupIds.count)")
         } catch is CancellationError {
@@ -159,16 +163,24 @@ final class ToolsViewModel {
         }
     }
 
-    private func loadCatalog() async {
+    private func loadCatalog() async -> String? {
         do {
             let result = try await settings.profileRepository.getMcpCatalog()
-            if case .success(let s) = onEnum(of: result) {
+            switch onEnum(of: result) {
+            case .success(let s):
                 catalog = s.data
-            } else if case .failure(let f) = onEnum(of: result) {
+                return nil
+            case .failure(let f):
                 log.warn("load.catalog.failed kind=\(f.error.kind)")
+                return f.error.userMessage
+            case .loading:
+                return "Capabilities are still loading. Try again."
             }
+        } catch is CancellationError {
+            return nil
         } catch {
             log.warn("load.catalog.threw")
+            return "Couldn't load capabilities."
         }
     }
 
@@ -182,9 +194,9 @@ final class ToolsViewModel {
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
-                save = .idle
                 log.info("save.ready")
                 await load()
+                save = .applied
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying")

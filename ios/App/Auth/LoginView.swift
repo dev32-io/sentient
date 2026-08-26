@@ -13,6 +13,8 @@ struct LoginView: View {
     let onAuthenticatedUser: (String) -> Void
     /// Legacy connect hook retained as the session-start trigger.
     let onConnect: () -> Void
+    /// Initial list success, empty, or actionable error makes login revealable.
+    let onInitialUsersResolved: () -> Void
     /// Called when the user taps the gear to open backend setup.
     var onOpenBackendSetup: () -> Void
 
@@ -21,14 +23,17 @@ struct LoginView: View {
     init(
         onAuthenticatedUser: @escaping (String) -> Void = { _ in },
         onConnect: @escaping () -> Void = {},
+        onInitialUsersResolved: @escaping () -> Void = {},
         onOpenBackendSetup: @escaping () -> Void = {}
     ) {
         self.onAuthenticatedUser = onAuthenticatedUser
         self.onConnect = onConnect
+        self.onInitialUsersResolved = onInitialUsersResolved
         self.onOpenBackendSetup = onOpenBackendSetup
         _model = StateObject(wrappedValue: AuthViewModel(
             connect: onConnect,
             onAuthenticatedUser: onAuthenticatedUser,
+            onInitialUsersResolved: onInitialUsersResolved
         ))
     }
 

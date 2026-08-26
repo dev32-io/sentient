@@ -46,7 +46,9 @@ struct AdvancedScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load advanced settings", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 saveBanner
                 contextCard
@@ -83,6 +85,7 @@ struct AdvancedScreen: View {
         case .saving: SoulApplyingBanner(text: "Saving…")
         case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
@@ -120,7 +123,7 @@ struct AdvancedScreen: View {
     }
 
     private var promptCard: some View {
-        SettingsCard(title: "Prompt injection", sub: "Appended to every user message. Use sparingly — counts against context.") {
+        SettingsCard(title: "Additional instructions", sub: "Included with each request. Use sparingly because this reduces available context.") {
             MonoEditor(
                 text: vm.extraSystemPrompt,
                 placeholder: "Optional extra instructions…",

@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import type { StepProps } from "../step-registry.tsx";
+import { ActionButton } from "../../common/foundation.tsx";
 
 export function StepFinish({ onAdvance: _onAdvance }: StepProps): JSX.Element {
   const [busy, setBusy] = useState(false);
@@ -23,9 +24,7 @@ export function StepFinish({ onAdvance: _onAdvance }: StepProps): JSX.Element {
         <li>✓ Voice configured</li>
         <li>✓ Setup complete</li>
       </ul>
-      <button type="button" disabled={busy} onClick={finish}>
-        {busy ? "Finalizing..." : "Take me in →"}
-      </button>
+      <ActionButton variant="primary" loading={busy} onClick={() => void finish()}>Take me in →</ActionButton>
     </section>
   );
 }

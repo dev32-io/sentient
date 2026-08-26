@@ -45,7 +45,9 @@ struct ModelScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load models", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 saveBanner
                 browseControls
@@ -82,6 +84,7 @@ struct ModelScreen: View {
         case .saving: SoulApplyingBanner(text: "Saving…")
         case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
@@ -97,16 +100,16 @@ struct ModelScreen: View {
             )
         }
         HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").foregroundStyle(DuskColors.ink3)
+            Image(systemName: "magnifyingglass").accessibilityHidden(true)
             TextField("Search models…", text: Binding(get: { vm.query }, set: { vm.query = $0 }))
+                .font(Typo.ui(TypeScale.base))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .foregroundStyle(DuskColors.ink)
                 .accessibilityIdentifier("settings-model-search")
         }
-        .padding(Space.sm)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
+        .padding(.horizontal, Space.md)
+        .frame(minHeight: DesignMetrics.minimumTarget)
+        .designWell()
     }
 
     @ViewBuilder
@@ -155,33 +158,40 @@ private struct ModelCard: View {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(DuskColors.accent)
                     }
                 }
-                HStack(spacing: Space.sm) {
-                    Text("\(entry.contextLength / Int32(contextPerK))k context")
-                        .font(Typo.ui(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                    if entry.supportsTools { capChip("Tools") }
-                    if entry.supportsVision { capChip("Vision") }
+                ViewThatFits(in: .horizontal) {
+                    capabilitySummary
+                    VStack(alignment: .leading, spacing: Space.xs) { capabilityItems }
                 }
             }
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: Radii.md))
+            .designPlate()
             .overlay(
                 RoundedRectangle(cornerRadius: Radii.md)
-                    .stroke(isSelected ? DuskColors.accent : DuskColors.lineSoft, lineWidth: isSelected ? 2 : 1)
+                    .stroke(isSelected ? DuskColors.accent : .clear, lineWidth: DesignMetrics.hairline)
             )
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("settings-model-card-\(entry.id)")
     }
 
-    private func capChip(_ label: String) -> some View {
-        Text(label)
-            .font(Typo.ui(TypeScale.xs, .medium))
+    private var capabilitySummary: some View {
+        HStack(spacing: Space.sm) { capabilityItems }
+    }
+
+    @ViewBuilder
+    private var capabilityItems: some View {
+        Text("\(entry.contextLength / Int32(contextPerK))k context")
+            .font(Typo.ui(TypeScale.sm))
+            .foregroundStyle(DuskColors.ink3)
+        if entry.supportsTools { capabilityLabel("Tools", systemImage: "wrench.and.screwdriver") }
+        if entry.supportsVision { capabilityLabel("Vision", systemImage: "eye") }
+    }
+
+    private func capabilityLabel(_ label: String, systemImage: String) -> some View {
+        Label(label, systemImage: systemImage)
+            .font(Typo.ui(TypeScale.sm, .medium))
             .foregroundStyle(DuskColors.ink2)
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, 2)
-            .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
     }
 }
 

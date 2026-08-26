@@ -4,6 +4,9 @@ import { createLogger } from "@sentient/web-sdk";
 import type { AuthApi, PublicUser } from "../../services/auth-api.js";
 import { AvatarTile } from "./avatar-tile.js";
 import { PinPad } from "./pin-pad.js";
+import { ActionButton, Plate, Surface } from "../common/foundation.tsx";
+import { GateState } from "../common/gate-state.tsx";
+import { Notice } from "../common/composites.tsx";
 
 const log = createLogger(["sentient", "webui", "auth", "login-screen"]);
 
@@ -13,6 +16,7 @@ const log = createLogger(["sentient", "webui", "auth", "login-screen"]);
 
 export interface LoginScreenProps {
   api: AuthApi;
+  notice?: string | undefined;
   auth: {
     login(input: { userId: string; pin: string }): Promise<
       | { ok: true; value: { token: string } }
@@ -36,7 +40,7 @@ type Stage =
 // Component
 // ---------------------------------------------------------------------------
 
-export function LoginScreen({ api, auth }: LoginScreenProps): JSX.Element {
+export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Element {
   const [stage, setStage] = useState<Stage>({ view: "loading" });
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [pinError, setPinError] = useState<string | null>(null);
@@ -100,58 +104,37 @@ export function LoginScreen({ api, auth }: LoginScreenProps): JSX.Element {
   // ---- Render ----
 
   if (stage.view === "loading") {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card login-screen__card--loading">
-          <div class="login-screen__title">Loading...</div>
-        </div>
-      </div>
-    );
+    return <GateState state="loading" title="Loading profiles" message="Finding your household…" />;
   }
 
   if (stage.view === "error") {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card">
-          <div class="login-screen__title">Could not load users</div>
-          <p class="login-screen__error">Check your connection and try again.</p>
-          <button class="login-screen__back" onClick={fetchUsers}>Try Again</button>
-        </div>
-      </div>
-    );
+    return <GateState state="error" title="Could not load profiles" message="Check your connection and try again." actionLabel="Try again" onAction={() => void fetchUsers()} />;
   }
 
   if (stage.view === "empty") {
-    return (
-      <div class="login-screen">
-        <div class="login-screen__card">
-          <div class="login-screen__title">No users found</div>
-          <p class="login-screen__error">Ask an admin to create a profile for you.</p>
-        </div>
-      </div>
-    );
+    return <GateState title="No profiles found" message="Ask a household admin to create a profile for you." />;
   }
 
   if (stage.view === "pin") {
     return (
-      <div class="login-screen">
-        <div class="login-screen__card">
-          <button class="login-screen__back" onClick={handleBack} aria-label="Back to user list">
-            ← Back
-          </button>
-          <div class="login-screen__title">Enter PIN for {stage.displayName}</div>
+      <Surface className="login-screen auth-gate">
+        <Plate className="login-screen__card auth-gate__card">
+          <ActionButton variant="quiet" className="login-screen__back" onClick={handleBack}>← Back to profiles</ActionButton>
+          <h1 class="login-screen__title">Enter PIN for {stage.displayName}</h1>
+          {notice && <Notice>{notice}</Notice>}
           <PinPad onSubmit={handlePinSubmit} resetSignal={resetSignal} />
-          {pinError && <p class="login-screen__error">{pinError}</p>}
-        </div>
-      </div>
+          {pinError && <p class="login-screen__error" role="alert">{pinError}</p>}
+        </Plate>
+      </Surface>
     );
   }
 
   // Avatars grid (default)
   return (
-    <div class="login-screen">
-      <div class="login-screen__card">
-        <div class="login-screen__title">Who's using Sentient?</div>
+    <Surface className="login-screen auth-gate">
+      <Plate className="login-screen__card auth-gate__card">
+        <h1 class="login-screen__title">Who's using Sentient?</h1>
+        {notice && <Notice>{notice}</Notice>}
         <div class="login-screen__grid">
           {users.map((user) => (
             <AvatarTile
@@ -163,7 +146,7 @@ export function LoginScreen({ api, auth }: LoginScreenProps): JSX.Element {
             />
           ))}
         </div>
-      </div>
-    </div>
+      </Plate>
+    </Surface>
   );
 }

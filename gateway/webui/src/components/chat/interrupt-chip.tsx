@@ -6,6 +6,6 @@ export interface InterruptChipProps {
 }
 
 export function InterruptChip({ variant, cutoffKind }: InterruptChipProps): JSX.Element {
-  const label = cutoffKind === "barge-in" ? "barge-in" : "interrupted";
-  return <span class={`interrupt-chip interrupt-chip--${variant}`}>• {label}</span>;
+  const label = cutoffKind === "barge-in" ? "Interrupted by a new message" : "Interrupted";
+  return <span class={`interrupt-chip interrupt-chip--${variant}`} role="note" aria-label={label}><span aria-hidden="true" />{label}</span>;
 }

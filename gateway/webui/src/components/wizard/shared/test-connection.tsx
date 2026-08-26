@@ -1,5 +1,7 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { ActionButton } from "../../common/foundation.tsx";
+import { Notice } from "../../common/composites.tsx";
 
 export interface TestConnectionProps {
   onTest: () => Promise<{
@@ -53,19 +55,9 @@ export function TestConnection({
 
   return (
     <div class={`test-connection test-connection--${state}`}>
-      <button type="button" disabled={state === "testing"} onClick={run}>
-        {state === "testing" ? "Testing..." : "Test connection"}
-      </button>
-      {state === "ok" && (
-        <span class="test-connection__status test-connection__status--ok">
-          ✓ {detail}
-        </span>
-      )}
-      {state === "fail" && (
-        <span class="test-connection__status test-connection__status--fail">
-          ✗ {detail}
-        </span>
-      )}
+      <ActionButton loading={state === "testing"} onClick={() => void run()}>Test connection</ActionButton>
+      {state === "ok" && <Notice tone="success">{detail}</Notice>}
+      {state === "fail" && <Notice tone="error">{detail}</Notice>}
     </div>
   );
 }

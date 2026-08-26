@@ -1,6 +1,7 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { TestConnection } from "../shared/test-connection.tsx";
+import { ActionButton, Field, SegmentedControl } from "../../common/foundation.tsx";
 
 type Provider = "ollama-cloud" | "openrouter" | "custom";
 
@@ -87,16 +88,7 @@ export function StepProvider({ onAdvance }: StepProviderProps): JSX.Element {
     <section class="step-provider">
       <h2>Choose your LLM provider</h2>
       <nav class="step-provider__tabs">
-        {TABS.map(t => (
-          <button
-            type="button"
-            key={t.key}
-            class={t.key === active ? "is-active" : ""}
-            onClick={() => setActive(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+        <SegmentedControl label="Provider" value={active} options={TABS.map((tab) => ({ value: tab.key, label: tab.label }))} onChange={(value) => setActive(value as Provider)} />
       </nav>
       <div class="step-provider__form">
         {active === "ollama-cloud" && (
@@ -108,51 +100,19 @@ export function StepProvider({ onAdvance }: StepProviderProps): JSX.Element {
               </a>.
               {" "}For a local Ollama daemon on your LAN, pick the <strong>Custom</strong> tab.
             </p>
-            <label>API key
-              <input
-                type="password"
-                value={ps.apiKey}
-                onInput={e => patchActive({ apiKey: (e.target as HTMLInputElement).value })}
-              />
-            </label>
+            <Field label="API key" type="password" value={ps.apiKey} onInput={(event) => patchActive({ apiKey: event.currentTarget.value })} />
           </>
         )}
         {active === "openrouter" && (
           <>
-            <label>API key
-              <input
-                type="password"
-                placeholder="sk-or-..."
-                value={ps.apiKey}
-                onInput={e => patchActive({ apiKey: (e.target as HTMLInputElement).value })}
-              />
-            </label>
-            <label>Base URL (optional)
-              <input
-                type="text"
-                value={ps.baseUrl}
-                onInput={e => patchActive({ baseUrl: (e.target as HTMLInputElement).value })}
-                placeholder="https://openrouter.ai/api/v1"
-              />
-            </label>
+            <Field label="API key" type="password" placeholder="sk-or-..." value={ps.apiKey} onInput={(event) => patchActive({ apiKey: event.currentTarget.value })} />
+            <Field label="Base URL" hint="Optional" value={ps.baseUrl} onInput={(event) => patchActive({ baseUrl: event.currentTarget.value })} placeholder="https://openrouter.ai/api/v1" />
           </>
         )}
         {active === "custom" && (
           <>
-            <label>Base URL
-              <input
-                type="text"
-                value={ps.baseUrl}
-                onInput={e => patchActive({ baseUrl: (e.target as HTMLInputElement).value })}
-              />
-            </label>
-            <label>API key (optional)
-              <input
-                type="password"
-                value={ps.apiKey}
-                onInput={e => patchActive({ apiKey: (e.target as HTMLInputElement).value })}
-              />
-            </label>
+            <Field label="Base URL" value={ps.baseUrl} onInput={(event) => patchActive({ baseUrl: event.currentTarget.value })} />
+            <Field label="API key" hint="Optional" type="password" value={ps.apiKey} onInput={(event) => patchActive({ apiKey: event.currentTarget.value })} />
           </>
         )}
         <TestConnection
@@ -162,9 +122,7 @@ export function StepProvider({ onAdvance }: StepProviderProps): JSX.Element {
         />
       </div>
       <footer class="step-provider__footer">
-        <button type="button" disabled={!canContinue} onClick={continueStep}>
-          {busy ? "Saving..." : "Continue"}
-        </button>
+        <ActionButton variant="primary" loading={busy} disabled={!canContinue} onClick={() => void continueStep()}>Continue</ActionButton>
       </footer>
     </section>
   );

@@ -1,6 +1,7 @@
 import type { JSX } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { Icon } from "../common/icon.tsx";
+import { ActionButton, FoundationIconButton } from "../common/foundation.tsx";
 
 export interface RowMenuProps {
   onRename(): void;
@@ -96,48 +97,24 @@ export function RowMenu({ onRename, onDelete }: RowMenuProps): JSX.Element | nul
 
   return (
     <div class="row-menu" ref={wrapRef}>
-      <button
-        type="button"
-        ref={triggerRef}
-        class={`row-menu__trigger ${open ? "row-menu__trigger--open" : ""}`}
-        aria-label="Chat options"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
+      <FoundationIconButton
+        label="Chat options"
+        buttonRef={triggerRef}
+        className={`row-menu__trigger ${open ? "row-menu__trigger--open" : ""}`}
+        expanded={open}
+        hasPopup="menu"
+        onClick={(event) => { event.stopPropagation(); setOpen((value) => !value); }}
       >
         <Icon name="more-horizontal" size={16} />
-      </button>
+      </FoundationIconButton>
       {open && (
         <div ref={popRef} class={popClass} role="menu">
-          <button
-            type="button"
-            class="row-menu__item"
-            role="menuitem"
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onRename();
-            }}
-          >
-            <Icon name="pencil" size={14} />
-            <span>Rename</span>
-          </button>
-          <button
-            type="button"
-            class="row-menu__item row-menu__item--danger"
-            role="menuitem"
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen(false);
-              onDelete();
-            }}
-          >
-            <Icon name="trash" size={14} />
-            <span>Delete</span>
-          </button>
+          <ActionButton variant="quiet" className="row-menu__item" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onRename(); }}>
+            <Icon name="pencil" size={14} /> Rename
+          </ActionButton>
+          <ActionButton variant="destructive" className="row-menu__item row-menu__item--danger" role="menuitem" onClick={(event) => { event.stopPropagation(); setOpen(false); onDelete(); }}>
+            <Icon name="trash" size={14} /> Delete
+          </ActionButton>
         </div>
       )}
     </div>

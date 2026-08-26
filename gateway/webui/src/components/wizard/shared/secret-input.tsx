@@ -1,5 +1,6 @@
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
+import { ActionButton, Field } from "../../common/foundation.tsx";
 
 const MASK = "••••••••••••";
 
@@ -38,43 +39,24 @@ export function SecretInput({
       <div class="secret-input secret-input--idle">
         {label && <label>{label}</label>}
         <span class="secret-input__masked">{hasKey ? MASK : "Not set"}</span>
-        <button
-          type="button"
-          disabled={disabled || busy}
-          onClick={() => setEditing(true)}
-        >
-          {hasKey ? "Change" : "Add"}
-        </button>
+        <ActionButton disabled={disabled || busy} onClick={() => setEditing(true)}>{hasKey ? "Change" : "Add"}</ActionButton>
       </div>
     );
   }
 
   return (
     <div class="secret-input secret-input--editing">
-      {label && <label>{label}</label>}
-      <input
+      <Field
+        label={label}
         type="password"
         autoComplete="off"
         value={value}
-        placeholder={
-          placeholder ?? (hasKey ? "Replacing existing key" : "Paste your key")
-        }
+        placeholder={placeholder ?? (hasKey ? "Replacing existing key" : "Paste your key")}
         disabled={busy || disabled}
-        onInput={(e) => setValue((e.target as HTMLInputElement).value)}
+        onInput={(event) => setValue(event.currentTarget.value)}
       />
-      <button type="button" disabled={busy || !value} onClick={() => save(value)}>
-        Save
-      </button>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => {
-          setEditing(hasKey ? false : true);
-          setValue("");
-        }}
-      >
-        Cancel
-      </button>
+      <ActionButton variant="primary" loading={busy} disabled={!value} onClick={() => void save(value)}>Save</ActionButton>
+      <ActionButton variant="quiet" disabled={busy} onClick={() => { setEditing(!hasKey); setValue(""); }}>Cancel</ActionButton>
     </div>
   );
 }

@@ -25,16 +25,27 @@
   line-height: var(--line-height-normal);
 }
 
-.calendar-editor__all-day {
+.calendar-editor__date-time {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-md);
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-md);
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-md);
   background: var(--color-bg-elev);
+}
+
+.calendar-editor__date-time > header {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.calendar-editor__date-time > header strong {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
 }
 
 .calendar-editor__check,

@@ -102,6 +102,18 @@ struct CalendarSurfaceTests {
         #expect(label.contains("2 additional events"))
     }
 
+    @Test func nativeScopeTargetsMapBothToSharedAllAndKeepTheLastSelection() {
+        let all = CalendarFilters(scope: .all, groups: [], tags: [], importance: nil, text: "")
+        #expect(CalendarFilterMapping.visibleScopes == [.private, .household])
+        #expect(CalendarFilterMapping.isScopeSelected(.private, in: all))
+        #expect(CalendarFilterMapping.isScopeSelected(.household, in: all))
+
+        let privateOnly = CalendarFilterMapping.togglingScope(.household, in: all)
+        #expect(privateOnly.scope == .private)
+        #expect(CalendarFilterMapping.togglingScope(.private, in: privateOnly).scope == .private)
+        #expect(CalendarFilterMapping.togglingScope(.household, in: privateOnly).scope == .all)
+    }
+
     @Test func selectedAbsentFiltersRemainVisibleAndRemovableWithoutChangingOtherFacets() {
         let filters = CalendarFilters(
             scope: .private, groups: Set(["Absent group"]), tags: Set(["absent-tag"]),

@@ -8,9 +8,7 @@
 
 import type { Dispatch, StateUpdater } from "preact/hooks";
 import type { JSX } from "preact";
-import { SearchField } from "../../settings/primitives/search-field.tsx";
-import { Select } from "../../settings/primitives/select.tsx";
-import { Chip } from "../../settings/primitives/chip.tsx";
+import { ActionButton, ChipControl, Field, SelectControl } from "../../common/index.ts";
 import { VoiceFilterSection } from "./fish-filter-section.tsx";
 import { langDisplay } from "./fish-langs.ts";
 import { toggleInArray, type FilterOptions, type SortKey, type VoiceFilters } from "./fish-bucket.ts";
@@ -61,17 +59,14 @@ export function FishToolbar({
   return (
     <>
       <div class="v-toolbar">
-        <SearchField
-          value={filters.q}
-          onChange={(e) => setFilters((f) => ({ ...f, q: (e.target as HTMLInputElement).value }))}
-          placeholder="Search voices…"
-        />
-        <Select
+        <Field label="Search public voices" type="search" value={filters.q} onInput={(event) => setFilters((filters) => ({ ...filters, q: event.currentTarget.value }))} placeholder="Search voices…" />
+        <SelectControl
+          label="Language"
           value={filters.language}
           onChange={(l) => setFilters((f) => ({ ...f, language: l }))}
           options={langOptions}
         />
-        <Select value={sort} onChange={(s) => setSort(s as SortKey)} options={SORT_OPTIONS} />
+        <SelectControl label="Sort voices" value={sort} onChange={(value) => setSort(value as SortKey)} options={SORT_OPTIONS} />
       </div>
 
       <div class="v-filters">
@@ -92,23 +87,23 @@ export function FishToolbar({
             <span class="v-filter-label">Tags</span>
             <div class="v-filter-chips">
               {visibleVibes.map((t) => (
-                <Chip
+                <ChipControl
                   key={t}
-                  active={filters.vibes.includes(t)}
+                  selected={filters.vibes.includes(t)}
                   onClick={() => setFilters((f) => ({ ...f, vibes: toggleInArray(f.vibes, t) }))}
                 >
                   {t}
-                </Chip>
+                </ChipControl>
               ))}
               {hiddenVibeCount > 0 && !vibesExpanded && (
-                <button type="button" class="v-tag-toggle" onClick={() => setVibesExpanded(true)}>
+                <ActionButton variant="quiet" onClick={() => setVibesExpanded(true)}>
                   +{hiddenVibeCount} more
-                </button>
+                </ActionButton>
               )}
               {vibesExpanded && options.vibes.length > VIBE_COLLAPSED_COUNT && (
-                <button type="button" class="v-tag-toggle" onClick={() => setVibesExpanded(false)}>
+                <ActionButton variant="quiet" onClick={() => setVibesExpanded(false)}>
                   Less
-                </button>
+                </ActionButton>
               )}
             </div>
           </div>

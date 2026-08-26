@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
+import { ActionButton, ProgressControl } from "../../common/foundation.tsx";
 
 const log = createLogger(["sentient", "webui", "wizard", "step-bringup"]);
 
@@ -88,7 +89,8 @@ export function StepBringup({ onAdvance }: StepBringupProps): JSX.Element {
   return (
     <section class="step-bringup">
       <h2>Starting up services…</h2>
-      <p>This will only take a moment. We're bringing the assistant's services online.</p>
+      <p>This will only take a moment. We're preparing your assistant.</p>
+      {!status && <ProgressControl label="Preparing your assistant" />}
 
       <ul class="step-bringup__services">
         {(status?.services ?? []).map((s) => (
@@ -107,14 +109,7 @@ export function StepBringup({ onAdvance }: StepBringupProps): JSX.Element {
 
       <footer class="step-bringup__footer">
         {requiredFailed && (
-          <button
-            class="step-bringup__retry"
-            type="button"
-            disabled={retrying}
-            onClick={retry}
-          >
-            {retrying ? "Retrying…" : "Retry"}
-          </button>
+          <ActionButton variant="primary" className="step-bringup__retry" loading={retrying} onClick={() => void retry()}>Retry</ActionButton>
         )}
       </footer>
     </section>

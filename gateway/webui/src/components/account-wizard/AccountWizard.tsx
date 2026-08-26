@@ -169,7 +169,7 @@ export function AccountWizard({
       profile: profileBody,
     };
 
-    log.info("submit", { mode, displayName: draft.displayName });
+    log.info("submit", { mode });
 
     try {
       if (mode === "first-admin") {
@@ -208,7 +208,7 @@ export function AccountWizard({
       onComplete(r.value.user);
     } catch (err: unknown) {
       stopTicker();
-      log.warn("submit.unexpected-error", { err: String(err) });
+      log.warn("submit.unexpected-error", { errorType: err instanceof Error ? err.name : "unknown" });
       setSubmitError("Something went wrong. Please try again.");
     } finally {
       setBusy(false);

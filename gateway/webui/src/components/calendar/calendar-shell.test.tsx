@@ -95,7 +95,7 @@ describe("CalendarWorkspace", () => {
 
     expect(screen.getByTestId("canvas-slot").textContent).toBe("week:2026-08-10:2026-08-12:dentist");
     expect(screen.getByRole("status").textContent).toBe("4 events in Week view.");
-    fireEvent.click(screen.getByRole("button", { name: "Month view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
     expect(onViewChange).toHaveBeenCalledWith("month");
   });
 
@@ -191,7 +191,7 @@ describe("CalendarWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Previous period" }));
     fireEvent.click(screen.getByRole("button", { name: "Next period" }));
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
-    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    fireEvent.click(screen.getByRole("button", { name: "Year" }));
     expect(previous).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledTimes(1);
     expect(today).toHaveBeenCalledTimes(1);
@@ -297,30 +297,30 @@ describe("CalendarWorkspace", () => {
       </CalendarWorkspace>,
     );
 
-    expect(screen.getAllByRole("button", { name: "Private" })).toHaveLength(1);
-    expect(screen.getAllByText("Group: old-group").length).toBeGreaterThan(0);
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove Private filter" })[0]!);
-    expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ scopes: ["all"] }));
+    expect(screen.getAllByRole("checkbox", { name: "Private" })).toHaveLength(1);
+    expect(screen.getAllByText("5 active filters")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Private" }));
+    expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ scopes: [] }));
     expect(screen.queryByText("member")).toBeNull();
   });
 });
 
 describe("CalendarFilterSidebar", () => {
-  it("exposes only private, household, and all scopes and omits prototype-only facets", () => {
+  it("exposes direct Private and Household checkboxes and omits prototype-only facets", () => {
     render(<CalendarFilterSidebar facets={facets} onAddEvent={vi.fn()} />);
 
-    expect(CALENDAR_SUPPORTED_SCOPES).toEqual(["private", "household", "all"]);
-    expect(screen.getByRole("button", { name: "Private" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Household" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "All calendars" })).toBeTruthy();
+    expect(CALENDAR_SUPPORTED_SCOPES).toEqual(["private", "household"]);
+    expect(screen.getByRole("checkbox", { name: "Private" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Household" })).toBeTruthy();
+    expect(screen.queryByText("All calendars")).toBeNull();
     expect(screen.queryByText("member")).toBeNull();
     expect(screen.queryByText(/routine|place|reminder|persona|member ownership/i)).toBeNull();
-    expect(screen.getByRole("button", { name: /add event/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /add event/i })).toBeNull();
     expect(screen.getByRole("searchbox", { name: "Search calendar events" })).toBeTruthy();
 
     render(<CalendarFilterSidebar />);
-    for (const scope of ["Private", "Household", "All calendars"]) {
-      expect(screen.getAllByRole("button", { name: scope }).length).toBeGreaterThan(0);
+    for (const scope of ["Private", "Household"]) {
+      expect(screen.getAllByRole("checkbox", { name: scope }).length).toBeGreaterThan(0);
     }
     for (const importance of ["Normal", "Important", "Pinned"]) {
       expect(screen.getAllByRole("button", { name: importance }).length).toBeGreaterThan(0);
@@ -336,9 +336,9 @@ describe("CalendarFilterSidebar", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Private" }));
-    expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ scopes: ["private"] }));
-    fireEvent.click(screen.getByRole("button", { name: "Tag school" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Private" }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ scopes: ["household"] }));
+    fireEvent.click(screen.getByRole("button", { name: "school" }));
     expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ tags: ["school"] }));
     fireEvent.click(screen.getByRole("button", { name: "Important" }));
     expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ importance: "important" }));
@@ -366,14 +366,11 @@ describe("CalendarCompactControls", () => {
     const trigger = screen.getByRole("button", { name: "Filters, 5 active filters" });
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Calendar filters" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Household" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: "Clear all" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("checkbox", { name: "Household" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Clear filters" }).length).toBeGreaterThan(0);
 
-    document.dispatchEvent(new Event("pointerdown", { bubbles: true }));
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Calendar filters" })).toBeNull();
-      expect(document.activeElement).toBe(trigger);
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Calendar filters" })).toBeNull());
   });
 
   it("dismisses the anchored filter popover with Escape and restores focus", () => {
@@ -383,7 +380,7 @@ describe("CalendarCompactControls", () => {
     const dialog = screen.getByRole("dialog", { name: "Calendar filters" });
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Calendar filters" })).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 });
 
@@ -417,8 +414,8 @@ describe("DateNavigation and FloatingViewBar", () => {
     expect(callbacks.next).toHaveBeenCalledTimes(1);
     expect(callbacks.today).toHaveBeenCalledTimes(1);
     expect(screen.getAllByRole("button", { pressed: true })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Month view" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Year view" }));
+    expect(screen.getByRole("button", { name: "Month" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Year" }));
     expect(callbacks.view).toHaveBeenCalledWith("year");
   });
 

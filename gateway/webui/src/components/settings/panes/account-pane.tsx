@@ -1,18 +1,19 @@
-// gateway/webui/src/components/settings/panes/account-pane.tsx
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import { useAuth } from "../../../hooks/use-auth.tsx";
 import { useToast } from "../../../hooks/use-toast.tsx";
-import { createAuthApi } from "../../../services/auth-api.js";
-import { Card } from "../primitives/card.tsx";
-import { PaneHead } from "../primitives/pane-head.tsx";
-import { Row } from "../primitives/row.tsx";
-import { TextField } from "../primitives/text-field.tsx";
-import { Btn } from "../primitives/btn.tsx";
-import { Modal } from "../primitives/modal.tsx";
-import { PinInput } from "../primitives/pin-input.tsx";
-import { WipBadge } from "../primitives/wip-badge.tsx";
+import { createAuthApi } from "../../../services/auth-api.ts";
+import {
+  ActionButton,
+  ActionRow,
+  Dialog,
+  Field,
+  PaneChrome,
+  PinEntry,
+  SettingsCard,
+  SettingsRow,
+} from "../../common/index.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "account-pane"]);
 const PIN_PATTERN = /^\d{4}$/;
@@ -25,7 +26,7 @@ export function AccountPane(): JSX.Element {
   const [pinOpen, setPinOpen] = useState(false);
   const [oldPin, setOldPin] = useState("");
   const [newPin, setNewPin] = useState("");
-  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinError, setPinError] = useState<string | undefined>();
   const [savingName, setSavingName] = useState(false);
   const [savingPin, setSavingPin] = useState(false);
 
@@ -33,115 +34,90 @@ export function AccountPane(): JSX.Element {
 
   const trimmedName = name.trim();
   const nameUnchanged = trimmedName === auth.user.displayName;
+  const canSubmitPin = PIN_PATTERN.test(oldPin) && PIN_PATTERN.test(newPin);
 
   const handleSaveName = async () => {
     if (nameUnchanged || !trimmedName) return;
     setSavingName(true);
-    const r = await api.updateMe(auth.token, { displayName: trimmedName });
+    const result = await api.updateMe(auth.token, { displayName: trimmedName });
     setSavingName(false);
-    if (!r.ok) {
-      log.warn("update.failed", { code: r.error.code });
+    if (!result.ok) {
+      log.warn("update.failed", { code: result.error.code });
       toast.show("Couldn't update display name", "error");
       return;
     }
-    auth.updateUser(r.value.user);
+    auth.updateUser(result.value.user);
     toast.show("Display name updated");
   };
 
-  const canSubmitPin = PIN_PATTERN.test(oldPin) && PIN_PATTERN.test(newPin);
+  const closePinDialog = () => {
+    setPinOpen(false);
+    setOldPin("");
+    setNewPin("");
+    setPinError(undefined);
+  };
 
   const handleSavePin = async () => {
     if (!canSubmitPin) return;
     setSavingPin(true);
-    setPinError(null);
-    const r = await api.changePin(auth.token, { currentPin: oldPin, newPin });
+    setPinError(undefined);
+    const result = await api.changePin(auth.token, { currentPin: oldPin, newPin });
     setSavingPin(false);
-    if (!r.ok) {
-      log.warn("changePin.failed", { code: r.error.code, status: r.error.status });
-      if (r.error.status === 401) setPinError("Current PIN is wrong");
-      else if (r.error.status === 422) setPinError("PIN must be 4 digits");
-      else setPinError("Something went wrong");
+    if (!result.ok) {
+      log.warn("changePin.failed", { code: result.error.code, status: result.error.status });
+      if (result.error.status === 401) setPinError("Current PIN is wrong");
+      else if (result.error.status === 422) setPinError("PIN must be 4 digits");
+      else setPinError("Something went wrong. Try again.");
       return;
     }
     toast.show("PIN updated");
-    setPinOpen(false);
-    setOldPin("");
-    setNewPin("");
-  };
-
-  const closePinModal = () => {
-    setPinOpen(false);
-    setOldPin("");
-    setNewPin("");
-    setPinError(null);
+    closePinDialog();
   };
 
   return (
-    <>
-      <PaneHead title="Account" sub="Your profile inside this household." />
-
-      <Card title="Identity" sub="How Sentient knows it's you.">
-        <Row label="Display name">
-          <div class="kv-row grow">
-            <TextField
-              value={name}
-              onChange={(e) => setName((e.target as HTMLInputElement).value)}
-              fullWidth
-            />
-            <Btn
-              kind="secondary"
-              size="sm"
-              disabled={nameUnchanged || !trimmedName || savingName}
-              onClick={handleSaveName}
-            >
-              {savingName ? "Saving…" : "Save"}
-            </Btn>
+    <PaneChrome title="Account" subtitle="Your profile inside this household." className="owned-pane">
+      <SettingsCard title="Identity" subtitle="How Sentient knows it's you.">
+        <SettingsRow label="Display name">
+          <div class="owned-inline-field">
+            <Field ariaLabel="Display name" value={name} onInput={(event) => setName(event.currentTarget.value)} />
+            <ActionButton loading={savingName} disabled={nameUnchanged || !trimmedName} onClick={() => void handleSaveName()}>Save</ActionButton>
           </div>
-        </Row>
-        <Row label="Voice print" hint="Used to recognize you when you speak.">
-          <WipBadge label="Coming soon" />
-        </Row>
-      </Card>
+        </SettingsRow>
+        <SettingsRow label="Voice print" hint="Used to recognize you when you speak.">
+          <span class="snt-kicker" aria-disabled="true">Coming soon</span>
+        </SettingsRow>
+      </SettingsCard>
 
-      <Card title="Security" sub="Used for destructive actions like unlocking doors or spending money.">
-        <Row label="PIN" hint="4 digits. Required for sensitive actions.">
-          <Btn kind="secondary" size="sm" onClick={() => setPinOpen(true)}>Change PIN</Btn>
-        </Row>
-      </Card>
+      <SettingsCard title="Security" subtitle="Used for sensitive household actions.">
+        <SettingsRow label="PIN" hint="Four digits, required for sensitive actions.">
+          <ActionButton onClick={() => setPinOpen(true)}>Change PIN</ActionButton>
+        </SettingsRow>
+      </SettingsCard>
 
-      <Card title="Session" sub="This device only.">
-        <Row label="Sign out" hint="Returns you to the login screen on this device.">
-          <Btn kind="secondary" size="sm" danger onClick={() => void auth.logout()}>Sign out</Btn>
-        </Row>
-      </Card>
+      <SettingsCard title="Session" subtitle="This device only.">
+        <SettingsRow label="Sign out" hint="Returns you to the login screen on this device.">
+          <ActionButton variant="destructive" onClick={() => void auth.logout()}>Sign out</ActionButton>
+        </SettingsRow>
+      </SettingsCard>
 
       {pinOpen && (
-        <Modal
+        <Dialog
           title="Change PIN"
-          onClose={closePinModal}
+          description="Enter your current four-digit PIN, then choose a new one."
+          onClose={closePinDialog}
           footer={
-            <>
-              <Btn kind="ghost" size="sm" onClick={() => setPinOpen(false)} disabled={savingPin}>Cancel</Btn>
-              <Btn kind="primary" size="sm" disabled={!canSubmitPin || savingPin} onClick={handleSavePin}>
-                {savingPin ? "Saving…" : "Update PIN"}
-              </Btn>
-            </>
+            <ActionRow>
+              <ActionButton variant="quiet" disabled={savingPin} onClick={closePinDialog}>Cancel</ActionButton>
+              <ActionButton variant="primary" loading={savingPin} disabled={!canSubmitPin} onClick={() => void handleSavePin()}>Update PIN</ActionButton>
+            </ActionRow>
           }
         >
-          <p class="modal-lead">Enter your current 4-digit PIN, then choose a new one.</p>
-          <div class="modal-fields">
-            <label class="mf">
-              <span class="mf-l">Current PIN</span>
-              <PinInput value={oldPin} onChange={setOldPin} autoFocus />
-            </label>
-            <label class="mf">
-              <span class="mf-l">New PIN</span>
-              <PinInput value={newPin} onChange={setNewPin} />
-            </label>
-            {pinError && <p class="account-section__error">{pinError}</p>}
+          <div class="owned-fields">
+            <PinEntry label="Current PIN" value={oldPin} onChange={setOldPin} autoFocus error={pinError} />
+            <PinEntry label="New PIN" value={newPin} onChange={setNewPin} />
           </div>
-        </Modal>
+        </Dialog>
       )}
-    </>
+    </PaneChrome>
   );
 }

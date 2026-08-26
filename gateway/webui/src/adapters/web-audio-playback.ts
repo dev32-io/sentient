@@ -283,9 +283,9 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       // looks "running" after gesture-resume but routes audio to nowhere
       // and never fires `onended`. We defer to the first unlock() call,
       // which is wired ONLY to TTS-expecting actions in use-voice-client
-      // (`sendText`, `startVoiceMode`). Both run inside `click` event
-      // handlers — the only DOM events that grant transient activation on
-      // iOS. Frames that arrive before unlock are buffered.
+      // (`sendText`, `startCapture`). Both run directly in their activating
+      // click/pointer handler so iOS grants transient activation. Frames that
+      // arrive before unlock are buffered.
       return true;
     },
 
@@ -430,9 +430,9 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
     },
 
     unlock(): void {
-      // Caller MUST be a TTS-expecting onClick handler (`sendText`,
-      // `startVoiceMode`). iOS Safari refuses to route audio through a
-      // context constructed outside an activation-granting event, and once
+      // Caller MUST be a TTS-expecting activating handler (`sendText`,
+      // `startCapture`). iOS Safari refuses to route audio through a context
+      // constructed outside an activation-granting event, and once
       // a context is ghosted that way it cannot be revived by a later
       // resume(). Calling unlock() from any non-`click` path (passive
       // touchstart, document-wide listeners) corrupts the context for the

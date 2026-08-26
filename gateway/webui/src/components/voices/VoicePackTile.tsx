@@ -2,6 +2,7 @@
 import type { JSX } from "preact";
 import type { VoiceSummary } from "../../services/voices-api.ts";
 import { bucketVoiceTags } from "./fish/fish-bucket.ts";
+import { FoundationIconButton } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
 import { VoiceRow } from "./VoiceRow.tsx";
 
@@ -38,22 +39,16 @@ export function VoicePackTile(props: VoicePackTileProps): JSX.Element {
       playDisabled={props.previewDisabled}
       playLoading={previewState === "loading"}
       selected={isActive}
-      selectedMarker={null}
+      selectedMarker={isActive ? <span class="snt-kicker">Current</span> : null}
       trailing={
         props.onDelete ? (
-          <button
-            type="button"
-            class="v-del"
+          <FoundationIconButton
+            className="v-del"
             disabled={props.busy}
-            title="Delete voice"
-            aria-label="Delete voice"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onDelete?.();
-            }}
-          >
-            <Icon name="trash" size={17} />
-          </button>
+            label={`Delete ${pack.name}`}
+            variant="destructive"
+            onClick={(event) => { event.stopPropagation(); props.onDelete?.(); }}
+          ><Icon name="trash" size={17} /></FoundationIconButton>
         ) : null
       }
       onSelect={props.onPick}

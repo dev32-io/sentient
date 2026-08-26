@@ -11,7 +11,6 @@
 // ---------------------------------------------------------------------------
 import Foundation
 import MobileData
-import UIKit
 
 @MainActor
 @Observable
@@ -40,15 +39,37 @@ final class VoiceAddViewModel {
     var notice: String?
     private(set) var done = false
 
-    private let settings: SettingsComponent
-    private let recorder = VoiceRecorder()
-    private let player = VoiceSamplePlayer()
+    private let settings: SettingsComponent?
+    private let recorder: any VoiceRecording
+    private let player: any VoiceSamplePlaying
+    private let permission: any VoicePermissionProviding
+    private let settingsOpener: any VoiceSettingsOpening
     private var timerTask: Task<Void, Never>?
     private var startedAt: Date?
     private let log = AppLog("settings", "voice-add-vm")
 
     init(settings: SettingsComponent) {
         self.settings = settings
+        self.recorder = VoiceRecorder()
+        self.player = VoiceSamplePlayer()
+        self.permission = SystemVoicePermissionProvider()
+        self.settingsOpener = SystemVoiceSettingsOpener()
+        player.onFinished = { [weak self] in self?.previewingTake = false }
+    }
+
+    /// Audio-free seam used by state tests and static previews. Supplying fakes never
+    /// touches AVFoundation, the microphone permission prompt, or UIApplication.
+    init(
+        recorder: any VoiceRecording,
+        player: any VoiceSamplePlaying,
+        permission: any VoicePermissionProviding,
+        settingsOpener: any VoiceSettingsOpening
+    ) {
+        self.settings = nil
+        self.recorder = recorder
+        self.player = player
+        self.permission = permission
+        self.settingsOpener = settingsOpener
         player.onFinished = { [weak self] in self?.previewingTake = false }
     }
 
@@ -61,9 +82,22 @@ final class VoiceAddViewModel {
 
     // ── Record flow ──
 
+    func selectMode(_ next: Mode) {
+        guard mode != next else { return }
+        timerTask?.cancel()
+        recorder.discard()
+        player.stop()
+        previewingTake = false
+        recordState = .idle
+        elapsedSeconds = 0
+        audioData = nil
+        uploadedName = nil
+        mode = next
+    }
+
     /// Record tapped from idle: gate mic permission, then begin capture.
     func onRecordTapped() {
-        switch MicPermission.status() {
+        switch permission.status() {
         case .granted:
             beginRecording()
         case .denied:
@@ -71,7 +105,7 @@ final class VoiceAddViewModel {
             log.warn("record.denied")
         case .undetermined:
             log.info("record.request-permission")
-            MicPermission.request { [weak self] granted in
+            permission.request { [weak self] granted in
                 Task { @MainActor in
                     guard let self else { return }
                     if granted { self.beginRecording() } else { self.recordState = .denied }
@@ -100,8 +134,15 @@ final class VoiceAddViewModel {
         timerTask?.cancel()
         recorder.stop()
         audioData = recorder.recordedData()
-        recordState = .review
-        log.info("record.review bytes=\(audioData?.count ?? 0)")
+        if audioData?.isEmpty == false {
+            recordState = .review
+            log.info("record.review bytes=\(audioData?.count ?? 0)")
+        } else {
+            audioData = nil
+            recordState = .idle
+            notice = "Couldn't finish recording"
+            log.warn("record.review.failed code=empty-clip")
+        }
     }
 
     func reRecord() {
@@ -131,8 +172,7 @@ final class VoiceAddViewModel {
 
     /// Open Settings so the user can grant mic access after a denial.
     func openAppSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
+        settingsOpener.openMicrophoneSettings()
     }
 
     // ── Upload flow ──
@@ -141,23 +181,33 @@ final class VoiceAddViewModel {
         switch result {
         case .success(let url):
             copyPickedFile(url)
-        case .failure(let error):
+        case .failure:
             log.warn("upload.pick.failed code=file-picker")
         }
     }
 
     /// Copy the security-scoped picked file into a tmp copy we own, then read it.
     private func copyPickedFile(_ url: URL) {
+        guard VoiceUploadValidation.accepts(fileName: url.lastPathComponent) else {
+            notice = VoiceUploadValidation.unsupportedMessage
+            return
+        }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("upload-\(UUID().uuidString)-\(url.lastPathComponent)")
             try? FileManager.default.removeItem(at: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
             try FileManager.default.copyItem(at: url, to: tmp)
             let data = try Data(contentsOf: tmp)
+            guard !data.isEmpty else {
+                notice = VoiceUploadValidation.emptyMessage
+                return
+            }
             audioData = data
             uploadedName = url.lastPathComponent
+            notice = nil
             log.info("upload.picked bytes=\(data.count)")
         } catch {
             notice = "Couldn't read that file"
@@ -168,12 +218,12 @@ final class VoiceAddViewModel {
     // ── Submit ──
 
     func submit() {
-        guard canSubmit, let audioData else { return }
+        guard canSubmit, let audioData, let settings else { return }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         submitting = true
         player.stop()
         previewingTake = false
-        log.info("create.request bytes=\(audioData.count) nameLen=\(trimmed.count) tags=\(tags.count) lang=\(language)")
+        log.info("create.request \(VoiceSafeDiagnostics.mutation(audioBytes: audioData.count, name: trimmed, tags: tags, language: language))")
         Task {
             defer { submitting = false }
             do {
@@ -186,7 +236,7 @@ final class VoiceAddViewModel {
                 )
                 switch onEnum(of: result) {
                 case .success(let s):
-                    log.info("create.ok id=\(s.data.voiceId) warning=\(s.data.warning ?? "none")")
+                    log.info("create.ok warning=\(s.data.warning != nil)")
                     NotificationCenter.default.post(name: .voiceLibraryChanged, object: nil)
                     done = true
                 case .failure(let f):

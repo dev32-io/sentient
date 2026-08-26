@@ -21,7 +21,7 @@ final class MemoryViewModel {
         case user
 
         var sdk: MemorySlot { self == .memory ? .memory : .user }
-        var label: String { self == .memory ? "MEMORY.md" : "USER.md" }
+        var label: String { self == .memory ? "Shared notes" : "About you" }
     }
 
     /// Per-slot editing state. `original` is nil until the slot is first fetched.
@@ -43,6 +43,7 @@ final class MemoryViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -92,13 +93,19 @@ final class MemoryViewModel {
         }
     }
 
+    /// Clear a failed slot and retry its lazy load.
+    func retry(_ slot: Slot) async {
+        if slot == .memory { memoryState = SlotState() } else { userState = SlotState() }
+        await loadIfNeeded(slot)
+    }
+
     /// Save every dirty slot, each its own FSM run; refetch truth on Ready.
     func save() async {
         let dirty = Slot.allCases.filter { state(for: $0).isDirty }
         guard !dirty.isEmpty else { return }
         log.info("save.start slots=\(dirty.map(\.rawValue).joined(separator: ","))")
         for slot in dirty where await putSlot(slot) == false { return }
-        save = .idle
+        save = .applied
         log.info("save.done")
     }
 

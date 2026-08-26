@@ -1,5 +1,6 @@
 import type { JSX } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { ActionButton } from "../common/foundation.tsx";
 
 const PIN_LENGTH = 4;
 const KEYS: Array<{ digit: string; label: string }> = [
@@ -66,25 +67,15 @@ export function PinPad({ onSubmit, resetSignal }: PinPadProps): JSX.Element {
           }
           if (digit === "del") {
             return (
-              <button
-                key="del"
-                class="pin-pad__key pin-pad__key--delete"
-                onClick={() => handleKey("del")}
-                aria-label="delete"
-              >
+              <ActionButton key="del" variant="quiet" className="pin-pad__key pin-pad__key--delete" onClick={() => handleKey("del")} ariaLabel="Delete last digit" title="Delete last digit">
                 {label}
-              </button>
+              </ActionButton>
             );
           }
           return (
-            <button
-              key={digit}
-              class="pin-pad__key"
-              onClick={() => handleKey(digit)}
-              aria-label={digit}
-            >
+            <ActionButton key={digit} className="pin-pad__key" onClick={() => handleKey(digit)} ariaLabel={`PIN digit ${digit}`} title={`PIN digit ${digit}`}>
               {label}
-            </button>
+            </ActionButton>
           );
         })}
       </div>

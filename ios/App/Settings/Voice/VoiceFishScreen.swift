@@ -50,7 +50,7 @@ struct VoiceFishScreen: View {
     private var content: some View {
         switch vm.phase {
         case .loading:
-            ProgressView().frame(maxWidth: .infinity).padding(.vertical, Space.xl)
+            AsyncNotice(kind: .loading, title: "Loading the Fish library")
                 .accessibilityIdentifier("settings-voice-fish-loading")
         case .disabled:
             inlineMessage("Cloning from Fish isn't available on this gateway.", id: "settings-voice-fish-disabled")
@@ -86,130 +86,106 @@ struct VoiceFishScreen: View {
                 )
             }
             if vm.hasMore {
-                Button { vm.loadMore() } label: {
-                    Text(vm.loadingMore ? "Loading…" : "Load more")
-                        .font(Typo.ui(TypeScale.sm, .semibold))
-                        .foregroundStyle(DuskColors.accent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, Space.sm)
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.loadingMore)
-                .accessibilityIdentifier("settings-voice-fish-loadmore")
+                DesignActionButton(
+                    title: "Load more", role: .quiet,
+                    state: vm.loadingMore ? .loading : .normal,
+                    accessibilityId: "settings-voice-fish-loadmore",
+                    action: vm.loadMore
+                )
             }
         }
     }
 
     private var filterControls: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            RowSelect(label: "Language", options: [SelectOption(id: "", label: "All languages")] + vm.filterLanguages.map { SelectOption(id: $0, label: VoiceLanguages.label(for: $0)) }, selectedId: vm.languageFilter, accessibilityId: "settings-voice-fish-language", onSelect: { vm.languageFilter = $0 })
-            RowSelect(label: "Sort", options: [SelectOption(id: "popular", label: "Popular"), SelectOption(id: "recent", label: "Recent"), SelectOption(id: "az", label: "A–Z")], selectedId: vm.sort.rawValue, accessibilityId: "settings-voice-fish-sort", onSelect: { vm.sort = VoiceFishViewModel.Sort(rawValue: $0) ?? .popular })
-            facetRow("Gender", vm.filterGenders, vm.selectedGenders) { vm.toggleGender($0) }
-            facetRow("Age", vm.filterAges, vm.selectedAges) { vm.toggleAge($0) }
-            facetRow("Vibe", vm.filterVibes, vm.selectedVibes) { vm.toggleVibe($0) }
-            if vm.filterActive { Button("Clear filters", action: vm.resetFilters).accessibilityIdentifier("settings-voice-fish-clear-filters") }
+        DesignPane(title: "Filters") {
+            DesignSelect(
+                title: "Language",
+                options: [(value: "", label: "All languages")] + vm.filterLanguages.map { (value: $0, label: VoiceLanguages.label(for: $0)) },
+                selection: $vm.languageFilter
+            )
+            .accessibilityIdentifier("settings-voice-fish-language")
+            DesignSelect(
+                title: "Sort",
+                options: [(.popular, "Popular"), (.recent, "Recent"), (.az, "A–Z")],
+                selection: $vm.sort
+            )
+            .accessibilityIdentifier("settings-voice-fish-sort")
+            facetRow("Gender", vm.filterGenders, vm.selectedGenders, vm.toggleGender)
+            facetRow("Age", vm.filterAges, vm.selectedAges, vm.toggleAge)
+            facetRow("Vibe", vm.filterVibes, vm.selectedVibes, vm.toggleVibe)
+            if vm.filterActive {
+                DesignActionButton(title: "Clear filters", role: .quiet, accessibilityId: "settings-voice-fish-clear-filters", action: vm.resetFilters)
+            }
         }
     }
 
+    @ViewBuilder
     private func facetRow(_ label: String, _ options: [String], _ selected: [String], _ action: @escaping (String) -> Void) -> some View {
-        if options.isEmpty { return AnyView(EmptyView()) }
-        return AnyView(VStack(alignment: .leading, spacing: Space.xs) {
-            Text(label).font(Typo.ui(TypeScale.xs, .medium)).foregroundStyle(DuskColors.ink2)
-            ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: Space.xs) { ForEach(options, id: \.self) { value in Button(value) { action(value) }.buttonStyle(.borderedProminent).tint(selected.contains(value) ? DuskColors.accent : DuskColors.bgElev).accessibilityIdentifier("settings-voice-fish-\(label.lowercased())-\(value)") } } }
-        })
+        if !options.isEmpty {
+            VStack(alignment: .leading, spacing: Space.xs) {
+                DesignGroupHeader(title: label)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: DesignMetrics.minimumTarget))], alignment: .leading, spacing: Space.xs) {
+                    ForEach(options, id: \.self) { value in
+                        DesignChip(title: value, selected: selected.contains(value)) { action(value) }
+                            .accessibilityIdentifier("settings-voice-fish-\(label.lowercased())-\(value)")
+                    }
+                }
+            }
+        }
     }
 
     private var cloneEditor: some View {
-        VStack(alignment: .leading, spacing: Space.lg) {
-            Text("Clone this voice")
-                .font(Typo.ui(TypeScale.base, .semibold))
-                .foregroundStyle(DuskColors.ink)
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text("Name").font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink)
-                TextField("Voice name", text: Binding(get: { vm.cloneName }, set: { vm.setCloneName($0) }))
-                    .font(Typo.ui(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink)
-                    .padding(.horizontal, Space.md).padding(.vertical, Space.sm)
-                    .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                    .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-                    .accessibilityIdentifier("settings-voice-fish-clone-name")
-            }
-            RowSelect(
-                label: "Language",
-                options: VoiceLanguages.formOptions.map { SelectOption(id: $0.code, label: $0.label) },
-                selectedId: vm.cloneLanguage,
-                accessibilityId: "settings-voice-fish-clone-language",
-                onSelect: { vm.cloneLanguage = $0 }
+        DesignPane(title: "Clone this voice") {
+            DesignField(
+                title: "Name", prompt: "Voice name",
+                text: Binding(get: { vm.cloneName }, set: { vm.setCloneName($0) }),
+                accessibilityId: "settings-voice-fish-clone-name"
             )
-            HStack(spacing: Space.sm) {
-                Button("Cancel") { editorEntry == nil ? vm.cancelSelect() : onBack() }
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.ink2)
-                    .accessibilityIdentifier("settings-voice-fish-clone-cancel")
-                Spacer()
-                Button { vm.clone() } label: {
-                    Text(vm.cloning ? "Cloning…" : "Clone voice")
-                        .font(.system(size: TypeScale.base, weight: .semibold))
-                        .foregroundStyle(vm.canClone ? DuskColors.bg : DuskColors.ink4)
-                        .padding(.horizontal, Space.lg).padding(.vertical, Space.sm)
-                        .background(vm.canClone ? DuskColors.accent : DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.md))
-                }
-                .buttonStyle(.plain)
-                .disabled(!vm.canClone)
-                .accessibilityIdentifier("settings-voice-fish-clone-submit")
+            DesignSelect(
+                title: "Language",
+                options: VoiceLanguages.formOptions.map { (value: $0.code, label: $0.label) },
+                selection: $vm.cloneLanguage
+            )
+            .accessibilityIdentifier("settings-voice-fish-clone-language")
+            DesignActionButton(
+                title: "Clone voice",
+                state: vm.cloning ? .loading : vm.canClone ? .normal : .disabled,
+                accessibilityId: "settings-voice-fish-clone-submit",
+                action: vm.clone
+            )
+            DesignActionButton(title: "Cancel", role: .quiet, accessibilityId: "settings-voice-fish-clone-cancel") {
+                editorEntry == nil ? vm.cancelSelect() : onBack()
             }
         }
     }
 
     private var searchField: some View {
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").font(.system(size: TypeScale.sm)).foregroundStyle(DuskColors.ink3)
-            TextField("Search the Fish library", text: $vm.query)
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("settings-voice-fish-search")
-        }
-        .padding(.horizontal, Space.md).padding(.vertical, Space.sm)
-        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
+        SearchFilterRow(prompt: "Search the Fish library", query: $vm.query) { EmptyView() }
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .accessibilityIdentifier("settings-voice-fish-search")
     }
 
     private var failureState: some View {
-        VStack(spacing: Space.md) {
-            Text("Couldn't reach the Fish library.")
-                .font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2)
-            Button("Retry") { Task { await vm.load() } }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.accent)
-                .accessibilityIdentifier("settings-voice-fish-retry")
+        VStack(spacing: Space.sm) {
+            AsyncNotice(kind: .error, title: "Couldn't reach the Fish library")
+            DesignActionButton(title: "Retry", role: .quiet, accessibilityId: "settings-voice-fish-retry") {
+                Task { await vm.load() }
+            }
         }
-        .frame(maxWidth: .infinity).padding(.vertical, Space.xl)
     }
 
     private func inlineMessage(_ text: String, id: String) -> some View {
-        Text(text)
-            .font(Typo.ui(TypeScale.sm))
-            .foregroundStyle(DuskColors.ink3)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, Space.xl)
-            .accessibilityIdentifier(id)
+        AsyncNotice(kind: .empty, title: text).accessibilityIdentifier(id)
     }
 
     @ViewBuilder
     private var noticeBanner: some View {
         if let notice = vm.notice {
-            Button { vm.notice = nil } label: {
-                Text(notice)
-                    .font(Typo.ui(TypeScale.xs, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Space.sm)
-                    .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings-voice-fish-notice")
+            Button { vm.notice = nil } label: { AsyncNotice(kind: .warning, title: notice) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss notice")
+                .accessibilityIdentifier("settings-voice-fish-notice")
         }
     }
 }

@@ -26,8 +26,8 @@ private let titleText = "Settings"
 private let logoutLabel = "Log out"
 private let versionUnknown = "unknown"
 
-// Group headers (webui nav-config parity: Soul / User / Admin / Support).
-private let groupSoul = "Soul"
+// Group headers use household-facing capability language.
+private let groupAssistant = "Assistant"
 private let groupUser = "User"
 private let groupAdmin = "Admin"
 private let groupSupport = "Support"
@@ -100,7 +100,7 @@ struct SettingsSheet: View {
 
     var body: some View {
         SettingsRootView(
-            showAdmin: vm.showAdmin,
+            access: vm.access,
             updateStatus: updateModel.status,
             versionText: versionText,
             onOpen: onOpen,
@@ -116,7 +116,7 @@ struct SettingsSheet: View {
 /// Takes derived state + closures only (no VM) so previews render every access
 /// state with fake data.
 private struct SettingsRootView: View {
-    let showAdmin: Bool
+    let access: SettingsRootViewModel.AccessState
     let updateStatus: UpdateStatus
     let versionText: String
     let onOpen: (Route) -> Void
@@ -127,9 +127,10 @@ private struct SettingsRootView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Space.lg) {
-                group(groupSoul, soulItems)
+                accessNotice
+                group(groupAssistant, soulItems)
                 group(groupUser, userItems)
-                if showAdmin { group(groupAdmin, adminItems) }
+                if access.isAdmin { group(groupAdmin, adminItems) }
                 group(groupSupport, supportItems)
 
                 DangerButton(title: logoutLabel, accessibilityId: "settings-logout", action: onLogout)
@@ -160,6 +161,24 @@ private struct SettingsRootView: View {
         .duskTheme()
     }
 
+    @ViewBuilder
+    private var accessNotice: some View {
+        switch access {
+        case .loading:
+            AsyncNotice(kind: .loading, title: "Loading settings")
+                .accessibilityIdentifier("settings-access-loading")
+        case .failed:
+            AsyncNotice(
+                kind: .warning,
+                title: "Some settings are unavailable",
+                detail: "You can still use the settings shown below."
+            )
+            .accessibilityIdentifier("settings-access-failed")
+        case .ready:
+            EmptyView()
+        }
+    }
+
     /// A titled section: GroupHeader + its CategoryRows.
     @ViewBuilder
     private func group(_ header: String, _ items: [CategoryItem]) -> some View {
@@ -182,7 +201,7 @@ private struct SettingsRootView: View {
 #Preview("admin") {
     NavigationStack {
         SettingsRootView(
-            showAdmin: true,
+            access: .ready(isAdmin: true, fishBrowseEnabled: true),
             updateStatus: UpdateStatusUpToDate.shared,
             versionText: "0.2.0 (6)",
             onOpen: { _ in },
@@ -194,10 +213,26 @@ private struct SettingsRootView: View {
     .preferredColorScheme(.dark)
 }
 
+#Preview("access loading — larger text") {
+    NavigationStack {
+        SettingsRootView(
+            access: .loading,
+            updateStatus: UpdateStatusUpToDate.shared,
+            versionText: "0.2.0 (6)",
+            onOpen: { _ in },
+            onLogout: {},
+            onCheck: { UpdateStatusUpToDate.shared },
+            onInstall: {}
+        )
+    }
+    .environment(\.dynamicTypeSize, .accessibility3)
+    .preferredColorScheme(.dark)
+}
+
 #Preview("non-admin") {
     NavigationStack {
         SettingsRootView(
-            showAdmin: false,
+            access: .ready(isAdmin: false, fishBrowseEnabled: false),
             updateStatus: UpdateStatusAvailable(
                 latestBuild: 7,
                 versionName: "0.3.0",

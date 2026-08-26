@@ -39,12 +39,31 @@ enum CalendarFilterMapping {
         return result
     }
 
+    static let visibleScopes: [CalendarScope] = [.private, .household]
+
     static func scopeLabel(_ scope: CalendarScope) -> String {
         switch scope {
         case .private: "Private"
         case .household: "Household"
         case .all: "All"
         }
+    }
+
+    static func isScopeSelected(_ scope: CalendarScope, in filters: CalendarFilters) -> Bool {
+        filters.scope == .all || filters.scope == scope
+    }
+
+    /// Shared CalendarFilters currently models scope as private, household, or
+    /// both (`all`). The native checkbox composition therefore keeps the last
+    /// scope selected rather than manufacturing an iOS-only no-match state.
+    static func togglingScope(_ scope: CalendarScope, in filters: CalendarFilters) -> CalendarFilters {
+        var selected = Set(visibleScopes.filter { isScopeSelected($0, in: filters) })
+        if selected.contains(scope) { selected.remove(scope) } else { selected.insert(scope) }
+        let mapped: CalendarScope
+        if selected == Set(visibleScopes) { mapped = .all }
+        else if let remaining = selected.first { mapped = remaining }
+        else { mapped = filters.scope }
+        return replacing(filters, scope: mapped)
     }
 
     static func importanceLabel(_ importance: Importance) -> String {
@@ -66,14 +85,14 @@ struct CalendarFiltersView: View {
         VStack(spacing: Space.sm) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: Space.sm) {
-                    ForEach(CalendarScope.allCases, id: \.self) { scope in
+                    ForEach(CalendarFilterMapping.visibleScopes, id: \.self) { scope in
                         CalendarFilterChip(
                             label: CalendarFilterMapping.scopeLabel(scope),
-                            selected: filters.scope == scope,
-                            accessibilityPrefix: "Scope",
+                            selected: CalendarFilterMapping.isScopeSelected(scope, in: filters),
+                            accessibilityPrefix: "Calendar",
                             identifier: "calendar-filter-scope-\(scope.name.lowercased())"
                         ) {
-                            onChange(CalendarFilterMapping.replacing(filters, scope: scope))
+                            onChange(CalendarFilterMapping.togglingScope(scope, in: filters))
                         }
                     }
                     ForEach(Array(CalendarFilterMapping.groups(filters: filters, facets: facets).enumerated()), id: \.element) { index, group in
@@ -129,7 +148,7 @@ struct CalendarFiltersView: View {
                     .foregroundStyle(DuskColors.ink3)
                     .accessibilityHidden(true)
                 TextField("Search events", text: Binding(get: { filters.text }, set: onSearch))
-                    .font(CalendarFont.ui(TypeScale.sm))
+                    .font(Typo.ui(TypeScale.sm))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityLabel("Search calendar events")
@@ -143,8 +162,7 @@ struct CalendarFiltersView: View {
             }
             .padding(.leading, Space.md)
             .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-            .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft))
+            .designWell()
         }
     }
 }
@@ -159,9 +177,9 @@ private struct CalendarFilterChip: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(CalendarFont.mono(TypeScale.xs))
+                .font(Typo.mono(TypeScale.xs))
                 .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
-                .padding(.horizontal, 13)
+                .padding(.horizontal, CalendarSurfaceLayout.filterHorizontalPadding)
                 .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
                 .background(selected ? DuskColors.paper : .clear, in: Capsule())
                 .overlay(Capsule().stroke(selected ? DuskColors.line : DuskColors.lineSoft))
@@ -183,9 +201,9 @@ private struct CalendarTagChip: View {
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(CalendarFont.mono(TypeScale.xs))
+                .font(Typo.mono(TypeScale.xs))
                 .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, CalendarSurfaceLayout.tagHorizontalPadding)
                 .frame(height: CalendarSurfaceLayout.tagVisualHeight)
                 .background(selected ? DuskColors.bgSunk : .clear, in: Capsule())
                 .overlay(Capsule().stroke(DuskColors.lineSoft))

@@ -28,6 +28,20 @@ enum CalendarOverlaySemantics {
     static let topRadius: CGFloat = 26
     static let handleSize = CGSize(width: 42, height: 4)
     static let actionHeight: CGFloat = 48
+    static let scrimOpacity = 0.62
+    static let sheetBorderWidth = DesignMetrics.hairline
+    static let sheetShadowOpacity = 0.74
+    static let sheetShadowRadius: CGFloat = 35
+    static let sheetShadowY: CGFloat = -11
+    static let restingOffset: CGFloat = 0
+    static let dismissDragThreshold: CGFloat = 90
+    static let dismissPredictedThreshold: CGFloat = 160
+    static let dismissMinimumDistance: CGFloat = 12
+    static let headerDisplaySize: CGFloat = 29
+    static let metadataLabelWidth: CGFloat = 82
+    static let noticeBackgroundOpacity = 0.10
+    static let pressedScale = 0.97
+    static let normalScale = 1.0
 
     static func isOpen(_ state: CalendarUiState) -> Bool { isOpen(state.mutation) }
 

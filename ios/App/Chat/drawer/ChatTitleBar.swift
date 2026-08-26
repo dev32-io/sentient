@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct ChatTitleBar: View {
-    let markMode: MarkMode
+    let markMode: SentientIdentityState
     let onOpenPanel: () -> Void
     let onNewChat: () -> Void
 
@@ -21,6 +21,7 @@ struct ChatTitleBar: View {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: TypeScale.lg))
                     .foregroundStyle(DuskColors.ink2)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("History")
@@ -38,6 +39,7 @@ struct ChatTitleBar: View {
                 Image(systemName: "plus")
                     .font(.system(size: TypeScale.lg))
                     .foregroundStyle(DuskColors.ink2)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("New chat")
