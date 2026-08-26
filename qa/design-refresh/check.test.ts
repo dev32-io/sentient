@@ -91,6 +91,56 @@ describe("design refresh inventory checker", () => {
     await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("unsanitized evidence");
   });
 
+  it("rejects reviewed status without render evidence for every required configuration", async () => {
+    const root = await tempRoot();
+    const path = "qa/web/evidence/design-refresh/review.txt";
+    await mkdir(resolve(root, "qa/web/evidence/design-refresh"), { recursive: true });
+    await writeFile(resolve(root, path), "Synthetic visual review observation.\n");
+    const inventory = inventorySchema.parse(await current("inventory.json"));
+    const manifest = await current("visual-review.json");
+    const entry = manifest.entries[0];
+    entry.status = "reviewed";
+    entry.evidencePaths = [path];
+    entry.reviewerNotes = "Reviewed the rendered synthetic fixture for layout and interaction behavior.";
+    entry.measurements = {
+      overflow: { applicable: false, reason: "The loading surface has no overflowing content region." },
+      minimumTarget: { applicable: false, reason: "The loading surface has no interactive target." },
+      focus: { applicable: false, reason: "The loading surface has no focusable control." },
+    };
+    await expect(validateVisualManifest(root, manifest, inventory)).rejects.toThrow("render evidence does not cover configurations");
+  });
+
+  it("accepts reviewed evidence with sidecar-backed render coverage", async () => {
+    const root = await tempRoot();
+    const evidenceRoot = "qa/web/evidence/design-refresh";
+    await mkdir(resolve(root, evidenceRoot), { recursive: true });
+    const inventory = inventorySchema.parse(await current("inventory.json"));
+    const manifest = await current("visual-review.json");
+    const entry = manifest.entries[0];
+    const captures = entry.configurations.map((configuration: string) => ({
+      configuration,
+      path: `${evidenceRoot}/${configuration}.png`,
+    }));
+    for (const capture of captures) await writeFile(resolve(root, capture.path), "synthetic image bytes");
+    const sidecar = `${evidenceRoot}/capture.json`;
+    await writeFile(resolve(root, sidecar), JSON.stringify({
+      version: 1,
+      kind: "design-refresh-visual-evidence",
+      platform: "web",
+      inventoryIds: [entry.inventoryId],
+      captures,
+    }));
+    entry.status = "reviewed";
+    entry.evidencePaths = [sidecar, ...captures.map((capture: { path: string }) => capture.path)];
+    entry.reviewerNotes = "Reviewed the rendered synthetic fixture for layout and interaction behavior.";
+    entry.measurements = {
+      overflow: { applicable: false, reason: "The loading surface has no overflowing content region." },
+      minimumTarget: { applicable: false, reason: "The loading surface has no interactive target." },
+      focus: { applicable: false, reason: "The loading surface has no focusable control." },
+    };
+    await expect(validateVisualManifest(root, manifest, inventory)).resolves.toBeDefined();
+  });
+
   it("accepts only explicit local loopback fixture targets", () => {
     expect(() => assertLoopbackFixtureTarget("https://localhost/", "local")).not.toThrow();
     expect(() => assertLoopbackFixtureTarget("http://127.0.0.1:8888/", "local")).not.toThrow();

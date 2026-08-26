@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
-import { e2eMatrixSchema, inventorySchema, visualManifestSchema, type Inventory, type VisualManifest } from "./contracts.ts";
+import { e2eMatrixSchema, inventorySchema, visualEvidenceDocumentSchema, visualManifestSchema, type Inventory, type VisualManifest } from "./contracts.ts";
 
 export const EXPECTED_CASES = Array.from({ length: 9 }, (_, i) => `E2E-${String(i + 1).padStart(3, "0")}`);
 const PRODUCTION_ROOTS = ["gateway/webui/src", "ios/App", "shared/mobile-sdk/src", "shared/mobile-data/src"];
@@ -20,6 +20,7 @@ export interface ReachabilityEntry {
 const EVIDENCE_ROOTS = ["qa/web/evidence/design-refresh/", "qa/mobile/evidence/design-refresh/"];
 const EVIDENCE_EXTENSIONS = new Set([".json", ".md", ".txt", ".png", ".jpg", ".jpeg", ".mp4"]);
 const TEXT_EVIDENCE_EXTENSIONS = new Set([".json", ".md", ".txt"]);
+const RENDER_CAPTURE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".mp4"]);
 const UNSAFE_EVIDENCE = [
   /\b(?:password|credential|bearer|authorization|access[_ -]?token|refresh[_ -]?token|pin\s*[:=])\b/i,
   /\b(?:transcript|raw audio|microphone capture|private household|production (?:user|event|session|identifier)|system prompt|user prompt)\b/i,
@@ -246,7 +247,9 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
     if (row.platform === "ios" && entry.nativeAdaptation !== row.intentionalNativeAdaptation) throw new Error(`${row.id}: native adaptation was not carried into visual review`);
   }
   for (const entry of manifest.entries) {
-    if (!inventory.rows.some((row) => row.id === entry.inventoryId)) throw new Error(`${entry.evidenceId}: unknown inventory row`);
+    const row = inventory.rows.find((candidate) => candidate.id === entry.inventoryId);
+    if (!row) throw new Error(`${entry.evidenceId}: unknown inventory row`);
+    const coverage = new Set<string>();
     for (const path of entry.evidencePaths) {
       if (!EVIDENCE_ROOTS.some((root) => path.startsWith(root))) throw new Error(`${entry.evidenceId}: evidence path is outside a design-refresh evidence root`);
       const extension = extname(path).toLowerCase();
@@ -254,7 +257,27 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
       if (!(await regularFile(repoRoot, path))) throw new Error(`${entry.evidenceId}: evidence must be a sanitized regular file: ${path}`);
       const content = TEXT_EVIDENCE_EXTENSIONS.has(extension) ? await readFile(resolve(repoRoot, path), "utf8") : "";
       if (UNSAFE_EVIDENCE.some((pattern) => pattern.test(`${path}\n${content}`))) throw new Error(`${entry.evidenceId}: unsanitized evidence content`);
+      if (extension !== ".json") continue;
+      let rawDocument: unknown;
+      try { rawDocument = JSON.parse(content); } catch { continue; }
+      const parsed = visualEvidenceDocumentSchema.safeParse(rawDocument);
+      if (!parsed.success || !parsed.data.inventoryIds.includes(entry.inventoryId)) continue;
+      if (parsed.data.platform !== row.platform) throw new Error(`${entry.evidenceId}: visual evidence platform mismatch`);
+      for (const capture of parsed.data.captures) {
+        if (!entry.evidencePaths.includes(capture.path)) throw new Error(`${entry.evidenceId}: sidecar capture is absent from entry evidence paths`);
+        if (!RENDER_CAPTURE_EXTENSIONS.has(extname(capture.path).toLowerCase())) throw new Error(`${entry.evidenceId}: sidecar does not reference a render capture`);
+        coverage.add(capture.configuration);
+      }
     }
+    if (entry.status !== "reviewed") continue;
+    if (/\b(?:pending|placeholder|not reviewed)\b/i.test(entry.reviewerNotes)) throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder reviewer notes`);
+    for (const measurement of Object.values(entry.measurements)) {
+      if (!measurement.applicable && /\b(?:pending|placeholder|not reviewed)\b/i.test(measurement.reason)) {
+        throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder measurements`);
+      }
+    }
+    const missingConfigurations = entry.configurations.filter((configuration) => !coverage.has(configuration));
+    if (missingConfigurations.length) throw new Error(`${entry.evidenceId}: render evidence does not cover configurations: ${missingConfigurations.join(", ")}`);
   }
   return manifest;
 }

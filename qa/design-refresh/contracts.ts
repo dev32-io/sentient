@@ -77,6 +77,15 @@ export const visualReviewEntrySchema = z.object({
 
 export const visualManifestSchema = z.object({ version: z.literal(1), entries: z.array(visualReviewEntrySchema) });
 
+/** Sanitized sidecar emitted by a real render/simulator capture run. */
+export const visualEvidenceDocumentSchema = z.object({
+  version: z.literal(1),
+  kind: z.literal("design-refresh-visual-evidence"),
+  platform: z.enum(platforms),
+  inventoryIds: z.array(z.string().regex(/^(web|ios)\./)).min(1),
+  captures: z.array(z.object({ configuration: nonEmpty, path: sourcePath })).min(1),
+});
+
 const e2eText = z.array(nonEmpty).min(1);
 export const e2eCaseSchema = z.object({
   id: z.string().regex(/^E2E-00[1-9]$/),
