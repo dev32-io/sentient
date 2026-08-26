@@ -28,11 +28,20 @@ criteria:
     navigation and large Dynamic Type
   - No audio E2E, no network manipulation, and no prototype runtime imports
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: eda1f1a0-468a-4325-9838-4a0d0018269a
   reviewedCommit: bc5f663fb06b205b069af12d784e3a1df890ffd4
+  managerPrompt: Fix both blocking accessibility gaps. For Web History, ensure a
+    closed drawer and every descendant are removed from sequential focus and
+    interaction—prefer conditional unmount after any exit transition or
+    correctly apply native `inert` to the closed subtree—while preserving open
+    focus trap, Escape/backdrop dismissal, and trigger focus restoration; add a
+    keyboard regression proving Tab cannot enter the closed drawer. For iOS
+    History, make the search control at least 44pt high and replace page-local
+    `Typo.ui(14)` with the approved shared semantic typography/token, with
+    focused accessibility/layout proof.
 findings:
   - id: F-001
     severity: medium
