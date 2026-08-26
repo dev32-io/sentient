@@ -12,27 +12,29 @@ methods:
     integrated change for specification fit, cross-stage correctness,
     regressions, maintainability, and test coverage.
 loop:
+  state: fixing
   iteration: 2
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
   reviewedCommit: 6891b1e0966a4122c397086ff1304b1abd5dc148
-  managerPrompt: Complete FINAL-003; do not return after validator or
-    manifest-only changes. Build/use deterministic local review fixtures that
-    render the actual production Web and SwiftUI components with fake state/data
-    adapters, then execute the structured review. Capture sanitized
-    screenshots/contact sheets and measurement reports under the approved
-    evidence roots for every inventory row and required configuration. Evidence
-    may be grouped where a single rendered capture genuinely proves multiple
-    visible rows, but each of the 373 entries must link real evidence and record
-    observed overflow, minimum-target, focus/keyboard, native-adaptation, and
-    configuration results before becoming `reviewed`. Add any missing QA-only
-    state selectors/fixtures needed to reach loading, empty, error, modal, menu,
-    disabled, and no-op states; do not replace production components with mock
-    visuals. Run and pass `bun qa/design-refresh/check.ts --require-closed`. Do
-    not alter FINAL-001/002 behavior, access production, activate audio,
-    manipulate network adapters, mass-fill generic verdicts, or infer review
-    from static tests.
+  managerPrompt: "FINAL-003 remains blocking because the prior repair explicitly
+    substituted generic specimens. Remove the synthetic Web
+    `StateSpecimen`/fixture controls and iOS `QAVisualReviewSpecimen` catalog,
+    plus all state-name/regex-derived measurements and mass-reviewed statuses.
+    Build a fixture registry at real screen/container boundaries: each inventory
+    ID must launch the actual production route, screen, overlay, dialog, sheet,
+    menu, message/composer, Calendar, Settings, setup/auth, or reusable
+    production component with deterministic fake repositories/ViewModels/props
+    supplying that state. Web capture must measure the rendered production DOM
+    at each required viewport/zoom/motion configuration. iOS capture must launch
+    the actual SwiftUI destination/component in the signed simulator and derive
+    target/focus/overflow observations from its accessibility/layout hierarchy,
+    not the inventory name. Require evidence metadata to identify the concrete
+    production component and fixture state used; reject generic fallback
+    renderers. Resolve the 105 `needs-review` outcomes through production fixes
+    and recapture, not by relabeling. Only then mark entries reviewed and pass
+    `bun qa/design-refresh/check.ts --require-closed`. Preserve FINAL-001/002
+    and all production/audio/network restrictions."
   fixerAgentId: b0622fe4-2893-4827-b82a-d988939b31f0
 findings:
   - id: FINAL-001
