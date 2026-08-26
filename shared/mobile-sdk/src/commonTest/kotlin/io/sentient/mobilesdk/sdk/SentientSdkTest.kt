@@ -22,12 +22,15 @@ import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SentientSdkTest {
@@ -166,23 +169,51 @@ class SentientSdkTest {
     }
 
     @Test
-    fun disconnect_does_not_await_a_stalled_transport_close() = runTest {
-        val fake = FakeWebSocketEngine()
-        val releaseClose = CompletableDeferred<Unit>()
-        fake.beforeClose = { releaseClose.await() }
+    fun normal_logout_closes_transport_and_cancels_voice_root() = runTest {
+        val events = mutableListOf<String>()
+        val fake = FakeWebSocketEngine().apply { beforeClose = { events += "transport-close" } }
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
-        // The release happens only after disconnect returns. Awaiting the adapter close here
-        // would deadlock this deterministic test; lifecycle teardown must be best-effort async.
         sdk.disconnect()
+
+        assertEquals(listOf("transport-close"), events)
+        assertFalse(sdk.hasActiveCapture)
+        assertEquals(0, sdk.activeVoiceLifecycleChildren)
+        assertFalse(sdk.isVoiceLifecycleRootActive)
+    }
+
+    @Test
+    fun hanging_cancellable_transport_is_cancelled_joined_and_leaves_no_sdk_children_or_capture() = runTest {
+        val closeCancelled = CompletableDeferred<Unit>()
+        val fake = FakeWebSocketEngine()
+        fake.beforeClose = {
+            try {
+                awaitCancellation()
+            } finally {
+                closeCancelled.complete(Unit)
+            }
+        }
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+        val binaryAtLogout = fake.sentBinary.size
+
+        sdk.disconnect()
+
+        assertTrue(closeCancelled.isCompleted, "timed-out close child must be cancelled and joined")
         assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
-        releaseClose.complete(Unit)
+        assertFalse(sdk.hasActiveCapture)
+        assertEquals(0, sdk.activeVoiceLifecycleChildren)
+        assertFalse(sdk.isVoiceLifecycleRootActive)
+        sdk.holdStart()
+        advanceUntilIdle()
+        assertEquals(binaryAtLogout, fake.sentBinary.size, "no frame may be emitted after terminal logout")
     }
 
     @Test
     fun disconnect_sets_disconnected_and_is_idempotent() = runTest {
-        val fake = FakeWebSocketEngine()
+        var closeCalls = 0
+        val fake = FakeWebSocketEngine().apply { beforeClose = { closeCalls += 1 } }
         val sdk = buildSdk(fake)
         connectToReady(sdk, fake)
 
@@ -194,5 +225,6 @@ class SentientSdkTest {
         sdk.disconnect()
         yield()
         assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
+        assertEquals(1, closeCalls, "repeated terminal disconnect must not close twice")
     }
 }

@@ -292,18 +292,23 @@ class SdkLifecycle(
             status == SdkStatus.AUTHENTICATING ||
             status == SdkStatus.RECONNECTING
 
-    /** Tear down the WS + all loops. Idempotent. */
-    fun teardown(closeScope: CoroutineScope = scope) {
+    /**
+     * Detach the WS + all loops synchronously and return the session that still needs closing.
+     * Terminal logout closes that session as a caller-owned structured child; reconnect keeps
+     * the historical fire-and-forget facade below.
+     */
+    fun detach(): WebSocketSession? {
         pumpJob?.cancel(); pumpJob = null
         val open = session
-        if (open != null) {
-            // Logout may be initiated immediately before the platform owner cancels [scope].
-            // Its SDK-owned close scope keeps this best-effort handshake alive without awaiting
-            // a transport adapter that can itself stall.
-            closeScope.launch { open.close(WS_NORMAL_CLOSURE, "User disconnect") }
-        }
         transport = null
         session = null
         handshake = null
+        return open
+    }
+
+    /** Non-terminal/reconnect teardown. Idempotent. */
+    fun teardown() {
+        val open = detach()
+        if (open != null) scope.launch { open.close(WS_NORMAL_CLOSURE, "User disconnect") }
     }
 }

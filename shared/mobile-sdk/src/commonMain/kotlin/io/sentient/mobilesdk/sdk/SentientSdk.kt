@@ -33,14 +33,19 @@ import io.sentient.mobilesdk.transport.ResumeCursor
 import io.sentient.mobilesdk.transport.ResumeCursorPersistence
 import io.sentient.mobilesdk.transport.ResumeCursorStore
 import io.sentient.mobilesdk.transport.SdkStatus
+import io.sentient.mobilesdk.transport.WS_NORMAL_CLOSURE
+import io.sentient.mobilesdk.transport.WebSocketSession
 import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.io.VoiceAudioState
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import io.sentient.mobilesdk.voice.talk.TalkModeController
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -51,11 +56,38 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
 private const val DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS = 1_000L
+private const val DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS = 1_000L
+
+/** Restartable root used only by the voice lane. Terminal logout cancels and joins the
+ * current root; reconnect creates a fresh root before restarting the lane. */
+internal class RestartableSdkScope(
+    private val dispatcher: CoroutineDispatcher,
+) : CoroutineScope {
+    @Volatile private var root: Job = SupervisorJob()
+    override val coroutineContext: CoroutineContext get() = root + dispatcher
+
+    val activeChildCount: Int get() = root.children.count { it.isActive }
+    val isRootActive: Boolean get() = root.isActive
+
+    suspend fun cancelRootAndJoin() {
+        root.cancelAndJoin()
+    }
+
+    fun renew() {
+        if (!root.isActive) root = SupervisorJob()
+    }
+}
 
 /** A1: "stuck" only when a turn is active AND the socket is not healthy. A slow healthy
  *  turn stays READY and never arms — no content-frame false-positives. */
@@ -70,6 +102,7 @@ class SentientSdk(
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
     sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
     private val captureTeardownTimeoutMs: Long = DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS,
+    private val transportTeardownTimeoutMs: Long = DEFAULT_TRANSPORT_TEARDOWN_TIMEOUT_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
     sessionsHttpClient: SessionsHttpClient? = null,
     /**
@@ -84,6 +117,8 @@ class SentientSdk(
     private val resumeCursorStore: ResumeCursorStore = NoOpResumeCursorStore,
 ) {
     private val log = createLogger("sdk", "orchestrator")
+    private val disconnectMutex = Mutex()
+    @Volatile private var terminallyDisconnected = false
 
     private val _connection = MutableStateFlow(ConnectionState())
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
@@ -199,7 +234,11 @@ class SentientSdk(
     // The voice lane has an SDK-owned non-main lifecycle. Platform session owners may cancel
     // their orchestration scope immediately after initiating logout; this scope survives just
     // long enough for the bounded ordered cancel attempt, then [disconnect] shuts its lane.
-    private val voiceLifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val voiceLifecycleScope = RestartableSdkScope(Dispatchers.Default)
+
+    internal val activeVoiceLifecycleChildren: Int get() = voiceLifecycleScope.activeChildCount
+    internal val isVoiceLifecycleRootActive: Boolean get() = voiceLifecycleScope.isRootActive
+    internal val hasActiveCapture: Boolean get() = connectors.audioInput.hasActiveCapture
 
     // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
     // connector set, reaching connectors.audioInput via a lazy lambda. Null voiceAudio
@@ -425,6 +464,10 @@ class SentientSdk(
             return
         }
         consumerDisconnected = false
+        if (terminallyDisconnected) {
+            voiceLifecycleScope.renew()
+            terminallyDisconnected = false
+        }
         voice.resumeAfterTeardown()
         reconnectController.reset()
         when (val result = lifecycle.attemptConnect()) {
@@ -441,13 +484,14 @@ class SentientSdk(
      *   teardown) keeps the user "in session" (gate stays on chat; SDK
      *   auto-reconnects on the next presence signal).
      */
-    suspend fun disconnect(clearSession: Boolean = true) {
+    suspend fun disconnect(clearSession: Boolean = true) = disconnectMutex.withLock {
+        if (clearSession && terminallyDisconnected) return@withLock
         log.info("disconnect", mapOf("clearSession" to clearSession))
         consumerDisconnected = true
         voice.beginTeardown()
         // Teardown is a genuine capture loss. Reset shared TalkMode, then fence the voice
         // lane before transport/audio disposal. This guarantees producer stop/join and the
-        // matching Cancel control complete while both the socket and SDK scope still exist.
+        // matching Cancel control complete while both the socket and voice root still exist.
         talkModeController.lifecycleCancel("disconnect")
         syncVoiceMode()
         val orderedCaptureTeardown = voice.cancelCaptureAndAwait(captureTeardownTimeoutMs)
@@ -459,7 +503,15 @@ class SentientSdk(
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
         // (reconnect) keeps them so TTS survives the next reconnect.
         if (clearSession) audio.dispose() else audio.suspendForReconnect()
-        lifecycle.teardown(closeScope = voiceLifecycleScope)
+
+        if (clearSession) {
+            // Detach first so no SDK loop can retain or reuse this session. Its close runs as
+            // a child of the caller's teardown coroutine—not in an SDK scope that outlives
+            // logout—and a timeout explicitly cancels and joins that child.
+            closeTransportBounded(lifecycle.detach())
+        } else {
+            lifecycle.teardown()
+        }
         if (clearSession && deriver.hasSession) {
             log.info("hasSession.clear", mapOf("trigger" to "logout"))
             deriver.hasSession = false
@@ -471,7 +523,36 @@ class SentientSdk(
         }
         setStatus(SdkStatus.DISCONNECTED)
         stuckWatchdog.disarm()
-        if (clearSession) voice.shutdownLane()
+        if (clearSession) {
+            terminallyDisconnected = true
+            voice.shutdownLane()
+            // Ordering is deliberate: capture terminalization, transport close attempt, then
+            // root cancellation/join. No SDK-owned teardown child survives this return.
+            voiceLifecycleScope.cancelRootAndJoin()
+        }
+    }
+
+    private suspend fun closeTransportBounded(open: WebSocketSession?) {
+        if (open == null) return
+        supervisorScope {
+            val closeChild = launch {
+                try {
+                    open.close(WS_NORMAL_CLOSURE, "User disconnect")
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    log.warn("transport.close-failed", mapOf("code" to "transport-close-failed"))
+                }
+            }
+            val completed = withTimeoutOrNull(transportTeardownTimeoutMs) {
+                closeChild.join()
+                true
+            } ?: false
+            if (!completed) {
+                closeChild.cancelAndJoin()
+                log.warn("transport.close-timeout", mapOf("timeoutMs" to transportTeardownTimeoutMs))
+            }
+        }
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */
