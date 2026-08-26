@@ -1,4 +1,4 @@
-// ComposerTaskStrip — the live tool/task rows, flush with the top edge of the
+// ComposerTaskShelf — the live tool/task rows, flush with the top edge of the
 // composer, inside its border (design v2, `sentient-webui-design-v2/screenshots/
 // 00-chat-reference.png`; spec `docs/superpowers/specs/2026-04-18-cerebrum-ux-refresh-design.md`
 // §4.9).
@@ -13,14 +13,15 @@ import type { TaskListItem } from "@sentient/protocol";
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { ToolInlineDetail } from "../chat/tool-inline-detail.tsx";
+import { ActionButton } from "../common/foundation.tsx";
 import { Icon } from "../common/icon.tsx";
 
-export interface ComposerTaskStripProps {
+export interface ComposerTaskShelfProps {
   items: readonly TaskListItem[];
 }
 
 function statusClass(s: TaskListItem["status"]): string {
-  return `tool-pill--${s}`;
+  return `dock-task-pill--${s}`;
 }
 
 // Tool names ship with redundant routing prefixes that don't fit on
@@ -63,20 +64,22 @@ interface ToolPillButtonProps {
 }
 
 function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.Element {
-  const openClass = isOpen ? "tool-pill--open" : "";
   return (
-    <button
-      type="button"
-      class={`tool-pill ${statusClass(task.status)} ${openClass}`}
+    <ActionButton
+      variant="quiet"
+      className={`dock-task-pill ${statusClass(task.status)}`}
+      title={task.toolName}
+      ariaLabel={`Task ${shortToolName(task.toolName)}`}
+      expanded={isOpen}
       onClick={() => onToggle(task.id)}
     >
-      <span class="tool-pill__icon">
+      <span class="dock-task-pill__icon" aria-hidden="true">
         <Icon name={iconForTool(task.toolName)} size={14} />
       </span>
-      <code class="tool-pill__name" title={task.toolName}>{shortToolName(task.toolName)}</code>
-      <span class={`tool-pill__dot tool-pill__dot--${task.status}`} />
-      <span class="tool-pill__chev"><Icon name="chevron" size={10} /></span>
-    </button>
+      <code class="dock-task-pill__name">{shortToolName(task.toolName)}</code>
+      <span class={`dock-task-pill__dot dock-task-pill__dot--${task.status}`} aria-hidden="true" />
+      <span class="dock-task-pill__chevron" aria-hidden="true"><Icon name="chevron" size={10} /></span>
+    </ActionButton>
   );
 }
 
@@ -86,7 +89,7 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
  * upward") because the strip sits at the very top of the composer card; an
  * expansion has nowhere to grow but up.
  */
-export function ComposerTaskStrip({ items }: ComposerTaskStripProps): JSX.Element | null {
+export function ComposerTaskShelf({ items }: ComposerTaskShelfProps): JSX.Element | null {
   const [openId, setOpenId] = useState<string | null>(null);
 
   if (items.length === 0) return null;
@@ -98,9 +101,9 @@ export function ComposerTaskStrip({ items }: ComposerTaskStripProps): JSX.Elemen
   const open = openId !== null ? items.find((t) => t.id === openId) : undefined;
 
   return (
-    <div class="tool-strip">
+    <div class="dock-task-shelf">
       {open && <ToolInlineDetail item={open} direction="up" />}
-      <div class="tool-strip__pills">
+      <div class="dock-task-shelf__pills">
         {items.map((t) => (
           <ToolPillButton key={t.id} task={t} isOpen={openId === t.id} onToggle={toggle} />
         ))}

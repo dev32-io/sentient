@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { ChipControl } from "../common/foundation.tsx";
 
 export interface SuggestionChipsProps {
   suggestions: readonly string[];
@@ -7,12 +8,12 @@ export interface SuggestionChipsProps {
 
 export function SuggestionChips({ suggestions, onClick }: SuggestionChipsProps): JSX.Element {
   return (
-    <div class="suggestion-chips">
-      {suggestions.map((s) => (
-        <button key={s} type="button" class="suggestion-chips__item" onClick={() => onClick(s)}>
-          {s}
-        </button>
+    <nav class="dock-suggestions" aria-label="Suggestions">
+      {suggestions.map((suggestion) => (
+        <ChipControl key={suggestion} onClick={() => onClick(suggestion)}>
+          {suggestion}
+        </ChipControl>
       ))}
-    </div>
+    </nav>
   );
 }

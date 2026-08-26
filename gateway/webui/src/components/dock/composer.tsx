@@ -2,28 +2,44 @@ import type { TaskListItem } from "@sentient/protocol";
 import type { JSX, RefObject } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
+import { ActionButton, Surface } from "../common/foundation.tsx";
 import { Icon } from "../common/icon.tsx";
-import { ComposerTaskStrip } from "./composer-task-strip.tsx";
+import { type CapturePort, createCapturePort, legacySource, semanticSource, type LegacyCaptureMode, type CaptureSource } from "./capture-adapter.ts";
+import type { ChatComposerProps as SemanticChatComposerProps } from "./composer-api.ts";
+import { DockStyleSheet } from "./dock-styles.tsx";
+import { ComposerTaskShelf } from "./composer-task-strip.tsx";
 import { InterruptButton } from "./interrupt-button.tsx";
 import { SuggestionChips } from "./suggestion-chips.tsx";
 import { TtsButton } from "./tts-button.tsx";
-import { type VoiceCaptureMode, type VoiceCaptureState, VoiceCaptureControl } from "./voice-capture-control.tsx";
+import { VoiceCaptureControl, type VoiceCaptureState } from "./voice-capture-control.tsx";
 
-export interface ChatComposerProps {
+export type { CaptureIntent, ChatComposerProps } from "./composer-api.ts";
+
+// The public product boundary below composes the private DraftEditor and
+// ComposerActions layers. TaskShelf and VoiceCaptureControl own their own
+// state; screens only provide value, server state, and semantic callbacks.
+
+/** Compatibility adapter for the current screen until it adopts intents. */
+interface LegacyChatComposerProps {
   cycleStatus: CycleStatus;
   connectionReady: boolean;
   captureActive: boolean;
   ttsEnabled: boolean;
   suggestions: readonly string[];
-  /** Full-state `tasklist.state`; the composer never infers row lifetime. */
   tasks: readonly TaskListItem[];
   onSendText(text: string): void;
-  onCaptureStart(mode: VoiceCaptureMode): Promise<string>;
+  onCaptureStart(mode: LegacyCaptureMode): Promise<string>;
   onCaptureCommit(captureId: string): Promise<void>;
   onCaptureCancel(captureId: string): Promise<void>;
   onTtsToggle(): void;
   onInterrupt(): void;
   onSuggestionClick(text: string): void;
+}
+
+type ChatComposerInputProps = SemanticChatComposerProps | LegacyChatComposerProps;
+
+function isSemanticProps(props: ChatComposerInputProps): props is SemanticChatComposerProps {
+  return "onCaptureIntent" in props;
 }
 
 function isTouchDevice(): boolean {
@@ -32,30 +48,22 @@ function isTouchDevice(): boolean {
 
 interface DraftEditorProps {
   value: string;
-  hidden: boolean;
+  receded: boolean;
   inputRef: RefObject<HTMLTextAreaElement>;
-  onInput(value: string): void;
+  onValueChange(value: string): void;
   onSubmit(): void;
 }
 
-function DraftEditor({ value, hidden, inputRef, onInput, onSubmit }: DraftEditorProps): JSX.Element {
-  function resize(element: HTMLTextAreaElement): void {
-    element.style.height = "auto";
-    element.style.height = `${Math.min(132, Math.max(42, element.scrollHeight))}px`;
-  }
-
+function DraftEditor({ value, receded, inputRef, onValueChange, onSubmit }: DraftEditorProps): JSX.Element {
   return (
     <textarea
       ref={inputRef}
-      class={`chat-composer__draft${hidden ? " chat-composer__draft--receded" : ""}`}
+      class={`dock-composer__draft${receded ? " dock-composer__draft--receded" : ""}`}
       aria-label="Message Sentient"
       placeholder="Message Sentient"
+      rows={1}
       value={value}
-      onInput={(event) => {
-        const element = event.currentTarget;
-        onInput(element.value);
-        resize(element);
-      }}
+      onInput={(event) => onValueChange(event.currentTarget.value)}
       onKeyDown={(event) => {
         if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
@@ -73,37 +81,44 @@ interface ComposerActionsProps {
   connectionReady: boolean;
   captureActive: boolean;
   ttsEnabled: boolean;
+  capturePort: CapturePort;
   onSend(): void;
   onTtsToggle(): void;
   onInterrupt(): void;
-  onCaptureStart(mode: VoiceCaptureMode): Promise<string>;
-  onCaptureCommit(captureId: string): Promise<void>;
-  onCaptureCancel(captureId: string): Promise<void>;
   onVoiceState(state: VoiceCaptureState): void;
 }
 
 function ComposerActions(props: ComposerActionsProps): JSX.Element {
   return (
-    <div class="chat-composer__actions">
-      <button class="chat-composer__attach" type="button" disabled aria-label="Attachments are not available" title="Attachments are not available">
+    <div class="dock-composer__actions">
+      <ActionButton
+        className="dock-composer__attachment"
+        disabled
+        ariaLabel="Attachments are not available"
+        title="Attachments are not available"
+      >
         <Icon name="plus" size={18} />
-      </button>
+      </ActionButton>
       <TtsButton enabled={props.ttsEnabled} onToggle={props.onTtsToggle} />
-      <span class="chat-composer__grow" />
-      <span class={`chat-composer__interrupt${props.held ? " chat-composer__interrupt--receded" : ""}`}>
+      <span class="dock-composer__grow" />
+      <span class={`dock-composer__interrupt${props.held ? " dock-composer__interrupt--receded" : ""}`}>
         {props.canInterrupt && <InterruptButton onInterrupt={props.onInterrupt} />}
       </span>
       {props.draftPresent ? (
-        <button class="chat-composer__send" type="button" disabled={!props.connectionReady} aria-label="Send message" onClick={props.onSend}>
+        <ActionButton
+          variant="primary"
+          className="dock-composer__send"
+          disabled={!props.connectionReady}
+          ariaLabel="Send message"
+          onClick={props.onSend}
+        >
           <Icon name="send" size={17} />
-        </button>
+        </ActionButton>
       ) : (
         <VoiceCaptureControl
           disabled={!props.connectionReady}
           captureActive={props.captureActive}
-          onStart={props.onCaptureStart}
-          onCommit={props.onCaptureCommit}
-          onCancel={props.onCaptureCancel}
+          capturePort={props.capturePort}
           onStateChange={props.onVoiceState}
         />
       )}
@@ -111,15 +126,45 @@ function ComposerActions(props: ComposerActionsProps): JSX.Element {
   );
 }
 
-export function ChatComposer(props: ChatComposerProps): JSX.Element {
-  const [draft, setDraft] = useState("");
-  const [voiceState, setVoiceState] = useState<VoiceCaptureState>(props.connectionReady ? "idle" : "reconnect-disabled");
+export function ChatComposer(props: SemanticChatComposerProps): JSX.Element;
+export function ChatComposer(props: LegacyChatComposerProps): JSX.Element;
+export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
+  const semantic = isSemanticProps(props);
+  const [legacyDraft, setLegacyDraft] = useState("");
+  const [voiceState, setVoiceState] = useState<VoiceCaptureState>(() => props.connectionReady ? "idle" : "reconnect-disabled");
   const [blockedFlash, setBlockedFlash] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const blurAfterSend = useRef(isTouchDevice());
+  const sourceRef = useRef<CaptureSource | null>(null);
+  sourceRef.current = semantic
+    ? semanticSource(props.onCaptureIntent)
+    : legacySource({
+      onStart: props.onCaptureStart,
+      onCommit: props.onCaptureCommit,
+      onCancel: props.onCaptureCancel,
+    });
+  const capturePortRef = useRef<CapturePort | null>(null);
+  if (capturePortRef.current === null) {
+    capturePortRef.current = createCapturePort(() => {
+      if (sourceRef.current === null) throw new Error("Composer capture source is unavailable.");
+      return sourceRef.current;
+    });
+  }
+  const capturePort: CapturePort = capturePortRef.current;
+
+  const draft = semantic ? props.value : legacyDraft;
+  const onValueChange = semantic ? props.onValueChange : setLegacyDraft;
+  const submitText = semantic ? props.onTextSubmit : props.onSendText;
+  const onTtsToggle = props.onTtsToggle;
+  const onInterrupt = props.onInterrupt;
+  const onSuggestionClick = props.onSuggestionClick;
   const held = voiceState === "hold";
   const captureLive = voiceState === "hold" || voiceState === "auto" || voiceState === "transitioning";
-  const canInterrupt = props.cycleStatus !== "idle";
+  // `awaiting-tasks` may contain only background work. Do not present a
+  // foreground Interrupt for that state; a foreground row remains explicit.
+  const canInterrupt = props.cycleStatus === "streaming"
+    || props.cycleStatus === "speaking"
+    || props.tasks.some((task) => task.kind === "foreground" && task.status === "running");
 
   function focusEditor(): void {
     editorRef.current?.focus();
@@ -133,51 +178,52 @@ export function ChatComposer(props: ChatComposerProps): JSX.Element {
       setTimeout(() => setBlockedFlash(false), 1500);
       return;
     }
-    props.onSendText(text);
-    setDraft("");
+    submitText(text);
+    onValueChange("");
     if (blurAfterSend.current) editorRef.current?.blur();
     else focusEditor();
   }
 
   return (
-    <div class="dock">
-      <div class="dock-inner">
-        <div class="chat-composer-frame">
-          <ComposerTaskStrip items={props.tasks} />
-          <div
-            class={`chat-composer chat-composer--${voiceState}${!props.connectionReady ? " chat-composer--reconnecting" : ""}`}
-            data-voice-state={voiceState}
-            onPointerDown={(event) => {
-              if ((event.target as Element).closest("textarea,button,input,a,[role='button']")) return;
-              event.preventDefault();
-              focusEditor();
-              const length = editorRef.current?.value.length ?? 0;
-              editorRef.current?.setSelectionRange(length, length);
-            }}
-          >
-            {!props.connectionReady && (
-              <div class={`chat-composer__connection${blockedFlash ? " chat-composer__connection--flash" : ""}`} role="status">Reconnecting…</div>
-            )}
-            <DraftEditor value={draft} hidden={held} inputRef={editorRef} onInput={setDraft} onSubmit={submit} />
-            <ComposerActions
-              draftPresent={!captureLive && draft.trim().length > 0}
-              held={held}
-              canInterrupt={canInterrupt}
-              connectionReady={props.connectionReady}
-              captureActive={props.captureActive}
-              ttsEnabled={props.ttsEnabled}
-              onSend={submit}
-              onTtsToggle={() => { props.onTtsToggle(); focusEditor(); }}
-              onInterrupt={() => { props.onInterrupt(); focusEditor(); }}
-              onCaptureStart={props.onCaptureStart}
-              onCaptureCommit={props.onCaptureCommit}
-              onCaptureCancel={props.onCaptureCancel}
-              onVoiceState={setVoiceState}
-            />
+    <>
+      <DockStyleSheet />
+      <Surface className="dock-composer">
+        <div class="dock-composer__inner">
+          <div class="dock-composer__frame">
+            <ComposerTaskShelf items={props.tasks} />
+            <div
+              class={`dock-composer__surface dock-composer__surface--${voiceState}`}
+              data-voice-state={voiceState}
+              onPointerDown={(event) => {
+                if ((event.target as Element).closest("textarea,button,input,a,[role='button']")) return;
+                event.preventDefault();
+                focusEditor();
+                const length = editorRef.current?.value.length ?? 0;
+                editorRef.current?.setSelectionRange(length, length);
+              }}
+            >
+              {!props.connectionReady && (
+                <div class={`dock-composer__connection${blockedFlash ? " dock-composer__connection--flash" : ""}`} role="status">Reconnecting…</div>
+              )}
+              <DraftEditor value={draft} receded={held} inputRef={editorRef} onValueChange={onValueChange} onSubmit={submit} />
+              <ComposerActions
+                draftPresent={!captureLive && draft.trim().length > 0}
+                held={held}
+                canInterrupt={canInterrupt}
+                connectionReady={props.connectionReady}
+                captureActive={props.captureActive}
+                ttsEnabled={props.ttsEnabled}
+                capturePort={capturePort}
+                onSend={submit}
+                onTtsToggle={() => { onTtsToggle(); focusEditor(); }}
+                onInterrupt={() => { onInterrupt(); focusEditor(); }}
+                onVoiceState={setVoiceState}
+              />
+            </div>
           </div>
+          <SuggestionChips suggestions={props.suggestions} onClick={(text) => { onSuggestionClick(text); focusEditor(); }} />
         </div>
-        <SuggestionChips suggestions={props.suggestions} onClick={(text) => { props.onSuggestionClick(text); focusEditor(); }} />
-      </div>
-    </div>
+      </Surface>
+    </>
   );
 }

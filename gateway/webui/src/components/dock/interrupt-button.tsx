@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { FoundationIconButton } from "../common/foundation.tsx";
 
 export interface InterruptButtonProps {
   onInterrupt(): void;
@@ -6,13 +7,13 @@ export interface InterruptButtonProps {
 
 export function InterruptButton({ onInterrupt }: InterruptButtonProps): JSX.Element {
   return (
-    <button
-      type="button"
-      class="interrupt-btn"
-      aria-label="Interrupt"
+    <FoundationIconButton
+      className="dock-interrupt-button"
+      variant="destructive"
+      label="Interrupt"
       onClick={onInterrupt}
     >
-      <span class="interrupt-btn__glyph" aria-hidden="true" />
-    </button>
+      <span class="dock-interrupt-button__glyph" aria-hidden="true" />
+    </FoundationIconButton>
   );
 }
