@@ -22,11 +22,23 @@ criteria:
   - Startup readiness integration, native NavigationStack/sheets/alerts, and
     larger Dynamic Type
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: c3a92723-65db-48a1-a32d-e1c9ea5c117c
   reviewedCommit: ea022ab262853f819870ea2f39c857a9c79ace8d
+  managerPrompt: Fix both capture-state violations with fake-only tests. Keep
+    `VoiceCaptureControl` mounted and operable whenever capture is active,
+    including Auto, even if the user types or an error/draft appears; draft
+    presence may change idle composer actions but must not implicitly cancel
+    Auto. Preserve the draft, and ensure the explicit second Auto activation is
+    what finalizes/exits semantic capture. Rework sustained-hold gesture
+    handling so only a confirmed normal release can emit `sendHeld`; system
+    gesture cancellation, interruption, scene/lifecycle loss, or disappearance
+    must emit exactly one capture cancel and zero send/end. Add deterministic
+    state-machine regressions for Auto + typed draft + explicit Auto exit,
+    normal held release, and held system cancellation/interruption. Do not use
+    microphone/STT/TTS/audio in proof.
 findings:
   - id: IOS-FINAL-001
     severity: high
