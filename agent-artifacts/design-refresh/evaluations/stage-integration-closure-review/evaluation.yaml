@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: integration-closure
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - bun run design:foundation:check
   - bun run design:avatar:verify
@@ -31,6 +31,21 @@ criteria:
   - No Android UI changes, no production/audio/network-disruption verification,
     and readiness for E2E-001..009
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: f2b0cea4-efc7-4116-b8d8-7f2d2f82926f
+  reviewedCommit: 8f0215d4c42e1bb5d4ed3e40161c0dfd04603ed7
+findings:
+  - id: F-001
+    severity: high
+    status: open
+    criterion: Session ownership and Android/old-client compatibility
+    location: shared/mobile-data/src/commonMain/kotlin/io/sentient/mobiledata/di/ChatComponent.kt:203-205
+    summary: Unbounded runBlocking makes Android logout wait on capture/audio
+      teardown on the UI callback path.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-integration-closure-review/manifest.yaml

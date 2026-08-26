@@ -1,0 +1,43 @@
+schemaVersion: 1
+evaluation: stage-integration-closure-review
+recordedAt: 2026-08-26T00:58:27.343Z
+entries:
+  - result: Passed; inventory closed, static boundaries passed, and deterministic
+      Rive SHA-256 matched
+      bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b.
+    command: bun run design:inventory:check && bun run design:foundation:check &&
+      bun run design:avatar:verify
+  - result: "Passed: gateway unit summary 2528 pass, 4 skipped, 0 fail."
+    command: bun run ci (fresh rerun)
+  - result: Passed; configured integration suite completed with Docker-only cases
+      skipped.
+    command: bun run test:int
+  - result: BUILD SUCCESSFUL.
+    command: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
+      :android:assembleDebug :android:testDebugUnitTest
+  - result: Setup succeeded; iOS tests succeeded (25 XCTest plus 114 Swift Testing
+      tests).
+    command: ./scripts/ios-setup.sh && xcodebuild test -project
+      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
+      Simulator,name=iPhone 16'
+  - result: Passed; Android source/resource baseline diff empty and no whitespace
+      errors.
+    command: Android baseline diff check and git diff --check
+  - result: Lines 203-205 wrap suspending teardown in unbounded runBlocking.
+    description: Changed synchronous compatibility wrapper.
+    path: files/001-7-ChatComponent.kt
+    checksum: sha256:c7caa7f26180dce53d6099022ec64150f207a8653d23d4dbd095b036894e112f
+  - result: Lines 434-443 wait for voice capture teardown before continuing.
+    description: SDK disconnect implementation.
+    path: files/001-8-SentientSdk.kt
+    checksum: sha256:c24356dbe21554e0c1f022da17b9c3bf4ef78761545696f1dd6b35bc6d3b42fa
+  - result: Lines 313-318 enqueue a barrier and await acknowledgement after ordered
+      terminal handling.
+    description: Capture teardown fence.
+    path: files/001-9-SdkVoice.kt
+    checksum: sha256:86fd70945e63b99e612a1daa9732f6aaba89aff0e92b5ac35232faf6670ac4b7
+  - result: Lines 236-239 invoke session teardown synchronously before navigating to
+      login.
+    description: Android logout call path.
+    path: files/001-10-AppNavHost.kt
+    checksum: sha256:cbea5589af5bb471f5168b40443dc806991bb088d0551d72237f720596c78cdf
