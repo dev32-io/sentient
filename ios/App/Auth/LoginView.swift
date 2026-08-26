@@ -1,21 +1,23 @@
-// ---------------------------------------------------------------------------
-// LoginView — the avatar-grid → PIN-pad login flow.
-//
-// Owns a login-scoped @StateObject AuthViewModel (UI state only). AppConfig drives
-// login-vs-chat; the authenticated server userId is passed to the app/session
-// boundary explicitly after a successful response.
-// ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
 
+enum LoginPickerState: Equatable {
+    case loading
+    case empty
+    case error(String)
+    case ready
+}
+
+func loginPickerState(isLoading: Bool, userCount: Int, error: String?) -> LoginPickerState {
+    if isLoading && userCount == 0 { return .loading }
+    if let error { return .error(error) }
+    return userCount == 0 ? .empty : .ready
+}
+
 struct LoginView: View {
-    /// Called after the server returns AuthUser.userId and the token is saved.
     let onAuthenticatedUser: (String) -> Void
-    /// Legacy connect hook retained as the session-start trigger.
     let onConnect: () -> Void
-    /// Initial list success, empty, or actionable error makes login revealable.
     let onInitialUsersResolved: () -> Void
-    /// Called when the user taps the gear to open backend setup.
     var onOpenBackendSetup: () -> Void
 
     @StateObject private var model: AuthViewModel
@@ -38,98 +40,115 @@ struct LoginView: View {
     }
 
     var body: some View {
-        phaseContent
-            .padding(Space.xl)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topLeading) { backBar }
-            .overlay(alignment: .topTrailing) {
-                Button { onOpenBackendSetup() } label: {
-                    Image(systemName: "gearshape")
-                        .foregroundStyle(DuskColors.ink3)
-                }
-                .padding()
-                .accessibilityIdentifier("login-backend-setup")
+        ScrollView {
+            VStack(spacing: Space.xl) {
+                Spacer(minLength: Space.xxl)
+                phaseContent
+                Spacer(minLength: Space.xl)
             }
-            .duskTheme()
-            .task { await model.loadUsers() }
+            .padding(.horizontal, Space.xl)
+            .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
+        }
+        .safeAreaInset(edge: .top) { navigationBar }
+        .background(DuskColors.bg)
+        .duskTheme()
+        .task { await model.loadUsers() }
+        .accessibilityIdentifier("login-screen")
     }
-
-    // ── Avatar grid / PIN entry ────────────────────────────────────────────────
 
     @ViewBuilder
     private var phaseContent: some View {
         switch model.phase {
-        case .pickUser: userGrid
+        case .pickUser: userPicker
         case .enterPin: pinEntry
         }
     }
 
-    private var userGrid: some View {
+    private var userPicker: some View {
         VStack(spacing: Space.xl) {
-            if model.isLoadingUsers && model.users.isEmpty {
-                ProgressView()
-                    .accessibilityIdentifier("login-loading")
-            } else {
-                Text("Who's here?")
-                    .font(.system(size: TypeScale.xl, weight: .semibold))
-                    .foregroundStyle(DuskColors.ink)
-                CenteredFlowLayout(spacing: Space.lg) {
-                    ForEach(model.users, id: \.userId) { user in
-                        AvatarTile(user: user, onTap: { model.select(user) })
-                    }
+            Text("Who's here?")
+                .designText(.display)
+                .foregroundStyle(DuskColors.ink)
+                .multilineTextAlignment(.center)
+            pickerContent
+        }
+    }
+
+    @ViewBuilder
+    private var pickerContent: some View {
+        switch loginPickerState(isLoading: model.isLoadingUsers, userCount: model.users.count, error: model.error) {
+        case .loading:
+            AsyncNotice(kind: .loading, title: "Loading household")
+                .accessibilityIdentifier("login-loading")
+        case .error(let error):
+            AsyncNotice(kind: .error, title: "Couldn't load household", detail: error, retry: reloadUsers)
+                .accessibilityIdentifier("login-error")
+        case .empty:
+            AsyncNotice(
+                kind: .empty,
+                title: "No members found",
+                detail: "Add a household member on the gateway, then try again.",
+                retry: reloadUsers
+            )
+            .accessibilityIdentifier("login-empty")
+        case .ready:
+            CenteredFlowLayout(spacing: Space.lg) {
+                ForEach(model.users, id: \.userId) { user in
+                    AvatarTile(user: user, onTap: { model.select(user) })
                 }
-                errorText
             }
         }
     }
 
     private var pinEntry: some View {
-        VStack(spacing: Space.xl) {
-            Text(model.selectedUser?.displayName ?? "")
-                .font(.system(size: TypeScale.xl, weight: .semibold))
-                .foregroundStyle(DuskColors.ink)
-            Text("Enter your PIN")
-                .font(.system(size: TypeScale.base))
-                .foregroundStyle(DuskColors.ink3)
+        DesignPane(title: model.selectedUser?.displayName ?? "", detail: "Enter your PIN") {
             PinPad(
                 entered: model.pin.count,
+                isSubmitting: model.isSubmitting,
                 onDigit: { model.appendDigit($0) },
                 onDelete: { model.deleteDigit() }
             )
-            errorText
+            .frame(maxWidth: .infinity)
+            if model.isSubmitting {
+                DesignProgress(title: "Signing in")
+                    .accessibilityIdentifier("login-submitting")
+            }
+            if let error = model.error {
+                AsyncNotice(kind: .error, title: "Sign in failed", detail: error)
+                    .accessibilityIdentifier("login-error")
+            }
         }
     }
 
-    /// Top-leading nav bar — only in the PIN phase. It remains outside the
-    /// vertically-centered PIN stack so it behaves as a navigation affordance.
-    @ViewBuilder
-    private var backBar: some View {
-        if model.phase == .enterPin {
-            HStack {
-                Button(action: { model.back() }) {
+    private var navigationBar: some View {
+        HStack {
+            if model.phase == .enterPin {
+                Button(action: model.back) {
                     Label("Back", systemImage: "chevron.left")
-                        .font(.system(size: TypeScale.base))
-                        .foregroundStyle(DuskColors.ink3)
+                        .frame(minHeight: DesignMetrics.minimumTarget)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("login-back")
-                Spacer()
             }
-            .padding(.horizontal, Space.lg)
-            .padding(.vertical, Space.sm)
+            Spacer()
+            Button(action: onOpenBackendSetup) {
+                Image(systemName: "gearshape")
+                    .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Backend settings")
+            .accessibilityIdentifier("login-backend-setup")
         }
+        .padding(.horizontal, Space.lg)
+        .background(DuskColors.bg)
     }
 
-    // ── Error ───────────────────────────────────────────────────────────────────
-
-    @ViewBuilder
-    private var errorText: some View {
-        if let error = model.error {
-            Text(error)
-                .font(.system(size: TypeScale.base))
-                .foregroundStyle(DuskColors.stop)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("login-error")
-        }
+    private func reloadUsers() {
+        Task { await model.loadUsers() }
     }
+}
+
+#Preview("Large text") {
+    LoginView()
+        .environment(\.dynamicTypeSize, .accessibility3)
 }

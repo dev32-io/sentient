@@ -1,19 +1,28 @@
-// ---------------------------------------------------------------------------
-// BackendSetupViewModel — drives the iOS backend setup view. Save folds in a probe
-// (createAuthClient → listUsers); success persists + reconfigures the AppConfig
-// and signals dismiss; failure shows an error and stays.
-// ---------------------------------------------------------------------------
 import Foundation
 import MobileData
 
-// Delay before the single probe retry. The first probe may be the connection
-// that raised the iOS Local Network prompt; this window lets the user tap
-// "Allow" before we retry, so a just-granted permission isn't shown as failure.
-private let probeRetryDelaySeconds: UInt64 = 1
-private let probeRetryDelayNanosExtra: UInt64 = 500_000_000 // 1.5s total
+private let probeRetryDelay: Duration = .milliseconds(1_500)
+
+/// Pure validation shared by the setup UI and focused tests. It intentionally
+/// returns only user-facing configuration errors and never includes host input.
+func backendValidationError(host: String, port: String) -> String? {
+    let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalizedHost.isEmpty else { return "Enter a host or IP." }
+    let forbiddenHostText = ["://", "/", "@", "?", "#"]
+    guard !forbiddenHostText.contains(where: normalizedHost.contains),
+          normalizedHost.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+        return "Enter a host or IP without a scheme, credentials, or path."
+    }
+    guard let value = Int(port), (1...65_535).contains(value) else {
+        return "Port must be 1–65535."
+    }
+    return nil
+}
 
 @MainActor
 final class BackendSetupViewModel: ObservableObject {
+    typealias Probe = (BackendConfig) async -> Bool
+
     @Published var host: String
     @Published var port: String
     @Published var security: ConnectionSecurity
@@ -22,73 +31,84 @@ final class BackendSetupViewModel: ObservableObject {
     @Published private(set) var error: String?
 
     private let reconfigure: (BackendConfig) -> Void
+    private let probe: Probe
+    private let retryDelay: Duration
     private let log = AppLog("backend", "setup")
 
-    init(existing: BackendConfig?, reconfigure: @escaping (BackendConfig) -> Void) {
-        self.host = existing?.host ?? ""
-        self.port = existing.map { String($0.port) } ?? "443"
-        self.security = existing?.security ?? .tlsValid
+    init(
+        existing: BackendConfig?,
+        reconfigure: @escaping (BackendConfig) -> Void,
+        probe: @escaping Probe = BackendSetupViewModel.productionProbe,
+        retryDelay: Duration = probeRetryDelay
+    ) {
+        host = existing?.host ?? ""
+        port = existing.map { String($0.port) } ?? "443"
+        security = existing?.security ?? .tlsValid
         self.reconfigure = reconfigure
+        self.probe = probe
+        self.retryDelay = retryDelay
     }
 
     func save() {
-        guard !host.trimmingCharacters(in: .whitespaces).isEmpty else {
-            error = "Enter a host or IP."
+        if let validation = backendValidationError(host: host, port: port) {
+            error = validation
             return
         }
-        guard let portInt = Int(port), (1...65535).contains(portInt) else {
-            error = "Port must be 1–65535."
-            return
-        }
+        guard let portValue = Int(port) else { return }
         let candidate = BackendConfig(
-            host: host.trimmingCharacters(in: .whitespaces),
-            port: portInt,
+            host: host.trimmingCharacters(in: .whitespacesAndNewlines),
+            port: portValue,
             security: security
         )
-        log.info("save.probe hostLength=\(candidate.host.count) port=\(portInt) security=\(security.rawValue)")
+        // Deliberately omit host, credentials, and endpoint text from diagnostics.
+        log.info("save.probe security=\(security.rawValue)")
         isSaving = true
+        didSave = false
         error = nil
         Task { await probeThenApply(candidate) }
     }
 
     private func probeThenApply(_ candidate: BackendConfig) async {
-        // First probe may be the connection that raised the Local Network prompt.
-        // If it fails, wait briefly (for the user to tap "Allow") and retry ONCE
-        // before surfacing an error — but never more than once, so a genuinely
-        // wrong host still fails fast.
-        if await probeOnce(candidate) { return }
+        if await probe(candidate) {
+            apply(candidate)
+            return
+        }
         log.info("save.retry waiting before single retry")
-        let delay = probeRetryDelaySeconds * 1_000_000_000 + probeRetryDelayNanosExtra
-        try? await Task.sleep(nanoseconds: delay)
-        if await probeOnce(candidate) { return }
+        do {
+            try await Task.sleep(for: retryDelay)
+        } catch {
+            isSaving = false
+            return
+        }
+        guard !Task.isCancelled else { isSaving = false; return }
+        if await probe(candidate) {
+            apply(candidate)
+            return
+        }
         log.warn("save.failed after retry")
         isSaving = false
         error = "Couldn't verify the server. Check the host, port, and TLS option."
     }
 
-    /// Runs one probe attempt. On success: persists + reconfigures + signals
-    /// dismiss and returns `true`. On any failure: returns `false` WITHOUT
-    /// touching the error/isSaving UX (the caller decides retry vs. surface).
-    private func probeOnce(_ candidate: BackendConfig) async -> Bool {
+    private func apply(_ candidate: BackendConfig) {
+        log.info("save.ok")
+        reconfigure(candidate)
+        isSaving = false
+        didSave = true
+    }
+
+    /// External probe adapter. The iOS AuthClient factory installs the bounded
+    /// request timeout; this boundary folds typed and thrown failures to `false`.
+    nonisolated static func productionProbe(_ candidate: BackendConfig) async -> Bool {
         let client = createAuthClient(
             gatewayWsUrl: candidate.gatewayWsURL,
             allowSelfSignedDevHost: candidate.allowSelfSigned
         )
         do {
             let result = try await client.listUsers()
-            switch onEnum(of: result) {
-            case .success:
-                log.info("save.ok")
-                reconfigure(candidate)
-                isSaving = false
-                didSave = true
-                return true
-            case .failure:
-                log.warn("save.probe.failed")
-                return false
-            }
+            if case .success = onEnum(of: result) { return true }
+            return false
         } catch {
-            log.warn("save.probe.threw code=transport")
             return false
         }
     }

@@ -21,13 +21,6 @@
     "ios/App/Chat/voice/PttBigWave.swift",
     "ios/App/History/HistoryAccountHeader.swift",
     "ios/App/History/HistorySessionsError.swift",
-    "ios/App/History/HistorySidePanel.swift",
-    "ios/App/Settings/Account/AccountScreen.swift",
-    "ios/App/Settings/Account/ChangePinSheet.swift",
-    "ios/App/Settings/Members/AddMemberSheet.swift",
-    "ios/App/Settings/Members/MembersScreen.swift",
-    "ios/App/Settings/Secrets/SecretRowView.swift",
-    "ios/App/Settings/Secrets/SecretsScreen.swift",
-    "ios/App/Update/UpdateBanner.swift"
+    "ios/App/History/HistorySidePanel.swift"
   ]
 }

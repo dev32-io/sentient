@@ -19,6 +19,10 @@ import MobileData
 
 private let addGenericFailure = "Couldn't add member"
 
+func isAuthorizationFailure(kindName: String) -> Bool {
+    kindName.caseInsensitiveCompare("AUTH") == .orderedSame
+}
+
 @MainActor
 @Observable
 final class MembersViewModel {
@@ -38,6 +42,7 @@ final class MembersViewModel {
     private(set) var mutatingUserId: String?
     var isAddSheetOpen = false
     private(set) var addError: String?
+    private(set) var mutationError: String?
 
     private let account: AccountUseCases
     private let admin: AdminUseCases
@@ -55,6 +60,8 @@ final class MembersViewModel {
 
     /// Gate on admin, then load the roster. Idempotent; safe on each `.task`.
     func load() async {
+        access = .loading
+        mutationError = nil
         do {
             let meResult = try await account.me()
             switch onEnum(of: meResult) {
@@ -67,7 +74,7 @@ final class MembersViewModel {
                 meId = s.data.userId
                 await reloadUsers()
             case .failure(let f):
-                access = .error
+                access = isAuthorizationFailure(kindName: f.error.kind.name) ? .notAdmin : .error
                 log.warn("me.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
@@ -80,6 +87,7 @@ final class MembersViewModel {
 
     /// Promote or demote a member (never the self row — the view hides that action).
     func toggleAdmin(_ user: UserSummary) async {
+        mutationError = nil
         mutatingUserId = user.userId
         defer { mutatingUserId = nil }
         do {
@@ -89,18 +97,21 @@ final class MembersViewModel {
                 users = users.map { $0.userId == s.data.userId ? s.data : $0 }
                 log.info("role.updated isAdmin=\(s.data.isAdmin)")
             case .failure(let f):
+                handleMutationFailure(f.error.userMessage, kindName: f.error.kind.name)
                 log.warn("role.update.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
             }
         } catch is CancellationError {
         } catch {
+            mutationError = "Couldn't change this member's role."
             log.warn("role.update.threw")
         }
     }
 
     /// Delete a member (confirmed by the view), then refetch.
     func deleteUser(_ user: UserSummary) async {
+        mutationError = nil
         mutatingUserId = user.userId
         defer { mutatingUserId = nil }
         do {
@@ -110,12 +121,14 @@ final class MembersViewModel {
                 log.info("member.deleted")
                 await reloadUsers()
             case .failure(let f):
+                handleMutationFailure(f.error.userMessage, kindName: f.error.kind.name)
                 log.warn("member.delete.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
             }
         } catch is CancellationError {
         } catch {
+            mutationError = "Couldn't remove this member."
             log.warn("member.delete.threw")
         }
     }
@@ -134,7 +147,12 @@ final class MembersViewModel {
                 await reloadUsers()
                 return true
             case .failure(let f):
-                addError = f.error.userMessage
+                if isAuthorizationFailure(kindName: f.error.kind.name) {
+                    access = .notAdmin
+                    isAddSheetOpen = false
+                } else {
+                    addError = f.error.userMessage
+                }
                 log.warn("member.add.failed kind=\(f.error.kind.name)")
                 return false
             case .loading:
@@ -168,7 +186,7 @@ final class MembersViewModel {
                 access = .ready
                 log.info("roster.loaded count=\(list.count)")
             case .failure(let f):
-                access = .error
+                access = isAuthorizationFailure(kindName: f.error.kind.name) ? .notAdmin : .error
                 log.warn("roster.load.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
@@ -176,6 +194,15 @@ final class MembersViewModel {
         } catch is CancellationError {
         } catch {
             access = .error
+        }
+    }
+
+    private func handleMutationFailure(_ message: String, kindName: String) {
+        if isAuthorizationFailure(kindName: kindName) {
+            access = .notAdmin
+            mutationError = "Admin access changed. Member controls are no longer available."
+        } else {
+            mutationError = message
         }
     }
 }

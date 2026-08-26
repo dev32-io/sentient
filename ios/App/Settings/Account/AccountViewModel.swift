@@ -17,6 +17,15 @@ private let savedResetDelayNs: UInt64 = 2_000_000_000
 private let wrongPinMessage = "Current PIN is wrong"
 private let genericErrorMessage = "Something went wrong"
 
+func normalizedDisplayName(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func isDisplayNameDirty(draft: String, saved: String) -> Bool {
+    let normalized = normalizedDisplayName(draft)
+    return !normalized.isEmpty && normalized != saved
+}
+
 @MainActor
 @Observable
 final class AccountViewModel {
@@ -28,8 +37,11 @@ final class AccountViewModel {
         case failed(String)
     }
 
+    enum LoadState: Equatable { case loading, ready, failed(String) }
+
     /// The server-truth display name (what Save diffs against).
     private(set) var savedName = ""
+    private(set) var loadState: LoadState = .loading
     /// The editable draft bound to the name field.
     var draftName = ""
     private(set) var nameSave: SaveState = .idle
@@ -48,21 +60,21 @@ final class AccountViewModel {
     }
 
     /// Dirty when the trimmed draft is non-empty and differs from server truth.
-    var isDirty: Bool {
-        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && trimmed != savedName
-    }
+    var isDirty: Bool { isDisplayNameDirty(draft: draftName, saved: savedName) }
 
     /// Load identity (display name). Idempotent; safe on each `.task`.
     func load() async {
+        loadState = .loading
         do {
             let result = try await account.me()
             switch onEnum(of: result) {
             case .success(let s):
                 savedName = s.data.displayName
                 if draftName.isEmpty { draftName = s.data.displayName }
+                loadState = .ready
                 log.info("me.loaded len=\(s.data.displayName.count)")
             case .failure(let f):
+                loadState = .failed(f.error.userMessage)
                 log.warn("me.failed kind=\(f.error.kind.name)")
             case .loading:
                 break
@@ -70,13 +82,14 @@ final class AccountViewModel {
         } catch is CancellationError {
             // View replaced — not a failure.
         } catch {
+            loadState = .failed(genericErrorMessage)
             log.warn("me.threw")
         }
     }
 
     /// Save the display name (imperative PUT; usecase rolls the token on success).
     func saveName() async {
-        let name = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = normalizedDisplayName(draftName)
         guard !name.isEmpty, name != savedName else { return }
         nameSave = .saving
         do {
