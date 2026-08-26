@@ -6,9 +6,9 @@
 // A ScrollView of MessageBubbles with gapMsg (32pt) between messages.
 // A newly observed outbound row is anchored at its beginning exactly once.
 //
-// Pending rows: optimistic outbox entries appended AFTER committed history.
-// Each pending message shows a status chip (QUEUED / SENT / FAILED); FAILED
-// is tappable → onRetry(pendingId). Mirrors Android MessageList pending param.
+// The chronology appends optimistic outbox rows AFTER committed history. Each
+// pending message shows a status chip (QUEUED / FAILED); FAILED is tappable →
+// onRetry(pendingId). Task activity remains in the composer task strip.
 //
 // iOS 18+: onScrollGeometryChange drives the pin FSM precisely.
 // iOS 17:  always-follow fallback (prior behavior) — no geometry API available.
@@ -125,40 +125,43 @@ struct MessageList: View {
     }
 
     private func messageRows() -> some View {
+        // The chronology is the one typed source for committed and pending rows:
+        // pending entries remain after authoritative history and carry no divider.
+        let chronology = messageChronology(messages: messages, pending: pending)
         // The latest assistant bubble carries the live mark animation even after it
         // commits, so the avatar ring persists through the whole thinking+speaking
         // window (the post-commit TTS tail has no streaming bubble).
         let lastAssistant = messages.lastIndex(where: { $0.role == "assistant" })
         return LazyVStack(alignment: .leading, spacing: Space.gapMsg) {
-            // ChatRow is Identifiable; divider ids are day-keyed. Message ids key on
-            // replyId first (see ChatRow.messageRowId) — a steered turn's two replies
-            // share one turnId but rotate replyId, so turnId alone would collapse them
-            // into one row. The live streaming bubble and its committed twin still
-            // share replyId, so the reveal grows in place with no remount; replyId
-            // never churns mid-reveal, so no ts-based identity flicker either.
-            ForEach(chatRows(messages)) { row in
+            // Message ids are replyId-first (see messageRowId): a steered turn's
+            // two replies share one turnId but rotate replyId, while the live
+            // streaming bubble and committed twin share replyId and stay in place.
+            ForEach(chronology.rows) { row in
                 switch row {
-                case let .divider(label, _): DayDivider(label: label)
-                case let .message(m, i, continuation):
+                case let .divider(label, _):
+                    DayDivider(label: label)
+                case let .message(message, index, continuation):
                     MessageBubble(
-                        message: m,
-                        index: i,
-                        total: messages.count,
+                        message: message,
+                        index: index,
+                        total: chronology.messageCount,
                         continuation: continuation,
-                        avatarMode: avatarMode(for: m, at: i, lastAssistant: lastAssistant),
+                        avatarMode: avatarMode(for: message, at: index, lastAssistant: lastAssistant),
                         userName: userName
                     )
                         .padding(.top, continuation ? BubbleLayout.continuationPullup : BubbleLayout.standardOffset)
-                        .accessibilityIdentifier(m.role == "user" ? m.pendingId.map { "chat-user-row-\($0)" } ?? "chat-user-row-\(m.entryId)" : "")
+                        .accessibilityIdentifier(message.role == "user" ? message.pendingId.map { "chat-user-row-\($0)" } ?? "chat-user-row-\(message.entryId)" : "")
+                case let .pending(message, index):
+                    PendingBubble(
+                        msg: message,
+                        userName: userName,
+                        onRetry: { onRetry(message.id) },
+                        index: index,
+                        total: chronology.messageCount
+                    )
+                        .accessibilityIdentifier("chat-user-row-\(message.id)")
+                        .id(sendAnchorIdentity(message.id))
                 }
-            }
-            // Pending outbox entries: appended AFTER committed history, no day-dividers
-            // (they are optimistic/transient). Stable "pending-<id>" identity so
-            // SwiftUI doesn't reset local @State on recomposition. Mirrors Android.
-            ForEach(pending, id: \.id) { msg in
-                PendingBubble(msg: msg, userName: userName, onRetry: { onRetry(msg.id) })
-                    .accessibilityIdentifier("chat-user-row-\(msg.id)")
-                    .id(sendAnchorIdentity(msg.id))
             }
             Color.clear
                 .frame(height: 1)
@@ -183,9 +186,16 @@ struct MessageList: View {
     }
 
     private var sendAnchorIdentities: Set<String> {
-        Set(pending.map { sendAnchorIdentity($0.id) } + messages.compactMap { message in
-            guard message.role == "user", let id = message.pendingId, !id.isEmpty else { return nil }
-            return sendAnchorIdentity(id)
+        Set(messageChronology(messages: messages, pending: pending).rows.compactMap { row in
+            switch row {
+            case let .pending(message, _):
+                return sendAnchorIdentity(message.id)
+            case let .message(message, _, _):
+                guard message.role == "user", let id = message.pendingId, !id.isEmpty else { return nil }
+                return sendAnchorIdentity(id)
+            case .divider:
+                return nil
+            }
         })
     }
 

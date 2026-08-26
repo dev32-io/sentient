@@ -1,9 +1,8 @@
 // ---------------------------------------------------------------------------
-// BubbleAnimations — the two animated leaf views used inside a MessageBubble:
+// BubbleAnimations — the two presentation leaves used inside a MessageBubble:
 // PulseDots (pre-first-token thinking pulse) and StreamingText (data-driven
-// reveal of in-flight assistant text). Extracted from MessageBubble.swift to
-// keep that file under the clean-code size limit; both are module-internal and
-// used only by MessageBubble.bubbleContent.
+// reveal of in-flight assistant text). Extracted from MessageBubble.swift so
+// content-state rendering stays separate from the shared bubble shell.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MarkdownUI
@@ -11,6 +10,7 @@ import MarkdownUI
 /// Three-dot thinking pulse — mirrors the Android PulseDots / webui PlaceholderPulse.
 struct PulseDots: View {
     @State private var pulsing = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: BubbleLayout.pulseGap) {
@@ -18,16 +18,17 @@ struct PulseDots: View {
                 Circle()
                     .fill(DuskColors.accent.opacity(0.4))
                     .frame(width: BubbleLayout.pulseDot, height: BubbleLayout.pulseDot)
-                    .scaleEffect(pulsing ? 1.0 : 0.6)
+                    .scaleEffect(reduceMotion || pulsing ? 1.0 : 0.6)
                     .animation(
-                        .easeInOut(duration: Motion.wave)
+                        reduceMotion ? nil : .easeInOut(duration: Motion.wave)
                             .repeatForever()
                             .delay(Double(i) * BubbleLayout.pulseStagger),
                         value: pulsing
                     )
             }
         }
-        .onAppear { pulsing = true }
+        .onAppear { pulsing = !reduceMotion }
+        .onChange(of: reduceMotion) { _, reduced in pulsing = !reduced }
         .accessibilityLabel("Assistant is thinking")
     }
 }

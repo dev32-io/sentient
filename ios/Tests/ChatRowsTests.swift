@@ -28,6 +28,59 @@ struct ChatRowsTests {
         #expect(chatRows([], calendar: cal).isEmpty)
     }
 
+    @Test func chronologyAppendsPendingRowsAfterHistoryWithoutASecondDivider() {
+        let day: Int64 = 1_700_000_000_000
+        let pending = PendingMessage(id: "p1", text: "queued", status: .queued, sentAtMs: nil)
+        let chronology = messageChronology(
+            messages: [msg(day, entryId: "u1")],
+            pending: [pending],
+            calendar: cal
+        )
+
+        #expect(chronology.messageCount == 2)
+        #expect(chronology.rows.count == 3) // divider + committed + pending
+        #expect(chronology.rows[1].id == "ent-u1")
+        #expect(chronology.rows[2].id == "send-p1")
+        if case let .pending(row, index) = chronology.rows[2] {
+            #expect(row.id == "p1")
+            #expect(index == 1)
+        } else {
+            #expect(Bool(false), "pending outbox entry must be a typed chronology row")
+        }
+    }
+
+    @Test func chronologySuppressesPendingEntryOnceItsCommittedEchoIsPresent() {
+        let echoed = ChatMessage(
+            ts: 1_700_000_000_000,
+            role: "user",
+            content: "hello",
+            streaming: false,
+            cutoffKind: nil,
+            turnId: nil,
+            replyId: nil,
+            pendingId: "p1",
+            entryId: "e1"
+        )
+        let pending = PendingMessage(id: "p1", text: "hello", status: .queued, sentAtMs: nil)
+        let chronology = messageChronology(messages: [echoed], pending: [pending], calendar: cal)
+
+        #expect(chronology.messageCount == 1)
+        #expect(chronology.rows.filter { if case .pending = $0 { return true } else { return false } }.isEmpty)
+    }
+
+    @Test func streamingRowsDoNotCreateAnEpochDivider() {
+        let committed = assistantMsg(1_700_000_000_000, turnId: "T1", replyId: "R1")
+        let streaming = assistantMsg(0, turnId: "T1", replyId: "R1", streaming: true)
+        let rows = messageChronology(messages: [committed, streaming], calendar: cal).rows
+
+        #expect(rows.filter { if case .divider = $0 { return true } else { return false } }.count == 1)
+        let continuations = rows.compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, true])
+    }
+
     // MARK: — replyId render-key guard tests (steered-turn regression)
 
     private func assistantMsg(_ ts: Int64, turnId: String?, replyId: String? = nil,
