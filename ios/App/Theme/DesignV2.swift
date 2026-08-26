@@ -80,6 +80,7 @@ enum DesignV2 {
     enum Motion {
         static let feedback = Double(MobileData.Motion_.shared.feedbackMs) / 1_000
         static let state = Double(MobileData.Motion_.shared.stateTransitionMs) / 1_000
+        static let respondingCadence = Double(MobileData.Motion_.shared.respondingCadenceMs) / 1_000
 
         static func animation(duration: Double, reduceMotion: Bool) -> Animation? {
             reduceMotion ? nil : .easeInOut(duration: duration)

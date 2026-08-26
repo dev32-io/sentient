@@ -23,6 +23,55 @@ final class DesignFoundationV2Tests: XCTestCase {
                        [8, 12, 18, 26])
         XCTAssertEqual(DesignV2.Motion.feedback, 0.15)
         XCTAssertEqual(DesignV2.Motion.state, 0.25)
+        XCTAssertEqual(DesignV2.Motion.respondingCadence, 1.55)
+    }
+
+    func testMotionProjectsEveryCanonicalRoleAndKeepsCompatibilityAliasesAligned() {
+        let canonical = MobileData.Motion_.shared
+
+        XCTAssertEqual(DesignV2.Motion.feedback, Double(canonical.feedbackMs) / 1_000)
+        XCTAssertEqual(DesignV2.Motion.state, Double(canonical.stateTransitionMs) / 1_000)
+        XCTAssertEqual(DesignV2.Motion.respondingCadence, Double(canonical.respondingCadenceMs) / 1_000)
+        XCTAssertEqual(
+            [DesignV2.Motion.feedback, DesignV2.Motion.state, DesignV2.Motion.respondingCadence],
+            [0.15, 0.25, 1.55]
+        )
+
+        XCTAssertEqual(Motion.fast, DesignV2.Motion.feedback)
+        XCTAssertEqual(Motion.normal, DesignV2.Motion.state)
+        XCTAssertEqual(Motion.respondingCadence, DesignV2.Motion.respondingCadence)
+        XCTAssertEqual(Motion.wave, DesignV2.Motion.respondingCadence)
+        XCTAssertEqual(Motion.cursor, DesignV2.Motion.respondingCadence)
+    }
+
+    func testSecureFieldAccessibilityNeverExposesHiddenValue() {
+        let secret = "1234-secret-key"
+
+        let hidden = DesignSecureField.accessibilityValue(
+            text: secret,
+            isEnabled: true,
+            error: nil,
+            revealed: false
+        )
+        XCTAssertEqual(hidden, "Value entered")
+        XCTAssertFalse(hidden.contains(secret))
+
+        XCTAssertEqual(
+            DesignSecureField.accessibilityValue(text: secret, isEnabled: true, error: nil, revealed: true),
+            secret
+        )
+        XCTAssertEqual(
+            DesignSecureField.accessibilityValue(text: "", isEnabled: true, error: nil, revealed: false),
+            "Empty"
+        )
+        XCTAssertEqual(
+            DesignSecureField.accessibilityValue(text: secret, isEnabled: false, error: nil, revealed: true),
+            "Disabled"
+        )
+        XCTAssertEqual(
+            DesignSecureField.accessibilityValue(text: secret, isEnabled: true, error: "Invalid PIN", revealed: false),
+            "Error: Invalid PIN"
+        )
     }
 
     func testNamedMaterialRolesProjectEveryKMPRecipe() {

@@ -628,7 +628,7 @@ struct DesignSecureField: View {
                 .focused($focused)
                 .disabled(!isEnabled)
                 .accessibilityLabel(title)
-                .accessibilityValue(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? (text.isEmpty ? "Empty" : text))
+                .accessibilityValue(Self.accessibilityValue(text: text, isEnabled: isEnabled, error: error, revealed: revealed))
                 .accessibilityHint(!isEnabled ? "Disabled" : (revealed ? "Value is visible" : "Value is hidden"))
                 .accessibilityIdentifier(accessibilityId ?? "")
                 DesignIconButton(
@@ -644,6 +644,15 @@ struct DesignSecureField: View {
                 DesignFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
             }
         }
+    }
+
+    /// Keeps hidden credentials content-free to assistive technologies. A raw
+    /// value is returned only while the user has explicitly enabled reveal.
+    static func accessibilityValue(text: String, isEnabled: Bool, error: String?, revealed: Bool) -> String {
+        guard isEnabled else { return "Disabled" }
+        if let error { return "Error: \(error)" }
+        if text.isEmpty { return "Empty" }
+        return revealed ? text : "Value entered"
     }
 }
 

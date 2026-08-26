@@ -40,9 +40,12 @@ enum TypeScale {
 enum Motion {
     static let fast = DesignV2.Motion.feedback
     static let normal = DesignV2.Motion.state
-    // Domain-specific animation cadences remain on their existing named contract.
-    static let wave = Double(MobileData.Motion.shared.waveMs) / 1_000
-    static let cursor = Double(MobileData.Motion.shared.cursorMs) / 1_000
+    static let respondingCadence = DesignV2.Motion.respondingCadence
+
+    // Preserve the old names while keeping continuous assistant motion on the
+    // canonical v2 responding cadence rather than the retired v1 timings.
+    static let wave = respondingCadence
+    static let cursor = respondingCadence
 }
 
 enum SplashLayout {
