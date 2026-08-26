@@ -30,6 +30,7 @@ import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTAdapterFactory, STTEvent } from "../adapters/stt/stt-adapter-types.js";
 import { getLog } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 
 const log = getLog(["sentient", "session-handlers", "stt-session"]);
 
@@ -107,10 +108,10 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   let bufferedBytes = 0;
   interface CaptureContext {
     readonly id: string;
+    readonly diagnosticRef: string;
     readonly mode: TurnMode;
     readonly epoch: number;
     status: "active" | "committing";
-    transcripts: string[];
     submitted: boolean;
   }
   let capture: CaptureContext | null = null;
@@ -145,7 +146,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
    *  dispatching, rather than a second one that could drift from it. */
   async function dispatch(event: STTEvent, active: STTAdapter, eventCapture: CaptureContext): Promise<void> {
     if (event.type === "turn_dropped") {
-      log.debug("stt.turn-dropped", { sessionId, captureId: eventCapture.id, turnIdx: event.turnIdx });
+      log.debug("stt.turn-dropped", { sessionId, captureRef: eventCapture.diagnosticRef, turnIdx: event.turnIdx });
       if (eventCapture.status === "committing" && capture === eventCapture) capture = null;
       return;
     }
@@ -170,7 +171,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     if (text.length === 0) {
       log.debug("stt.transcript.blank", {
         sessionId,
-        captureId: eventCapture.id,
+        captureRef: eventCapture.diagnosticRef,
         turnIdx: event.turnIdx,
         reason: "empty after trim",
       });
@@ -178,10 +179,13 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       return;
     }
     if (eventCapture.mode === "manual") {
-      eventCapture.transcripts.push(text);
+      // While capture is active, transcript callbacks are provisional. End
+      // requests a flush and only the callback that arrives through the
+      // committing gate is authoritative, so a partial prefix cannot be
+      // submitted or duplicated in the final turn.
       if (eventCapture.status !== "committing" || eventCapture.submitted) return;
     }
-    const submittedText = eventCapture.mode === "manual" ? eventCapture.transcripts.join(" ") : text;
+    const submittedText = text;
     const runtime = await getRuntimeForInput(submittedText);
     // RE-CHECKED AFTER THE AWAIT, and this is the second half of the guard the
     // loop below performs before dispatching — not a duplicate of it.
@@ -207,7 +211,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     ) {
       log.info("stt.transcript.after-discard", {
         sessionId,
-        captureId: eventCapture.id,
+        captureRef: eventCapture.diagnosticRef,
         turnIdx: event.turnIdx,
         reason: "the uplink was discarded while this transcript was resolving a runtime — dropping it",
       });
@@ -224,7 +228,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
     if (eventCapture.mode === "manual") eventCapture.submitted = true;
     log.info("stt.transcript.submit", {
       sessionId,
-      captureId: eventCapture.id,
+      captureRef: eventCapture.diagnosticRef,
       mode: eventCapture.mode,
       turnIdx: event.turnIdx,
       length: submittedText.length,
@@ -312,7 +316,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         if (capture?.mode === "manual" || capture?.status === "committing") {
           log.info("stt.capture.discarded", {
             sessionId,
-            captureId: capture.id,
+            captureRef: capture.diagnosticRef,
             mode: capture.mode,
             bufferedBytes,
             transition: `${capture.status}->closed`,
@@ -375,15 +379,15 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       bufferedBytes = 0;
       capture = {
         id: captureId,
+        diagnosticRef: captureDiagnosticRef(captureId),
         mode: turnMode,
         epoch: uplinkEpoch,
         status: "active",
-        transcripts: [],
         submitted: false,
       };
       log.info("stt.audio-start", {
         sessionId,
-        captureId,
+        captureRef: capture.diagnosticRef,
         mode: turnMode,
         bufferedBytes,
         transition: "closed->active",
@@ -404,29 +408,18 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       current.status = "committing";
       log.info("stt.audio-end", {
         sessionId,
-        captureId,
+        captureRef: current.diagnosticRef,
         mode: current.mode,
         connected: adapter !== null,
         bufferedBytes,
         transition: "active->committing",
       });
       bufferedBytes = 0;
-      try {
-        adapter?.endUtterance();
-      } catch (err: unknown) {
-        log.warn("stt.audio-end.failed", {
-          sessionId,
-          captureId,
-          mode: current.mode,
-          reason: err instanceof Error ? err.message : String(err),
-        });
-        this.cancel(captureId);
-        return;
-      }
-      if (!adapter) {
+      const active = adapter;
+      if (!active) {
         log.info("stt.capture.discarded", {
           sessionId,
-          captureId,
+          captureRef: current.diagnosticRef,
           mode: current.mode,
           bufferedBytes,
           transition: "committing->closed",
@@ -435,43 +428,27 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         capture = null;
         return;
       }
-      // A manual adapter may have finalized just before the control arrived.
-      // It was buffered rather than submitted; a successful flush now opens
-      // the commit gate for that sanitized value.
-      if (current.mode === "manual" && current.transcripts.length > 0 && !current.submitted) {
-        const active = adapter;
-        const text = current.transcripts.join(" ");
-        detach("submit-manual", async () => {
-          try {
-            const runtime = await getRuntimeForInput(text);
-            if (
-              adapter !== active ||
-              capture !== current ||
-              current.epoch !== uplinkEpoch ||
-              current.submitted ||
-              !runtime
-            )
-              return;
-            current.submitted = true;
-            log.info("stt.transcript.submit", {
-              sessionId,
-              captureId,
-              mode: current.mode,
-              turnIdx: null,
-              length: text.length,
-            });
-            runtime.submit({ kind: "conversational", text });
-          } finally {
-            // Runtime lookup/submission failure is still a terminal outcome for
-            // the committed capture; otherwise no later capture can start.
-            if (capture === current) capture = null;
-          }
+      try {
+        // This only requests finalization. The committing capture remains
+        // latched until its final transcript/drop callback arrives; no
+        // provisional pre-End transcript is submitted here.
+        active.endUtterance();
+      } catch (err: unknown) {
+        log.warn("stt.audio-end.failed", {
+          sessionId,
+          captureRef: current.diagnosticRef,
+          mode: current.mode,
+          reason: err instanceof Error ? err.message : String(err),
         });
+        uplinkEpoch += 1;
+        if (capture === current) capture = null;
+        if (adapter === active) adapter = null;
+        detach("close-after-flush-failure", () => active.close());
       }
     },
 
     cancel(captureId) {
-      if (capture?.id !== captureId) return;
+      if (capture?.id !== captureId || capture.status !== "active") return;
       uplinkEpoch += 1;
       const current = capture;
       const active = adapter;
@@ -480,7 +457,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       micOpen = false;
       log.info("stt.audio-cancel", {
         sessionId,
-        captureId,
+        captureRef: current.diagnosticRef,
         mode: current.mode,
         bufferedBytes,
         transition: `${current.status}->closed`,
@@ -494,7 +471,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       if (capture?.id !== captureId || capture.status !== "active" || !micOpen) {
         log.debug("stt.frame-dropped", {
           sessionId,
-          captureId,
+          captureRef: captureDiagnosticRef(captureId),
           byteSize: bytes.byteLength,
           reason: "capture is not open",
         });
@@ -504,7 +481,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         connect();
         log.debug("stt.frame-dropped", {
           sessionId,
-          captureId,
+          captureRef: capture.diagnosticRef,
           byteSize: bytes.byteLength,
           reason: "no live STT socket",
         });
@@ -532,7 +509,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       micOpen = false;
       log.info("stt.discard", {
         sessionId,
-        captureId: discarded?.id ?? null,
+        captureRef: discarded?.diagnosticRef ?? null,
         mode: discarded?.mode ?? null,
         wasConnected: active !== null,
         bufferedBytes,
@@ -551,7 +528,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       capture = null;
       log.info("stt.close", {
         sessionId,
-        captureId: closingCapture?.id ?? null,
+        captureRef: closingCapture?.diagnosticRef ?? null,
         mode: closingCapture?.mode ?? null,
         bufferedBytes,
         transition: `${closingCapture?.status ?? "closed"}->closed`,

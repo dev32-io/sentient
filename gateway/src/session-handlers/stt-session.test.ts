@@ -13,9 +13,11 @@
 import { describe, expect, it } from "bun:test";
 import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTEvent } from "../adapters/stt/stt-adapter-types.js";
+import { createGatewayLogger } from "../logging/logger.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
 import type { Stimulus } from "../runtime/stimulus.js";
 import { EMPTY_TURN_STATE } from "../runtime/turn-state-snapshot.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import { createSttSession } from "./stt-session.js";
 
 const TEST_CONFIG: STTAdapterConfig = {
@@ -39,7 +41,7 @@ interface FakeAdapter {
   closes: number;
 }
 
-function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
+function fakeAdapter(openError?: Error, eventsError?: Error, endError?: Error): FakeAdapter {
   const pendingEvents: Array<STTEvent | Error> = [];
   let deliver: ((e: STTEvent | Error | null) => void) | null = null;
   const enqueue = (value: STTEvent | Error): void => {
@@ -68,6 +70,7 @@ function fakeAdapter(openError?: Error, eventsError?: Error): FakeAdapter {
       },
       endUtterance: () => {
         f.flushes += 1;
+        if (endError) throw endError;
       },
       setTurnMode: (mode) => {
         f.turnModes.push(mode);
@@ -265,9 +268,155 @@ describe("createSttSession", () => {
     session.end("manual-1");
     fake.emit({ type: "transcript", turnIdx: 1, text: "send this final" });
     await settle();
-    expect(stub.submitted).toHaveLength(1);
-    expect(stub.submitted[0]?.kind).toBe("conversational");
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "send this final" }]);
     session.close();
+  });
+
+  it("submits no turn when manual finalization is empty", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-empty", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.end("manual-empty");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "   " });
+    await settle();
+
+    expect(fake.flushes).toBe(1);
+    expect(stub.submitted).toEqual([]);
+    expect(session.start("next", "manual")).toBe(true);
+    session.close();
+  });
+
+  it("submits exactly once when an adapter repeats the finalized callback", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-duplicate", "manual");
+    await settle();
+    session.end("manual-duplicate");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    await settle();
+
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "final words" }]);
+    session.close();
+  });
+
+  it("drops manual input when requesting the final flush fails", async () => {
+    const fake = fakeAdapter(undefined, undefined, new Error("flush failed"));
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("manual-failure", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.end("manual-failure");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "late final words" });
+    await settle();
+
+    expect(stub.submitted).toEqual([]);
+    expect(fake.closes).toBe(1);
+    expect(session.start("next", "manual")).toBe(true);
+    session.close();
+  });
+
+  it("keeps the first matching terminal outcome across cancel/end races", async () => {
+    const fake = lingeringAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("cancel-wins", "manual");
+    await settle();
+    fake.emit({ type: "transcript", turnIdx: 1, text: "provisional words" });
+    await settle();
+    session.cancel("cancel-wins");
+    session.end("cancel-wins");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "late final words" });
+    await settle();
+
+    expect(fake.flushes).toBe(0);
+    expect(stub.submitted).toEqual([]);
+    session.close();
+  });
+
+  it("does not let cancel steal a capture after End has won", async () => {
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start("end-wins", "manual");
+    await settle();
+    session.end("end-wins");
+    session.cancel("end-wins");
+    fake.emit({ type: "transcript", turnIdx: 1, text: "final words" });
+    await settle();
+
+    expect(fake.flushes).toBe(1);
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "final words" }]);
+    session.close();
+  });
+
+  it("does not retain credential-shaped capture IDs in STT logs", async () => {
+    const lines: string[] = [];
+    await createGatewayLogger({ logLevel: "debug", testSink: (line) => lines.push(line) });
+    const fake = fakeAdapter();
+    const stub = stubRuntime();
+    const untrusted = "token=private-content-shaped-capture";
+    const session = createSttSession({
+      sessionId: "sess-1",
+      factory: () => fake.adapter,
+      config: TEST_CONFIG,
+      getRuntime: () => stub.runtime,
+      getRuntimeForInput: async () => stub.runtime,
+    });
+
+    session.start(untrusted, "manual");
+    await settle();
+    session.end(untrusted);
+    fake.emit({ type: "transcript", turnIdx: 1, text: "synthetic final" });
+    await settle();
+    session.close();
+
+    const output = lines.join("\n");
+    expect(output).not.toContain(untrusted);
+    expect(output).toContain(captureDiagnosticRef(untrusted));
+    expect(output).not.toContain("captureId=");
   });
 
   it("drops manual transcript and late adapter callbacks after cancel", async () => {

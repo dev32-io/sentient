@@ -3,6 +3,8 @@ import type { TurnMode } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { createUserPrincipal } from "../identity/user-principal.js";
+import { createGatewayLogger } from "../logging/logger.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import type { SttSession } from "./stt-session.js";
 import { handleWebSocketMessage } from "./ws-handlers.js";
 import { type SessionData, createEmptySessionData } from "./ws-helpers.js";
@@ -130,5 +132,22 @@ describe("ws-handlers — capture-aware audio", () => {
   it("is a safe no-op when STT is not configured", async () => {
     const ws = fakeWs(true, null);
     await expect(route(ws, { type: "audio.start", captureId: "cap-1" })).resolves.toBeUndefined();
+  });
+
+  it("logs only a bounded fingerprint for content-shaped capture IDs", async () => {
+    const lines: string[] = [];
+    await createGatewayLogger({ logLevel: "debug", testSink: (line) => lines.push(line) });
+    const spy = spyStt();
+    const ws = fakeWs(true, spy.session);
+    const untrusted = "Bearer-super-secret household-message";
+
+    await route(ws, { type: "audio.start", captureId: untrusted, turnMode: "manual" });
+    await route(ws, { type: "audio.end", captureId: `${untrusted}-stale` });
+    await route(ws, { type: "audio.cancel", captureId: untrusted });
+
+    const output = lines.join("\n");
+    expect(output).not.toContain(untrusted);
+    expect(output).toContain(captureDiagnosticRef(untrusted));
+    expect(output).not.toContain("captureId=");
   });
 });

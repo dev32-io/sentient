@@ -176,7 +176,13 @@ export interface SessionData {
    */
   stt: SttSession | null;
   /** The one capture currently allowed to feed this connection's STT uplink. */
-  audioCapture: { readonly id: string; readonly mode: TurnMode; readonly legacy: boolean; bytes: number } | null;
+  audioCapture: {
+    readonly id: string;
+    readonly diagnosticRef: string;
+    readonly mode: TurnMode;
+    readonly legacy: boolean;
+    bytes: number;
+  } | null;
   /**
    * This connection's live audio/voice preferences (spec §6). Minted with the
    * runtime in `handleSessionConfigure` and held here so

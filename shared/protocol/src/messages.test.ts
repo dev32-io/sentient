@@ -234,9 +234,13 @@ describe("capture-aware audio controls", () => {
     expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "cap-1" }).success).toBe(true);
   });
 
-  it("requires a non-empty captureId on cancel", () => {
+  it("requires a non-empty, bounded captureId without breaking legacy omission", () => {
     expect(audioCancelSchema.safeParse({ type: "audio.cancel" }).success).toBe(false);
     expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "" }).success).toBe(false);
+    expect(audioStartSchema.safeParse({ type: "audio.start", captureId: "x".repeat(128) }).success).toBe(true);
+    expect(audioStartSchema.safeParse({ type: "audio.start", captureId: "x".repeat(129) }).success).toBe(false);
+    expect(audioEndSchema.safeParse({ type: "audio.end", captureId: "x".repeat(129) }).success).toBe(false);
+    expect(audioCancelSchema.safeParse({ type: "audio.cancel", captureId: "x".repeat(129) }).success).toBe(false);
   });
 
   it("parses explicit turnMode=manual", () => {

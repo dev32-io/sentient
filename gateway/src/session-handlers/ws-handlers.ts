@@ -4,6 +4,7 @@ import type { ServerWebSocket } from "bun";
 import type { GatewayServices } from "../bootstrap/create-gateway-services.js";
 import { getLog } from "../logging/logger.js";
 import { scopePendingId } from "../store/pending-id-scope.js";
+import { captureDiagnosticRef } from "./capture-diagnostics.js";
 import { type CommandKind, claimInputFloor, mediateCommand } from "./command-mediator.js";
 import { closeExpiredCredential, isCredentialExpired } from "./credential-lifetime.js";
 import { handlePreferencesPatch } from "./handle-preferences-patch.js";
@@ -281,7 +282,7 @@ export async function handleWebSocketMessage(
       if (ws.data.audioCapture !== null) {
         log.info("audio.transition-ignored", {
           connectionId: ws.data.sessionId,
-          captureId: msg.captureId ?? null,
+          captureRef: captureDiagnosticRef(msg.captureId),
           mode: msg.turnMode,
           byteCount: ws.data.audioCapture.bytes,
           transition: "active->active",
@@ -294,7 +295,7 @@ export async function handleWebSocketMessage(
       if (stt !== null && !stt.start(captureId, msg.turnMode)) {
         log.info("audio.transition-ignored", {
           connectionId: ws.data.sessionId,
-          captureId,
+          captureRef: captureDiagnosticRef(captureId),
           mode: msg.turnMode,
           byteCount: 0,
           transition: "closed->closed",
@@ -302,10 +303,17 @@ export async function handleWebSocketMessage(
         });
         return;
       }
-      ws.data.audioCapture = { id: captureId, mode: msg.turnMode, legacy: msg.captureId === undefined, bytes: 0 };
+      const diagnosticRef = captureDiagnosticRef(captureId);
+      ws.data.audioCapture = {
+        id: captureId,
+        diagnosticRef,
+        mode: msg.turnMode,
+        legacy: msg.captureId === undefined,
+        bytes: 0,
+      };
       log.info("audio.transition", {
         connectionId: ws.data.sessionId,
-        captureId,
+        captureRef: diagnosticRef,
         mode: msg.turnMode,
         byteCount: 0,
         transition: "closed->active",
@@ -322,7 +330,7 @@ export async function handleWebSocketMessage(
       if (!matches || capture === null) {
         log.info("audio.transition-ignored", {
           connectionId: ws.data.sessionId,
-          captureId: msg.captureId ?? null,
+          captureRef: captureDiagnosticRef(msg.captureId),
           mode: capture?.mode ?? null,
           byteCount: capture?.bytes ?? 0,
           transition: "unchanged",
@@ -335,7 +343,7 @@ export async function handleWebSocketMessage(
       ws.data.stt?.end(capture.id);
       log.info("audio.transition", {
         connectionId: ws.data.sessionId,
-        captureId: capture.id,
+        captureRef: capture.diagnosticRef,
         mode: capture.mode,
         byteCount: capture.bytes,
         transition: "active->committed",
@@ -350,7 +358,7 @@ export async function handleWebSocketMessage(
       if (capture === null || capture.id !== msg.captureId) {
         log.info("audio.transition-ignored", {
           connectionId: ws.data.sessionId,
-          captureId: msg.captureId,
+          captureRef: captureDiagnosticRef(msg.captureId),
           mode: capture?.mode ?? null,
           byteCount: capture?.bytes ?? 0,
           transition: "unchanged",
@@ -362,7 +370,7 @@ export async function handleWebSocketMessage(
       ws.data.stt?.cancel(capture.id);
       log.info("audio.transition", {
         connectionId: ws.data.sessionId,
-        captureId: capture.id,
+        captureRef: capture.diagnosticRef,
         mode: capture.mode,
         byteCount: capture.bytes,
         transition: "active->canceled",
