@@ -25,6 +25,7 @@ final class AdvancedViewModel {
         case saving
         case restarting
         case alreadyApplying
+        case applied
         case failed(String)
     }
 
@@ -87,9 +88,9 @@ final class AdvancedViewModel {
             case .saving: save = .saving
             case .restarting: save = .restarting
             case .ready:
-                save = .idle
                 log.info("save.ready")
                 await load()
+                save = .applied
             case .alreadyApplying:
                 save = .alreadyApplying
                 log.warn("save.already-applying")

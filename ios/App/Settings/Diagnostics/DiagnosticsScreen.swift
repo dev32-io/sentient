@@ -13,8 +13,8 @@ import SwiftUI
 import MobileData
 
 private let diagnosticsSummary =
-    "Send a diagnostic log to help debug an issue. Logs carry timing, ids, and error "
-    + "types only — never message content."
+    "Send sanitized timing, version, session, and error details to help diagnose an issue. "
+    + "Messages, prompts, transcripts, audio, secrets, tokens, PINs, and credentials are never included."
 
 struct DiagnosticsScreen: View {
     /// Page-agent seam for a custom back; the system back button handles it today.

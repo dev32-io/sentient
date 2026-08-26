@@ -36,7 +36,9 @@ struct SystemPromptScreen: View {
             case .loading:
                 SoulLoadingRow()
             case .failed(let message):
-                SoulInlineError(message: message)
+                AsyncNotice(kind: .error, title: "Couldn't load system instructions", detail: message) {
+                    Task { await vm.load() }
+                }
             case .ready:
                 saveBanner
                 soulCard
@@ -63,7 +65,7 @@ struct SystemPromptScreen: View {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-        .confirmationDialog("Restore default Soul.md?", isPresented: $showRestore, titleVisibility: .visible) {
+        .confirmationDialog("Restore default instructions?", isPresented: $showRestore, titleVisibility: .visible) {
             Button("Restore", role: .destructive) { Task { await vm.restoreDefault() } }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -78,14 +80,15 @@ struct SystemPromptScreen: View {
         case .saving: SoulApplyingBanner(text: "Saving…")
         case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
         case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
+        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
         case .failed(let message): SoulInlineError(message: message)
         }
     }
 
     private var soulCard: some View {
-        SettingsCard(title: "Soul.md", sub: "Markdown supported. Restart required after save.") {
+        SettingsCard(title: "System instructions", sub: "Markdown supported. The assistant restarts after saving.") {
             VStack(alignment: .leading, spacing: Space.md) {
-                HStack {
+                VStack(alignment: .leading, spacing: Space.sm) {
                     RowSegmented(
                         options: viewOptions,
                         selectedId: viewMode,
@@ -93,8 +96,9 @@ struct SystemPromptScreen: View {
                         onSelect: { viewMode = $0 }
                     )
                     Button("Restore default") { showRestore = true }
-                        .font(Typo.ui(TypeScale.xs, .semibold))
+                        .font(Typo.ui(TypeScale.base, .semibold))
                         .foregroundStyle(DuskColors.stop)
+                        .frame(minHeight: DesignMetrics.minimumTarget)
                         .disabled(vm.isRestoring)
                         .accessibilityIdentifier("settings-system-prompt-restore")
                 }
@@ -126,7 +130,7 @@ struct SystemPromptScreen: View {
 #Preview("edit") {
     NavigationStack {
         SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
-            SettingsCard(title: "Soul.md", sub: "Markdown supported. Restart required after save.") {
+            SettingsCard(title: "System instructions", sub: "Markdown supported. The assistant restarts after saving.") {
                 MonoEditor(
                     text: "You are Sentient, a warm and capable family assistant…",
                     accessibilityId: "settings-system-prompt-editor", onChange: { _ in }

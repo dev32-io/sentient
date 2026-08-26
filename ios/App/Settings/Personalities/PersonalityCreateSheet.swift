@@ -9,6 +9,7 @@ import SwiftUI
 
 struct PersonalityCreateSheet: View {
     let isBusy: Bool
+    let error: String?
     let onCreate: (String, String) async -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -23,6 +24,10 @@ struct PersonalityCreateSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
+                    if let error {
+                        AsyncNotice(kind: .error, title: "Couldn't create personality", detail: error)
+                            .accessibilityIdentifier("settings-personalities-new-error")
+                    }
                     field
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text("Instructions")
@@ -59,23 +64,18 @@ struct PersonalityCreateSheet: View {
     }
 
     private var field: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Name")
-                .font(Typo.ui(TypeScale.sm, .medium))
-                .foregroundStyle(DuskColors.ink)
-            TextField("e.g. Focused", text: $name)
-                .textInputAutocapitalization(.words)
-                .autocorrectionDisabled()
-                .foregroundStyle(DuskColors.ink)
-                .padding(Space.sm)
-                .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-                .accessibilityIdentifier("settings-personalities-new-name")
-        }
+        DesignField(
+            title: "Name",
+            prompt: "e.g. Focused",
+            text: $name,
+            accessibilityId: "settings-personalities-new-name"
+        )
+        .textInputAutocapitalization(.words)
+        .autocorrectionDisabled()
     }
 }
 
 #Preview {
-    PersonalityCreateSheet(isBusy: false, onCreate: { _, _ in })
+    PersonalityCreateSheet(isBusy: false, error: nil, onCreate: { _, _ in })
         .preferredColorScheme(.dark)
 }

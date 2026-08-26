@@ -8,7 +8,22 @@
 // future fifth permission (`auto`, once a classifier exists — plan
 // 2026-08-07-tool-permissions) must fail to COMPILE here, not fall through.
 // ---------------------------------------------------------------------------
+import Foundation
 import MobileData
+
+/// Turns catalog identifiers into readable capability labels without changing
+/// the wire value used for persistence or accessibility identifiers.
+func capabilityName(_ raw: String) -> String {
+    let separatedCamelCase = raw.reduce(into: "") { result, character in
+        if character.isUppercase, let last = result.last, last.isLowercase { result.append(" ") }
+        result.append(character == "_" || character == "-" ? " " : character)
+    }
+    return separatedCamelCase
+        .split(whereSeparator: \.isWhitespace)
+        .map(String.init)
+        .joined(separator: " ")
+        .capitalized
+}
 
 extension ToolPermission {
     /// The `SelectOption.id` this permission round-trips as through the Tools
