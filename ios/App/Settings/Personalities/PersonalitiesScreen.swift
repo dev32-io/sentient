@@ -71,15 +71,18 @@ struct PersonalitiesScreen: View {
         }
     }
 
-    @ViewBuilder
     private var opBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.op {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
@@ -96,60 +99,56 @@ struct PersonalitiesScreen: View {
     private func card(_ personality: Personality) -> some View {
         let isActive = personality.name == vm.activeName
         let isOpen = expanded.contains(personality.name)
-        return SettingsCard {
-            Button(action: { toggle(personality.name) }) {
-                HStack {
+        return DesignCard {
+            DesignDisclosureButton(
+                isExpanded: isOpen,
+                accessibilityLabel: "\(isOpen ? "Collapse" : "Expand") \(personality.name)",
+                accessibilityId: "settings-personalities-card-\(personality.name)",
+                action: { toggle(personality.name) }
+            ) {
+                HStack(spacing: Space.sm) {
                     Text(personality.name)
                         .font(Typo.ui(TypeScale.sm, .semibold))
                         .foregroundStyle(DuskColors.ink)
                     if isActive { activeBadge }
-                    Spacer()
-                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.system(size: TypeScale.sm, weight: .semibold))
-                        .foregroundStyle(DuskColors.ink3)
                 }
-                .padding(.vertical, Space.sm)
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("settings-personalities-card-\(personality.name)")
             if isOpen { cardBody(personality, isActive: isActive) }
         }
     }
 
     @ViewBuilder
     private func cardBody(_ personality: Personality, isActive: Bool) -> some View {
-        Divider().background(DuskColors.lineSoft)
+        DesignDivider()
         Text(personality.body.isEmpty ? "No instructions." : personality.body)
-            .font(Typo.mono(TypeScale.sm))
+            .designText(.supporting)
             .foregroundStyle(personality.body.isEmpty ? DuskColors.ink4 : DuskColors.ink2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, Space.sm)
         HStack(spacing: Space.md) {
             if !isActive {
-                Button("Activate") { Task { await vm.activate(personality.name) } }
-                    .font(Typo.ui(TypeScale.sm, .semibold))
-                    .foregroundStyle(DuskColors.accent)
-                    .disabled(vm.isBusy)
-                    .accessibilityIdentifier("settings-personalities-activate-\(personality.name)")
+                DesignTextButton(
+                    title: "Activate",
+                    role: .action,
+                    state: vm.isBusy ? .disabled : .normal,
+                    accessibilityId: "settings-personalities-activate-\(personality.name)",
+                    action: { Task { await vm.activate(personality.name) } }
+                )
             }
             Spacer()
-            Button("Delete") { deleteTarget = personality.name }
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.stop)
-                .disabled(vm.isBusy)
-                .accessibilityIdentifier("settings-personalities-delete-\(personality.name)")
+            DesignTextButton(
+                title: "Delete",
+                role: .destructive,
+                state: vm.isBusy ? .disabled : .normal,
+                accessibilityId: "settings-personalities-delete-\(personality.name)",
+                action: { deleteTarget = personality.name }
+            )
         }
         .padding(.bottom, Space.sm)
     }
 
     private var activeBadge: some View {
-        Text("Active")
-            .font(Typo.ui(TypeScale.sm, .semibold))
-            .foregroundStyle(DuskColors.bg)
-            .padding(.horizontal, Space.sm)
-            .padding(.vertical, Space.xs)
-            .background(DuskColors.accent, in: RoundedRectangle(cornerRadius: Radii.pill))
+        DesignStatusBadge(title: "Active")
     }
 
     private func toggle(_ name: String) {
@@ -160,17 +159,18 @@ struct PersonalitiesScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Personalities", screenId: "settings-personalities-screen") {
-            SettingsCard {
-                HStack {
-                    Text("Default").font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.ink)
-                    Text("Active")
-                        .font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.bg)
-                        .padding(.horizontal, Space.sm).padding(.vertical, Space.xs)
-                        .background(DuskColors.accent, in: RoundedRectangle(cornerRadius: Radii.pill))
-                    Spacer()
-                    Image(systemName: "chevron.right").foregroundStyle(DuskColors.ink3)
+            DesignCard {
+                DesignDisclosureButton(
+                    isExpanded: false,
+                    accessibilityLabel: "Expand Default",
+                    accessibilityId: "settings-personalities-preview-card",
+                    action: {}
+                ) {
+                    HStack(spacing: Space.sm) {
+                        Text("Default").font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.ink)
+                        DesignStatusBadge(title: "Active")
+                    }
                 }
-                .padding(.vertical, Space.sm)
             }
         }
     }

@@ -67,36 +67,38 @@ struct AudioScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving, .restarting: SoulApplyingBanner(text: "Saving…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving, .restarting: .saving
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     private var outputCard: some View {
-        SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
-            RowToggle(
-                label: "Speak responses",
-                sub: "When off, replies are silent — text still streams to chat.",
-                isOn: vm.ttsEnabled,
-                accessibilityId: "settings-audio-tts",
-                onChange: { vm.ttsEnabled = $0 }
+        DesignCard(title: "Output", detail: "Takes effect on the next reply.") {
+            DesignToggleRow(
+                title: "Speak responses",
+                detail: "When off, replies are silent — text still streams to chat.",
+                isOn: Binding(get: { vm.ttsEnabled }, set: { vm.ttsEnabled = $0 }),
+                accessibilityId: "settings-audio-tts"
             )
-            Divider().background(DuskColors.lineSoft)
+            DesignDivider()
             VStack(alignment: .leading, spacing: Space.sm) {
                 Text("Reply channel")
                     .font(Typo.ui(TypeScale.sm, .medium))
                     .foregroundStyle(DuskColors.ink)
-                RowSegmented(
-                    options: audioChannelOptions,
-                    selectedId: vm.channel,
-                    accessibilityId: "settings-audio-channel",
-                    onSelect: { vm.channel = $0 }
+                DesignSegmentedPicker(
+                    title: "Reply channel",
+                    options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
+                    selection: Binding(get: { vm.channel }, set: { vm.channel = $0 }),
+                    accessibilityId: "settings-audio-channel"
                 )
             }
             .padding(.vertical, Space.sm)
@@ -111,18 +113,19 @@ struct AudioScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
-            SettingsCard(title: "Output", sub: "Takes effect on the next reply.") {
-                RowToggle(
-                    label: "Speak responses",
-                    sub: "When off, replies are silent — text still streams to chat.",
-                    isOn: true, accessibilityId: "settings-audio-tts", onChange: { _ in }
+            DesignCard(title: "Output", detail: "Takes effect on the next reply.") {
+                DesignToggleRow(
+                    title: "Speak responses",
+                    detail: "When off, replies are silent — text still streams to chat.",
+                    isOn: .constant(true), accessibilityId: "settings-audio-tts"
                 )
-                Divider().background(DuskColors.lineSoft)
+                DesignDivider()
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("Reply channel").font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink)
-                    RowSegmented(
-                        options: audioChannelOptions, selectedId: "voice",
-                        accessibilityId: "settings-audio-channel", onSelect: { _ in }
+                    DesignSegmentedPicker(
+                        title: "Reply channel",
+                        options: audioChannelOptions.map { (value: $0.id, label: $0.label) },
+                        selection: .constant("voice"), accessibilityId: "settings-audio-channel"
                     )
                 }
                 .padding(.vertical, Space.sm)

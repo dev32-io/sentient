@@ -1,18 +1,7 @@
-// ---------------------------------------------------------------------------
-// CategoryRow — one tappable row on the root Settings list: SF Symbol +
-// title + trailing chevron. One row per category (Memory, Voice, Account,
-// …); the destination page is pushed by the caller's `onTap`, not this view
-// — CategoryRow knows nothing about navigation (swiftui state-hoisting rule:
-// leaf views take state + closures, never a Route or a ViewModel).
-//
-// `accessibilityId` is per-instance (many rows share this one view type on
-// the same screen), matching the HistoryRow / SettingsDiagnostics convention
-// of a caller-supplied identifier rather than a hardcoded literal.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
-private let iconSlotWidth: CGFloat = 26
-
+/// Compatibility facade for the pre-v2 category row API. Visual ownership is
+/// in `DesignCategoryRow`.
 struct CategoryRow: View {
     let icon: SettingsIcon
     let title: String
@@ -20,28 +9,7 @@ struct CategoryRow: View {
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: Space.md) {
-                Image(systemName: icon.symbolName)
-                    .font(.system(size: TypeScale.base, weight: .medium))
-                    .foregroundStyle(DuskColors.ink2)
-                    .frame(width: iconSlotWidth, alignment: .center)
-
-                Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: TypeScale.xs, weight: .semibold))
-                    .foregroundStyle(DuskColors.ink3)
-            }
-            .frame(minHeight: DesignMetrics.minimumTarget)
-            .padding(.vertical, Space.sm)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(accessibilityId)
+        DesignCategoryRow(icon: icon, title: title, accessibilityId: accessibilityId, onTap: onTap)
     }
 }
 

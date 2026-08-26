@@ -1,24 +1,12 @@
-// ---------------------------------------------------------------------------
-// RowSegmented — pill segmented control, custom-drawn and token-styled to
-// match the webui `Segmented` feel (components/settings/primitives/segmented
-// .tsx + primitives.css `.seg2`: bg-elev track, paper "on" pill with a soft
-// shadow) — NOT the default UIKit/SwiftUI `Picker(.segmented)` look, which
-// reads as system chrome rather than Dusk. Used for Memory's slot switch
-// (MEMORY.md/USER.md), edit/preview toggles, Model's provider switch, etc.
-//
-// Stateless leaf: `selectedId` + `onSelect` in, no local state.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
-private let segmentInnerRadius: CGFloat = 6
-private let segmentTrackPadding: CGFloat = 3
-private let segmentHeight: CGFloat = 28
-
+/// Compatibility option model for callers that still use the old row API.
 struct SegmentOption: Identifiable, Equatable {
     let id: String
     let label: String
 }
 
+/// Compatibility facade. `DesignSegmentedPicker` is the canonical primitive.
 struct RowSegmented: View {
     let options: [SegmentOption]
     let selectedId: String
@@ -26,15 +14,12 @@ struct RowSegmented: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        Picker("Selection", selection: Binding(get: { selectedId }, set: onSelect)) {
-            ForEach(options) { option in
-                Text(option.label).tag(option.id)
-            }
-        }
-        .pickerStyle(.segmented)
-        .font(Typo.ui(TypeScale.base))
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .accessibilityIdentifier(accessibilityId)
+        DesignSegmentedPicker(
+            title: "Selection",
+            options: options.map { (value: $0.id, label: $0.label) },
+            selection: Binding(get: { selectedId }, set: onSelect),
+            accessibilityId: accessibilityId
+        )
     }
 }
 

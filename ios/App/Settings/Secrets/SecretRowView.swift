@@ -54,8 +54,7 @@ struct SecretKeyRow: View {
                     accessibilityId: "settings-secret-\(idKey)-save",
                     action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 )
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(DesignButtonStyle(role: .quiet))
+                DesignTextButton(title: "Cancel", action: onCancel)
             }
         }
     }
@@ -68,13 +67,17 @@ struct SecretKeyRow: View {
                 .accessibilityLabel(hasKey ? "Key configured" : "Key not configured")
             HStack(spacing: Space.sm) {
                 if let onSetActive, !isActive {
-                    Button("Set active", action: onSetActive)
-                        .buttonStyle(DesignButtonStyle(role: .quiet))
-                        .accessibilityIdentifier("settings-secret-\(idKey)-active")
+                    DesignTextButton(
+                        title: "Set active",
+                        accessibilityId: "settings-secret-\(idKey)-active",
+                        action: onSetActive
+                    )
                 }
-                Button("Update key", action: onStartEdit)
-                    .buttonStyle(DesignButtonStyle(role: .quiet))
-                    .accessibilityIdentifier("settings-secret-\(idKey)-update")
+                DesignTextButton(
+                    title: "Update key",
+                    accessibilityId: "settings-secret-\(idKey)-update",
+                    action: onStartEdit
+                )
             }
         }
     }
@@ -122,8 +125,7 @@ struct SecretUrlRow: View {
                     accessibilityId: "settings-secret-custom-baseurl-save",
                     action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 )
-                Button("Cancel", action: onCancel)
-                    .buttonStyle(DesignButtonStyle(role: .quiet))
+                DesignTextButton(title: "Cancel", action: onCancel)
             }
         }
     }
@@ -134,9 +136,11 @@ struct SecretUrlRow: View {
                 .designText(.telemetry)
                 .foregroundStyle(hasValue ? DuskColors.ink2 : DuskColors.ink4)
                 .accessibilityLabel(hasValue ? "Base URL configured" : "Base URL not configured")
-            Button("Update base URL", action: onStartEdit)
-                .buttonStyle(DesignButtonStyle(role: .quiet))
-                .accessibilityIdentifier("settings-secret-custom-baseurl-update")
+            DesignTextButton(
+                title: "Update base URL",
+                accessibilityId: "settings-secret-custom-baseurl-update",
+                action: onStartEdit
+            )
         }
     }
 

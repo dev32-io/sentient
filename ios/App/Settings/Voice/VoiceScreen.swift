@@ -124,12 +124,12 @@ struct VoiceScreen: View {
     @ViewBuilder
     private var noticeBanner: some View {
         if let notice = vm.notice {
-            Button { vm.notice = nil } label: {
-                AsyncNotice(kind: .warning, title: notice)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss notice")
-            .accessibilityIdentifier("settings-voice-notice")
+            DesignDismissibleNotice(
+                kind: .warning,
+                title: notice,
+                accessibilityId: "settings-voice-notice",
+                onDismiss: { vm.notice = nil }
+            )
         }
     }
 

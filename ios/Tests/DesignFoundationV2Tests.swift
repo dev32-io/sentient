@@ -1,4 +1,5 @@
 import XCTest
+import MobileData
 @testable import SentientApp
 
 final class DesignFoundationV2Tests: XCTestCase {
@@ -41,11 +42,39 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertEqual(DesignMetrics.pressedDepth, 1)
     }
 
+    func testNativeMaterialAdapterCoversEveryGeneratedRecipe() {
+        let projections = DesignV2.MaterialRole.allCases.map { DesignMaterialAdapter.nativeProjection(for: $0) }
+
+        XCTAssertEqual(Set(projections.map(\.role)), Set(DesignV2.MaterialRole.allCases))
+        XCTAssertEqual(Set(projections.map { $0.kind.rawValue }), Set(DesignMaterialNativeProjection.Kind.allCases.map(\.rawValue)))
+        XCTAssertTrue(projections.allSatisfy { $0.contractRecipe == $0.role.contractRecipe })
+    }
+
+    func testTypographyAdapterUsesGeneratedFamilyRoles() {
+        func firstFamily(_ fallbackList: String) -> String {
+            fallbackList.split(separator: ",", maxSplits: 1).first.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            } ?? fallbackList
+        }
+
+        XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.display))
+        XCTAssertEqual(DesignTypographyAdapter.uiFamily, firstFamily(MobileData.Fonts_.shared.ui))
+        XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
+        XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
+        XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)
+        XCTAssertEqual(DesignTextRole.telemetry.family, DesignTypographyAdapter.monoFamily)
+    }
+
     func testControlSemanticsAndAccessibilityMetricsAreStable() {
         XCTAssertTrue(DesignControlState.normal.isInteractive)
         XCTAssertFalse(DesignControlState.loading.isInteractive)
         XCTAssertFalse(DesignControlState.error("failed").isInteractive)
         XCTAssertFalse(DesignControlState.disabled.isInteractive)
+        XCTAssertTrue(DesignControlState.selected.isInteractive)
+        XCTAssertTrue(DesignControlState.on.isSelected)
+        XCTAssertEqual(DesignControlState.loading.accessibilityValue, "In progress")
+        XCTAssertEqual(DesignControlState.error("failed").accessibilityValue, "Error: failed")
+        XCTAssertEqual(DesignControlState.disabled.accessibilityValue, "Disabled")
         XCTAssertGreaterThanOrEqual(DesignMetrics.minimumTarget, 44)
         XCTAssertGreaterThanOrEqual(DesignV2.Typography.body, 15)
         XCTAssertGreaterThanOrEqual(DesignV2.Typography.supporting, 12.5)

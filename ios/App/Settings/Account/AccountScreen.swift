@@ -67,9 +67,11 @@ private struct AccountBody: View {
 
                 DesignPane(title: "Security", detail: "Used for sensitive household actions.") {
                     DesignSettingsRow(title: "PIN", detail: "Four digits") {
-                        Button("Change PIN", action: onOpenPin)
-                            .buttonStyle(DesignButtonStyle(role: .quiet))
-                            .accessibilityIdentifier("settings-account-changepin")
+                        DesignTextButton(
+                            title: "Change PIN",
+                            accessibilityId: "settings-account-changepin",
+                            action: onOpenPin
+                        )
                     }
                 }
             }

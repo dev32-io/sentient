@@ -48,6 +48,8 @@ struct VoiceRowView: View {
                 .stroke(isSelected ? DuskColors.accent : .clear, lineWidth: DesignMetrics.hairline)
         }
         .accessibilityElement(children: .contain)
+        .accessibilityValue(rowAccessibilityValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityIdentifier(accessibilityId)
     }
 
@@ -64,6 +66,7 @@ struct VoiceRowView: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .accessibilityLabel(label)
+        .accessibilityValue(disabled ? "Disabled" : isLoading ? "Loading" : isPlaying ? "Playing" : "Ready")
     }
 
     private var playIcon: String {
@@ -113,15 +116,20 @@ struct VoiceRowView: View {
         switch accessory {
         case .none: EmptyView()
         case .activePill:
-            Text("Active")
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.accent)
+            DesignStatusBadge(title: "Active")
                 .accessibilityLabel("Active voice")
         case .check:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(DuskColors.accent)
                 .accessibilityLabel("Selected")
         }
+    }
+
+    private var rowAccessibilityValue: String {
+        if isLoading { return "Loading preview" }
+        if isPlaying { return "Preview playing" }
+        if isSelected { return "Selected" }
+        return "Not selected"
     }
 }
 

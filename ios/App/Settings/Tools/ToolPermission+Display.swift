@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ToolPermission+Display — wire-value / label mapping for the Tools screen's
-// per-tool RowSelect. Mirrors the webui's PERMISSION_OPTION_BY_VALUE
+// per-tool DesignSelect. Mirrors the webui's PERMISSION_OPTION_BY_VALUE
 // (tools-pane.tsx) and the shared ToolPermission.kt header's reasoning: this
 // is a REAL Kotlin enum (unlike model.provider/voice.provider/audio.channel/
 // advanced.reasoningEffort, which stay Strings for forward-compat), so
@@ -26,8 +26,8 @@ func capabilityName(_ raw: String) -> String {
 }
 
 extension ToolPermission {
-    /// The `SelectOption.id` this permission round-trips as through the Tools
-    /// screen's RowSelect. Matches the gateway wire value (`toolPermissionSchema`).
+    /// The option id this permission round-trips as through the Tools
+    /// screen's DesignSelect. Matches the gateway wire value (`toolPermissionSchema`).
     var wireValue: String {
         switch self {
         case .allow: return "allow"

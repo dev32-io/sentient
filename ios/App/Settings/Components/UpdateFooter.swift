@@ -113,6 +113,8 @@ struct UpdateFooter: View {
         }
         .buttonStyle(.plain)
         .disabled(spinner)
+        .accessibilityLabel(title)
+        .accessibilityValue(spinner ? "In progress" : title)
         .accessibilityIdentifier("\(accessibilityId)-action")
     }
 

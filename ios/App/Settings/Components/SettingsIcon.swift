@@ -9,7 +9,7 @@
 // native iOS icon set.
 //
 // One case per Settings root-list category (Soul / User / Admin / Support
-// groups). `symbolName` feeds `Image(systemName:)` directly from CategoryRow.
+// groups). `symbolName` feeds `Image(systemName:)` directly from DesignCategoryRow.
 // All symbols below are documented as available since SF Symbols 1–3 (iOS
 // 13–15), well under this project's iOS 18.0 deployment target.
 // ---------------------------------------------------------------------------

@@ -77,39 +77,38 @@ struct ModelScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     @ViewBuilder
     private var browseControls: some View {
         if providerSegments.count > 1 {
-            RowSegmented(
-                options: providerSegments,
-                selectedId: vm.browseProvider,
-                accessibilityId: "settings-model-provider",
-                onSelect: { vm.browseProvider = $0 }
+            DesignSegmentedPicker(
+                title: "Model provider",
+                options: providerSegments.map { (value: $0.id, label: $0.label) },
+                selection: Binding(get: { vm.browseProvider }, set: { vm.browseProvider = $0 }),
+                accessibilityId: "settings-model-provider"
             )
         }
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").accessibilityHidden(true)
-            TextField("Search models…", text: Binding(get: { vm.query }, set: { vm.query = $0 }))
-                .font(Typo.ui(TypeScale.base))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityIdentifier("settings-model-search")
-        }
-        .padding(.horizontal, Space.md)
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .designWell()
+        DesignSearchField(
+            prompt: "Search models…",
+            query: Binding(get: { vm.query }, set: { vm.query = $0 }),
+            accessibilityId: "settings-model-search"
+        )
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
     }
 
     @ViewBuilder
@@ -117,7 +116,7 @@ struct ModelScreen: View {
         let list = vm.filtered
         if list.isEmpty {
             Text("No models match.")
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.supporting)
                 .foregroundStyle(DuskColors.ink3)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, Space.lg)
@@ -146,7 +145,12 @@ private struct ModelCard: View {
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
+        DesignSelectableCard(
+            isSelected: isSelected,
+            accessibilityLabel: "Model \(entry.id)",
+            accessibilityId: "settings-model-card-\(entry.id)",
+            action: onTap
+        ) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 HStack {
                     Text(entry.id)
@@ -155,7 +159,9 @@ private struct ModelCard: View {
                         .lineLimit(1)
                     Spacer(minLength: Space.sm)
                     if isSelected {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(DuskColors.accent)
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(DuskColors.accent)
+                            .accessibilityHidden(true)
                     }
                 }
                 ViewThatFits(in: .horizontal) {
@@ -163,16 +169,7 @@ private struct ModelCard: View {
                     VStack(alignment: .leading, spacing: Space.xs) { capabilityItems }
                 }
             }
-            .padding(Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .designPlate()
-            .overlay(
-                RoundedRectangle(cornerRadius: Radii.md)
-                    .stroke(isSelected ? DuskColors.accent : .clear, lineWidth: DesignMetrics.hairline)
-            )
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("settings-model-card-\(entry.id)")
     }
 
     private var capabilitySummary: some View {
@@ -190,7 +187,8 @@ private struct ModelCard: View {
 
     private func capabilityLabel(_ label: String, systemImage: String) -> some View {
         Label(label, systemImage: systemImage)
-            .font(Typo.ui(TypeScale.sm, .medium))
+            .designText(.supporting)
+            .fontWeight(.medium)
             .foregroundStyle(DuskColors.ink2)
     }
 }
@@ -201,17 +199,14 @@ private struct ModelCard: View {
 #Preview("browse") {
     NavigationStack {
         SettingsPageScaffold(title: "Model", screenId: "settings-model-screen") {
-            RowSegmented(
-                options: [
-                    SegmentOption(id: "ollama-cloud", label: "Ollama Cloud"),
-                    SegmentOption(id: "openrouter", label: "OpenRouter"),
-                ],
-                selectedId: "openrouter",
-                accessibilityId: "settings-model-provider",
-                onSelect: { _ in }
+            DesignSegmentedPicker(
+                title: "Model provider",
+                options: [(value: "ollama-cloud", label: "Ollama Cloud"), (value: "openrouter", label: "OpenRouter")],
+                selection: .constant("openrouter"),
+                accessibilityId: "settings-model-provider"
             )
             Text("No models match.")
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.supporting)
                 .foregroundStyle(DuskColors.ink3)
         }
     }

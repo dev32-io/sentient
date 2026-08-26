@@ -54,9 +54,9 @@ enum DesignV2 {
         static let lineNormal = MobileData.LineHeights.shared.normal
         static let lineRelaxed = MobileData.LineHeights.shared.relaxed
 
-        static let displayFamily = MobileData.Fonts_.shared.display
-        static let uiFamily = MobileData.Fonts_.shared.ui
-        static let monoFamily = MobileData.Fonts_.shared.mono
+        static let displayFamily = DesignTypographyAdapter.displayFamily
+        static let uiFamily = DesignTypographyAdapter.uiFamily
+        static let monoFamily = DesignTypographyAdapter.monoFamily
     }
 
     enum Spacing {
@@ -74,7 +74,7 @@ enum DesignV2 {
         static let md = CGFloat(MobileData.Radii_.shared.md)
         static let lg = CGFloat(MobileData.Radii_.shared.lg)
         static let xl = CGFloat(MobileData.Radii_.shared.xl)
-        static let pill = CGFloat.infinity
+        static let pill = MobileData.Pill.shared.isTruePill ? CGFloat.infinity : xl
     }
 
     enum Motion {
@@ -86,7 +86,7 @@ enum DesignV2 {
         }
     }
 
-    enum MaterialRole: CaseIterable {
+    enum MaterialRole: CaseIterable, Hashable {
         case slateFace, slateFaceHover, slateFaceMuted, slateTopLight
         case slateContact, slateCast, slateEmberCast
         case slateShadow, slateShadowHover, slateShadowPressed, slateShadowDisabled
@@ -133,20 +133,28 @@ extension Color {
 enum DesignTextRole {
     case telemetry, supporting, body, large, title, display
 
+    var family: String {
+        switch self {
+        case .telemetry: DesignV2.Typography.monoFamily
+        case .supporting, .body, .large: DesignV2.Typography.uiFamily
+        case .title, .display: DesignV2.Typography.displayFamily
+        }
+    }
+
     var font: Font {
         switch self {
         case .telemetry:
-            .custom("JetBrains Mono", size: DesignV2.Typography.xs, relativeTo: .caption2)
+            .custom(family, size: DesignV2.Typography.xs, relativeTo: .caption2)
         case .supporting:
-            .custom("DM Sans", size: DesignV2.Typography.supporting, relativeTo: .footnote)
+            .custom(family, size: DesignV2.Typography.supporting, relativeTo: .footnote)
         case .body:
-            .custom("DM Sans", size: DesignV2.Typography.body, relativeTo: .body)
+            .custom(family, size: DesignV2.Typography.body, relativeTo: .body)
         case .large:
-            .custom("DM Sans", size: DesignV2.Typography.large, relativeTo: .headline)
+            .custom(family, size: DesignV2.Typography.large, relativeTo: .headline)
         case .title:
-            .custom("Fraunces", size: DesignV2.Typography.title, relativeTo: .title2)
+            .custom(family, size: DesignV2.Typography.title, relativeTo: .title2)
         case .display:
-            .custom("Fraunces", size: DesignV2.Typography.display, relativeTo: .largeTitle)
+            .custom(family, size: DesignV2.Typography.display, relativeTo: .largeTitle)
         }
     }
 
@@ -190,7 +198,15 @@ enum DesignMetrics {
     static let minimumTarget: CGFloat = 44
     static let hairline: CGFloat = 1
     static let focusRing: CGFloat = 3
+    static let focusBorder: CGFloat = 2
+    static let focusBorderInset: CGFloat = -3
     static let pressedDepth: CGFloat = 1
+    static let categoryIconSlot: CGFloat = 26
+    static let progressWidth: CGFloat = 64
+    static let multilineEditorMinHeight: CGFloat = 160
+    static let editorInset: CGFloat = 8
+    static let editorPlaceholderInsetH: CGFloat = 14
+    static let editorPlaceholderInsetV: CGFloat = 16
     static let narrowPreviewWidth: CGFloat = 320
     static let padPreviewWidth: CGFloat = 768
 }

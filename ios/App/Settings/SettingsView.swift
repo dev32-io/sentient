@@ -126,7 +126,7 @@ private struct SettingsRootView: View {
     @State private var isConfirmingLogout = false
 
     var body: some View {
-        ScrollView {
+        DesignPageChrome(title: titleText, accessibilityId: "settings-screen", bottomPadding: Space.xl) {
             VStack(alignment: .leading, spacing: Space.lg) {
                 accessNotice
                 group(groupAssistant, soulItems)
@@ -134,12 +134,13 @@ private struct SettingsRootView: View {
                 if access.isAdmin { group(groupAdmin, adminItems) }
                 group(groupSupport, supportItems)
 
-                DangerButton(
+                DesignActionButton(
                     title: logoutLabel,
+                    role: .destructive,
                     accessibilityId: "settings-logout",
                     action: { isConfirmingLogout = true }
                 )
-                    .padding(.top, Space.sm)
+                .padding(.top, Space.sm)
 
                 UpdateFooter(
                     status: updateStatus,
@@ -151,18 +152,7 @@ private struct SettingsRootView: View {
                 )
                 .padding(.top, Space.sm)
             }
-            .padding(.horizontal, Space.lg)
-            .padding(.top, Space.md)
-            .padding(.bottom, Space.xl)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(DuskColors.bg)
-        .navigationTitle(titleText)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(DuskColors.bg, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .accessibilityIdentifier("settings-screen")
         .confirmationDialog(
             "Log out of Sentient?",
             isPresented: $isConfirmingLogout,
@@ -173,7 +163,6 @@ private struct SettingsRootView: View {
         } message: {
             Text("You'll need your household PIN to sign in again.")
         }
-        .duskTheme()
     }
 
     @ViewBuilder
@@ -194,13 +183,13 @@ private struct SettingsRootView: View {
         }
     }
 
-    /// A titled section: GroupHeader + its CategoryRows.
+    /// A titled section: design header + its category rows.
     @ViewBuilder
     private func group(_ header: String, _ items: [CategoryItem]) -> some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            GroupHeader(title: header)
+            DesignGroupHeader(title: header)
             ForEach(items) { item in
-                CategoryRow(
+                DesignCategoryRow(
                     icon: item.icon,
                     title: item.title,
                     accessibilityId: "settings-cat-\(item.key)",

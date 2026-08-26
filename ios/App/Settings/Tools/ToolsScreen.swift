@@ -67,15 +67,18 @@ struct ToolsScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
@@ -127,33 +130,35 @@ struct ToolsScreen: View {
         let builtins = (vm.catalog?.hermesBuiltins ?? []).sorted {
             $0.toolset == $1.toolset ? $0.name < $1.name : $0.toolset < $1.toolset
         }
-        SettingsCard(
+        DesignCard(
             title: "Built-in capabilities",
-            sub: "Related capabilities may be enabled or disabled together."
+            detail: "Related capabilities may be enabled or disabled together."
         ) {
             HStack {
                 Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
                     .font(Typo.ui(TypeScale.sm))
                     .foregroundStyle(DuskColors.ink3)
                 Spacer()
-                Button(action: { builtInsOpen.toggle() }) {
-                    Image(systemName: builtInsOpen ? "chevron.down" : "chevron.right")
-                        .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
-                        .foregroundStyle(DuskColors.ink3)
+                DesignDisclosureButton(
+                    isExpanded: builtInsOpen,
+                    accessibilityLabel: builtInsOpen ? "Collapse built-in capabilities" : "Expand built-in capabilities",
+                    accessibilityId: "settings-tools-hermes-expand",
+                    action: { builtInsOpen.toggle() }
+                ) {
+                    EmptyView()
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(builtInsOpen ? "Collapse built-in capabilities" : "Expand built-in capabilities")
-                .accessibilityIdentifier("settings-tools-hermes-expand")
             }
             .padding(.vertical, Space.sm)
             if builtInsOpen {
                 ForEach(builtins, id: \.name) { tool in
-                    RowToggle(
-                        label: capabilityName(tool.name),
-                        sub: tool.description.isEmpty ? tool.toolset : "\(tool.description) · \(tool.toolset)",
-                        isOn: vm.isToolsetOn(tool.toolset),
-                        accessibilityId: "settings-tools-builtin-\(tool.name)",
-                        onChange: { _ in vm.toggleToolset(tool.toolset) }
+                    DesignToggleRow(
+                        title: capabilityName(tool.name),
+                        detail: tool.description.isEmpty ? tool.toolset : "\(tool.description) · \(tool.toolset)",
+                        isOn: Binding(
+                            get: { vm.isToolsetOn(tool.toolset) },
+                            set: { _ in vm.toggleToolset(tool.toolset) }
+                        ),
+                        accessibilityId: "settings-tools-builtin-\(tool.name)"
                     )
                 }
             }

@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // ToolPermissionRow — one tool's four-state permission control: mono name +
-// description + a RowSelect (Allow/Ask/Deny/Off). Shared by ToolsServerCard's
+// description + a DesignSelect (Allow/Ask/Deny/Off). Shared by ToolsServerCard's
 // expanded per-tool list and the Tools screen's "Gateway tools" (native tools)
 // card — identical rendering regardless of which catalog array
 // (ProductToolGroupView.tools) a tool came from.
 // `settable` is what this view branches on to render read-only (a genuinely
-// disabled, non-interactive RowSelect) — never the tool's name (`delegateTask`
+// disabled, non-interactive DesignSelect) — never the tool's name (`delegateTask`
 // is unsettable today only because the catalog says so).
 //
 // Stateless leaf: `row` + `onChange` in, no local state.
@@ -27,17 +27,20 @@ struct ToolPermissionRow: View {
     let onChange: (ToolPermission) -> Void
 
     var body: some View {
-        RowSelect(
-            label: capabilityName(row.name),
-            sub: row.description.isEmpty ? nil : row.description,
-            options: ToolPermission.selectOptions,
-            selectedId: row.permission.wireValue,
-            accessibilityId: accessibilityId,
+        DesignSelect(
+            title: capabilityName(row.name),
+            detail: row.description.isEmpty ? nil : row.description,
+            options: ToolPermission.selectOptions.map { (value: $0.id, label: $0.label) },
+            selection: Binding(
+                get: { row.permission.wireValue },
+                set: { value in
+                    guard let permission = ToolPermission(wireValue: value) else { return }
+                    onChange(permission)
+                }
+            ),
             isEnabled: row.settable,
-            onSelect: { value in
-                guard let permission = ToolPermission(wireValue: value) else { return }
-                onChange(permission)
-            }
+            accessibilityId: accessibilityId,
+            optionAccessibilityId: { "settings-select-option-\($0)" }
         )
     }
 }

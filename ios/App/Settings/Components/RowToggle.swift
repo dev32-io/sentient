@@ -1,16 +1,6 @@
-// ---------------------------------------------------------------------------
-// RowToggle — label (+ optional sub) with a trailing Toggle, tinted with the
-// Dusk accent token. Transcribed from the webui Row + Toggle primitives
-// (components/settings/primitives/row.tsx + toggle.tsx) but rides the native
-// SwiftUI `Toggle` control ("trailing Toggle tinted with token colors" per
-// the mobile-settings-parity plan) rather than a fully custom pill, matching
-// platform-native affordances (VoiceOver, Dynamic Type, hit-testing) for
-// free.
-//
-// Stateless leaf: `isOn` + `onChange` in, no local state, no ViewModel.
-// ---------------------------------------------------------------------------
 import SwiftUI
 
+/// Compatibility facade for the callback-based toggle row API.
 struct RowToggle: View {
     let label: String
     var sub: String?
@@ -19,26 +9,12 @@ struct RowToggle: View {
     let onChange: (Bool) -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: Space.lg) {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(label)
-                    .font(Typo.ui(TypeScale.base, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                if let sub {
-                    Text(sub)
-                        .font(Typo.ui(TypeScale.xs))
-                        .foregroundStyle(DuskColors.ink3)
-                }
-            }
-            Spacer(minLength: Space.sm)
-            Toggle("", isOn: Binding(get: { isOn }, set: onChange))
-                .labelsHidden()
-                .tint(DuskColors.accent)
-        }
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .padding(.vertical, Space.sm)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(accessibilityId)
+        DesignToggleRow(
+            title: label,
+            detail: sub,
+            isOn: Binding(get: { isOn }, set: onChange),
+            accessibilityId: accessibilityId
+        )
     }
 }
 

@@ -70,7 +70,12 @@ private struct SecretsBody: View {
                 retry: onRetryLoad
             )
         } else if let status {
-            DesignPane(title: "Provider keys", detail: "Encrypted at rest. Values are write-only and never displayed.") {
+            DesignCard(
+                title: "Provider keys",
+                detail: "Encrypted at rest. Values are write-only and never displayed.",
+                headerStyle: .quiet,
+                bodyStyle: .padded
+            ) {
                 keyRow(.openrouter, label: "OpenRouter", status: status, hasKey: status.llm.openrouter.hasKey)
                 DesignDivider()
                 keyRow(.ollamaCloud, label: "Ollama Cloud", status: status, hasKey: status.llm.ollamaCloud.hasKey)
@@ -120,7 +125,7 @@ private struct RestartNotice: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        DesignPane {
+        DesignCard(headerStyle: .quiet, bodyStyle: .padded) {
             AsyncNotice(kind: noticeKind, title: title, detail: detail)
             if phase != .applying && phase != .applied {
                 HStack(spacing: Space.sm) {
@@ -129,9 +134,11 @@ private struct RestartNotice: View {
                         accessibilityId: "settings-secrets-apply",
                         action: onApply
                     )
-                    Button("Dismiss", action: onDismiss)
-                        .buttonStyle(DesignButtonStyle(role: .quiet))
-                        .accessibilityIdentifier("settings-secrets-notice-dismiss")
+                    DesignTextButton(
+                        title: "Dismiss",
+                        accessibilityId: "settings-secrets-notice-dismiss",
+                        action: onDismiss
+                    )
                 }
             }
         }

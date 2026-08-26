@@ -36,7 +36,8 @@ struct VoiceAddScreen: View {
             DesignSegmentedPicker(
                 title: "Sample source",
                 options: modeOptions,
-                selection: Binding(get: { vm.mode }, set: { vm.selectMode($0) })
+                selection: Binding(get: { vm.mode }, set: { vm.selectMode($0) }),
+                isEnabled: !vm.submitting
             )
             .accessibilityIdentifier("settings-voice-add-mode")
             captureSection
@@ -97,17 +98,20 @@ struct VoiceAddScreen: View {
             DesignField(
                 title: "Name", prompt: "e.g. Dad",
                 text: Binding(get: { vm.name }, set: { vm.setName($0) }),
-                accessibilityId: "settings-voice-add-name"
+                accessibilityId: "settings-voice-add-name",
+                isEnabled: !vm.submitting
             )
             DesignMultilineEditor(
                 title: "Description",
-                text: Binding(get: { vm.description }, set: { vm.setDescription($0) })
+                text: Binding(get: { vm.description }, set: { vm.setDescription($0) }),
+                accessibilityId: "settings-voice-add-description",
+                isEnabled: !vm.submitting
             )
-            .accessibilityIdentifier("settings-voice-add-description")
             DesignSelect(
                 title: "Language",
                 options: VoiceLanguages.formOptions.map { (value: $0.code, label: $0.label) },
-                selection: $vm.language
+                selection: $vm.language,
+                isEnabled: !vm.submitting
             )
             .accessibilityIdentifier("settings-voice-add-language")
             VoiceTagField(tags: vm.tags, disabled: vm.submitting, onChange: { vm.tags = $0 })
@@ -126,10 +130,12 @@ struct VoiceAddScreen: View {
     @ViewBuilder
     private var noticeBanner: some View {
         if let notice = vm.notice {
-            Button { vm.notice = nil } label: { AsyncNotice(kind: .error, title: notice) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss error")
-                .accessibilityIdentifier("settings-voice-add-notice")
+            DesignDismissibleNotice(
+                kind: .error,
+                title: notice,
+                accessibilityId: "settings-voice-add-notice",
+                onDismiss: { vm.notice = nil }
+            )
         }
     }
 }

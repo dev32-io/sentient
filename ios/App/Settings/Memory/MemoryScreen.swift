@@ -43,11 +43,11 @@ struct MemoryScreen: View {
     var body: some View {
         SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
             saveBanner
-            RowSegmented(
-                options: slotOptions,
-                selectedId: slot.rawValue,
-                accessibilityId: "settings-memory-slot",
-                onSelect: { selectSlot($0) }
+            DesignSegmentedPicker(
+                title: "Memory file",
+                options: slotOptions.map { (value: $0.id, label: $0.label) },
+                selection: Binding(get: { slot.rawValue }, set: selectSlot),
+                accessibilityId: "settings-memory-slot"
             )
             slotCard
         }
@@ -74,22 +74,25 @@ struct MemoryScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     @ViewBuilder
     private var slotCard: some View {
         let state = vm.state(for: slot)
-        SettingsCard(title: slot.label, sub: slotExplain[slot]) {
+        DesignCard(title: slot.label, detail: slotExplain[slot]) {
             if !state.loaded {
                 SoulLoadingRow()
             } else if let loadError = state.loadError {
@@ -105,23 +108,25 @@ struct MemoryScreen: View {
     @ViewBuilder
     private func editor(_ state: MemoryViewModel.SlotState) -> some View {
         VStack(alignment: .leading, spacing: Space.md) {
-            RowSegmented(
-                options: viewOptions,
-                selectedId: viewMode,
-                accessibilityId: "settings-memory-view",
-                onSelect: { viewMode = $0 }
+            DesignSegmentedPicker(
+                title: "Memory view",
+                options: viewOptions.map { (value: $0.id, label: $0.label) },
+                selection: $viewMode,
+                accessibilityId: "settings-memory-view"
             )
             if viewMode == "edit" {
-                MonoEditor(
-                    text: state.draft,
+                DesignMultilineEditor(
+                    text: Binding(
+                        get: { state.draft },
+                        set: { vm.setDraft($0, for: slot) }
+                    ),
                     placeholder: "Nothing here yet. Add a note now or let the assistant build this over time.",
                     maxLength: state.charLimit > 0 ? state.charLimit : nil,
-                    accessibilityId: "settings-memory-editor",
-                    onChange: { vm.setDraft($0, for: slot) }
+                    accessibilityId: "settings-memory-editor"
                 )
             } else {
                 Text(state.draft.isEmpty ? "Nothing to preview." : state.draft)
-                    .font(Typo.mono(TypeScale.sm))
+                    .designText(.supporting)
                     .foregroundStyle(state.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
@@ -144,15 +149,17 @@ struct MemoryScreen: View {
 #Preview("edit") {
     NavigationStack {
         SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            RowSegmented(
-                options: slotOptions, selectedId: "memory",
-                accessibilityId: "settings-memory-slot", onSelect: { _ in }
+            DesignSegmentedPicker(
+                title: "Memory file",
+                options: slotOptions.map { (value: $0.id, label: $0.label) },
+                selection: .constant("memory"),
+                accessibilityId: "settings-memory-slot"
             )
-            SettingsCard(title: "Shared notes", sub: slotExplain[.memory]) {
-                MonoEditor(
-                    text: "The kitchen light is on circuit 3.",
+            DesignCard(title: "Shared notes", detail: slotExplain[.memory]) {
+                DesignMultilineEditor(
+                    text: .constant("The kitchen light is on circuit 3."),
                     maxLength: 4000,
-                    accessibilityId: "settings-memory-editor", onChange: { _ in }
+                    accessibilityId: "settings-memory-editor"
                 )
                 .padding(.vertical, Space.sm)
             }

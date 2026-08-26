@@ -8,7 +8,13 @@ struct VoiceTagField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            DesignField(title: "Tags", prompt: "Add a tag", text: $draft, accessibilityId: "settings-voice-add-tag-input")
+            DesignField(
+                title: "Tags",
+                prompt: "Add a tag",
+                text: $draft,
+                accessibilityId: "settings-voice-add-tag-input",
+                isEnabled: !disabled
+            )
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .onSubmit(addTag)
@@ -19,9 +25,14 @@ struct VoiceTagField: View {
             if !tags.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: DesignMetrics.minimumTarget))], alignment: .leading, spacing: Space.xs) {
                     ForEach(tags, id: \.self) { tag in
-                        DesignChip(title: "\(tag) ×", selected: true) { onChange(tags.filter { $0 != tag }) }
-                            .accessibilityLabel("Remove tag \(tag)")
-                            .accessibilityIdentifier("settings-voice-add-tag-chip-\(tag)")
+                        DesignChip(
+                            title: "\(tag) ×",
+                            selected: true,
+                            isEnabled: !disabled,
+                            accessibilityId: "settings-voice-add-tag-chip-\(tag)",
+                            action: { onChange(tags.filter { $0 != tag }) }
+                        )
+                        .accessibilityLabel("Remove tag \(tag)")
                     }
                 }
             }

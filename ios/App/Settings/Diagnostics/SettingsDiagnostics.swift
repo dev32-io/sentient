@@ -23,7 +23,6 @@ private let labelRetry = "Retry"
 private let labelSend = "Send"
 private let labelSelect = "Select"
 private let labelNoSessions = "No diagnostic sessions yet."
-private let progressWidth: CGFloat = 64
 
 /// The diagnostics section. Reads `model` published state; the newest session is
 /// default-selected. Stateless beyond which row is selected (view-local).
@@ -66,14 +65,15 @@ struct SettingsDiagnostics: View {
     }
 
     private var sendLogsButton: some View {
-        Button {
-            expanded.toggle()
-            if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
-        } label: {
-            Text(sendLogsLabel).frame(maxWidth: .infinity)
-        }
-        .buttonStyle(DesignButtonStyle(role: .quiet))
-        .accessibilityIdentifier("settings-send-logs")
+        DesignActionButton(
+            title: sendLogsLabel,
+            role: .quiet,
+            accessibilityId: "settings-send-logs",
+            action: {
+                expanded.toggle()
+                if expanded && selectedPath == nil { selectedPath = model.sessions.first?.path }
+            }
+        )
     }
 
     private var sessionRows: some View {
@@ -134,6 +134,8 @@ private struct SessionUploadRow: View {
             )
         }
         .padding(.vertical, Space.xs)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("settings-log-session-\(info.sessionStartMs)")
     }
 }
@@ -150,39 +152,26 @@ private struct UploadControl: View {
     var body: some View {
         switch (isUploading, progress, outcome) {
         case let (true, p?, _):
-            ProgressView(value: p)
-                .frame(width: progressWidth)
-                .accessibilityIdentifier("settings-log-progress")
+            DesignProgress(value: p, accessibilityId: "settings-log-progress")
+                .frame(width: DesignMetrics.progressWidth)
         case let (_, _, .sent(ref)):
             Text(ref.isEmpty ? labelSent : "\(sentRefPrefix)\(ref)")
                 .font(Typo.ui(TypeScale.sm))
                 .foregroundStyle(DuskColors.accent)
                 .accessibilityIdentifier("settings-log-sent")
         case (_, _, .failed):
-            controlButton(labelRetry, tint: DuskColors.stop, id: "settings-log-failed") {
-                onSelect(); onUpload()
-            }
+            DesignTextButton(
+                title: labelRetry,
+                role: .destructive,
+                accessibilityId: "settings-log-failed",
+                action: { onSelect(); onUpload() }
+            )
         default:
             if selected {
-                controlButton(labelSend, tint: DuskColors.accent, id: "settings-log-send", action: onUpload)
+                DesignTextButton(title: labelSend, role: .action, accessibilityId: "settings-log-send", action: onUpload)
             } else {
-                controlButton(labelSelect, tint: DuskColors.ink2, id: "settings-log-select", action: onSelect)
+                DesignTextButton(title: labelSelect, accessibilityId: "settings-log-select", action: onSelect)
             }
         }
-    }
-
-    private func controlButton(
-        _ title: String,
-        tint: Color,
-        id: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(Typo.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(tint)
-        }
-        .buttonStyle(DesignButtonStyle(role: .quiet))
-        .accessibilityIdentifier(id)
     }
 }

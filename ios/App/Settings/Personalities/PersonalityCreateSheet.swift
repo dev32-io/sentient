@@ -29,17 +29,12 @@ struct PersonalityCreateSheet: View {
                             .accessibilityIdentifier("settings-personalities-new-error")
                     }
                     field
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                        Text("Instructions")
-                            .font(Typo.ui(TypeScale.sm, .medium))
-                            .foregroundStyle(DuskColors.ink)
-                        MonoEditor(
-                            text: body_,
-                            placeholder: "How this personality should behave…",
-                            accessibilityId: "settings-personalities-new-body",
-                            onChange: { body_ = $0 }
-                        )
-                    }
+                    DesignMultilineEditor(
+                        title: "Instructions",
+                        text: $body_,
+                        placeholder: "How this personality should behave…",
+                        accessibilityId: "settings-personalities-new-body"
+                    )
                 }
                 .padding(Space.lg)
                 .frame(maxWidth: .infinity, alignment: .topLeading)

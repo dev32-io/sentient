@@ -78,57 +78,56 @@ struct AdvancedScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     private var contextCard: some View {
-        SettingsCard(title: "Context") {
-            RowSelect(
-                label: "Reasoning",
-                options: reasoningOptions,
-                selectedId: vm.reasoningEffort,
-                accessibilityId: "settings-advanced-reasoning",
-                onSelect: { vm.reasoningEffort = $0 }
+        DesignCard(title: "Context") {
+            DesignSelect(
+                title: "Reasoning",
+                options: reasoningOptions.map { (value: $0.id, label: $0.label) },
+                selection: Binding(get: { vm.reasoningEffort }, set: { vm.reasoningEffort = $0 }),
+                accessibilityId: "settings-advanced-reasoning"
             )
-            Divider().background(DuskColors.lineSoft)
-            RowSlider(
-                label: "Compression threshold",
-                value: vm.threshold,
+            DesignDivider()
+            DesignSlider(
+                title: "Compression threshold",
+                value: Binding(get: { vm.threshold }, set: { vm.threshold = $0 }),
                 range: compressionRange,
                 step: compressionStep,
                 format: { String(format: "%.2f", $0) },
-                accessibilityId: "settings-advanced-compression",
-                onChange: { vm.threshold = $0 }
+                accessibilityId: "settings-advanced-compression"
             )
-            Divider().background(DuskColors.lineSoft)
-            RowSlider(
-                label: "Max tokens",
-                value: vm.maxTokens,
+            DesignDivider()
+            DesignSlider(
+                title: "Max tokens",
+                value: Binding(get: { vm.maxTokens }, set: { vm.maxTokens = $0 }),
                 range: maxTokensRange,
                 step: maxTokensStep,
                 format: { "\(Int($0)) tok" },
-                accessibilityId: "settings-advanced-max-tokens",
-                onChange: { vm.maxTokens = $0 }
+                accessibilityId: "settings-advanced-max-tokens"
             )
         }
     }
 
     private var promptCard: some View {
-        SettingsCard(title: "Additional instructions", sub: "Included with each request. Use sparingly because this reduces available context.") {
-            MonoEditor(
-                text: vm.extraSystemPrompt,
+        DesignCard(title: "Additional instructions", detail: "Included with each request. Use sparingly because this reduces available context.") {
+            DesignMultilineEditor(
+                text: Binding(get: { vm.extraSystemPrompt }, set: { vm.extraSystemPrompt = $0 }),
                 placeholder: "Optional extra instructions…",
-                accessibilityId: "settings-advanced-extra-prompt",
-                onChange: { vm.extraSystemPrompt = $0 }
+                accessibilityId: "settings-advanced-extra-prompt"
             )
             .padding(.vertical, Space.sm)
         }
@@ -142,17 +141,18 @@ struct AdvancedScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Advanced", screenId: "settings-advanced-screen") {
-            SettingsCard(title: "Context") {
-                RowSelect(
-                    label: "Reasoning",
-                    options: [SelectOption(id: "minimal", label: "Minimal")],
-                    selectedId: "minimal", accessibilityId: "settings-advanced-reasoning", onSelect: { _ in }
+            DesignCard(title: "Context") {
+                DesignSelect(
+                    title: "Reasoning",
+                    options: [(value: "minimal", label: "Minimal")],
+                    selection: .constant("minimal"),
+                    accessibilityId: "settings-advanced-reasoning"
                 )
-                Divider().background(DuskColors.lineSoft)
-                RowSlider(
-                    label: "Compression threshold", value: 0.3, range: 0...1, step: 0.05,
+                DesignDivider()
+                DesignSlider(
+                    title: "Compression threshold", value: .constant(0.3), range: 0...1, step: 0.05,
                     format: { String(format: "%.2f", $0) },
-                    accessibilityId: "settings-advanced-compression", onChange: { _ in }
+                    accessibilityId: "settings-advanced-compression"
                 )
             }
         }

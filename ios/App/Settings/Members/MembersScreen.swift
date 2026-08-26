@@ -150,7 +150,10 @@ private struct MemberRow: View {
             if isMutating {
                 DesignProgress()
             } else if !isSelf {
-                Menu {
+                DesignMenuButton(
+                    accessibilityLabel: "Actions for \(user.displayName)",
+                    accessibilityId: "settings-member-actions-\(user.userId)"
+                ) {
                     Button(user.isAdmin ? "Demote" : "Promote", action: onToggle)
                         .accessibilityIdentifier("settings-member-toggle-\(user.userId)")
                     Button("Remove", role: .destructive, action: onDelete)
@@ -159,7 +162,6 @@ private struct MemberRow: View {
                     Image(systemName: "ellipsis.circle")
                         .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
                 }
-                .accessibilityLabel("Actions for \(user.displayName)")
             }
         }
         .frame(minHeight: DesignMetrics.minimumTarget)

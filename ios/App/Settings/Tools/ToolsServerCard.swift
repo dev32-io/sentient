@@ -29,7 +29,7 @@ struct ToolsServerCard: View {
     let onToolChange: (String, ToolPermission) -> Void
 
     var body: some View {
-        SettingsCard {
+        DesignCard {
             header
             if isOpen { expandedBody }
         }
@@ -38,34 +38,29 @@ struct ToolsServerCard: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             HStack(alignment: .center, spacing: Space.sm) {
-                Button(action: onToggleOpen) {
-                    HStack(spacing: Space.sm) {
-                        Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                            .accessibilityHidden(true)
-                        Text(capabilityName(id))
-                            .font(Typo.ui(TypeScale.base, .semibold))
-                            .foregroundStyle(DuskColors.ink)
-                    }
-                    .frame(minHeight: DesignMetrics.minimumTarget)
-                    .contentShape(Rectangle())
+                DesignDisclosureButton(
+                    isExpanded: isOpen,
+                    accessibilityLabel: "\(isOpen ? "Collapse" : "Expand") \(capabilityName(id))",
+                    accessibilityId: "settings-tools-server-expand-\(id)",
+                    action: onToggleOpen
+                ) {
+                    Text(capabilityName(id))
+                        .font(Typo.ui(TypeScale.base, .semibold))
+                        .foregroundStyle(DuskColors.ink)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(isOpen ? "Collapse" : "Expand") \(capabilityName(id))")
-                .accessibilityIdentifier("settings-tools-server-expand-\(id)")
-
-                Spacer(minLength: Space.sm)
-                Toggle("Enable \(capabilityName(id))", isOn: Binding(get: { masterOn }, set: onToggleServer))
-                    .labelsHidden()
-                    .tint(DuskColors.accent)
-                    .accessibilityIdentifier("settings-tools-server-\(id)")
+                DesignToggleSwitch(
+                    label: "Enable \(capabilityName(id))",
+                    isOn: Binding(get: { masterOn }, set: onToggleServer),
+                    accessibilityId: "settings-tools-server-\(id)"
+                )
             }
             if let serverDescription, !serverDescription.isEmpty {
                 Text(serverDescription)
-                    .font(Typo.ui(TypeScale.sm))
+                    .designText(.supporting)
                     .foregroundStyle(DuskColors.ink3)
             }
             Text("\(activeCount) of \(totalCount) capabilities enabled")
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.supporting)
                 .foregroundStyle(DuskColors.ink3)
         }
         .padding(.vertical, Space.sm)
@@ -73,7 +68,7 @@ struct ToolsServerCard: View {
 
     @ViewBuilder
     private var expandedBody: some View {
-        Divider().background(DuskColors.lineSoft)
+        DesignDivider()
         if toolRows.isEmpty {
             placeholder("No tools declared for this server.")
         } else {
@@ -89,7 +84,7 @@ struct ToolsServerCard: View {
 
     private func placeholder(_ text: String) -> some View {
         Text(text)
-            .font(Typo.ui(TypeScale.sm))
+            .designText(.supporting)
             .foregroundStyle(DuskColors.ink4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, Space.sm)

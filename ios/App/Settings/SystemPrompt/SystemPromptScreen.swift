@@ -73,45 +73,48 @@ struct SystemPromptScreen: View {
         }
     }
 
-    @ViewBuilder
     private var saveBanner: some View {
+        DesignApplyFeedback(state: applyState)
+    }
+
+    private var applyState: DesignApplyState {
         switch vm.save {
-        case .idle: EmptyView()
-        case .saving: SoulApplyingBanner(text: "Saving…")
-        case .restarting: SoulApplyingBanner(text: "Applying — assistant restarting…")
-        case .alreadyApplying: SoulNoticeBanner(text: soulAlreadyApplyingText)
-        case .applied: AsyncNotice(kind: .success, title: "Changes applied")
-        case .failed(let message): SoulInlineError(message: message)
+        case .idle: .idle
+        case .saving: .saving
+        case .restarting: .restarting
+        case .alreadyApplying: .alreadyApplying
+        case .applied: .applied
+        case .failed(let message): .failed(message)
         }
     }
 
     private var soulCard: some View {
-        SettingsCard(title: "System instructions", sub: "Markdown supported. The assistant restarts after saving.") {
+        DesignCard(title: "System instructions", detail: "Markdown supported. The assistant restarts after saving.") {
             VStack(alignment: .leading, spacing: Space.md) {
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    RowSegmented(
-                        options: viewOptions,
-                        selectedId: viewMode,
-                        accessibilityId: "settings-system-prompt-view",
-                        onSelect: { viewMode = $0 }
+                    DesignSegmentedPicker(
+                        title: "System prompt view",
+                        options: viewOptions.map { (value: $0.id, label: $0.label) },
+                        selection: $viewMode,
+                        accessibilityId: "settings-system-prompt-view"
                     )
-                    Button("Restore default") { showRestore = true }
-                        .font(Typo.ui(TypeScale.base, .semibold))
-                        .foregroundStyle(DuskColors.stop)
-                        .frame(minHeight: DesignMetrics.minimumTarget)
-                        .disabled(vm.isRestoring)
-                        .accessibilityIdentifier("settings-system-prompt-restore")
+                    DesignActionButton(
+                        title: "Restore default",
+                        role: .destructive,
+                        state: vm.isRestoring ? .disabled : .normal,
+                        accessibilityId: "settings-system-prompt-restore",
+                        action: { showRestore = true }
+                    )
                 }
                 if viewMode == "edit" {
-                    MonoEditor(
-                        text: vm.draft,
+                    DesignMultilineEditor(
+                        text: $vm.draft,
                         placeholder: "The base personality and behavior contract…",
-                        accessibilityId: "settings-system-prompt-editor",
-                        onChange: { vm.draft = $0 }
+                        accessibilityId: "settings-system-prompt-editor"
                     )
                 } else {
                     Text(vm.draft.isEmpty ? "Nothing to preview." : vm.draft)
-                        .font(Typo.mono(TypeScale.sm))
+                        .designText(.supporting)
                         .foregroundStyle(vm.draft.isEmpty ? DuskColors.ink4 : DuskColors.ink)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
@@ -130,10 +133,10 @@ struct SystemPromptScreen: View {
 #Preview("edit") {
     NavigationStack {
         SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
-            SettingsCard(title: "System instructions", sub: "Markdown supported. The assistant restarts after saving.") {
-                MonoEditor(
-                    text: "You are Sentient, a warm and capable family assistant…",
-                    accessibilityId: "settings-system-prompt-editor", onChange: { _ in }
+            DesignCard(title: "System instructions", detail: "Markdown supported. The assistant restarts after saving.") {
+                DesignMultilineEditor(
+                    text: .constant("You are Sentient, a warm and capable family assistant…"),
+                    accessibilityId: "settings-system-prompt-editor"
                 )
                 .padding(.vertical, Space.sm)
             }
