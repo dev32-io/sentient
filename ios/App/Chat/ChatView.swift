@@ -122,7 +122,9 @@ struct ChatView: View {
     private var currentSentientIdentityState: SentientIdentityState {
         identityState(
             for: connection,
-            hasStreamingAssistantText: displayMessages.contains { $0.role == "assistant" && $0.streaming }
+            hasStreamingAssistantText: displayMessages.contains {
+                $0.role == "assistant" && $0.streaming && !$0.content.isEmpty
+            }
         )
     }
 
@@ -299,16 +301,13 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom) {
             Composer(
                 tasks: tasks,
-                canSend: true,
                 ttsEnabled: connection.prefs.ttsEnabled,
                 talkMode: vm.talkMode,
                 micLevels: vm.micLevels,
+                voiceDisabled: connection.status != .ready,
                 canInterrupt: canInterrupt,
                 onSend: { vm.send($0) },
-                onMicPress: { vm.pressMic() },
-                onMicRelease: { vm.releaseMic() },
-                onMicLock: { vm.lockMic() },
-                onMicStopContinuous: { vm.stopContinuous() },
+                onVoiceIntent: { vm.voiceIntent($0) },
                 onTtsToggle: { vm.toggleTts() },
                 onInterrupt: { vm.interrupt() },
                 onFocusGained: { vm.onComposerFocus() }

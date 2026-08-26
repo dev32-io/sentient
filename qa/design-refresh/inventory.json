@@ -7321,7 +7321,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "E2E-007"
@@ -7338,7 +7338,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/ComposerButtons.swift"
+        "ios/App/Chat/composer/Composer.swift"
       ],
       "assetCopies": []
     },
@@ -7356,7 +7356,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-controls"
@@ -7373,7 +7373,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/ComposerButtons.swift"
+        "ios/App/Chat/composer/Composer.swift"
       ],
       "assetCopies": []
     },
@@ -7391,7 +7391,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-controls"
@@ -7408,7 +7408,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/ComposerButtons.swift"
+        "ios/App/Chat/composer/Composer.swift"
       ],
       "assetCopies": []
     },
@@ -7426,7 +7426,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-voice-user-owned"
@@ -7443,7 +7443,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/MicCorner.swift"
+        "ios/App/Chat/voice/VoiceCaptureControl.swift"
       ],
       "assetCopies": []
     },
@@ -7461,7 +7461,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-voice-user-owned"
@@ -7478,7 +7478,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/MicCorner.swift"
+        "ios/App/Chat/voice/VoiceCaptureControl.swift"
       ],
       "assetCopies": []
     },
@@ -7490,13 +7490,13 @@
         "path": "composer / mic"
       },
       "surfaceType": "control",
-      "state": "locked",
+      "state": "Auto semantic listening",
       "designAuthority": [
         "design/prototype/chat-composer/README.md",
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-voice-user-owned"
@@ -7513,7 +7513,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/MicCorner.swift"
+        "ios/App/Chat/voice/VoiceCaptureControl.swift"
       ],
       "assetCopies": []
     },
@@ -7531,7 +7531,7 @@
         "design/prototype/chat-composer/handoff.md",
         "native:iOS:SwiftUI keyboard, safe-area, and gesture semantics"
       ],
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "taskOwner": "refresh-ios-chat-composer",
       "functionalProof": [
         "REVIEW:ios-voice-user-owned"
@@ -7548,7 +7548,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Chat/composer/MicCorner.swift"
+        "ios/App/Chat/voice/VoiceCaptureControl.swift"
       ],
       "assetCopies": []
     },

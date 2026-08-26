@@ -5,11 +5,11 @@ import MobileData
 
 enum ChatRow: Identifiable {
     case divider(label: String, id: String)
-    case message(ChatMessage, index: Int)
+    case message(ChatMessage, index: Int, continuation: Bool)
     var id: String {
         switch self {
         case let .divider(_, id): return "div-\(id)"
-        case let .message(m, i): return Self.messageRowId(m, index: i)
+        case let .message(m, i, _): return Self.messageRowId(m, index: i)
         }
     }
 
@@ -46,7 +46,9 @@ func chatRows(_ messages: [ChatMessage], calendar: Calendar = .current,
               now: Date = Date()) -> [ChatRow] {
     var rows: [ChatRow] = []
     var lastDay: DateComponents?
+    var previous: ChatMessage?
     for (i, m) in messages.enumerated() {
+        var insertedDivider = false
         // Streaming messages have ts=0 (no real timestamp while in flight).
         // Never bucket them into a day-divider — ts=0/epoch would produce a
         // bogus "WEDNESDAY · 4:00 PM" separator. Skip the divider entirely;
@@ -61,9 +63,12 @@ func chatRows(_ messages: [ChatMessage], calendar: Calendar = .current,
                 rows.append(.divider(label: dividerLabel(date, calendar: calendar, now: now),
                                      id: dayKey))
                 lastDay = day
+                insertedDivider = true
             }
         }
-        rows.append(.message(m, index: i))
+        let continuation = !insertedDivider && previous?.role == m.role
+        rows.append(.message(m, index: i, continuation: continuation))
+        previous = m
     }
     return rows
 }
