@@ -64,5 +64,7 @@ describe("Web foundation controls", () => {
     expect(css).toContain("@media (max-width: 620px)");
     expect(css).toContain("prefers-reduced-motion: reduce");
     for (const role of ["--slate-face", "--well-face", "--plate-shadow", "--float-shadow"]) expect(css).toContain(`var(${role})`);
+    expect(css).toContain(":is(.snt-button, .snt-icon-button");
+    expect(css).toContain("var(--slate-base, var(--color-paper))");
   });
 });

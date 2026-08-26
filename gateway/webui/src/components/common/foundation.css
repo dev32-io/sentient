@@ -20,6 +20,34 @@
   outline-offset: 3px;
 }
 
+/* Resolve the concave face on each semantic slate so variant-specific
+   --slate-base and --slate-glow values are reflected in every state. */
+:is(.snt-button, .snt-icon-button, .snt-chip, .snt-toggle, .snt-segment, .snt-segmented, .snt-avatar--user) {
+  --slate-face:
+    radial-gradient(
+      ellipse 82% 105% at 50% 52%,
+      color-mix(in oklab, var(--slate-base, var(--color-paper)) 80%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--slate-base, var(--color-paper)) 88%, var(--color-bg-sunk)) 42%,
+      transparent 76%
+    ),
+    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 96%, var(--color-ink)), var(--slate-base, var(--color-paper)));
+  --slate-face-hover:
+    radial-gradient(
+      ellipse 82% 105% at 50% 52%,
+      color-mix(in oklab, var(--slate-base, var(--color-paper)) 77%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--slate-base, var(--color-paper)) 86%, var(--color-bg-sunk)) 42%,
+      transparent 76%
+    ),
+    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 94%, var(--color-ink)), color-mix(in oklab, var(--slate-base, var(--color-paper)) 97%, var(--slate-glow, var(--color-accent))));
+  --slate-face-muted:
+    radial-gradient(
+      ellipse 82% 105% at 50% 52%,
+      color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 84%, var(--color-bg-sunk)) 0%,
+      transparent 74%
+    ),
+    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 97%, var(--color-ink-4)), var(--slate-base, var(--color-bg-elev)));
+}
+
 /* Type hierarchy copied from the current design tokens and settings surfaces. */
 .snt-page-title {
   margin: 0;
