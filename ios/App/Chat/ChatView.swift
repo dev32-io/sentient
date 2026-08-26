@@ -413,10 +413,7 @@ private struct ContentErrorBanner: View {
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.sm)
         .background {
-            ZStack {
-                Rectangle().fill(DuskColors.bgElev)
-                Rectangle().fill(DuskColors.warn.opacity(0.12))
-            }
+            DuskColors.warnSoft
         }
         .accessibilityIdentifier("banner-chat")
     }

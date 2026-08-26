@@ -21,6 +21,7 @@ import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
@@ -197,7 +198,11 @@ open class ChatComponent(
      * Tear down the WS + loops. [clearSession] true clears the in-session slice
      * (logout); false keeps the user in session (idle/pause).
      */
-    suspend fun disconnect(clearSession: Boolean = true) = sdk.disconnect(clearSession)
+    // Preserve the platform-facing synchronous contract while the SDK fences capture
+    // teardown asynchronously. Android can therefore remain byte-identical to its v1 UI.
+    fun disconnect(clearSession: Boolean = true) = runBlocking {
+        sdk.disconnect(clearSession)
+    }
 
     /**
      * Connection-scope teardown (logout). No-op today — the SDK + its scope are owned

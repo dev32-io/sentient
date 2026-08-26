@@ -637,14 +637,9 @@ class UserSessionManager(
             oldCalendarRuntime?.closeAndPurge()
         }
 
-        val closingComponent = chatComponent
-        val closingScope = scope
-        closingScope?.launch {
-            // The shared SDK fences capture cancellation before this owner scope is cancelled.
-            closingComponent?.disconnect(clearSession = true)
-            closingComponent?.close()
-            closingScope.cancel()
-        }
+        chatComponent?.disconnect(clearSession = true)
+        chatComponent?.close()
+        scope?.cancel()
         if (io.sentient.android.BuildConfig.DEBUG) SdkFaultHolder.clear()
         chatComponent = null
         settingsComponent = null

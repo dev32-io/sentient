@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { inventorySchema } from "./contracts.ts";
-import { discoverReachability, findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
+import { assertImplementationInventoryClosed, discoverReachability, findPrototypeRuntimeReferences, validateAssetCopy, validateInventory, validateMatrix, validateVisualManifest } from "./check.ts";
 import { assertLoopbackFixtureTarget, withDisposableUser } from "./fixture.ts";
 
 const repoRoot = resolve(import.meta.dir, "../..");
@@ -27,6 +27,12 @@ describe("design refresh inventory checker", () => {
     const reachability = await discoverReachability(repoRoot);
     raw.rows = raw.rows.slice(1);
     await expect(validateInventory(repoRoot, raw, reachability)).rejects.toThrow("missing reachable inventory rows");
+  });
+
+  it("rejects an open implementation inventory", async () => {
+    const inventory = inventorySchema.parse(await current("inventory.json"));
+    inventory.rows[0].status = "planned";
+    expect(() => assertImplementationInventoryClosed(inventory)).toThrow("implementation inventory is not closed");
   });
 
   it("rejects a duplicate final E2E mapping", async () => {

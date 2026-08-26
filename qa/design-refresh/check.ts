@@ -210,6 +210,11 @@ export async function validateInventory(repoRoot: string, raw: unknown, reachabi
   return inventory;
 }
 
+export function assertImplementationInventoryClosed(inventory: Inventory): void {
+  const openRows = inventory.rows.filter((row) => row.status !== "reviewed" && row.status !== "unreachable" && row.status !== "excluded");
+  if (openRows.length) throw new Error(`design refresh implementation inventory is not closed (${openRows.length} rows)`);
+}
+
 export async function validateMatrix(raw: unknown, inventory: Inventory): Promise<void> {
   const matrix = e2eMatrixSchema.parse(raw);
   const ids = matrix.cases.map((entry) => entry.id);
@@ -258,12 +263,12 @@ export async function checkRepository(repoRoot = resolve(import.meta.dir, "../..
   const base = resolve(repoRoot, "qa/design-refresh");
   const reachability = await discoverReachability(repoRoot);
   const inventory = await validateInventory(repoRoot, await json(resolve(base, "inventory.json")), reachability);
+  assertImplementationInventoryClosed(inventory);
   await validateMatrix(await json(resolve(base, "e2e-matrix.json")), inventory);
   const visual = await validateVisualManifest(repoRoot, await json(resolve(base, "visual-review.json")), inventory);
   if (requireClosed) {
-    const openRows = inventory.rows.filter((row) => row.status !== "reviewed" && row.status !== "unreachable" && row.status !== "excluded");
     const openEvidence = visual.entries.filter((entry) => entry.status !== "reviewed");
-    if (openRows.length || openEvidence.length) throw new Error(`design refresh review is not closed (inventory=${openRows.length}, evidence=${openEvidence.length})`);
+    if (openEvidence.length) throw new Error(`design refresh visual review is not closed (${openEvidence.length} entries)`);
   }
 }
 

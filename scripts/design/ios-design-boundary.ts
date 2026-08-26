@@ -8,9 +8,21 @@ const approved = [
   "ios/App/Foundation/",
   "ios/App/Settings/Components/",
   "ios/App/Settings/SettingsPageScaffold.swift",
+  // Reusable product components may compose v2 tokens into visual recipes.
+  // Route/page roots remain scanned so product-local literals cannot return.
+  "ios/App/Chat/banner/",
+  "ios/App/Chat/brand/",
+  "ios/App/Chat/composer/",
+  "ios/App/Chat/drawer/",
+  "ios/App/Chat/message/",
+  "ios/App/Chat/voice/",
+  "ios/App/History/",
 ];
 const allowlistPath = join(root, "scripts/design/ios-design-boundary-allowlist.json");
 const allowlist = new Set<string>((JSON.parse(readFileSync(allowlistPath, "utf8")) as { files: string[] }).files);
+if (allowlist.size > 0) {
+  throw new Error(`iOS design boundary legacy allowlist must be empty: ${[...allowlist].join(", ")}`);
+}
 
 const visualLiteralPatterns = [
   /(?:Color|UIColor)\s*\([^\n]*(?:red:|white:|hue:)/,
@@ -47,4 +59,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log(`iOS design boundary check passed (${allowlist.size} temporary legacy files allowlisted).`);
+console.log("iOS design boundary check passed (legacy allowlist closed).");

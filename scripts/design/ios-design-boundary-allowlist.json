@@ -1,26 +1,4 @@
 {
-  "description": "Temporary legacy product-page exceptions. Later design-refresh page tasks remove entries as literals move behind v2 named values/components.",
-  "files": [
-    "ios/App/Chat/banner/ConnectionBanner.swift",
-    "ios/App/Chat/banner/CycleErrorBanner.swift",
-    "ios/App/Chat/brand/SentientMark.swift",
-    "ios/App/Chat/brand/UserAvatar.swift",
-    "ios/App/Chat/ChatView.swift",
-    "ios/App/Chat/composer/Composer.swift",
-    "ios/App/Chat/composer/ComposerButtons.swift",
-    "ios/App/Chat/composer/ComposerTaskStrip.swift",
-    "ios/App/Chat/composer/MicCorner.swift",
-    "ios/App/Chat/composer/MicCornerVisuals.swift",
-    "ios/App/Chat/message/BubbleAnimations.swift",
-    "ios/App/Chat/message/DayDivider.swift",
-    "ios/App/Chat/message/MessageBubble.swift",
-    "ios/App/Chat/message/MessageList.swift",
-    "ios/App/Chat/message/PendingBubble.swift",
-    "ios/App/Chat/message/TranscriptPreview.swift",
-    "ios/App/Chat/voice/BubbleSpeakingWave.swift",
-    "ios/App/Chat/voice/PttBigWave.swift",
-    "ios/App/History/HistoryAccountHeader.swift",
-    "ios/App/History/HistorySessionsError.swift",
-    "ios/App/History/HistorySidePanel.swift"
-  ]
+  "description": "Closed legacy exception list. Product route and page roots must use v2 tokens or approved reusable components.",
+  "files": []
 }

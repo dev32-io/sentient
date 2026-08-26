@@ -23,6 +23,7 @@ enum DuskColors {
     static let clay = DesignV2.ColorToken.clay.color
     static let ok = DesignV2.ColorToken.ok.color
     static let warn = DesignV2.ColorToken.warn.color
+    static let warnSoft = lerpColor(MobileData.Colors_.shared.elevated, MobileData.Colors_.shared.warn, 0.12)
     static let stop = DesignV2.ColorToken.stop.color
 
     static let userBubble = lerpColor(MobileData.Colors_.shared.paper, MobileData.Colors_.shared.sage, 0.16)

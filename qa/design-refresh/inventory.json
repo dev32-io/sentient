@@ -76,7 +76,7 @@
         "VE-WEB-INSTALL-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/app.tsx"
@@ -110,7 +110,7 @@
         "VE-WEB-INSTALL-WIZARD"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/wizard-shell.tsx"
@@ -144,7 +144,7 @@
         "VE-WEB-INSTALL-WIZARD-UNLOCK"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/unlock-gate.tsx"
@@ -178,7 +178,7 @@
         "VE-WEB-INSTALL-WIZARD-PROVIDER"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-provider.tsx"
@@ -212,7 +212,7 @@
         "VE-WEB-INSTALL-WIZARD-PROVIDER-TESTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-provider.tsx"
@@ -246,7 +246,7 @@
         "VE-WEB-INSTALL-WIZARD-PROVIDER-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-provider.tsx"
@@ -280,7 +280,7 @@
         "VE-WEB-INSTALL-WIZARD-SECRETS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-secrets.tsx"
@@ -314,7 +314,7 @@
         "VE-WEB-INSTALL-WIZARD-SECRETS-SAVING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-secrets.tsx"
@@ -348,7 +348,7 @@
         "VE-WEB-INSTALL-WIZARD-SECRETS-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-secrets.tsx"
@@ -382,7 +382,7 @@
         "VE-WEB-INSTALL-WIZARD-VOICE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-voice.tsx"
@@ -416,7 +416,7 @@
         "VE-WEB-INSTALL-WIZARD-VOICE-UNAVAILABLE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-voice.tsx"
@@ -450,7 +450,7 @@
         "VE-WEB-INSTALL-WIZARD-BRINGUP"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-bringup.tsx"
@@ -484,7 +484,7 @@
         "VE-WEB-INSTALL-WIZARD-BRINGUP-RUNNING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-bringup.tsx"
@@ -518,7 +518,7 @@
         "VE-WEB-INSTALL-WIZARD-BRINGUP-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-bringup.tsx"
@@ -552,7 +552,7 @@
         "VE-WEB-INSTALL-WIZARD-BRINGUP-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-bringup.tsx"
@@ -586,7 +586,7 @@
         "VE-WEB-INSTALL-WIZARD-FINISH"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/wizard/steps/step-finish.tsx"
@@ -620,7 +620,7 @@
         "VE-WEB-AUTH-BOOT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/app.tsx"
@@ -654,7 +654,7 @@
         "VE-WEB-AUTH-USER-LIST-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/app.tsx"
@@ -688,7 +688,7 @@
         "VE-WEB-AUTH-SETUP"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/setup-screen.tsx"
@@ -722,7 +722,7 @@
         "VE-WEB-AUTH-SETUP-SUBMITTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/setup-screen.tsx"
@@ -756,7 +756,7 @@
         "VE-WEB-AUTH-SETUP-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/setup-screen.tsx"
@@ -790,7 +790,7 @@
         "VE-WEB-AUTH-LOGIN-PICKER"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/login-screen.tsx"
@@ -824,7 +824,7 @@
         "VE-WEB-AUTH-PIN"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/login-screen.tsx"
@@ -858,7 +858,7 @@
         "VE-WEB-AUTH-PIN-SUBMITTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/login-screen.tsx"
@@ -892,7 +892,7 @@
         "VE-WEB-AUTH-PIN-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/auth/login-screen.tsx"
@@ -926,7 +926,7 @@
         "VE-WEB-AUTH-FAILED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/app.tsx"
@@ -960,7 +960,7 @@
         "VE-WEB-SHELL-CHAT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/shell/app-shell.tsx"
@@ -994,7 +994,7 @@
         "VE-WEB-SHELL-TOPBAR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/shell/topbar.tsx"
@@ -1028,7 +1028,7 @@
         "VE-WEB-SHELL-NOTIFICATIONS-NOOP"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/shell/topbar.tsx"
@@ -1062,7 +1062,7 @@
         "VE-WEB-SHELL-USER-MENU"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/shell/user-menu.tsx"
@@ -1096,7 +1096,7 @@
         "VE-WEB-SHELL-USER-MENU-OPEN"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/shell/user-menu.tsx"
@@ -1130,7 +1130,7 @@
         "VE-WEB-HISTORY-CLOSED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1164,7 +1164,7 @@
         "VE-WEB-HISTORY-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1198,7 +1198,7 @@
         "VE-WEB-HISTORY-LIST"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1232,7 +1232,7 @@
         "VE-WEB-HISTORY-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1266,7 +1266,7 @@
         "VE-WEB-HISTORY-NO-RESULTS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1300,7 +1300,7 @@
         "VE-WEB-HISTORY-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/drawer.tsx"
@@ -1334,7 +1334,7 @@
         "VE-WEB-HISTORY-ROW-MENU"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/row-menu.tsx"
@@ -1368,7 +1368,7 @@
         "VE-WEB-HISTORY-RENAME"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/rename-dialog.tsx"
@@ -1402,7 +1402,7 @@
         "VE-WEB-HISTORY-RENAME-INVALID"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/rename-dialog.tsx"
@@ -1436,7 +1436,7 @@
         "VE-WEB-HISTORY-RENAME-SUBMITTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/rename-dialog.tsx"
@@ -1470,7 +1470,7 @@
         "VE-WEB-HISTORY-DELETE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/sessions/confirm-delete-dialog.tsx"
@@ -1505,7 +1505,7 @@
         "VE-WEB-CHAT-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/message-list.tsx"
@@ -1540,7 +1540,7 @@
         "VE-WEB-CHAT-USER-MESSAGE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/message-bubble.tsx"
@@ -1575,7 +1575,7 @@
         "VE-WEB-CHAT-ASSISTANT-THINKING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/message-bubble.tsx"
@@ -1610,7 +1610,7 @@
         "VE-WEB-CHAT-ASSISTANT-RESPONDING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/message-bubble.tsx"
@@ -1645,7 +1645,7 @@
         "VE-WEB-CHAT-ASSISTANT-COMPLETE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/message-bubble.tsx"
@@ -1680,7 +1680,7 @@
         "VE-WEB-CHAT-INTERRUPTED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/chat/interrupt-chip.tsx"
@@ -1750,7 +1750,7 @@
         "VE-WEB-CHAT-TASKS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer-task-strip.tsx"
@@ -1785,7 +1785,7 @@
         "VE-WEB-CHAT-TASKS-DONE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer-task-strip.tsx"
@@ -1820,7 +1820,7 @@
         "VE-WEB-CHAT-TASKS-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer-task-strip.tsx"
@@ -1855,7 +1855,7 @@
         "VE-WEB-CHAT-CONNECTION-LOST"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/app.tsx"
@@ -1890,7 +1890,7 @@
         "VE-WEB-CHAT-PERMISSION"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/permission/permission-dialog.tsx"
@@ -1925,7 +1925,7 @@
         "VE-WEB-CHAT-TOAST"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/common/toast.tsx"
@@ -1960,7 +1960,7 @@
         "VE-WEB-CHAT-TOAST-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/common/toast.tsx"
@@ -1995,7 +1995,7 @@
         "VE-WEB-COMPOSER-IDLE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer.tsx"
@@ -2030,7 +2030,7 @@
         "VE-WEB-COMPOSER-DRAFT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer.tsx"
@@ -2065,7 +2065,7 @@
         "VE-WEB-COMPOSER-RECONNECTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/composer.tsx"
@@ -2100,7 +2100,7 @@
         "VE-WEB-COMPOSER-INTERRUPT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/interrupt-button.tsx"
@@ -2135,7 +2135,7 @@
         "VE-WEB-COMPOSER-TTS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/tts-button.tsx"
@@ -2170,7 +2170,7 @@
         "VE-WEB-COMPOSER-TTS-DISABLED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/tts-button.tsx"
@@ -2205,7 +2205,7 @@
         "VE-WEB-COMPOSER-TTS-APPLYING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/tts-button.tsx"
@@ -2240,7 +2240,7 @@
         "VE-WEB-COMPOSER-MIC"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/voice-capture-control.tsx"
@@ -2275,7 +2275,7 @@
         "VE-WEB-COMPOSER-MIC-HOLD"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/voice-capture-control.tsx"
@@ -2310,7 +2310,7 @@
         "VE-WEB-COMPOSER-MIC-LOCKED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/voice-capture-control.tsx"
@@ -2345,7 +2345,7 @@
         "VE-WEB-COMPOSER-MIC-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/dock/voice-capture-control.tsx"
@@ -2379,7 +2379,7 @@
         "VE-WEB-SETTINGS-ROUTE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/settings-view.tsx"
@@ -2413,7 +2413,7 @@
         "VE-WEB-SETTINGS-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/settings-view.tsx"
@@ -2447,7 +2447,7 @@
         "VE-WEB-SETTINGS-MEMORY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/memory-pane.tsx"
@@ -2481,7 +2481,7 @@
         "VE-WEB-SETTINGS-MEMORY-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/memory-pane.tsx"
@@ -2515,7 +2515,7 @@
         "VE-WEB-SETTINGS-MEMORY-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/memory-pane.tsx"
@@ -2549,7 +2549,7 @@
         "VE-WEB-SETTINGS-MEMORY-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/memory-pane.tsx"
@@ -2583,7 +2583,7 @@
         "VE-WEB-SETTINGS-PERSONALITIES"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/personalities-pane.tsx"
@@ -2617,7 +2617,7 @@
         "VE-WEB-SETTINGS-PERSONALITIES-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/personalities-pane.tsx"
@@ -2651,7 +2651,7 @@
         "VE-WEB-SETTINGS-PERSONALITIES-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/personalities-pane.tsx"
@@ -2685,7 +2685,7 @@
         "VE-WEB-SETTINGS-PERSONALITIES-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/personalities-pane.tsx"
@@ -2719,7 +2719,7 @@
         "VE-WEB-SETTINGS-VOICE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/voices/VoicesPanel.tsx"
@@ -2753,7 +2753,7 @@
         "VE-WEB-SETTINGS-VOICE-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/voices/VoicesPanel.tsx"
@@ -2787,7 +2787,7 @@
         "VE-WEB-SETTINGS-VOICE-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/voices/VoicesPanel.tsx"
@@ -2821,7 +2821,7 @@
         "VE-WEB-SETTINGS-VOICE-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/voices/VoicesPanel.tsx"
@@ -2855,7 +2855,7 @@
         "VE-WEB-SETTINGS-AUDIO"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/audio-pane.tsx"
@@ -2889,7 +2889,7 @@
         "VE-WEB-SETTINGS-AUDIO-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/audio-pane.tsx"
@@ -2923,7 +2923,7 @@
         "VE-WEB-SETTINGS-AUDIO-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/audio-pane.tsx"
@@ -2957,7 +2957,7 @@
         "VE-WEB-SETTINGS-AUDIO-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/audio-pane.tsx"
@@ -2991,7 +2991,7 @@
         "VE-WEB-SETTINGS-MODEL"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/model-pane.tsx"
@@ -3025,7 +3025,7 @@
         "VE-WEB-SETTINGS-MODEL-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/model-pane.tsx"
@@ -3059,7 +3059,7 @@
         "VE-WEB-SETTINGS-MODEL-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/model-pane.tsx"
@@ -3093,7 +3093,7 @@
         "VE-WEB-SETTINGS-MODEL-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/model-pane.tsx"
@@ -3127,7 +3127,7 @@
         "VE-WEB-SETTINGS-TOOLS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/tools-pane.tsx"
@@ -3161,7 +3161,7 @@
         "VE-WEB-SETTINGS-TOOLS-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/tools-pane.tsx"
@@ -3195,7 +3195,7 @@
         "VE-WEB-SETTINGS-TOOLS-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/tools-pane.tsx"
@@ -3229,7 +3229,7 @@
         "VE-WEB-SETTINGS-TOOLS-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/tools-pane.tsx"
@@ -3263,7 +3263,7 @@
         "VE-WEB-SETTINGS-SYSTEM-PROMPT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx"
@@ -3297,7 +3297,7 @@
         "VE-WEB-SETTINGS-SYSTEM-PROMPT-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx"
@@ -3331,7 +3331,7 @@
         "VE-WEB-SETTINGS-SYSTEM-PROMPT-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx"
@@ -3365,7 +3365,7 @@
         "VE-WEB-SETTINGS-SYSTEM-PROMPT-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/system-prompt-pane.tsx"
@@ -3399,7 +3399,7 @@
         "VE-WEB-SETTINGS-ADVANCED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/advanced-pane.tsx"
@@ -3433,7 +3433,7 @@
         "VE-WEB-SETTINGS-ADVANCED-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/advanced-pane.tsx"
@@ -3467,7 +3467,7 @@
         "VE-WEB-SETTINGS-ADVANCED-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/advanced-pane.tsx"
@@ -3501,7 +3501,7 @@
         "VE-WEB-SETTINGS-ADVANCED-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/advanced-pane.tsx"
@@ -3535,7 +3535,7 @@
         "VE-WEB-SETTINGS-ACCOUNT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/account-pane.tsx"
@@ -3569,7 +3569,7 @@
         "VE-WEB-SETTINGS-ACCOUNT-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/account-pane.tsx"
@@ -3603,7 +3603,7 @@
         "VE-WEB-SETTINGS-ACCOUNT-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/account-pane.tsx"
@@ -3637,7 +3637,7 @@
         "VE-WEB-SETTINGS-ACCOUNT-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/account-pane.tsx"
@@ -3671,7 +3671,7 @@
         "VE-WEB-SETTINGS-MEMBERS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/members-pane.tsx"
@@ -3705,7 +3705,7 @@
         "VE-WEB-SETTINGS-MEMBERS-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/members-pane.tsx"
@@ -3739,7 +3739,7 @@
         "VE-WEB-SETTINGS-MEMBERS-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/members-pane.tsx"
@@ -3773,7 +3773,7 @@
         "VE-WEB-SETTINGS-MEMBERS-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/members-pane.tsx"
@@ -3807,7 +3807,7 @@
         "VE-WEB-SETTINGS-SECRETS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/secrets-pane.tsx"
@@ -3841,7 +3841,7 @@
         "VE-WEB-SETTINGS-SECRETS-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/secrets-pane.tsx"
@@ -3875,7 +3875,7 @@
         "VE-WEB-SETTINGS-SECRETS-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/secrets-pane.tsx"
@@ -3909,7 +3909,7 @@
         "VE-WEB-SETTINGS-SECRETS-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/secrets-pane.tsx"
@@ -3943,7 +3943,7 @@
         "VE-WEB-SETTINGS-GET-APP"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/get-app-pane.tsx"
@@ -3977,7 +3977,7 @@
         "VE-WEB-SETTINGS-GET-APP-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/get-app-pane.tsx"
@@ -4011,7 +4011,7 @@
         "VE-WEB-SETTINGS-GET-APP-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/get-app-pane.tsx"
@@ -4045,7 +4045,7 @@
         "VE-WEB-SETTINGS-GET-APP-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/panes/get-app-pane.tsx"
@@ -4080,7 +4080,7 @@
         "VE-WEB-SETTINGS-APPLY-DIRTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx"
@@ -4115,7 +4115,7 @@
         "VE-WEB-SETTINGS-APPLY-APPLYING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx"
@@ -4150,7 +4150,7 @@
         "VE-WEB-SETTINGS-APPLY-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx"
@@ -4185,7 +4185,7 @@
         "VE-WEB-SETTINGS-APPLY-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx"
@@ -4220,7 +4220,7 @@
         "VE-WEB-SETTINGS-APPLY-DISCARD"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx"
@@ -4254,7 +4254,7 @@
         "VE-WEB-SETTINGS-MEMBERS-ADD"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/account-wizard/AccountWizard.tsx"
@@ -4288,7 +4288,7 @@
         "VE-WEB-SETTINGS-MEMBERS-ADD-SUBMITTING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/account-wizard/AccountWizard.tsx"
@@ -4322,7 +4322,7 @@
         "VE-WEB-SETTINGS-MEMBERS-ADD-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/account-wizard/AccountWizard.tsx"
@@ -4356,7 +4356,7 @@
         "VE-WEB-SETTINGS-MEMBERS-ADD-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/account-wizard/AccountWizard.tsx"
@@ -4391,7 +4391,7 @@
         "VE-WEB-CALENDAR-ROUTE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-view.tsx"
@@ -4426,7 +4426,7 @@
         "VE-WEB-CALENDAR-LOADING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-canvas.tsx"
@@ -4461,7 +4461,7 @@
         "VE-WEB-CALENDAR-EMPTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-canvas-primitives.tsx"
@@ -4496,7 +4496,7 @@
         "VE-WEB-CALENDAR-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-shell.tsx"
@@ -4531,7 +4531,7 @@
         "VE-WEB-CALENDAR-ERROR-MUTATION-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-shell.tsx"
@@ -4566,7 +4566,7 @@
         "VE-WEB-CALENDAR-DAY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/day-view.tsx"
@@ -4601,7 +4601,7 @@
         "VE-WEB-CALENDAR-WEEK"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/week-grid.tsx"
@@ -4636,7 +4636,7 @@
         "VE-WEB-CALENDAR-MONTH"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/month-grid.tsx"
@@ -4671,7 +4671,7 @@
         "VE-WEB-CALENDAR-YEAR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/year-grid.tsx"
@@ -4706,7 +4706,7 @@
         "VE-WEB-CALENDAR-FILTERS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx"
@@ -4741,7 +4741,7 @@
         "VE-WEB-CALENDAR-FILTERS-SELECTED"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx"
@@ -4776,7 +4776,7 @@
         "VE-WEB-CALENDAR-FILTERS-NO-MATCH"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-filter-sidebar.tsx"
@@ -4811,7 +4811,7 @@
         "VE-WEB-CALENDAR-PREFERENCES"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/calendar-preferences.ts"
@@ -4846,7 +4846,7 @@
         "VE-WEB-CALENDAR-PREVIEW"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-preview.tsx"
@@ -4881,7 +4881,7 @@
         "VE-WEB-CALENDAR-PREVIEW-OPEN"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-preview.tsx"
@@ -4916,7 +4916,7 @@
         "VE-WEB-CALENDAR-EDITOR-CREATE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -4951,7 +4951,7 @@
         "VE-WEB-CALENDAR-EDITOR-CREATE-INVALID"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -4986,7 +4986,7 @@
         "VE-WEB-CALENDAR-EDITOR-CREATE-SAVING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5021,7 +5021,7 @@
         "VE-WEB-CALENDAR-EDITOR-CREATE-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5056,7 +5056,7 @@
         "VE-WEB-CALENDAR-EDITOR-CREATE-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5091,7 +5091,7 @@
         "VE-WEB-CALENDAR-EDITOR-EDIT"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5126,7 +5126,7 @@
         "VE-WEB-CALENDAR-EDITOR-EDIT-DIRTY"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5161,7 +5161,7 @@
         "VE-WEB-CALENDAR-EDITOR-EDIT-SAVING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5196,7 +5196,7 @@
         "VE-WEB-CALENDAR-EDITOR-EDIT-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5231,7 +5231,7 @@
         "VE-WEB-CALENDAR-EDITOR-EDIT-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5266,7 +5266,7 @@
         "VE-WEB-CALENDAR-EDITOR-DISCARD"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/event-editor.tsx"
@@ -5301,7 +5301,7 @@
         "VE-WEB-CALENDAR-DELETE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/delete-confirmation.tsx"
@@ -5336,7 +5336,7 @@
         "VE-WEB-CALENDAR-DELETE-APPLYING"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/delete-confirmation.tsx"
@@ -5371,7 +5371,7 @@
         "VE-WEB-CALENDAR-DELETE-ERROR"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/delete-confirmation.tsx"
@@ -5406,7 +5406,7 @@
         "VE-WEB-CALENDAR-DELETE-SUCCESS"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/delete-confirmation.tsx"
@@ -5441,7 +5441,7 @@
         "VE-WEB-CALENDAR-RECURRENCE-SCOPE"
       ],
       "intentionalNativeAdaptation": "",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "gateway/webui/src/components/calendar/mutation-scope-chooser.tsx"
@@ -5475,7 +5475,7 @@
         "VE-IOS-SETUP"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/SDK/BackendSetupView.swift"
@@ -5509,7 +5509,7 @@
         "VE-IOS-SETUP-SAVING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/SDK/BackendSetupView.swift"
@@ -5543,7 +5543,7 @@
         "VE-IOS-SETUP-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/SDK/BackendSetupView.swift"
@@ -5577,7 +5577,7 @@
         "VE-IOS-SETUP-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/SDK/BackendSetupView.swift"
@@ -5611,7 +5611,7 @@
         "VE-IOS-LOGIN-PICKER"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/LoginView.swift"
@@ -5645,7 +5645,7 @@
         "VE-IOS-LOGIN-PICKER-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/LoginView.swift"
@@ -5679,7 +5679,7 @@
         "VE-IOS-LOGIN-PICKER-POPULATED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/LoginView.swift"
@@ -5713,7 +5713,7 @@
         "VE-IOS-LOGIN-PICKER-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/LoginView.swift"
@@ -5747,7 +5747,7 @@
         "VE-IOS-LOGIN-PIN"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/PinPad.swift"
@@ -5781,7 +5781,7 @@
         "VE-IOS-LOGIN-PIN-SUBMITTING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/PinPad.swift"
@@ -5815,7 +5815,7 @@
         "VE-IOS-LOGIN-PIN-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Auth/PinPad.swift"
@@ -5849,7 +5849,7 @@
         "VE-IOS-SPLASH-THINKING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/SplashOverlay.swift"
@@ -5883,7 +5883,7 @@
         "VE-IOS-UPDATE-CHECKING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/UpdateGate.swift"
@@ -5917,7 +5917,7 @@
         "VE-IOS-UPDATE-OPTIONAL"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/UpdateBanner.swift"
@@ -5951,7 +5951,7 @@
         "VE-IOS-UPDATE-OPTIONAL-DISMISSED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/UpdateBanner.swift"
@@ -5985,7 +5985,7 @@
         "VE-IOS-UPDATE-OPTIONAL-INSTALLING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/UpdateBanner.swift"
@@ -6019,7 +6019,7 @@
         "VE-IOS-UPDATE-OPTIONAL-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/UpdateBanner.swift"
@@ -6053,7 +6053,7 @@
         "VE-IOS-UPDATE-MANDATORY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/ForceUpdateView.swift"
@@ -6087,7 +6087,7 @@
         "VE-IOS-UPDATE-MANDATORY-INSTALLING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/ForceUpdateView.swift"
@@ -6121,7 +6121,7 @@
         "VE-IOS-UPDATE-MANDATORY-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Update/ForceUpdateView.swift"
@@ -6155,7 +6155,7 @@
         "VE-IOS-SHELL-CHAT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/ChatView.swift"
@@ -6189,7 +6189,7 @@
         "VE-IOS-SHELL-NAVIGATION"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Nav/UserSessionHost.swift"
@@ -6223,7 +6223,7 @@
         "VE-IOS-HISTORY-CLOSED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/drawer/SideDrawer.swift"
@@ -6257,7 +6257,7 @@
         "VE-IOS-HISTORY-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/History/HistorySidePanel.swift"
@@ -6291,7 +6291,7 @@
         "VE-IOS-HISTORY-LIST"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/History/HistorySidePanel.swift"
@@ -6325,7 +6325,7 @@
         "VE-IOS-HISTORY-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/History/HistorySidePanel.swift"
@@ -6359,7 +6359,7 @@
         "VE-IOS-HISTORY-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/History/HistorySessionsError.swift"
@@ -6393,7 +6393,7 @@
         "VE-IOS-HISTORY-ROW-MENU"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/History/HistoryRow.swift"
@@ -6427,7 +6427,7 @@
         "VE-IOS-HISTORY-RENAME"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ChatPanelAlerts.swift"
@@ -6461,7 +6461,7 @@
         "VE-IOS-HISTORY-DELETE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ChatPanelAlerts.swift"
@@ -6530,7 +6530,7 @@
         "VE-IOS-CHAT-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/MessageList.swift"
@@ -6565,7 +6565,7 @@
         "VE-IOS-CHAT-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/ChatLoadingView.swift"
@@ -6600,7 +6600,7 @@
         "VE-IOS-CHAT-PENDING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/PendingBubble.swift"
@@ -6635,7 +6635,7 @@
         "VE-IOS-CHAT-USER-MESSAGE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/MessageBubble.swift"
@@ -6670,7 +6670,7 @@
         "VE-IOS-CHAT-ASSISTANT-THINKING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/MessageBubble.swift"
@@ -6705,7 +6705,7 @@
         "VE-IOS-CHAT-ASSISTANT-RESPONDING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/MessageBubble.swift"
@@ -6740,7 +6740,7 @@
         "VE-IOS-CHAT-ASSISTANT-COMPLETE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/message/MessageBubble.swift"
@@ -6775,7 +6775,7 @@
         "VE-IOS-CHAT-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/ChatView.swift"
@@ -6810,7 +6810,7 @@
         "VE-IOS-CHAT-ERROR-RETRY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/ChatView.swift"
@@ -6845,7 +6845,7 @@
         "VE-IOS-CHAT-ERROR-REOPEN-FAILURE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/ChatView.swift"
@@ -6880,7 +6880,7 @@
         "VE-IOS-CHAT-CYCLE-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/CycleErrorBanner.swift"
@@ -6915,7 +6915,7 @@
         "VE-IOS-CHAT-CYCLE-ERROR-ERROR-WITHOUT-RETRY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/CycleErrorBanner.swift"
@@ -6950,7 +6950,7 @@
         "VE-IOS-CHAT-CYCLE-ERROR-DISMISSED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/CycleErrorBanner.swift"
@@ -6985,7 +6985,7 @@
         "VE-IOS-CHAT-CONNECTION"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ConnectionBanner.swift"
@@ -7020,7 +7020,7 @@
         "VE-IOS-CHAT-CONNECTION-LOST"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ConnectionBanner.swift"
@@ -7055,7 +7055,7 @@
         "VE-IOS-CHAT-CONNECTION-RECONNECTING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ConnectionBanner.swift"
@@ -7090,7 +7090,7 @@
         "VE-IOS-CHAT-CONNECTION-AUTHENTICATION-EXPIRED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ConnectionBanner.swift"
@@ -7125,7 +7125,7 @@
         "VE-IOS-CHAT-PERMISSION"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/banner/ChatPermissionAlert.swift"
@@ -7160,7 +7160,7 @@
         "VE-IOS-CHAT-TASKS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/ComposerTaskStrip.swift"
@@ -7195,7 +7195,7 @@
         "VE-IOS-CHAT-TASKS-DONE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/ComposerTaskStrip.swift"
@@ -7230,7 +7230,7 @@
         "VE-IOS-CHAT-TASKS-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/ComposerTaskStrip.swift"
@@ -7265,7 +7265,7 @@
         "VE-IOS-COMPOSER-IDLE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/Composer.swift"
@@ -7300,7 +7300,7 @@
         "VE-IOS-COMPOSER-DRAFT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/Composer.swift"
@@ -7335,7 +7335,7 @@
         "VE-IOS-COMPOSER-INTERRUPT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/Composer.swift"
@@ -7370,7 +7370,7 @@
         "VE-IOS-COMPOSER-TTS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/Composer.swift"
@@ -7405,7 +7405,7 @@
         "VE-IOS-COMPOSER-TTS-DISABLED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/composer/Composer.swift"
@@ -7440,7 +7440,7 @@
         "VE-IOS-COMPOSER-MIC"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/voice/VoiceCaptureControl.swift"
@@ -7475,7 +7475,7 @@
         "VE-IOS-COMPOSER-MIC-HOLD"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/voice/VoiceCaptureControl.swift"
@@ -7510,7 +7510,7 @@
         "VE-IOS-COMPOSER-MIC-LOCKED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/voice/VoiceCaptureControl.swift"
@@ -7545,7 +7545,7 @@
         "VE-IOS-COMPOSER-MIC-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Chat/voice/VoiceCaptureControl.swift"
@@ -7579,7 +7579,7 @@
         "VE-IOS-SETTINGS-ROOT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SettingsView.swift"
@@ -7613,7 +7613,7 @@
         "VE-IOS-SETTINGS-ROOT-NON-ADMIN"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SettingsView.swift"
@@ -7647,7 +7647,7 @@
         "VE-IOS-SETTINGS-ROOT-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SettingsView.swift"
@@ -7681,7 +7681,7 @@
         "VE-IOS-SETTINGS-MEMORY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7715,7 +7715,7 @@
         "VE-IOS-SETTINGS-MEMORY-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7749,7 +7749,7 @@
         "VE-IOS-SETTINGS-MEMORY-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7783,7 +7783,7 @@
         "VE-IOS-SETTINGS-MEMORY-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7817,7 +7817,7 @@
         "VE-IOS-SETTINGS-MEMORY-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7851,7 +7851,7 @@
         "VE-IOS-SETTINGS-MEMORY-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7885,7 +7885,7 @@
         "VE-IOS-SETTINGS-MEMORY-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Memory/MemoryScreen.swift"
@@ -7919,7 +7919,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -7953,7 +7953,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -7987,7 +7987,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -8021,7 +8021,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -8055,7 +8055,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -8089,7 +8089,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -8123,7 +8123,7 @@
         "VE-IOS-SETTINGS-CALENDAR-ENTRY-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -8157,7 +8157,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8191,7 +8191,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8225,7 +8225,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8259,7 +8259,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8293,7 +8293,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8327,7 +8327,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8361,7 +8361,7 @@
         "VE-IOS-SETTINGS-PERSONALITIES-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalitiesScreen.swift"
@@ -8395,7 +8395,7 @@
         "VE-IOS-SETTINGS-VOICE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8429,7 +8429,7 @@
         "VE-IOS-SETTINGS-VOICE-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8463,7 +8463,7 @@
         "VE-IOS-SETTINGS-VOICE-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8497,7 +8497,7 @@
         "VE-IOS-SETTINGS-VOICE-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8531,7 +8531,7 @@
         "VE-IOS-SETTINGS-VOICE-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8565,7 +8565,7 @@
         "VE-IOS-SETTINGS-VOICE-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8599,7 +8599,7 @@
         "VE-IOS-SETTINGS-VOICE-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceScreen.swift"
@@ -8633,7 +8633,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8667,7 +8667,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8701,7 +8701,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8735,7 +8735,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8769,7 +8769,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8803,7 +8803,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8837,7 +8837,7 @@
         "VE-IOS-SETTINGS-VOICE-ADD-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceAddScreen.swift"
@@ -8871,7 +8871,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -8905,7 +8905,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -8939,7 +8939,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -8973,7 +8973,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -9007,7 +9007,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -9041,7 +9041,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -9075,7 +9075,7 @@
         "VE-IOS-SETTINGS-VOICE-FISH-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceFishScreen.swift"
@@ -9109,7 +9109,7 @@
         "VE-IOS-SETTINGS-AUDIO"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9143,7 +9143,7 @@
         "VE-IOS-SETTINGS-AUDIO-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9177,7 +9177,7 @@
         "VE-IOS-SETTINGS-AUDIO-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9211,7 +9211,7 @@
         "VE-IOS-SETTINGS-AUDIO-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9245,7 +9245,7 @@
         "VE-IOS-SETTINGS-AUDIO-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9279,7 +9279,7 @@
         "VE-IOS-SETTINGS-AUDIO-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9313,7 +9313,7 @@
         "VE-IOS-SETTINGS-AUDIO-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Audio/AudioScreen.swift"
@@ -9347,7 +9347,7 @@
         "VE-IOS-SETTINGS-MODEL"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9381,7 +9381,7 @@
         "VE-IOS-SETTINGS-MODEL-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9415,7 +9415,7 @@
         "VE-IOS-SETTINGS-MODEL-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9449,7 +9449,7 @@
         "VE-IOS-SETTINGS-MODEL-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9483,7 +9483,7 @@
         "VE-IOS-SETTINGS-MODEL-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9517,7 +9517,7 @@
         "VE-IOS-SETTINGS-MODEL-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9551,7 +9551,7 @@
         "VE-IOS-SETTINGS-MODEL-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Model/ModelScreen.swift"
@@ -9585,7 +9585,7 @@
         "VE-IOS-SETTINGS-TOOLS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9619,7 +9619,7 @@
         "VE-IOS-SETTINGS-TOOLS-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9653,7 +9653,7 @@
         "VE-IOS-SETTINGS-TOOLS-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9687,7 +9687,7 @@
         "VE-IOS-SETTINGS-TOOLS-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9721,7 +9721,7 @@
         "VE-IOS-SETTINGS-TOOLS-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9755,7 +9755,7 @@
         "VE-IOS-SETTINGS-TOOLS-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9789,7 +9789,7 @@
         "VE-IOS-SETTINGS-TOOLS-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Tools/ToolsScreen.swift"
@@ -9823,7 +9823,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -9857,7 +9857,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -9891,7 +9891,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -9925,7 +9925,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -9959,7 +9959,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -9993,7 +9993,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -10027,7 +10027,7 @@
         "VE-IOS-SETTINGS-SYSTEM-PROMPT-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/SystemPrompt/SystemPromptScreen.swift"
@@ -10061,7 +10061,7 @@
         "VE-IOS-SETTINGS-ADVANCED"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10095,7 +10095,7 @@
         "VE-IOS-SETTINGS-ADVANCED-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10129,7 +10129,7 @@
         "VE-IOS-SETTINGS-ADVANCED-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10163,7 +10163,7 @@
         "VE-IOS-SETTINGS-ADVANCED-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10197,7 +10197,7 @@
         "VE-IOS-SETTINGS-ADVANCED-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10231,7 +10231,7 @@
         "VE-IOS-SETTINGS-ADVANCED-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10265,7 +10265,7 @@
         "VE-IOS-SETTINGS-ADVANCED-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Advanced/AdvancedScreen.swift"
@@ -10299,7 +10299,7 @@
         "VE-IOS-SETTINGS-ACCOUNT"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10333,7 +10333,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10367,7 +10367,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10401,7 +10401,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10435,7 +10435,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10469,7 +10469,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10503,7 +10503,7 @@
         "VE-IOS-SETTINGS-ACCOUNT-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/AccountScreen.swift"
@@ -10537,7 +10537,7 @@
         "VE-IOS-SETTINGS-MEMBERS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10571,7 +10571,7 @@
         "VE-IOS-SETTINGS-MEMBERS-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10605,7 +10605,7 @@
         "VE-IOS-SETTINGS-MEMBERS-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10639,7 +10639,7 @@
         "VE-IOS-SETTINGS-MEMBERS-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10673,7 +10673,7 @@
         "VE-IOS-SETTINGS-MEMBERS-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10707,7 +10707,7 @@
         "VE-IOS-SETTINGS-MEMBERS-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10741,7 +10741,7 @@
         "VE-IOS-SETTINGS-MEMBERS-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/MembersScreen.swift"
@@ -10775,7 +10775,7 @@
         "VE-IOS-SETTINGS-SECRETS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10809,7 +10809,7 @@
         "VE-IOS-SETTINGS-SECRETS-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10843,7 +10843,7 @@
         "VE-IOS-SETTINGS-SECRETS-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10877,7 +10877,7 @@
         "VE-IOS-SETTINGS-SECRETS-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10911,7 +10911,7 @@
         "VE-IOS-SETTINGS-SECRETS-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10945,7 +10945,7 @@
         "VE-IOS-SETTINGS-SECRETS-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -10979,7 +10979,7 @@
         "VE-IOS-SETTINGS-SECRETS-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Secrets/SecretsScreen.swift"
@@ -11013,7 +11013,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11047,7 +11047,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11081,7 +11081,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11115,7 +11115,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11149,7 +11149,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11183,7 +11183,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11217,7 +11217,7 @@
         "VE-IOS-SETTINGS-DIAGNOSTICS-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Diagnostics/DiagnosticsScreen.swift"
@@ -11251,7 +11251,7 @@
         "VE-IOS-SETTINGS-CHANGE-PIN"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/ChangePinSheet.swift"
@@ -11285,7 +11285,7 @@
         "VE-IOS-SETTINGS-CHANGE-PIN-INVALID"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/ChangePinSheet.swift"
@@ -11319,7 +11319,7 @@
         "VE-IOS-SETTINGS-CHANGE-PIN-SAVING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/ChangePinSheet.swift"
@@ -11353,7 +11353,7 @@
         "VE-IOS-SETTINGS-CHANGE-PIN-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/ChangePinSheet.swift"
@@ -11387,7 +11387,7 @@
         "VE-IOS-SETTINGS-CHANGE-PIN-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Account/ChangePinSheet.swift"
@@ -11421,7 +11421,7 @@
         "VE-IOS-SETTINGS-MEMBER-ADD"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/AddMemberSheet.swift"
@@ -11455,7 +11455,7 @@
         "VE-IOS-SETTINGS-MEMBER-ADD-INVALID"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/AddMemberSheet.swift"
@@ -11489,7 +11489,7 @@
         "VE-IOS-SETTINGS-MEMBER-ADD-SAVING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/AddMemberSheet.swift"
@@ -11523,7 +11523,7 @@
         "VE-IOS-SETTINGS-MEMBER-ADD-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/AddMemberSheet.swift"
@@ -11557,7 +11557,7 @@
         "VE-IOS-SETTINGS-MEMBER-ADD-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Members/AddMemberSheet.swift"
@@ -11591,7 +11591,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11625,7 +11625,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11659,7 +11659,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11693,7 +11693,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11727,7 +11727,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11761,7 +11761,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11795,7 +11795,7 @@
         "VE-IOS-SETTINGS-PERSONALITY-CREATE-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Personalities/PersonalityCreateSheet.swift"
@@ -11829,7 +11829,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -11863,7 +11863,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -11897,7 +11897,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -11931,7 +11931,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -11965,7 +11965,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -11999,7 +11999,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -12033,7 +12033,7 @@
         "VE-IOS-SETTINGS-VOICE-RECORD-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Voice/VoiceRecordSection.swift"
@@ -12068,7 +12068,7 @@
         "VE-IOS-CALENDAR-ROUTE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -12103,7 +12103,7 @@
         "VE-IOS-CALENDAR-LOADING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -12138,7 +12138,7 @@
         "VE-IOS-CALENDAR-EMPTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarSurfaceSupport.swift"
@@ -12173,7 +12173,7 @@
         "VE-IOS-CALENDAR-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -12208,7 +12208,7 @@
         "VE-IOS-CALENDAR-ERROR-MUTATION-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarScreen.swift"
@@ -12243,7 +12243,7 @@
         "VE-IOS-CALENDAR-DAY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarCanvasViews.swift"
@@ -12278,7 +12278,7 @@
         "VE-IOS-CALENDAR-WEEK"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarCanvasViews.swift"
@@ -12313,7 +12313,7 @@
         "VE-IOS-CALENDAR-MONTH"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarCanvasViews.swift"
@@ -12348,7 +12348,7 @@
         "VE-IOS-CALENDAR-YEAR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarCanvasViews.swift"
@@ -12383,7 +12383,7 @@
         "VE-IOS-CALENDAR-FILTERS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarFiltersView.swift"
@@ -12418,7 +12418,7 @@
         "VE-IOS-CALENDAR-FILTERS-NO-MATCH"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarFiltersView.swift"
@@ -12453,7 +12453,7 @@
         "VE-IOS-CALENDAR-PREVIEW"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12488,7 +12488,7 @@
         "VE-IOS-CALENDAR-EDITOR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12523,7 +12523,7 @@
         "VE-IOS-CALENDAR-EDITOR-EDIT-CLEAN"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12558,7 +12558,7 @@
         "VE-IOS-CALENDAR-EDITOR-DIRTY"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12593,7 +12593,7 @@
         "VE-IOS-CALENDAR-EDITOR-SAVING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12628,7 +12628,7 @@
         "VE-IOS-CALENDAR-EDITOR-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12663,7 +12663,7 @@
         "VE-IOS-CALENDAR-EDITOR-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12698,7 +12698,7 @@
         "VE-IOS-CALENDAR-DELETE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12733,7 +12733,7 @@
         "VE-IOS-CALENDAR-DELETE-APPLYING"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12768,7 +12768,7 @@
         "VE-IOS-CALENDAR-DELETE-ERROR"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12803,7 +12803,7 @@
         "VE-IOS-CALENDAR-DELETE-SUCCESS"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
@@ -12838,7 +12838,7 @@
         "VE-IOS-CALENDAR-RECURRENCE-SCOPE"
       ],
       "intentionalNativeAdaptation": "Shared Dusk semantics rendered with native SwiftUI behavior; no additional deviation.",
-      "status": "planned",
+      "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
         "ios/App/Settings/Calendar/CalendarOverlays.swift"
