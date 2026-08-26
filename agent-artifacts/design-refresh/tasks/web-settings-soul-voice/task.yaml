@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-settings-soul-voice
 title: Refresh Web Soul settings and voice-library product surfaces
-status: contribution_complete
+status: merged
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
@@ -32,3 +32,4 @@ runtime:
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: e1e8b811-60e5-44b2-b7b5-caf2cf59d9d0
   completedCommit: 1cbeb2d0d18758635b499ba01bc0a1bcc187bb8f
+  mergedCommit: dcfdd3ca02ea8897ee9fe41fbfd5182b083b5615
