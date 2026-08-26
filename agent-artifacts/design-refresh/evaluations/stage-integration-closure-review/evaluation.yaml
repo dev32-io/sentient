@@ -31,22 +31,21 @@ criteria:
   - No Android UI changes, no production/audio/network-disruption verification,
     and readiness for E2E-001..009
 loop:
+  state: fixing
   iteration: 1
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: f2b0cea4-efc7-4116-b8d8-7f2d2f82926f
   reviewedCommit: 8099251e94c5de7a66d654ac1a4256370bc31037
-  managerPrompt: "Fix F-001 without weakening capture teardown ordering. Remove
-    unbounded `runBlocking` from the logout/UI callback path. Move logout
-    cleanup to a structured asynchronous/suspending lifecycle boundary on a
-    non-main dispatcher with a bounded timeout: attempt serialized capture
-    cancel/terminal emission before transport and scope shutdown, then force
-    local terminal cleanup if the adapter hangs. The Android UI callback must
-    return promptly, no capture may survive logout, and no frame may be emitted
-    after terminal. Add deterministic tests for normal ordered teardown and a
-    hanging capture/transport adapter proving bounded completion, prompt
-    callback behavior, no deadlock, and no post-terminal frames. Keep Android
-    visual/UI files unchanged."
+  managerPrompt: "Fix F-002 by making timeout ownership real rather than timing
+    out only the waiter. Do not launch transport close into an SDK-owned scope
+    that survives logout. Run teardown as a caller-owned structured child (or
+    expose a suspending close boundary); on timeout explicitly cancel/join that
+    child and cancel the SDK root job/scope so no teardown coroutine remains
+    live. Preserve ordering: terminalize/cancel the active capture first, then
+    close transport, then cancel scope; make repeated close/logout idempotent.
+    Add a hanging cancellable transport regression that asserts bounded return,
+    zero surviving SDK child jobs/active captures, and no post-terminal frames,
+    alongside the normal ordered path."
   fixerAgentId: db78f57d-deca-434e-8830-81fcc048fc61
 findings:
   - id: F-001
