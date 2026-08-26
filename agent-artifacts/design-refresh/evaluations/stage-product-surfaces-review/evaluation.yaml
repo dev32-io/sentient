@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: product-surfaces
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - bun run --filter '@sentient/webui' test:unit
   - bun run --filter '@sentient/webui' typecheck
@@ -28,6 +28,32 @@ criteria:
     navigation and large Dynamic Type
   - No audio E2E, no network manipulation, and no prototype runtime imports
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: eda1f1a0-468a-4325-9838-4a0d0018269a
+  reviewedCommit: bc5f663fb06b205b069af12d784e3a1df890ffd4
+findings:
+  - id: F-001
+    severity: medium
+    status: open
+    criterion: Web History keyboard operation and closed-drawer focus isolation
+    location: gateway/webui/src/components/sessions/drawer.tsx:84-99;
+      gateway/webui/src/components/sessions/drawer.css:3-10,26-52
+    summary: "Minor, blocking contract gap: the closed off-canvas drawer remains
+      mounted with focusable controls; aria-hidden and pointer-events:none do
+      not remove descendants from sequential keyboard focus."
+    blocking: true
+  - id: F-002
+    severity: medium
+    status: open
+    criterion: iOS History 44pt target and semantic type acceptance
+    location: ios/App/History/HistorySidePanel.swift:98-111
+    summary: "Minor, blocking contract gap: History search is fixed to 40pt and uses
+      page-local Typo.ui(14), below the explicit 44pt target and shared
+      semantic-type requirements."
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-product-surfaces-review/manifest.yaml

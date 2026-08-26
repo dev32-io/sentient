@@ -1,0 +1,26 @@
+schemaVersion: 1
+evaluation: stage-product-surfaces-review
+recordedAt: 2026-08-26T00:12:20.246Z
+entries:
+  - result: PASS — 46 files, 276 tests
+    command: bun run --filter '@sentient/webui' test:unit
+    description: Focused Web suite passes but does not prove closed-state tab isolation.
+    path: files/001-1-drawer.test.tsx
+    checksum: sha256:210760c00116de0076e05a18b44fb2b65604ad622f58bf3dc3502d7128471f8a
+  - result: PASS — 118 Swift Testing and 16 XCTest tests
+    command: xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp
+      -destination 'platform=iOS Simulator,name=iPhone 16'
+    description: Focused iOS tests pass but do not assert the search target metric.
+    path: files/001-2-HistoryInteractionTests.swift
+    checksum: sha256:dcc01af74553460b8dfa34b9f54b7407e41a472c8bcef96f86d9553ff1dbcd29
+  - result: PASS
+    command: bun run design:inventory:check
+    description: Closed inventory metadata validates.
+    path: files/001-3-inventory.json
+    checksum: sha256:678b881093d05486e9d26bfada0caa2d6c4211cfad734224ab0d658765aa9cde
+  - result: PASS
+    command: git diff --check
+      3a9871de53780eae65206de4bf14d8d8fb385c16..bc5f663fb06b205b069af12d784e3a1df890ffd4
+    description: Bounded diff has no whitespace errors.
+    path: files/001-4-drawer.tsx
+    checksum: sha256:a9a04b09c262291b19c90cc2215bfdf88cb3320a23f4ab79e8e59e1188c83129
