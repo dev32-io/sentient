@@ -76,6 +76,8 @@
     transform: translateY(-1px);
   }
   .snt-media-card:hover::after { opacity: 1; }
+  /* Profile tiles keep their quiet edge on hover; focus-visible remains accessible. */
+  .snt-media-card.avatar-tile:hover { border-color: var(--color-line-soft); }
 }
 .snt-media-card:active {
   box-shadow: var(--slate-shadow-pressed);
