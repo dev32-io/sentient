@@ -8,6 +8,9 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     from: "2.4.1"
+  RiveRuntime:
+    url: https://github.com/rive-app/rive-ios
+    exactVersion: "6.22.0"
 targets:
   SentientApp:
     type: application
@@ -16,7 +19,8 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         CFBundleDisplayName: Sentient
         # Version is the SPEC's source of truth (xcodegen regenerates Info.plist
         # on every generate; a hand-edit there is clobbered). Bump together with
@@ -64,6 +68,18 @@ targets:
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: io.dev32.sentient.debug
+    preBuildScripts:
+      - name: Verify Sentient identity checksum
+        script: |
+          set -euo pipefail
+          asset="$SRCROOT/App/Resources/Identity/sentient-avatar.riv"
+          expected="bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b"
+          actual="$(shasum -a 256 "$asset" | awk '{print $1}')"
+          test "$actual" = "$expected" || {
+            echo "error: Sentient identity checksum mismatch: $actual"
+            exit 1
+          }
+        basedOnDependencyAnalysis: false
     dependencies:
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
@@ -71,6 +87,8 @@ targets:
       - sdk: libsqlite3.tbd
       - package: MarkdownUI
         product: MarkdownUI
+      - package: RiveRuntime
+        product: RiveRuntime
 
   SentientAppTests:
     type: bundle.unit-test

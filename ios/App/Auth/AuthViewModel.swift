@@ -53,6 +53,8 @@ final class AuthViewModel: ObservableObject {
     /// Receives only the server-authenticated AuthUser.userId. Never pass a
     /// display name or derive identity from the token.
     private let onAuthenticatedUser: (String) -> Void
+    private let onInitialUsersResolved: () -> Void
+    private var initialUsersResolved = false
     private let log = AppLog("auth", "model")
 
     /// - Parameters:
@@ -67,12 +69,14 @@ final class AuthViewModel: ObservableObject {
     init(
         connect: @escaping () -> Void,
         onAuthenticatedUser: @escaping (String) -> Void = { _ in },
+        onInitialUsersResolved: @escaping () -> Void = {},
         authClient: AuthClient = AuthViewModel.makeAuthClient(),
         tokenStore: SecureTokenStore = createTokenStore(),
         displayNameStore: DisplayNameStore = DisplayNameStore()
     ) {
         self.connect = connect
         self.onAuthenticatedUser = onAuthenticatedUser
+        self.onInitialUsersResolved = onInitialUsersResolved
         self.authClient = authClient
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
@@ -100,6 +104,10 @@ final class AuthViewModel: ObservableObject {
             self.error = "Can't reach the server. Check your connection."
         }
         isLoadingUsers = false
+        if !initialUsersResolved {
+            initialUsersResolved = true
+            onInitialUsersResolved()
+        }
     }
 
     func select(_ user: AuthUserLite) {

@@ -63,6 +63,7 @@ struct HistoryAccountHeader: View {
             Image(systemName: "gearshape")
                 .font(.system(size: 19))
                 .foregroundStyle(DuskColors.ink2)
+                .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("settings-open")

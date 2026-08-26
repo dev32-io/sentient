@@ -29,11 +29,20 @@
 import SwiftUI
 import MobileData
 
+@MainActor
 struct RootView: View {
     @EnvironmentObject private var appConfig: AppConfig
     @State private var showSetupOverride = false
-    @State private var showSplash = true
+    @StateObject private var startup: StartupReadinessCoordinator
     private let log = AppLog("root")
+
+    init() {
+        _startup = StateObject(wrappedValue: StartupReadinessCoordinator())
+    }
+
+    init(startup: StartupReadinessCoordinator) {
+        _startup = StateObject(wrappedValue: startup)
+    }
 
     var body: some View {
         Group {
@@ -51,22 +60,29 @@ struct RootView: View {
                 LoginView(
                     onAuthenticatedUser: { appConfig.didLogin(authenticatedUserId: $0) },
                     onConnect: {},
+                    onInitialUsersResolved: { startup.rootDidResolve() },
                     onOpenBackendSetup: { showSetupOverride = true }
                 )
             }
         }
         .overlay {
-            if showSplash {
+            if startup.isCovering {
                 SplashOverlay()
                     .transition(.opacity)
             }
         }
         .task(id: appConfig.configGeneration) {
-            showSplash = true
-            log.info("splash.show generation=\(appConfig.configGeneration)")
-            try? await Task.sleep(for: .seconds(SplashLayout.minDisplay))
-            withAnimation(.easeOut(duration: SplashLayout.fadeOut)) { showSplash = false }
-            log.info("splash.hide")
+            startup.begin()
+            log.info("startup.begin generation=\(appConfig.configGeneration)")
+            // Setup is immediately actionable. An authenticated shell is also
+            // usable while its connection resolves because it owns recovery UI.
+            // Login resolves separately after its initial user-list terminal result.
+            if !appConfig.isConfigured || appConfig.hasToken {
+                startup.rootDidResolve()
+            }
+        }
+        .onChange(of: startup.isCovering) { _, covering in
+            if !covering { log.info("startup.reveal") }
         }
     }
 }
