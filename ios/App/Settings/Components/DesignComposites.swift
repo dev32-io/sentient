@@ -47,9 +47,13 @@ struct DesignSettingsRow<Accessory: View>: View {
     let title: String
     var detail: String? = nil
     @ViewBuilder let accessory: () -> Accessory
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .center, spacing: Space.lg) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.sm))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: Space.lg))
+        layout {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(title).font(Typo.ui(TypeScale.base, .medium))
                 if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3) }
@@ -142,7 +146,7 @@ struct AsyncNotice: View {
         }
         .padding(Space.md)
         .designPlate()
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: retry == nil ? .combine : .contain)
     }
 
     @ViewBuilder private var symbol: some View {

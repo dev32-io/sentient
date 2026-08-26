@@ -26,6 +26,7 @@ package io.sentient.mobilesdk.auth
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import io.sentient.mobilesdk.log.createLogger
@@ -45,6 +46,7 @@ import platform.Foundation.serverTrust
 import platform.Security.SecTrustRef
 
 private val log = createLogger("auth", "factory", "ios")
+private const val AUTH_REQUEST_TIMEOUT_MS = 10_000L
 
 /**
  * Build the REST [AuthClient] for iOS: a Darwin-backed Ktor [HttpClient] with
@@ -61,10 +63,9 @@ fun createAuthClient(
     gatewayWsUrl: String,
     allowSelfSignedDevHost: Boolean,
 ): AuthClient {
-    log.info(
-        "create",
-        mapOf("gatewayWsUrl" to gatewayWsUrl, "allowSelfSignedDevHost" to allowSelfSignedDevHost),
-    )
+    // The configured endpoint can contain private host details or user-info.
+    // Record only the trust mode; never emit the URL or credentials.
+    log.info("create", mapOf("allowSelfSignedDevHost" to allowSelfSignedDevHost))
     return AuthClient(
         gatewayWsUrl = gatewayWsUrl,
         httpClient = buildAuthHttpClient(allowSelfSignedDevHost),
@@ -115,5 +116,6 @@ private fun buildAuthHttpClient(allowSelfSignedDevHost: Boolean): HttpClient =
                 }
             }
         }
+        install(HttpTimeout) { requestTimeoutMillis = AUTH_REQUEST_TIMEOUT_MS }
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
     }

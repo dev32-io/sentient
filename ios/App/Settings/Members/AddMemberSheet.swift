@@ -1,14 +1,14 @@
-// ---------------------------------------------------------------------------
-// AddMemberSheet — the "Add user" modal for the Members page: display name + a
-// 4-digit PIN (reusing the masked PinBoxesField). Mobile collects only name +
-// PIN; AdminUseCases (shared mobile-data) templates the rest of the profile off
-// the admin's own. On success the sheet dismisses; a server failure surfaces
-// inline. PIN NEVER logged.
-//
-// Pure presentation: `adding` / `error` values + an async `onSubmit` returning
-// success. Drafts live in local @State. Previews render empty + error states.
-// ---------------------------------------------------------------------------
 import SwiftUI
+
+private let memberPinLength = 4
+
+func addMemberValidationError(name: String, pin: String) -> String? {
+    guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return "Enter a display name."
+    }
+    guard pin.count == memberPinLength else { return "Enter a four-digit PIN." }
+    return nil
+}
 
 struct AddMemberSheet: View {
     let adding: Bool
@@ -20,30 +20,40 @@ struct AddMemberSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var canSubmit: Bool { !trimmedName.isEmpty && pin.count == 4 && !adding }
+    private var validation: String? { addMemberValidationError(name: name, pin: pin) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.lg) {
                     Text("Create a new member of this household.")
-                        .font(Typo.ui(TypeScale.sm))
+                        .designText(.body)
                         .foregroundStyle(DuskColors.ink3)
-                    nameField
-                    PinBoxesField(title: "PIN", value: $pin, accessibilityId: "settings-members-add-pin", autoFocus: false)
+                    DesignField(
+                        title: "Display name",
+                        prompt: "Their name",
+                        text: $name,
+                        error: name.isEmpty ? nil : validation == "Enter a display name." ? validation : nil,
+                        accessibilityId: "settings-members-add-name"
+                    )
+                    DesignMaskedField(
+                        title: "PIN",
+                        prompt: "Four digits",
+                        text: sanitizedPin,
+                        error: pin.isEmpty ? nil : validation == "Enter a four-digit PIN." ? validation : nil,
+                        accessibilityId: "settings-members-add-pin",
+                        keyboard: .numberPad
+                    )
                     if let error {
-                        Text(error)
-                            .font(Typo.ui(TypeScale.xs, .medium))
-                            .foregroundStyle(DuskColors.stop)
+                        AsyncNotice(kind: .error, title: "Couldn't add member", detail: error)
                             .accessibilityIdentifier("settings-members-add-error")
                     }
+                    if adding { DesignProgress(title: "Adding member") }
                 }
-                .padding(.horizontal, Space.lg)
-                .padding(.top, Space.lg)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Space.lg)
             }
             .background(DuskColors.bg)
-            .navigationTitle("Add user")
+            .navigationTitle("Add member")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -51,36 +61,26 @@ struct AddMemberSheet: View {
                         .accessibilityIdentifier("settings-members-add-cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { Task { if await onSubmit(trimmedName, pin) { dismiss() } } }
-                        .disabled(!canSubmit)
-                        .accessibilityIdentifier("settings-members-add-submit")
+                    Button("Add") {
+                        Task { if await onSubmit(trimmedName, pin) { dismiss() } }
+                    }
+                    .disabled(validation != nil || adding)
+                    .accessibilityIdentifier("settings-members-add-submit")
                 }
             }
             .duskTheme()
         }
     }
 
-    private var nameField: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
-            Text("Display name")
-                .font(Typo.ui(TypeScale.xs, .medium))
-                .foregroundStyle(DuskColors.ink3)
-            TextField("Their name", text: $name)
-                .font(Typo.ui(TypeScale.sm))
-                .foregroundStyle(DuskColors.ink)
-                .padding(.horizontal, Space.md)
-                .padding(.vertical, Space.sm)
-                .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: 1))
-                .accessibilityIdentifier("settings-members-add-name")
-        }
+    private var sanitizedPin: Binding<String> {
+        Binding(
+            get: { pin },
+            set: { pin = String($0.filter(\.isNumber).prefix(memberPinLength)) }
+        )
     }
 }
 
-#Preview("empty") {
-    AddMemberSheet(adding: false, error: nil, onSubmit: { _, _ in true })
-}
-
-#Preview("error") {
+#Preview("Error — large text") {
     AddMemberSheet(adding: false, error: "Household is full", onSubmit: { _, _ in false })
+        .environment(\.dynamicTypeSize, .accessibility3)
 }
