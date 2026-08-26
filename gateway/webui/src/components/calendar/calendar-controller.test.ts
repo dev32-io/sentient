@@ -203,6 +203,27 @@ describe("CalendarController", () => {
     controller.dispose();
   });
 
+  it("distinguishes omitted all-scope defaults from an explicit empty scope selection", async () => {
+    const privateEvent = occurrence("private", "Private event");
+    const householdEvent = { ...occurrence("household", "Household event"), scope: "household" as const };
+    const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [privateEvent, householdEvent] } })));
+    const controller = createCalendarController({
+      ...options,
+      api,
+      preferenceStore: createMemoryCalendarPreferenceStore(),
+    });
+    await controller.ready;
+
+    expect(controller.state.filteredOccurrences.map((event) => event.occurrenceId).sort()).toEqual([
+      "household",
+      "private",
+    ]);
+    controller.setFilters({ scopes: [] });
+    expect(controller.state.selectedFilters.scopes).toEqual([]);
+    expect(controller.state.filteredOccurrences).toEqual([]);
+    controller.dispose();
+  });
+
   it("does not persist preferences without a normalized backend identity", async () => {
     const store = createMemoryCalendarPreferenceStore();
     const api = apiFor(vi.fn(async () => ({ ok: true as const, value: { events: [] } })));

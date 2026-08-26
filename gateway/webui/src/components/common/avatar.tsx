@@ -18,11 +18,10 @@ export interface AvatarProps {
 const PIXELS: Record<AvatarSize, number> = { sm: 28, lg: 44, xl: 56 };
 
 export function Avatar({ kind, initial, name, tint = "terra", size = "sm", mode = "idle", selected, disabled }: AvatarProps): JSX.Element {
-  const sizeClass = size === "sm" ? "" : ` avatar--${size}`;
   const foundationSize = `snt-avatar--${size}`;
   if (kind === "assistant") {
     return (
-      <span class={`avatar avatar--assistant${sizeClass} snt-avatar snt-avatar--sentient ${foundationSize}`}>
+      <span class={`snt-avatar snt-avatar--sentient ${foundationSize}`}>
         <SentientIdentity size={PIXELS[size]} state={mode} label={name ?? "Sentient"} />
       </span>
     );
@@ -30,7 +29,7 @@ export function Avatar({ kind, initial, name, tint = "terra", size = "sm", mode 
   const fallback = initial?.trim().slice(0, 2).toLocaleUpperCase() || "?";
   return (
     <span
-      class={`avatar avatar--user avatar--${tint}${sizeClass} snt-avatar snt-avatar--user snt-avatar--${tint} ${foundationSize}${selected ? " snt-avatar--selected" : ""}`}
+      class={`snt-avatar snt-avatar--user snt-avatar--${tint} ${foundationSize}${selected ? " snt-avatar--selected" : ""}`}
       aria-label={name ?? `User ${fallback}`}
       aria-disabled={disabled || undefined}
     >

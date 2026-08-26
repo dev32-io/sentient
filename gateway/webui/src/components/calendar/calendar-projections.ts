@@ -679,8 +679,9 @@ export interface CalendarDerivedProjection {
 const CONTROLLER_IMPORTANCE_ORDER: readonly CalendarImportance[] = ["normal", "important", "pinned"];
 const CONTROLLER_SCOPE_ORDER: readonly CalendarReadScope[] = ["private", "household", "all"];
 
-function controllerScopes(filters: CalendarFilters): readonly CalendarReadScope[] {
-  const values = filters.scopes ?? (filters.scope === undefined ? [] : [filters.scope]);
+function controllerScopes(filters: CalendarFilters): readonly CalendarReadScope[] | undefined {
+  const values = filters.scopes ?? (filters.scope === undefined ? undefined : [filters.scope]);
+  if (values === undefined) return undefined;
   return [...new Set(values)].filter(
     (value): value is CalendarReadScope => value === "private" || value === "household" || value === "all",
   );
@@ -735,13 +736,12 @@ export function filterCalendarOccurrences(
   filters: CalendarFilters = {},
 ): CalendarOccurrence[] {
   const scopes = controllerScopes(filters);
-  const hasAllScope = scopes.length === 0 || scopes.includes("all");
   const groups = new Set(controllerGroups(filters));
   const tags = new Set(filters.tags ?? []);
   const importance = controllerImportance(filters);
   const search = controllerSearch(filters);
   return occurrences.filter((event) => {
-    if (!hasAllScope && !scopes.includes(event.scope)) return false;
+    if (scopes !== undefined && !scopes.includes("all") && !scopes.includes(event.scope)) return false;
     if (groups.size > 0 && (event.group === undefined || !groups.has(event.group))) return false;
     if (tags.size > 0 && !(filters.tags ?? []).every((tag) => event.tags.includes(tag))) return false;
     if (importance.length > 0 && !importance.includes(event.importance)) return false;
@@ -755,7 +755,8 @@ export function deriveCalendarFacets(
   occurrences: readonly CalendarOccurrence[],
   filters: CalendarFilters = {},
 ): CalendarFacets {
-  const scopes = new Set<CalendarReadScope>(["all", ...controllerScopes(filters)]);
+  const selectedScopes = controllerScopes(filters) ?? [];
+  const scopes = new Set<CalendarReadScope>(["all", ...selectedScopes]);
   const groups = new Set(controllerGroups(filters));
   const tags = new Set(filters.tags ?? []);
   const importance = new Set<CalendarImportance>(controllerImportance(filters));

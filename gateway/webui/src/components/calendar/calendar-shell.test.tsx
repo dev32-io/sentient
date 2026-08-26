@@ -345,6 +345,29 @@ describe("CalendarFilterSidebar", () => {
     fireEvent.input(screen.getByRole("searchbox", { name: "Search calendar events" }), { target: { value: "school" } });
     expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ search: "school" }));
   });
+
+  it("emits an explicit empty scope selection when both calendars are unchecked", () => {
+    const onFiltersChange = vi.fn();
+    const { rerender } = render(
+      <CalendarFilterSidebar
+        filters={{ scopes: ["all"] }}
+        facets={{ scopes: ["all", "private", "household"] }}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Private" }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ scopes: ["household"] }));
+    rerender(
+      <CalendarFilterSidebar
+        filters={{ scopes: ["household"] }}
+        facets={{ scopes: ["all", "private", "household"] }}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Household" }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith(expect.objectContaining({ scopes: [] }));
+  });
 });
 
 describe("CalendarCompactControls", () => {

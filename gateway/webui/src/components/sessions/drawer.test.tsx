@@ -1,8 +1,9 @@
 import { signal } from "@preact/signals";
-import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { describe, expect, it, vi } from "vitest";
 import { SessionsProvider } from "../../context/sessions.tsx";
+import { Dialog } from "../common/dialog.tsx";
 import type { UseSessions } from "../../hooks/use-sessions.ts";
 import { Drawer } from "./drawer.tsx";
 
@@ -58,6 +59,32 @@ describe("History drawer", () => {
       expect(drawer?.hasAttribute("inert")).toBe(true);
       expect(document.activeElement).toBe(trigger);
     });
+  });
+
+  it("does not let a closed Drawer steal Dialog focus trapping or Escape", () => {
+    const sessions = sessionsFixture();
+    const onClose = vi.fn();
+    const host = document.createElement("div");
+    document.body.append(host);
+    render(
+      <SessionsProvider value={sessions}>
+        <Dialog title="Calendar" onClose={onClose}>
+          <button type="button">First action</button>
+        </Dialog>
+        <Drawer open={false} onClose={() => {}} />
+      </SessionsProvider>,
+      { container: host },
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Calendar" });
+    const dialogButtons = within(dialog).getAllByRole("button");
+    const last = dialogButtons[dialogButtons.length - 1];
+    last?.focus();
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(document.activeElement).toBe(dialogButtons[0]);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("dismisses explicitly, by Escape, and by backdrop while restoring trigger focus", async () => {

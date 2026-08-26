@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  findChatStyleOwnershipViolations,
   findImportGraphViolations,
   findPageBoundaryViolations,
   findPrototypeRuntimeReferences,
@@ -64,6 +65,31 @@ describe("Web foundation boundary", () => {
       '@import "./colors.css";',
       '<link rel="stylesheet" href="/src/styles/components.css" />',
     ).length).toBeGreaterThan(0);
+  });
+
+  test("keeps active chat and task-detail styles in their canonical owners", async () => {
+    const sources: WebFoundationSource[] = [
+      {
+        path: "src/styles/components.css",
+        source: await readFile(join(root, "gateway/webui/src/styles/components.css"), "utf8"),
+      },
+      {
+        path: "src/components/chat/chat-messages.css",
+        source: await readFile(join(root, "gateway/webui/src/components/chat/chat-messages.css"), "utf8"),
+      },
+    ];
+    expect(findChatStyleOwnershipViolations(sources)).toEqual([]);
+    expect(findChatStyleOwnershipViolations([
+      { ...sources[0], source: ".message-list { gap: 1rem; }" },
+      sources[1]!,
+    ])).toContain("src/styles/components.css: active chat/dock selector .message-list must be owned by a component stylesheet");
+  });
+
+  test("scans complete source text so split declarations cannot bypass the boundary", () => {
+    expect(findPageBoundaryViolations([
+      { path: "src/components/page.css", source: ".page { gap\n: 1px; }" },
+      { path: "src/components/page.tsx", source: "const props = { style\n: {} };" },
+    ])).toHaveLength(2);
   });
 
   test("reports a finite transitional product boundary", () => {

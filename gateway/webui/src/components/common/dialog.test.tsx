@@ -51,6 +51,66 @@ describe("Dialog", () => {
     expect(background.hasAttribute("inert")).toBe(false);
   });
 
+  it("isolates every outside branch when mounted inside nested settings trees", () => {
+    const shell = document.createElement("div");
+    const settings = document.createElement("section");
+    const sidebar = document.createElement("button");
+    const account = document.createElement("div");
+    const accountContent = document.createElement("div");
+    const dialogHost = document.createElement("div");
+    const outside = document.createElement("button");
+    outside.setAttribute("aria-hidden", "false");
+
+    settings.append(sidebar, account);
+    account.append(accountContent, dialogHost);
+    shell.append(settings);
+    document.body.append(shell, outside);
+
+    const view = render(<Dialog title="Account" onClose={() => {}} />, { container: dialogHost });
+
+    expect(sidebar.hasAttribute("inert")).toBe(true);
+    expect(sidebar.getAttribute("aria-hidden")).toBe("true");
+    expect(accountContent.hasAttribute("inert")).toBe(true);
+    expect(outside.hasAttribute("inert")).toBe(true);
+    expect(outside.getAttribute("aria-hidden")).toBe("true");
+    expect(settings.hasAttribute("inert")).toBe(false);
+    expect(account.hasAttribute("inert")).toBe(false);
+    expect(dialogHost.hasAttribute("inert")).toBe(false);
+
+    view.unmount();
+    expect(sidebar.hasAttribute("inert")).toBe(false);
+    expect(accountContent.hasAttribute("inert")).toBe(false);
+    expect(outside.hasAttribute("inert")).toBe(false);
+    expect(outside.getAttribute("aria-hidden")).toBe("false");
+  });
+
+  it("restores the outer dialog isolation after a nested dialog closes", () => {
+    const background = document.createElement("main");
+    background.setAttribute("aria-hidden", "false");
+    const outerHost = document.createElement("div");
+    document.body.append(background, outerHost);
+    const outer = render(
+      <Dialog title="Outer" onClose={() => {}}><div>Outer content</div></Dialog>,
+      { container: outerHost },
+    );
+    const nestedHost = document.createElement("div");
+    const outerBody = outerHost.querySelector<HTMLElement>(".app-dialog__body");
+    expect(outerBody).toBeTruthy();
+    if (!outerBody) return;
+    outerBody.append(nestedHost);
+
+    const inner = render(<Dialog title="Inner" onClose={() => {}} />, { container: nestedHost });
+    expect(background.hasAttribute("inert")).toBe(true);
+    expect(background.getAttribute("aria-hidden")).toBe("true");
+
+    inner.unmount();
+    expect(background.hasAttribute("inert")).toBe(true);
+    expect(background.getAttribute("aria-hidden")).toBe("true");
+    outer.unmount();
+    expect(background.hasAttribute("inert")).toBe(false);
+    expect(background.getAttribute("aria-hidden")).toBe("false");
+  });
+
   it("routes safe backdrop and Escape requests without silently closing", () => {
     const onClose = vi.fn();
     const onRequestClose = vi.fn();

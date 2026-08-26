@@ -67,6 +67,43 @@ function inertProperty(element: HTMLElement): boolean | undefined {
   return Boolean((element as HTMLElement & { inert?: boolean }).inert);
 }
 
+function isInert(element: HTMLElement): boolean {
+  return element.hasAttribute("inert") || inertProperty(element) === true;
+}
+
+function isHidden(element: HTMLElement): boolean {
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (current.hidden || current.getAttribute("aria-hidden")?.toLowerCase() === "true" || isInert(current)) return true;
+    try {
+      const style = window.getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return true;
+    } catch {
+      // A detached or tearing-down document may not have computed styles.
+    }
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function isLiveDialogRoot(element: HTMLElement): boolean {
+  return element.isConnected && !isHidden(element);
+}
+
+function outsideTreeElements(root: HTMLElement): HTMLElement[] {
+  const targets = new Set<HTMLElement>();
+  let current: HTMLElement | null = root;
+  while (current && current !== document.body) {
+    const parent: HTMLElement | null = current.parentElement;
+    if (!parent) break;
+    for (const child of Array.from(parent.children)) {
+      if (child !== current && child instanceof HTMLElement) targets.add(child);
+    }
+    current = parent;
+  }
+  return [...targets];
+}
+
 function applyInert(element: HTMLElement, value: boolean): void {
   const target = element as HTMLElement & { inert?: boolean };
   if ("inert" in element || value) target.inert = value;
@@ -166,7 +203,8 @@ export function Dialog({
     const onKey = (e: KeyboardEvent): void => {
       const root = dialogRef.current;
       if (!root) return;
-      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>("[role='dialog']"));
+      const openDialogs = Array.from(document.querySelectorAll<HTMLElement>("[role='dialog']"))
+        .filter(isLiveDialogRoot);
       if (openDialogs[openDialogs.length - 1] !== root) return;
       if (e.key === "Escape") {
         e.stopPropagation();
@@ -211,11 +249,8 @@ export function Dialog({
   useEffect(() => {
     if (!(inertBackground ?? backgroundInert ?? true)) return;
     const scrim = scrimRef.current;
-    const parent = scrim?.parentElement;
-    if (!parent || !scrim) return;
-    const cleanups = Array.from(parent.children)
-      .filter((child): child is HTMLElement => child instanceof HTMLElement && child !== scrim)
-      .map((child) => isolateBackground(child));
+    if (!scrim) return;
+    const cleanups = outsideTreeElements(scrim).map((element) => isolateBackground(element));
     return () => cleanups.forEach((cleanup) => cleanup());
   }, [backgroundInert, inertBackground]);
 

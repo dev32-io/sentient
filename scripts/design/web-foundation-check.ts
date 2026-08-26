@@ -23,7 +23,7 @@ export interface TransitionalAllowlistEntry {
  * migrations remove these entries one path at a time.
  */
 export const WEB_FOUNDATION_TRANSITIONAL_ALLOWLIST: readonly TransitionalAllowlistEntry[] = [
-  { path: "src/styles/components.css", reason: "legacy global shell/chat/dock styles" },
+  { path: "src/styles/components.css", reason: "legacy global shell and non-chat product styles" },
   { path: "src/components/account-wizard/account-wizard.css", reason: "account wizard composition" },
   { path: "src/components/chat/chat-messages.css", reason: "chat product surface" },
   { path: "src/components/calendar/calendar-canvas.css", reason: "calendar product surface" },
@@ -96,6 +96,46 @@ const visualLiteralPatterns: readonly RegExp[] = [
   /(?:^|[;{])\s*(?:padding|margin|gap)\s*:[^;{}]*\b\d+(?:\.\d+)?(?:px|rem|em)\b/i,
 ];
 
+const CANONICAL_CHAT_STYLE_CLASSES = [
+  "chat-view",
+  "chat-view__content",
+  "chat-view__transcript",
+  "message-list",
+  "message-list--empty",
+  "message-list--error",
+  "message-list__placeholder",
+  "day-divider",
+  "message-bubble",
+  "message-bubble--continuation",
+  "message-bubble--user",
+  "message-bubble__avatar-spacer",
+  "message-bubble__body",
+  "message-bubble__meta",
+  "message-bubble__name",
+  "message-bubble__sep",
+  "message-bubble__text-wrap",
+  "message-bubble__surface",
+  "message-bubble__text-inner",
+  "bubble-text",
+  "bubble-text__md",
+  "bubble-text__pulse",
+  "bubble-text__pulse-dot",
+  "bubble-text__caret",
+  "bubble-speaking-wave",
+  "interrupt-chip",
+  "interrupt-chip--inline",
+] as const;
+
+// Task detail is rendered by the dock's task shelf. Its only owner is the
+// dock-local stylesheet; the old global selectors must not come back with the
+// legacy chat sheet.
+const LEGACY_GLOBAL_CHAT_STYLE_CLASSES = [
+  ...CANONICAL_CHAT_STYLE_CLASSES,
+  "tool-inline-detail",
+  "tool-inline-detail__label",
+  "tool-inline-detail__preview",
+] as const;
+
 function normalizeCss(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
@@ -131,6 +171,33 @@ function isTransitionalPath(path: string): boolean {
 
 function isRuntimeSource(path: string): boolean {
   return !isTestOrQa(path);
+}
+
+function hasClassSelector(source: string, className: string): boolean {
+  const escaped = className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\.${escaped}(?![A-Za-z0-9_-])`).test(source);
+}
+
+export function findChatStyleOwnershipViolations(sources: readonly WebFoundationSource[]): string[] {
+  const violations: string[] = [];
+  const global = sources.find((source) => source.path === "src/styles/components.css");
+  const canonical = sources.find((source) => source.path === "src/components/chat/chat-messages.css");
+  if (!global) return ["src/styles/components.css: legacy global stylesheet is missing from the source graph"];
+  if (!canonical) return ["src/components/chat/chat-messages.css: canonical chat stylesheet is missing from the source graph"];
+
+  const globalSource = stripComments(global.source);
+  const canonicalSource = stripComments(canonical.source);
+  for (const className of LEGACY_GLOBAL_CHAT_STYLE_CLASSES) {
+    if (hasClassSelector(globalSource, className)) {
+      violations.push(`${global.path}: active chat/dock selector .${className} must be owned by a component stylesheet`);
+    }
+  }
+  for (const className of CANONICAL_CHAT_STYLE_CLASSES) {
+    if (!hasClassSelector(canonicalSource, className)) {
+      violations.push(`${canonical.path}: canonical chat selector .${className} is missing`);
+    }
+  }
+  return violations;
 }
 
 export function findPrototypeRuntimeReferences(sources: readonly WebFoundationSource[]): string[] {
@@ -204,25 +271,28 @@ export function findImportGraphViolations(mainSource: string, indexSource: strin
   return violations;
 }
 
+function lineNumberAt(source: string, index: number): number {
+  return source.slice(0, index).split("\n").length;
+}
+
 export function findPageBoundaryViolations(sources: readonly WebFoundationSource[]): string[] {
   const violations: string[] = [];
   for (const { path, source } of sources) {
     if (isTestOrQa(path) || isFoundationPath(path) || isTransitionalPath(path)) continue;
     const content = stripComments(source);
     if (path.endsWith(".tsx") || path.endsWith(".ts")) {
-      const lines = content.split("\n");
-      lines.forEach((line, index) => {
-        if (rawControlPattern.test(line)) violations.push(`${path}:${index + 1}: raw visual control outside foundation`);
-        if (inlineStylePattern.test(line)) violations.push(`${path}:${index + 1}: page-local inline style outside foundation`);
-      });
+      const rawControl = rawControlPattern.exec(content);
+      if (rawControl) violations.push(`${path}:${lineNumberAt(content, rawControl.index)}: raw visual control outside foundation`);
+      const inlineStyle = inlineStylePattern.exec(content);
+      if (inlineStyle) violations.push(`${path}:${lineNumberAt(content, inlineStyle.index)}: page-local inline style outside foundation`);
     }
     if (path.endsWith(".css")) {
-      const lines = content.split("\n");
-      lines.forEach((line, index) => {
-        if (visualLiteralPatterns.some((pattern) => pattern.test(line))) {
-          violations.push(`${path}:${index + 1}: page-local visual literal outside foundation`);
+      for (const pattern of visualLiteralPatterns) {
+        const visualLiteral = pattern.exec(content);
+        if (visualLiteral) {
+          violations.push(`${path}:${lineNumberAt(content, visualLiteral.index)}: page-local visual literal outside foundation`);
         }
-      });
+      }
     }
   }
   return violations;
@@ -262,6 +332,7 @@ export async function runWebFoundationCheck(): Promise<void> {
   const violations = [
     ...findPrototypeRuntimeReferences(sources),
     ...findTokenBoundaryViolations(sources),
+    ...findChatStyleOwnershipViolations(sources),
     ...findPageBoundaryViolations(sources),
   ];
   const mainSource = sources.find((source) => source.path === "src/main.tsx")?.source;
