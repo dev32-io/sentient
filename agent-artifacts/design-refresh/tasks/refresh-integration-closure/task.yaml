@@ -2,7 +2,7 @@ schemaVersion: 1
 id: refresh-integration-closure
 title: Close the refresh inventory, remove legacy visual paths, and enforce
   migration boundaries
-status: contribution_complete
+status: merged
 dependsOn:
   - design-foundation-v2
   - capture-protocol-gateway
@@ -58,3 +58,4 @@ runtime:
   baseCommit: dcc570233dd51e73f9783f08160756c6d4b4b1c1
   lastRunId: 61f8a8be-70b0-4198-9287-67e65bead41b
   completedCommit: cf9e586c3ff7a056d9baac05f190a95954f9f408
+  mergedCommit: f152cfafcc2ac257713c9b127f0bdb3755fdad86
