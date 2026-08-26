@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-access-account-admin
 title: Refresh iOS setup/login, update, account, members, and secrets surfaces
-status: running
+status: submitted
 dependsOn:
   - ios-foundation-components
   - ios-identity-startup-history
@@ -32,3 +32,4 @@ runtime:
   worktree: /Users/kevinye/Development/sentient/.worktree/pibox/design-refresh/ios-access-account-admin
   baseCommit: 70b8de316bd0b086928bfea97f348f9ded13992c
   lastRunId: 1b728317-2638-478c-8f6f-2e7d63746daf
+  completedCommit: 4d3b8add849452891d060817448d86b69d1e6d12
