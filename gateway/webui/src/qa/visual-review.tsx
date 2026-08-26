@@ -3,6 +3,7 @@ import { useEffect } from "preact/hooks";
 import "../styles/tokens/index.css";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
+import "../components/common/composites.css";
 import "../components/chat/chat-messages.css";
 import "./visual-review.css";
 import { AsyncState, Notice } from "../components/common/composites.tsx";

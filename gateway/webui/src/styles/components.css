@@ -299,130 +299,7 @@ html.is-paused *::after {
   .topbar__nav { order: 10; width: 100%; justify-content: center; }
 }
 
-/* ─── AvatarTile ─── */
-
-.avatar-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-sm);
-  padding: var(--space-md) var(--space-lg);
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-.avatar-tile:hover {
-  background: var(--color-bg-elev);
-  border-color: var(--color-line-soft);
-}
-.avatar-tile:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-.avatar-tile__circle {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-display);
-  font-size: var(--font-size-xl);
-  font-weight: 500;
-  border: 1px solid var(--color-line-soft);
-  background: var(--color-bg-elev);
-  color: var(--color-ink-2);
-}
-.avatar-tile__circle--tint-terra {
-  background: var(--color-accent-50);
-  border-color: color-mix(in oklab, var(--color-accent) 20%, transparent);
-  color: var(--color-accent);
-}
-.avatar-tile__circle--tint-sage {
-  background: var(--color-sage-soft);
-  border-color: color-mix(in oklab, var(--color-sage) 35%, transparent);
-  color: var(--color-sage);
-}
-.avatar-tile__circle--tint-amber {
-  background: color-mix(in oklab, var(--color-amber) 20%, var(--color-bg-elev));
-  border-color: color-mix(in oklab, var(--color-amber) 30%, transparent);
-  color: var(--color-amber);
-}
-.avatar-tile__circle--tint-clay {
-  background: color-mix(in oklab, var(--color-clay) 14%, var(--color-bg-elev));
-  border-color: color-mix(in oklab, var(--color-clay) 30%, transparent);
-  color: var(--color-clay);
-}
-.avatar-tile__name {
-  font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
-  color: var(--color-ink-2);
-  text-align: center;
-}
-
-/* ─── PinPad ─── */
-
-.pin-pad {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-lg);
-}
-.pin-pad__dots {
-  display: flex;
-  gap: var(--space-md);
-  justify-content: center;
-}
-.pin-pad__dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--color-bg-sunk);
-  border: 1px solid var(--color-line-soft);
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-.pin-pad__dot--filled {
-  background: var(--color-ink);
-  border-color: var(--color-ink);
-}
-.pin-pad__keys {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-sm);
-}
-.pin-pad__key {
-  width: 64px;
-  height: 48px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-elev);
-  border: 1px solid var(--color-line-soft);
-  color: var(--color-ink);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-lg);
-  cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-.pin-pad__key:hover {
-  background: var(--color-paper);
-  border-color: var(--color-line);
-}
-.pin-pad__key:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-.pin-pad__key--blank {
-  visibility: hidden;
-  pointer-events: none;
-}
-.pin-pad__key--delete {
-  font-size: var(--font-size-base);
-  color: var(--color-ink-3);
-}
+/* Auth identity and PIN controls consume the shared composites in components/common. */
 
 /* ─── Shared setup/auth gates ─── */
 .auth-gate {
@@ -447,7 +324,7 @@ html.is-paused *::after {
   /* min-height: 100% resolves to 0 because #app has no explicit height — use the viewport. */
   min-height: 100vh;
   min-height: 100dvh;
-  padding: var(--space-xl);
+  padding: var(--space-lg);
 }
 .login-screen__card {
   width: 100%;
@@ -465,6 +342,9 @@ html.is-paused *::after {
 .login-screen__card--loading {
   padding: var(--space-3xl) var(--space-xl);
 }
+.login-screen__card--profiles {
+  max-width: 1156px;
+}
 .login-screen__title {
   font-family: var(--font-display);
   font-weight: 400;
@@ -473,19 +353,7 @@ html.is-paused *::after {
   text-align: center;
   margin: 0;
 }
-.login-screen__grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  justify-content: center;
-  width: 100%;
-}
-.login-screen__error {
-  color: var(--color-stop);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  margin: 0;
-}
+.login-screen__grid { width: 100%; }
 .login-screen__back {
   align-self: flex-start;
   padding: var(--space-sm) var(--space-md);

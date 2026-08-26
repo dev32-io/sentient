@@ -1,6 +1,7 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useId, useRef, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { ActionButton, Field, type FieldProps, Plate, ProgressControl } from "./foundation.tsx";
+import { BackspaceIcon } from "./icons/backspace.tsx";
 import { SearchIcon } from "./icons/search.tsx";
 
 function classes(...values: Array<string | false | null | undefined>): string {
@@ -74,6 +75,129 @@ export function SettingsRow({ label, hint, children, vertical, dirty }: Settings
     <div class={classes("snt-settings-row", vertical && "snt-settings-row--vertical")}>
       <div><div class="snt-settings-row__label">{label}{dirty && <span class="snt-kicker"> · Changed</span>}</div>{hint && <p class="snt-settings-row__hint">{hint}</p>}</div>
       <div>{children}</div>
+    </div>
+  );
+}
+
+export interface DominantVisualCardProps {
+  label: string;
+  description?: string | undefined;
+  visual: ComponentChildren;
+  ariaLabel?: string | undefined;
+  className?: string | undefined;
+  onActivate: () => void;
+}
+
+export function DominantVisualCard({ label, description, visual, ariaLabel, className, onActivate }: DominantVisualCardProps): JSX.Element {
+  return (
+    <button type="button" class={classes("snt-media-card", className)} aria-label={ariaLabel} onClick={onActivate}>
+      <span class="snt-media-card__visual">{visual}</span>
+      <span class="snt-media-card__copy">
+        <strong class="snt-media-card__label">{label}</strong>
+        {description && <small class="snt-media-card__description">{description}</small>}
+      </span>
+    </button>
+  );
+}
+
+const PIN_LENGTH = 4;
+const PIN_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "delete"] as const;
+
+export interface PinKeypadProps {
+  onSubmit: (pin: string) => void;
+  resetSignal?: number | undefined;
+  error?: string | undefined;
+}
+
+export function PinKeypad({ onSubmit, resetSignal, error }: PinKeypadProps): JSX.Element {
+  const [digits, setDigits] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [dismissedErrorRevision, setDismissedErrorRevision] = useState<number | null>(null);
+  const feedbackRevision = resetSignal ?? 0;
+  const showError = Boolean(error) && dismissedErrorRevision !== feedbackRevision;
+
+  useEffect(() => {
+    setSubmitted(false);
+    setDismissedErrorRevision(null);
+    if (!error) setDigits("");
+  }, [resetSignal, error]);
+
+  const handleKey = (key: string): void => {
+    if (submitted) return;
+
+    let current = digits;
+    if (showError) {
+      current = "";
+      setDigits("");
+      setDismissedErrorRevision(feedbackRevision);
+    }
+
+    if (key === "delete") {
+      setDigits(current.slice(0, -1));
+      return;
+    }
+    if (!/^\d$/.test(key) || current.length >= PIN_LENGTH) return;
+
+    const next = current + key;
+    setDigits(next);
+    if (next.length === PIN_LENGTH) {
+      setSubmitted(true);
+      onSubmit(next);
+    }
+  };
+
+  const state = showError ? "error" : submitted ? "checking" : digits.length > 0 ? "active" : "idle";
+  const status = showError
+    ? error
+    : submitted
+      ? "Checking PIN…"
+      : digits.length > 0
+        ? `${digits.length} of ${PIN_LENGTH} digits entered.`
+        : "Enter your four-digit PIN.";
+
+  return (
+    <div
+      class="snt-pin-keypad"
+      data-state={state}
+      onKeyDown={(event) => {
+        if (/^\d$/.test(event.key)) {
+          event.preventDefault();
+          handleKey(event.key);
+        } else if (event.key === "Backspace" || event.key === "Delete") {
+          event.preventDefault();
+          handleKey("delete");
+        }
+      }}
+    >
+      <div
+        key={`pin-feedback-${feedbackRevision}`}
+        class="snt-pin-keypad__progress"
+        role="status"
+        aria-live="polite"
+        aria-label={digits.length > 0 ? `${digits.length} of ${PIN_LENGTH} digits entered` : "No digits entered"}
+      >
+        {Array.from({ length: PIN_LENGTH }, (_, index) => (
+          <span key={index} class="snt-pin-keypad__dot" data-filled={index < digits.length ? "true" : undefined} aria-hidden="true" />
+        ))}
+      </div>
+      <p class="snt-pin-keypad__status" role={showError ? "alert" : undefined} aria-live={showError ? "assertive" : undefined}>{status}</p>
+      <div class="snt-pin-keypad__keys" aria-label="PIN keypad">
+        {PIN_KEYS.map((key) => {
+          if (key === "") return <span key="blank" class="snt-pin-keypad__key snt-pin-keypad__key--blank" aria-hidden="true" />;
+          if (key === "delete") {
+            return (
+              <ActionButton key={key} className="snt-pin-keypad__key snt-pin-keypad__key--delete" disabled={submitted} onClick={() => handleKey(key)} ariaLabel="Delete last digit" title="Delete last digit">
+                <BackspaceIcon size={24} />
+              </ActionButton>
+            );
+          }
+          return (
+            <ActionButton key={key} className="snt-pin-keypad__key" disabled={submitted} onClick={() => handleKey(key)} ariaLabel={`PIN digit ${key}`} title={`PIN digit ${key}`}>
+              {key}
+            </ActionButton>
+          );
+        })}
+      </div>
     </div>
   );
 }

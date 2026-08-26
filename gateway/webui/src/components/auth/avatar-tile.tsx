@@ -1,6 +1,6 @@
 import type { JSX } from "preact";
-import type { AvatarTint } from "../common/avatar.tsx";
-import { ActionButton } from "../common/foundation.tsx";
+import { Avatar, type AvatarTint } from "../common/avatar.tsx";
+import { DominantVisualCard } from "../common/composites.tsx";
 
 export interface AvatarTileProps {
   userId: string;
@@ -17,20 +17,13 @@ export function AvatarTile({
 }: AvatarTileProps): JSX.Element {
   const initial = displayName.charAt(0).toUpperCase();
 
-  const handleClick = (): void => onSelect(userId);
-
   return (
-    <ActionButton
+    <DominantVisualCard
       className="avatar-tile"
-      variant="quiet"
-      onClick={handleClick}
+      label={displayName}
+      visual={<Avatar kind="user" initial={initial} name={displayName} tint={avatarTint} size="xl" />}
+      onActivate={() => onSelect(userId)}
       ariaLabel={`Continue as ${displayName}`}
-      title={`Continue as ${displayName}`}
-    >
-      <span class={`avatar-tile__circle avatar-tile__circle--tint-${avatarTint}`}>
-        {initial}
-      </span>
-      <span class="avatar-tile__name">{displayName}</span>
-    </ActionButton>
+    />
   );
 }

@@ -122,8 +122,7 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
           <ActionButton variant="quiet" className="login-screen__back" onClick={handleBack}>← Back to profiles</ActionButton>
           <h1 class="login-screen__title">Enter PIN for {stage.displayName}</h1>
           {notice && <Notice>{notice}</Notice>}
-          <PinPad onSubmit={handlePinSubmit} resetSignal={resetSignal} />
-          {pinError && <p class="login-screen__error" role="alert">{pinError}</p>}
+          <PinPad onSubmit={handlePinSubmit} resetSignal={resetSignal} error={pinError ?? undefined} />
         </Plate>
       </Surface>
     );
@@ -132,10 +131,10 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
   // Avatars grid (default)
   return (
     <Surface className="login-screen auth-gate">
-      <Plate className="login-screen__card auth-gate__card">
+      <Plate className="login-screen__card login-screen__card--profiles auth-gate__card">
         <h1 class="login-screen__title">Who's using Sentient?</h1>
         {notice && <Notice>{notice}</Notice>}
-        <div class="login-screen__grid">
+        <div class="login-screen__grid snt-media-card-grid">
           {users.map((user) => (
             <AvatarTile
               key={user.userId}

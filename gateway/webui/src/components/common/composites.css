@@ -1,0 +1,182 @@
+/* Shared WebUI composites. Product surfaces compose these classes rather than restyling them locally. */
+
+/* Dominant visual action card */
+.snt-media-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+.snt-media-card {
+  position: relative;
+  min-width: 0;
+  min-height: 220px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: var(--space-lg) 14px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--color-paper) 88%, var(--color-bg-elev));
+  color: var(--color-ink);
+  box-shadow: var(--plate-shadow);
+  text-align: center;
+  transform: translateY(0);
+  transition: background-color var(--motion-state), border-color var(--motion-state), transform var(--motion-feedback);
+}
+.snt-media-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--slate-ember-cast);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-state);
+}
+.snt-media-card__visual {
+  width: 104px;
+  height: 104px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+}
+.snt-media-card__visual .snt-avatar { --avatar-size: 82px; }
+.snt-media-card__copy {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: 3px;
+}
+.snt-media-card__label {
+  overflow: hidden;
+  color: var(--color-ink);
+  font: 500 var(--font-size-lg) / 1.25 var(--font-display);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snt-media-card__description {
+  overflow: hidden;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 620px) {
+  .snt-media-card-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .snt-media-card:hover {
+    border-color: var(--color-line);
+    background: color-mix(in oklab, var(--color-paper) 82%, var(--color-bg-elev));
+    transform: translateY(-1px);
+  }
+  .snt-media-card:hover::after { opacity: 1; }
+}
+.snt-media-card:active {
+  box-shadow: var(--slate-shadow-pressed);
+  transform: translateY(1px);
+}
+
+/* PIN keypad */
+.snt-pin-keypad {
+  --pin-checking-cycle: 900ms ease-in-out;
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: var(--space-lg);
+}
+.snt-pin-keypad__progress {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-md);
+}
+.snt-pin-keypad__dot {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 50%;
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  transform: scale(1);
+  transition: background-color var(--motion-state), border-color var(--motion-state), box-shadow var(--motion-state), transform var(--motion-state);
+}
+.snt-pin-keypad__dot[data-filled="true"] {
+  border-color: color-mix(in oklab, var(--color-accent) 62%, var(--color-line));
+  background: var(--color-accent);
+  box-shadow: 0 0 10px -3px var(--color-accent);
+  transform: scale(1.06);
+}
+.snt-pin-keypad[data-state="checking"] .snt-pin-keypad__dot {
+  animation: snt-pin-keypad-live var(--pin-checking-cycle) infinite;
+}
+.snt-pin-keypad[data-state="error"] .snt-pin-keypad__progress {
+  animation: snt-pin-keypad-error var(--motion-state) both;
+}
+.snt-pin-keypad[data-state="error"] .snt-pin-keypad__dot {
+  border-color: color-mix(in oklab, var(--color-stop) 74%, var(--color-line));
+  background: var(--color-stop);
+  box-shadow: 0 0 10px -3px var(--color-stop);
+}
+.snt-pin-keypad__status {
+  min-height: 20px;
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  transition: color var(--motion-feedback);
+}
+.snt-pin-keypad[data-state="error"] .snt-pin-keypad__status {
+  color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink));
+}
+.snt-pin-keypad__keys {
+  width: min(276px, 100%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.snt-pin-keypad__key.snt-button {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
+  font-weight: 500;
+}
+.snt-pin-keypad__key--blank {
+  visibility: hidden;
+  pointer-events: none;
+}
+.snt-pin-keypad__key--delete.snt-button {
+  color: var(--color-ink-2);
+}
+
+@keyframes snt-pin-keypad-live {
+  0%, 100% { opacity: .72; transform: scale(.94); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+@keyframes snt-pin-keypad-error {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(calc(-1 * var(--space-sm))); }
+  40% { transform: translateX(var(--space-sm)); }
+  60% { transform: translateX(calc(-1 * var(--space-xs))); }
+  80% { transform: translateX(var(--space-xs)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snt-media-card,
+  .snt-media-card::after,
+  .snt-pin-keypad__dot,
+  .snt-pin-keypad__progress,
+  .snt-pin-keypad__status {
+    animation: none !important;
+    transition-duration: .01ms !important;
+  }
+}
