@@ -2,7 +2,7 @@ schemaVersion: 1
 id: refresh-integration-closure
 title: Close the refresh inventory, remove legacy visual paths, and enforce
   migration boundaries
-status: blocked
+status: ready
 dependsOn:
   - design-foundation-v2
   - capture-protocol-gateway
