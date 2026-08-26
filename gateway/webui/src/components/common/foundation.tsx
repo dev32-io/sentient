@@ -93,19 +93,20 @@ interface FieldShellProps {
   label?: string | undefined;
   hint?: string | undefined;
   error?: string | undefined;
+  invalid?: boolean | undefined;
   id?: string | undefined;
   children: (ids: { id: string; describedBy?: string | undefined }) => ComponentChildren;
   className?: string | undefined;
 }
 
-function FieldShell({ label, hint, error, id: suppliedId, children, className }: FieldShellProps): JSX.Element {
+function FieldShell({ label, hint, error, invalid = false, id: suppliedId, children, className }: FieldShellProps): JSX.Element {
   const generatedId = useId();
   const id = suppliedId ?? generatedId;
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
   return (
-    <div class={classes("snt-field", className)} data-error={error ? "true" : undefined}>
+    <div class={classes("snt-field", className)} data-error={error || invalid ? "true" : undefined}>
       {label && <label class="snt-field__label" for={id}>{label}</label>}
       {children({ id, describedBy })}
       {hint && <span class="snt-field__hint" id={hintId}>{hint}</span>}
@@ -143,6 +144,31 @@ export function Field({ label, hint, error, id, className, inputClassName, input
   return (
     <FieldShell label={label} hint={hint} error={error} id={id} className={className}>
       {({ id: inputId, describedBy }) => <input {...input} {...(inputRef ? { ref: inputRef } : {})} id={inputId} aria-label={ariaLabel} aria-describedby={describedBy} class={classes("snt-input", inputClassName)} aria-invalid={Boolean(error) || undefined} />}
+    </FieldShell>
+  );
+}
+
+export interface TextFieldProps extends Omit<FieldProps, "inputClassName" | "inputRef"> {
+  prefix?: ComponentChildren | undefined;
+  suffix?: ComponentChildren | undefined;
+  monospace?: boolean | undefined;
+  fullWidth?: boolean | undefined;
+  invalid?: boolean | undefined;
+  inputClassName?: string | undefined;
+  inputRef?: { current: HTMLInputElement | null } | undefined;
+}
+
+/** A field with optional inline adornments; settings wrappers delegate here. */
+export function TextField({ prefix, suffix, monospace = false, fullWidth = false, invalid = false, label, hint, error, id, className, inputClassName, inputRef, ariaLabel, ...input }: TextFieldProps): JSX.Element {
+  return (
+    <FieldShell label={label} hint={hint} error={error} invalid={invalid} id={id} className={classes(className, fullWidth && "snt-field--full")}>
+      {({ id: inputId, describedBy }) => (
+        <span class={classes("snt-input-group", monospace && "snt-input-group--mono")}>
+          {prefix && <span class="snt-input-group__prefix">{prefix}</span>}
+          <input {...input} {...(inputRef ? { ref: inputRef } : {})} id={inputId} aria-label={ariaLabel} aria-describedby={describedBy} class={classes("snt-input-group__input", inputClassName)} aria-invalid={Boolean(error) || invalid || undefined} />
+          {suffix && <span class="snt-input-group__suffix">{suffix}</span>}
+        </span>
+      )}
     </FieldShell>
   );
 }

@@ -1,5 +1,5 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useRef, useState } from "preact/hooks";
+import { useId, useRef, useState } from "preact/hooks";
 import { ActionButton, Field, type FieldProps, Plate, ProgressControl } from "./foundation.tsx";
 import { SearchIcon } from "./icons/search.tsx";
 
@@ -108,6 +108,7 @@ export interface PinEntryProps {
 
 export function PinEntry({ value, onChange, length = 4, label = "PIN", disabled, autoFocus, error }: PinEntryProps): JSX.Element {
   const refs = useRef<Array<HTMLInputElement | null>>([]);
+  const errorId = `${useId()}-error`;
   const update = (index: number, digit: string): void => {
     if (!/^\d?$/.test(digit)) return;
     const next = Array.from({ length }, (_, position) => value[position] ?? "");
@@ -116,7 +117,7 @@ export function PinEntry({ value, onChange, length = 4, label = "PIN", disabled,
     if (digit) refs.current[Math.min(index + 1, length - 1)]?.focus();
   };
   return (
-    <fieldset class="snt-field" aria-describedby={error ? "snt-pin-error" : undefined}>
+    <fieldset class="snt-field" aria-describedby={error ? errorId : undefined}>
       <legend class="snt-field__label">{label}</legend>
       <div class="snt-pin">
         {Array.from({ length }, (_, index) => (
@@ -150,7 +151,7 @@ export function PinEntry({ value, onChange, length = 4, label = "PIN", disabled,
           />
         ))}
       </div>
-      {error && <span id="snt-pin-error" class="snt-field__error">{error}</span>}
+      {error && <span id={errorId} class="snt-field__error">{error}</span>}
     </fieldset>
   );
 }
@@ -183,6 +184,15 @@ export function SearchFilterBar({ value, onChange, placeholder = "Search", label
       {children}
     </div>
   );
+}
+
+export interface WipBadgeProps {
+  label?: string | undefined;
+  className?: string | undefined;
+}
+
+export function WipBadge({ label = "In progress", className }: WipBadgeProps): JSX.Element {
+  return <span class={classes("snt-wip-badge", "wip-badge", className)}>{label}</span>;
 }
 
 export interface NoticeProps {

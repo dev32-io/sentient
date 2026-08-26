@@ -1,0 +1,15 @@
+/*
+ * Transitional product aliases.
+ *
+ * The generated v2 projection is the only source of foundation values. These
+ * names exist only for product styles that have not yet moved to their
+ * semantic role; new components must use the generated names directly.
+ */
+:root {
+  --color-overlay-scrim: color-mix(in oklab, var(--color-bg-sunk) 78%, transparent);
+  --shadow-1: var(--plate-shadow);
+  --shadow-2: var(--float-shadow);
+  --shadow-inset: var(--well-shadow);
+  --motion-fast: var(--motion-feedback);
+  --motion-normal: var(--motion-state);
+}

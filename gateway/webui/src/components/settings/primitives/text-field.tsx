@@ -1,5 +1,33 @@
 import type { JSX } from "preact";
-export interface TextFieldProps { value: string; onChange: (event: Event) => void; placeholder?: string; prefix?: string; suffix?: string; type?: "text" | "password" | "email" | "tel"; monospace?: boolean; fullWidth?: boolean; error?: boolean; disabled?: boolean; }
+import { TextField as FoundationTextField } from "../../common/foundation.tsx";
+
+export interface TextFieldProps {
+  value: string;
+  onChange: (event: Event) => void;
+  placeholder?: string;
+  prefix?: string;
+  suffix?: string;
+  type?: "text" | "password" | "email" | "tel";
+  monospace?: boolean;
+  fullWidth?: boolean;
+  error?: boolean;
+  disabled?: boolean;
+}
+
+/** Compatibility wrapper; adornments and input semantics live in the common field. */
 export function TextField({ value, onChange, placeholder, prefix, suffix, type = "text", monospace, fullWidth, error, disabled }: TextFieldProps): JSX.Element {
-  return <div class={`snt-filter-bar${fullWidth ? " full" : ""}`} data-error={error ? "true" : undefined}>{prefix && <span class="snt-kicker">{prefix}</span>}<input class={`snt-input${monospace ? " mono" : ""}`} type={type} value={value ?? ""} onInput={(event) => onChange(event)} placeholder={placeholder} aria-invalid={error || undefined} disabled={disabled} />{suffix && <span class="snt-kicker">{suffix}</span>}</div>;
+  return (
+    <FoundationTextField
+      value={value ?? ""}
+      onInput={(event) => onChange(event as unknown as Event)}
+      placeholder={placeholder}
+      prefix={prefix}
+      suffix={suffix}
+      type={type}
+      monospace={monospace}
+      fullWidth={fullWidth}
+      invalid={error}
+      disabled={disabled}
+    />
+  );
 }

@@ -2,8 +2,8 @@ import { fireEvent, render, screen } from "@testing-library/preact";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PinEntry, SearchFilterBar } from "./composites.tsx";
-import { ActionButton, CheckboxControl, Field, SelectControl, ToggleControl } from "./foundation.tsx";
+import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
+import { ActionButton, CheckboxControl, Field, SelectControl, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -38,6 +38,13 @@ describe("Web foundation controls", () => {
     const button = screen.getByRole("button", { name: "Save changes" });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(button.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("delegates adorned fields and badges to shared semantic primitives", () => {
+    render(<div><TextField value="draft" prefix="ID" suffix=".local" invalid /><WipBadge /></div>);
+    expect(screen.getByRole("textbox").classList.contains("snt-input-group__input")).toBe(true);
+    expect(screen.getByRole("textbox").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText("In progress").classList.contains("snt-wip-badge")).toBe(true);
   });
 
   it("supports PIN keyboard movement and a labelled native search", () => {

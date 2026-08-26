@@ -1,9 +1,2 @@
-import type { JSX } from "preact";
-
-export interface WipBadgeProps {
-  label?: string;
-}
-
-export function WipBadge({ label = "In progress" }: WipBadgeProps): JSX.Element {
-  return <span class="wip-badge">{label}</span>;
-}
+export { WipBadge } from "../../common/composites.tsx";
+export type { WipBadgeProps } from "../../common/composites.tsx";

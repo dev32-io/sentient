@@ -20,34 +20,6 @@
   outline-offset: 3px;
 }
 
-/* Resolve the concave face on each component so semantic --slate-base values
-   participate in the gradient instead of inheriting the default paper face. */
-:is(.snt-button, .snt-icon-button, .snt-chip, .snt-toggle, .snt-segment, .snt-segmented, .snt-avatar--user) {
-  --slate-face:
-    radial-gradient(
-      ellipse 82% 105% at 50% 52%,
-      color-mix(in oklab, var(--slate-base, var(--color-paper)) 80%, var(--color-bg-sunk)) 0%,
-      color-mix(in oklab, var(--slate-base, var(--color-paper)) 88%, var(--color-bg-sunk)) 42%,
-      transparent 76%
-    ),
-    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 96%, var(--color-ink)), var(--slate-base, var(--color-paper)));
-  --slate-face-hover:
-    radial-gradient(
-      ellipse 82% 105% at 50% 52%,
-      color-mix(in oklab, var(--slate-base, var(--color-paper)) 77%, var(--color-bg-sunk)) 0%,
-      color-mix(in oklab, var(--slate-base, var(--color-paper)) 86%, var(--color-bg-sunk)) 42%,
-      transparent 76%
-    ),
-    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-paper)) 94%, var(--color-ink)), color-mix(in oklab, var(--slate-base, var(--color-paper)) 97%, var(--slate-glow, var(--color-accent))));
-  --slate-face-muted:
-    radial-gradient(
-      ellipse 82% 105% at 50% 52%,
-      color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 84%, var(--color-bg-sunk)) 0%,
-      transparent 74%
-    ),
-    linear-gradient(180deg, color-mix(in oklab, var(--slate-base, var(--color-bg-elev)) 97%, var(--color-ink-4)), var(--slate-base, var(--color-bg-elev)));
-}
-
 /* Type hierarchy copied from the current design tokens and settings surfaces. */
 .snt-page-title {
   margin: 0;
@@ -227,6 +199,47 @@
   background: var(--well-face);
   box-shadow: var(--well-shadow-focus);
 }
+.snt-field--full { width: 100%; }
+.snt-input-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 40px;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  transition: border-color var(--motion-feedback), box-shadow var(--motion-state), background var(--motion-feedback);
+}
+.snt-input-group:focus-within {
+  border-color: color-mix(in oklab, var(--color-accent) 56%, var(--color-line));
+  box-shadow: var(--well-shadow-focus);
+}
+.snt-input-group__prefix,
+.snt-input-group__suffix {
+  flex: 0 0 auto;
+  color: var(--color-ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.snt-input-group__input {
+  min-width: 0;
+  min-height: 38px;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+}
+.snt-input-group--mono .snt-input-group__input { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.snt-input-group__input::placeholder { color: var(--color-ink-3); }
+.snt-input-group[data-error="true"],
+.snt-field[data-error="true"] .snt-input-group { border-color: var(--color-stop); }
+.snt-input-group__input:disabled { color: var(--color-ink-4); cursor: not-allowed; opacity: .62; }
 
 /* Range: recessed track with restrained ember progress and an elevated-slate thumb. */
 .snt-range-row { min-height: 44px; display: grid; grid-template-columns: minmax(120px, 1fr) auto; align-items: center; gap: 12px; }
@@ -505,7 +518,6 @@
 .snt-avatar--sentient sentient-avatar { --sentient-avatar-size: 100%; width: 100%; height: 100%; }
 
 @media (hover: none), (max-width: 620px) {
-  :root { --control-height: 44px; }
   .snt-button, .snt-icon-button { min-height: 44px; }
   .snt-icon-button { width: 44px; }
   .snt-chip { min-height: 38px; }
@@ -562,6 +574,17 @@
 .snt-notice { padding: var(--space-md); border: 1px solid var(--color-line-soft); border-radius: var(--radius-sm); background: var(--color-bg-elev); color: var(--color-ink-2); }
 .snt-notice--error { border-color: color-mix(in oklab, var(--color-stop) 55%, var(--color-line)); color: var(--color-ink); }
 .snt-notice--success { border-color: color-mix(in oklab, var(--color-ok) 55%, var(--color-line)); }
+.snt-wip-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--color-amber);
+  color: var(--color-bg);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
 .snt-async-state { display: grid; place-items: center; gap: var(--space-md); min-height: 120px; padding: var(--space-xl); text-align: center; }
 .snt-pin { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
 .snt-pin .snt-input { width: 48px; min-height: 48px; padding-inline: 0; text-align: center; font-family: var(--font-mono); }
@@ -591,6 +614,7 @@
 .snt-select-menu__options { position: absolute; z-index: 30; top: calc(100% + var(--space-xs)); left: 0; right: 0; display: grid; gap: var(--space-xs); max-height: 280px; overflow-y: auto; padding: var(--space-xs); border: 1px solid var(--color-line-soft); border-radius: var(--radius-sm); background: var(--color-paper); }
 .snt-select-menu__options .snt-button { width: 100%; justify-content: flex-start; }
 .snt-select-menu__options .snt-kicker { margin-left: auto; }
+.snt-select-menu__option--disabled { cursor: not-allowed; opacity: .58; }
 :is(.snt-button, .snt-icon-button, .snt-toggle, .snt-segment, .snt-chip):focus-visible,
 .snt-checkbox > input:focus-visible + .snt-checkbox__box {
   outline: 2px solid var(--color-accent);
