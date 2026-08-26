@@ -344,6 +344,9 @@ html.is-paused *::after {
 }
 .login-screen__card--profiles {
   max-width: 1156px;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 .login-screen__title {
   font-family: var(--font-display);
