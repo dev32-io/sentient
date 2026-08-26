@@ -2225,7 +2225,7 @@
         "design/prototype/chat-composer/README.md",
         "design/prototype/chat-composer/handoff.md"
       ],
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "taskOwner": "refresh-web-chat-composer",
       "functionalProof": [
         "REVIEW:web-voice-user-owned"
@@ -2243,7 +2243,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "gateway/webui/src/components/dock/mic-corner.tsx"
+        "gateway/webui/src/components/dock/voice-capture-control.tsx"
       ],
       "assetCopies": []
     },
@@ -2260,7 +2260,7 @@
         "design/prototype/chat-composer/README.md",
         "design/prototype/chat-composer/handoff.md"
       ],
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "taskOwner": "refresh-web-chat-composer",
       "functionalProof": [
         "REVIEW:web-voice-user-owned"
@@ -2278,7 +2278,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "gateway/webui/src/components/dock/mic-corner.tsx"
+        "gateway/webui/src/components/dock/voice-capture-control.tsx"
       ],
       "assetCopies": []
     },
@@ -2295,7 +2295,7 @@
         "design/prototype/chat-composer/README.md",
         "design/prototype/chat-composer/handoff.md"
       ],
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "taskOwner": "refresh-web-chat-composer",
       "functionalProof": [
         "REVIEW:web-voice-user-owned"
@@ -2313,7 +2313,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "gateway/webui/src/components/dock/mic-corner.tsx"
+        "gateway/webui/src/components/dock/voice-capture-control.tsx"
       ],
       "assetCopies": []
     },
@@ -2330,7 +2330,7 @@
         "design/prototype/chat-composer/README.md",
         "design/prototype/chat-composer/handoff.md"
       ],
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "taskOwner": "refresh-web-chat-composer",
       "functionalProof": [
         "REVIEW:web-voice-user-owned"
@@ -2348,7 +2348,7 @@
       "status": "planned",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "gateway/webui/src/components/dock/mic-corner.tsx"
+        "gateway/webui/src/components/dock/voice-capture-control.tsx"
       ],
       "assetCopies": []
     },

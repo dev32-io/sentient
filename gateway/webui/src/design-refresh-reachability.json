@@ -319,22 +319,22 @@
     },
     {
       "id": "web.composer.mic",
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "reachable": true
     },
     {
       "id": "web.composer.mic.hold",
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "reachable": true
     },
     {
       "id": "web.composer.mic.locked",
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "reachable": true
     },
     {
       "id": "web.composer.mic.error",
-      "implementationPath": "gateway/webui/src/components/dock/mic-corner.tsx",
+      "implementationPath": "gateway/webui/src/components/dock/voice-capture-control.tsx",
       "reachable": true
     },
     {
