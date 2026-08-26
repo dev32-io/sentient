@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: integration-closure
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -31,8 +31,8 @@ criteria:
   - No Android UI changes, no production/audio/network-disruption verification,
     and readiness for E2E-001..009
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: f2b0cea4-efc7-4116-b8d8-7f2d2f82926f
   reviewedCommit: 8f0215d4c42e1bb5d4ed3e40161c0dfd04603ed7
@@ -47,6 +47,7 @@ loop:
     hanging capture/transport adapter proving bounded completion, prompt
     callback behavior, no deadlock, and no post-terminal frames. Keep Android
     visual/UI files unchanged."
+  fixerAgentId: db78f57d-deca-434e-8830-81fcc048fc61
 findings:
   - id: F-001
     severity: high
