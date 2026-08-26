@@ -12,6 +12,7 @@ import {
   type EventPreviewViewport,
 } from "./event-preview-position.ts";
 import type { ProjectedCalendarOccurrence } from "./calendar-projection-types.ts";
+import { EventPreviewContent } from "./event-preview-content.tsx";
 import "./event-preview.css";
 
 const FOCUSABLE_SELECTOR = [
@@ -253,7 +254,9 @@ export function EventPreview({
     wasOpenRef.current = true;
     setTriggerExpanded(activeAnchorRef.current, true, id);
     const root = previewRef.current;
-    const initial = root?.querySelector<HTMLElement>("[data-event-preview-initial-focus]") ?? root;
+    const initial = root?.querySelector<HTMLElement>("[data-event-preview-initial-focus]")
+      ?? root?.querySelector<HTMLElement>("button")
+      ?? root;
     initial?.focus();
   }, [id, isOpen, model, occurrenceKey, resolvedAnchorElement]);
 
@@ -395,8 +398,6 @@ export function EventPreview({
 
   const titleId = `${id}-title`;
   const descriptionId = `${id}-description`;
-  const when = model.details.find((item) => item.key === "when")?.value ?? "";
-  const detailRows = model.details.filter((item) => item.key !== "when");
   const placement = position?.placement ?? "right";
   const placementClass = placement === "right" ? "side-right" : placement === "left" ? "side-left" : "below";
   const style: EventPreviewStyle = {
@@ -436,52 +437,15 @@ export function EventPreview({
       tabIndex={-1}
     >
       <div class="event-preview__hero" aria-hidden="true" />
-      <div class="event-preview__body" data-scrollable="true">
-        <button
-          type="button"
-          class="event-preview__close"
-          aria-label="Close event details"
-          data-od-id="calendar-event-preview-close"
-          data-event-preview-initial-focus="true"
-          onClick={requestClose}
-        />
-        <p class="event-preview__kicker">Event preview</p>
-        <h2 class="event-preview__title" id={titleId}>{model.occurrence.title || "Event details"}</h2>
-        <p class="event-preview__time" aria-label={`When: ${when}`}><span class="event-preview__sr-only">When: </span>{when}</p>
-        {model.description && <p class="event-preview__description" id={descriptionId}>{model.description}</p>}
-        <dl class="event-preview__meta">
-          {detailRows.map((item) => (
-            <div class="event-preview__detail" data-detail-key={item.key} key={item.key}>
-              <dt>{item.label}</dt>
-              <dd>
-                {item.key === "tags" ? (
-                  <span class="event-preview__tags">
-                    {model.occurrence.tags.map((tag) => <span class="event-preview__tag" key={tag}>{tag}</span>)}
-                  </span>
-                ) : item.value}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <div class="event-preview__actions">
-          <button
-            type="button"
-            class="event-preview__action event-preview__action--edit"
-            disabled={!onEdit}
-            onClick={() => invokeAction(onEdit)}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            class="event-preview__action event-preview__action--delete"
-            disabled={!onDelete}
-            onClick={() => invokeAction(onDelete)}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
+      <EventPreviewContent
+        model={model}
+        titleId={titleId}
+        descriptionId={descriptionId}
+        onClose={requestClose}
+        onAction={invokeAction}
+        {...(onEdit === undefined ? {} : { onEdit })}
+        {...(onDelete === undefined ? {} : { onDelete })}
+      />
     </aside>
   );
 }
@@ -503,6 +467,8 @@ export type {
   EventPreviewModel,
   EventPreviewOccurrence,
 } from "./event-preview-details.ts";
+export { EventPreviewContent } from "./event-preview-content.tsx";
+export type { EventPreviewContentProps } from "./event-preview-content.tsx";
 export type {
   EventPreviewAnchorRect,
   EventPreviewPopoverSize,

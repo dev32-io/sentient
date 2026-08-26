@@ -80,7 +80,7 @@
   border: 1px solid var(--color-line-soft);
   border-radius: var(--radius-xl);
   background: var(--color-paper);
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--plate-shadow);
   text-align: center;
 }
 
@@ -122,6 +122,7 @@
   color: var(--color-ink);
   text-align: left;
   cursor: pointer;
+  box-shadow: none;
 }
 
 .calendar-overflow-dialog__event:hover {

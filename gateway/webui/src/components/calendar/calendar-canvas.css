@@ -151,8 +151,10 @@
   padding: 0;
   border: 0;
   background: transparent;
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
+  box-shadow: none;
 }
 
 .calendar-agenda-section__date-button strong {
@@ -220,9 +222,11 @@
   border-radius: var(--radius-sm);
   background: var(--color-paper);
   color: var(--color-ink);
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast), transform var(--motion-fast);
+  box-shadow: none;
+  transition: background var(--motion-feedback), border-color var(--motion-feedback), transform var(--motion-feedback);
 }
 
 .calendar-event-indicator:hover {
@@ -341,9 +345,10 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-ink-3);
-  font: var(--font-size-xs)/1 var(--font-mono);
+  font: 400 var(--font-size-xs)/1 var(--font-mono);
   text-align: left;
   cursor: pointer;
+  box-shadow: none;
 }
 
 .calendar-overflow-control:hover {
@@ -476,8 +481,9 @@
   border-radius: var(--radius-pill);
   background: transparent;
   color: var(--color-ink-3);
-  font: var(--font-size-xs)/1 var(--font-mono);
+  font: 400 var(--font-size-xs)/1 var(--font-mono);
   cursor: pointer;
+  box-shadow: none;
 }
 
 .calendar-day-cell__date:hover {

@@ -2,7 +2,6 @@ import type { JSX } from "preact";
 import { useCallback, useMemo, useRef, useState } from "preact/hooks";
 import { useAuth } from "../../hooks/use-auth.tsx";
 import {
-  type CalendarApi,
   type CalendarCreateInput,
   type CalendarEvent,
   type CalendarMutationCommand,
@@ -12,7 +11,6 @@ import {
   type CalendarTime,
 } from "../../services/calendar-api.ts";
 import { createCalendarApi } from "../../services/calendar-api.ts";
-import { Dialog } from "../common/dialog.tsx";
 import { CalendarCanvas } from "./calendar-canvas.tsx";
 import {
   EventEditor,
@@ -20,28 +18,24 @@ import {
   type CalendarEditorRequest,
 } from "./event-editor.tsx";
 import { EventPreview } from "./event-preview.tsx";
-import {
-  CalendarWorkspace,
-  type CalendarFilters,
-  type CalendarViewMode,
-} from "./calendar-shell.tsx";
+import { CalendarWorkspace } from "./calendar-workspace.tsx";
+import type { CalendarViewMode, CalendarViewProps } from "./calendar-product-api.ts";
 import {
   calendarCapabilityAllows,
   projectCalendarCapabilities,
-  type CalendarAccessCapabilities,
 } from "./calendar-access.ts";
 import {
   browserLocale,
   browserTimeZone,
-  formatAccessibleCalendarDate,
   localeWeekStart,
   todayCalendarDate,
   type CalendarDate,
 } from "./calendar-time.ts";
 import { projectCalendar } from "./calendar-projections.ts";
-import type { CalendarPreferenceStore } from "./calendar-preferences.ts";
 import type { CalendarCanvasSlotProps } from "./calendar-canvas-types.ts";
 import type { ProjectedCalendarOccurrence } from "./calendar-projection-types.ts";
+import { CalendarPermissionState, CalendarLoadingState, CalendarRouteNotice } from "./calendar-route-composites.tsx";
+import { CalendarOverflowDialog } from "./calendar-overlay-adapters.tsx";
 import { isCalendarPermissionError } from "./calendar-controller.ts";
 import { useCalendarController } from "./use-calendar-controller.tsx";
 import "./calendar-view.css";
@@ -54,23 +48,7 @@ export {
   parseCalendarInput,
 } from "./calendar-time.ts";
 
-export interface CalendarViewProps {
-  api?: CalendarApi;
-  token?: string;
-  /** Explicit capability projection for embedding and deterministic tests. */
-  capabilities?: CalendarAccessCapabilities;
-  accountId?: string;
-  backendId?: string;
-  backendUrl?: string;
-  baseUrl?: string;
-  preferenceStore?: CalendarPreferenceStore;
-  initialView?: CalendarViewMode;
-  initialAnchorDate?: string;
-  initialDate?: string;
-  initialFilters?: Partial<CalendarFilters>;
-  now?: () => Date;
-  weekStartsOn?: 0 | 1;
-}
+export type { CalendarViewProps } from "./calendar-product-api.ts";
 
 type PreviewState = {
   readonly occurrence: ProjectedCalendarOccurrence;
@@ -149,138 +127,6 @@ function legacyUpdatePatch(command: Extract<CalendarMutationCommand, { operation
     ...(command.scope === undefined ? {} : { scope: command.scope }),
     ...(command.expectedRevision === undefined ? {} : { expectedRevision: command.expectedRevision }),
   };
-}
-
-function permissionState(reason: "signin" | "calendar"): JSX.Element {
-  return (
-    <section class="calendar-route-state calendar-route-state--permission" data-calendar-permission-state={reason} aria-labelledby="calendar-permission-title">
-      <div class="calendar-route-state__card">
-        <p class="calendar-route-state__eyebrow">Calendar</p>
-        <h1 id="calendar-permission-title">{reason === "signin" ? "Sign in to view Calendar" : "Calendar access unavailable"}</h1>
-        <p>{reason === "signin" ? "Authenticate to see the calendars available to your account." : "This account cannot view the calendar right now."}</p>
-      </div>
-    </section>
-  );
-}
-
-function loadingState(): JSX.Element {
-  return (
-    <section class="calendar-route-state" data-calendar-route-loading aria-busy="true" aria-labelledby="calendar-loading-title">
-      <div class="calendar-route-state__card" role="status">
-        <p class="calendar-route-state__eyebrow">Calendar</p>
-        <h1 id="calendar-loading-title">Loading calendar</h1>
-        <p>Preparing your authorized calendar view.</p>
-      </div>
-    </section>
-  );
-}
-
-function CalendarRouteNotice({
-  errorCode,
-  hasData,
-  refreshing,
-  stale,
-  canEdit,
-  mutationNotice,
-  successorEventId,
-  onRetry,
-}: {
-  readonly errorCode: string | null;
-  readonly hasData: boolean;
-  readonly refreshing: boolean;
-  readonly stale: boolean;
-  readonly canEdit: boolean;
-  readonly mutationNotice: string | null;
-  readonly successorEventId: string | null;
-  readonly onRetry: () => void;
-}): JSX.Element | null {
-  const notices: JSX.Element[] = [];
-  if (errorCode && hasData) {
-    notices.push(
-      <div class="calendar-route-notice calendar-route-notice--stale" role="status" key="stale" data-calendar-state="stale">
-        <span>Showing the last saved calendar data.</span>
-        <button type="button" onClick={onRetry}>Try again</button>
-      </div>,
-    );
-  } else if (stale) {
-    notices.push(
-      <div class="calendar-route-notice calendar-route-notice--stale" role="status" key="stale-refreshing" data-calendar-state="stale">
-        <span>Showing saved events while Calendar refreshes.</span>
-      </div>,
-    );
-  } else if (refreshing) {
-    notices.push(
-      <div class="calendar-route-notice" role="status" key="refreshing" data-calendar-state="refreshing">
-        Refreshing Calendar…
-      </div>,
-    );
-  }
-  if (!hasData && errorCode && errorCode !== "forbidden") {
-    notices.push(
-      <div class="calendar-route-notice calendar-route-notice--error" role="alert" key="error" data-calendar-state="error">
-        <span>Calendar could not be loaded.</span>
-        <button type="button" onClick={onRetry}>Retry</button>
-      </div>,
-    );
-  }
-  if (!canEdit) {
-    notices.push(
-      <div class="calendar-route-notice calendar-route-notice--permission" role="status" key="permission" data-calendar-state="permission">
-        Calendar editing is unavailable for this session.
-      </div>,
-    );
-  }
-  if (mutationNotice) {
-    notices.push(
-      <div
-        class="calendar-route-notice calendar-route-notice--success"
-        role="status"
-        key="mutation"
-        data-calendar-state="mutation-success"
-        {...(successorEventId === null ? {} : { "data-successor-event-id": successorEventId })}
-      >
-        {mutationNotice}
-      </div>,
-    );
-  }
-  if (notices.length === 0) return null;
-  return <div class="calendar-route-notices" aria-live="polite">{notices}</div>;
-}
-
-function CalendarOverflowDialog({
-  state,
-  onClose,
-  onOpen,
-}: {
-  readonly state: OverflowState;
-  readonly onClose: () => void;
-  readonly onOpen: (event: ProjectedCalendarOccurrence, anchor: HTMLElement) => void;
-}): JSX.Element {
-  return (
-    <Dialog
-      title={`Events on ${formatAccessibleCalendarDate(state.date)}`}
-      description="Every event in this dense day remains available to open."
-      width={460}
-      inertBackground
-      onClose={onClose}
-      footer={<button type="button" class="app-dialog__btn app-dialog__btn--ghost" onClick={onClose}>Close</button>}
-    >
-      <div class="calendar-overflow-dialog__list" role="list" aria-label="Events in this day">
-        {state.events.map((event) => (
-          <div role="listitem" key={event.occurrenceId}>
-            <button
-              type="button"
-              class="calendar-overflow-dialog__event"
-              onClick={(e) => onOpen(event, e.currentTarget)}
-            >
-              <strong>{event.title}</strong>
-              <span>{event.start.label}</span>
-            </button>
-          </div>
-        ))}
-      </div>
-    </Dialog>
-  );
 }
 
 export function CalendarView({
@@ -471,9 +317,9 @@ export function CalendarView({
   const stateHasData = controller.dataInterval !== null;
   const errorCode = controller.error?.code ?? null;
   const authIsPending = auth.status === "boot" || auth.status === "authenticating";
-  if (authIsPending && !suppliedToken) return loadingState();
-  if (!token) return permissionState("signin");
-  if (permissionDenied) return permissionState("calendar");
+  if (authIsPending && !suppliedToken) return <CalendarLoadingState />;
+  if (!token) return <CalendarPermissionState reason="signin" />;
+  if (permissionDenied) return <CalendarPermissionState reason="calendar" />;
 
   const previewEdit = preview && calendarCapabilityAllows(capabilities, "update", preview.occurrence.scope)
     ? openEditorFor
@@ -495,32 +341,36 @@ export function CalendarView({
         onRetry={() => void controller.actions.refresh()}
       />
       <CalendarWorkspace
-        view={controller.view}
-        selectedView={controller.selectedView}
-        anchorDate={controller.anchorDate}
-        selectedDate={controller.selectedDate}
+        model={{
+          view: controller.view,
+          selectedView: controller.selectedView,
+          anchorDate: controller.anchorDate,
+          selectedDate: controller.selectedDate,
+          filters: controller.filters,
+          facets: controller.facets,
+          projection: richProjection as CalendarCanvasSlotProps["projection"],
+          resultCount: controller.filteredOccurrences.length,
+          liveAnnouncement: controller.liveAnnouncement,
+          loading: controller.loading,
+          refreshing: controller.refreshing,
+          emptyLabel: emptyLabel(controller.view),
+        }}
+        actions={{
+          onFiltersChange: controller.actions.setFilters,
+          onViewChange: (view) => void controller.actions.setView(view),
+          onPrevious: () => void controller.actions.previous(),
+          onNext: () => void controller.actions.next(),
+          onToday: () => void controller.actions.goToToday(),
+          onDateChange: (date) => void controller.actions.setAnchorDate(date),
+          onSelectDate: (date) => void controller.actions.selectDate(date),
+          onSelectMonth: (year, month) => void controller.actions.selectMonth(year, month),
+          onOpenEvent,
+          onOpenOverflow,
+          onAddEvent: controller.actions.openAddEvent,
+        }}
         weekStartsOn={weekStartsOn}
         locale={locale}
-        filters={controller.filters}
-        facets={controller.facets}
-        projection={richProjection as CalendarCanvasSlotProps["projection"]}
-        resultCount={controller.filteredOccurrences.length}
-        liveAnnouncement={controller.liveAnnouncement}
-        loading={controller.loading}
-        refreshing={controller.refreshing}
-        emptyLabel={emptyLabel(controller.view)}
         addEventDisabled={!canCreate}
-        onFiltersChange={controller.actions.setFilters}
-        onViewChange={(view) => void controller.actions.setView(view)}
-        onPrevious={() => void controller.actions.previous()}
-        onNext={() => void controller.actions.next()}
-        onToday={() => void controller.actions.goToToday()}
-        onDateChange={(date) => void controller.actions.setAnchorDate(date)}
-        onSelectDate={(date) => void controller.actions.selectDate(date)}
-        onSelectMonth={(year, month) => void controller.actions.selectMonth(year, month)}
-        onOpenEvent={onOpenEvent}
-        onOpenOverflow={onOpenOverflow}
-        onAddEvent={controller.actions.openAddEvent}
       >
         <CalendarCanvas />
       </CalendarWorkspace>

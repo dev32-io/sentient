@@ -183,7 +183,7 @@
   border-radius: var(--radius-sm);
   color: var(--color-ink-2);
   cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
+  transition: background var(--motion-feedback), border-color var(--motion-feedback), color var(--motion-feedback);
 }
 
 .calendar-editor__scope-option:hover {

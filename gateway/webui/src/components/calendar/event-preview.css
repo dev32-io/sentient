@@ -10,13 +10,13 @@
   border-radius: var(--radius-lg);
   background: var(--color-paper);
   color: var(--color-ink);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--float-shadow);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   opacity: 1;
   transform: translateY(0) scale(1);
   transform-origin: center;
-  transition: opacity var(--motion-fast), transform var(--motion-normal), border-color var(--motion-fast);
+  transition: opacity var(--motion-feedback), transform var(--motion-state), border-color var(--motion-feedback);
 }
 
 .event-preview::before {
@@ -98,7 +98,8 @@
   background: transparent;
   color: var(--color-ink-3);
   cursor: pointer;
-  transition: background var(--motion-fast), color var(--motion-fast);
+  box-shadow: none;
+  transition: background var(--motion-feedback), color var(--motion-feedback);
 }
 .event-preview__close::before,
 .event-preview__close::after {
@@ -198,7 +199,8 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast), transform var(--motion-fast);
+  box-shadow: none;
+  transition: background var(--motion-feedback), border-color var(--motion-feedback), color var(--motion-feedback), transform var(--motion-feedback);
 }
 .event-preview__action:hover:not(:disabled) { transform: translateY(-1px); }
 .event-preview__action--edit {
@@ -206,7 +208,7 @@
   color: var(--color-bg);
 }
 .event-preview__action--edit:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--color-accent) 88%, white);
+  background: color-mix(in oklab, var(--color-accent) 88%, var(--color-ink));
 }
 .event-preview__action--delete {
   border-color: color-mix(in oklab, var(--color-stop) 45%, var(--color-line));
