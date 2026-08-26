@@ -101,29 +101,52 @@ export function DominantVisualCard({ label, description, visual, ariaLabel, clas
 }
 
 const PIN_LENGTH = 4;
+/** Timing from the reviewed common-composites PIN sequence. */
+export const PIN_CHECKING_MIN_MS = 700;
+export const PIN_SUCCESS_TRANSITION_MS = 250;
+export const PIN_ERROR_FEEDBACK_MS = 250;
 const PIN_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "delete"] as const;
 
 export interface PinKeypadProps {
   onSubmit: (pin: string) => void;
   resetSignal?: number | undefined;
   error?: string | undefined;
+  success?: string | undefined;
 }
 
-export function PinKeypad({ onSubmit, resetSignal, error }: PinKeypadProps): JSX.Element {
+export function PinKeypad({ onSubmit, resetSignal, error, success }: PinKeypadProps): JSX.Element {
   const [digits, setDigits] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [dismissedErrorRevision, setDismissedErrorRevision] = useState<number | null>(null);
+  const [errorReadyKey, setErrorReadyKey] = useState<string | null>(null);
   const feedbackRevision = resetSignal ?? 0;
+  const errorFeedbackKey = `${feedbackRevision}:${error ?? ""}`;
   const showError = Boolean(error) && dismissedErrorRevision !== feedbackRevision;
+  const showSuccess = Boolean(success);
+  const errorReady = !showError || errorReadyKey === errorFeedbackKey;
 
   useEffect(() => {
-    setSubmitted(false);
     setDismissedErrorRevision(null);
+    if (success) {
+      setSubmitted(true);
+      return;
+    }
+    setSubmitted(false);
     if (!error) setDigits("");
-  }, [resetSignal, error]);
+  }, [resetSignal, error, success]);
+
+  useEffect(() => {
+    if (!showError) {
+      setErrorReadyKey(errorFeedbackKey);
+      return;
+    }
+    setErrorReadyKey(null);
+    const timer = window.setTimeout(() => setErrorReadyKey(errorFeedbackKey), PIN_ERROR_FEEDBACK_MS);
+    return () => window.clearTimeout(timer);
+  }, [showError, errorFeedbackKey]);
 
   const handleKey = (key: string): void => {
-    if (submitted) return;
+    if (submitted || showSuccess || (showError && !errorReady)) return;
 
     let current = digits;
     if (showError) {
@@ -146,14 +169,16 @@ export function PinKeypad({ onSubmit, resetSignal, error }: PinKeypadProps): JSX
     }
   };
 
-  const state = showError ? "error" : submitted ? "checking" : digits.length > 0 ? "active" : "idle";
-  const status = showError
-    ? error
-    : submitted
-      ? "Checking PIN…"
-      : digits.length > 0
-        ? `${digits.length} of ${PIN_LENGTH} digits entered.`
-        : "Enter your four-digit PIN.";
+  const state = showSuccess ? "success" : showError ? "error" : submitted ? "checking" : digits.length > 0 ? "active" : "idle";
+  const status = showSuccess
+    ? success
+    : showError
+      ? error
+      : submitted
+        ? "Checking PIN…"
+        : digits.length > 0
+          ? `${digits.length} of ${PIN_LENGTH} digits entered.`
+          : "Enter your four-digit PIN.";
 
   return (
     <div
@@ -174,7 +199,7 @@ export function PinKeypad({ onSubmit, resetSignal, error }: PinKeypadProps): JSX
         class="snt-pin-keypad__progress"
         role="status"
         aria-live="polite"
-        aria-label={digits.length > 0 ? `${digits.length} of ${PIN_LENGTH} digits entered` : "No digits entered"}
+        aria-label={showSuccess ? "PIN accepted" : digits.length > 0 ? `${digits.length} of ${PIN_LENGTH} digits entered` : "No digits entered"}
       >
         {Array.from({ length: PIN_LENGTH }, (_, index) => (
           <span key={index} class="snt-pin-keypad__dot" data-filled={index < digits.length ? "true" : undefined} aria-hidden="true" />
@@ -186,13 +211,13 @@ export function PinKeypad({ onSubmit, resetSignal, error }: PinKeypadProps): JSX
           if (key === "") return <span key="blank" class="snt-pin-keypad__key snt-pin-keypad__key--blank" aria-hidden="true" />;
           if (key === "delete") {
             return (
-              <ActionButton key={key} className="snt-pin-keypad__key snt-pin-keypad__key--delete" disabled={submitted} onClick={() => handleKey(key)} ariaLabel="Delete last digit" title="Delete last digit">
+              <ActionButton key={key} className="snt-pin-keypad__key snt-pin-keypad__key--delete" disabled={submitted || showSuccess || (showError && !errorReady)} onClick={() => handleKey(key)} ariaLabel="Delete last digit" title="Delete last digit">
                 <BackspaceIcon size={24} />
               </ActionButton>
             );
           }
           return (
-            <ActionButton key={key} className="snt-pin-keypad__key" disabled={submitted} onClick={() => handleKey(key)} ariaLabel={`PIN digit ${key}`} title={`PIN digit ${key}`}>
+            <ActionButton key={key} className="snt-pin-keypad__key" disabled={submitted || showSuccess || (showError && !errorReady)} onClick={() => handleKey(key)} ariaLabel={`PIN digit ${key}`} title={`PIN digit ${key}`}>
               {key}
             </ActionButton>
           );

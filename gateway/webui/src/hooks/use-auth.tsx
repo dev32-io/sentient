@@ -13,8 +13,13 @@ const log = createLogger(["sentient", "webui", "auth", "context"]);
 
 type AuthResult<T> = { ok: true; value: T } | { ok: false; error: AuthApiError };
 
+export interface AuthLoginOptions {
+  /** Resolve after client-owned verification feedback has been presented. */
+  beforeCommit?: () => void | Promise<void>;
+}
+
 type AuthContextValue = AuthState & {
-  login(input: { userId: string; pin: string }): Promise<AuthResult<{ token: string }>>;
+  login(input: { userId: string; pin: string }, options?: AuthLoginOptions): Promise<AuthResult<{ token: string }>>;
   setup(input: { userId: string; displayName: string; pin: string }): Promise<AuthResult<{ token: string }>>;
   logout(): Promise<void>;
   updateUser(user: AuthUser): void;
@@ -142,7 +147,7 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
     };
   }, [api]);
 
-  const login = async (input: { userId: string; pin: string }) => {
+  const login = async (input: { userId: string; pin: string }, options?: AuthLoginOptions) => {
     setState({ status: "authenticating" });
     const result = await api.login(input);
 
@@ -152,6 +157,7 @@ export function AuthProvider({ api, children }: AuthProviderProps) {
       return { ok: false as const, error: result.error };
     }
 
+    await options?.beforeCommit?.();
     log.debug("login-success", { userId: result.value.user.userId });
     persistToken(result.value.token);
     setState({

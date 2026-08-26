@@ -1,12 +1,16 @@
 import type { JSX } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { AuthApi, PublicUser } from "../../services/auth-api.js";
 import { AvatarTile } from "./avatar-tile.js";
 import { PinPad } from "./pin-pad.js";
 import { ActionButton, Plate, Surface } from "../common/foundation.tsx";
 import { GateState } from "../common/gate-state.tsx";
-import { Notice } from "../common/composites.tsx";
+import {
+  Notice,
+  PIN_CHECKING_MIN_MS,
+  PIN_SUCCESS_TRANSITION_MS,
+} from "../common/composites.tsx";
 
 const log = createLogger(["sentient", "webui", "auth", "login-screen"]);
 
@@ -18,7 +22,10 @@ export interface LoginScreenProps {
   api: AuthApi;
   notice?: string | undefined;
   auth: {
-    login(input: { userId: string; pin: string }): Promise<
+    login(
+      input: { userId: string; pin: string },
+      options?: { beforeCommit?: () => void | Promise<void> },
+    ): Promise<
       | { ok: true; value: { token: string } }
       | { ok: false; error: { status: number; code: string } }
     >;
@@ -40,11 +47,20 @@ type Stage =
 // Component
 // ---------------------------------------------------------------------------
 
+// Keep the client-side presentation window even when the gateway answers faster.
+function waitForMinimum(startedAt: number, minimumMs: number): Promise<void> {
+  const remaining = minimumMs - (Date.now() - startedAt);
+  if (remaining <= 0) return Promise.resolve();
+  return new Promise((resolve) => window.setTimeout(resolve, remaining));
+}
+
 export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Element {
   const [stage, setStage] = useState<Stage>({ view: "loading" });
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [pinSuccess, setPinSuccess] = useState<string | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
+  const pinAttemptRef = useRef(0);
 
   const fetchUsers = useCallback(async () => {
     setStage({ view: "loading" });
@@ -70,17 +86,34 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
   const handleSelectUser = useCallback((userId: string) => {
     const user = users.find((u) => u.userId === userId);
     if (!user) return;
+    pinAttemptRef.current += 1;
     log.debug("user-selected", { userId });
     setPinError(null);
+    setPinSuccess(null);
     setResetSignal((n) => n + 1);
     setStage({ view: "pin", userId: user.userId, displayName: user.displayName });
   }, [users]);
 
   const handlePinSubmit = useCallback(async (pin: string) => {
     if (stage.view !== "pin") return;
+    const attempt = ++pinAttemptRef.current;
+    const checkingStartedAt = Date.now();
     log.debug("pin-submit", { userId: stage.userId });
-    const result = await auth.login({ userId: stage.userId, pin });
+    const result = await auth.login(
+      { userId: stage.userId, pin },
+      {
+        beforeCommit: async () => {
+          await waitForMinimum(checkingStartedAt, PIN_CHECKING_MIN_MS);
+          if (pinAttemptRef.current !== attempt) return;
+          setPinSuccess("PIN accepted.");
+          await waitForMinimum(Date.now(), PIN_SUCCESS_TRANSITION_MS);
+        },
+      },
+    );
     if (!result.ok) {
+      await waitForMinimum(checkingStartedAt, PIN_CHECKING_MIN_MS);
+      if (pinAttemptRef.current !== attempt) return;
+      setPinSuccess(null);
       if (result.error.code === "invalid-credentials") {
         log.debug("wrong-pin", { userId: stage.userId });
         setPinError("Wrong PIN");
@@ -92,12 +125,14 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
       setResetSignal((n) => n + 1);
       return;
     }
-    // Success: auth state transitions to authenticated, parent unmounts us
+    // AuthProvider commits only after beforeCommit presents the success state.
     log.debug("login-success", { userId: stage.userId });
   }, [stage, auth]);
 
   const handleBack = useCallback(() => {
+    pinAttemptRef.current += 1;
     setPinError(null);
+    setPinSuccess(null);
     setStage({ view: "avatars" });
   }, []);
 
@@ -122,7 +157,7 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
           <ActionButton variant="quiet" className="login-screen__back" onClick={handleBack}>← Back to profiles</ActionButton>
           <h1 class="login-screen__title">Enter PIN for {stage.displayName}</h1>
           {notice && <Notice>{notice}</Notice>}
-          <PinPad onSubmit={handlePinSubmit} resetSignal={resetSignal} error={pinError ?? undefined} />
+          <PinPad onSubmit={handlePinSubmit} resetSignal={resetSignal} error={pinError ?? undefined} success={pinSuccess ?? undefined} />
         </Plate>
       </Surface>
     );

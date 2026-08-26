@@ -125,6 +125,11 @@
   background: var(--color-stop);
   box-shadow: 0 0 10px -3px var(--color-stop);
 }
+.snt-pin-keypad[data-state="success"] .snt-pin-keypad__dot {
+  border-color: var(--color-ok);
+  background: var(--color-ok);
+  box-shadow: none;
+}
 .snt-pin-keypad__status {
   min-height: 20px;
   margin: 0;
@@ -135,6 +140,9 @@
 }
 .snt-pin-keypad[data-state="error"] .snt-pin-keypad__status {
   color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink));
+}
+.snt-pin-keypad[data-state="success"] .snt-pin-keypad__status {
+  color: var(--color-ok);
 }
 .snt-pin-keypad__keys {
   width: min(276px, 100%);
