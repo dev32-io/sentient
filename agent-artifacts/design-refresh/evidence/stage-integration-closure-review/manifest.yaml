@@ -1,43 +1,50 @@
 schemaVersion: 1
 evaluation: stage-integration-closure-review
-recordedAt: 2026-08-26T00:58:27.343Z
+recordedAt: 2026-08-26T01:13:39.163Z
 entries:
-  - result: Passed; inventory closed, static boundaries passed, and deterministic
-      Rive SHA-256 matched
-      bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b.
-    command: bun run design:inventory:check && bun run design:foundation:check &&
-      bun run design:avatar:verify
-  - result: "Passed: gateway unit summary 2528 pass, 4 skipped, 0 fail."
-    command: bun run ci (fresh rerun)
-  - result: Passed; configured integration suite completed with Docker-only cases
-      skipped.
-    command: bun run test:int
+  - result: Inspected the complete bounded repair; no Android or iOS visual files
+      changed.
+    command: git diff 8f0215d4..ce4c13eb -- shared/mobile-data shared/mobile-sdk
+  - result: BUILD SUCCESSFUL; all selected KMP test tasks were freshly executed.
+    command: ./gradlew :shared:mobile-sdk:iosSimulatorArm64Test
+      :shared:mobile-sdk:testDebugUnitTest
+      :shared:mobile-data:iosSimulatorArm64Test
+      :shared:mobile-data:testDebugUnitTest --rerun-tasks
   - result: BUILD SUCCESSFUL.
     command: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
       :android:assembleDebug :android:testDebugUnitTest
-  - result: Setup succeeded; iOS tests succeeded (25 XCTest plus 114 Swift Testing
-      tests).
-    command: ./scripts/ios-setup.sh && xcodebuild test -project
-      ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS
-      Simulator,name=iPhone 16'
-  - result: Passed; Android source/resource baseline diff empty and no whitespace
-      errors.
-    command: Android baseline diff check and git diff --check
-  - result: Lines 203-205 wrap suspending teardown in unbounded runBlocking.
-    description: Changed synchronous compatibility wrapper.
-    path: files/001-7-ChatComponent.kt
-    checksum: sha256:c7caa7f26180dce53d6099022ec64150f207a8653d23d4dbd095b036894e112f
-  - result: Lines 434-443 wait for voice capture teardown before continuing.
-    description: SDK disconnect implementation.
-    path: files/001-8-SentientSdk.kt
-    checksum: sha256:c24356dbe21554e0c1f022da17b9c3bf4ef78761545696f1dd6b35bc6d3b42fa
-  - result: Lines 313-318 enqueue a barrier and await acknowledgement after ordered
-      terminal handling.
-    description: Capture teardown fence.
-    path: files/001-9-SdkVoice.kt
-    checksum: sha256:86fd70945e63b99e612a1daa9732f6aaba89aff0e92b5ac35232faf6670ac4b7
-  - result: Lines 236-239 invoke session teardown synchronously before navigating to
-      login.
-    description: Android logout call path.
-    path: files/001-10-AppNavHost.kt
-    checksum: sha256:cbea5589af5bb471f5168b40443dc806991bb088d0551d72237f720596c78cdf
+  - result: Passed; CI reported 2528 pass, 4 skipped, 0 fail. Integration command
+      completed with approved Docker-only skips.
+    command: bun run ci && bun run test:int
+  - result: Passed; canonical Rive SHA-256 remained
+      bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b.
+    command: bun run design:foundation:check && bun run design:avatar:verify && bun
+      run design:inventory:check
+  - result: Passed; no Android source/resource changes from the feature baseline and
+      no whitespace errors.
+    command: Android baseline exclusion and git diff --check
+  - result: Lines 208-247 remove runBlocking and use a component-owned asynchronous
+      lifecycle.
+    description: Prior finding repair.
+    path: files/002-7-ChatComponent.kt
+    checksum: sha256:39db3de93db5b6408e0a4e595c3dfc32592998a5209cedb814424b0277784a52
+  - result: Lines 293-303 launch transport close in the supplied scope without
+      timeout, join, or scope shutdown.
+    description: Transport close lifecycle.
+    path: files/002-8-SdkLifecycle.kt
+    checksum: sha256:b3b545fa8f2689c49e92d3945acb90417e2390b4359c73fe6951998a7fac4523
+  - result: Lines 199-202 create voiceLifecycleScope; lines 462-474 never cancel it
+      after launching transport close.
+    description: SDK-owned voice lifecycle and logout.
+    path: files/002-9-SentientSdk.kt
+    checksum: sha256:1491c85efd2eb23f24147c8ba9f03bc4e8aa36929e77eea92519a54430a471c0
+  - result: Lines 346-351 cancel only the consumer job and drain commands; they do
+      not cancel the owning lifecycle scope.
+    description: Voice lane shutdown behavior.
+    path: files/002-10-SdkVoice.kt
+    checksum: sha256:e2d844f3d53f0b62e913c028f75745bde1b7bf25d058be5236706dafc23705c9
+  - result: The test releases the stalled close immediately after disconnect returns
+      and does not assert close-job or scope cancellation.
+    description: Hanging transport test proof gap.
+    path: files/002-11-SentientSdkTest.kt
+    checksum: sha256:553bbf1479b380f3aa9cec22f64dcf3204ec1355eb7a82f05a1e1823270d5959
