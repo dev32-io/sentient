@@ -342,7 +342,7 @@ html.is-paused *::after {
 .login-screen__card--loading {
   padding: var(--space-3xl) var(--space-xl);
 }
-.login-screen__card--profiles {
+.snt-plate.login-screen__card--profiles {
   max-width: 1156px;
   background: transparent;
   border-color: transparent;
