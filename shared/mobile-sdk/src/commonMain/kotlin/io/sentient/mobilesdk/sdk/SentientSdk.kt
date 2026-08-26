@@ -39,6 +39,8 @@ import io.sentient.mobilesdk.voice.talk.TalkMode
 import io.sentient.mobilesdk.voice.talk.TalkModeController
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -53,6 +55,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 
 private const val DEFAULT_SESSIONS_TIMEOUT_MS = 5_000L
+private const val DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS = 1_000L
 
 /** A1: "stuck" only when a turn is active AND the socket is not healthy. A slow healthy
  *  turn stays READY and never arms — no content-frame false-positives. */
@@ -66,6 +69,7 @@ class SentientSdk(
     newId: () -> String = { Random.nextLong().toString(16) },
     private val delayFn: suspend (Long) -> Unit = { delay(it) },
     sessionsTimeoutMs: Long = DEFAULT_SESSIONS_TIMEOUT_MS,
+    private val captureTeardownTimeoutMs: Long = DEFAULT_CAPTURE_TEARDOWN_TIMEOUT_MS,
     /** REST client for session queries. Null in tests that don't exercise REST. */
     sessionsHttpClient: SessionsHttpClient? = null,
     /**
@@ -192,6 +196,11 @@ class SentientSdk(
         disarmPlayback = { voice.requestPlayback(false) },
     )
 
+    // The voice lane has an SDK-owned non-main lifecycle. Platform session owners may cancel
+    // their orchestration scope immediately after initiating logout; this scope survives just
+    // long enough for the bounded ordered cancel attempt, then [disconnect] shuts its lane.
+    private val voiceLifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     // Real-time voice-uplink pipeline (Task 9). Built like SdkAudio — BEFORE the
     // connector set, reaching connectors.audioInput via a lazy lambda. Null voiceAudio
     // (text/test path) → no pipeline; startMic/stopMic still send audio.start/end.
@@ -205,7 +214,8 @@ class SentientSdk(
         onUplinkStart = { capture, turnMode -> connectors.audioInput.startStreaming(capture, turnMode) },
         onUplinkBeginTerminal = { capture -> connectors.audioInput.beginTerminal(capture) },
         onUplinkTerminal = { capture, terminal -> connectors.audioInput.completeTerminal(capture, terminal) },
-        scope = scope,
+        onUplinkForceLocalTerminal = { generation -> connectors.audioInput.forceLocalTerminalCleanup(generation) },
+        scope = voiceLifecycleScope,
     )
 
     /** Reactive engine readiness (Idle → Configuring → Ready / Error). UI spinner off
@@ -440,13 +450,16 @@ class SentientSdk(
         // matching Cancel control complete while both the socket and SDK scope still exist.
         talkModeController.lifecycleCancel("disconnect")
         syncVoiceMode()
-        voice.cancelCaptureAndAwait()
+        val orderedCaptureTeardown = voice.cancelCaptureAndAwait(captureTeardownTimeoutMs)
+        if (!orderedCaptureTeardown) {
+            log.warn("capture.teardown-timeout", mapOf("timeoutMs" to captureTeardownTimeoutMs))
+        }
         reconnectController.cancel()
         connectors.sessions.reset()
         // Terminal teardown (logout) frees the native codecs; a transient disconnect
         // (reconnect) keeps them so TTS survives the next reconnect.
         if (clearSession) audio.dispose() else audio.suspendForReconnect()
-        lifecycle.teardown()
+        lifecycle.teardown(closeScope = voiceLifecycleScope)
         if (clearSession && deriver.hasSession) {
             log.info("hasSession.clear", mapOf("trigger" to "logout"))
             deriver.hasSession = false
@@ -458,6 +471,7 @@ class SentientSdk(
         }
         setStatus(SdkStatus.DISCONNECTED)
         stuckWatchdog.disarm()
+        if (clearSession) voice.shutdownLane()
     }
 
     /** Send user text (text.input). Mirrors web-sdk sendText. */

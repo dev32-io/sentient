@@ -44,6 +44,9 @@ class FakeWebSocketEngine : WebSocketEngine {
     /** All `allowSelfSignedDevHost` values passed to [open], in order. */
     val openedAllowSelfSigned: MutableList<Boolean> = mutableListOf()
 
+    /** Optional adapter seam for deterministic close-stall lifecycle tests. */
+    var beforeClose: suspend () -> Unit = {}
+
     /** The session minted by the most recent [open], or `null` before the first. */
     var current: Session? = null
         private set
@@ -88,7 +91,7 @@ class FakeWebSocketEngine : WebSocketEngine {
     override suspend fun open(url: String, allowSelfSignedDevHost: Boolean): WebSocketSession {
         openedUrls += url
         openedAllowSelfSigned += allowSelfSignedDevHost
-        val session = Session()
+        val session = Session(beforeClose)
         current = session
         return session
     }
@@ -98,7 +101,7 @@ class FakeWebSocketEngine : WebSocketEngine {
      * so [close] on this instance affects only this session's channel — never a
      * later session minted by a subsequent [open].
      */
-    class Session : WebSocketSession {
+    class Session(private val beforeClose: suspend () -> Unit = {}) : WebSocketSession {
         val sentText: MutableList<String> = mutableListOf()
         val sentBinary: MutableList<ByteArray> = mutableListOf()
         var closed: Pair<Int, String>? = null
@@ -131,6 +134,7 @@ class FakeWebSocketEngine : WebSocketEngine {
         }
 
         override suspend fun close(code: Int, reason: String) {
+            beforeClose()
             closed = Pair(code, reason)
             channel.close()
         }

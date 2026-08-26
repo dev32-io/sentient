@@ -52,13 +52,22 @@ class VoiceUplinkPipeline(
     }
 
     suspend fun stop() {
+        // Close the sink before waiting: cancellation is normally prompt, but even a
+        // non-cooperative encoder cannot publish another packet once terminal teardown starts.
+        capturePacketSink = null
         // cancelAndJoin (not cancel): wait for any in-flight onPcm encode on the
         // dispatcher thread to finish before encoder.reset(), so reset() can never
         // race a concurrent encode of the non-thread-safe encoder/Framer.
         job?.cancelAndJoin(); job = null
-        capturePacketSink = null
         encoder.reset()
         // No mic.stop() — configure(mic=false) owns teardown.
+    }
+
+    /** Timeout fallback: close the packet sink and request cancellation without joining. */
+    fun forceStop() {
+        capturePacketSink = null
+        job?.cancel()
+        job = null
     }
 
     private fun onPcm(pcm: ShortArray) {

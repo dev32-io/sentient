@@ -66,10 +66,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.uuid.ExperimentalUuidApi
@@ -98,7 +100,8 @@ class SdkVoice internal constructor(
     private val onUplinkStart: (CaptureToken, TurnMode) -> Boolean,
     private val onUplinkBeginTerminal: (CaptureToken) -> Boolean,
     private val onUplinkTerminal: (CaptureToken, CaptureTerminal) -> Unit,
-    scope: CoroutineScope,
+    private val onUplinkForceLocalTerminal: (Long) -> Unit = { _ -> },
+    private val scope: CoroutineScope,
     private val createCaptureId: () -> String = { randomCaptureId() },
     // Dedicated SERIAL dispatcher OFF the orchestrator scope: guarantees the
     // non-thread-safe Framer + Opus encoder are never accessed concurrently.
@@ -210,6 +213,7 @@ class SdkVoice internal constructor(
     // terminal intent win and lets Hold→Auto reserve its successor without overlap on apply.
     private var requestedCapture: CaptureToken? = null
     @Volatile private var acceptsCaptureRequests = true
+    @Volatile private var forceClosedGeneration = 0L
     private var nextCaptureGeneration = 0L
     private val allocatedCaptureIds = mutableSetOf<String>()
 
@@ -218,11 +222,17 @@ class SdkVoice internal constructor(
     // continuous/VPIO path, matching the pre-S3b default behavior.
     private var currentPath = VoiceAudioPath.Duplex
 
+    private var consumerJob: Job? = null
+
     init {
-        // ONE consumer on the orchestrator scope: pulls commands sequentially, so a
-        // Configure fully completes (engine reconfigured, collect job started or
-        // stopped, control frames sent) before the next runs — serial + ordered.
-        scope.launch {
+        startConsumer()
+    }
+
+    private fun startConsumer() {
+        if (consumerJob?.isActive == true) return
+        // ONE consumer on the SDK-owned voice lifecycle scope: pulls commands sequentially,
+        // so owner-scope cancellation cannot strand logout before its bounded fallback runs.
+        consumerJob = scope.launch {
             for (cmd in commands) {
                 when (cmd) {
                     is Cmd.Configure -> handle(cmd)
@@ -307,15 +317,38 @@ class SdkVoice internal constructor(
     }
 
     fun resumeAfterTeardown() {
+        startConsumer()
         acceptsCaptureRequests = true
     }
 
-    suspend fun cancelCaptureAndAwait() {
+    /**
+     * Attempt the fully ordered cancel fence, but never let a platform adapter hold logout
+     * forever. A timeout force-closes the local generation and packet sink; transport teardown
+     * may then proceed while a non-cooperative adapter unwinds on its abandoned coroutine.
+     */
+    suspend fun cancelCaptureAndAwait(timeoutMs: Long): Boolean {
         beginTeardown()
         requestCancel()
         val ack = CompletableDeferred<Unit>()
         commands.send(Cmd.Barrier(ack))
-        ack.await()
+        val ordered = withTimeoutOrNull(timeoutMs) { ack.await(); true } ?: false
+        if (!ordered) forceLocalTerminalCleanup()
+        return ordered
+    }
+
+    private fun forceLocalTerminalCleanup() {
+        forceClosedGeneration = nextCaptureGeneration
+        requestedCapture = null
+        pipeline?.forceStop()
+        onUplinkForceLocalTerminal(forceClosedGeneration)
+    }
+
+    /** End this voice lifecycle after terminal logout; reconnect starts a fresh consumer. */
+    fun shutdownLane() {
+        forceLocalTerminalCleanup()
+        consumerJob?.cancel()
+        consumerJob = null
+        while (commands.tryReceive().isSuccess) Unit
     }
 
     private fun requestTerminal(terminal: CaptureTerminal, playback: Boolean) {
@@ -408,7 +441,7 @@ class SdkVoice internal constructor(
             val capture = c.capture
             // audio.start BEFORE the engine + uplink come up. A start command without its
             // reserved generation is invalid and resolves locally without touching the engine.
-            if (micRising && (capture == null || !onUplinkStart(capture, c.turnMode ?: TurnMode.Semantic))) {
+            if (micRising && (capture == null || capture.generation <= forceClosedGeneration || !onUplinkStart(capture, c.turnMode ?: TurnMode.Semantic))) {
                 if (requestedCapture == capture) requestedCapture = null
                 return@runCatching
             }
@@ -445,7 +478,11 @@ class SdkVoice internal constructor(
                 return@runCatching
             }
             // Start the uplink collect once the mic tap is live, with a generation-latched sink.
-            if (micRising && capture != null) pipeline?.start { packet -> audioInput().sendAudioFrame(packet, capture) }
+            // A timeout may have force-closed this generation while configure was stuck; never
+            // resurrect its producer when a non-cooperative adapter eventually returns.
+            if (micRising && capture != null && capture.generation > forceClosedGeneration) {
+                pipeline?.start { packet -> audioInput().sendAudioFrame(packet, capture) }
+            }
             micOn = targetMic; playbackOn = c.playback; currentPath = targetPath
             // Terminal AFTER the uplink is down + configure settled (no late frame past it).
             if (micFalling && capture != null) onUplinkTerminal(capture, c.terminal ?: CaptureTerminal.Commit)

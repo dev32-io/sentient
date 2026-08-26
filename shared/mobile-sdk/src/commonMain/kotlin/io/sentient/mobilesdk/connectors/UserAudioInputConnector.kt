@@ -4,6 +4,7 @@ import io.sentient.mobilesdk.log.createLogger
 import io.sentient.mobilesdk.protocol.ClientMessage
 import io.sentient.mobilesdk.protocol.ServerMessage
 import io.sentient.mobilesdk.voice.talk.TurnMode
+import kotlin.concurrent.Volatile
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -23,7 +24,8 @@ class UserAudioInputConnector(
     private enum class Phase { Streaming, Terminating }
     private data class Active(val token: CaptureToken, var phase: Phase)
 
-    private var active: Active? = null
+    @Volatile private var active: Active? = null
+    @Volatile private var forceClosedThroughGeneration = 0L
     internal val hasActiveCapture: Boolean get() = active != null
     private var nextGeneration = 0L
     private val usedIds = mutableSetOf<String>()
@@ -37,7 +39,7 @@ class UserAudioInputConnector(
 
     /** Emits start only when terminal cleanup of the previous capture has completed. */
     internal fun startStreaming(token: CaptureToken, turnMode: TurnMode): Boolean {
-        if (active != null || token.id.isBlank() || !usedIds.add(token.id)) return false
+        if (token.generation <= forceClosedThroughGeneration || active != null || token.id.isBlank() || !usedIds.add(token.id)) return false
         active = Active(token, Phase.Streaming)
         send(ClientMessage.AudioStart(token.id, turnMode.wireValue))
         log.info("transition", mapOf("from" to "idle", "to" to "streaming", "generation" to token.generation, "turnMode" to turnMode.wireValue))
@@ -69,6 +71,17 @@ class UserAudioInputConnector(
             CaptureTerminal.Cancel -> send(ClientMessage.AudioCancel(token.id))
         }
         log.info("transition", mapOf("from" to "terminating", "to" to "idle", "generation" to token.generation, "terminal" to terminal.name))
+    }
+
+    /**
+     * Timeout fallback for terminal SDK teardown. The serialized lane normally emits the
+     * terminal before clearing this record. If an audio adapter never returns, clearing the
+     * local generation still closes the frame gate immediately; a late lane completion then
+     * observes no matching record and cannot emit a second terminal.
+     */
+    internal fun forceLocalTerminalCleanup(throughGeneration: Long) {
+        forceClosedThroughGeneration = maxOf(forceClosedThroughGeneration, throughGeneration)
+        active = null
     }
 
     /** Existing release behavior remains a commit. */

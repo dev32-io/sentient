@@ -293,11 +293,14 @@ class SdkLifecycle(
             status == SdkStatus.RECONNECTING
 
     /** Tear down the WS + all loops. Idempotent. */
-    fun teardown() {
+    fun teardown(closeScope: CoroutineScope = scope) {
         pumpJob?.cancel(); pumpJob = null
         val open = session
         if (open != null) {
-            scope.launch { open.close(WS_NORMAL_CLOSURE, "User disconnect") }
+            // Logout may be initiated immediately before the platform owner cancels [scope].
+            // Its SDK-owned close scope keeps this best-effort handshake alive without awaiting
+            // a transport adapter that can itself stall.
+            closeScope.launch { open.close(WS_NORMAL_CLOSURE, "User disconnect") }
         }
         transport = null
         session = null

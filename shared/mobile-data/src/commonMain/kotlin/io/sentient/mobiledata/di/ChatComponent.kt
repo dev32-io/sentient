@@ -20,11 +20,18 @@ import io.sentient.mobilesdk.sdk.SentientSdk
 import io.sentient.mobilesdk.util.Clock
 import io.sentient.mobilesdk.voice.io.MicLevelEnvelope
 import io.sentient.mobilesdk.voice.talk.TalkMode
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock as KtClock
 
 /**
@@ -50,6 +57,9 @@ open class ChatComponent(
      */
     private val loadAudioPreferences: (suspend () -> AudioPreferences?)? = null,
 ) {
+    private val disconnectLifecycle = AsyncDisconnectLifecycle { clearSession ->
+        sdk.disconnect(clearSession)
+    }
     // VM-facing repos are the pure SDK passthroughs: data in, data out, no accumulated
     // state. The active conversation is anchored by the SDK ([currentSessionId]); the
     // timeline is the SDK's in-memory fused stream — no client-side cache or anchor seam.
@@ -198,10 +208,11 @@ open class ChatComponent(
      * Tear down the WS + loops. [clearSession] true clears the in-session slice
      * (logout); false keeps the user in session (idle/pause).
      */
-    // Preserve the platform-facing synchronous contract while the SDK fences capture
-    // teardown asynchronously. Android can therefore remain byte-identical to its v1 UI.
-    fun disconnect(clearSession: Boolean = true) = runBlocking {
-        sdk.disconnect(clearSession)
+    // Preserve the platform-facing synchronous callback contract without parking its caller.
+    // The SDK's bounded ordered fence runs on this component-owned non-main lifecycle, which
+    // survives the platform owner cancelling its ordinary session scope immediately afterward.
+    fun disconnect(clearSession: Boolean = true) {
+        disconnectLifecycle.disconnect(clearSession)
     }
 
     /**
@@ -210,6 +221,32 @@ open class ChatComponent(
      * stable platform-facing teardown hook (call after [disconnect]); idempotent.
      */
     fun close() {
-        // Nothing client-scoped to release: the timeline is in-memory in the SDK.
+        disconnectLifecycle.closeAfterDisconnect()
+    }
+}
+
+/** Structured fire-and-finish lifecycle for the platform's synchronous logout callback. */
+internal class AsyncDisconnectLifecycle(
+    dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val teardown: suspend (Boolean) -> Unit,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
+    @Volatile private var closeRequested = false
+    @Volatile private var teardownJob: Job? = null
+
+    fun disconnect(clearSession: Boolean) {
+        if (teardownJob?.isActive == true) return
+        teardownJob = scope.launch {
+            try {
+                teardown(clearSession)
+            } finally {
+                if (closeRequested) scope.cancel()
+            }
+        }
+    }
+
+    fun closeAfterDisconnect() {
+        closeRequested = true
+        if (teardownJob?.isActive != true) scope.cancel()
     }
 }

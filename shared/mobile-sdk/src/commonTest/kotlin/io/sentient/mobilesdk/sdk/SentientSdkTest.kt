@@ -21,6 +21,7 @@ package io.sentient.mobilesdk.sdk
 import io.sentient.mobilesdk.fakes.FakeWebSocketEngine
 import io.sentient.mobilesdk.transport.SdkStatus
 import io.sentient.mobilesdk.transport.WsIncoming
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
@@ -162,6 +163,21 @@ class SentientSdkTest {
 
         assertEquals(SdkStatus.ERROR, sdk.connection.value.status)
         assertTrue(sdk.connection.value.authExpired)
+    }
+
+    @Test
+    fun disconnect_does_not_await_a_stalled_transport_close() = runTest {
+        val fake = FakeWebSocketEngine()
+        val releaseClose = CompletableDeferred<Unit>()
+        fake.beforeClose = { releaseClose.await() }
+        val sdk = buildSdk(fake)
+        connectToReady(sdk, fake)
+
+        // The release happens only after disconnect returns. Awaiting the adapter close here
+        // would deadlock this deterministic test; lifecycle teardown must be best-effort async.
+        sdk.disconnect()
+        assertEquals(SdkStatus.DISCONNECTED, sdk.connection.value.status)
+        releaseClose.complete(Unit)
     }
 
     @Test
