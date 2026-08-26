@@ -46,7 +46,7 @@ struct LoginView: View {
                 phaseContent
                 Spacer(minLength: Space.xl)
             }
-            .padding(.horizontal, Space.xl)
+            .padding(.horizontal, Space.lg)
             .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
         }
         .safeAreaInset(edge: .top) { navigationBar }
@@ -66,8 +66,8 @@ struct LoginView: View {
 
     private var userPicker: some View {
         VStack(spacing: Space.xl) {
-            Text("Who's here?")
-                .designText(.display)
+            Text("Who's using Sentient?")
+                .designText(.title)
                 .foregroundStyle(DuskColors.ink)
                 .multilineTextAlignment(.center)
             pickerContent
@@ -92,30 +92,36 @@ struct LoginView: View {
             )
             .accessibilityIdentifier("login-empty")
         case .ready:
-            CenteredFlowLayout(spacing: Space.lg) {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: DesignMetrics.dominantCardMinimumWidth, maximum: DesignMetrics.dominantCardMaximumWidth), spacing: Space.md)],
+                spacing: Space.md
+            ) {
                 ForEach(model.users, id: \.userId) { user in
                     AvatarTile(user: user, onTap: { model.select(user) })
                 }
             }
+            .frame(maxWidth: .infinity)
         }
     }
 
     private var pinEntry: some View {
-        DesignPane(title: model.selectedUser?.displayName ?? "", detail: "Enter your PIN") {
-            PinPad(
-                entered: model.pin.count,
-                isSubmitting: model.isSubmitting,
-                onDigit: { model.appendDigit($0) },
-                onDelete: { model.deleteDigit() }
-            )
-            .frame(maxWidth: .infinity)
-            if model.isSubmitting {
-                DesignProgress(title: "Signing in")
-                    .accessibilityIdentifier("login-submitting")
-            }
-            if let error = model.error {
-                AsyncNotice(kind: .error, title: "Sign in failed", detail: error)
-                    .accessibilityIdentifier("login-error")
+        DesignCard(bodyStyle: .padded) {
+            VStack(spacing: Space.lg) {
+                Text("Enter PIN for \(model.selectedUser?.displayName ?? "")")
+                    .designText(.title)
+                    .foregroundStyle(DuskColors.ink)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                PinPad(
+                    entered: model.pin.count,
+                    isSubmitting: model.isSubmitting,
+                    error: model.error,
+                    success: model.pinSuccess,
+                    errorRevision: model.pinFeedbackRevision,
+                    onDigit: { model.appendDigit($0) },
+                    onDelete: { model.deleteDigit() }
+                )
+                .frame(maxWidth: .infinity)
             }
         }
     }

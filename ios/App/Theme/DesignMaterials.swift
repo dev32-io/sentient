@@ -72,10 +72,14 @@ enum DesignMaterialAdapter {
     static let slateFadeStop = 0.76
     static let slateCenterSunk = 0.20
     static let slateMutedCenterSunk = 0.16
+    static let slateHoverCenterSunk = 0.23
     static let slateRingSunk = 0.12
+    static let slateHoverRingSunk = 0.14
     static let slateTopLight = 0.07
     static let slateMutedBaseLight = 0.03
     static let slateBaseLight = 0.04
+    static let slateHoverBaseLight = 0.06
+    static let slateHoverGlow = 0.03
     static let slateDestructiveOverlay = 0.38
     static let slateMutedInk = 0.08
     static let slateContactY: CGFloat = 2

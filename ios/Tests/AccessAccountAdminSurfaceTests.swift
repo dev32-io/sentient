@@ -1,4 +1,5 @@
 import XCTest
+import MobileData
 @testable import SentientApp
 
 @MainActor
@@ -44,6 +45,12 @@ final class AccessAccountAdminSurfaceTests: XCTestCase {
             .error("Network unavailable")
         )
         XCTAssertEqual(loginPickerState(isLoading: false, userCount: 2, error: nil), .ready)
+    }
+
+    func testLoginPinFeedbackKeepsCopyAndTimingBounded() {
+        XCTAssertEqual(loginPinErrorMessage(for: AuthError.InvalidCredentials.shared), "Wrong PIN")
+        XCTAssertEqual(LoginFeedbackTiming.checkingMinimum, .milliseconds(700))
+        XCTAssertEqual(LoginFeedbackTiming.successTransition, .milliseconds(250))
     }
 
     func testUpdateGateCoversOptionalDismissalAndMandatoryOverride() {

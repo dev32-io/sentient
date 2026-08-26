@@ -136,4 +136,17 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertNil(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: true))
         XCTAssertNotNil(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: false))
     }
+
+    func testLoginIdentityAndKeypadUseSharedFoundationMetrics() {
+        XCTAssertEqual(DesignMetrics.dominantVisualSize, 104)
+        XCTAssertEqual(DesignMetrics.dominantAvatarSize, 82)
+        XCTAssertEqual(DesignMetrics.dominantCardMinimumHeight, 220)
+        XCTAssertEqual(DesignMetrics.pinKeypadWidth, 276)
+        XCTAssertEqual(DesignMetrics.pinDotSize, 14)
+        XCTAssertEqual(DesignUserAvatarTint(serverValue: "terra"), .terra)
+        XCTAssertEqual(DesignUserAvatarTint(serverValue: "sage"), .sage)
+        XCTAssertEqual(DesignUserAvatarTint(serverValue: "amber"), .amber)
+        XCTAssertEqual(DesignUserAvatarTint(serverValue: "clay"), .clay)
+        XCTAssertEqual(DesignUserAvatarTint(serverValue: ""), .fallback)
+    }
 }

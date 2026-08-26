@@ -210,4 +210,13 @@ enum DesignMetrics {
     static let editorPlaceholderInsetV: CGFloat = 16
     static let narrowPreviewWidth: CGFloat = 320
     static let padPreviewWidth: CGFloat = 768
+    static let dominantCardMinimumWidth: CGFloat = 144
+    static let dominantCardMaximumWidth: CGFloat = 280
+    static let dominantCardMinimumHeight: CGFloat = 220
+    static let dominantVisualSize: CGFloat = 104
+    static let dominantAvatarSize: CGFloat = 82
+    static let pinKeypadWidth: CGFloat = 276
+    static let pinKeySize: CGFloat = 86
+    static let pinKeyGap: CGFloat = 10
+    static let pinDotSize: CGFloat = 14
 }

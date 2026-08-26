@@ -1,3 +1,4 @@
+import CoreGraphics
 import SwiftUI
 
 struct DesignPageChrome<Content: View>: View {
@@ -127,6 +128,315 @@ struct DesignPane<Content: View>: View {
         DesignCard(title: title, detail: detail, headerStyle: .quiet, bodyStyle: .padded) {
             content()
         }
+    }
+}
+
+private struct DominantVisualCardButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var focused
+    let hovered: Bool
+    let quietHoverBorder: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled
+        let raised = hovered && !pressed && isEnabled
+        let shape = RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
+        configuration.label
+            .background {
+                ZStack {
+                    DuskColors.paper
+                    DuskColors.bgElev.opacity(raised ? 0.18 : 0.12)
+                }
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.stroke(
+                    focused
+                        ? DuskColors.accent
+                        : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
+                    lineWidth: DesignMetrics.hairline
+                )
+            }
+            .overlay(alignment: .top) {
+                DuskColors.ink
+                    .opacity(contrast == .increased ? 0.13 : 0.05)
+                    .frame(height: DesignMetrics.hairline)
+                    .clipShape(shape)
+            }
+            .shadow(color: DuskColors.line.opacity(0.45), radius: 0, y: pressed ? 1 : 2)
+            .shadow(color: .black.opacity(pressed ? 0.88 : 0.90), radius: pressed ? 6 : 30, y: pressed ? 3 : 18)
+            .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
+            .opacity(isEnabled ? 1 : 0.58)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: raised)
+    }
+}
+
+/// A reusable identity/media action. The visual, copy, target, and material
+/// surface stay together so login and future identity pickers cannot drift.
+struct DesignDominantVisualCard<Visual: View>: View {
+    let title: String
+    var detail: String? = nil
+    let accessibilityLabel: String
+    let accessibilityId: String
+    var quietHoverBorder = false
+    let action: () -> Void
+    @ViewBuilder let visual: () -> Visual
+    @State private var hovered = false
+
+    init(
+        title: String,
+        detail: String? = nil,
+        accessibilityLabel: String,
+        accessibilityId: String,
+        quietHoverBorder: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder visual: @escaping () -> Visual
+    ) {
+        self.title = title
+        self.detail = detail
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityId = accessibilityId
+        self.quietHoverBorder = quietHoverBorder
+        self.action = action
+        self.visual = visual
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: Space.md) {
+                ZStack {
+                    DuskColors.bgSunk
+                    visual()
+                        .accessibilityHidden(true)
+                        .frame(width: DesignMetrics.dominantAvatarSize, height: DesignMetrics.dominantAvatarSize)
+                }
+                .frame(width: DesignMetrics.dominantVisualSize, height: DesignMetrics.dominantVisualSize)
+                .clipShape(RoundedRectangle(cornerRadius: Radii.xl, style: .continuous))
+                .overlay(alignment: .top) {
+                    DuskColors.ink.opacity(0.07)
+                        .frame(height: DesignMetrics.hairline)
+                        .clipShape(RoundedRectangle(cornerRadius: Radii.xl, style: .continuous))
+                }
+                .shadow(color: DuskColors.line.opacity(0.45), radius: 0, y: 1)
+                .shadow(color: .black.opacity(0.72), radius: 6, y: 3)
+
+                VStack(spacing: Space.xs) {
+                    Text(title)
+                        .font(Typo.display(TypeScale.lg, .medium))
+                        .foregroundStyle(DuskColors.ink)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .accessibilityHidden(true)
+                    if let detail {
+                        Text(detail)
+                            .font(Typo.ui(TypeScale.sm))
+                            .foregroundStyle(DuskColors.ink2)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity, minHeight: DesignMetrics.dominantCardMinimumHeight)
+            .padding(.horizontal, Space.md)
+            .padding(.vertical, Space.lg)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .ignore)
+        }
+        .buttonStyle(DominantVisualCardButtonStyle(hovered: hovered, quietHoverBorder: quietHoverBorder))
+        .onHover { hovered = $0 }
+        .accessibilityRepresentation {
+            Text(accessibilityLabel)
+        }
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Enter PIN")
+        .accessibilityIdentifier(accessibilityId)
+    }
+}
+
+private struct PinShakeEffect: GeometryEffect {
+    var amount: CGFloat = CGFloat(Space.sm)
+    var animatableData: CGFloat
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        ProjectionTransform(
+            CGAffineTransform(translationX: sin(Double(animatableData) * .pi * 4) * amount, y: 0)
+        )
+    }
+}
+
+private enum DesignPinKeypadState {
+    static let length = 4
+    static let checkingCycle: TimeInterval = 0.9
+    static let errorFeedbackDuration = Duration.milliseconds(Int((DesignV2.Motion.state * 1_000).rounded()))
+}
+
+/// Native PIN keypad composite with explicit progress, retry feedback, and
+/// platform keyboard parity. Authentication remains owned by the screen model.
+struct DesignPinKeypad: View {
+    let entered: Int
+    var isSubmitting = false
+    var error: String? = nil
+    var success: String? = nil
+    var errorRevision = 0
+    var statusAccessibilityId = "pin-status"
+    let onDigit: (Character) -> Void
+    let onDelete: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var errorReady = true
+
+    private static let keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "delete"]
+
+    private var isChecking: Bool { isSubmitting && success == nil && error == nil }
+    private var keyDisabled: Bool { isSubmitting || success != nil || (error != nil && !errorReady) }
+    private var status: String {
+        if let success { return success }
+        if let error { return error }
+        if isSubmitting { return "Checking PIN…" }
+        if entered > 0 { return "\(entered) of \(DesignPinKeypadState.length) digits entered." }
+        return "Enter your four-digit PIN."
+    }
+
+    var body: some View {
+        VStack(spacing: Space.md) {
+            progress
+            Text(status)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(statusColor)
+                .frame(minHeight: 20)
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier(
+                    error != nil ? "login-error" : isSubmitting ? "login-submitting" : statusAccessibilityId
+                )
+                .accessibilityAddTraits(error == nil ? [] : .isStaticText)
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: DesignMetrics.pinKeyGap), count: 3),
+                spacing: DesignMetrics.pinKeyGap
+            ) {
+                ForEach(Self.keys, id: \.self) { key in
+                    keyView(key)
+                }
+            }
+            .frame(width: DesignMetrics.pinKeypadWidth)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("PIN keypad")
+        }
+        .focusable()
+        .onKeyPress(phases: .down) { keyPress in
+            if let digit = keyPress.characters.first, keyPress.characters.count == 1, digit.isNumber {
+                guard !keyDisabled else { return .handled }
+                onDigit(digit)
+                return .handled
+            }
+            if keyPress.key == .delete || keyPress.key == .deleteForward {
+                guard !keyDisabled else { return .handled }
+                onDelete()
+                return .handled
+            }
+            return .ignored
+        }
+        .task(id: "\(errorRevision):\(error ?? "")") {
+            guard error != nil else {
+                errorReady = true
+                return
+            }
+            errorReady = false
+            do {
+                try await Task.sleep(for: DesignPinKeypadState.errorFeedbackDuration)
+                guard !Task.isCancelled else { return }
+                errorReady = true
+            } catch {
+                // Cancellation is expected when the user starts a fresh attempt.
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var progress: some View {
+        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || reduceMotion)) { context in
+            let cycle = context.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: DesignPinKeypadState.checkingCycle)
+            let phase = (sin(cycle / DesignPinKeypadState.checkingCycle * 2 * .pi) + 1) / 2
+            HStack(spacing: Space.md) {
+                ForEach(0..<DesignPinKeypadState.length, id: \.self) { index in
+                    Circle()
+                        .fill(dotColor(index: index))
+                        .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
+                        .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
+                        .shadow(color: dotGlow(index: index), radius: 5)
+                        .scaleEffect(isChecking ? 0.94 + (0.12 * phase) : entered > index ? 1.06 : 1)
+                        .opacity(isChecking ? 0.72 + (0.28 * phase) : 1)
+                        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: entered)
+                }
+            }
+            .modifier(PinShakeEffect(animatableData: reduceMotion ? 0 : CGFloat(errorRevision)))
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: errorRevision)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("PIN entry")
+            .accessibilityValue(success != nil ? "PIN accepted" : "\(entered) of \(DesignPinKeypadState.length) digits entered")
+        }
+    }
+
+    @ViewBuilder
+    private func keyView(_ key: String) -> some View {
+        if key.isEmpty {
+            Color.clear
+                .aspectRatio(1, contentMode: .fit)
+                .accessibilityHidden(true)
+        } else if key == "delete" {
+            DesignIconButton(
+                systemName: "delete.left",
+                label: "Delete last digit",
+                role: .destructive,
+                state: keyDisabled ? .disabled : .normal,
+                accessibilityId: "pin-delete",
+                minimumSize: DesignMetrics.pinKeySize,
+                action: onDelete
+            )
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+        } else {
+            DesignActionButton(
+                title: key,
+                role: .quiet,
+                state: keyDisabled ? .disabled : .normal,
+                accessibilityId: "pin-key-\(key)",
+                fillsWidth: true,
+                minimumHeight: DesignMetrics.pinKeySize,
+                action: { onDigit(Character(key)) }
+            )
+            .frame(maxWidth: .infinity)
+            .aspectRatio(1, contentMode: .fit)
+        }
+    }
+
+    private var statusColor: Color {
+        if success != nil { return DuskColors.ok }
+        if error != nil { return DuskColors.stop }
+        return DuskColors.ink2
+    }
+
+    private func dotColor(index: Int) -> Color {
+        if success != nil { return DuskColors.ok }
+        if error != nil { return DuskColors.stop }
+        return entered > index ? DuskColors.accent : DuskColors.bgElev
+    }
+
+    private func dotBorder(index: Int) -> Color {
+        if success != nil { return DuskColors.ok }
+        if error != nil { return DuskColors.stop.opacity(0.74) }
+        return entered > index ? DuskColors.accent.opacity(0.62) : DuskColors.line
+    }
+
+    private func dotGlow(index: Int) -> Color {
+        if success != nil { return .clear }
+        if error != nil { return DuskColors.stop.opacity(0.8) }
+        return entered > index ? DuskColors.accent : .clear
     }
 }
 

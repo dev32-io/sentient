@@ -23,10 +23,24 @@ import MobileData
 /// PIN length the gateway expects (auth.ts: 4-digit numeric PIN).
 let pinLength = 4
 
+/// Client feedback timings mirror the Web login contract. The server remains
+/// authoritative; these durations only keep visual feedback legible.
+enum LoginFeedbackTiming {
+    static let checkingMinimum = Duration.milliseconds(700)
+    static let successTransition = Duration.milliseconds(Int((DesignV2.Motion.state * 1_000).rounded()))
+}
+
 /// Which login sub-screen is showing.
 enum AuthPhase {
     case pickUser
     case enterPin
+}
+
+func loginPinErrorMessage(for error: AuthError) -> String {
+    switch onEnum(of: error) {
+    case .invalidCredentials: return "Wrong PIN"
+    case .network, .server, .unknown: return "Something went wrong"
+    }
 }
 
 @MainActor
@@ -41,8 +55,12 @@ final class AuthViewModel: ObservableObject {
     @Published private(set) var pin = ""
     /// User-facing error message, or nil. Drives the `login-error` text.
     @Published private(set) var error: String?
-    /// True while a login round-trip + connect is in flight.
+    /// True while a login round-trip, feedback transition, and commit are in flight.
     @Published private(set) var isSubmitting = false
+    /// Success copy remains visible during the short transition before auth commits.
+    @Published private(set) var pinSuccess: String?
+    /// Incremented for each failed attempt so the keypad can replay its bounded feedback.
+    @Published private(set) var pinFeedbackRevision = 0
 
     var phase: AuthPhase { selectedUser == nil ? .pickUser : .enterPin }
 
@@ -55,6 +73,10 @@ final class AuthViewModel: ObservableObject {
     private let onAuthenticatedUser: (String) -> Void
     private let onInitialUsersResolved: () -> Void
     private var initialUsersResolved = false
+    private var loginAttempt = 0
+    private var loginTask: Task<Void, Never>?
+    private let sleep: @Sendable (Duration) async throws -> Void
+    private let clock = ContinuousClock()
     private let log = AppLog("auth", "model")
 
     /// - Parameters:
@@ -72,7 +94,8 @@ final class AuthViewModel: ObservableObject {
         onInitialUsersResolved: @escaping () -> Void = {},
         authClient: AuthClient = AuthViewModel.makeAuthClient(),
         tokenStore: SecureTokenStore = createTokenStore(),
-        displayNameStore: DisplayNameStore = DisplayNameStore()
+        displayNameStore: DisplayNameStore = DisplayNameStore(),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.connect = connect
         self.onAuthenticatedUser = onAuthenticatedUser
@@ -80,6 +103,7 @@ final class AuthViewModel: ObservableObject {
         self.authClient = authClient
         self.tokenStore = tokenStore
         self.displayNameStore = displayNameStore
+        self.sleep = sleep
     }
 
     // ── User actions ────────────────────────────────────────────────────────
@@ -111,15 +135,19 @@ final class AuthViewModel: ObservableObject {
     }
 
     func select(_ user: AuthUserLite) {
+        invalidateLogin()
         selectedUser = user
         pin = ""
         error = nil
+        pinSuccess = nil
     }
 
     func back() {
+        invalidateLogin()
         selectedUser = nil
         pin = ""
         error = nil
+        pinSuccess = nil
     }
 
     func appendDigit(_ digit: Character) {
@@ -140,26 +168,53 @@ final class AuthViewModel: ObservableObject {
     private func submit() {
         guard let user = selectedUser else { return }
         let attemptPin = pin // PIN intentionally not logged
+        loginAttempt += 1
+        let attempt = loginAttempt
+        loginTask?.cancel()
         log.info("login.start")
         isSubmitting = true
         error = nil
-        Task { await self.performLogin(user: user, pin: attemptPin) }
+        pinSuccess = nil
+        loginTask = Task { [weak self] in
+            guard let self else { return }
+            await self.performLogin(user: user, pin: attemptPin, attempt: attempt)
+        }
     }
 
-    private func performLogin(user: AuthUserLite, pin: String) async {
+    private func performLogin(user: AuthUserLite, pin: String, attempt: Int) async {
+        let startedAt = clock.now
         do {
             let result = try await authClient.login(userId: user.userId, pin: pin)
+            try await waitForMinimumChecking(since: startedAt)
+            guard isCurrent(attempt, user: user) else { return }
+
             switch onEnum(of: result) {
             case .success(let success):
                 guard let response = success.value,
                       !response.token.isEmpty,
                       !response.user.userId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     log.warn("login.invalid-success")
-                    isSubmitting = false
-                    self.pin = ""
-                    self.error = "Something went wrong. Please try again."
+                    await finishPinFailure(
+                        message: "Something went wrong. Please try again.",
+                        since: startedAt,
+                        attempt: attempt,
+                        user: user
+                    )
                     return
                 }
+
+                // Keep the accepted state visible before the backend-authoritative
+                // identity/token commit changes the root view.
+                pinSuccess = "PIN accepted."
+                do {
+                    try await sleep(LoginFeedbackTiming.successTransition)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    return
+                }
+                guard isCurrent(attempt, user: user) else { return }
+
                 // The namespace identity comes from the authenticated response,
                 // not the pre-login display list and never the token text.
                 let authenticatedUserId = response.user.userId
@@ -168,26 +223,73 @@ final class AuthViewModel: ObservableObject {
                 // Persist the server-authoritative display name for headers; it
                 // is separate from the identity used by the calendar namespace.
                 displayNameStore.save(response.user.displayName)
-                onAuthenticatedUser(authenticatedUserId)
                 isSubmitting = false
+                onAuthenticatedUser(authenticatedUserId)
                 connect()
             case .failure(let failure):
                 log.warn("login.failed")
-                isSubmitting = false
-                self.pin = ""
-                error = message(for: failure.error)
+                await finishPinFailure(
+                    message: loginPinErrorMessage(for: failure.error),
+                    since: startedAt,
+                    attempt: attempt,
+                    user: user
+                )
             }
+        } catch is CancellationError {
+            return
         } catch {
             log.warn("login.threw code=transport")
-            isSubmitting = false
-            self.pin = ""
-            self.error = "Something went wrong. Please try again."
+            await finishPinFailure(
+                message: "Something went wrong. Please try again.",
+                since: startedAt,
+                attempt: attempt,
+                user: user
+            )
         }
+    }
+
+    private func waitForMinimumChecking(since startedAt: ContinuousClock.Instant) async throws {
+        let minimum = LoginFeedbackTiming.checkingMinimum
+        let elapsed = startedAt.duration(to: clock.now)
+        guard elapsed < minimum else { return }
+        try await sleep(minimum - elapsed)
+    }
+
+    private func finishPinFailure(
+        message: String,
+        since startedAt: ContinuousClock.Instant,
+        attempt: Int,
+        user: AuthUserLite
+    ) async {
+        do {
+            try await waitForMinimumChecking(since: startedAt)
+        } catch is CancellationError {
+            return
+        } catch {
+            return
+        }
+        guard isCurrent(attempt, user: user) else { return }
+        isSubmitting = false
+        pin = ""
+        pinSuccess = nil
+        error = message
+        pinFeedbackRevision += 1
+    }
+
+    private func isCurrent(_ attempt: Int, user: AuthUserLite) -> Bool {
+        loginAttempt == attempt && selectedUser?.userId == user.userId
+    }
+
+    private func invalidateLogin() {
+        loginAttempt += 1
+        loginTask?.cancel()
+        loginTask = nil
+        isSubmitting = false
     }
 
     private func message(for error: AuthError) -> String {
         switch onEnum(of: error) {
-        case .invalidCredentials: return "Incorrect PIN. Try again."
+        case .invalidCredentials: return "Wrong PIN"
         case .network: return "Can't reach the server. Check your connection."
         case .server: return "Server error. Please try again."
         case .unknown: return "Something went wrong. Please try again."

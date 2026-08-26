@@ -45,6 +45,21 @@ describe("Web foundation boundary", () => {
     ])).toContain("src/components/page.css: redeclares generated token --color-bg");
   });
 
+  test("allows foundation-local slate recipe resolution without creating a second token source", async () => {
+    const sources = await foundationSources();
+    expect(findTokenBoundaryViolations([
+      ...sources,
+      {
+        path: "src/components/common/foundation.css",
+        source: ":is(.snt-button) { --slate-face: var(--color-paper); --slate-face-hover: var(--color-paper); --slate-face-muted: var(--color-bg-elev); }",
+      },
+    ])).toEqual([]);
+    expect(findTokenBoundaryViolations([
+      ...sources,
+      { path: "src/components/other.css", source: ".other { --slate-face: var(--color-paper); }" },
+    ])).toContain("src/components/other.css: redeclares generated token --slate-face");
+  });
+
   test("rejects raw controls and page-local visual literals outside the explicit migration boundary", () => {
     expect(findPageBoundaryViolations([
       { path: "src/components/page.tsx", source: "<button style={{ color: 'red' }}>Save</button>" },

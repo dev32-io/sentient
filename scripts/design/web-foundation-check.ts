@@ -86,6 +86,11 @@ const tokenPrefixes = [
   "--motion-",
 ] as const;
 
+// The foundation component must resolve these generated recipes on the same
+// element that supplies --slate-base/--slate-glow. This is a deliberate local
+// cascade override, not a second token source.
+const localMaterialOverrides = new Set(["--slate-face", "--slate-face-hover", "--slate-face-muted"]);
+
 const rawControlPattern = /<(?:button|input|textarea|select|progress)\b/;
 const inlineStylePattern = /\bstyle\s*(?:=|:)/i;
 const visualLiteralPatterns: readonly RegExp[] = [
@@ -242,6 +247,7 @@ export function findTokenBoundaryViolations(sources: readonly WebFoundationSourc
     const values = declarations(source);
     for (const [name, value] of values) {
       if (generatedTokens.has(name)) {
+        if (path === "src/components/common/foundation.css" && localMaterialOverrides.has(name)) continue;
         violations.push(`${path}: redeclares generated token ${name}`);
         continue;
       }

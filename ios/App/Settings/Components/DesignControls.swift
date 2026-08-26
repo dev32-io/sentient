@@ -45,27 +45,59 @@ enum DesignNoticeKind { case loading, empty, error, success, warning }
 private struct SlateFace: View {
     let role: DesignButtonRole
     let muted: Bool
+    let hovered: Bool
 
     private var base: Color {
         if muted { return DuskColors.bgElev }
         switch role {
         case .action: return DuskColors.accent
-        case .destructive: return DuskColors.paper
+        case .destructive:
+            // Resolve the destructive base before applying the shared slate
+            // construction. This is the native equivalent of the WebUI
+            // component-local --slate-base recipe.
+            return DuskColors.paper.overlaying(DuskColors.stop, opacity: DesignMaterialAdapter.slateDestructiveOverlay)
         case .quiet: return DuskColors.bgElev
         }
+    }
+
+    private var centerSunk: Double {
+        if muted { return DesignMaterialAdapter.slateMutedCenterSunk }
+        return hovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
+    }
+
+    private var ringSunk: Double {
+        hovered && !muted ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
+    }
+
+    private var fadeStop: Double {
+        muted ? DesignMaterialAdapter.slateMutedFadeStop : DesignMaterialAdapter.slateFadeStop
+    }
+
+    private var glow: Color {
+        role == .destructive ? DuskColors.stop : DuskColors.accent
     }
 
     var body: some View {
         ZStack {
             base
-            if role == .destructive && !muted { DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveOverlay) }
             if muted { DuskColors.ink4.opacity(DesignMaterialAdapter.slateMutedInk) }
-            LinearGradient(colors: [DuskColors.ink.opacity(muted ? DesignMaterialAdapter.slateMutedBaseLight : DesignMaterialAdapter.slateBaseLight), .clear], startPoint: .top, endPoint: .bottom)
+            LinearGradient(
+                colors: [
+                    DuskColors.ink.opacity(
+                        muted
+                            ? DesignMaterialAdapter.slateMutedBaseLight
+                            : hovered ? DesignMaterialAdapter.slateHoverBaseLight : DesignMaterialAdapter.slateBaseLight
+                    ),
+                    hovered && !muted ? glow.opacity(DesignMaterialAdapter.slateHoverGlow) : .clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
             RadialGradient(
                 stops: [
-                    .init(color: DuskColors.bgSunk.opacity(muted ? DesignMaterialAdapter.slateMutedCenterSunk : DesignMaterialAdapter.slateCenterSunk), location: DesignMaterialAdapter.slateRadialStartRadius),
-                    .init(color: DuskColors.bgSunk.opacity(DesignMaterialAdapter.slateRingSunk), location: DesignMaterialAdapter.slateCenterStop),
-                    .init(color: .clear, location: muted ? DesignMaterialAdapter.slateMutedFadeStop : DesignMaterialAdapter.slateFadeStop),
+                    .init(color: DuskColors.bgSunk.opacity(centerSunk), location: DesignMaterialAdapter.slateRadialStartRadius),
+                    .init(color: DuskColors.bgSunk.opacity(ringSunk), location: DesignMaterialAdapter.slateCenterStop),
+                    .init(color: .clear, location: fadeStop),
                 ],
                 center: UnitPoint(x: DesignMaterialAdapter.slateRadialCenterX, y: DesignMaterialAdapter.slateRadialCenterY),
                 startRadius: DesignMaterialAdapter.slateRadialStartRadius,
@@ -192,6 +224,9 @@ struct DesignButtonStyle: ButtonStyle {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isFocused) private var focused
     let role: DesignButtonRole
+    var hovered = false
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
+    var horizontalPadding: CGFloat = Space.lg
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
@@ -199,9 +234,9 @@ struct DesignButtonStyle: ButtonStyle {
         configuration.label
             .font(Typo.ui(TypeScale.base, .semibold))
             .foregroundStyle(foreground)
-            .frame(minHeight: DesignMetrics.minimumTarget)
-            .padding(.horizontal, Space.lg)
-            .background { SlateFace(role: role, muted: !isEnabled) }
+            .frame(minHeight: minimumHeight)
+            .padding(.horizontal, horizontalPadding)
+            .background { SlateFace(role: role, muted: !isEnabled, hovered: hovered) }
             .clipShape(shape)
             .overlay(alignment: .top) {
                 (pressed ? DuskColors.bgSunk.opacity(DesignMaterialAdapter.slatePressedTop) : DuskColors.ink.opacity(contrast == .increased ? DesignMaterialAdapter.slateTopLightContrast : DesignMaterialAdapter.slateTopLight))
@@ -251,7 +286,9 @@ struct DesignActionButton: View {
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
     var fillsWidth = true
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
     let action: () -> Void
+    @State private var hovered = false
 
     var body: some View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
@@ -261,7 +298,8 @@ struct DesignActionButton: View {
                     .frame(maxWidth: fillsWidth ? .infinity : nil)
             }
         }
-        .buttonStyle(DesignButtonStyle(role: role))
+        .buttonStyle(DesignButtonStyle(role: role, hovered: hovered, minimumHeight: minimumHeight))
+        .onHover { hovered = $0 }
         .disabled(!state.isInteractive)
         .accessibilityLabel(title)
         .accessibilityValue(state.accessibilityValue)
@@ -276,15 +314,18 @@ struct DesignIconButton: View {
     var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
+    var minimumSize: CGFloat = DesignMetrics.minimumTarget
     let action: () -> Void
+    @State private var hovered = false
 
     var body: some View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
             Image(systemName: systemName)
-                .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
+                .frame(width: minimumSize, height: minimumSize)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignButtonStyle(role: role))
+        .buttonStyle(DesignButtonStyle(role: role, hovered: hovered, minimumHeight: minimumSize, horizontalPadding: 0))
+        .onHover { hovered = $0 }
         .disabled(!state.isInteractive)
         .accessibilityLabel(label)
         .accessibilityValue(state.accessibilityValue)
@@ -1265,21 +1306,79 @@ struct DesignDivider: View {
     }
 }
 
+enum DesignUserAvatarTint: String, CaseIterable, Equatable {
+    case terra
+    case sage
+    case amber
+    case clay
+    case fallback
+
+    init(serverValue: String) {
+        self = switch serverValue.lowercased() {
+        case "terra": .terra
+        case "sage": .sage
+        case "amber": .amber
+        case "clay": .clay
+        default: .fallback
+        }
+    }
+
+    var accent: Color {
+        switch self {
+        case .terra: DuskColors.accent
+        case .sage: DuskColors.sage
+        case .amber: DuskColors.amber
+        case .clay: DuskColors.clay
+        case .fallback: DuskColors.ink3
+        }
+    }
+
+    var base: Color {
+        switch self {
+        case .terra: DuskColors.paper.overlaying(DuskColors.accentSoft, opacity: 0.18)
+        case .sage: DuskColors.paper.overlaying(DuskColors.sageSoft, opacity: 0.18)
+        case .amber: DuskColors.paper.overlaying(DuskColors.amber, opacity: 0.16)
+        case .clay: DuskColors.paper.overlaying(DuskColors.clay, opacity: 0.20)
+        case .fallback: DuskColors.paper.overlaying(DuskColors.bgElev, opacity: 0.14)
+        }
+    }
+}
+
 struct ElevatedUserAvatar: View {
     let name: String
     var size: CGFloat = DesignMetrics.minimumTarget
+    var tint: DesignUserAvatarTint = .fallback
     var selected = false
     var disabled = false
 
+    private var diameter: CGFloat { max(size, DesignMetrics.minimumTarget) }
+
     var body: some View {
         Text(initials)
-            .font(Typo.ui(max(TypeScale.base, size * DesignMaterialAdapter.avatarGlyphRatio), .semibold))
-            .foregroundStyle(DuskColors.ink)
-            .frame(width: max(size, DesignMetrics.minimumTarget), height: max(size, DesignMetrics.minimumTarget))
-            .background(RadialGradient(colors: [DuskColors.paper, DuskColors.bgSunk], center: .center, startRadius: DesignMaterialAdapter.avatarGradientStartRadius, endRadius: size))
+            .font(Typo.display(max(TypeScale.base, diameter * DesignMaterialAdapter.avatarGlyphRatio), .semibold))
+            .foregroundStyle(tint.accent)
+            .frame(width: diameter, height: diameter)
+            .background(
+                RadialGradient(
+                    colors: [
+                        tint.base.overlaying(DuskColors.bgSunk, opacity: 0.28),
+                        tint.base.overlaying(DuskColors.bgSunk, opacity: 0.18),
+                        tint.base,
+                        DuskColors.bgSunk.overlaying(tint.accent, opacity: 0.10),
+                    ],
+                    center: .center,
+                    startRadius: DesignMaterialAdapter.avatarGradientStartRadius,
+                    endRadius: diameter
+                )
+            )
             .clipShape(Circle())
-            .overlay(Circle().stroke(selected ? DuskColors.accent : DuskColors.line, lineWidth: selected ? DesignMaterialAdapter.avatarSelectedBorder : DesignMetrics.hairline))
-            .shadow(color: .black.opacity(DesignMaterialAdapter.avatarShadowOpacity), radius: DesignMaterialAdapter.avatarShadowRadius, y: DesignMaterialAdapter.avatarShadowY)
+            .overlay(
+                Circle().stroke(
+                    selected ? DuskColors.accent : tint.accent.opacity(0.20),
+                    lineWidth: selected ? DesignMaterialAdapter.avatarSelectedBorder : DesignMetrics.hairline
+                )
+            )
+            .shadow(color: tint.accent.opacity(DesignMaterialAdapter.avatarShadowOpacity * 0.55), radius: DesignMaterialAdapter.avatarShadowRadius, y: DesignMaterialAdapter.avatarShadowY)
             .opacity(disabled ? DesignMaterialAdapter.avatarDisabledOpacity : 1)
             .accessibilityLabel(name)
             .accessibilityValue(disabled ? "Disabled" : selected ? "Selected" : "")
