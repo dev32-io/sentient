@@ -8,9 +8,55 @@ struct VoiceCaptureControlTests {
         #expect(result == VoiceCaptureTransition(state: .hold, intents: [.holdStart]))
     }
 
-    @Test func sustainedReleaseDefaultsToSend() {
-        let result = VoiceCaptureReducer.release(from: .hold, target: .send, elapsed: 0.5)
-        #expect(result.intents == [.sendHeld])
+    @Test func confirmedNormalHeldReleaseSendsExactlyOnce() {
+        let release = VoiceCaptureReducer.terminatePhysicalHold(
+            from: .hold,
+            target: .send,
+            elapsed: 0.5,
+            termination: .released
+        )
+        let lateRelease = VoiceCaptureReducer.terminatePhysicalHold(
+            from: release.state,
+            target: .send,
+            elapsed: 0.6,
+            termination: .released
+        )
+
+        #expect(release.intents + lateRelease.intents == [.sendHeld])
+    }
+
+    @Test func heldSystemCancellationCancelsExactlyOnceAndNeverSends() {
+        let cancellation = VoiceCaptureReducer.terminatePhysicalHold(
+            from: .hold,
+            target: .send,
+            elapsed: 0.5,
+            termination: .cancelled
+        )
+        let lateRelease = VoiceCaptureReducer.terminatePhysicalHold(
+            from: cancellation.state,
+            target: .send,
+            elapsed: 0.6,
+            termination: .released
+        )
+        let intents = cancellation.intents + lateRelease.intents
+
+        #expect(intents == [.cancelHeld])
+        #expect(!intents.contains(.sendHeld))
+    }
+
+    @Test func heldLifecycleInterruptionCancelsExactlyOnceAndNeverEnds() {
+        let interruption = VoiceCaptureReducer.interrupt(from: .hold)
+        let repeatedInterruption = VoiceCaptureReducer.interrupt(from: interruption.state)
+        let lateRelease = VoiceCaptureReducer.terminatePhysicalHold(
+            from: interruption.state,
+            target: .send,
+            elapsed: 0.5,
+            termination: .released
+        )
+        let intents = interruption.intents + repeatedInterruption.intents + lateRelease.intents
+
+        #expect(intents == [.lifecycleCancel])
+        #expect(!intents.contains(.sendHeld))
     }
 
     @Test func explicitCancelDiscards() {
@@ -25,6 +71,19 @@ struct VoiceCaptureControlTests {
 
     @Test func assistiveActivationUsesSemanticIntentSequence() {
         #expect(VoiceCaptureReducer.activate(from: .idle).intents == [.holdStart, .enterAuto])
+        #expect(VoiceCaptureReducer.activate(from: .auto).intents == [.exitAuto])
+    }
+
+    @Test func autoRemainsOperableWithTypedDraftUntilExplicitExit() {
+        let idleWithDraft = ComposerActionState(draftPresent: true, talkMode: .idle)
+        let beforeTyping = ComposerActionState(draftPresent: false, talkMode: .continuous)
+        let afterTyping = ComposerActionState(draftPresent: true, talkMode: .continuous)
+
+        #expect(!idleWithDraft.showsVoiceCapture)
+        #expect(beforeTyping.showsVoiceCapture)
+        #expect(afterTyping.showsVoiceCapture)
+        #expect(afterTyping.showsSend)
+        #expect(VoiceCaptureReducer.authority(.continuous, disabled: false) == .auto)
         #expect(VoiceCaptureReducer.activate(from: .auto).intents == [.exitAuto])
     }
 

@@ -40,14 +40,35 @@ enum VoiceCaptureReducer {
         elapsed: TimeInterval,
         cancelled: Bool = false
     ) -> VoiceCaptureTransition {
+        terminatePhysicalHold(
+            from: state,
+            target: target,
+            elapsed: elapsed,
+            termination: cancelled ? .cancelled : .released
+        )
+    }
+
+    static func terminatePhysicalHold(
+        from state: VoiceCaptureState,
+        target: VoiceCaptureTarget,
+        elapsed: TimeInterval,
+        termination: VoiceCaptureGestureTermination
+    ) -> VoiceCaptureTransition {
         guard state == .hold else { return .init(state: state, intents: []) }
-        if cancelled || target == .cancel {
+        if termination == .cancelled || target == .cancel {
             return .init(state: .transitioning, intents: [.cancelHeld])
         }
         if target == .auto || elapsed < quickAutoThreshold {
             return .init(state: .transitioning, intents: [.enterAuto])
         }
         return .init(state: .transitioning, intents: [.sendHeld])
+    }
+
+    static func interrupt(from state: VoiceCaptureState) -> VoiceCaptureTransition {
+        guard state == .hold || state == .auto || state == .transitioning else {
+            return .init(state: state, intents: [])
+        }
+        return .init(state: .idle, intents: [.lifecycleCancel])
     }
 
     static func activate(from state: VoiceCaptureState) -> VoiceCaptureTransition {

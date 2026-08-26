@@ -54,6 +54,7 @@ struct VoiceCaptureControl: View {
     @State private var target: VoiceCaptureTarget = .send
     @State private var startedAt: Date?
     @State private var gestureActive = false
+    @State private var captureNeedsCancellation = false
     /// A physical release is handled by the zero-distance gesture. Suppress the
     /// Button's trailing activation so a quick Hold-to-Auto cannot immediately
     /// fire the assistive Auto-exit action for the same touch.
@@ -81,7 +82,7 @@ struct VoiceCaptureControl: View {
             synchronize()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { lifecycleCancel(reason: "background") }
+            if phase != .active { lifecycleCancel(reason: "scene-interruption") }
         }
         .onDisappear { lifecycleCancel(reason: "teardown") }
         .accessibilityElement(children: .contain)
@@ -107,7 +108,7 @@ struct VoiceCaptureControl: View {
         .frame(minWidth: DesignMetrics.minimumTarget, minHeight: DesignMetrics.minimumTarget)
         .buttonStyle(DesignButtonStyle(role: state == .auto ? .action : .quiet))
         .disabled(disabled)
-        .highPriorityGesture(captureGesture)
+        .gesture(captureGesture)
         .accessibilityLabel(primaryLabel)
         .accessibilityAddTraits(state == .auto ? .isSelected : [])
         .accessibilityIdentifier("chat-mic")
@@ -143,25 +144,48 @@ struct VoiceCaptureControl: View {
         .accessibilityIdentifier("voice-\(choice.rawValue)")
     }
 
-    private var captureGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
+    private var captureGesture: VoiceCaptureGesture {
+        VoiceCaptureGesture(
+            onBegin: {
                 guard !disabled else { return }
-                if !gestureActive { beginPhysicalHold() }
+                if state == .auto {
+                    gestureActive = true
+                    startedAt = Date()
+                } else {
+                    beginPhysicalHold()
+                }
+            },
+            onChange: { upwardTravel in
                 guard gestureActive, state == .hold else { return }
-                let next = VoiceCaptureReducer.target(for: max(0, -value.translation.height))
+                let next = VoiceCaptureReducer.target(for: upwardTravel)
                 if next != target {
                     target = next
                     UISelectionFeedbackGenerator().selectionChanged()
                     announce("\(next.rawValue.capitalized) selected.")
                 }
-            }
-            .onEnded { _ in
+            },
+            onTerminate: { termination in
                 guard gestureActive else { return }
                 gestureActive = false
+                if state == .auto {
+                    if termination == .released {
+                        apply(VoiceCaptureReducer.activate(from: state))
+                        announce("Auto listening off. Voice message sent.")
+                    } else {
+                        apply(VoiceCaptureReducer.interrupt(from: state))
+                        announce("Voice capture cancelled by the system.")
+                    }
+                    return
+                }
                 let elapsed = Date().timeIntervalSince(startedAt ?? Date())
-                apply(VoiceCaptureReducer.release(from: state, target: target, elapsed: elapsed))
+                apply(VoiceCaptureReducer.terminatePhysicalHold(
+                    from: state,
+                    target: target,
+                    elapsed: elapsed,
+                    termination: termination
+                ))
             }
+        )
     }
 
     private func beginPhysicalHold() {
@@ -169,6 +193,7 @@ struct VoiceCaptureControl: View {
         switch permission.status() {
         case .granted:
             gestureActive = true
+            captureNeedsCancellation = true
             startedAt = Date()
             target = .send
             apply(VoiceCaptureReducer.begin(from: state))
@@ -211,19 +236,28 @@ struct VoiceCaptureControl: View {
 
     private func apply(_ transition: VoiceCaptureTransition) {
         state = transition.state
-        transition.intents.forEach(onIntent)
+        for intent in transition.intents {
+            switch intent {
+            case .holdStart, .enterAuto:
+                captureNeedsCancellation = true
+            case .sendHeld, .cancelHeld, .exitAuto, .lifecycleCancel:
+                captureNeedsCancellation = false
+            }
+            onIntent(intent)
+        }
     }
 
     private func synchronize() {
         state = VoiceCaptureReducer.authority(talkMode, disabled: disabled)
+        captureNeedsCancellation = talkMode != .idle && !disabled
         if state == .idle { gestureActive = false }
     }
 
     private func lifecycleCancel(reason: String) {
-        guard state == .hold || state == .auto || state == .transitioning else { return }
+        guard captureNeedsCancellation else { return }
         gestureActive = false
-        onIntent(.lifecycleCancel)
-        state = disabled ? .disabled : .idle
+        apply(VoiceCaptureReducer.interrupt(from: state))
+        if disabled { state = .disabled }
         announce("Voice capture cancelled by the system.")
     }
 

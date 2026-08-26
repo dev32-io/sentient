@@ -88,6 +88,14 @@ struct DraftEditor: View {
     }
 }
 
+struct ComposerActionState: Equatable {
+    let draftPresent: Bool
+    let talkMode: TalkMode
+
+    var showsSend: Bool { draftPresent }
+    var showsVoiceCapture: Bool { !draftPresent || talkMode != .idle }
+}
+
 private struct ComposerActions: View {
     let draftPresent: Bool
     let held: Bool
@@ -102,6 +110,8 @@ private struct ComposerActions: View {
     let onInterrupt: () -> Void
 
     var body: some View {
+        let actions = ComposerActionState(draftPresent: draftPresent, talkMode: talkMode)
+
         HStack(alignment: .bottom, spacing: Space.sm) {
             if !held {
                 ComposerIconButton(systemName: "paperclip", label: "Attachments are not available", enabled: false, action: {})
@@ -119,10 +129,11 @@ private struct ComposerActions: View {
                 ComposerIconButton(systemName: "stop.fill", label: "Stop Sentient response", destructive: true, action: onInterrupt)
                     .accessibilityIdentifier("chat-interrupt")
             }
-            if draftPresent {
+            if actions.showsSend {
                 ComposerIconButton(systemName: "paperplane.fill", label: "Send message", selected: true, action: onSend)
                     .accessibilityIdentifier("chat-send")
-            } else {
+            }
+            if actions.showsVoiceCapture {
                 VoiceCaptureControl(
                     talkMode: talkMode,
                     levels: micLevels,
