@@ -4,7 +4,7 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 2
 methods:
@@ -12,8 +12,8 @@ methods:
     integrated change for specification fit, cross-stage correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: fixing
-  iteration: 1
+  state: rereviewing
+  iteration: 2
   maxIterations: 6
   reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
   reviewedCommit: 5c2df1a8b2172951c9a79d9343f39f5cb079e06d
