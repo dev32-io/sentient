@@ -5,7 +5,7 @@ checkpoint: stage-review
 stageId: product-surfaces
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -28,8 +28,8 @@ criteria:
     navigation and large Dynamic Type
   - No audio E2E, no network manipulation, and no prototype runtime imports
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: eda1f1a0-468a-4325-9838-4a0d0018269a
   reviewedCommit: bc5f663fb06b205b069af12d784e3a1df890ffd4
@@ -42,6 +42,7 @@ loop:
     History, make the search control at least 44pt high and replace page-local
     `Typo.ui(14)` with the approved shared semantic typography/token, with
     focused accessibility/layout proof.
+  fixerAgentId: 76966435-49ca-41f0-8341-37bb8d6b8394
 findings:
   - id: F-001
     severity: medium
