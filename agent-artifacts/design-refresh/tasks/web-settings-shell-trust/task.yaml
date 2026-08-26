@@ -2,7 +2,7 @@ schemaVersion: 1
 id: web-settings-shell-trust
 title: Refresh the Web Settings shell, account/admin panes, and Diagnostics
   trust boundary
-status: contribution_complete
+status: merged
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
@@ -33,3 +33,4 @@ runtime:
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: 5f40fdc9-918b-4efb-882b-891b5a286cfb
   completedCommit: 1229b5271473a45aa5c9004c00f0aa3abfc3b0e4
+  mergedCommit: dcfdd3ca02ea8897ee9fe41fbfd5182b083b5615
