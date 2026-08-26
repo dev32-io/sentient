@@ -28,6 +28,7 @@ export interface CalendarFilters {
   readonly importanceValues?: readonly CalendarImportance[];
   readonly text?: string;
   readonly query?: string;
+  readonly search?: string;
 }
 
 export type CalendarSelectedFilters = CalendarFilters;
