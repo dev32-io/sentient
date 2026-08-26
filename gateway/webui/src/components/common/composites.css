@@ -164,10 +164,6 @@
   visibility: hidden;
   pointer-events: none;
 }
-.snt-pin-keypad__key--delete.snt-button {
-  color: var(--color-ink-2);
-}
-
 @keyframes snt-pin-keypad-live {
   0%, 100% { opacity: .72; transform: scale(.94); }
   50% { opacity: 1; transform: scale(1.06); }

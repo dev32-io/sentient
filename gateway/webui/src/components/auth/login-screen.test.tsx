@@ -15,6 +15,7 @@ describe("LoginScreen", () => {
     expect(profile.classList.contains("snt-media-card")).toBe(true);
     expect(profile.querySelector(".snt-media-card__visual .snt-avatar")).toBeTruthy();
     fireEvent.click(profile);
+    expect(screen.getByRole("button", { name: "Delete last digit" }).classList.contains("snt-button--destructive")).toBe(true);
     for (const digit of ["1", "2", "3", "4"]) fireEvent.click(screen.getByRole("button", { name: `PIN digit ${digit}` }));
 
     await waitFor(() => expect(login).toHaveBeenCalledWith(
