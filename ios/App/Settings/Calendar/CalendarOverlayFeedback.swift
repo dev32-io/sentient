@@ -94,13 +94,12 @@ struct CalendarSheetHeader: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: Space.sm)
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
-            }
-            .buttonStyle(CalendarOverlayPressButtonStyle())
-            .accessibilityLabel("Close")
-            .accessibilityIdentifier("calendar-overlay-close")
+            DesignCompactIconButton(
+                systemName: "xmark",
+                label: "Close",
+                accessibilityId: "calendar-overlay-close",
+                action: onClose
+            )
         }
     }
 }

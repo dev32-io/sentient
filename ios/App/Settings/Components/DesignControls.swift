@@ -250,6 +250,7 @@ struct DesignActionButton: View {
     var role: DesignButtonRole = .action
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
+    var fillsWidth = true
     let action: () -> Void
 
     var body: some View {
@@ -257,7 +258,7 @@ struct DesignActionButton: View {
             HStack(spacing: Space.sm) {
                 if state == .loading { ProgressView().controlSize(.small) }
                 Text(state == .loading ? "Loading" : title)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: fillsWidth ? .infinity : nil)
             }
         }
         .buttonStyle(DesignButtonStyle(role: role))
@@ -292,6 +293,168 @@ struct DesignIconButton: View {
     }
 }
 
+/// Plain, minimum-target actions for compact product controls. The primitive
+/// owns press motion and state semantics while callers supply only the
+/// product-specific label composition.
+struct DesignCompactButton<Label: View>: View {
+    let accessibilityLabel: String
+    var state: DesignControlState = .normal
+    var isEnabled = true
+    var accessibilityId: String? = nil
+    var minimumWidth: CGFloat? = nil
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
+    var pressedScale: CGFloat = 0.985
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    init(
+        accessibilityLabel: String,
+        state: DesignControlState = .normal,
+        isEnabled: Bool = true,
+        accessibilityId: String? = nil,
+        minimumWidth: CGFloat? = nil,
+        minimumHeight: CGFloat = DesignMetrics.minimumTarget,
+        pressedScale: CGFloat = 0.985,
+        action: @escaping () -> Void,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.state = state
+        self.isEnabled = isEnabled
+        self.accessibilityId = accessibilityId
+        self.minimumWidth = minimumWidth
+        self.minimumHeight = minimumHeight
+        self.pressedScale = pressedScale
+        self.action = action
+        self.label = label
+    }
+
+    private var effectiveState: DesignControlState {
+        isEnabled ? state : .disabled
+    }
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .frame(minWidth: minimumWidth, minHeight: minimumHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale))
+        .disabled(!effectiveState.isInteractive)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(effectiveState.accessibilityValue)
+        .accessibilityIdentifier(accessibilityId ?? "")
+        .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+    }
+}
+
+/// The compact icon action used for close, clear, and navigation affordances.
+struct DesignCompactIconButton: View {
+    let systemName: String
+    let label: String
+    var state: DesignControlState = .normal
+    var isEnabled = true
+    var accessibilityId: String? = nil
+    var pressedScale: CGFloat = 0.985
+    let action: () -> Void
+
+    var body: some View {
+        DesignCompactButton(
+            accessibilityLabel: label,
+            state: state,
+            isEnabled: isEnabled,
+            accessibilityId: accessibilityId,
+            minimumWidth: DesignMetrics.minimumTarget,
+            minimumHeight: DesignMetrics.minimumTarget,
+            pressedScale: pressedScale,
+            action: action
+        ) {
+            Image(systemName: systemName)
+                .font(Typo.ui(TypeScale.base, .semibold))
+                .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
+        }
+    }
+}
+
+/// Selection semantics for compact filters and segmented-looking product
+/// controls. The label remains product-owned so Calendar can retain its
+/// existing geometry while the button, state, target, and accessibility stay
+/// centralized.
+struct DesignSelectableButton<Label: View>: View {
+    let accessibilityLabel: String
+    let state: DesignControlState
+    var isEnabled = true
+    var accessibilityId: String? = nil
+    var minimumWidth: CGFloat? = nil
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
+    var pressedScale: CGFloat = 0.985
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+
+    init(
+        accessibilityLabel: String,
+        state: DesignControlState,
+        isEnabled: Bool = true,
+        accessibilityId: String? = nil,
+        minimumWidth: CGFloat? = nil,
+        minimumHeight: CGFloat = DesignMetrics.minimumTarget,
+        pressedScale: CGFloat = 0.985,
+        action: @escaping () -> Void,
+        @ViewBuilder label: @escaping () -> Label
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.state = state
+        self.isEnabled = isEnabled
+        self.accessibilityId = accessibilityId
+        self.minimumWidth = minimumWidth
+        self.minimumHeight = minimumHeight
+        self.pressedScale = pressedScale
+        self.action = action
+        self.label = label
+    }
+
+    private var effectiveState: DesignControlState {
+        isEnabled ? state : .disabled
+    }
+
+    private var selectionValue: String {
+        switch effectiveState {
+        case .normal: "Not selected"
+        default: effectiveState.accessibilityValue
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .frame(minWidth: minimumWidth, minHeight: minimumHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale))
+        .disabled(!effectiveState.isInteractive)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(selectionValue)
+        .accessibilityIdentifier(accessibilityId ?? "")
+        .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+    }
+}
+
+struct DesignCompactButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let pressedScale: CGFloat
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? pressedScale : 1)
+            .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+
 private struct DesignFieldError: View {
     let message: String
     let accessibilityId: String?
@@ -312,29 +475,131 @@ struct DesignField: View {
     var error: String? = nil
     var accessibilityId: String? = nil
     var isEnabled = true
-    @FocusState private var focused: Bool
+    var showsTitle = true
+    var accessibilityLabel: String? = nil
+    var axis: Axis? = nil
+    var lineLimit: ClosedRange<Int> = 1...1
+    var autocapitalization: TextInputAutocapitalization? = nil
+    var autocorrectionDisabled = false
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
+    var focused: FocusState<Bool>.Binding? = nil
+    var submitLabel: SubmitLabel? = nil
+    var onSubmit: (() -> Void)? = nil
+    var onChange: ((String) -> Void)? = nil
+    @FocusState private var internalFocused: Bool
+
+    init(
+        title: String,
+        prompt: String = "",
+        text: Binding<String>,
+        error: String? = nil,
+        accessibilityId: String? = nil,
+        isEnabled: Bool = true,
+        showsTitle: Bool = true,
+        accessibilityLabel: String? = nil,
+        axis: Axis? = nil,
+        lineLimit: ClosedRange<Int> = 1...1,
+        autocapitalization: TextInputAutocapitalization? = nil,
+        autocorrectionDisabled: Bool = false,
+        minimumHeight: CGFloat = DesignMetrics.minimumTarget,
+        focused: FocusState<Bool>.Binding? = nil,
+        submitLabel: SubmitLabel? = nil,
+        onSubmit: (() -> Void)? = nil,
+        onChange: ((String) -> Void)? = nil
+    ) {
+        self.title = title
+        self.prompt = prompt
+        _text = text
+        self.error = error
+        self.accessibilityId = accessibilityId
+        self.isEnabled = isEnabled
+        self.showsTitle = showsTitle
+        self.accessibilityLabel = accessibilityLabel
+        self.axis = axis
+        self.lineLimit = lineLimit
+        self.autocapitalization = autocapitalization
+        self.autocorrectionDisabled = autocorrectionDisabled
+        self.minimumHeight = minimumHeight
+        self.focused = focused
+        self.submitLabel = submitLabel
+        self.onSubmit = onSubmit
+        self.onChange = onChange
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            Text(title)
-                .font(Typo.ui(TypeScale.base, .medium))
-                .foregroundStyle(DuskColors.ink)
-            TextField(prompt, text: $text)
-                .font(Typo.ui(TypeScale.base))
-                .textFieldStyle(.plain)
-                .padding(.horizontal, Space.md)
-                .frame(minHeight: DesignMetrics.minimumTarget)
-                .designWell(focused: focused, error: error != nil)
-                .focused($focused)
-                .disabled(!isEnabled)
-                .accessibilityLabel(title)
-                .accessibilityValue(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? (text.isEmpty ? "Empty" : text))
-                .accessibilityHint(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? "")
-                .accessibilityIdentifier(accessibilityId ?? "")
+            if showsTitle {
+                Text(title)
+                    .font(Typo.ui(TypeScale.base, .medium))
+                    .foregroundStyle(DuskColors.ink)
+            }
+            focusableField
             if let error {
                 DesignFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
             }
         }
+    }
+
+    @ViewBuilder
+    private var focusableField: some View {
+        if let focused {
+            input.focused(focused)
+        } else {
+            input.focused($internalFocused)
+        }
+    }
+
+    @ViewBuilder
+    private var nativeField: some View {
+        if let axis {
+            TextField(prompt, text: $text, axis: axis)
+        } else {
+            TextField(prompt, text: $text)
+        }
+    }
+
+    private var baseInput: some View {
+        nativeField
+            .font(Typo.ui(TypeScale.base))
+            .textFieldStyle(.plain)
+            .padding(.horizontal, Space.md)
+            .frame(minHeight: minimumHeight)
+    }
+
+    private var surfacedInput: some View {
+        baseInput
+            .lineLimit(lineLimit)
+            .designWell(focused: isFocused, error: error != nil)
+            .disabled(!isEnabled)
+    }
+
+    private var input: some View {
+        surfacedInput
+            .submitLabel(submitLabel ?? .return)
+            .onSubmit { onSubmit?() }
+            .onChange(of: text) { _, value in onChange?(value) }
+            .textInputAutocapitalization(autocapitalization ?? .sentences)
+            .autocorrectionDisabled(autocorrectionDisabled)
+            .accessibilityLabel(accessibilityLabel ?? title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(fieldAccessibilityHint)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var fieldAccessibilityValue: String {
+        if !isEnabled { return "Disabled" }
+        if let error { return "Error: \(error)" }
+        return text.isEmpty ? "Empty" : text
+    }
+
+    private var fieldAccessibilityHint: String {
+        if !isEnabled { return "Disabled" }
+        if let error { return "Error: \(error)" }
+        return ""
     }
 }
 
@@ -586,6 +851,181 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
 
     private var selectedLabel: String {
         options.first(where: { $0.value == selection })?.label ?? "Not selected"
+    }
+}
+
+private struct DesignStateAccessibilityModifier: ViewModifier {
+    let state: DesignControlState
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        switch state {
+        case .normal:
+            content
+        default:
+            content.accessibilityValue(state.accessibilityValue)
+        }
+    }
+}
+
+/// Native date selection with shared state, error, target, and accessibility
+/// semantics. The DatePicker itself remains SwiftUI-native so locale, calendar,
+/// time-zone, Dynamic Type, and system editing behavior are untouched.
+struct DesignDatePicker: View {
+    let title: String
+    @Binding var selection: Date
+    var range: PartialRangeFrom<Date>? = nil
+    let displayedComponents: DatePickerComponents
+    var timeZone: TimeZone = .current
+    var labelsHidden = false
+    var error: String? = nil
+    var state: DesignControlState = .normal
+    var isEnabled = true
+    var accessibilityId: String? = nil
+    var minimumHeight: CGFloat = DesignMetrics.minimumTarget
+
+    init(
+        title: String,
+        selection: Binding<Date>,
+        range: PartialRangeFrom<Date>? = nil,
+        displayedComponents: DatePickerComponents,
+        timeZone: TimeZone = .current,
+        labelsHidden: Bool = false,
+        error: String? = nil,
+        state: DesignControlState = .normal,
+        isEnabled: Bool = true,
+        accessibilityId: String? = nil,
+        minimumHeight: CGFloat = DesignMetrics.minimumTarget
+    ) {
+        self.title = title
+        _selection = selection
+        self.range = range
+        self.displayedComponents = displayedComponents
+        self.timeZone = timeZone
+        self.labelsHidden = labelsHidden
+        self.error = error
+        self.state = state
+        self.isEnabled = isEnabled
+        self.accessibilityId = accessibilityId
+        self.minimumHeight = minimumHeight
+    }
+
+    private var effectiveState: DesignControlState {
+        if !isEnabled { return .disabled }
+        if let error { return .error(error) }
+        return state
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            picker
+                .environment(\.timeZone, timeZone)
+                .disabled(!effectiveState.isInteractive)
+                .frame(minHeight: minimumHeight)
+                .accessibilityLabel(title)
+                .accessibilityHint(accessibilityHint)
+                .accessibilityIdentifier(accessibilityId ?? "")
+                .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+                .modifier(DesignStateAccessibilityModifier(state: effectiveState))
+            if let error {
+                DesignFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
+            }
+        }
+    }
+
+    private var accessibilityHint: String {
+        switch effectiveState {
+        case .error(let message): "Error: \(message)"
+        case .disabled: "Disabled"
+        default: ""
+        }
+    }
+
+    @ViewBuilder
+    private var picker: some View {
+        if let range {
+            if labelsHidden {
+                DatePicker(title, selection: $selection, in: range, displayedComponents: displayedComponents)
+                    .labelsHidden()
+            } else {
+                DatePicker(title, selection: $selection, in: range, displayedComponents: displayedComponents)
+            }
+        } else if labelsHidden {
+            DatePicker(title, selection: $selection, displayedComponents: displayedComponents)
+                .labelsHidden()
+        } else {
+            DatePicker(title, selection: $selection, displayedComponents: displayedComponents)
+        }
+    }
+}
+
+/// Native integer stepper with shared state, error, target, and accessibility
+/// semantics. Callers retain ownership of value mapping and change handling.
+struct DesignStepper: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    var error: String? = nil
+    var state: DesignControlState = .normal
+    var isEnabled = true
+    var accessibilityId: String? = nil
+    var valueDescription: (Int) -> String = { String($0) }
+
+    init(
+        title: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>,
+        error: String? = nil,
+        state: DesignControlState = .normal,
+        isEnabled: Bool = true,
+        accessibilityId: String? = nil,
+        valueDescription: @escaping (Int) -> String = { String($0) }
+    ) {
+        self.title = title
+        _value = value
+        self.range = range
+        self.error = error
+        self.state = state
+        self.isEnabled = isEnabled
+        self.accessibilityId = accessibilityId
+        self.valueDescription = valueDescription
+    }
+
+    private var effectiveState: DesignControlState {
+        if !isEnabled { return .disabled }
+        if let error { return .error(error) }
+        return state
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Stepper(title, value: $value, in: range)
+                .disabled(!effectiveState.isInteractive)
+                .frame(minHeight: DesignMetrics.minimumTarget)
+                .accessibilityLabel(title)
+                .accessibilityValue(accessibilityValue)
+                .accessibilityHint(accessibilityHint)
+                .accessibilityIdentifier(accessibilityId ?? "")
+                .accessibilityAddTraits(effectiveState.isSelected ? .isSelected : [])
+            if let error {
+                DesignFieldError(message: error, accessibilityId: accessibilityId.map { "\($0)-error" })
+            }
+        }
+    }
+
+    private var accessibilityValue: String {
+        switch effectiveState {
+        case .normal: valueDescription(value)
+        default: effectiveState.accessibilityValue
+        }
+    }
+
+    private var accessibilityHint: String {
+        switch effectiveState {
+        case .error(let message): "Error: \(message)"
+        case .disabled: "Disabled"
+        default: ""
+        }
     }
 }
 

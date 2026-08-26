@@ -29,17 +29,3 @@ struct CalendarDestructiveButton: View {
             .frame(minHeight: CalendarOverlaySemantics.actionHeight)
     }
 }
-
-struct CalendarOverlayPressButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .contentShape(Rectangle())
-            .scaleEffect(configuration.isPressed && !reduceMotion
-                         ? CalendarOverlaySemantics.pressedScale
-                         : CalendarOverlaySemantics.normalScale)
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback,
-                                                 reduceMotion: reduceMotion),
-                       value: configuration.isPressed)
-    }
-}

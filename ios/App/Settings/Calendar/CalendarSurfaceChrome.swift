@@ -16,13 +16,16 @@ struct CalendarTopBar: View {
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
-            Button("Add", action: onAdd)
-                .buttonStyle(DesignButtonStyle(role: .action))
-                .disabled(!canAdd)
-                .opacity(canAdd ? CalendarSurfaceLayout.normalScale : CalendarSurfaceLayout.disabledOpacity)
-                .accessibilityHint(canAdd ? "Creates a calendar event" : "Adding events is unavailable")
-                .calendarAccessibilityFocus(openerFocus, equals: .addControl)
-                .accessibilityIdentifier("calendar-add")
+            DesignActionButton(
+                title: "Add",
+                state: canAdd ? .normal : .disabled,
+                accessibilityId: "calendar-add",
+                fillsWidth: false,
+                action: onAdd
+            )
+            .opacity(canAdd ? CalendarSurfaceLayout.normalScale : CalendarSurfaceLayout.disabledOpacity)
+            .accessibilityHint(canAdd ? "Creates a calendar event" : "Adding events is unavailable")
+            .calendarAccessibilityFocus(openerFocus, equals: .addControl)
         }
         .padding(.horizontal, Space.sm)
         .frame(height: CalendarSurfaceLayout.topBarHeight)
@@ -69,18 +72,23 @@ private struct CalendarNavigationButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        DesignCompactButton(
+            accessibilityLabel: label,
+            minimumWidth: CalendarSurfaceLayout.minimumTarget,
+            minimumHeight: CalendarSurfaceLayout.minimumTarget,
+            pressedScale: CalendarSurfaceLayout.pressedScale,
+            action: action
+        ) {
             Group {
                 if let systemImage { Image(systemName: systemImage) } else { Text(label) }
             }
             .font(Typo.ui(TypeScale.xs, .medium))
             .foregroundStyle(DuskColors.ink2)
-            .frame(minWidth: CalendarSurfaceLayout.minimumTarget, minHeight: CalendarSurfaceLayout.minimumTarget)
+            .frame(minWidth: CalendarSurfaceLayout.minimumTarget,
+                   minHeight: CalendarSurfaceLayout.minimumTarget)
             .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: Radii.md))
             .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft))
         }
-        .buttonStyle(CalendarPressButtonStyle())
-        .accessibilityLabel(label)
     }
 }
 
@@ -92,11 +100,8 @@ struct CalendarStatusView: View {
         Group {
             switch state.content {
             case .loading:
-                HStack(spacing: Space.sm) {
-                    ProgressView()
-                    Text("Loading calendar…")
-                }
-                .statusStyle()
+                DesignProgress(title: "Loading calendar…")
+                    .statusStyle()
             case .unavailableOffline:
                 retryStatus("This date range is not available offline.", icon: "wifi.slash")
             case .error:
@@ -120,9 +125,11 @@ struct CalendarStatusView: View {
         HStack(spacing: Space.sm) {
             Label(message, systemImage: icon)
             Spacer(minLength: 0)
-            Button("Retry", action: onRetry)
-                .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-                .accessibilityIdentifier("calendar-retry")
+            DesignTextButton(
+                title: "Retry",
+                accessibilityId: "calendar-retry",
+                action: onRetry
+            )
         }
         .statusStyle()
     }
@@ -146,16 +153,21 @@ struct FloatingViewBar: View {
     var body: some View {
         HStack(spacing: 3) {
             ForEach(CalendarView.allCases, id: \.self) { view in
-                Button(view.displayName) { onSelect(view) }
-                    .font(Typo.mono(TypeScale.xs))
-                    .foregroundStyle(selected == view ? DuskColors.ink : DuskColors.ink3)
-                    .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.viewControlHeight)
-                    .background(selected == view ? DuskColors.bgSunk : .clear, in: Capsule())
-                    .overlay(Capsule().stroke(selected == view ? DuskColors.line : .clear))
-                    .buttonStyle(CalendarPressButtonStyle())
-                    .accessibilityValue(selected == view ? "Selected" : "Not selected")
-                    .accessibilityAddTraits(selected == view ? .isSelected : [])
-                    .accessibilityIdentifier("calendar-view-\(view.displayName.lowercased())")
+                DesignSelectableButton(
+                    accessibilityLabel: view.displayName,
+                    state: selected == view ? .selected : .normal,
+                    accessibilityId: "calendar-view-\(view.displayName.lowercased())",
+                    minimumHeight: CalendarSurfaceLayout.viewControlHeight,
+                    pressedScale: CalendarSurfaceLayout.pressedScale,
+                    action: { onSelect(view) }
+                ) {
+                    Text(view.displayName)
+                        .font(Typo.mono(TypeScale.xs))
+                        .foregroundStyle(selected == view ? DuskColors.ink : DuskColors.ink3)
+                        .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.viewControlHeight)
+                        .background(selected == view ? DuskColors.bgSunk : .clear, in: Capsule())
+                        .overlay(Capsule().stroke(selected == view ? DuskColors.line : .clear))
+                }
             }
         }
         .padding(CalendarSurfaceLayout.floatingInnerPadding)

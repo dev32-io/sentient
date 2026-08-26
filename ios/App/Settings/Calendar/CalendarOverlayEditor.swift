@@ -63,13 +63,13 @@ struct CalendarEditorSheet: View {
                     .accessibilityIdentifier("calendar-editor-error")
             }
             if editor.isEdit && canDelete {
-                Button("Delete event", role: .destructive, action: onDelete)
-                    .font(Typo.ui(TypeScale.base, .semibold))
-                    .foregroundStyle(DuskColors.stop)
-                    .frame(minWidth: DesignMetrics.minimumTarget, minHeight: DesignMetrics.minimumTarget)
-                    .disabled(isOffline || isSubmitting)
-                    .accessibilityHint(isOffline ? "Connection required" : "")
-                    .accessibilityIdentifier("calendar-editor-delete")
+                CalendarDestructiveButton(
+                    title: "Delete event",
+                    disabled: isOffline || isSubmitting,
+                    action: onDelete
+                )
+                .accessibilityHint(isOffline ? "Connection required" : "")
+                .accessibilityIdentifier("calendar-editor-delete")
             }
         } footer: {
             HStack(spacing: Space.sm) {

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Calendar's native text field primitive. The field keeps the shared input
-/// recipe in one place while leaving text state and mutation mapping to the
-/// editor sections.
+/// Calendar's text field adapter keeps Calendar's prompt, mutation callback,
+/// and accessibility identity while delegating input rendering and semantics
+/// to the shared Design field.
 struct CalendarTextField: View {
     let prompt: String
     @Binding var text: String
@@ -25,16 +25,22 @@ struct CalendarTextField: View {
     }
 
     var body: some View {
-        TextField(prompt, text: $text)
-            .calendarAutocapitalization(autocapitalization)
-            .onChange(of: text) { _, _ in onChange() }
-            .calendarInput()
-            .calendarAccessibilityIdentifier(accessibilityIdentifier)
+        DesignField(
+            title: prompt,
+            prompt: prompt,
+            text: $text,
+            accessibilityId: accessibilityIdentifier,
+            showsTitle: false,
+            accessibilityLabel: prompt,
+            autocapitalization: autocapitalization,
+            minimumHeight: CalendarOverlaySemantics.actionHeight,
+            onChange: { _ in onChange() }
+        )
     }
 }
 
-/// The multiline details field intentionally remains a native SwiftUI
-/// TextField so Dynamic Type, selection, and keyboard behavior stay native.
+/// The multiline details field remains a native SwiftUI axis-aware TextField;
+/// the shared Design field supplies its surface and accessibility contract.
 struct CalendarMultilineTextField: View {
     let prompt: String
     @Binding var text: String
@@ -54,11 +60,18 @@ struct CalendarMultilineTextField: View {
     }
 
     var body: some View {
-        TextField(prompt, text: $text, axis: .vertical)
-            .lineLimit(3...7)
-            .onChange(of: text) { _, _ in onChange() }
-            .calendarInput()
-            .calendarAccessibilityIdentifier(accessibilityIdentifier)
+        DesignField(
+            title: prompt,
+            prompt: prompt,
+            text: $text,
+            accessibilityId: accessibilityIdentifier,
+            showsTitle: false,
+            accessibilityLabel: prompt,
+            axis: .vertical,
+            lineLimit: 3...7,
+            minimumHeight: CalendarOverlaySemantics.actionHeight,
+            onChange: { _ in onChange() }
+        )
     }
 }
 
@@ -83,18 +96,24 @@ struct CalendarTitleField: View {
     }
 
     var body: some View {
-        TextField("Event title", text: $text)
-            .focused(focused)
-            .submitLabel(.done)
-            .onSubmit { focused.wrappedValue = false }
-            .onChange(of: text) { _, _ in onChange() }
-            .calendarInput()
-            .calendarAccessibilityIdentifier(accessibilityIdentifier)
+        DesignField(
+            title: "Event title",
+            prompt: "Event title",
+            text: $text,
+            accessibilityId: accessibilityIdentifier,
+            showsTitle: false,
+            accessibilityLabel: "Event title",
+            minimumHeight: CalendarOverlaySemantics.actionHeight,
+            focused: focused,
+            submitLabel: .done,
+            onSubmit: { focused.wrappedValue = false },
+            onChange: { _ in onChange() }
+        )
     }
 }
 
-/// Native toggle primitive used by editor sections. It owns only Calendar's
-/// semantic tint and forwards the changed value to the section reducer.
+/// Native toggle adapter used by editor sections. It owns only Calendar's
+/// labels and mutation callback while Design owns the toggle semantics.
 struct CalendarToggleField: View {
     let label: String
     @Binding var isOn: Bool
@@ -114,14 +133,16 @@ struct CalendarToggleField: View {
     }
 
     var body: some View {
-        Toggle(label, isOn: $isOn)
-            .tint(DuskColors.accent)
-            .onChange(of: isOn) { _, value in onChange(value) }
-            .calendarAccessibilityIdentifier(accessibilityIdentifier)
+        DesignToggleRow(
+            title: label,
+            isOn: $isOn,
+            accessibilityId: accessibilityIdentifier
+        )
+        .onChange(of: isOn) { _, value in onChange(value) }
     }
 }
 
-/// Native date control primitive. The optional lower bound is used only by an
+/// Native date control adapter. The optional lower bound is used only by an
 /// end date; all other date controls retain DatePicker's normal range.
 struct CalendarDateField: View {
     let title: String
@@ -154,54 +175,49 @@ struct CalendarDateField: View {
     }
 
     var body: some View {
-        nativePicker
-            .calendarLabelsHidden(labelsHidden)
-            .environment(\.timeZone, timeZone)
-            .onChange(of: selection) { _, _ in onChange() }
-            .calendarAccessibilityIdentifier(accessibilityIdentifier)
-    }
-
-    @ViewBuilder
-    private var nativePicker: some View {
-        if let minimumDate {
-            DatePicker(
-                title,
-                selection: $selection,
-                in: minimumDate...,
-                displayedComponents: displayedComponents
-            )
-        } else {
-            DatePicker(title, selection: $selection, displayedComponents: displayedComponents)
-        }
+        DesignDatePicker(
+            title: title,
+            selection: $selection,
+            range: minimumDate.map { $0... },
+            displayedComponents: displayedComponents,
+            timeZone: timeZone,
+            labelsHidden: labelsHidden,
+            accessibilityId: accessibilityIdentifier,
+            minimumHeight: CalendarOverlaySemantics.actionHeight
+        )
+        .onChange(of: selection) { _, _ in onChange() }
     }
 }
 
-/// Segmented Picker primitive. Option labels remain supplied by the owning
-/// section so this wrapper does not invent domain values.
-struct CalendarSegmentedPicker<Selection: Hashable, Options: View>: View {
+/// Segmented picker adapter. Option labels and values remain supplied by the
+/// owning section while the native picker and accessibility contract live in
+/// the Design foundation.
+struct CalendarSegmentedPicker<Selection: Hashable>: View {
     let title: String
+    let options: [(value: Selection, label: String)]
     @Binding var selection: Selection
-    @ViewBuilder let options: () -> Options
 
     init(
         _ title: String,
         selection: Binding<Selection>,
-        @ViewBuilder options: @escaping () -> Options
+        options: [(value: Selection, label: String)]
     ) {
         self.title = title
-        _selection = selection
         self.options = options
+        _selection = selection
     }
 
     var body: some View {
-        Picker(title, selection: $selection) {
-            options()
-        }
-        .pickerStyle(.segmented)
+        DesignSegmentedPicker(
+            title: title,
+            options: options,
+            selection: $selection
+        )
     }
 }
 
-/// Native stepper primitive for recurrence values.
+/// Stepper adapter for recurrence values. Calendar retains its labels and
+/// reducer callback while the native control is owned by Design.
 struct CalendarStepperField: View {
     let label: String
     @Binding var value: Int
@@ -209,45 +225,8 @@ struct CalendarStepperField: View {
     let onChange: () -> Void
 
     var body: some View {
-        Stepper(label, value: $value, in: range)
+        DesignStepper(title: label, value: $value, range: range)
             .onChange(of: value) { _, _ in onChange() }
-    }
-}
-
-private extension View {
-    func calendarInput() -> some View {
-        font(Typo.ui(TypeScale.base))
-            .foregroundStyle(DuskColors.ink)
-            .padding(.horizontal, Space.md)
-            .frame(minHeight: CalendarOverlaySemantics.actionHeight)
-            .designWell()
-    }
-
-    @ViewBuilder
-    func calendarAccessibilityIdentifier(_ identifier: String?) -> some View {
-        if let identifier {
-            accessibilityIdentifier(identifier)
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func calendarAutocapitalization(_ value: TextInputAutocapitalization?) -> some View {
-        if let value {
-            textInputAutocapitalization(value)
-        } else {
-            self
-        }
-    }
-
-    @ViewBuilder
-    func calendarLabelsHidden(_ hidden: Bool) -> some View {
-        if hidden {
-            labelsHidden()
-        } else {
-            self
-        }
     }
 }
 

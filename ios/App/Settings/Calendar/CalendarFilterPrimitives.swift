@@ -9,7 +9,13 @@ struct CalendarFilterChip: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        DesignSelectableButton(
+            accessibilityLabel: "\(accessibilityPrefix), \(label)",
+            state: selected ? .selected : .normal,
+            accessibilityId: identifier,
+            pressedScale: CalendarSurfaceLayout.pressedScale,
+            action: action
+        ) {
             Text(label)
                 .font(Typo.mono(TypeScale.xs))
                 .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
@@ -18,11 +24,6 @@ struct CalendarFilterChip: View {
                 .background(selected ? DuskColors.paper : .clear, in: Capsule())
                 .overlay(Capsule().stroke(selected ? DuskColors.line : DuskColors.lineSoft))
         }
-        .buttonStyle(CalendarPressButtonStyle())
-        .accessibilityLabel("\(accessibilityPrefix), \(label)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -35,7 +36,13 @@ struct CalendarTagChip: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        DesignSelectableButton(
+            accessibilityLabel: "Tag or importance, \(label)",
+            state: selected ? .selected : .normal,
+            accessibilityId: identifier,
+            pressedScale: CalendarSurfaceLayout.pressedScale,
+            action: action
+        ) {
             Text(label)
                 .font(Typo.mono(TypeScale.xs))
                 .foregroundStyle(selected ? DuskColors.ink : DuskColors.ink3)
@@ -45,12 +52,6 @@ struct CalendarTagChip: View {
                 .overlay(Capsule().stroke(DuskColors.lineSoft))
                 .contentShape(Rectangle().inset(by: -5))
         }
-        .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-        .buttonStyle(CalendarPressButtonStyle())
-        .accessibilityLabel("Tag or importance, \(label)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -61,26 +62,16 @@ struct CalendarSearchField: View {
     let onSearch: (String) -> Void
 
     var body: some View {
-        HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(DuskColors.ink3)
-                .accessibilityHidden(true)
-            TextField("Search events", text: Binding(get: { text }, set: onSearch))
-                .font(Typo.ui(TypeScale.sm))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .accessibilityLabel("Search calendar events")
-                .accessibilityIdentifier("calendar-filter-search")
-            if !text.isEmpty {
-                Button("Clear search", systemImage: "xmark.circle.fill") { onSearch("") }
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(DuskColors.ink3)
-                    .frame(minWidth: CalendarSurfaceLayout.minimumTarget,
-                           minHeight: CalendarSurfaceLayout.minimumTarget)
-            }
-        }
-        .padding(.leading, Space.md)
-        .frame(minHeight: CalendarSurfaceLayout.minimumTarget)
-        .designWell()
+        DesignSearchField(
+            prompt: "Search events",
+            query: Binding(get: { text }, set: onSearch),
+            accessibilityId: "calendar-filter-search",
+            onClear: text.isEmpty ? nil : { onSearch("") },
+            textFont: Typo.ui(TypeScale.sm),
+            trailingPadding: 0
+        )
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .accessibilityLabel("Search calendar events")
     }
 }

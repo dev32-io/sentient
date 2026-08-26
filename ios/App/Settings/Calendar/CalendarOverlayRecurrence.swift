@@ -30,12 +30,16 @@ struct CalendarDraftRecurrenceSection: View {
 
             if repeats {
                 CalendarLabeledField("Frequency") {
-                    CalendarSegmentedPicker("Frequency", selection: $frequency) {
-                        Text("Daily").tag(RecurrenceFrequency.daily)
-                        Text("Weekly").tag(RecurrenceFrequency.weekly)
-                        Text("Monthly").tag(RecurrenceFrequency.monthly)
-                        Text("Yearly").tag(RecurrenceFrequency.yearly)
-                    }
+                    CalendarSegmentedPicker(
+                        "Frequency",
+                        selection: $frequency,
+                        options: [
+                            (value: RecurrenceFrequency.daily, label: "Daily"),
+                            (value: RecurrenceFrequency.weekly, label: "Weekly"),
+                            (value: RecurrenceFrequency.monthly, label: "Monthly"),
+                            (value: RecurrenceFrequency.yearly, label: "Yearly")
+                        ]
+                    )
                     .onChange(of: frequency) { _, _ in
                         ensureWeeklyDay()
                         onChange()
@@ -106,14 +110,19 @@ struct CalendarWeekdayPicker: View {
         CalendarLabeledField("Days") {
             HStack(spacing: Space.xs) {
                 ForEach(Weekday.allCases, id: \.self) { day in
-                    Button {
-                        if selection.contains(day) {
-                            selection.remove(day)
-                        } else {
-                            selection.insert(day)
+                    DesignSelectableButton(
+                        accessibilityLabel: day.name.capitalized,
+                        state: selection.contains(day) ? .selected : .normal,
+                        pressedScale: CalendarOverlaySemantics.pressedScale,
+                        action: {
+                            if selection.contains(day) {
+                                selection.remove(day)
+                            } else {
+                                selection.insert(day)
+                            }
+                            onChange()
                         }
-                        onChange()
-                    } label: {
+                    ) {
                         Text(String(day.name.prefix(1)))
                             .font(Typo.mono(TypeScale.xs))
                             .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
@@ -122,9 +131,6 @@ struct CalendarWeekdayPicker: View {
                                 in: RoundedRectangle(cornerRadius: Radii.sm)
                             )
                     }
-                    .buttonStyle(CalendarOverlayPressButtonStyle())
-                    .accessibilityLabel(day.name.capitalized)
-                    .accessibilityValue(selection.contains(day) ? "Selected" : "Not selected")
                 }
             }
         }
@@ -142,18 +148,20 @@ struct CalendarScopeChoices: View {
                 .font(Typo.ui(TypeScale.sm, .medium))
                 .foregroundStyle(DuskColors.ink3)
             ForEach(scopes, id: \.self) { scope in
-                Button { onChoose(scope) } label: {
+                DesignSelectableButton(
+                    accessibilityLabel: CalendarOverlaySemantics.scopeAccessibilityLabel(scope, selected: selected == scope),
+                    state: selected == scope ? .selected : .normal,
+                    accessibilityId: "calendar-scope-\(scope.name.lowercased())",
+                    action: { onChoose(scope) }
+                ) {
                     HStack {
                         Image(systemName: selected == scope ? "largecircle.fill.circle" : "circle")
                             .foregroundStyle(selected == scope ? DuskColors.accent : DuskColors.ink3)
                         Text(CalendarOverlaySemantics.scopeLabel(scope))
                         Spacer()
                     }
-                    .frame(minHeight: DesignMetrics.minimumTarget)
+                    .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(CalendarOverlaySemantics.scopeAccessibilityLabel(scope, selected: selected == scope))
-                .accessibilityIdentifier("calendar-scope-\(scope.name.lowercased())")
             }
         }
     }

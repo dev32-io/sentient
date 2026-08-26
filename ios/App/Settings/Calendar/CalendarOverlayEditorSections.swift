@@ -266,24 +266,32 @@ struct CalendarDraftClassificationSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.lg) {
             CalendarLabeledField("Calendar") {
-                CalendarSegmentedPicker("Calendar", selection: $scope) {
-                    Text("Private").tag(CalendarScope.private)
-                    Text("Household").tag(CalendarScope.household)
-                }
+                CalendarSegmentedPicker(
+                    "Calendar",
+                    selection: $scope,
+                    options: [
+                        (value: CalendarScope.private, label: "Private"),
+                        (value: CalendarScope.household, label: "Household")
+                    ]
+                )
             }
             CalendarLabeledField("Visibility") {
-                CalendarSegmentedPicker("Visibility", selection: $visibility) {
-                    ForEach(MobileData.Visibility.allCases, id: \.self) {
-                        Text($0.calendarDisplayName).tag($0)
+                CalendarSegmentedPicker(
+                    "Visibility",
+                    selection: $visibility,
+                    options: MobileData.Visibility.allCases.map {
+                        (value: $0, label: $0.calendarDisplayName)
                     }
-                }
+                )
             }
             CalendarLabeledField("Importance") {
-                CalendarSegmentedPicker("Importance", selection: $importance) {
-                    ForEach(Importance.allCases, id: \.self) {
-                        Text($0.calendarDisplayName).tag($0)
+                CalendarSegmentedPicker(
+                    "Importance",
+                    selection: $importance,
+                    options: Importance.allCases.map {
+                        (value: $0, label: $0.calendarDisplayName)
                     }
-                }
+                )
             }
             CalendarLabeledField("Group") {
                 CalendarTextField(prompt: "Optional group", text: $group, onChange: onChange)

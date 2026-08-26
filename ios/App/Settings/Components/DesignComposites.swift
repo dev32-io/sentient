@@ -350,15 +350,46 @@ struct DesignSearchField: View {
     let prompt: String
     @Binding var query: String
     var accessibilityId: String? = nil
+    var onClear: (() -> Void)? = nil
+    var textFont: Font = Typo.ui(TypeScale.base)
+    var leadingPadding: CGFloat = Space.md
+    var trailingPadding: CGFloat = Space.md
+
+    init(
+        prompt: String,
+        query: Binding<String>,
+        accessibilityId: String? = nil,
+        onClear: (() -> Void)? = nil,
+        textFont: Font = Typo.ui(TypeScale.base),
+        leadingPadding: CGFloat = Space.md,
+        trailingPadding: CGFloat = Space.md
+    ) {
+        self.prompt = prompt
+        _query = query
+        self.accessibilityId = accessibilityId
+        self.onClear = onClear
+        self.textFont = textFont
+        self.leadingPadding = leadingPadding
+        self.trailingPadding = trailingPadding
+    }
 
     var body: some View {
         HStack(spacing: Space.sm) {
             Image(systemName: "magnifyingglass").accessibilityHidden(true)
             TextField(prompt, text: $query)
-                .font(Typo.ui(TypeScale.base))
+                .font(textFont)
                 .textFieldStyle(.plain)
+            if let onClear, !query.isEmpty {
+                DesignCompactIconButton(
+                    systemName: "xmark.circle.fill",
+                    label: "Clear search",
+                    action: onClear
+                )
+                .foregroundStyle(DuskColors.ink3)
+            }
         }
-        .padding(.horizontal, Space.md)
+        .padding(.leading, leadingPadding)
+        .padding(.trailing, trailingPadding)
         .frame(minHeight: DesignMetrics.minimumTarget)
         .designWell()
         .accessibilityLabel(prompt)
