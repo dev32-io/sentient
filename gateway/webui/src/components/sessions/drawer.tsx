@@ -81,7 +81,11 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
   const showStaleErrorBanner = hasError && visible.length > 0;
 
   return (
-    <div class={`drawer ${open ? "drawer--open" : ""}`} aria-hidden={!open}>
+    <div
+      class={`drawer ${open ? "drawer--open" : ""}`}
+      aria-hidden={!open}
+      inert={open ? undefined : true}
+    >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismiss-only; ESC handled at panel scope */}
       <div class="drawer__backdrop" onClick={onClose} aria-hidden="true" />
       <aside ref={panelRef} class="drawer__panel" aria-label="Past chats" role="dialog" aria-modal="true" data-history-drawer>

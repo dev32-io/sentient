@@ -22,6 +22,11 @@ private let fabIconColor = terraOnAccentText
 private let fabSize: CGFloat = 52
 private let fabCorner: CGFloat = 16
 
+enum HistorySurfaceLayout {
+    static let searchMinimumHeight = DesignMetrics.minimumTarget
+    static let searchTextRole: DesignTextRole = .body
+}
+
 struct HistorySidePanel: View {
     /// The host (Task 8.2 parent view) owns the model via @StateObject and
     /// passes it here. @ObservedObject is correct: the panel is a consumer, not
@@ -98,14 +103,14 @@ struct HistorySidePanel: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(DuskColors.ink3)
             TextField("Search past chats", text: $model.query)
-                .font(Typo.ui(14))
+                .designText(HistorySurfaceLayout.searchTextRole)
                 .foregroundStyle(DuskColors.ink)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .accessibilityIdentifier("history-search")
         }
         .padding(.horizontal, Space.lg)
-        .frame(height: 40)
+        .frame(minHeight: HistorySurfaceLayout.searchMinimumHeight)
         .background(DuskColors.bgElev, in: Capsule())
         .overlay(Capsule().stroke(DuskColors.lineSoft, lineWidth: 1))
         .padding(.horizontal, Space.lg)

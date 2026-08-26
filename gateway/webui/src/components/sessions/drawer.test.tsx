@@ -34,6 +34,32 @@ function Harness({ sessions }: { sessions: UseSessions }) {
 }
 
 describe("History drawer", () => {
+  it("keeps every closed drawer control out of sequential keyboard navigation", async () => {
+    const sessions = sessionsFixture();
+    const { container } = render(<Harness sessions={sessions} />);
+    const trigger = screen.getByRole("button", { name: "Open history" });
+    const drawer = container.querySelector<HTMLElement>(".drawer");
+
+    expect(drawer?.hasAttribute("inert")).toBe(true);
+    const sequentialControls = Array.from(
+      container.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])"),
+    ).filter((element) => !element.closest("[inert]"));
+    expect(sequentialControls).toEqual([trigger]);
+
+    trigger.focus();
+    fireEvent.click(trigger);
+    await screen.findByRole("dialog", { name: "Past chats" });
+    expect(drawer?.hasAttribute("inert")).toBe(false);
+    const closeButton = screen.getByRole("button", { name: "Close past chats" });
+    await waitFor(() => expect(document.activeElement).toBe(closeButton));
+
+    fireEvent.click(closeButton);
+    await waitFor(() => {
+      expect(drawer?.hasAttribute("inert")).toBe(true);
+      expect(document.activeElement).toBe(trigger);
+    });
+  });
+
   it("dismisses explicitly, by Escape, and by backdrop while restoring trigger focus", async () => {
     const sessions = sessionsFixture();
     const { container } = render(<Harness sessions={sessions} />);

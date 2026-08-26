@@ -29,4 +29,10 @@ final class HistoryInteractionTests: XCTestCase {
         XCTAssertTrue(DrawerSettlingDecision.shouldOpen(fraction: 0.1, velocityX: 500))
         XCTAssertFalse(DrawerSettlingDecision.shouldOpen(fraction: 0.9, velocityX: -500))
     }
+
+    func testSearchUsesFoundationTargetAndSemanticBodyType() {
+        XCTAssertGreaterThanOrEqual(HistorySurfaceLayout.searchMinimumHeight, 44)
+        XCTAssertEqual(HistorySurfaceLayout.searchTextRole.baseSize, DesignV2.Typography.body)
+        XCTAssertGreaterThanOrEqual(HistorySurfaceLayout.searchTextRole.baseSize, 15)
+    }
 }
