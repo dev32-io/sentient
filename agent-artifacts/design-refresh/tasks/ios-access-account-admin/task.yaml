@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-access-account-admin
 title: Refresh iOS setup/login, update, account, members, and secrets surfaces
-status: awaiting_ci
+status: contribution_complete
 dependsOn:
   - ios-foundation-components
   - ios-identity-startup-history
