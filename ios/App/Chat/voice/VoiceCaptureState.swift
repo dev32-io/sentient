@@ -8,6 +8,32 @@ enum VoiceCaptureState: String, Equatable, Sendable {
     case idle, hold, auto, transitioning, denied, failed, disabled
 }
 
+/// Presentation facts kept next to the pure capture state. The SwiftUI leaves
+/// consume this projection instead of reaching into the control's state or
+/// transport callbacks.
+struct VoiceCapturePresentationState: Equatable, Sendable {
+    let state: VoiceCaptureState
+    let disabled: Bool
+
+    var isDisabled: Bool { disabled || state == .disabled }
+    var isAuto: Bool { state == .auto && !isDisabled }
+    var showsWaveform: Bool { (state == .hold || state == .auto) && !isDisabled }
+    var showsTargetDeck: Bool { state == .hold && !isDisabled }
+    var showsFailureNotice: Bool { state == .denied || state == .failed }
+
+    var primaryLabel: String {
+        if isDisabled { return "Voice unavailable while reconnecting" }
+        if isAuto { return "Auto listening is on; activate to send and turn it off" }
+        return "Tap for Auto listening or hold to talk"
+    }
+
+    var failureMessage: String {
+        state == .denied
+            ? "Microphone access is off. Text messages are still available."
+            : "Voice capture could not start. Text messages are still available."
+    }
+}
+
 enum VoiceCaptureTarget: String, Equatable, Sendable {
     case auto, cancel, send
 }

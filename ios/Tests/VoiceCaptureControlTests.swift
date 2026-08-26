@@ -69,6 +69,11 @@ struct VoiceCaptureControlTests {
         #expect(result.intents == [.enterAuto])
     }
 
+    @Test func deliberateAutoTargetWinsOverElapsedTime() {
+        let result = VoiceCaptureReducer.release(from: .hold, target: .auto, elapsed: 1)
+        #expect(result.intents == [.enterAuto])
+    }
+
     @Test func assistiveActivationUsesSemanticIntentSequence() {
         #expect(VoiceCaptureReducer.activate(from: .idle).intents == [.holdStart, .enterAuto])
         #expect(VoiceCaptureReducer.activate(from: .auto).intents == [.exitAuto])
@@ -92,9 +97,48 @@ struct VoiceCaptureControlTests {
         #expect(VoiceCaptureReducer.release(from: .idle, target: .send, elapsed: 1).intents.isEmpty)
     }
 
+    @Test func autoSystemInterruptionExitsWithoutASecondTerminal() {
+        let interruption = VoiceCaptureReducer.interrupt(from: .auto)
+        let repeated = VoiceCaptureReducer.interrupt(from: interruption.state)
+
+        #expect(interruption == VoiceCaptureTransition(state: .idle, intents: [.lifecycleCancel]))
+        #expect(repeated.intents.isEmpty)
+    }
+
     @Test func dragTargetsUseAutoCancelSendOrder() {
         #expect(VoiceCaptureReducer.target(for: 0) == .send)
         #expect(VoiceCaptureReducer.target(for: VoiceCaptureReducer.targetStep) == .cancel)
         #expect(VoiceCaptureReducer.target(for: VoiceCaptureReducer.targetStep * 2) == .auto)
+    }
+
+    @Test func presentationKeepsFailureAndDisabledStatesExplicit() {
+        let denied = VoiceCapturePresentationState(state: .denied, disabled: false)
+        let failed = VoiceCapturePresentationState(state: .failed, disabled: false)
+        let disabled = VoiceCapturePresentationState(state: .disabled, disabled: true)
+
+        #expect(denied.showsFailureNotice)
+        #expect(failed.showsFailureNotice)
+        #expect(disabled.isDisabled)
+        #expect(!disabled.showsWaveform)
+        #expect(disabled.primaryLabel == "Voice unavailable while reconnecting")
+    }
+
+    @Test func reducedMotionWaveUsesClampedPerBarLevels() {
+        let levels: [Float] = [-1, 0, 0.5, 2, .nan]
+
+        #expect(PttWaveMetrics.levelScale(levels, at: 0) == PttWaveMetrics.levelFloor)
+        #expect(PttWaveMetrics.levelScale(levels, at: 2) == 0.675)
+        #expect(PttWaveMetrics.levelScale(levels, at: 3) == 1)
+        #expect(PttWaveMetrics.levelScale(levels, at: 4) == PttWaveMetrics.levelFloor)
+        #expect(PttWaveMetrics.levelScale(levels, at: 8) == PttWaveMetrics.levelFloor)
+    }
+
+    @Test func animatedWaveRetainsLevelAmplitude() {
+        let quiet = PttWaveMetrics.animatedScale([0], at: 0, time: 0.5)
+        let loud = PttWaveMetrics.animatedScale([1], at: 0, time: 0.5)
+
+        #expect(quiet == PttWaveMetrics.levelFloor)
+        #expect(loud == 1)
+        #expect(loud > quiet)
     }
 }
