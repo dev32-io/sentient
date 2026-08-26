@@ -18,4 +18,16 @@ describe("chat message responsive and motion contract", () => {
     expect(reducedMotion).toContain("animation: none");
     expect(reducedMotion).toContain(".bubble-text__caret { display: none; }");
   });
+
+  it("uses v2 semantic materials instead of local foundation recipes", () => {
+    expect(css).toContain("background: var(--slate-face)");
+    expect(css).toContain("box-shadow: var(--plate-shadow)");
+    expect(css).toContain("background: var(--well-face)");
+    expect(css).toContain("box-shadow: var(--well-shadow)");
+    expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    expect(css).not.toMatch(/\brgba?\s*\(/i);
+    expect(css).not.toMatch(/var\(--shadow-/);
+    expect(css).not.toMatch(/border-radius\s*:\s*\d/);
+    expect(css).not.toMatch(/(?:animation|transition)[^:]*:\s*[^;]*\b\d+(?:\.\d+)?(?:ms|s)\b/);
+  });
 });

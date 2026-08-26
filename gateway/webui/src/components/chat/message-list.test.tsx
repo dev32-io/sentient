@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "../../types.ts";
-import { MessageList, assistantStateFor } from "./message-list.tsx";
+import { MessageList, assistantStateFor, dividerLabelFor } from "./message-list.tsx";
 
 vi.mock("../common/sentient-identity.tsx", () => ({
   SentientIdentity: ({ state, label }: { state: string; label: string }): JSX.Element => (
@@ -36,6 +36,16 @@ describe("MessageList chronology and grouping", () => {
     expect(articles[2]?.querySelector("[data-identity-state]")).toBeNull();
     expect(articles[3]?.querySelector("[data-identity-state]")).not.toBeNull();
     expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+  });
+
+  it("starts a new assistant group after a same-day chronology gap", () => {
+    const first = message({ id: "a1", role: "assistant", text: "Earlier", timestamp: new Date(2026, 2, 19, 9).getTime() });
+    const later = message({ id: "a2", role: "assistant", text: "Later", timestamp: new Date(2026, 2, 19, 10).getTime() });
+    expect(dividerLabelFor(first, later)).toMatch(/10:00/);
+
+    const { container } = render(<MessageList messages={[first, later]} currentTurnId={null} activeCycleState="idle" currentUser={currentUser} />);
+    expect(container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+    expect(container.querySelectorAll(".message-bubble--continuation")).toHaveLength(0);
   });
 
   it("presents loading, empty, and error states inside chat content", () => {

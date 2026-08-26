@@ -3,8 +3,7 @@ import type { JSX, RefObject } from "preact";
 import type { ChatMessage } from "../../types.ts";
 import { useFollowLatest } from "../../hooks/use-follow-latest.ts";
 import type { SentientIdentityState } from "../common/sentient-identity.tsx";
-import type { CurrentUser } from "./message-bubble.tsx";
-import { MessageList, type MessageListStatus } from "./message-list.tsx";
+import { MessageChronology, type CurrentUser, type MessageChronologyStatus } from "./index.ts";
 
 export interface ChatViewProps {
   messages: readonly ChatMessage[];
@@ -12,7 +11,7 @@ export interface ChatViewProps {
   currentTurnId: string | null;
   activeCycleState: SentientIdentityState;
   currentUser: CurrentUser;
-  status?: MessageListStatus;
+  status?: MessageChronologyStatus;
 }
 
 export function ChatView({
@@ -33,7 +32,7 @@ export function ChatView({
   return (
     <section class="chat-view" ref={scrollRef} aria-label="Conversation content">
       <div class="chat-view__content" ref={contentRef as unknown as RefObject<HTMLDivElement>}>
-        <MessageList
+        <MessageChronology
           messages={messages}
           currentTurnId={currentTurnId}
           activeCycleState={activeCycleState}

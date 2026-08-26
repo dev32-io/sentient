@@ -1,7 +1,5 @@
-/**
- * Compatibility entry for existing chat callers. New consumers should import
- * the bounded API from ./index.ts and use MessageChronology.
- */
+export { MessageBubble } from "./message-bubble.tsx";
+export type { CurrentUser, MessageBubbleProps } from "./message-bubble.tsx";
 export {
   MessageChronology,
   MessageChronology as MessageList,
@@ -14,3 +12,6 @@ export type {
   MessageChronologyStatus,
   MessageChronologyStatus as MessageListStatus,
 } from "./message-chronology.tsx";
+export { DayDivider } from "./day-divider.tsx";
+export type { DayDividerProps } from "./day-divider.tsx";
+export type { SentientIdentityState } from "../common/sentient-identity.tsx";
