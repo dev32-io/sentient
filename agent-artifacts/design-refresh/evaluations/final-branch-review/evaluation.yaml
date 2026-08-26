@@ -4,7 +4,7 @@ type: combined-review
 checkpoint: final-review
 scope:
   workItem: design-refresh
-status: failed
+status: planned
 required: true
 attempt: 1
 methods:
@@ -12,8 +12,8 @@ methods:
     integrated change for specification fit, cross-stage correctness,
     regressions, maintainability, and test coverage.
 loop:
-  state: fixing
-  iteration: 0
+  state: rereviewing
+  iteration: 1
   maxIterations: 6
   reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
   reviewedCommit: ed78cfb880978aa0e86950a12f5efd7af73db049
@@ -40,6 +40,7 @@ loop:
     qa/design-refresh/check.ts --require-closed` pass. Do not use production,
     microphones, STT/TTS/audio, network-adapter manipulation, fabricated visual
     verdicts, or pixel-perfect comparison."
+  fixerAgentId: b0622fe4-2893-4827-b82a-d988939b31f0
 findings:
   - id: FINAL-001
     severity: high
