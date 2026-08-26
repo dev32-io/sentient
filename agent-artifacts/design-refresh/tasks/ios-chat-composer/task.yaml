@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: ios-chat-composer
 title: Refresh the native iOS chat, messages, task shelf, and capture-aware composer
-status: contribution_complete
+status: merged
 dependsOn:
   - ios-foundation-components
   - ios-identity-startup-history
@@ -35,3 +35,4 @@ runtime:
   baseCommit: 70b8de316bd0b086928bfea97f348f9ded13992c
   lastRunId: 8b9c6b07-8d5b-4a6a-9fd5-fb573d42423b
   completedCommit: bc2c6c7848a85c470b776755c63fe72b0365877d
+  mergedCommit: 13a01f4bcace0a7f5a8e59f32b74802b35c2815f
