@@ -26,8 +26,17 @@ struct SentientApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--qa-visual-review") {
+                QAVisualReviewCatalog()
+            } else {
+                RootView()
+                    .environmentObject(appConfig)
+            }
+            #else
             RootView()
                 .environmentObject(appConfig)
+            #endif
         }
     }
 }

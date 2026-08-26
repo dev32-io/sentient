@@ -116,6 +116,10 @@ describe("design refresh inventory checker", () => {
     await mkdir(resolve(root, evidenceRoot), { recursive: true });
     const inventory = inventorySchema.parse(await current("inventory.json"));
     const manifest = await current("visual-review.json");
+    for (const pending of manifest.entries.slice(1)) {
+      pending.status = "pending";
+      pending.evidencePaths = [];
+    }
     const entry = manifest.entries[0];
     const captures = entry.configurations.map((configuration: string) => ({
       configuration,
@@ -129,6 +133,13 @@ describe("design refresh inventory checker", () => {
       platform: "web",
       inventoryIds: [entry.inventoryId],
       captures,
+      observations: captures.map((capture: { configuration: string }) => ({
+        inventoryId: entry.inventoryId,
+        configuration: capture.configuration,
+        overflow: 0,
+        minimumTarget: null,
+        focusableCount: 0,
+      })),
     }));
     entry.status = "reviewed";
     entry.evidencePaths = [sidecar, ...captures.map((capture: { path: string }) => capture.path)];

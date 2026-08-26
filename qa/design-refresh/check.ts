@@ -266,13 +266,15 @@ export async function validateVisualManifest(repoRoot: string, raw: unknown, inv
       for (const capture of parsed.data.captures) {
         if (!entry.evidencePaths.includes(capture.path)) throw new Error(`${entry.evidenceId}: sidecar capture is absent from entry evidence paths`);
         if (!RENDER_CAPTURE_EXTENSIONS.has(extname(capture.path).toLowerCase())) throw new Error(`${entry.evidenceId}: sidecar does not reference a render capture`);
+        const observation = parsed.data.observations.find((item) => item.inventoryId === entry.inventoryId && item.configuration === capture.configuration);
+        if (!observation) throw new Error(`${entry.evidenceId}: sidecar capture lacks an inventory/configuration observation`);
         coverage.add(capture.configuration);
       }
     }
     if (entry.status !== "reviewed") continue;
-    if (/\b(?:pending|placeholder|not reviewed)\b/i.test(entry.reviewerNotes)) throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder reviewer notes`);
+    if (/\b(?:pending structured review|placeholder|not reviewed)\b/i.test(entry.reviewerNotes)) throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder reviewer notes`);
     for (const measurement of Object.values(entry.measurements)) {
-      if (!measurement.applicable && /\b(?:pending|placeholder|not reviewed)\b/i.test(measurement.reason)) {
+      if (!measurement.applicable && /\b(?:pending implementation review|pending structured review|placeholder|not reviewed)\b/i.test(measurement.reason)) {
         throw new Error(`${entry.evidenceId}: reviewed entry retains placeholder measurements`);
       }
     }

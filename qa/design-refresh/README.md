@@ -23,3 +23,17 @@ The iOS entrypoint verifies the installed app signature, never grants microphone
 ## Evidence closure
 
 Implementation tasks change inventory and visual entries from `planned`/`pending` to `reviewed`, attach files only beneath the platform design-refresh evidence root, and enter measured values. Evidence must use clearly synthetic disposable text and omit authentication material, private household content, model input/output logs, speech-derived text, sound files, and live deployment identifiers. Visual acceptance is structured review, not pixel-perfect automation.
+
+The final review uses DEBUG/QA-only catalogs that mount the shipped Preact and SwiftUI components with synthetic state adapters. They do not initialize audio or access the local/production stack:
+
+```bash
+bun qa/design-refresh/capture-web-visual-review.ts
+./scripts/ios-setup.sh
+xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp -configuration Debug \
+  -destination 'platform=iOS Simulator,id=<signed-simulator-id>' \
+  -derivedDataPath /tmp/sentient-visual-derived build CODE_SIGNING_ALLOWED=YES
+IOS_VISUAL_DEVICE=<signed-simulator-id> bash qa/design-refresh/capture-ios-visual-review.sh
+bun qa/design-refresh/check.ts --require-closed
+```
+
+Web captures are two-state paged sheets at desktop, narrow, 200% effective zoom, and Reduced Motion. iOS captures are three-state signed-simulator sheets at standard/AX3 Dynamic Type and with fixture motion disabled. Sidecars bind every inventory ID and configuration to its screenshot and observed overflow, target, and focus values.

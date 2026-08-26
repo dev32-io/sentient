@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "web",
+  "inventoryIds": [
+    "web.shell.notifications-noop",
+    "web.shell.user-menu"
+  ],
+  "captures": [
+    {
+      "configuration": "web-desktop-1280x900",
+      "path": "qa/web/evidence/design-refresh/web-desktop-1280x900-page-15.png"
+    },
+    {
+      "configuration": "web-narrow-390x844",
+      "path": "qa/web/evidence/design-refresh/web-narrow-390x844-page-15.png"
+    },
+    {
+      "configuration": "web-zoom-200",
+      "path": "qa/web/evidence/design-refresh/web-zoom-200-page-15.png"
+    },
+    {
+      "configuration": "web-reduced-motion",
+      "path": "qa/web/evidence/design-refresh/web-reduced-motion-page-15.png"
+    }
+  ],
+  "measurements": {
+    "web-desktop-1280x900": [
+      {
+        "inventoryId": "web.shell.notifications-noop",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.shell.user-menu",
+        "overflowPx": 0,
+        "minimumTargetPx": 40,
+        "focusableCount": 2
+      }
+    ],
+    "web-narrow-390x844": [
+      {
+        "inventoryId": "web.shell.notifications-noop",
+        "overflowPx": 26,
+        "minimumTargetPx": 28,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.shell.user-menu",
+        "overflowPx": 0,
+        "minimumTargetPx": 44,
+        "focusableCount": 2
+      }
+    ],
+    "web-zoom-200": [
+      {
+        "inventoryId": "web.shell.notifications-noop",
+        "overflowPx": 153,
+        "minimumTargetPx": 28,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.shell.user-menu",
+        "overflowPx": 0,
+        "minimumTargetPx": 40,
+        "focusableCount": 2
+      }
+    ],
+    "web-reduced-motion": [
+      {
+        "inventoryId": "web.shell.notifications-noop",
+        "overflowPx": 0,
+        "minimumTargetPx": 28,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.shell.user-menu",
+        "overflowPx": 0,
+        "minimumTargetPx": 40,
+        "focusableCount": 2
+      }
+    ]
+  },
+  "observations": [
+    {
+      "inventoryId": "web.shell.notifications-noop",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.shell.user-menu",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": 40,
+      "focusableCount": 2
+    },
+    {
+      "inventoryId": "web.shell.notifications-noop",
+      "configuration": "web-narrow-390x844",
+      "overflow": 26,
+      "minimumTarget": 28,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.shell.user-menu",
+      "configuration": "web-narrow-390x844",
+      "overflow": 0,
+      "minimumTarget": 44,
+      "focusableCount": 2
+    },
+    {
+      "inventoryId": "web.shell.notifications-noop",
+      "configuration": "web-zoom-200",
+      "overflow": 153,
+      "minimumTarget": 28,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.shell.user-menu",
+      "configuration": "web-zoom-200",
+      "overflow": 0,
+      "minimumTarget": 40,
+      "focusableCount": 2
+    },
+    {
+      "inventoryId": "web.shell.notifications-noop",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 28,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.shell.user-menu",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": 40,
+      "focusableCount": 2
+    }
+  ]
+}

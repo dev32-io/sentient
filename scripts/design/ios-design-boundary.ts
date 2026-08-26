@@ -8,6 +8,8 @@ const approved = [
   "ios/App/Foundation/",
   "ios/App/Settings/Components/",
   "ios/App/Settings/SettingsPageScaffold.swift",
+  // Local DEBUG-only production-component review catalog; never a route/page.
+  "ios/App/QAVisualReviewCatalog.swift",
   // Reusable product components may compose v2 tokens into visual recipes.
   // Route/page roots remain scanned so product-local literals cannot return.
   "ios/App/Chat/banner/",

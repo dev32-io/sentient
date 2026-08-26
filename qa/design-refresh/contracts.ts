@@ -84,6 +84,13 @@ export const visualEvidenceDocumentSchema = z.object({
   platform: z.enum(platforms),
   inventoryIds: z.array(z.string().regex(/^(web|ios)\./)).min(1),
   captures: z.array(z.object({ configuration: nonEmpty, path: sourcePath })).min(1),
+  observations: z.array(z.object({
+    inventoryId: z.string().regex(/^(web|ios)\./),
+    configuration: nonEmpty,
+    overflow: z.number().nonnegative(),
+    minimumTarget: z.number().nonnegative().nullable(),
+    focusableCount: z.number().int().nonnegative(),
+  })).min(1),
 });
 
 const e2eText = z.array(nonEmpty).min(1);

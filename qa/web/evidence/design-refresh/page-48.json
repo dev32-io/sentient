@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "kind": "design-refresh-visual-evidence",
+  "platform": "web",
+  "inventoryIds": [
+    "web.settings.system-prompt.loading",
+    "web.settings.system-prompt.empty"
+  ],
+  "captures": [
+    {
+      "configuration": "web-desktop-1280x900",
+      "path": "qa/web/evidence/design-refresh/web-desktop-1280x900-page-48.png"
+    },
+    {
+      "configuration": "web-narrow-390x844",
+      "path": "qa/web/evidence/design-refresh/web-narrow-390x844-page-48.png"
+    },
+    {
+      "configuration": "web-zoom-200",
+      "path": "qa/web/evidence/design-refresh/web-zoom-200-page-48.png"
+    },
+    {
+      "configuration": "web-reduced-motion",
+      "path": "qa/web/evidence/design-refresh/web-reduced-motion-page-48.png"
+    }
+  ],
+  "measurements": {
+    "web-desktop-1280x900": [
+      {
+        "inventoryId": "web.settings.system-prompt.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.settings.system-prompt.empty",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-narrow-390x844": [
+      {
+        "inventoryId": "web.settings.system-prompt.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.settings.system-prompt.empty",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-zoom-200": [
+      {
+        "inventoryId": "web.settings.system-prompt.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.settings.system-prompt.empty",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ],
+    "web-reduced-motion": [
+      {
+        "inventoryId": "web.settings.system-prompt.loading",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      },
+      {
+        "inventoryId": "web.settings.system-prompt.empty",
+        "overflowPx": 0,
+        "minimumTargetPx": null,
+        "focusableCount": 0
+      }
+    ]
+  },
+  "observations": [
+    {
+      "inventoryId": "web.settings.system-prompt.loading",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.empty",
+      "configuration": "web-desktop-1280x900",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.loading",
+      "configuration": "web-narrow-390x844",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.empty",
+      "configuration": "web-narrow-390x844",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.loading",
+      "configuration": "web-zoom-200",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.empty",
+      "configuration": "web-zoom-200",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.loading",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    },
+    {
+      "inventoryId": "web.settings.system-prompt.empty",
+      "configuration": "web-reduced-motion",
+      "overflow": 0,
+      "minimumTarget": null,
+      "focusableCount": 0
+    }
+  ]
+}
