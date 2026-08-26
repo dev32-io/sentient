@@ -1,32 +1,27 @@
 schemaVersion: 1
 evaluation: stage-ios-final-products-review
-recordedAt: 2026-08-26T00:37:09.990Z
+recordedAt: 2026-08-26T00:43:22.994Z
 entries:
-  - result: All five required stage checks passed and the worktree remained clean.
-    description: Sanitized command and review summary.
-    path: files/001-1-stage-ios-final-products-review-summary.txt
-    checksum: sha256:1d2edc0f89f6ff30091ac10e21ad97981e817f57927d17e877e5090d669fd4cc
-  - result: Voice control is mounted only in the else branch when draftPresent is
-      false.
-    description: Conditional VoiceCaptureControl mounting and draft/Auto interaction
-      evidence.
-    path: files/001-2-Composer.swift
-    checksum: sha256:aaee9cfad5ecdf73706bbf82db6dd917ba87f4b49d729cd474563f525f62b02b
-  - result: DragGesture.onEnded always calls reducer release without cancelled=true.
-    description: Physical gesture terminal and lifecycle cancellation wiring.
-    path: files/001-3-VoiceCaptureControl.swift
-    checksum: sha256:dd193bc495b4fce5d2bd31ca039b2ef75a98105ca9dd787ee0beecd7f2a2c59e
-  - result: cancelled=true maps to cancelHeld, while default sustained Send maps to
-      sendHeld.
-    description: Reducer cancellation and terminal intent mapping.
-    path: files/001-4-VoiceCaptureState.swift
-    checksum: sha256:fd40c4347fefe0bc0348b54e7cce0569771a044aa872eabd85dbd318f9039053
-  - result: Tests cover explicit target cancellation but not physical/system gesture
-      cancellation or mounted control-to-KMP wiring.
-    description: Current reducer-only fake proof boundary.
-    path: files/001-5-VoiceCaptureControlTests.swift
-    checksum: sha256:89f7feb6c0d67372a20ac99a1bcbf8403ac35e4687f97595998144a85c84e301
-  - result: sendHeld finalizes capture; cancelHeld/lifecycleCancel discard it.
-    description: Authoritative KMP commit/cancel behavior for emitted intents.
-    path: files/001-6-TalkModeController.kt
-    checksum: sha256:928079b0986a230d4bd245a4ba53d79d5d4098424f230411f8672e8da9188430
+  - result: Both prior findings resolved; all required checks passed.
+    description: Sanitized re-review and check summary.
+    path: files/002-1-stage-ios-final-products-rereview-1-summary.txt
+    checksum: sha256:309d1555b017c12bc699871c9bff3ebd70dc6a51af9b2d7e8ade9989d1559526
+  - result: VoiceCaptureControl is shown whenever talkMode is non-idle, even with a
+      draft.
+    description: Active capture/draft action projection.
+    path: files/002-2-Composer.swift
+    checksum: sha256:e965134556c4d17055d5163c9bfcd1165bd813dcab913047de152fbf4f32859f
+  - result: Recognizer ended maps to released; cancelled/failed map to cancelled.
+    description: Physical gesture release/cancellation distinction.
+    path: files/002-3-VoiceCaptureGesture.swift
+    checksum: sha256:942eb06940cb807263d777237b992d622d4f993759c7fe0dbda69a937bf55d16
+  - result: Normal release, system cancellation, Auto exit, scene interruption,
+      disabled state, and teardown route through distinct bounded paths.
+    description: Control terminal and lifecycle wiring.
+    path: files/002-4-VoiceCaptureControl.swift
+    checksum: sha256:dc5f82eb8e158e5069aa744a2dc3725e5e7d567b52810010831093641ed585a3
+  - result: Covers normal held release, system cancellation, lifecycle interruption,
+      Auto with typed draft, and explicit Auto exit without audio.
+    description: Deterministic fake-only state-machine regressions.
+    path: files/002-5-VoiceCaptureControlTests.swift
+    checksum: sha256:49475fde0e96db1f84b69620e539437b72fc995b53f56808c1aad6df0a55fd7f

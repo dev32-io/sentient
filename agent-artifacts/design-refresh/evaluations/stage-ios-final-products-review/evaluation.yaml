@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: ios-final-products
 scope:
   workItem: design-refresh
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
   - ./scripts/ios-setup.sh
@@ -22,11 +22,11 @@ criteria:
   - Startup readiness integration, native NavigationStack/sheets/alerts, and
     larger Dynamic Type
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: passed
   reviewerAgentId: c3a92723-65db-48a1-a32d-e1c9ea5c117c
-  reviewedCommit: ea022ab262853f819870ea2f39c857a9c79ace8d
+  reviewedCommit: 5568f8e9f0c66926209b4053b9529edfddebc688
   managerPrompt: Fix both capture-state violations with fake-only tests. Keep
     `VoiceCaptureControl` mounted and operable whenever capture is active,
     including Auto, even if the user types or an error/draft appears; draft
@@ -43,21 +43,20 @@ loop:
 findings:
   - id: IOS-FINAL-001
     severity: high
-    status: open
+    status: resolved
     criterion: Preserve draft through voice/errors and Auto exit semantics
-    location: ios/App/Chat/composer/Composer.swift:30-32,122-132
-    summary: Draft presence removes VoiceCaptureControl; typing during Auto removes
-      the control and its teardown cancels the active semantic capture.
-    blocking: true
+    location: ios/App/Chat/composer/Composer.swift:91-97,132-143
+    summary: Active capture now remains mounted and operable with a typed draft.
+    blocking: false
   - id: IOS-FINAL-002
     severity: high
-    status: open
+    status: resolved
     criterion: AC-009/system cancellation must discard without submission
-    location: ios/App/Chat/voice/VoiceCaptureControl.swift:146-164
-    summary: Physical gesture termination never distinguishes system cancellation
-      and can emit sendHeld for a cancelled sustained hold.
-    blocking: true
+    location: ios/App/Chat/voice/VoiceCaptureGesture.swift:17-42
+    summary: Physical cancellation is distinguished from normal release and cannot
+      emit sendHeld.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-ios-final-products-review/manifest.yaml
