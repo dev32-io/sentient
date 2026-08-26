@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: product-surfaces
 scope:
   workItem: design-refresh
-status: planned
+status: passed
 required: true
-attempt: 1
+attempt: 2
 methods:
   - bun run --filter '@sentient/webui' test:unit
   - bun run --filter '@sentient/webui' typecheck
@@ -28,11 +28,11 @@ criteria:
     navigation and large Dynamic Type
   - No audio E2E, no network manipulation, and no prototype runtime imports
 loop:
-  state: rereviewing
   iteration: 1
   maxIterations: 6
+  state: passed
   reviewerAgentId: eda1f1a0-468a-4325-9838-4a0d0018269a
-  reviewedCommit: bc5f663fb06b205b069af12d784e3a1df890ffd4
+  reviewedCommit: d8c7b954ad7a38c620de73d333bb3e6e8cb430b0
   managerPrompt: Fix both blocking accessibility gaps. For Web History, ensure a
     closed drawer and every descendant are removed from sequential focus and
     interaction—prefer conditional unmount after any exit transition or
@@ -46,24 +46,21 @@ loop:
 findings:
   - id: F-001
     severity: medium
-    status: open
+    status: resolved
     criterion: Web History keyboard operation and closed-drawer focus isolation
-    location: gateway/webui/src/components/sessions/drawer.tsx:84-99;
-      gateway/webui/src/components/sessions/drawer.css:3-10,26-52
-    summary: "Minor, blocking contract gap: the closed off-canvas drawer remains
-      mounted with focusable controls; aria-hidden and pointer-events:none do
-      not remove descendants from sequential keyboard focus."
-    blocking: true
+    location: gateway/webui/src/components/sessions/drawer.tsx:84-89
+    summary: Minor prior contract gap resolved with native inert and focused
+      keyboard regression coverage.
+    blocking: false
   - id: F-002
     severity: medium
-    status: open
+    status: resolved
     criterion: iOS History 44pt target and semantic type acceptance
-    location: ios/App/History/HistorySidePanel.swift:98-111
-    summary: "Minor, blocking contract gap: History search is fixed to 40pt and uses
-      page-local Typo.ui(14), below the explicit 44pt target and shared
-      semantic-type requirements."
-    blocking: true
+    location: ios/App/History/HistorySidePanel.swift:24-28,103-115
+    summary: Minor prior contract gap resolved with shared 44pt metric and semantic
+      body typography.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-product-surfaces-review/manifest.yaml
