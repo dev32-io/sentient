@@ -274,37 +274,37 @@
     },
     {
       "id": "ios.composer.interrupt",
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.tts",
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.tts.disabled",
-      "implementationPath": "ios/App/Chat/composer/ComposerButtons.swift",
+      "implementationPath": "ios/App/Chat/composer/Composer.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.mic",
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.mic.hold",
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.mic.locked",
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "reachable": true
     },
     {
       "id": "ios.composer.mic.error",
-      "implementationPath": "ios/App/Chat/composer/MicCorner.swift",
+      "implementationPath": "ios/App/Chat/voice/VoiceCaptureControl.swift",
       "reachable": true
     },
     {

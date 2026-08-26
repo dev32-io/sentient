@@ -26,6 +26,8 @@ import MobileData
 struct MessageBubble: View {
     let message: ChatMessage
     let index: Int
+    var total: Int = 1
+    var continuation = false
     /// Avatar animation mode — only the live streaming assistant bubble animates;
     /// committed bubbles pass `.idle` (static), mirroring the Android avatarMode.
     var avatarMode: SentientIdentityState = .idle
@@ -44,16 +46,14 @@ struct MessageBubble: View {
             if isUser {
                 Spacer(minLength: BubbleLayout.edgeMin)
                 VStack(alignment: .trailing, spacing: Space.xs) {
-                    MessageMeta(message: message, userName: userName)
+                    if !continuation { MessageMeta(message: message, userName: userName) }
                     bubbleBody
                 }
-                userAvatar
+                avatarColumn(user: true)
             } else {
-                SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                    .overlay(AvatarRipple(active: avatarMode != .idle))
-                    .padding(.trailing, Space.md)
+                avatarColumn(user: false)
                 VStack(alignment: .leading, spacing: Space.xs) {
-                    MessageMeta(message: message, userName: userName)
+                    if !continuation { MessageMeta(message: message, userName: userName) }
                     bubbleBody
                 }
                 Spacer(minLength: BubbleLayout.edgeMin)
@@ -62,15 +62,37 @@ struct MessageBubble: View {
         .frame(maxWidth: .infinity)
         // Index-based id for all bubbles; assistant rows additionally get
         // "assistant-bubble" so Maestro can assert any assistant reply appeared.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityChronology)
         .accessibilityIdentifier(isUser ? "message-bubble-\(index)" : "assistant-bubble")
     }
 
     // ── Avatar ────────────────────────────────────────────────────────────────
 
-    /// User → initial on terra/amber accent circle (webui parity).
-    private var userAvatar: some View {
-        UserAvatar(name: userName, size: BubbleLayout.avatarSize)
-            .padding(.leading, Space.md)
+    @ViewBuilder
+    private func avatarColumn(user: Bool) -> some View {
+        if continuation {
+            Color.clear
+                .frame(width: BubbleLayout.avatarSize + Space.md, height: 1)
+                .accessibilityHidden(true)
+        } else if user {
+            UserAvatar(name: userName, size: BubbleLayout.avatarSize)
+                .padding(.leading, Space.md)
+                .accessibilityHidden(true)
+        } else {
+            SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
+                .overlay(AvatarRipple(active: avatarMode != .idle))
+                .padding(.trailing, Space.md)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var accessibilityChronology: String {
+        let author = isUser ? userName : "Sentient"
+        let position = "Message \(index + 1) of \(max(total, index + 1)) from \(author)"
+        guard !message.streaming else { return "\(position), responding" }
+        let time = Date(timeIntervalSince1970: Double(message.ts) / 1000).formatted(date: .omitted, time: .shortened)
+        return "\(position) at \(time)\(cutoffLabel.map { ", \($0)" } ?? "")"
     }
 
     // ── Body ──────────────────────────────────────────────────────────────────
@@ -113,6 +135,7 @@ struct MessageBubble: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Markdown(message.content)
                 .markdownTheme(.dusk)
+                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if cutoffLabel != nil { interruptedMarker }
         }
@@ -163,8 +186,10 @@ struct MessageBubble: View {
 /// Android `lerp(paper, sage, 0.16)`. (Color.mix is iOS 18+, so the token wrapper
 /// does the lerp on the raw ARGB values, keeping the iOS-17 deployment target.)
 enum BubbleLayout {
+    static let standardOffset: CGFloat = .zero
+    static let continuationPullup = -Space.lg
     static let flushCorner: CGFloat = 6
-    static let avatarSize: CGFloat = 28
+    static let avatarSize: CGFloat = DesignMetrics.minimumTarget
     static let edgeMin: CGFloat = 12
     static let pulseDot: CGFloat = 6
     static let pulseGap: CGFloat = 4

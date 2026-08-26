@@ -85,6 +85,28 @@ struct ChatRowsTests {
         // share replyId — must yield the SAME row id so the handoff never remounts.
         let streaming = assistantMsg(0, turnId: nil, replyId: "R9", entryId: "", streaming: true)
         let committed = assistantMsg(1_700_000_000_000, turnId: nil, replyId: "R9", entryId: "R9")
-        #expect(ChatRow.message(streaming, index: 0).id == ChatRow.message(committed, index: 1).id)
+        #expect(ChatRow.message(streaming, index: 0, continuation: false).id == ChatRow.message(committed, index: 1, continuation: false).id)
+    }
+
+    @Test func adjacentSameSpeakerGroupsWithoutLosingRows() {
+        let first = assistantMsg(1_700_000_001_000, turnId: "T1", replyId: "R1")
+        let second = assistantMsg(1_700_000_002_000, turnId: "T2", replyId: "R2")
+        let rows = chatRows([first, second], calendar: cal)
+        let continuations = rows.compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, true])
+    }
+
+    @Test func roleChangeAndDayDividerBreakGrouping() {
+        let first = assistantMsg(1_700_000_001_000, turnId: "T1")
+        let user = msg(1_700_000_002_000)
+        let nextDay = assistantMsg(1_700_086_401_000, turnId: "T2")
+        let continuations = chatRows([first, user, nextDay], calendar: cal).compactMap { row -> Bool? in
+            if case let .message(_, _, continuation) = row { return continuation }
+            return nil
+        }
+        #expect(continuations == [false, false, false])
     }
 }

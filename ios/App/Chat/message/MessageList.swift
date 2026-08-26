@@ -139,8 +139,16 @@ struct MessageList: View {
             ForEach(chatRows(messages)) { row in
                 switch row {
                 case let .divider(label, _): DayDivider(label: label)
-                case let .message(m, i):
-                    MessageBubble(message: m, index: i, avatarMode: avatarMode(for: m, at: i, lastAssistant: lastAssistant), userName: userName)
+                case let .message(m, i, continuation):
+                    MessageBubble(
+                        message: m,
+                        index: i,
+                        total: messages.count,
+                        continuation: continuation,
+                        avatarMode: avatarMode(for: m, at: i, lastAssistant: lastAssistant),
+                        userName: userName
+                    )
+                        .padding(.top, continuation ? BubbleLayout.continuationPullup : BubbleLayout.standardOffset)
                         .accessibilityIdentifier(m.role == "user" ? m.pendingId.map { "chat-user-row-\($0)" } ?? "chat-user-row-\(m.entryId)" : "")
                 }
             }
@@ -166,8 +174,8 @@ struct MessageList: View {
     /// Mirrors canInterrupt (cognition != idle || isSpeaking). Other committed
     /// bubbles stay static (`.idle`).
     private func avatarMode(for message: ChatMessage, at index: Int, lastAssistant: Int?) -> SentientIdentityState {
-        guard message.role == "assistant" else { return .idle }
-        if message.streaming { return activeMarkMode }
+        guard message.role == "assistant", message.cutoffKind == nil else { return .idle }
+        if message.streaming { return message.content.isEmpty ? .thinking : .responding }
         if index == lastAssistant, activeMarkMode == .thinking || activeMarkMode == .responding {
             return activeMarkMode
         }
