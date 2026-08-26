@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: ios-final-products
 scope:
   workItem: design-refresh
-status: planned
+status: failed
 required: true
-attempt: 0
+attempt: 1
 methods:
   - ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
   - ./scripts/ios-setup.sh
@@ -22,6 +22,29 @@ criteria:
   - Startup readiness integration, native NavigationStack/sheets/alerts, and
     larger Dynamic Type
 loop:
-  state: planned
   iteration: 0
   maxIterations: 6
+  state: awaiting_manager
+  reviewerAgentId: c3a92723-65db-48a1-a32d-e1c9ea5c117c
+  reviewedCommit: ea022ab262853f819870ea2f39c857a9c79ace8d
+findings:
+  - id: IOS-FINAL-001
+    severity: high
+    status: open
+    criterion: Preserve draft through voice/errors and Auto exit semantics
+    location: ios/App/Chat/composer/Composer.swift:30-32,122-132
+    summary: Draft presence removes VoiceCaptureControl; typing during Auto removes
+      the control and its teardown cancels the active semantic capture.
+    blocking: true
+  - id: IOS-FINAL-002
+    severity: high
+    status: open
+    criterion: AC-009/system cancellation must discard without submission
+    location: ios/App/Chat/voice/VoiceCaptureControl.swift:146-164
+    summary: Physical gesture termination never distinguishes system cancellation
+      and can emit sendHeld for a cancelled sustained hold.
+    blocking: true
+result:
+  verdict: fail
+  report: report.md
+  evidence: ../../evidence/stage-ios-final-products-review/manifest.yaml

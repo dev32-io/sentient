@@ -1,0 +1,14 @@
+Reviewed head: ea022ab262853f819870ea2f39c857a9c79ace8d
+Boundary base used for integrated stage diff: 70b8de316bd0b086928bfea97f348f9ded13992c
+
+Checks:
+PASS ./scripts/ios-setup.sh (BUILD SUCCESSFUL; project generated)
+PASS xcodebuild test -project ios/SentientApp.xcodeproj -scheme SentientApp -destination 'platform=iOS Simulator,name=iPhone 16' (25 XCTest + 111 Swift Testing tests; TEST SUCCEEDED)
+PASS ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests (BUILD SUCCESSFUL)
+PASS bun run design:inventory:check
+PASS git diff --check base..head
+PASS worktree clean after checks
+
+Review observations:
+- Composer conditionally replaces VoiceCaptureControl whenever a text draft is present.
+- The physical DragGesture terminal path always applies release with cancelled=false; the reducer's cancellation input is not wired by the view.
