@@ -24,6 +24,7 @@ struct CalendarDraftFields: View {
     @State private var weekdays: Set<Weekday>
 
     private let zone: TimeZone
+    private let sourceUntil: CalendarOverlayRecurrenceUntil?
 
     init(
         draft: Binding<CalendarMutationDraft>,
@@ -41,6 +42,10 @@ struct CalendarDraftFields: View {
             CalendarOverlayDateCodec.date(from: $0, allDay: value.allDay, timeZone: zone)
         } ?? start
         let recurrence = value.recurrence
+        let sourceUntil = recurrence?.until.flatMap {
+            CalendarOverlayDateCodec.recurrenceUntil(from: $0, timeZone: zone)
+        }
+        self.sourceUntil = sourceUntil
         _title = State(initialValue: value.title)
         _details = State(initialValue: value.descriptionText)
         _group = State(initialValue: value.group ?? "")
@@ -54,10 +59,7 @@ struct CalendarDraftFields: View {
         _interval = State(initialValue: Int(recurrence?.interval?.intValue ?? 1))
         _count = State(initialValue: Int(recurrence?.count?.intValue ?? 1))
         _hasCount = State(initialValue: recurrence?.count != nil)
-        let untilValue = recurrence?.until.flatMap {
-            CalendarOverlayDateCodec.date(from: $0, allDay: true, timeZone: zone)
-        }
-        _untilDate = State(initialValue: untilValue ?? start)
+        _untilDate = State(initialValue: sourceUntil?.date ?? start)
         _hasUntil = State(initialValue: recurrence?.until != nil)
         _weekdays = State(initialValue: Set(recurrence?.weekdays ?? []))
     }
@@ -129,9 +131,9 @@ struct CalendarDraftFields: View {
                     : nil,
                 count: hasCount ? KotlinInt(int: Int32(count)) : nil,
                 until: hasUntil
-                    ? CalendarOverlayDateCodec.wireValue(
-                        from: untilDate,
-                        allDay: true,
+                    ? CalendarOverlayDateCodec.recurrenceUntilWireValue(
+                        source: sourceUntil,
+                        date: untilDate,
                         timeZone: zone
                     )
                     : nil

@@ -1,19 +1,54 @@
 import Foundation
 import MobileData
 
+/// A recurrence bound keeps its wire kind and original spelling alongside the
+/// native Date. The source value can therefore survive unrelated editor edits
+/// without losing a timed offset, fractional seconds, or all-day semantics.
+struct CalendarOverlayRecurrenceUntil: Equatable {
+    let wireValue: String
+    let date: Date
+    let allDay: Bool
+}
+
 /// Native DatePicker adapters keep wire values and source time-zone semantics
 /// at the Calendar boundary. Existing values are only reformatted after a
 /// user changes the native control.
 enum CalendarOverlayDateCodec {
     static func date(from wireValue: String, allDay: Bool, timeZone: TimeZone) -> Date? {
         if allDay {
+            guard wireValue.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else {
+                return nil
+            }
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = timeZone
             let parts = wireValue.split(separator: "-").compactMap { Int($0) }
             guard parts.count == 3 else { return nil }
             return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
         }
-        return ISO8601DateFormatter().date(from: wireValue)
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone, .withFractionalSeconds]
+        if let date = fractional.date(from: wireValue) { return date }
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime, .withColonSeparatorInTimeZone]
+        return standard.date(from: wireValue)
+    }
+
+    static func recurrenceUntil(from wireValue: String, timeZone: TimeZone) -> CalendarOverlayRecurrenceUntil? {
+        let allDay = wireValue.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil
+        guard let date = date(from: wireValue, allDay: allDay, timeZone: timeZone) else { return nil }
+        return CalendarOverlayRecurrenceUntil(wireValue: wireValue, date: date, allDay: allDay)
+    }
+
+    /// Preserve a parsed source value while the native date is unchanged. Once
+    /// the user changes it, retain the source's timed/all-day kind when
+    /// re-encoding in the event's editing zone.
+    static func recurrenceUntilWireValue(
+        source: CalendarOverlayRecurrenceUntil?,
+        date: Date,
+        timeZone: TimeZone
+    ) -> String {
+        if let source, source.date == date { return source.wireValue }
+        return wireValue(from: date, allDay: source?.allDay ?? true, timeZone: timeZone)
     }
 
     static func wireValue(from date: Date, allDay: Bool, timeZone: TimeZone) -> String {

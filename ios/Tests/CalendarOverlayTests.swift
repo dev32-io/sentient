@@ -121,6 +121,42 @@ struct CalendarOverlayTests {
         #expect(CalendarOverlayDateCodec.displayRange(start: "10:00", end: "11:30") == "10:00 – 11:30")
     }
 
+    @Test func recurrenceUntilRoundTripsTimedValuesWithoutRewritingUnrelatedEdits() throws {
+        let zone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let wire = "2026-08-31T10:15:30.123-07:00"
+        let source = try #require(CalendarOverlayDateCodec.recurrenceUntil(from: wire, timeZone: zone))
+
+        #expect(!source.allDay)
+        #expect(CalendarOverlayDateCodec.recurrenceUntilWireValue(
+            source: source, date: source.date, timeZone: zone
+        ) == wire)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let nextDate = try #require(calendar.date(byAdding: .day, value: 1, to: source.date))
+        #expect(CalendarOverlayDateCodec.recurrenceUntilWireValue(
+            source: source, date: nextDate, timeZone: zone
+        ) == "2026-09-01T10:15:30-07:00")
+    }
+
+    @Test func recurrenceUntilRoundTripsAllDayValuesWithoutAddingTime() throws {
+        let zone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+        let wire = "2026-08-31"
+        let source = try #require(CalendarOverlayDateCodec.recurrenceUntil(from: wire, timeZone: zone))
+
+        #expect(source.allDay)
+        #expect(CalendarOverlayDateCodec.recurrenceUntilWireValue(
+            source: source, date: source.date, timeZone: zone
+        ) == wire)
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let nextDate = try #require(calendar.date(byAdding: .day, value: 1, to: source.date))
+        #expect(CalendarOverlayDateCodec.recurrenceUntilWireValue(
+            source: source, date: nextDate, timeZone: zone
+        ) == "2026-09-01")
+    }
+
     @Test func typedErrorsUseNonDisclosingAccessibleCopy() {
         let forbidden = CalendarMutationError(
             kind: .forbidden, userMessage: "Secret event exists", code: "forbidden",

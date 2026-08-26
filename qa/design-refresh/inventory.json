@@ -12439,7 +12439,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayPreview.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12456,7 +12456,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayPreview.swift"
       ],
       "assetCopies": []
     },
@@ -12474,7 +12474,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12491,7 +12491,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayEditor.swift"
       ],
       "assetCopies": []
     },
@@ -12509,7 +12509,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12526,7 +12526,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayEditor.swift"
       ],
       "assetCopies": []
     },
@@ -12544,7 +12544,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12561,7 +12561,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayEditor.swift"
       ],
       "assetCopies": []
     },
@@ -12579,7 +12579,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12596,7 +12596,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayEditor.swift"
       ],
       "assetCopies": []
     },
@@ -12614,7 +12614,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12631,7 +12631,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayEditor.swift"
       ],
       "assetCopies": []
     },
@@ -12649,7 +12649,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12666,7 +12666,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift"
       ],
       "assetCopies": []
     },
@@ -12684,7 +12684,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12701,7 +12701,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayDelete.swift"
       ],
       "assetCopies": []
     },
@@ -12719,7 +12719,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12736,7 +12736,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayDelete.swift"
       ],
       "assetCopies": []
     },
@@ -12754,7 +12754,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12771,7 +12771,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayDelete.swift"
       ],
       "assetCopies": []
     },
@@ -12789,7 +12789,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "E2E-009"
@@ -12806,7 +12806,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift"
       ],
       "assetCopies": []
     },
@@ -12824,7 +12824,7 @@
         "design/prototype/calendar/handoff.md",
         "native:iOS:Native date controls, sheets, alerts, safe areas, and Dynamic Type"
       ],
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayRecurrence.swift",
       "taskOwner": "refresh-ios-calendar",
       "functionalProof": [
         "REVIEW:ios-calendar-overlays"
@@ -12841,7 +12841,7 @@
       "status": "reviewed",
       "exclusionReason": "",
       "reachabilityEvidence": [
-        "ios/App/Settings/Calendar/CalendarOverlays.swift"
+        "ios/App/Settings/Calendar/CalendarOverlayRecurrence.swift"
       ],
       "assetCopies": []
     }

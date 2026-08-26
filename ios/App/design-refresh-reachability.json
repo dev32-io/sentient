@@ -1024,62 +1024,62 @@
     },
     {
       "id": "ios.calendar.preview",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayPreview.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor.edit-clean",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor.dirty",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor.saving",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor.error",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayEditor.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.editor.success",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.delete",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.delete.applying",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.delete.error",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayDelete.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.delete.success",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayFeedback.swift",
       "reachable": true
     },
     {
       "id": "ios.calendar.recurrence-scope",
-      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlays.swift",
+      "implementationPath": "ios/App/Settings/Calendar/CalendarOverlayRecurrence.swift",
       "reachable": true
     }
   ]
