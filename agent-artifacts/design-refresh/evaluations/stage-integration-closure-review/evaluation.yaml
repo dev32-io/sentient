@@ -5,9 +5,9 @@ checkpoint: stage-review
 stageId: integration-closure
 scope:
   workItem: design-refresh
-status: planned
+status: passed
 required: true
-attempt: 2
+attempt: 3
 methods:
   - bun run design:foundation:check
   - bun run design:avatar:verify
@@ -31,11 +31,11 @@ criteria:
   - No Android UI changes, no production/audio/network-disruption verification,
     and readiness for E2E-001..009
 loop:
-  state: rereviewing
   iteration: 2
   maxIterations: 6
+  state: passed
   reviewerAgentId: f2b0cea4-efc7-4116-b8d8-7f2d2f82926f
-  reviewedCommit: 8099251e94c5de7a66d654ac1a4256370bc31037
+  reviewedCommit: 3fac56ca83b99dc53beb321de556c099dd7e500e
   managerPrompt: "Fix F-002 by making timeout ownership real rather than timing
     out only the waiter. Do not launch transport close into an SDK-owned scope
     that survives logout. Run teardown as a caller-owned structured child (or
@@ -58,13 +58,14 @@ findings:
     blocking: false
   - id: F-002
     severity: high
-    status: open
+    status: resolved
     criterion: Bounded hanging transport teardown and scope shutdown
-    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt:199-202,462-474
-    summary: A hanging transport close runs in an SDK-owned scope that logout never
-      cancels, so terminal teardown is not bounded or complete.
-    blocking: true
+    location: shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt:487-558
+    summary: Transport close is caller-owned and bounded; timeout cancels/joins the
+      child and terminal logout cancels/joins the SDK root with regression
+      coverage.
+    blocking: false
 result:
-  verdict: fail
+  verdict: pass
   report: report.md
   evidence: ../../evidence/stage-integration-closure-review/manifest.yaml

@@ -1,50 +1,36 @@
 schemaVersion: 1
 evaluation: stage-integration-closure-review
-recordedAt: 2026-08-26T01:13:39.163Z
+recordedAt: 2026-08-26T01:29:21.977Z
 entries:
-  - result: Inspected the complete bounded repair; no Android or iOS visual files
-      changed.
-    command: git diff 8f0215d4..ce4c13eb -- shared/mobile-data shared/mobile-sdk
-  - result: BUILD SUCCESSFUL; all selected KMP test tasks were freshly executed.
+  - result: Inspected the complete bounded repair for F-002.
+    command: git diff 8099251e..250fc0b7 --
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SdkLifecycle.kt
+      shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SentientSdk.kt
+      shared/mobile-sdk/src/commonTest/kotlin/io/sentient/mobilesdk/sdk/SentientSdkTest.kt
+  - result: BUILD SUCCESSFUL; all selected SDK tests were freshly rebuilt and
+      executed on Android/JVM and iOS simulator targets.
     command: ./gradlew :shared:mobile-sdk:iosSimulatorArm64Test
-      :shared:mobile-sdk:testDebugUnitTest
-      :shared:mobile-data:iosSimulatorArm64Test
-      :shared:mobile-data:testDebugUnitTest --rerun-tasks
-  - result: BUILD SUCCESSFUL.
-    command: ./gradlew :shared:mobile-sdk:allTests :shared:mobile-data:allTests
-      :android:assembleDebug :android:testDebugUnitTest
-  - result: Passed; CI reported 2528 pass, 4 skipped, 0 fail. Integration command
-      completed with approved Docker-only skips.
-    command: bun run ci && bun run test:int
-  - result: Passed; canonical Rive SHA-256 remained
-      bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b.
-    command: bun run design:foundation:check && bun run design:avatar:verify && bun
-      run design:inventory:check
-  - result: Passed; no Android source/resource changes from the feature baseline and
-      no whitespace errors.
+      :shared:mobile-sdk:testDebugUnitTest --rerun-tasks
+  - result: Passed; foundation projections/static boundaries and closed inventory
+      remain valid.
+    command: bun run design:foundation:check && bun run design:inventory:check
+  - result: Passed; no prohibited Android source/resource changes and no whitespace
+      errors.
     command: Android baseline exclusion and git diff --check
-  - result: Lines 208-247 remove runBlocking and use a component-owned asynchronous
-      lifecycle.
-    description: Prior finding repair.
-    path: files/002-7-ChatComponent.kt
-    checksum: sha256:39db3de93db5b6408e0a4e595c3dfc32592998a5209cedb814424b0277784a52
-  - result: Lines 293-303 launch transport close in the supplied scope without
-      timeout, join, or scope shutdown.
-    description: Transport close lifecycle.
-    path: files/002-8-SdkLifecycle.kt
-    checksum: sha256:b3b545fa8f2689c49e92d3945acb90417e2390b4359c73fe6951998a7fac4523
-  - result: Lines 199-202 create voiceLifecycleScope; lines 462-474 never cancel it
-      after launching transport close.
-    description: SDK-owned voice lifecycle and logout.
-    path: files/002-9-SentientSdk.kt
-    checksum: sha256:1491c85efd2eb23f24147c8ba9f03bc4e8aa36929e77eea92519a54430a471c0
-  - result: Lines 346-351 cancel only the consumer job and drain commands; they do
-      not cancel the owning lifecycle scope.
-    description: Voice lane shutdown behavior.
-    path: files/002-10-SdkVoice.kt
-    checksum: sha256:e2d844f3d53f0b62e913c028f75745bde1b7bf25d058be5236706dafc23705c9
-  - result: The test releases the stalled close immediately after disconnect returns
-      and does not assert close-job or scope cancellation.
-    description: Hanging transport test proof gap.
-    path: files/002-11-SentientSdkTest.kt
-    checksum: sha256:553bbf1479b380f3aa9cec22f64dcf3204ec1355eb7a82f05a1e1823270d5959
+  - result: Lines 295-313 synchronously detach terminal transport and retain the
+      historical non-terminal teardown facade.
+    description: Transport detachment boundary.
+    path: files/003-5-SdkLifecycle.kt
+    checksum: sha256:4f9259e54b8493f9a9fb923b917d7b409ce3625f20f936ff2330ce7815e47e10
+  - result: Lines 487-558 serialize disconnect, perform capture teardown,
+      bound/cancel/join caller-owned transport close, then cancel/join the SDK
+      root.
+    description: Bounded terminal teardown ownership.
+    path: files/003-6-SentientSdk.kt
+    checksum: sha256:adc6eb64a58f59caf7493933421f562d99102246e55f7716471ec0b185ae6b6a
+  - result: Lines 171-228 cover normal ordering/root shutdown, hanging-cancellable
+      close cleanup with no surviving captures/children or late frames, and
+      idempotent repeated logout.
+    description: Terminal teardown regressions.
+    path: files/003-7-SentientSdkTest.kt
+    checksum: sha256:ec2f17494e7c53622cd35e6dbc622807c8bbc968b61271ba21002c6a8383b873
