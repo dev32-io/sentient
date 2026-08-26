@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: web-shell-auth-history
 title: Refresh the Web gates, shell, authentication, History, and global overlays
-status: contribution_complete
+status: merged
 dependsOn:
   - web-foundation-components
   - verification-inventory-harness
@@ -32,3 +32,4 @@ runtime:
   baseCommit: 3a9871de53780eae65206de4bf14d8d8fb385c16
   lastRunId: 7436d8a4-0f32-4971-a3fa-e685212ebfdc
   completedCommit: 738f321884de181b54a2631f54cb4e6ad2f6031f
+  mergedCommit: dcfdd3ca02ea8897ee9fe41fbfd5182b083b5615
