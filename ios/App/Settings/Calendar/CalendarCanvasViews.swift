@@ -26,9 +26,7 @@ struct CalendarCanvasView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .background(DuskColors.bgSunk)
-        .clipShape(RoundedRectangle(cornerRadius: Radii.lg))
-        .overlay(RoundedRectangle(cornerRadius: Radii.lg).stroke(DuskColors.lineSoft))
+        .designWell()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(state.view.displayName) calendar")
     }
@@ -44,14 +42,14 @@ struct CalendarWeekCanvas: View {
                 Button { onSelectDate(day.date) } label: {
                     VStack(spacing: 5) {
                         Text(week.weekdayLabels[index].shortLabel)
-                            .font(CalendarFont.mono(TypeScale.xs))
+                            .font(Typo.mono(TypeScale.xs))
                             .foregroundStyle(day.isSelected ? DuskColors.ink : DuskColors.ink3)
                         Text("\(day.dayOfMonth)")
-                            .font(CalendarFont.display(TypeScale.xl, .medium))
+                            .font(Typo.display(TypeScale.xl, .medium))
                             .foregroundStyle(DuskColors.ink)
                         CalendarIndicatorRow(indicators: day.indicators, overflow: day.overflow)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 70)
+                    .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.weekDayHeight)
                     .background(day.isSelected ? DuskColors.paper : .clear, in: RoundedRectangle(cornerRadius: Radii.md))
                     .contentShape(Rectangle())
                 }
@@ -76,9 +74,9 @@ struct CalendarMonthCanvas: View {
             LazyVGrid(columns: columns, spacing: 0) {
                 ForEach(month.weekdayLabels, id: \.weekday) { label in
                     Text(label.shortLabel)
-                        .font(CalendarFont.mono(TypeScale.xs))
+                        .font(Typo.mono(TypeScale.xs))
                         .foregroundStyle(DuskColors.ink3)
-                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.weekdayHeaderHeight)
                         .accessibilityLabel(label.accessibilityLabel)
                 }
             }
@@ -88,24 +86,24 @@ struct CalendarMonthCanvas: View {
                     Button { onSelectDate(cell.date) } label: {
                         VStack(spacing: Space.xs) {
                             Text("\(cell.dayOfMonth)")
-                                .font(CalendarFont.mono(TypeScale.xs))
+                                .font(Typo.mono(TypeScale.xs))
                                 .foregroundStyle(cell.isOutsideMonth ? DuskColors.ink4 : DuskColors.ink2)
-                                .frame(width: 25, height: 25)
+                                .frame(width: CalendarSurfaceLayout.monthDaySize, height: CalendarSurfaceLayout.monthDaySize)
                                 .background(cell.isSelected ? DuskColors.paper : .clear, in: Circle())
                                 .overlay(Circle().stroke(cell.isToday ? DuskColors.ink : .clear))
                             CalendarIndicatorRow(indicators: cell.indicators, overflow: cell.overflow)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 53, alignment: .top)
+                        .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.monthCellHeight, alignment: .top)
                         .padding(.top, Space.xs)
-                        .background(cell.isOutsideMonth ? DuskColors.bg.opacity(0.7) : .clear)
+                        .background(cell.isOutsideMonth ? DuskColors.bg.opacity(CalendarSurfaceLayout.outsideMonthOpacity) : .clear)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(CalendarPressButtonStyle())
                     .overlay(alignment: .topLeading) {
-                        Rectangle().fill(DuskColors.lineSoft).frame(width: 0.5)
+                        Rectangle().fill(DuskColors.lineSoft).frame(width: CalendarSurfaceLayout.monthGridLineWidth)
                     }
                     .overlay(alignment: .top) {
-                        Rectangle().fill(DuskColors.lineSoft).frame(height: 0.5)
+                        Rectangle().fill(DuskColors.lineSoft).frame(height: CalendarSurfaceLayout.monthGridLineWidth)
                     }
                     .accessibilityLabel(CalendarSurfaceText.dateCellLabel(cell))
                     .accessibilityHint("Opens day view")
@@ -129,12 +127,12 @@ struct CalendarYearCanvas: View {
                 Button { onSelectMonth(month.year, month.month) } label: {
                     VStack(alignment: .leading, spacing: Space.sm) {
                         Text(monthName(month.month))
-                            .font(CalendarFont.display(TypeScale.sm, .medium))
+                            .font(Typo.display(TypeScale.sm, .medium))
                             .foregroundStyle(DuskColors.ink)
                         CalendarYearDays(days: month.days)
                     }
                     .padding(Space.sm)
-                    .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.yearMonthHeight, alignment: .topLeading)
                     .background(DuskColors.bgSunk)
                     .contentShape(Rectangle())
                 }
@@ -163,7 +161,7 @@ private struct CalendarYearDays: View {
         LazyVGrid(columns: columns, spacing: 2) {
             ForEach(days, id: \.date) { day in
                 Circle()
-                    .fill(day.hasEvents ? DuskColors.sage : DuskColors.ink3.opacity(0.12))
+                    .fill(day.hasEvents ? DuskColors.sage : DuskColors.ink3.opacity(CalendarSurfaceLayout.yearEmptyDayOpacity))
                     .aspectRatio(1, contentMode: .fit)
                     .accessibilityHidden(true)
             }
@@ -180,18 +178,18 @@ private struct CalendarIndicatorRow: View {
             ForEach(Array(indicators.prefix(3).enumerated()), id: \.offset) { _, indicator in
                 Circle()
                     .fill(indicatorColor(indicator))
-                    .frame(width: 5, height: 5)
+                    .frame(width: CalendarSurfaceLayout.indicatorSize, height: CalendarSurfaceLayout.indicatorSize)
                     .accessibilityHidden(true)
             }
             if let overflow {
                 Text("+\(overflow.count)")
-                    .font(CalendarFont.mono(8))
+                    .font(Typo.mono(CalendarSurfaceLayout.overflowTypeSize))
                     .foregroundStyle(DuskColors.ink2)
                     .accessibilityLabel(overflow.accessibilityLabel)
                     .accessibilityIdentifier("calendar-overflow")
             }
         }
-        .frame(minHeight: 8)
+        .frame(minHeight: CalendarSurfaceLayout.indicatorRowHeight)
     }
 
     private func indicatorColor(_ indicator: CalendarEventIndicator) -> Color {

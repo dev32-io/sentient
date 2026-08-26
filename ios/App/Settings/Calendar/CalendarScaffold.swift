@@ -85,7 +85,7 @@ struct CalendarScaffold: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             FloatingViewBar(selected: state.view, onSelect: actions.onSelectView)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, CalendarSurfaceLayout.floatingHorizontalInset)
                 .padding(.top, Space.xs)
                 .padding(.bottom, Space.sm)
         }
@@ -93,7 +93,8 @@ struct CalendarScaffold: View {
         .overlay(alignment: .topLeading) {
             if state.recovery.isReady {
                 Color.clear
-                    .frame(width: 1, height: 1)
+                    .frame(width: CalendarSurfaceLayout.accessibilitySentinelSize,
+                           height: CalendarSurfaceLayout.accessibilitySentinelSize)
                     .accessibilityIdentifier("calendar-recovery-ready")
             }
         }
@@ -126,24 +127,17 @@ struct CalendarTopBar: View {
 
     var body: some View {
         HStack(spacing: Space.sm) {
-            Button("Back", systemImage: "chevron.left", action: onBack)
-                .labelStyle(.iconOnly)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(minWidth: CalendarSurfaceLayout.minimumTarget, minHeight: CalendarSurfaceLayout.minimumTarget)
+            DesignIconButton(systemName: "chevron.left", label: "Back", action: onBack)
                 .accessibilityIdentifier("calendar-back")
             Text("Calendar")
-                .font(CalendarFont.ui(TypeScale.lg, .semibold))
+                .font(Typo.ui(TypeScale.lg, .semibold))
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityAddTraits(.isHeader)
             Spacer()
             Button("Add", action: onAdd)
-                .font(CalendarFont.ui(TypeScale.sm, .semibold))
-                .foregroundStyle(DuskColors.bg)
-                .padding(.horizontal, Space.md)
-                .frame(minWidth: CalendarSurfaceLayout.minimumTarget, minHeight: CalendarSurfaceLayout.minimumTarget)
-                .background(DuskColors.accent, in: RoundedRectangle(cornerRadius: Radii.md))
+                .buttonStyle(DesignButtonStyle(role: .action))
                 .disabled(!canAdd)
-                .opacity(canAdd ? 1 : 0.45)
+                .opacity(canAdd ? CalendarSurfaceLayout.normalScale : CalendarSurfaceLayout.disabledOpacity)
                 .accessibilityHint(canAdd ? "Creates a calendar event" : "Adding events is unavailable")
                 .calendarAccessibilityFocus(openerFocus, equals: .addControl)
                 .accessibilityIdentifier("calendar-add")
@@ -167,13 +161,13 @@ struct CalendarHeading: View {
         HStack(alignment: .bottom, spacing: Space.md) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(CalendarSurfaceText.heading(for: state))
-                    .font(CalendarFont.display(34, .medium))
+                    .font(Typo.display(DesignV2.Typography.display, .medium))
                     .foregroundStyle(DuskColors.ink)
                     .minimumScaleFactor(0.72)
                     .lineLimit(1)
                     .accessibilityAddTraits(.isHeader)
                 Text(CalendarSurfaceText.subtitle(for: state))
-                    .font(CalendarFont.mono(10))
+                    .designText(.telemetry)
                     .foregroundStyle(DuskColors.ink3)
             }
             Spacer(minLength: 0)
@@ -197,7 +191,7 @@ private struct CalendarNavigationButton: View {
             Group {
                 if let systemImage { Image(systemName: systemImage) } else { Text(label) }
             }
-            .font(systemImage == nil ? CalendarFont.ui(TypeScale.xs, .medium) : .system(size: 12, weight: .semibold))
+            .font(Typo.ui(TypeScale.xs, .medium))
             .foregroundStyle(DuskColors.ink2)
             .frame(minWidth: CalendarSurfaceLayout.minimumTarget, minHeight: CalendarSurfaceLayout.minimumTarget)
             .background(DuskColors.bgSunk, in: RoundedRectangle(cornerRadius: Radii.md))
@@ -255,11 +249,11 @@ struct CalendarStatusView: View {
 private extension View {
     func statusStyle() -> some View {
         self
-            .font(CalendarFont.ui(TypeScale.xs))
+            .font(Typo.ui(TypeScale.xs))
             .foregroundStyle(DuskColors.ink3)
             .padding(.horizontal, Space.md)
             .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.minimumTarget, alignment: .leading)
-            .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.md))
+            .designPlate()
     }
 }
 
@@ -271,7 +265,7 @@ struct FloatingViewBar: View {
         HStack(spacing: 3) {
             ForEach(CalendarView.allCases, id: \.self) { view in
                 Button(view.displayName) { onSelect(view) }
-                    .font(CalendarFont.mono(TypeScale.xs))
+                    .font(Typo.mono(TypeScale.xs))
                     .foregroundStyle(selected == view ? DuskColors.ink : DuskColors.ink3)
                     .frame(maxWidth: .infinity, minHeight: CalendarSurfaceLayout.viewControlHeight)
                     .background(selected == view ? DuskColors.bgSunk : .clear, in: Capsule())
@@ -282,11 +276,13 @@ struct FloatingViewBar: View {
                     .accessibilityIdentifier("calendar-view-\(view.displayName.lowercased())")
             }
         }
-        .padding(5)
+        .padding(CalendarSurfaceLayout.floatingInnerPadding)
         .background(.ultraThinMaterial, in: Capsule())
-        .background(DuskColors.paper.opacity(0.94), in: Capsule())
+        .background(DuskColors.paper.opacity(CalendarSurfaceLayout.floatingPaperOpacity), in: Capsule())
         .overlay(Capsule().stroke(DuskColors.line))
-        .shadow(color: DuskColors.bg.opacity(0.82), radius: 28, y: 20)
+        .shadow(color: DuskColors.bg.opacity(CalendarSurfaceLayout.floatingShadowOpacity),
+                radius: CalendarSurfaceLayout.floatingShadowRadius,
+                y: CalendarSurfaceLayout.floatingShadowY)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Calendar view")
         .accessibilityIdentifier("calendar-floating-view-bar-46")

@@ -107,7 +107,8 @@ private struct CalendarExperienceScreen: View {
             // `calendar-surface`; applying an identifier to the outer Group
             // causes SwiftUI to overwrite the descendant surface identifier.
             Color.clear
-                .frame(width: 1, height: 1)
+                .frame(width: CalendarSurfaceLayout.accessibilitySentinelSize,
+                       height: CalendarSurfaceLayout.accessibilitySentinelSize)
                 .accessibilityElement()
                 .accessibilityIdentifier("settings-calendar-screen")
                 .allowsHitTesting(false)

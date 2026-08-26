@@ -124,7 +124,7 @@ private struct CalendarSheet<Content: View, Footer: View>: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .bottom) {
-                DuskColors.bg.opacity(0.62)
+                DuskColors.bg.opacity(CalendarOverlaySemantics.scrimOpacity)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { if dismissOnScrim { onDismiss() } }
@@ -163,11 +163,13 @@ private struct CalendarSheet<Content: View, Footer: View>: View {
                 .overlay(alignment: .top) {
                     UnevenRoundedRectangle(topLeadingRadius: CalendarOverlaySemantics.topRadius,
                                            topTrailingRadius: CalendarOverlaySemantics.topRadius)
-                        .stroke(DuskColors.lineSoft, lineWidth: 1)
+                        .stroke(DuskColors.lineSoft, lineWidth: CalendarOverlaySemantics.sheetBorderWidth)
                         .allowsHitTesting(false)
                 }
-                .shadow(color: DuskColors.bg.opacity(0.74), radius: 35, y: -11)
-                .offset(y: dismissOnScrim ? max(0, dragOffset) : 0)
+                .shadow(color: DuskColors.bg.opacity(CalendarOverlaySemantics.sheetShadowOpacity),
+                        radius: CalendarOverlaySemantics.sheetShadowRadius,
+                        y: CalendarOverlaySemantics.sheetShadowY)
+                .offset(y: dismissOnScrim ? max(CalendarOverlaySemantics.restingOffset, dragOffset) : CalendarOverlaySemantics.restingOffset)
                 .gesture(dismissOnScrim ? dismissGesture : nil)
                 .accessibilityElement(children: .contain)
                 .accessibilityAddTraits(.isModal)
@@ -181,10 +183,15 @@ private struct CalendarSheet<Content: View, Footer: View>: View {
     }
 
     private var dismissGesture: some Gesture {
-        DragGesture(minimumDistance: 12)
-            .updating($dragOffset) { value, offset, _ in offset = max(0, value.translation.height) }
+        DragGesture(minimumDistance: CalendarOverlaySemantics.dismissMinimumDistance)
+            .updating($dragOffset) { value, offset, _ in
+                offset = max(CalendarOverlaySemantics.restingOffset, value.translation.height)
+            }
             .onEnded { value in
-                if value.translation.height > 90 || value.predictedEndTranslation.height > 160 { onDismiss() }
+                if value.translation.height > CalendarOverlaySemantics.dismissDragThreshold ||
+                    value.predictedEndTranslation.height > CalendarOverlaySemantics.dismissPredictedThreshold {
+                    onDismiss()
+                }
             }
     }
 }
@@ -305,7 +312,7 @@ struct CalendarEditorSheet: View {
                 Button("Delete event", role: .destructive, action: onDelete)
                     .font(Typo.ui(TypeScale.base, .semibold))
                     .foregroundStyle(DuskColors.stop)
-                    .frame(minWidth: 44, minHeight: 44)
+                    .frame(minWidth: DesignMetrics.minimumTarget, minHeight: DesignMetrics.minimumTarget)
                     .disabled(isOffline || isSubmitting)
                     .accessibilityHint(isOffline ? "Connection required" : "")
                     .accessibilityIdentifier("calendar-editor-delete")
@@ -590,7 +597,7 @@ private struct CalendarWeekdayPicker: View {
                     } label: {
                         Text(String(day.name.prefix(1)))
                             .font(Typo.mono(TypeScale.xs))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
                             .background(selection.contains(day) ? DuskColors.accent50 : DuskColors.bgElev,
                                         in: RoundedRectangle(cornerRadius: Radii.sm))
                     }
@@ -620,7 +627,7 @@ private struct CalendarScopeChoices: View {
                         Text(CalendarOverlaySemantics.scopeLabel(scope))
                         Spacer()
                     }
-                    .frame(minHeight: 44)
+                    .frame(minHeight: DesignMetrics.minimumTarget)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(CalendarOverlaySemantics.scopeAccessibilityLabel(scope, selected: selected == scope))
@@ -766,13 +773,14 @@ private struct CalendarSheetHeader: View {
                     .foregroundStyle(DuskColors.ink3)
                     .tracking(1)
                 Text(title)
-                    .font(Typo.display(29, .medium))
+                    .font(Typo.display(CalendarOverlaySemantics.headerDisplaySize, .medium))
                     .foregroundStyle(DuskColors.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: Space.sm)
             Button(action: onClose) {
-                Image(systemName: "xmark").frame(width: 44, height: 44)
+                Image(systemName: "xmark")
+                    .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
             }
             .buttonStyle(CalendarOverlayPressButtonStyle())
             .accessibilityLabel("Close")
@@ -788,7 +796,8 @@ private struct CalendarMetadata: View {
         VStack(spacing: Space.md) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-                    Text(row.0).foregroundStyle(DuskColors.ink3).frame(width: 82, alignment: .leading)
+                    Text(row.0).foregroundStyle(DuskColors.ink3)
+                        .frame(width: CalendarOverlaySemantics.metadataLabelWidth, alignment: .leading)
                     Text(row.1).foregroundStyle(DuskColors.ink2).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(Typo.ui(TypeScale.sm))
@@ -814,7 +823,8 @@ private struct CalendarStatusNotice: View {
             .foregroundStyle(color)
             .padding(Space.md)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: Radii.md))
+            .background(color.opacity(CalendarOverlaySemantics.noticeBackgroundOpacity),
+                        in: RoundedRectangle(cornerRadius: Radii.md))
             .accessibilityElement(children: .combine)
     }
 
@@ -855,9 +865,8 @@ private extension View {
         font(Typo.ui(TypeScale.base))
             .foregroundStyle(DuskColors.ink)
             .padding(.horizontal, Space.md)
-            .frame(minHeight: 48)
-            .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft))
+            .frame(minHeight: CalendarOverlaySemantics.actionHeight)
+            .designWell()
     }
 }
 
@@ -866,9 +875,8 @@ private struct CalendarPrimaryButton: View {
     var disabled = false
     let action: () -> Void
     var body: some View {
-        Button(title, action: action)
-            .buttonStyle(CalendarActionButtonStyle(fill: DuskColors.accent, foreground: DuskColors.bg))
-            .disabled(disabled)
+        DesignActionButton(title: title, state: disabled ? .disabled : .normal, action: action)
+            .frame(minHeight: CalendarOverlaySemantics.actionHeight)
     }
 }
 private struct CalendarSecondaryButton: View {
@@ -876,9 +884,9 @@ private struct CalendarSecondaryButton: View {
     var disabled = false
     let action: () -> Void
     var body: some View {
-        Button(title, action: action)
-            .buttonStyle(CalendarActionButtonStyle(fill: .clear, foreground: DuskColors.ink))
-            .disabled(disabled)
+        DesignActionButton(title: title, role: .quiet,
+                           state: disabled ? .disabled : .normal, action: action)
+            .frame(minHeight: CalendarOverlaySemantics.actionHeight)
     }
 }
 private struct CalendarDestructiveButton: View {
@@ -886,26 +894,9 @@ private struct CalendarDestructiveButton: View {
     var disabled = false
     let action: () -> Void
     var body: some View {
-        Button(title, role: .destructive, action: action)
-            .buttonStyle(CalendarActionButtonStyle(fill: DuskColors.stop, foreground: DuskColors.ink))
-            .disabled(disabled)
-    }
-}
-
-private struct CalendarActionButtonStyle: ButtonStyle {
-    let fill: Color
-    let foreground: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(Typo.ui(TypeScale.base, .semibold))
-            .foregroundStyle(foreground)
-            .frame(maxWidth: .infinity, minHeight: CalendarOverlaySemantics.actionHeight)
-            .background(fill, in: RoundedRectangle(cornerRadius: Radii.md))
-            .overlay(RoundedRectangle(cornerRadius: Radii.md).stroke(DuskColors.lineSoft))
-            .opacity(configuration.isPressed ? 0.86 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: Motion.fast), value: configuration.isPressed)
+        DesignActionButton(title: title, role: .destructive,
+                           state: disabled ? .disabled : .normal, action: action)
+            .frame(minHeight: CalendarOverlaySemantics.actionHeight)
     }
 }
 
@@ -914,8 +905,12 @@ private struct CalendarOverlayPressButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(Rectangle())
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: Motion.fast), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion
+                         ? CalendarOverlaySemantics.pressedScale
+                         : CalendarOverlaySemantics.normalScale)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback,
+                                                 reduceMotion: reduceMotion),
+                       value: configuration.isPressed)
     }
 }
 
