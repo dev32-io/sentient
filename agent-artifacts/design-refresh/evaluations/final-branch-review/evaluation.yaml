@@ -12,11 +12,34 @@ methods:
     integrated change for specification fit, cross-stage correctness,
     regressions, maintainability, and test coverage.
 loop:
+  state: fixing
   iteration: 0
   maxIterations: 6
-  state: awaiting_manager
   reviewerAgentId: aa5ea261-8c8c-4975-a0cc-a50d00e36eef
   reviewedCommit: ed78cfb880978aa0e86950a12f5efd7af73db049
+  managerPrompt: "Fix FINAL-001 through FINAL-003 before whole-branch re-review.
+    (1) Manual `End` must request/await the STT adapter's final flush and submit
+    exactly once from the finalized transcript; do not eagerly submit a pre-End
+    partial or discard a later final callback. Preserve cancel/disconnect as
+    zero-submit and add deterministic partial-before-End/final-after-End, empty
+    finalization, duplicate callback, failure, and cancel race tests. (2) Treat
+    capture IDs as untrusted opaque input: never log the raw value. Use a
+    bounded sanitized fingerprint/server-local diagnostic reference everywhere,
+    enforce safe protocol bounds without breaking legacy capture-ID-less
+    clients, and test credential/content-shaped IDs across gateway/STT logs. (3)
+    Perform the required structured visual review rather than mass-marking
+    placeholders. Using only local loopback/disposable fixtures, Web render
+    captures, and signed iOS simulator states, collect sanitized evidence that
+    covers every inventory entry and required
+    desktop/narrow/200%-zoom/Reduced-Motion or iOS
+    device/accessibility-Dynamic-Type/Reduced-Motion configuration. Entries may
+    share evidence where one capture genuinely demonstrates multiple visible
+    states, but each must record actual overflow, target, focus,
+    native-adaptation, and reviewer observations before status becomes
+    `reviewed`. Add deterministic evidence/coverage validation and make `bun
+    qa/design-refresh/check.ts --require-closed` pass. Do not use production,
+    microphones, STT/TTS/audio, network-adapter manipulation, fabricated visual
+    verdicts, or pixel-perfect comparison."
 findings:
   - id: FINAL-001
     severity: high
