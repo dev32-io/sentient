@@ -1,0 +1,17 @@
+{
+  "name": "sentient-visual-diff",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "visual-diff": "node visual-diff.mjs",
+    "capture:web": "node capture-web.mjs",
+    "compare": "node compare.mjs",
+    "browsers:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@playwright/test": "1.62.1",
+    "odiff-bin": "4.5.0",
+    "pngjs": "7.0.0"
+  }
+}

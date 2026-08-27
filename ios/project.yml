@@ -11,6 +11,9 @@ packages:
   RiveRuntime:
     url: https://github.com/rive-app/rive-ios
     exactVersion: "6.22.0"
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    exactVersion: "1.19.4"
 targets:
   SentientApp:
     type: application
@@ -103,6 +106,8 @@ targets:
       - framework: ../shared/mobile-data/build/XCFrameworks/MobileData.xcframework
         embed: false
       - sdk: libsqlite3.tbd
+      - package: SnapshotTesting
+        product: SnapshotTesting
 
 schemes:
   SentientApp:

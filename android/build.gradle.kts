@@ -5,6 +5,10 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.compose.compiler)
 }
+
+val visualDiffAndroid = providers.gradleProperty("visualDiffAndroid").isPresent
+if (visualDiffAndroid) apply(plugin = "com.android.compose.screenshot")
+
 android {
     // Release signing — sourced from android/keystore.properties (gitignored). Absent →
     // release stays unsigned so a public-repo contributor can still build. Present → signed.
@@ -54,6 +58,7 @@ android {
         versionCode = 15; versionName = "1.4.0"
     }
     buildFeatures { compose = true; buildConfig = true }
+    if (visualDiffAndroid) experimentalProperties["android.experimental.enableScreenshotTest"] = true
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
     buildTypes {
@@ -106,6 +111,10 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
+    if (visualDiffAndroid) {
+        add("screenshotTestImplementation", libs.compose.screenshot.validation)
+        add("screenshotTestImplementation", libs.compose.ui.tooling)
+    }
     // Markdown rendering for assistant chat bubbles (GFM, pure Compose).
     implementation(libs.markdown.renderer.m3)
     // System splash screen handoff.
