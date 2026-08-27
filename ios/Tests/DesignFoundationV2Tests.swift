@@ -100,8 +100,31 @@ final class DesignFoundationV2Tests: XCTestCase {
             DesignMaterialShadowGeometry.floatGlow,
             DesignDropShadowGeometry(radius: 40, y: 24, sourceInset: 30)
         )
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.slateActionGlow,
+            DesignDropShadowGeometry(radius: 22, y: 13, sourceInset: 13)
+        )
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.slateDestructiveGlow,
+            DesignDropShadowGeometry(radius: 22, y: 13, sourceInset: 14)
+        )
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.slateDestructiveHoverGlow,
+            DesignDropShadowGeometry(radius: 24, y: 14, sourceInset: 13)
+        )
         XCTAssertEqual(DesignMaterialAdapter.avatarDisabledOpacity, 0.58)
         XCTAssertEqual(DesignMetrics.pressedDepth, 1)
+        XCTAssertEqual(DesignMetrics.buttonVisualHeight, 40)
+        XCTAssertEqual(DesignMetrics.buttonCornerRadius, 7)
+        XCTAssertEqual(DesignMetrics.buttonHorizontalPadding, 15)
+        XCTAssertEqual(DesignMetrics.buttonContentGap, 7)
+        XCTAssertEqual(DesignMetrics.buttonLabelSize, 15)
+        XCTAssertEqual(DesignMetrics.buttonPressTransition, 0.07)
+        XCTAssertEqual(DesignMaterialAdapter.slateSecondaryBaseMix, 0.09)
+        XCTAssertEqual(DesignMaterialAdapter.slateDisabledBaseMix, 0.08)
+        XCTAssertEqual(DesignMaterialAdapter.slatePressedInsetOpacity, 0.42)
+        XCTAssertEqual(DesignMaterialAdapter.slatePressedInsetBlur, 3)
+        XCTAssertEqual(DesignMaterialAdapter.slatePressedInsetY, 2)
     }
 
     func testNativeMaterialAdapterCoversEveryGeneratedRecipe() {

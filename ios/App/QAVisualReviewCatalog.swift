@@ -350,18 +350,22 @@ struct QAFoundationCatalog: View {
 
     private var controlsSection: some View {
         catalogSection(.controls) {
-            QACatalogSpecimen("Action buttons", contract: "DesignActionButton") {
+            QACatalogSpecimen("Buttons", contract: "DesignActionButton") {
                 VStack(spacing: Space.sm) {
                     HStack(spacing: Space.sm) {
-                        DesignActionButton(title: "Primary", fillsWidth: false, action: {})
-                        DesignActionButton(title: "Secondary", role: .secondary, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Allow once", fillsWidth: false, action: {})
+                        DesignActionButton(title: "Always allow", role: .secondary, fillsWidth: false, action: {})
                     }
-                    DesignActionButton(title: "Destructive", role: .destructive, action: {})
                     HStack(spacing: Space.sm) {
-                        DesignActionButton(title: "Loading", state: .loading, action: {})
-                        DesignActionButton(title: "Disabled", state: .disabled, action: {})
+                        DesignActionButton(title: "Not now", role: .quiet, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Stop", role: .destructive, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Unavailable", state: .disabled, fillsWidth: false, action: {})
                     }
                 }
+            }
+
+            QACatalogSpecimen("Button states", contract: "loading") {
+                DesignActionButton(title: "Loading", state: .loading, action: {})
             }
 
             QACatalogSpecimen("Icon, compact, text, and toolbar actions", contract: "shared action states") {
