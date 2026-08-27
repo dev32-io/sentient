@@ -133,12 +133,20 @@ enum DesignMaterialAdapter {
     static let slateHoverEmberBlur: CGFloat = 4
     static let slateHoverEmberY: CGFloat = 14
     static let slateHoverBlack = 0.94
+    // SwiftUI has no negative-spread shadow. These compact values are used
+    // for ordinary keys so their cast stays a soft edge instead of a black
+    // rectangle below the control.
+    static let slateKeyCastBlack = 0.30
+    static let slateKeyCastBlur: CGFloat = 1
+    static let slateKeyCastY: CGFloat = 3
+    static let slateDestructiveGlowBlur: CGFloat = 1.5
+    static let slateDestructiveGlowY: CGFloat = 5
     // Negative CSS spread makes the web ember cast much narrower than a
     // same-number SwiftUI shadow radius. These native alphas keep the cast
     // localized instead of painting a halo into the next control.
     static let slateActionGlow = 0.28
     static let slateSecondaryGlow = 0.0
-    static let slateDestructiveGlow = 0.34
+    static let slateDestructiveGlow = 0.10
     static let slateQuietGlow = 0.0
     static let slateDisabledBorder = 0.74
     static let slateDestructiveBorder = 0.76
@@ -170,8 +178,8 @@ enum DesignMaterialAdapter {
     static let avatarGradientStartRadius: CGFloat = 1
     static let avatarSelectedBorder: CGFloat = 4
     static let avatarShadowOpacity = 0.90
-    static let avatarShadowRadius: CGFloat = 2
-    static let avatarShadowY: CGFloat = 8
+    static let avatarShadowRadius: CGFloat = 1.5
+    static let avatarShadowY: CGFloat = 6
     static let avatarDisabledOpacity = 0.48
 }
 

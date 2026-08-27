@@ -146,7 +146,7 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && !pressed && isEnabled
+        let raised = hovered && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
         configuration.label
             .background(
@@ -171,7 +171,7 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
             )
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
             .opacity(isEnabled ? 1 : 0.58)
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
+            // Touch-down is immediate; only pointer hover gets a transition.
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: raised)
     }
 }

@@ -284,7 +284,7 @@ struct DesignButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && !pressed && isEnabled
+        let raised = hovered && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
             .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
@@ -297,9 +297,9 @@ struct DesignButtonStyle: ButtonStyle {
             .overlay { shape.stroke(focused ? DuskColors.accent : .clear, lineWidth: DesignMetrics.focusBorder).padding(DesignMetrics.focusBorderInset) }
             .shadow(color: contact(pressed: pressed, hovered: raised), radius: 0, y: pressed ? 1 : DesignMaterialAdapter.slateContactY)
             .shadow(
-                color: .black.opacity(isEnabled ? (pressed ? DesignMaterialAdapter.slatePressedBlack : raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack) : DesignMaterialAdapter.slateDisabledBlack),
-                radius: pressed ? DesignMaterialAdapter.slatePressedShadowRadius : raised ? DesignMaterialAdapter.slateHoverShadowRadius : DesignMaterialAdapter.slateCastBlur,
-                y: pressed ? DesignMaterialAdapter.slatePressedShadowY : raised ? DesignMaterialAdapter.slateHoverShadowY : DesignMaterialAdapter.slateCastY
+                color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                radius: castRadius(pressed: pressed, raised: raised),
+                y: castY(pressed: pressed, raised: raised)
             )
             .shadow(
                 color: glow.opacity(
@@ -307,12 +307,29 @@ struct DesignButtonStyle: ButtonStyle {
                         ? (role == .action ? DesignMaterialAdapter.slateActionGlow : role == .secondary ? DesignMaterialAdapter.slateSecondaryGlow : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlow : DesignMaterialAdapter.slateQuietGlow)
                         : 0
                 ),
-                radius: raised ? DesignMaterialAdapter.slateHoverEmberBlur : DesignMaterialAdapter.slateEmberBlur,
-                y: raised ? DesignMaterialAdapter.slateHoverEmberY : DesignMaterialAdapter.slateEmberY
+                radius: raised ? DesignMaterialAdapter.slateHoverEmberBlur : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlowBlur : DesignMaterialAdapter.slateEmberBlur,
+                y: raised ? DesignMaterialAdapter.slateHoverEmberY : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlowY : DesignMaterialAdapter.slateEmberY
             )
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
+            // `isPressed` is intentionally discrete. Animating the material
+            // shadow makes touch-down feel late, especially on a keypad.
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: raised)
+    }
+
+    private func castBlack(pressed: Bool, raised: Bool) -> Double {
+        if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
+        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedBlack : raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack }
+        return DesignMaterialAdapter.slateKeyCastBlack
+    }
+
+    private func castRadius(pressed: Bool, raised: Bool) -> CGFloat {
+        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedShadowRadius : raised ? DesignMaterialAdapter.slateHoverShadowRadius : DesignMaterialAdapter.slateCastBlur }
+        return pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur
+    }
+
+    private func castY(pressed: Bool, raised: Bool) -> CGFloat {
+        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedShadowY : raised ? DesignMaterialAdapter.slateHoverShadowY : DesignMaterialAdapter.slateCastY }
+        return pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY
     }
 
     private var foreground: Color {
@@ -561,7 +578,7 @@ struct DesignCompactButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let raised = hovered && !pressed && isEnabled
+        let raised = hovered && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
             .background {
@@ -587,21 +604,15 @@ struct DesignCompactButtonStyle: ButtonStyle {
             .shadow(
                 color: selected
                     ? DuskColors.accent.opacity(0.40)
-                    : .black.opacity(isEnabled ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateDisabledBlack),
-                radius: pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateCastBlur,
-                y: pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateCastY
+                    : .black.opacity(isEnabled ? (role == .action ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateKeyCastBlack) : DesignMaterialAdapter.slateDisabledBlack),
+                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur),
+                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY)
             )
             .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-            .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
-            .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
-                value: hovered
-            )
+            // Keep press feedback discrete; an interpolated shadow delays the
+            // visual response of compact touch controls.
     }
 }
 
@@ -1053,11 +1064,9 @@ private struct DesignSegmentButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            // Segment press feedback is deliberately immediate; selection
+            // movement remains owned by the segmented control.
             .offset(y: configuration.isPressed && !reduceMotion ? DesignMetrics.pressedDepth : 0)
-            .animation(
-                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
-                value: configuration.isPressed
-            )
     }
 }
 
@@ -1525,7 +1534,6 @@ struct DesignSlider: View {
 }
 
 private struct DesignChipButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
     let selected: Bool
     let hovered: Bool
@@ -1557,14 +1565,13 @@ private struct DesignChipButtonStyle: ButtonStyle {
             .shadow(
                 color: selected
                     ? DuskColors.accent.opacity(hovered ? 0.34 : 0.28)
-                    : .black.opacity(isEnabled ? 0.90 : DesignMaterialAdapter.slateDisabledBlack),
-                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateCastBlur),
-                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateCastY)
+                    : .black.opacity(isEnabled ? DesignMaterialAdapter.slateKeyCastBlack : DesignMaterialAdapter.slateDisabledBlack),
+                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur),
+                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY)
             )
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : hovered ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: hovered)
+            // Keep press feedback discrete; chips should respond on touch-down.
     }
 }
 
@@ -1751,7 +1758,7 @@ struct ElevatedUserAvatar: View {
                         .init(color: tint.base.overlaying(DuskColors.bgSunk, opacity: 0.28), location: 0),
                         .init(color: tint.base.overlaying(DuskColors.bgSunk, opacity: 0.18), location: 0.48),
                         .init(color: tint.base, location: 0.70),
-                        .init(color: DuskColors.bgSunk.overlaying(tint.accent, opacity: 0.10), location: 1),
+                        .init(color: DuskColors.bgSunk, location: 1),
                     ],
                     center: UnitPoint(x: 0.5, y: 0.54),
                     startRadius: DesignMaterialAdapter.avatarGradientStartRadius,
@@ -1769,15 +1776,11 @@ struct ElevatedUserAvatar: View {
                         .padding(-4)
                 }
             }
-            // Contact, downward cast, and the narrow tint cast mirror the
-            // three non-selected user-avatar shadow layers in the contract.
-            .shadow(
-                color: DuskColors.bgSunk.overlaying(tint.accent, opacity: 0.04),
-                radius: 0,
-                y: 2
-            )
+            // Keep the avatar cast neutral. The identity accent belongs to
+            // the face and selected ring, not to an ambient halo in the well.
+            .shadow(color: DuskColors.bgSunk, radius: 0, y: 2)
             .shadow(color: .black.opacity(DesignMaterialAdapter.avatarShadowOpacity), radius: DesignMaterialAdapter.avatarShadowRadius, y: DesignMaterialAdapter.avatarShadowY)
-            .shadow(color: tint.accent.opacity(selected ? 0.60 : 0.24), radius: selected ? 5 : 2, y: selected ? 0 : 13)
+            .shadow(color: selected ? tint.accent.opacity(0.60) : .clear, radius: selected ? 5 : 0, y: 0)
             .saturation(disabled ? 0.35 : 1)
             .opacity(disabled ? DesignMaterialAdapter.avatarDisabledOpacity : 1)
             .accessibilityLabel(name)
