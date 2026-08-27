@@ -55,35 +55,39 @@ private struct SlateFace: View {
         case .action: return DuskColors.accent
         case .secondary: return DuskColors.paper
         case .destructive:
-            // Resolve the destructive base before applying the shared slate
-            // construction. This is the native equivalent of the WebUI
-            // component-local --slate-base recipe.
-            return DuskColors.paper.overlaying(DuskColors.stop, opacity: DesignMaterialAdapter.slateDestructiveOverlay)
+            return DuskColors.paper.overlaying(
+                DuskColors.stop,
+                opacity: DesignMaterialAdapter.slateDestructiveOverlay
+            )
         case .quiet: return DuskColors.bgElev
         }
     }
 
-    private var glow: Color {
-        role == .destructive ? DuskColors.stop : DuskColors.accent
-    }
+    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
 
     private var radialStops: [Gradient.Stop] {
         if muted {
             return [
                 .init(
                     color: base.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateMutedCenterSunk),
-                    location: DesignMaterialAdapter.slateRadialStartRadius
+                    location: 0
                 ),
                 .init(color: .clear, location: DesignMaterialAdapter.slateMutedFadeStop),
             ]
         }
         return [
             .init(
-                color: base.overlaying(DuskColors.bgSunk, opacity: hovered ? 0.23 : 0.20),
-                location: DesignMaterialAdapter.slateRadialStartRadius
+                color: base.overlaying(
+                    DuskColors.bgSunk,
+                    opacity: hovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
+                ),
+                location: 0
             ),
             .init(
-                color: base.overlaying(DuskColors.bgSunk, opacity: hovered ? 0.14 : 0.12),
+                color: base.overlaying(
+                    DuskColors.bgSunk,
+                    opacity: hovered ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
+                ),
                 location: DesignMaterialAdapter.slateCenterStop
             ),
             .init(color: .clear, location: DesignMaterialAdapter.slateFadeStop),
@@ -92,184 +96,44 @@ private struct SlateFace: View {
 
     private var linearTop: Color {
         if muted { return base.overlaying(DuskColors.ink4, opacity: DesignMaterialAdapter.slateMutedBaseLight) }
-        return base.overlaying(DuskColors.ink, opacity: hovered ? DesignMaterialAdapter.slateHoverBaseLight : DesignMaterialAdapter.slateBaseLight)
+        return base.overlaying(
+            DuskColors.ink,
+            opacity: hovered ? DesignMaterialAdapter.slateHoverBaseLight : DesignMaterialAdapter.slateBaseLight
+        )
     }
 
     private var linearBottom: Color {
-        if muted { return base }
-        return hovered ? base.overlaying(glow, opacity: DesignMaterialAdapter.slateHoverGlow) : base
+        muted ? base : hovered ? base.overlaying(glow, opacity: DesignMaterialAdapter.slateHoverGlow) : base
     }
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [linearTop, linearBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            RadialGradient(
+            LinearGradient(colors: [linearTop, linearBottom], startPoint: .top, endPoint: .bottom)
+            EllipticalGradient(
                 stops: radialStops,
-                center: UnitPoint(x: DesignMaterialAdapter.slateRadialCenterX, y: DesignMaterialAdapter.slateRadialCenterY),
-                startRadius: DesignMaterialAdapter.slateRadialStartRadius,
-                endRadius: DesignMaterialAdapter.slateRadialEndRadius
+                center: UnitPoint(
+                    x: DesignMaterialAdapter.slateRadialCenterX,
+                    y: DesignMaterialAdapter.slateRadialCenterY
+                ),
+                startRadiusFraction: DesignMaterialAdapter.slateRadialStartRadiusFraction,
+                endRadiusFraction: DesignMaterialAdapter.slateRadialEndRadiusFraction
             )
-            .scaleEffect(x: DesignMaterialAdapter.slateRadialScale.width, y: DesignMaterialAdapter.slateRadialScale.height)
+            .scaleEffect(
+                x: DesignMaterialAdapter.slateRadialScale.width,
+                y: DesignMaterialAdapter.slateRadialScale.height
+            )
         }
     }
 }
 
-private struct PlateSurface: ViewModifier {
-    @Environment(\.colorSchemeContrast) private var contrast
-    let elevated: Bool
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
-        content
-            .background(DuskColors.paper)
-            .clipShape(shape)
-            .overlay { shape.stroke(contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft, lineWidth: DesignMetrics.hairline) }
-            .shadow(
-                color: DuskColors.bgSunk.overlaying(
-                    DuskColors.line,
-                    opacity: elevated ? 0.14 : 0.22
-                ),
-                radius: 0,
-                y: elevated ? DesignMaterialAdapter.slateElevatedContactY : DesignMaterialAdapter.slateRestContactY
-            )
-            .shadow(
-                color: .black.opacity(elevated ? DesignMaterialAdapter.slateElevatedBlack : DesignMaterialAdapter.slateRestBlack),
-                radius: elevated ? DesignMaterialAdapter.floatCastBlur : DesignMaterialAdapter.plateCastBlur,
-                y: elevated ? DesignMaterialAdapter.floatCastY : DesignMaterialAdapter.plateCastY
-            )
-            .shadow(
-                color: DuskColors.accent.opacity(elevated ? DesignMaterialAdapter.slateElevatedEmber : DesignMaterialAdapter.slateNoEmber),
-                radius: elevated ? DesignMaterialAdapter.floatEmberBlur : 0,
-                y: elevated ? DesignMaterialAdapter.floatEmberY : 0
-            )
-    }
+private struct DesignControlPressedKey: EnvironmentKey {
+    static let defaultValue = false
 }
 
-private struct WellSurface: ViewModifier {
-    @Environment(\.colorSchemeContrast) private var contrast
-    let focused: Bool
-    let error: Bool
-    let cornerRadius: CGFloat
-    let showsBorder: Bool
-    let showsInsetHighlights: Bool
-
-    func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        content
-            .background(
-                LinearGradient(
-                    stops: [
-                        .init(color: DuskColors.bgSunk.overlaying(.black, opacity: DesignMaterialAdapter.wellTopBlack), location: 0),
-                        .init(color: DuskColors.bgSunk, location: DesignMaterialAdapter.wellMiddleStop),
-                        .init(color: DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: DesignMaterialAdapter.wellBottomElevated), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .clipShape(shape)
-            // The black upper occlusion and reflected lower edge are the
-            // native equivalents of the two inset layers in well-shadow. The
-            // media-card visual already gets the well face's directional
-            // gradient; suppressing these edge overlays avoids a false hard
-            // line at that nested boundary.
-            .overlay(alignment: .top) {
-                if showsInsetHighlights {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .black.opacity(focused ? DesignMaterialAdapter.wellInsetFocusOpacity : DesignMaterialAdapter.wellInsetOpacity), location: 0),
-                            .init(color: .black.opacity((focused ? DesignMaterialAdapter.wellInsetFocusOpacity : DesignMaterialAdapter.wellInsetOpacity) * 0.42), location: 0.32),
-                            .init(color: .clear, location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: DesignMaterialAdapter.wellInsetHeight)
-                    .clipShape(shape)
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if showsInsetHighlights {
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            DuskColors.ink.opacity(focused ? DesignMaterialAdapter.wellBottomHighlightFocused : DesignMaterialAdapter.wellBottomHighlight),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 2)
-                    .clipShape(shape)
-                }
-            }
-            .overlay {
-                if showsBorder {
-                    shape.stroke(
-                        error
-                            ? DuskColors.stop
-                            : focused
-                                ? DuskColors.accent.overlaying(DuskColors.line, opacity: DesignMaterialAdapter.wellFocusMix)
-                                : (contrast == .increased ? DuskColors.ink3 : DuskColors.line),
-                        lineWidth: DesignMetrics.hairline
-                    )
-                }
-            }
-            .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity), radius: 0, y: 1)
-            .shadow(color: focused ? DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity) : .clear, radius: DesignMetrics.focusRing)
-            .shadow(
-                color: focused ? DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity) : .clear,
-                radius: DesignMaterialAdapter.wellFocusCastBlur,
-                y: DesignMaterialAdapter.wellFocusCastY
-            )
-    }
-}
-
-extension Color {
-    /// Alpha-composite helper used to express the contract's color-mix weights natively.
-    func overlaying(_ overlay: Color, opacity: Double) -> Color {
-        UIColor(self).mixed(with: UIColor(overlay), overlayWeight: opacity).swiftUIColor
-    }
-}
-
-private extension UIColor {
-    func mixed(with other: UIColor, overlayWeight: Double) -> UIColor {
-        var r1: CGFloat = 0; var g1: CGFloat = 0; var b1: CGFloat = 0; var a1: CGFloat = 0
-        var r2: CGFloat = 0; var g2: CGFloat = 0; var b2: CGFloat = 0; var a2: CGFloat = 0
-        getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
-        other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-        let weight = CGFloat(overlayWeight)
-        return UIColor(
-            red: r1 * (1 - weight) + r2 * weight,
-            green: g1 * (1 - weight) + g2 * weight,
-            blue: b1 * (1 - weight) + b2 * weight,
-            alpha: a1 * (1 - weight) + a2 * weight
-        )
-    }
-
-    var swiftUIColor: Color { Color(self) }
-}
-
-extension View {
-    func designPlate(elevated: Bool = false) -> some View { modifier(PlateSurface(elevated: elevated)) }
-    func designFloat() -> some View { modifier(PlateSurface(elevated: true)) }
-    func designWell(
-        focused: Bool = false,
-        error: Bool = false,
-        cornerRadius: CGFloat = Radii.sm,
-        showsBorder: Bool = true,
-        showsInsetHighlights: Bool = true
-    ) -> some View {
-        modifier(WellSurface(
-            focused: focused,
-            error: error,
-            cornerRadius: cornerRadius,
-            showsBorder: showsBorder,
-            showsInsetHighlights: showsInsetHighlights
-        ))
+private extension EnvironmentValues {
+    var designControlPressed: Bool {
+        get { self[DesignControlPressedKey.self] }
+        set { self[DesignControlPressedKey.self] = newValue }
     }
 }
 
@@ -293,43 +157,99 @@ struct DesignButtonStyle: ButtonStyle {
             .padding(.horizontal, horizontalPadding)
             .background { SlateFace(role: role, muted: !isEnabled, hovered: raised) }
             .clipShape(shape)
-            .overlay { shape.stroke(border, lineWidth: DesignMetrics.hairline) }
-            .overlay { shape.stroke(focused ? DuskColors.accent : .clear, lineWidth: DesignMetrics.focusBorder).padding(DesignMetrics.focusBorderInset) }
-            .shadow(color: contact(pressed: pressed, hovered: raised), radius: 0, y: pressed ? 1 : DesignMaterialAdapter.slateContactY)
-            .shadow(
-                color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
-                radius: castRadius(pressed: pressed, raised: raised),
-                y: castY(pressed: pressed, raised: raised)
-            )
-            .shadow(
-                color: glow.opacity(
-                    isEnabled && !pressed
-                        ? (role == .action ? DesignMaterialAdapter.slateActionGlow : role == .secondary ? DesignMaterialAdapter.slateSecondaryGlow : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlow : DesignMaterialAdapter.slateQuietGlow)
-                        : 0
-                ),
-                radius: raised ? DesignMaterialAdapter.slateHoverEmberBlur : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlowBlur : DesignMaterialAdapter.slateEmberBlur,
-                y: raised ? DesignMaterialAdapter.slateHoverEmberY : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlowY : DesignMaterialAdapter.slateEmberY
-            )
+            .overlay {
+                shape
+                    .stroke(
+                        DuskColors.ink.opacity(
+                            raised
+                                ? DesignMaterialAdapter.slateTopLightContrast
+                                : DesignMaterialAdapter.slateTopLightOpacity
+                        ),
+                        lineWidth: DesignMetrics.hairline
+                    )
+                    .mask(
+                        LinearGradient(
+                            colors: [.white, .clear, .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .overlay { shape.stroke(border(raised: raised), lineWidth: DesignMetrics.hairline) }
+            .overlay {
+                shape
+                    .stroke(
+                        focused ? DuskColors.accent : .clear,
+                        lineWidth: DesignMetrics.focusBorder
+                    )
+                    .padding(DesignMetrics.focusBorderInset)
+            }
+            .background {
+                ZStack {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                        geometry: castGeometry(pressed: pressed, raised: raised)
+                    )
+                    if glowOpacity(pressed: pressed) > 0 {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: glow.opacity(glowOpacity(pressed: pressed)),
+                            geometry: glowGeometry(raised: raised)
+                        )
+                    }
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: contact(pressed: pressed, hovered: raised),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: pressed ? 1 : DesignMaterialAdapter.slateContactY,
+                            sourceInset: 1
+                        )
+                    )
+                }
+            }
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
             // `isPressed` is intentionally discrete. Animating the material
             // shadow makes touch-down feel late, especially on a keypad.
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: raised)
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: raised
+            )
     }
 
     private func castBlack(pressed: Bool, raised: Bool) -> Double {
         if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
-        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedBlack : raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack }
-        return DesignMaterialAdapter.slateKeyCastBlack
+        if pressed { return DesignMaterialAdapter.slatePressedBlack }
+        return raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack
     }
 
-    private func castRadius(pressed: Bool, raised: Bool) -> CGFloat {
-        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedShadowRadius : raised ? DesignMaterialAdapter.slateHoverShadowRadius : DesignMaterialAdapter.slateCastBlur }
-        return pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur
+    private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
+        if !isEnabled { return DesignMaterialShadowGeometry.slateDisabled }
+        if pressed { return DesignMaterialShadowGeometry.slatePressed }
+        return raised ? DesignMaterialShadowGeometry.slateHover : DesignMaterialShadowGeometry.slateRest
     }
 
-    private func castY(pressed: Bool, raised: Bool) -> CGFloat {
-        if role == .action { return pressed ? DesignMaterialAdapter.slatePressedShadowY : raised ? DesignMaterialAdapter.slateHoverShadowY : DesignMaterialAdapter.slateCastY }
-        return pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY
+    private func glowOpacity(pressed: Bool) -> Double {
+        guard isEnabled, !pressed else { return 0 }
+        return switch role {
+        case .action: DesignMaterialAdapter.slateActionGlow
+        case .secondary: DesignMaterialAdapter.slateSecondaryGlow
+        case .destructive: DesignMaterialAdapter.slateDestructiveGlow
+        case .quiet: DesignMaterialAdapter.slateQuietGlow
+        }
+    }
+
+    private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
+        if raised { return DesignMaterialShadowGeometry.slateHoverGlow }
+        if role == .destructive {
+            return DesignDropShadowGeometry(
+                radius: DesignMaterialAdapter.slateDestructiveGlowBlur,
+                y: DesignMaterialAdapter.slateDestructiveGlowY,
+                sourceInset: DesignMaterialAdapter.slateDestructiveGlowInset
+            )
+        }
+        return DesignMaterialShadowGeometry.slateGlow
     }
 
     private var foreground: Color {
@@ -341,12 +261,13 @@ struct DesignButtonStyle: ButtonStyle {
         }
     }
 
-    private var border: Color {
+    private func border(raised: Bool) -> Color {
         if !isEnabled { return DuskColors.lineSoft.opacity(DesignMaterialAdapter.slateDisabledBorder) }
-        switch role {
-        case .action: return DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder)
-        case .secondary, .quiet: return DuskColors.line
-        case .destructive: return DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder)
+        if raised { return .clear }
+        return switch role {
+        case .action: DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder)
+        case .secondary, .quiet: DuskColors.line
+        case .destructive: DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder)
         }
     }
 
@@ -583,31 +504,68 @@ struct DesignCompactButtonStyle: ButtonStyle {
         configuration.label
             .background {
                 if selected {
-                    LinearGradient(
-                        colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                    DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
                 } else {
                     SlateFace(role: role, muted: !isEnabled, hovered: raised)
                 }
             }
             .clipShape(shape)
-            .overlay { shape.stroke(selected ? Color.clear : DuskColors.line, lineWidth: DesignMetrics.hairline) }
+            .overlay {
+                shape.stroke(
+                    selected || raised ? Color.clear : DuskColors.line,
+                    lineWidth: DesignMetrics.hairline
+                )
+            }
             .overlay {
                 if focused {
                     shape.stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
                         .padding(DesignMetrics.focusBorderInset)
                 }
             }
-            .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: selected ? 1 : 2)
-            .shadow(
-                color: selected
-                    ? DuskColors.accent.opacity(0.40)
-                    : .black.opacity(isEnabled ? (role == .action ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateKeyCastBlack) : DesignMaterialAdapter.slateDisabledBlack),
-                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur),
-                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY)
-            )
+            .background {
+                ZStack {
+                    if selected {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: pressed
+                                ? .black.opacity(DesignMaterialAdapter.slatePressedBlack)
+                                : DuskColors.accent.opacity(0.40),
+                            geometry: pressed
+                                ? DesignMaterialShadowGeometry.slatePressed
+                                : DesignDropShadowGeometry(radius: 16, y: 8, sourceInset: 14)
+                        )
+                    } else {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : raised
+                                            ? DesignMaterialAdapter.slateHoverBlack
+                                            : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : raised
+                                        ? DesignMaterialShadowGeometry.slateHover
+                                        : DesignMaterialShadowGeometry.slateRest
+                        )
+                    }
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.bgSunk.opacity(0.88),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: selected ? 1 : 2,
+                            sourceInset: 1
+                        )
+                    )
+                }
+            }
             .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
@@ -943,30 +901,54 @@ struct DesignMultilineEditor: View {
 }
 
 private struct DesignToggleTrack: View {
+    @Environment(\.designControlPressed) private var pressed
     let isOn: Bool
     let isEnabled: Bool
+
+    private var trackFace: LinearGradient {
+        LinearGradient(
+            colors: isOn
+                ? [
+                    DuskColors.accentSoft.overlaying(DuskColors.bgSunk, opacity: 0.20),
+                    DuskColors.accentSoft,
+                ]
+                : [
+                    DuskColors.bgSunk.overlaying(.black, opacity: DesignMaterialAdapter.wellTopBlack),
+                    DuskColors.bgSunk.overlaying(
+                        DuskColors.bgElev,
+                        opacity: DesignMaterialAdapter.wellBottomElevated
+                    ),
+                ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
             Capsule()
                 .fill(
-                    isOn
-                        ? LinearGradient(
-                            colors: [
-                                DuskColors.accentSoft.overlaying(DuskColors.bgSunk, opacity: 0.20),
-                                DuskColors.accentSoft,
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
+                    trackFace.shadow(
+                        .inner(
+                            color: .black.opacity(DesignMaterialAdapter.wellInsetOpacity),
+                            radius: DesignMaterialAdapter.wellInsetBlur,
+                            y: DesignMaterialAdapter.wellInsetY
                         )
-                        : LinearGradient(
-                            colors: [DuskColors.bgSunk, DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
+                    )
                 )
-                .overlay(Capsule().stroke(isOn ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.52) : DuskColors.line, lineWidth: DesignMetrics.hairline))
-                .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity), radius: 0, y: 1)
+                .overlay {
+                    Capsule().stroke(
+                        isOn
+                            ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.52)
+                            : DuskColors.line,
+                        lineWidth: DesignMetrics.hairline
+                    )
+                }
+                .shadow(
+                    color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity),
+                    radius: 0,
+                    y: 1
+                )
                 .frame(width: DesignMetrics.toggleWidth, height: DesignMetrics.toggleHeight)
 
             Circle()
@@ -983,16 +965,54 @@ private struct DesignToggleTrack: View {
                 .clipShape(Circle())
                 .overlay {
                     Circle().stroke(
-                        isOn ? DuskColors.accent : DuskColors.line.overlaying(DuskColors.ink, opacity: 0.20),
+                        isOn
+                            ? DuskColors.accent
+                            : DuskColors.line.overlaying(DuskColors.ink, opacity: 0.20),
                         lineWidth: DesignMetrics.hairline
                     )
                 }
-                .shadow(color: DuskColors.bgSunk.opacity(DesignMaterialAdapter.slateContactOpacity), radius: 0, y: 2)
-                .shadow(color: .black.opacity(isEnabled ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateDisabledBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
-                .offset(x: isOn ? DesignMetrics.toggleTravel : 4)
+                .background {
+                    ZStack {
+                        DesignSpreadShadow(
+                            shape: Circle(),
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : DesignMaterialShadowGeometry.slateRest
+                        )
+                        DesignSpreadShadow(
+                            shape: Circle(),
+                            color: DuskColors.bgSunk.opacity(DesignMaterialAdapter.slateContactOpacity),
+                            geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                        )
+                    }
+                }
+                .offset(
+                    x: isOn ? DesignMetrics.toggleTravel : 4,
+                    y: pressed ? DesignMetrics.pressedDepth : 0
+                )
         }
         .frame(width: DesignMetrics.toggleWidth, height: DesignMetrics.minimumTarget)
         .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+    }
+}
+
+private struct DesignTogglePressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .environment(\.designControlPressed, configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.99 : 1)
+            .offset(y: configuration.isPressed ? DesignMetrics.pressedDepth : 0)
     }
 }
 
@@ -1009,7 +1029,7 @@ private struct DesignToggleStyle: ToggleStyle {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DesignTogglePressStyle())
         .animation(
             reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: DesignMetrics.toggleAnimationDuration),
             value: configuration.isOn
@@ -1119,10 +1139,33 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                                     .clipShape(RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous))
                                     .overlay {
                                         RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous)
-                                            .stroke(DuskColors.lineSoft.overlaying(DuskColors.accent, opacity: 0.22), lineWidth: DesignMetrics.hairline)
+                                            .stroke(
+                                                DuskColors.lineSoft.overlaying(DuskColors.accent, opacity: 0.22),
+                                                lineWidth: DesignMetrics.hairline
+                                            )
                                     }
-                                    .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
-                                    .shadow(color: .black.opacity(DesignMaterialAdapter.slateRestBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
+                                    .background {
+                                        let shape = RoundedRectangle(
+                                            cornerRadius: DesignMetrics.segmentCornerRadius,
+                                            style: .continuous
+                                        )
+                                        ZStack {
+                                            DesignSpreadShadow(
+                                                shape: shape,
+                                                color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
+                                                geometry: DesignMaterialShadowGeometry.slateRest
+                                            )
+                                            DesignSpreadShadow(
+                                                shape: shape,
+                                                color: DuskColors.bgSunk.opacity(0.88),
+                                                geometry: DesignDropShadowGeometry(
+                                                    radius: 0,
+                                                    y: 2,
+                                                    sourceInset: 1
+                                                )
+                                            )
+                                        }
+                                    }
                                     .matchedGeometryEffect(id: "selected-segment", in: selectionNamespace)
                             }
                         }
@@ -1441,9 +1484,29 @@ private struct DesignSliderThumb: View {
                 }
             }
             .clipShape(Circle())
-            .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
-            .shadow(color: .black.opacity(enabled ? 0.94 : DesignMaterialAdapter.slateDisabledBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
-            .shadow(color: enabled ? DuskColors.accent.opacity(0.20) : .clear, radius: 2, y: 8)
+            .background {
+                ZStack {
+                    DesignSpreadShadow(
+                        shape: Circle(),
+                        color: .black.opacity(enabled ? 0.94 : DesignMaterialAdapter.slateDisabledBlack),
+                        geometry: enabled
+                            ? DesignMaterialShadowGeometry.slateRest
+                            : DesignMaterialShadowGeometry.slateDisabled
+                    )
+                    if enabled {
+                        DesignSpreadShadow(
+                            shape: Circle(),
+                            color: DuskColors.accent.opacity(0.20),
+                            geometry: DesignDropShadowGeometry(radius: 16, y: 10, sourceInset: 13)
+                        )
+                    }
+                    DesignSpreadShadow(
+                        shape: Circle(),
+                        color: DuskColors.bgSunk.opacity(0.88),
+                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                    )
+                }
+            }
             .frame(width: DesignMetrics.sliderThumbSize, height: DesignMetrics.sliderThumbSize)
     }
 }
@@ -1522,6 +1585,8 @@ struct DesignSlider: View {
                         .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
                 }
             }
+            .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+            .saturation(isEnabled ? 1 : 0.35)
         }
         .frame(minHeight: DesignMetrics.minimumTarget)
         .padding(.vertical, Space.sm)
@@ -1542,33 +1607,80 @@ private struct DesignChipButtonStyle: ButtonStyle {
         let pressed = configuration.isPressed && isEnabled
         let shape = Capsule()
         configuration.label
-            .font(Typo.ui(DesignMetrics.controlLabelSize, selected ? .semibold : .regular))
+            // Keep font metrics invariant across states so selection never
+            // changes the chip's intrinsic width.
+            .font(Typo.ui(DesignMetrics.controlLabelSize, .regular))
             .foregroundStyle(isEnabled ? (selected ? DuskColors.accent : DuskColors.ink2) : DuskColors.ink4)
             .padding(.horizontal, Space.md)
             .frame(minHeight: DesignMetrics.minimumTarget)
             .background {
                 if selected {
-                    LinearGradient(
-                        colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
+                    DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
                 } else {
-                    SlateFace(role: .quiet, muted: !isEnabled, hovered: hovered)
+                    SlateFace(role: .secondary, muted: !isEnabled, hovered: hovered)
                 }
             }
             .clipShape(shape)
             .overlay {
-                shape.stroke(selected ? Color.clear : DuskColors.line, lineWidth: DesignMetrics.hairline)
+                shape.stroke(
+                    selected || hovered ? Color.clear : DuskColors.line,
+                    lineWidth: DesignMetrics.hairline
+                )
             }
-            .shadow(color: selected ? DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity) : DuskColors.bgSunk.opacity(0.88), radius: 0, y: selected ? 1 : 2)
-            .shadow(
-                color: selected
-                    ? DuskColors.accent.opacity(hovered ? 0.34 : 0.28)
-                    : .black.opacity(isEnabled ? DesignMaterialAdapter.slateKeyCastBlack : DesignMaterialAdapter.slateDisabledBlack),
-                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateKeyCastBlur),
-                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateKeyCastY)
-            )
+            .background {
+                ZStack {
+                    if selected {
+                        if pressed {
+                            DesignSpreadShadow(
+                                shape: shape,
+                                color: .black.opacity(DesignMaterialAdapter.slatePressedBlack),
+                                geometry: DesignMaterialShadowGeometry.slatePressed
+                            )
+                        } else {
+                            DesignSpreadShadow(
+                                shape: shape,
+                                color: DuskColors.accent.opacity(hovered ? 0.64 : 0.58),
+                                geometry: DesignDropShadowGeometry(
+                                    radius: hovered ? 18 : 16,
+                                    y: 8,
+                                    sourceInset: hovered ? 12 : 14
+                                )
+                            )
+                        }
+                    } else {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : hovered
+                                            ? DesignMaterialAdapter.slateHoverBlack
+                                            : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : hovered
+                                        ? DesignMaterialShadowGeometry.slateHover
+                                        : DesignMaterialShadowGeometry.slateRest
+                        )
+                    }
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: selected
+                            ? DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity)
+                            : DuskColors.bgSunk.opacity(0.88),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: selected ? 1 : 2,
+                            sourceInset: 1
+                        )
+                    )
+                }
+            }
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : hovered ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
             // Keep press feedback discrete; chips should respond on touch-down.
@@ -1609,6 +1721,82 @@ struct DesignChip: View {
     }
 }
 
+private struct DesignCheckboxMark: View {
+    @Environment(\.designControlPressed) private var pressed
+    let isOn: Bool
+    let isEnabled: Bool
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(
+            cornerRadius: DesignMetrics.checkboxCornerRadius,
+            style: .continuous
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            if !isEnabled {
+                SlateFace(role: .quiet, muted: true, hovered: false)
+            } else if isOn {
+                SlateFace(
+                    role: .action,
+                    muted: false,
+                    hovered: false,
+                    baseOverride: DuskColors.accent
+                )
+            } else {
+                DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
+            }
+            shape.stroke(
+                isOn && isEnabled
+                    ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.48)
+                    : DuskColors.line,
+                lineWidth: DesignMetrics.hairline
+            )
+            if isOn {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(isEnabled ? DuskColors.bgSunk : DuskColors.ink4)
+            }
+        }
+        .frame(width: DesignMetrics.checkboxSize, height: DesignMetrics.checkboxSize)
+        .clipShape(shape)
+        .background {
+            ZStack {
+                if !isEnabled {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(DesignMaterialAdapter.slateDisabledBlack),
+                        geometry: DesignMaterialShadowGeometry.slateDisabled
+                    )
+                } else if pressed {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(DesignMaterialAdapter.slatePressedBlack),
+                        geometry: DesignMaterialShadowGeometry.slatePressed
+                    )
+                } else if isOn {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
+                        geometry: DesignMaterialShadowGeometry.slateRest
+                    )
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.accent.opacity(0.50),
+                        geometry: DesignDropShadowGeometry(radius: 15, y: 9, sourceInset: 12)
+                    )
+                }
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk.opacity(0.88),
+                    geometry: DesignDropShadowGeometry(radius: 0, y: pressed ? 1 : 2, sourceInset: 1)
+                )
+            }
+        }
+    }
+}
+
 private struct DesignCheckboxStyle: ToggleStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
@@ -1616,28 +1804,7 @@ private struct DesignCheckboxStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button(action: { configuration.isOn.toggle() }) {
             HStack(spacing: DesignMetrics.checkboxGap) {
-                ZStack {
-                    if configuration.isOn {
-                        SlateFace(role: .action, muted: false, hovered: false, baseOverride: DuskColors.accent)
-                    } else {
-                        LinearGradient(
-                            colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    }
-                    RoundedRectangle(cornerRadius: DesignMetrics.checkboxCornerRadius, style: .continuous)
-                        .stroke(configuration.isOn ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.48) : DuskColors.line, lineWidth: DesignMetrics.hairline)
-                    if configuration.isOn {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(DuskColors.bgSunk)
-                    }
-                }
-                .frame(width: DesignMetrics.checkboxSize, height: DesignMetrics.checkboxSize)
-                .clipShape(RoundedRectangle(cornerRadius: DesignMetrics.checkboxCornerRadius, style: .continuous))
-                .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
-                .shadow(color: .black.opacity(isEnabled ? 0.90 : DesignMaterialAdapter.slateDisabledBlack), radius: isEnabled ? DesignMaterialAdapter.slateCastBlur : 3, y: isEnabled ? DesignMaterialAdapter.slateCastY : 4)
+                DesignCheckboxMark(isOn: configuration.isOn, isEnabled: isEnabled)
                 configuration.label
                     .font(Typo.ui(DesignMetrics.controlLabelSize))
                     .foregroundStyle(isEnabled ? DuskColors.ink2 : DuskColors.ink4)
@@ -1645,8 +1812,11 @@ private struct DesignCheckboxStyle: ToggleStyle {
             .frame(minHeight: DesignMetrics.minimumTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: configuration.isOn)
+        .buttonStyle(DesignTogglePressStyle())
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+            value: configuration.isOn
+        )
     }
 }
 

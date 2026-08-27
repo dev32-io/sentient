@@ -85,9 +85,22 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertEqual(DesignMaterialMetrics.slateFadeStop, 0.76)
         XCTAssertEqual(DesignMaterialMetrics.wellMiddleStop, 0.56)
         XCTAssertEqual(DesignMaterialMetrics.plateCastY, 18)
-        XCTAssertEqual(DesignMaterialMetrics.plateCastBlur, 4)
+        XCTAssertEqual(DesignMaterialMetrics.plateCastBlur, 30)
         XCTAssertEqual(DesignMaterialMetrics.floatCastY, 28)
-        XCTAssertEqual(DesignMaterialMetrics.floatCastBlur, 18)
+        XCTAssertEqual(DesignMaterialMetrics.floatCastBlur, 58)
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.slateRest,
+            DesignDropShadowGeometry(radius: 15, y: 9, sourceInset: 10)
+        )
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.plate,
+            DesignDropShadowGeometry(radius: 30, y: 18, sourceInset: 22)
+        )
+        XCTAssertEqual(
+            DesignMaterialShadowGeometry.floatGlow,
+            DesignDropShadowGeometry(radius: 40, y: 24, sourceInset: 30)
+        )
+        XCTAssertEqual(DesignMaterialAdapter.avatarDisabledOpacity, 0.58)
         XCTAssertEqual(DesignMetrics.pressedDepth, 1)
     }
 

@@ -99,12 +99,12 @@ struct DesignCard<Content: View>: View {
     private var headerContent: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title ?? "")
-                .font(Typo.ui(TypeScale.base, .semibold))
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
                 .foregroundStyle(DuskColors.ink)
             if let detail {
                 Text(detail)
-                    .font(Typo.ui(headerStyle == .elevated ? TypeScale.xs : TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink3)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
             }
         }
     }
@@ -148,12 +148,27 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
         let pressed = configuration.isPressed && isEnabled
         let raised = hovered && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
-        configuration.label
-            .background(
-                raised
-                    ? DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.mediaCardHoverSunkMix)
-                    : DuskColors.paper.overlaying(DuskColors.bgElev, opacity: DesignMaterialAdapter.mediaCardElevatedMix)
+        let face = raised
+            ? DuskColors.paper.overlaying(
+                DuskColors.bgSunk,
+                opacity: DesignMaterialAdapter.mediaCardHoverSunkMix
             )
+            : DuskColors.paper.overlaying(
+                DuskColors.bgElev,
+                opacity: DesignMaterialAdapter.mediaCardElevatedMix
+            )
+        configuration.label
+            .background {
+                shape.fill(
+                    face.shadow(
+                        .inner(
+                            color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightOpacity),
+                            radius: 0.5,
+                            y: 1
+                        )
+                    )
+                )
+            }
             .clipShape(shape)
             .overlay {
                 shape.stroke(
@@ -163,12 +178,28 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     lineWidth: DesignMetrics.hairline
                 )
             }
-            .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.mediaCardContactOpacity), radius: 0, y: pressed ? 1 : 2)
-            .shadow(
-                color: .black.opacity(pressed ? 0.88 : DesignMaterialAdapter.mediaCardRestBlack),
-                radius: pressed ? 2 : DesignMaterialAdapter.plateCastBlur,
-                y: pressed ? 3 : DesignMaterialAdapter.plateCastY
-            )
+            .background {
+                ZStack {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(
+                            pressed ? 0.88 : DesignMaterialAdapter.mediaCardRestBlack
+                        ),
+                        geometry: pressed
+                            ? DesignMaterialShadowGeometry.slatePressed
+                            : DesignMaterialShadowGeometry.plate
+                    )
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.line.opacity(DesignMaterialAdapter.mediaCardContactOpacity),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: pressed ? 1 : 2,
+                            sourceInset: 1
+                        )
+                    )
+                }
+            }
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
             .opacity(isEnabled ? 1 : 0.58)
             // Touch-down is immediate; only pointer hover gets a transition.

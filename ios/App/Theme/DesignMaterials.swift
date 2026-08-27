@@ -1,5 +1,6 @@
 import CoreGraphics
 import MobileData
+import SwiftUI
 
 /// The native material projection keeps the generated KMP recipe attached to the
 /// SwiftUI recipe it drives. SwiftUI cannot consume CSS gradients or shadows
@@ -65,8 +66,8 @@ enum DesignMaterialAdapter {
     static let slateRadialScale = CGSize(width: 0.82, height: 1.05)
     static let slateRadialCenterX = 0.5
     static let slateRadialCenterY = 0.52
-    static let slateRadialStartRadius: CGFloat = 0
-    static let slateRadialEndRadius: CGFloat = 80
+    static let slateRadialStartRadiusFraction: CGFloat = 0
+    static let slateRadialEndRadiusFraction: CGFloat = 1
     static let slateCenterStop = 0.42
     static let slateMutedFadeStop = 0.74
     static let slateFadeStop = 0.76
@@ -81,89 +82,89 @@ enum DesignMaterialAdapter {
     static let slateHoverBaseLight = 0.06
     static let slateHoverGlow = 0.03
     static let slateDestructiveOverlay = 0.38
-    static let slateMutedInk = 0.08
     static let slateContactY: CGFloat = 2
-    // The negative CSS spread removes most of the nominal 9px blur footprint;
-    // a narrower native shadow preserves the same compact downward cast.
-    static let slateCastY: CGFloat = 7
-    // CSS uses a negative spread on these shadows. SwiftUI's radius is a
-    // blur radius without spread, so these are the visually equivalent native
-    // blur widths rather than the raw CSS blur numbers.
-    static let slateCastBlur: CGFloat = 1.5
+    static let slateCastY: CGFloat = 9
+    static let slateCastBlur: CGFloat = 15
+    static let slateCastInset: CGFloat = 10
     static let slateEmberY: CGFloat = 12
-    static let slateEmberBlur: CGFloat = 4
+    static let slateEmberBlur: CGFloat = 20
+    static let slateEmberInset: CGFloat = 16
 
-    // well-face / well-shadow / well-shadow-focus
+    // well-face / well-shadow / well-shadow-focus. Inner occlusion uses
+    // SwiftUI's native ShapeStyle inner shadow; this project targets iOS 18,
+    // while the API has been available since iOS 16.
     static let wellMiddleStop = 0.56
     static let wellTopBlack = 0.05
     static let wellBottomElevated = 0.10
-    // SwiftUI has no inset-shadow primitive. A long, low-alpha gradient is a
-    // closer native adaptation of CSS's blurred inset occlusion than a solid
-    // one-point overlay (which reads as an accidental line on device).
-    static let wellInsetOpacity = 0.20
-    static let wellInsetFocusOpacity = 0.26
-    static let wellInsetHeight: CGFloat = 10
+    static let wellInsetOpacity = 0.72
+    static let wellInsetFocusOpacity = 0.76
+    static let wellInsetBlur: CGFloat = 3
+    static let wellInsetY: CGFloat = 3
     static let wellBottomHighlightFocused = 0.05
     static let wellBottomHighlight = 0.04
     static let wellFocusMix = 0.44
     static let wellLineOpacity = 0.45
+    static let wellLineY: CGFloat = 1
     static let wellFocusRingOpacity = 0.18
     static let wellFocusCastOpacity = 0.48
     static let wellFocusCastY: CGFloat = 8
     static let wellFocusCastBlur: CGFloat = 4
 
-    // plate-shadow / float-shadow
+    // plate-shadow / float-shadow. CSS negative spread is represented as an
+    // inset shadow source shape rather than by changing blur until it looks
+    // approximately right.
+    static let plateInnerLightBlur: CGFloat = 0.5
+    static let plateInnerLightY: CGFloat = 1
     static let plateCastY: CGFloat = 18
-    static let plateCastBlur: CGFloat = 4
+    static let plateCastBlur: CGFloat = 30
+    static let plateCastInset: CGFloat = 22
     static let floatCastY: CGFloat = 28
-    static let floatCastBlur: CGFloat = 18
+    static let floatCastBlur: CGFloat = 58
+    static let floatCastInset: CGFloat = 22
     static let floatEmberY: CGFloat = 24
-    static let floatEmberBlur: CGFloat = 10
+    static let floatEmberBlur: CGFloat = 40
+    static let floatEmberInset: CGFloat = 30
 
     // Slate native interaction states
     static let slateTopLightContrast = 0.13
-    static let slatePressedTop = 0.42
     static let slatePressedBlack = 0.88
     static let slateRestBlack = 0.90
     static let slateDisabledBlack = 0.70
-    static let slatePressedShadowRadius: CGFloat = 1
-    static let slatePressedShadowY: CGFloat = 2
-    static let slateHoverShadowRadius: CGFloat = 2.5
-    static let slateHoverShadowY: CGFloat = 8
-    static let slateHoverEmberBlur: CGFloat = 4
+    static let slateDisabledShadowRadius: CGFloat = 9
+    static let slateDisabledShadowY: CGFloat = 5
+    static let slateDisabledShadowInset: CGFloat = 8
+    static let slatePressedShadowRadius: CGFloat = 6
+    static let slatePressedShadowY: CGFloat = 3
+    static let slatePressedShadowInset: CGFloat = 5
+    static let slateHoverShadowRadius: CGFloat = 18
+    static let slateHoverShadowY: CGFloat = 11
+    static let slateHoverShadowInset: CGFloat = 10
+    static let slateHoverEmberBlur: CGFloat = 22
     static let slateHoverEmberY: CGFloat = 14
+    static let slateHoverEmberInset: CGFloat = 14
     static let slateHoverBlack = 0.94
-    // SwiftUI has no negative-spread shadow. These compact values are used
-    // for ordinary keys so their cast stays a soft edge instead of a black
-    // rectangle below the control.
-    static let slateKeyCastBlack = 0.30
-    static let slateKeyCastBlur: CGFloat = 1
-    static let slateKeyCastY: CGFloat = 3
-    static let slateDestructiveGlowBlur: CGFloat = 1.5
-    static let slateDestructiveGlowY: CGFloat = 5
-    // Negative CSS spread makes the web ember cast much narrower than a
-    // same-number SwiftUI shadow radius. These native alphas keep the cast
-    // localized instead of painting a halo into the next control.
-    static let slateActionGlow = 0.28
+    static let slateDestructiveGlowBlur: CGFloat = 22
+    static let slateDestructiveGlowY: CGFloat = 13
+    static let slateDestructiveGlowInset: CGFloat = 14
+    // Glow alpha can follow the reviewed recipe because the inset source now
+    // supplies the negative spread that keeps it localized.
+    static let slateActionGlow = 0.58
     static let slateSecondaryGlow = 0.0
-    static let slateDestructiveGlow = 0.10
+    static let slateDestructiveGlow = 0.72
     static let slateQuietGlow = 0.0
     static let slateDisabledBorder = 0.74
     static let slateDestructiveBorder = 0.76
     static let slateActionBorder = 0.64
-    static let slateDestructivePressedContact = 0.30
-    static let slateDestructiveContact = 0.38
-    static let slatePressedContactOpacity = 0.90
     static let slateContactOpacity = 0.88
     static let slateElevatedTopLight = 0.10
     static let slateTopLightOpacity = 0.05
     static let slateElevatedContact = 0.86
-    static let plateContactOpacity = 0.45
+    static let plateElevatedContactMix = 0.14
+    static let plateRestContactMix = 0.22
     static let slateElevatedContactY: CGFloat = 3
     static let slateRestContactY: CGFloat = 2
     static let slateElevatedBlack = 0.96
     static let slateElevatedEmber = 0.38
-    static let slateNoEmber = 0.0
 
     // Common composite media-card adaptation. Rest uses the quiet plate
     // surface; pointer hover tightens the face toward the sunk canvas.
@@ -174,13 +175,12 @@ enum DesignMaterialAdapter {
     static let selectDisabledOpacity = 0.5
 
     // User avatar native geometry
-    static let avatarGlyphRatio = 0.34
     static let avatarGradientStartRadius: CGFloat = 1
     static let avatarSelectedBorder: CGFloat = 4
     static let avatarShadowOpacity = 0.90
     static let avatarShadowRadius: CGFloat = 1.5
     static let avatarShadowY: CGFloat = 6
-    static let avatarDisabledOpacity = 0.48
+    static let avatarDisabledOpacity = 0.58
 }
 
 /// Compatibility name for tests and older component call sites. It only
@@ -210,6 +210,79 @@ enum DesignMaterialMetrics {
 
 /// Generated KMP typography families are fallback lists. SwiftUI needs the
 /// first installed family, so this is the only native family projection.
+extension Color {
+    /// Mirrors CSS `color-mix(in oklab, …)` with SwiftUI's perceptual color
+    /// interpolation instead of component-wise UIKit sRGB interpolation.
+    func overlaying(_ overlay: Color, opacity: Double) -> Color {
+        mix(with: overlay, by: opacity, in: .perceptual)
+    }
+}
+
+/// Geometry for a CSS-style drop shadow with negative spread. SwiftUI's view
+/// shadow has no spread parameter, so renderers draw the source shape inset by
+/// this amount before applying the native blur and offset.
+struct DesignDropShadowGeometry: Equatable {
+    let radius: CGFloat
+    let x: CGFloat
+    let y: CGFloat
+    let sourceInset: CGFloat
+
+    init(radius: CGFloat, x: CGFloat = 0, y: CGFloat, sourceInset: CGFloat) {
+        self.radius = radius
+        self.x = x
+        self.y = y
+        self.sourceInset = sourceInset
+    }
+}
+
+enum DesignMaterialShadowGeometry {
+    static let slateRest = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slateCastBlur,
+        y: DesignMaterialAdapter.slateCastY,
+        sourceInset: DesignMaterialAdapter.slateCastInset
+    )
+    static let slateGlow = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slateEmberBlur,
+        y: DesignMaterialAdapter.slateEmberY,
+        sourceInset: DesignMaterialAdapter.slateEmberInset
+    )
+    static let slateHover = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slateHoverShadowRadius,
+        y: DesignMaterialAdapter.slateHoverShadowY,
+        sourceInset: DesignMaterialAdapter.slateHoverShadowInset
+    )
+    static let slateHoverGlow = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slateHoverEmberBlur,
+        y: DesignMaterialAdapter.slateHoverEmberY,
+        sourceInset: DesignMaterialAdapter.slateHoverEmberInset
+    )
+    static let slatePressed = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slatePressedShadowRadius,
+        y: DesignMaterialAdapter.slatePressedShadowY,
+        sourceInset: DesignMaterialAdapter.slatePressedShadowInset
+    )
+    static let slateDisabled = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.slateDisabledShadowRadius,
+        y: DesignMaterialAdapter.slateDisabledShadowY,
+        sourceInset: DesignMaterialAdapter.slateDisabledShadowInset
+    )
+    static let plate = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.plateCastBlur,
+        y: DesignMaterialAdapter.plateCastY,
+        sourceInset: DesignMaterialAdapter.plateCastInset
+    )
+    static let float = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.floatCastBlur,
+        y: DesignMaterialAdapter.floatCastY,
+        sourceInset: DesignMaterialAdapter.floatCastInset
+    )
+    static let floatGlow = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.floatEmberBlur,
+        y: DesignMaterialAdapter.floatEmberY,
+        sourceInset: DesignMaterialAdapter.floatEmberInset
+    )
+}
+
 enum DesignTypographyAdapter {
     static let displayFamily = nativeFamily(MobileData.Fonts_.shared.display)
     static let uiFamily = nativeFamily(MobileData.Fonts_.shared.ui)

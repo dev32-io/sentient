@@ -27,7 +27,9 @@ struct SentientApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--qa-visual-review") {
+            if ProcessInfo.processInfo.arguments.contains("--qa-foundation-catalog") {
+                QAFoundationCatalog()
+            } else if ProcessInfo.processInfo.arguments.contains("--qa-visual-review") {
                 QAVisualReviewCatalog()
             } else {
                 RootView()
