@@ -201,14 +201,6 @@ enum DesignMetrics {
     static let focusRing: CGFloat = 3
     static let focusBorder: CGFloat = 2
     static let focusBorderInset: CGFloat = -3
-    // The visual key is 40pt high; the enclosing native control still keeps
-    // the 44pt minimum hit target below.
-    static let buttonVisualHeight: CGFloat = 40
-    static let buttonCornerRadius: CGFloat = 7
-    static let buttonHorizontalPadding: CGFloat = 15
-    static let buttonContentGap: CGFloat = 7
-    static let buttonLabelSize: CGFloat = 15
-    static let buttonPressTransition: Double = 0.07
     static let pressedDepth: CGFloat = 1
     static let categoryIconSlot: CGFloat = 26
     static let progressWidth: CGFloat = 64

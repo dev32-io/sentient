@@ -42,53 +42,18 @@ enum DesignButtonRole { case action, secondary, destructive, quiet }
 
 enum DesignNoticeKind { case loading, empty, error, success, warning }
 
-private enum DesignSlateState: Equatable {
-    case rest
-    case hover
-    case pressed
-    case disabled
-
-    var isPressed: Bool {
-        self == .pressed
-    }
-}
-
-/// The shared actionable face. Its geometry follows the reviewed CSS recipe;
-/// the enclosing ButtonStyle supplies native semantics, hit testing, focus, and
-/// state transitions.
-private struct SlateFace<S: InsettableShape>: View, Animatable {
-    let shape: S
+private struct SlateFace: View {
     let role: DesignButtonRole
-    let state: DesignSlateState
+    let muted: Bool
+    let hovered: Bool
     var baseOverride: Color? = nil
-    var pressProgress: CGFloat
-
-    init(shape: S, role: DesignButtonRole, state: DesignSlateState, baseOverride: Color? = nil) {
-        self.shape = shape
-        self.role = role
-        self.state = state
-        self.baseOverride = baseOverride
-        self.pressProgress = state.isPressed ? 1 : 0
-    }
-
-    var animatableData: CGFloat {
-        get { pressProgress }
-        set { pressProgress = newValue }
-    }
 
     private var base: Color {
-        if state == .disabled { return disabledBase }
+        if muted { return DuskColors.bgElev }
         if let baseOverride { return baseOverride }
         switch role {
         case .action: return DuskColors.accent
-        case .secondary:
-            // The plain prototype button uses a paper/secondary-ink mix so it
-            // remains legible on a paper plate without becoming a second
-            // accent face.
-            return DuskColors.paper.overlaying(
-                DuskColors.ink2,
-                opacity: DesignMaterialAdapter.slateSecondaryBaseMix
-            )
+        case .secondary: return DuskColors.paper
         case .destructive:
             return DuskColors.paper.overlaying(
                 DuskColors.stop,
@@ -98,19 +63,10 @@ private struct SlateFace<S: InsettableShape>: View, Animatable {
         }
     }
 
-    private var disabledBase: Color {
-        DuskColors.bgElev.overlaying(
-            DuskColors.ink4,
-            opacity: DesignMaterialAdapter.slateDisabledBaseMix
-        )
-    }
-
-    private var isMuted: Bool { state == .disabled }
-    private var isHovered: Bool { state == .hover }
     private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
 
     private var radialStops: [Gradient.Stop] {
-        if isMuted {
+        if muted {
             return [
                 .init(
                     color: base.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateMutedCenterSunk),
@@ -123,14 +79,14 @@ private struct SlateFace<S: InsettableShape>: View, Animatable {
             .init(
                 color: base.overlaying(
                     DuskColors.bgSunk,
-                    opacity: isHovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
+                    opacity: hovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
                 ),
                 location: 0
             ),
             .init(
                 color: base.overlaying(
                     DuskColors.bgSunk,
-                    opacity: isHovered ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
+                    opacity: hovered ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
                 ),
                 location: DesignMaterialAdapter.slateCenterStop
             ),
@@ -139,47 +95,20 @@ private struct SlateFace<S: InsettableShape>: View, Animatable {
     }
 
     private var linearTop: Color {
-        if isMuted { return base.overlaying(DuskColors.ink4, opacity: DesignMaterialAdapter.slateMutedBaseLight) }
+        if muted { return base.overlaying(DuskColors.ink4, opacity: DesignMaterialAdapter.slateMutedBaseLight) }
         return base.overlaying(
             DuskColors.ink,
-            opacity: isHovered ? DesignMaterialAdapter.slateHoverBaseLight : DesignMaterialAdapter.slateBaseLight
+            opacity: hovered ? DesignMaterialAdapter.slateHoverBaseLight : DesignMaterialAdapter.slateBaseLight
         )
     }
 
     private var linearBottom: Color {
-        isMuted ? base : isHovered ? base.overlaying(glow, opacity: DesignMaterialAdapter.slateHoverGlow) : base
-    }
-
-    private var topLight: Color? {
-        switch state {
-        case .pressed: nil
-        case .disabled: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightDisabled)
-        case .hover: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightHover)
-        case .rest:
-            switch role {
-            case .action: .white.opacity(DesignMaterialAdapter.slateActionTopLight)
-            case .destructive: .white.opacity(DesignMaterialAdapter.slateDestructiveTopLight)
-            case .secondary, .quiet: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
-            }
-        }
+        muted ? base : hovered ? base.overlaying(glow, opacity: DesignMaterialAdapter.slateHoverGlow) : base
     }
 
     var body: some View {
-        let linearStyle = state.isPressed
-            ? AnyShapeStyle(
-                linearFace.shadow(
-                    .inner(
-                        color: DuskColors.bgSunk.opacity(
-                            DesignMaterialAdapter.slatePressedInsetOpacity * pressProgress
-                        ),
-                        radius: DesignMaterialAdapter.slatePressedInsetBlur,
-                        y: DesignMaterialAdapter.slatePressedInsetY
-                    )
-                )
-            )
-            : AnyShapeStyle(linearFace)
         ZStack {
-            shape.fill(linearStyle)
+            LinearGradient(colors: [linearTop, linearBottom], startPoint: .top, endPoint: .bottom)
             EllipticalGradient(
                 stops: radialStops,
                 center: UnitPoint(
@@ -193,28 +122,7 @@ private struct SlateFace<S: InsettableShape>: View, Animatable {
                 x: DesignMaterialAdapter.slateRadialScale.width,
                 y: DesignMaterialAdapter.slateRadialScale.height
             )
-            if !state.isPressed, let topLight {
-                shape
-                    .stroke(topLight, lineWidth: DesignMetrics.hairline)
-                    .mask(
-                        LinearGradient(
-                            colors: [.white, .clear, .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
         }
-        .clipShape(shape)
-        .accessibilityHidden(true)
-    }
-
-    private var linearFace: LinearGradient {
-        LinearGradient(
-            colors: [linearTop, linearBottom],
-            startPoint: .top,
-            endPoint: .bottom
-        )
     }
 }
 
@@ -229,178 +137,6 @@ private extension EnvironmentValues {
     }
 }
 
-/// Shared directional depth for every actionable slate. The two animatable
-/// progress values mirror the prototype's short hover/press transitions while
-/// keeping all geometry in one renderer.
-private struct SlateShadowLayers<S: InsettableShape>: View, Animatable {
-    let shape: S
-    let role: DesignButtonRole
-    private let isDisabled: Bool
-    var hoverProgress: CGFloat
-    var pressProgress: CGFloat
-
-    init(shape: S, role: DesignButtonRole, state: DesignSlateState) {
-        self.shape = shape
-        self.role = role
-        self.isDisabled = state == .disabled
-        self.hoverProgress = state == .hover ? 1 : 0
-        self.pressProgress = state == .pressed ? 1 : 0
-    }
-
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(hoverProgress, pressProgress) }
-        set {
-            hoverProgress = newValue.first
-            pressProgress = newValue.second
-        }
-    }
-
-    private var hover: CGFloat { min(max(hoverProgress, 0), 1) }
-    private var pressed: CGFloat { min(max(pressProgress, 0), 1) }
-
-    private func interpolate(_ from: CGFloat, _ to: CGFloat, _ amount: CGFloat) -> CGFloat {
-        from + ((to - from) * amount)
-    }
-
-    private func interpolate(
-        _ from: DesignDropShadowGeometry,
-        _ to: DesignDropShadowGeometry,
-        _ amount: CGFloat
-    ) -> DesignDropShadowGeometry {
-        DesignDropShadowGeometry(
-            radius: interpolate(from.radius, to.radius, amount),
-            x: interpolate(from.x, to.x, amount),
-            y: interpolate(from.y, to.y, amount),
-            sourceInset: interpolate(from.sourceInset, to.sourceInset, amount)
-        )
-    }
-
-    private var castOpacity: Double {
-        if isDisabled { return DesignMaterialAdapter.slateDisabledBlack }
-        let rest = role == .action ? DesignMaterialAdapter.slateActionRestBlack : DesignMaterialAdapter.slateRestBlack
-        let restToHover = interpolate(CGFloat(rest), CGFloat(DesignMaterialAdapter.slateHoverBlack), hover)
-        return Double(interpolate(restToHover, CGFloat(DesignMaterialAdapter.slatePressedBlack), pressed))
-    }
-
-    private var castGeometry: DesignDropShadowGeometry {
-        if isDisabled { return DesignMaterialShadowGeometry.slateDisabled }
-        let restToHover = interpolate(DesignMaterialShadowGeometry.slateRest, DesignMaterialShadowGeometry.slateHover, hover)
-        return interpolate(restToHover, DesignMaterialShadowGeometry.slatePressed, pressed)
-    }
-
-    private var restGlow: (opacity: Double, geometry: DesignDropShadowGeometry, color: Color) {
-        switch role {
-        case .action:
-            (DesignMaterialAdapter.slateActionGlow, DesignMaterialShadowGeometry.slateActionGlow, DuskColors.accent)
-        case .destructive:
-            (DesignMaterialAdapter.slateDestructiveGlow, DesignMaterialShadowGeometry.slateDestructiveGlow, DuskColors.stop)
-        case .secondary, .quiet:
-            (DesignMaterialAdapter.slateDefaultGlow, DesignMaterialShadowGeometry.slateGlow, DuskColors.accent)
-        }
-    }
-
-    private var hoverGlow: (opacity: Double, geometry: DesignDropShadowGeometry, color: Color) {
-        switch role {
-        case .destructive:
-            (DesignMaterialAdapter.slateDestructiveHoverGlow, DesignMaterialShadowGeometry.slateDestructiveHoverGlow, DuskColors.stop)
-        case .action, .secondary, .quiet:
-            (0.48, DesignMaterialShadowGeometry.slateHoverGlow, DuskColors.accent)
-        }
-    }
-
-    private var glow: (color: Color, geometry: DesignDropShadowGeometry)? {
-        guard !isDisabled else { return nil }
-        let opacity = interpolate(
-            CGFloat(restGlow.opacity),
-            CGFloat(hoverGlow.opacity),
-            hover
-        ) * (1 - pressed)
-        guard opacity > 0.001 else { return nil }
-        return (
-            restGlow.color.opacity(Double(opacity)),
-            interpolate(restGlow.geometry, hoverGlow.geometry, hover)
-        )
-    }
-
-    private var restContact: Color {
-        switch role {
-        case .action:
-            DuskColors.bgSunk.overlaying(
-                DuskColors.accent,
-                opacity: DesignMaterialAdapter.slateActionContactMix
-            )
-        case .secondary, .quiet:
-            DuskColors.bgSunk.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.slateDefaultContactMix
-            )
-        case .destructive:
-            DuskColors.bgSunk.overlaying(
-                DuskColors.stop,
-                opacity: DesignMaterialAdapter.slateDestructiveContactMix
-            )
-        }
-    }
-
-    private var hoverContact: Color {
-        role == .destructive
-            ? DuskColors.bgSunk.overlaying(
-                DuskColors.stop,
-                opacity: DesignMaterialAdapter.slateDestructiveHoverContactMix
-            )
-            : DuskColors.bgSunk.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.slateHoverContactMix
-            )
-    }
-
-    private var contactColor: Color {
-        if isDisabled {
-            return DuskColors.bgSunk.overlaying(
-                DuskColors.line,
-                opacity: DesignMaterialAdapter.slateDisabledContactOpacity
-            )
-        }
-        let restToHover = restContact.overlaying(hoverContact, opacity: Double(hover))
-        let pressedContact = DuskColors.bgSunk.overlaying(
-            DuskColors.line,
-            opacity: DesignMaterialAdapter.slatePressedContactMix
-        )
-        return restToHover.overlaying(pressedContact, opacity: Double(pressed))
-    }
-
-    private var contactGeometry: DesignDropShadowGeometry {
-        let y = interpolate(
-            interpolate(
-                DesignMaterialAdapter.slateRestContactY,
-                DesignMaterialAdapter.slateRestContactY,
-                hover
-            ),
-            DesignMaterialAdapter.slatePressedContactY,
-            pressed
-        )
-        return DesignDropShadowGeometry(
-            radius: 0,
-            y: isDisabled ? DesignMaterialAdapter.slateDisabledContactY : y,
-            sourceInset: 1
-        )
-    }
-
-    var body: some View {
-        ZStack {
-            DesignSpreadShadow(
-                shape: shape,
-                color: .black.opacity(castOpacity),
-                geometry: castGeometry
-            )
-            if let glow {
-                DesignSpreadShadow(shape: shape, color: glow.color, geometry: glow.geometry)
-            }
-            DesignSpreadShadow(shape: shape, color: contactColor, geometry: contactGeometry)
-        }
-    }
-}
-
 struct DesignButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -408,32 +144,38 @@ struct DesignButtonStyle: ButtonStyle {
     let role: DesignButtonRole
     var hovered = false
     var minimumHeight: CGFloat = DesignMetrics.minimumTarget
-    var horizontalPadding: CGFloat = DesignMetrics.buttonHorizontalPadding
+    var horizontalPadding: CGFloat = Space.lg
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let state: DesignSlateState = if !isEnabled {
-            .disabled
-        } else if pressed {
-            .pressed
-        } else if hovered {
-            .hover
-        } else {
-            .rest
-        }
-        let shape = RoundedRectangle(cornerRadius: DesignMetrics.buttonCornerRadius, style: .continuous)
+        let raised = hovered && isEnabled
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
-            .font(Typo.ui(DesignMetrics.buttonLabelSize))
+            .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
             .foregroundStyle(foreground)
-            .frame(minHeight: DesignMetrics.buttonVisualHeight)
+            .frame(minHeight: minimumHeight)
             .padding(.horizontal, horizontalPadding)
-            .background {
-                SlateFace(shape: shape, role: role, state: state)
-            }
+            .background { SlateFace(role: role, muted: !isEnabled, hovered: raised) }
             .clipShape(shape)
             .overlay {
-                shape.stroke(border(raised: state == .hover), lineWidth: DesignMetrics.hairline)
+                shape
+                    .stroke(
+                        DuskColors.ink.opacity(
+                            raised
+                                ? DesignMaterialAdapter.slateTopLightContrast
+                                : DesignMaterialAdapter.slateTopLightOpacity
+                        ),
+                        lineWidth: DesignMetrics.hairline
+                    )
+                    .mask(
+                        LinearGradient(
+                            colors: [.white, .clear, .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
             }
+            .overlay { shape.stroke(border(raised: raised), lineWidth: DesignMetrics.hairline) }
             .overlay {
                 shape
                     .stroke(
@@ -443,48 +185,100 @@ struct DesignButtonStyle: ButtonStyle {
                     .padding(DesignMetrics.focusBorderInset)
             }
             .background {
-                SlateShadowLayers(shape: shape, role: role, state: state)
+                ZStack {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                        geometry: castGeometry(pressed: pressed, raised: raised)
+                    )
+                    if glowOpacity(pressed: pressed) > 0 {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: glow.opacity(glowOpacity(pressed: pressed)),
+                            geometry: glowGeometry(raised: raised)
+                        )
+                    }
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: contact(pressed: pressed, hovered: raised),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: pressed ? 1 : DesignMaterialAdapter.slateContactY,
+                            sourceInset: 1
+                        )
+                    )
+                }
             }
-            .offset(y: state == .pressed ? DesignMetrics.pressedDepth : state == .hover ? -1 : 0)
+            .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
+            // `isPressed` is intentionally discrete. Animating the material
+            // shadow makes touch-down feel late, especially on a keypad.
             .animation(
-                DesignV2.Motion.animation(
-                    duration: state == .pressed
-                        ? DesignMetrics.buttonPressTransition
-                        : DesignV2.Motion.feedback,
-                    reduceMotion: reduceMotion
-                ),
-                value: state
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: raised
             )
-            // Keep the native hit target at 44pt while the visual key follows
-            // the 40px prototype control height.
-            .frame(minHeight: max(minimumHeight, DesignMetrics.buttonVisualHeight))
-            .contentShape(Rectangle())
+    }
+
+    private func castBlack(pressed: Bool, raised: Bool) -> Double {
+        if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
+        if pressed { return DesignMaterialAdapter.slatePressedBlack }
+        return raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack
+    }
+
+    private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
+        if !isEnabled { return DesignMaterialShadowGeometry.slateDisabled }
+        if pressed { return DesignMaterialShadowGeometry.slatePressed }
+        return raised ? DesignMaterialShadowGeometry.slateHover : DesignMaterialShadowGeometry.slateRest
+    }
+
+    private func glowOpacity(pressed: Bool) -> Double {
+        guard isEnabled, !pressed else { return 0 }
+        return switch role {
+        case .action: DesignMaterialAdapter.slateActionGlow
+        case .secondary: DesignMaterialAdapter.slateSecondaryGlow
+        case .destructive: DesignMaterialAdapter.slateDestructiveGlow
+        case .quiet: DesignMaterialAdapter.slateQuietGlow
+        }
+    }
+
+    private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
+        if raised { return DesignMaterialShadowGeometry.slateHoverGlow }
+        if role == .destructive {
+            return DesignDropShadowGeometry(
+                radius: DesignMaterialAdapter.slateDestructiveGlowBlur,
+                y: DesignMaterialAdapter.slateDestructiveGlowY,
+                sourceInset: DesignMaterialAdapter.slateDestructiveGlowInset
+            )
+        }
+        return DesignMaterialShadowGeometry.slateGlow
     }
 
     private var foreground: Color {
         if !isEnabled { return DuskColors.ink4 }
         switch role {
-        case .action, .secondary, .destructive: return DuskColors.ink
+        case .action: return DuskColors.bgSunk
+        case .secondary, .destructive: return DuskColors.ink
         case .quiet: return DuskColors.ink2
         }
     }
 
     private func border(raised: Bool) -> Color {
-        if !isEnabled {
-            return DuskColors.lineSoft.overlaying(
-                DuskColors.bg,
-                opacity: DesignMaterialAdapter.slateDisabledBorder
-            )
-        }
+        if !isEnabled { return DuskColors.lineSoft.opacity(DesignMaterialAdapter.slateDisabledBorder) }
         if raised { return .clear }
         return switch role {
-        case .action:
-            DuskColors.accent.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateActionBorder)
-        case .secondary: DuskColors.line
-        case .quiet:
-            DuskColors.lineSoft.overlaying(DuskColors.bg, opacity: 0.84)
-        case .destructive:
-            DuskColors.stop.overlaying(DuskColors.line, opacity: DesignMaterialAdapter.slateDestructiveBorder)
+        case .action: DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder)
+        case .secondary, .quiet: DuskColors.line
+        case .destructive: DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder)
+        }
+    }
+
+    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
+
+    private func contact(pressed: Bool, hovered: Bool) -> Color {
+        if pressed || hovered { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
+        switch role {
+        case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
+        case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
+        case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
         }
     }
 }
@@ -501,7 +295,7 @@ struct DesignActionButton: View {
 
     var body: some View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
-            HStack(spacing: DesignMetrics.buttonContentGap) {
+            HStack(spacing: Space.sm) {
                 if state == .loading { ProgressView().controlSize(.small) }
                 Text(state == .loading ? "Loading" : title)
                     .frame(maxWidth: fillsWidth ? .infinity : nil)
@@ -520,7 +314,7 @@ struct DesignActionButton: View {
 struct DesignIconButton: View {
     let systemName: String
     let label: String
-    var role: DesignButtonRole = .secondary
+    var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
     var minimumSize: CGFloat = DesignMetrics.minimumTarget
@@ -548,7 +342,7 @@ struct DesignIconButton: View {
 /// product-specific label composition.
 struct DesignCompactButton<Label: View>: View {
     let accessibilityLabel: String
-    var role: DesignButtonRole = .secondary
+    var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var isEnabled = true
     var accessibilityId: String? = nil
@@ -561,7 +355,7 @@ struct DesignCompactButton<Label: View>: View {
 
     init(
         accessibilityLabel: String,
-        role: DesignButtonRole = .secondary,
+        role: DesignButtonRole = .quiet,
         state: DesignControlState = .normal,
         isEnabled: Bool = true,
         accessibilityId: String? = nil,
@@ -699,29 +493,20 @@ struct DesignCompactButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isFocused) private var focused
     let pressedScale: CGFloat
-    var role: DesignButtonRole = .secondary
+    var role: DesignButtonRole = .quiet
     var selected = false
     var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
         let raised = hovered && isEnabled
-        let state: DesignSlateState = if !isEnabled {
-            .disabled
-        } else if pressed {
-            .pressed
-        } else if raised {
-            .hover
-        } else {
-            .rest
-        }
-        let shape = RoundedRectangle(cornerRadius: DesignMetrics.buttonCornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
             .background {
                 if selected {
                     DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
                 } else {
-                    SlateFace(shape: shape, role: role, state: state)
+                    SlateFace(role: role, muted: !isEnabled, hovered: raised)
                 }
             }
             .clipShape(shape)
@@ -738,8 +523,8 @@ struct DesignCompactButtonStyle: ButtonStyle {
                 }
             }
             .background {
-                if selected {
-                    ZStack {
+                ZStack {
+                    if selected {
                         DesignSpreadShadow(
                             shape: shape,
                             color: pressed
@@ -749,26 +534,43 @@ struct DesignCompactButtonStyle: ButtonStyle {
                                 ? DesignMaterialShadowGeometry.slatePressed
                                 : DesignDropShadowGeometry(radius: 16, y: 8, sourceInset: 14)
                         )
+                    } else {
                         DesignSpreadShadow(
                             shape: shape,
-                            color: DuskColors.bgSunk.opacity(0.88),
-                            geometry: DesignDropShadowGeometry(radius: 0, y: pressed ? 1 : 2, sourceInset: 1)
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : raised
+                                            ? DesignMaterialAdapter.slateHoverBlack
+                                            : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : raised
+                                        ? DesignMaterialShadowGeometry.slateHover
+                                        : DesignMaterialShadowGeometry.slateRest
                         )
                     }
-                } else {
-                    SlateShadowLayers(shape: shape, role: role, state: state)
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.bgSunk.opacity(0.88),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: selected ? 1 : 2,
+                            sourceInset: 1
+                        )
+                    )
                 }
             }
             .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-            .animation(
-                DesignV2.Motion.animation(
-                    duration: pressed ? DesignMetrics.buttonPressTransition : DesignV2.Motion.feedback,
-                    reduceMotion: reduceMotion
-                ),
-                value: state
-            )
+            // Keep press feedback discrete; an interpolated shadow delays the
+            // visual response of compact touch controls.
     }
 }
 
@@ -951,7 +753,6 @@ struct DesignSecureField: View {
                 DesignIconButton(
                     systemName: revealed ? "eye.slash" : "eye",
                     label: revealed ? "Hide value" : "Show value",
-                    role: .quiet,
                     state: isEnabled ? .normal : .disabled,
                     action: { revealed.toggle() }
                 )
@@ -1150,21 +951,14 @@ private struct DesignToggleTrack: View {
                 )
                 .frame(width: DesignMetrics.toggleWidth, height: DesignMetrics.toggleHeight)
 
-            let knobState: DesignSlateState = if !isEnabled {
-                .disabled
-            } else if pressed {
-                .pressed
-            } else {
-                .rest
-            }
             Circle()
                 .fill(Color.clear)
                 .frame(width: DesignMetrics.toggleKnobSize, height: DesignMetrics.toggleKnobSize)
                 .background {
                     SlateFace(
-                        shape: Circle(),
-                        role: .secondary,
-                        state: knobState,
+                        role: .action,
+                        muted: !isEnabled,
+                        hovered: false,
                         baseOverride: isOn ? DuskColors.accent : DuskColors.paper
                     )
                 }
@@ -1178,7 +972,28 @@ private struct DesignToggleTrack: View {
                     )
                 }
                 .background {
-                    SlateShadowLayers(shape: Circle(), role: .secondary, state: knobState)
+                    ZStack {
+                        DesignSpreadShadow(
+                            shape: Circle(),
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : DesignMaterialShadowGeometry.slateRest
+                        )
+                        DesignSpreadShadow(
+                            shape: Circle(),
+                            color: DuskColors.bgSunk.opacity(DesignMaterialAdapter.slateContactOpacity),
+                            geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                        )
+                    }
                 }
                 .offset(
                     x: isOn ? DesignMetrics.toggleTravel : 4,
@@ -1315,12 +1130,9 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                                     .fill(Color.clear)
                                     .background {
                                         SlateFace(
-                                            shape: RoundedRectangle(
-                                                cornerRadius: DesignMetrics.segmentCornerRadius,
-                                                style: .continuous
-                                            ),
-                                            role: .secondary,
-                                            state: .rest,
+                                            role: .quiet,
+                                            muted: false,
+                                            hovered: false,
                                             baseOverride: DuskColors.accent50
                                         )
                                     }
@@ -1788,21 +1600,11 @@ struct DesignSlider: View {
 
 private struct DesignChipButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let selected: Bool
     let hovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
-        let state: DesignSlateState = if !isEnabled {
-            .disabled
-        } else if pressed {
-            .pressed
-        } else if hovered {
-            .hover
-        } else {
-            .rest
-        }
         let shape = Capsule()
         configuration.label
             // Keep font metrics invariant across states so selection never
@@ -1815,7 +1617,7 @@ private struct DesignChipButtonStyle: ButtonStyle {
                 if selected {
                     DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
                 } else {
-                    SlateFace(shape: shape, role: .secondary, state: state, baseOverride: DuskColors.paper)
+                    SlateFace(role: .secondary, muted: !isEnabled, hovered: hovered)
                 }
             }
             .clipShape(shape)
@@ -1826,36 +1628,62 @@ private struct DesignChipButtonStyle: ButtonStyle {
                 )
             }
             .background {
-                if selected {
-                    ZStack {
+                ZStack {
+                    if selected {
+                        if pressed {
+                            DesignSpreadShadow(
+                                shape: shape,
+                                color: .black.opacity(DesignMaterialAdapter.slatePressedBlack),
+                                geometry: DesignMaterialShadowGeometry.slatePressed
+                            )
+                        } else {
+                            DesignSpreadShadow(
+                                shape: shape,
+                                color: DuskColors.accent.opacity(hovered ? 0.64 : 0.58),
+                                geometry: DesignDropShadowGeometry(
+                                    radius: hovered ? 18 : 16,
+                                    y: 8,
+                                    sourceInset: hovered ? 12 : 14
+                                )
+                            )
+                        }
+                    } else {
                         DesignSpreadShadow(
                             shape: shape,
-                            color: pressed
-                                ? .black.opacity(DesignMaterialAdapter.slatePressedBlack)
-                                : DuskColors.accent.opacity(0.40),
-                            geometry: pressed
-                                ? DesignMaterialShadowGeometry.slatePressed
-                                : DesignDropShadowGeometry(radius: 16, y: 8, sourceInset: 14)
-                        )
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: DuskColors.bgSunk.opacity(0.88),
-                            geometry: DesignDropShadowGeometry(radius: 0, y: pressed ? 1 : 2, sourceInset: 1)
+                            color: .black.opacity(
+                                isEnabled
+                                    ? pressed
+                                        ? DesignMaterialAdapter.slatePressedBlack
+                                        : hovered
+                                            ? DesignMaterialAdapter.slateHoverBlack
+                                            : DesignMaterialAdapter.slateRestBlack
+                                    : DesignMaterialAdapter.slateDisabledBlack
+                            ),
+                            geometry: !isEnabled
+                                ? DesignMaterialShadowGeometry.slateDisabled
+                                : pressed
+                                    ? DesignMaterialShadowGeometry.slatePressed
+                                    : hovered
+                                        ? DesignMaterialShadowGeometry.slateHover
+                                        : DesignMaterialShadowGeometry.slateRest
                         )
                     }
-                } else {
-                    SlateShadowLayers(shape: shape, role: .secondary, state: state)
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: selected
+                            ? DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity)
+                            : DuskColors.bgSunk.opacity(0.88),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 0,
+                            y: selected ? 1 : 2,
+                            sourceInset: 1
+                        )
+                    )
                 }
             }
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : hovered ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-            .animation(
-                DesignV2.Motion.animation(
-                    duration: pressed ? DesignMetrics.buttonPressTransition : DesignV2.Motion.feedback,
-                    reduceMotion: reduceMotion
-                ),
-                value: state
-            )
+            // Keep press feedback discrete; chips should respond on touch-down.
     }
 }
 
@@ -1906,21 +1734,14 @@ private struct DesignCheckboxMark: View {
     }
 
     var body: some View {
-        let faceState: DesignSlateState = if !isEnabled {
-            .disabled
-        } else if pressed {
-            .pressed
-        } else {
-            .rest
-        }
         ZStack {
             if !isEnabled {
-                SlateFace(shape: shape, role: .quiet, state: .disabled)
+                SlateFace(role: .quiet, muted: true, hovered: false)
             } else if isOn {
                 SlateFace(
-                    shape: shape,
-                    role: .secondary,
-                    state: faceState,
+                    role: .action,
+                    muted: false,
+                    hovered: false,
                     baseOverride: DuskColors.accent
                 )
             } else {

@@ -81,16 +81,6 @@ enum DesignMaterialAdapter {
     static let slateBaseLight = 0.04
     static let slateHoverBaseLight = 0.06
     static let slateHoverGlow = 0.03
-    static let slateSecondaryBaseMix = 0.09
-    static let slateDisabledBaseMix = 0.08
-    static let slateActionContactMix = 0.22
-    static let slateDefaultContactMix = 0.12
-    static let slateHoverContactMix = 0.10
-    static let slatePressedContactMix = 0.10
-    static let slateDestructiveContactMix = 0.38
-    static let slateDestructiveHoverContactMix = 0.46
-    static let slateHoverGlowOpacity = 0.48
-    static let slateQuietBorderMix = 0.84
     static let slateDestructiveOverlay = 0.38
     static let slateContactY: CGFloat = 2
     static let slateCastY: CGFloat = 9
@@ -99,9 +89,6 @@ enum DesignMaterialAdapter {
     static let slateEmberY: CGFloat = 12
     static let slateEmberBlur: CGFloat = 20
     static let slateEmberInset: CGFloat = 16
-    static let slateActionEmberY: CGFloat = 13
-    static let slateActionEmberBlur: CGFloat = 22
-    static let slateActionEmberInset: CGFloat = 13
 
     // well-face / well-shadow / well-shadow-focus. Inner occlusion uses
     // SwiftUI's native ShapeStyle inner shadow; this project targets iOS 18,
@@ -139,14 +126,7 @@ enum DesignMaterialAdapter {
     static let floatEmberInset: CGFloat = 30
 
     // Slate native interaction states
-    static let slateTopLightRest = 0.07
-    static let slateTopLightHover = 0.13
-    static let slateTopLightDisabled = 0.05
-    static let slateActionTopLight = 0.24
-    static let slateDestructiveTopLight = 0.13
-    static let slatePressedInsetOpacity = 0.42
-    static let slatePressedInsetBlur: CGFloat = 3
-    static let slatePressedInsetY: CGFloat = 2
+    static let slateTopLightContrast = 0.13
     static let slatePressedBlack = 0.88
     static let slateRestBlack = 0.90
     static let slateDisabledBlack = 0.70
@@ -163,27 +143,22 @@ enum DesignMaterialAdapter {
     static let slateHoverEmberY: CGFloat = 14
     static let slateHoverEmberInset: CGFloat = 14
     static let slateHoverBlack = 0.94
-    static let slateActionRestBlack = 0.92
-    static let slateDefaultGlow = 0.42
-    static let slateDestructiveHoverGlow = 0.78
-    static let slateDestructiveHoverBlur: CGFloat = 24
-    static let slateDestructiveHoverY: CGFloat = 14
-    static let slateDestructiveHoverInset: CGFloat = 13
-    static let slatePressedContactY: CGFloat = 1
-    static let slateDisabledContactY: CGFloat = 1
-    static let slateDisabledContactOpacity = 0.28
     static let slateDestructiveGlowBlur: CGFloat = 22
     static let slateDestructiveGlowY: CGFloat = 13
     static let slateDestructiveGlowInset: CGFloat = 14
     // Glow alpha can follow the reviewed recipe because the inset source now
     // supplies the negative spread that keeps it localized.
     static let slateActionGlow = 0.58
+    static let slateSecondaryGlow = 0.0
     static let slateDestructiveGlow = 0.72
+    static let slateQuietGlow = 0.0
     static let slateDisabledBorder = 0.74
     static let slateDestructiveBorder = 0.76
     static let slateActionBorder = 0.64
+    static let slateContactOpacity = 0.88
     static let slateElevatedTopLight = 0.10
     static let slateTopLightOpacity = 0.05
+    static let slateElevatedContact = 0.86
     static let plateElevatedContactMix = 0.14
     static let plateRestContactMix = 0.22
     static let slateElevatedContactY: CGFloat = 3
@@ -271,16 +246,6 @@ enum DesignMaterialShadowGeometry {
         y: DesignMaterialAdapter.slateEmberY,
         sourceInset: DesignMaterialAdapter.slateEmberInset
     )
-    static let slateActionGlow = DesignDropShadowGeometry(
-        radius: DesignMaterialAdapter.slateActionEmberBlur,
-        y: DesignMaterialAdapter.slateActionEmberY,
-        sourceInset: DesignMaterialAdapter.slateActionEmberInset
-    )
-    static let slateDestructiveGlow = DesignDropShadowGeometry(
-        radius: DesignMaterialAdapter.slateDestructiveGlowBlur,
-        y: DesignMaterialAdapter.slateDestructiveGlowY,
-        sourceInset: DesignMaterialAdapter.slateDestructiveGlowInset
-    )
     static let slateHover = DesignDropShadowGeometry(
         radius: DesignMaterialAdapter.slateHoverShadowRadius,
         y: DesignMaterialAdapter.slateHoverShadowY,
@@ -290,11 +255,6 @@ enum DesignMaterialShadowGeometry {
         radius: DesignMaterialAdapter.slateHoverEmberBlur,
         y: DesignMaterialAdapter.slateHoverEmberY,
         sourceInset: DesignMaterialAdapter.slateHoverEmberInset
-    )
-    static let slateDestructiveHoverGlow = DesignDropShadowGeometry(
-        radius: DesignMaterialAdapter.slateDestructiveHoverBlur,
-        y: DesignMaterialAdapter.slateDestructiveHoverY,
-        sourceInset: DesignMaterialAdapter.slateDestructiveHoverInset
     )
     static let slatePressed = DesignDropShadowGeometry(
         radius: DesignMaterialAdapter.slatePressedShadowRadius,
