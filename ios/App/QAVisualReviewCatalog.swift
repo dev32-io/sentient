@@ -350,33 +350,19 @@ struct QAFoundationCatalog: View {
 
     private var controlsSection: some View {
         catalogSection(.controls) {
-            DesignCard(
-                title: "Buttons",
-                detail: "Semantic treatment with a clearly visible destructive face.",
-                bodyStyle: .padded
-            ) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        buttonAllowOnce
-                        buttonAlwaysAllow
-                        buttonNotNow
-                        buttonStop
-                        buttonUnavailable
+            QACatalogSpecimen("Buttons", contract: "DesignActionButton") {
+                VStack(spacing: Space.sm) {
+                    HStack(spacing: Space.sm) {
+                        DesignActionButton(title: "Allow once", fillsWidth: false, action: {})
+                        DesignActionButton(title: "Always allow", role: .secondary, fillsWidth: false, action: {})
                     }
-                    VStack(alignment: .leading, spacing: Space.sm) {
-                        HStack(spacing: Space.sm) {
-                            buttonAllowOnce
-                            buttonAlwaysAllow
-                        }
-                        HStack(spacing: Space.sm) {
-                            buttonNotNow
-                            buttonStop
-                            buttonUnavailable
-                        }
+                    HStack(spacing: Space.sm) {
+                        DesignActionButton(title: "Not now", role: .quiet, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Stop", role: .destructive, fillsWidth: false, action: {})
+                        DesignActionButton(title: "Unavailable", state: .disabled, fillsWidth: false, action: {})
                     }
                 }
             }
-            .accessibilityIdentifier("qa-buttons-specimen")
 
             QACatalogSpecimen("Button states", contract: "loading") {
                 DesignActionButton(title: "Loading", state: .loading, action: {})
@@ -432,26 +418,6 @@ struct QAFoundationCatalog: View {
                 }
             }
         }
-    }
-
-    private var buttonAllowOnce: some View {
-        DesignActionButton(title: "Allow once", fillsWidth: false, action: {})
-    }
-
-    private var buttonAlwaysAllow: some View {
-        DesignActionButton(title: "Always allow", role: .secondary, fillsWidth: false, action: {})
-    }
-
-    private var buttonNotNow: some View {
-        DesignActionButton(title: "Not now", role: .quiet, fillsWidth: false, action: {})
-    }
-
-    private var buttonStop: some View {
-        DesignActionButton(title: "Stop", role: .destructive, fillsWidth: false, action: {})
-    }
-
-    private var buttonUnavailable: some View {
-        DesignActionButton(title: "Unavailable", state: .disabled, fillsWidth: false, action: {})
     }
 
     private var formsSection: some View {
