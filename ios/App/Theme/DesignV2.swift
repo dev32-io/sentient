@@ -223,4 +223,23 @@ enum DesignMetrics {
     static let pinKeySize: CGFloat = 86
     static let pinKeyGap: CGFloat = 10
     static let pinDotSize: CGFloat = 14
+    static let toggleWidth: CGFloat = 44
+    static let toggleHeight: CGFloat = 28
+    static let toggleKnobSize: CGFloat = 18
+    static let toggleTravel: CGFloat = 16
+    static let toggleAnimationDuration: Double = 0.20
+    static let segmentGap: CGFloat = 3
+    static let segmentBedPadding: CGFloat = 4
+    static let segmentHeight: CGFloat = 34
+    static let controlLabelSize: CGFloat = 14
+    static let segmentLabelSize: CGFloat = 14
+    static let segmentHorizontalPadding: CGFloat = 13
+    static let segmentCornerRadius: CGFloat = 6
+    static let checkboxSize: CGFloat = 22
+    static let checkboxGap: CGFloat = 10
+    static let checkboxCornerRadius: CGFloat = 6
+    static let sliderTrackHeight: CGFloat = 8
+    static let sliderThumbSize: CGFloat = 26
+    static let sliderMinimumTrackWidth: CGFloat = 120
+    static let sliderOutputWidth: CGFloat = 44
 }

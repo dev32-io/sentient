@@ -38,7 +38,7 @@ enum DesignControlState: Equatable {
     }
 }
 
-enum DesignButtonRole { case action, destructive, quiet }
+enum DesignButtonRole { case action, secondary, destructive, quiet }
 
 enum DesignNoticeKind { case loading, empty, error, success, warning }
 
@@ -46,11 +46,14 @@ private struct SlateFace: View {
     let role: DesignButtonRole
     let muted: Bool
     let hovered: Bool
+    var baseOverride: Color? = nil
 
     private var base: Color {
         if muted { return DuskColors.bgElev }
+        if let baseOverride { return baseOverride }
         switch role {
         case .action: return DuskColors.accent
+        case .secondary: return DuskColors.paper
         case .destructive:
             // Resolve the destructive base before applying the shared slate
             // construction. This is the native equivalent of the WebUI
@@ -125,8 +128,14 @@ private struct PlateSurface: ViewModifier {
             .background(DuskColors.paper)
             .clipShape(shape)
             .overlay { shape.stroke(contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft, lineWidth: DesignMetrics.hairline) }
-            .overlay(alignment: .top) { DuskColors.ink.opacity(contrast == .increased ? DesignMaterialAdapter.slateElevatedTopLight : DesignMaterialAdapter.slateTopLightOpacity).frame(height: DesignMetrics.hairline).clipShape(shape) }
-            .shadow(color: DuskColors.line.opacity(elevated ? DesignMaterialAdapter.slateElevatedContact : DesignMaterialAdapter.plateContactOpacity), radius: 0, y: elevated ? DesignMaterialAdapter.slateElevatedContactY : DesignMaterialAdapter.slateRestContactY)
+            .shadow(
+                color: DuskColors.bgSunk.overlaying(
+                    DuskColors.line,
+                    opacity: elevated ? 0.14 : 0.22
+                ),
+                radius: 0,
+                y: elevated ? DesignMaterialAdapter.slateElevatedContactY : DesignMaterialAdapter.slateRestContactY
+            )
             .shadow(
                 color: .black.opacity(elevated ? DesignMaterialAdapter.slateElevatedBlack : DesignMaterialAdapter.slateRestBlack),
                 radius: elevated ? DesignMaterialAdapter.floatCastBlur : DesignMaterialAdapter.plateCastBlur,
@@ -267,7 +276,6 @@ extension View {
 struct DesignButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isFocused) private var focused
     let role: DesignButtonRole
     var hovered = false
@@ -279,31 +287,28 @@ struct DesignButtonStyle: ButtonStyle {
         let raised = hovered && !pressed && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
-            .font(Typo.ui(TypeScale.base, .semibold))
+            .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
             .foregroundStyle(foreground)
             .frame(minHeight: minimumHeight)
             .padding(.horizontal, horizontalPadding)
             .background { SlateFace(role: role, muted: !isEnabled, hovered: raised) }
             .clipShape(shape)
-            .overlay(alignment: .top) {
-                (pressed
-                    ? DuskColors.bgSunk.opacity(DesignMaterialAdapter.slatePressedTop)
-                    : DuskColors.ink.opacity(topLightOpacity))
-                    .frame(height: pressed ? 2 : DesignMetrics.hairline)
-                    .clipShape(shape)
-            }
             .overlay { shape.stroke(border, lineWidth: DesignMetrics.hairline) }
             .overlay { shape.stroke(focused ? DuskColors.accent : .clear, lineWidth: DesignMetrics.focusBorder).padding(DesignMetrics.focusBorderInset) }
-            .shadow(color: contact(pressed: pressed), radius: 0, y: pressed ? 1 : DesignMaterialAdapter.slateContactY)
+            .shadow(color: contact(pressed: pressed, hovered: raised), radius: 0, y: pressed ? 1 : DesignMaterialAdapter.slateContactY)
             .shadow(
-                color: .black.opacity(isEnabled ? (pressed ? DesignMaterialAdapter.slatePressedBlack : DesignMaterialAdapter.slateRestBlack) : DesignMaterialAdapter.slateDisabledBlack),
-                radius: pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateCastBlur,
-                y: pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateCastY
+                color: .black.opacity(isEnabled ? (pressed ? DesignMaterialAdapter.slatePressedBlack : raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack) : DesignMaterialAdapter.slateDisabledBlack),
+                radius: pressed ? DesignMaterialAdapter.slatePressedShadowRadius : raised ? DesignMaterialAdapter.slateHoverShadowRadius : DesignMaterialAdapter.slateCastBlur,
+                y: pressed ? DesignMaterialAdapter.slatePressedShadowY : raised ? DesignMaterialAdapter.slateHoverShadowY : DesignMaterialAdapter.slateCastY
             )
             .shadow(
-                color: glow.opacity(isEnabled && !pressed ? (role == .action ? DesignMaterialAdapter.slateActionGlow : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlow : DesignMaterialAdapter.slateQuietGlow) : 0),
-                radius: DesignMaterialAdapter.slateEmberBlur,
-                y: DesignMaterialAdapter.slateEmberY
+                color: glow.opacity(
+                    isEnabled && !pressed
+                        ? (role == .action ? DesignMaterialAdapter.slateActionGlow : role == .secondary ? DesignMaterialAdapter.slateSecondaryGlow : role == .destructive ? DesignMaterialAdapter.slateDestructiveGlow : DesignMaterialAdapter.slateQuietGlow)
+                        : 0
+                ),
+                radius: raised ? DesignMaterialAdapter.slateHoverEmberBlur : DesignMaterialAdapter.slateEmberBlur,
+                y: raised ? DesignMaterialAdapter.slateHoverEmberY : DesignMaterialAdapter.slateEmberY
             )
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
@@ -312,37 +317,30 @@ struct DesignButtonStyle: ButtonStyle {
 
     private var foreground: Color {
         if !isEnabled { return DuskColors.ink4 }
-        return role == .action ? DuskColors.bgSunk : role == .quiet ? DuskColors.ink2 : DuskColors.ink
-    }
-
-    private var topLightOpacity: Double {
-        if !isEnabled { return 0.05 }
         switch role {
-        case .action: return 0.24
-        case .destructive: return 0.13
-        case .quiet: return contrast == .increased ? DesignMaterialAdapter.slateTopLightContrast : DesignMaterialAdapter.slateTopLight
+        case .action: return DuskColors.bgSunk
+        case .secondary, .destructive: return DuskColors.ink
+        case .quiet: return DuskColors.ink2
         }
     }
 
     private var border: Color {
         if !isEnabled { return DuskColors.lineSoft.opacity(DesignMaterialAdapter.slateDisabledBorder) }
-        return role == .destructive ? DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder) : role == .action ? DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder) : DuskColors.line
+        switch role {
+        case .action: return DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder)
+        case .secondary, .quiet: return DuskColors.line
+        case .destructive: return DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder)
+        }
     }
 
     private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
 
-    private func contact(pressed: Bool) -> Color {
-        if pressed {
-            switch role {
-            case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
-            case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
-            case .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10)
-            }
-        }
+    private func contact(pressed: Bool, hovered: Bool) -> Color {
+        if pressed || hovered { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
         switch role {
         case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
+        case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
         case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
-        case .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
         }
     }
 }
@@ -406,6 +404,7 @@ struct DesignIconButton: View {
 /// product-specific label composition.
 struct DesignCompactButton<Label: View>: View {
     let accessibilityLabel: String
+    var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var isEnabled = true
     var accessibilityId: String? = nil
@@ -414,9 +413,11 @@ struct DesignCompactButton<Label: View>: View {
     var pressedScale: CGFloat = 0.985
     let action: () -> Void
     @ViewBuilder let label: () -> Label
+    @State private var hovered = false
 
     init(
         accessibilityLabel: String,
+        role: DesignButtonRole = .quiet,
         state: DesignControlState = .normal,
         isEnabled: Bool = true,
         accessibilityId: String? = nil,
@@ -427,6 +428,7 @@ struct DesignCompactButton<Label: View>: View {
         @ViewBuilder label: @escaping () -> Label
     ) {
         self.accessibilityLabel = accessibilityLabel
+        self.role = role
         self.state = state
         self.isEnabled = isEnabled
         self.accessibilityId = accessibilityId
@@ -447,7 +449,8 @@ struct DesignCompactButton<Label: View>: View {
                 .frame(minWidth: minimumWidth, minHeight: minimumHeight)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale))
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, role: role, selected: effectiveState.isSelected, hovered: hovered))
+        .onHover { hovered = $0 }
         .disabled(!effectiveState.isInteractive)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(effectiveState.accessibilityValue)
@@ -538,7 +541,7 @@ struct DesignSelectableButton<Label: View>: View {
                 .frame(minWidth: minimumWidth, minHeight: minimumHeight)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale))
+        .buttonStyle(DesignCompactButtonStyle(pressedScale: pressedScale, selected: effectiveState.isSelected))
         .disabled(!effectiveState.isInteractive)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(selectionValue)
@@ -550,15 +553,54 @@ struct DesignSelectableButton<Label: View>: View {
 struct DesignCompactButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isFocused) private var focused
     let pressedScale: CGFloat
+    var role: DesignButtonRole = .quiet
+    var selected = false
+    var hovered = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled
+        let raised = hovered && !pressed && isEnabled
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
         configuration.label
-            .scaleEffect(configuration.isPressed && isEnabled && !reduceMotion ? pressedScale : 1)
+            .background {
+                if selected {
+                    LinearGradient(
+                        colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                } else {
+                    SlateFace(role: role, muted: !isEnabled, hovered: raised)
+                }
+            }
+            .clipShape(shape)
+            .overlay { shape.stroke(selected ? Color.clear : DuskColors.line, lineWidth: DesignMetrics.hairline) }
+            .overlay {
+                if focused {
+                    shape.stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+                        .padding(DesignMetrics.focusBorderInset)
+                }
+            }
+            .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: selected ? 1 : 2)
+            .shadow(
+                color: selected
+                    ? DuskColors.accent.opacity(0.40)
+                    : .black.opacity(isEnabled ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateDisabledBlack),
+                radius: pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateCastBlur,
+                y: pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateCastY
+            )
+            .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
+            .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
             .animation(
                 DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
                 value: configuration.isPressed
+            )
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: hovered
             )
     }
 }
@@ -642,7 +684,7 @@ struct DesignField: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             if showsTitle {
                 Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                     .foregroundStyle(DuskColors.ink)
             }
             focusableField
@@ -724,7 +766,7 @@ struct DesignSecureField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
-                .font(Typo.ui(TypeScale.base, .medium))
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                 .foregroundStyle(DuskColors.ink)
             HStack(spacing: Space.sm) {
                 Group {
@@ -780,7 +822,7 @@ struct DesignMaskedField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
-                .font(Typo.ui(TypeScale.base, .medium))
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                 .foregroundStyle(DuskColors.ink)
             SecureField(prompt, text: $text)
                 .font(Typo.ui(TypeScale.base))
@@ -835,7 +877,7 @@ struct DesignMultilineEditor: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             if let title {
                 Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                     .foregroundStyle(DuskColors.ink)
             }
             ZStack(alignment: .topLeading) {
@@ -889,6 +931,81 @@ struct DesignMultilineEditor: View {
     }
 }
 
+private struct DesignToggleTrack: View {
+    let isOn: Bool
+    let isEnabled: Bool
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Capsule()
+                .fill(
+                    isOn
+                        ? LinearGradient(
+                            colors: [
+                                DuskColors.accentSoft.overlaying(DuskColors.bgSunk, opacity: 0.20),
+                                DuskColors.accentSoft,
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        : LinearGradient(
+                            colors: [DuskColors.bgSunk, DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                )
+                .overlay(Capsule().stroke(isOn ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.52) : DuskColors.line, lineWidth: DesignMetrics.hairline))
+                .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity), radius: 0, y: 1)
+                .frame(width: DesignMetrics.toggleWidth, height: DesignMetrics.toggleHeight)
+
+            Circle()
+                .fill(Color.clear)
+                .frame(width: DesignMetrics.toggleKnobSize, height: DesignMetrics.toggleKnobSize)
+                .background {
+                    SlateFace(
+                        role: .action,
+                        muted: !isEnabled,
+                        hovered: false,
+                        baseOverride: isOn ? DuskColors.accent : DuskColors.paper
+                    )
+                }
+                .clipShape(Circle())
+                .overlay {
+                    Circle().stroke(
+                        isOn ? DuskColors.accent : DuskColors.line.overlaying(DuskColors.ink, opacity: 0.20),
+                        lineWidth: DesignMetrics.hairline
+                    )
+                }
+                .shadow(color: DuskColors.bgSunk.opacity(DesignMaterialAdapter.slateContactOpacity), radius: 0, y: 2)
+                .shadow(color: .black.opacity(isEnabled ? DesignMaterialAdapter.slateRestBlack : DesignMaterialAdapter.slateDisabledBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
+                .offset(x: isOn ? DesignMetrics.toggleTravel : 4)
+        }
+        .frame(width: DesignMetrics.toggleWidth, height: DesignMetrics.minimumTarget)
+        .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+    }
+}
+
+private struct DesignToggleStyle: ToggleStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button(action: { configuration.isOn.toggle() }) {
+            HStack(spacing: Space.md) {
+                configuration.label
+                Spacer(minLength: Space.sm)
+                DesignToggleTrack(isOn: configuration.isOn, isEnabled: isEnabled)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(
+            reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: DesignMetrics.toggleAnimationDuration),
+            value: configuration.isOn
+        )
+    }
+}
+
 struct DesignToggleSwitch: View {
     let label: String
     @Binding var isOn: Bool
@@ -898,7 +1015,7 @@ struct DesignToggleSwitch: View {
     var body: some View {
         Toggle(label, isOn: $isOn)
             .labelsHidden()
-            .tint(DuskColors.accent)
+            .toggleStyle(DesignToggleStyle())
             .disabled(!isEnabled)
             .frame(minHeight: DesignMetrics.minimumTarget)
             .accessibilityLabel(label)
@@ -917,11 +1034,11 @@ struct DesignToggleRow: View {
     var body: some View {
         Toggle(isOn: $isOn) {
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(Typo.ui(TypeScale.base, .medium))
+                Text(title).font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                 if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3) }
             }
         }
-        .tint(DuskColors.accent)
+        .toggleStyle(DesignToggleStyle())
         .disabled(!isEnabled)
         .frame(minHeight: DesignMetrics.minimumTarget)
         .accessibilityLabel(title)
@@ -931,12 +1048,27 @@ struct DesignToggleRow: View {
     }
 }
 
+private struct DesignSegmentButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .offset(y: configuration.isPressed && !reduceMotion ? DesignMetrics.pressedDepth : 0)
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: configuration.isPressed
+            )
+    }
+}
+
 struct DesignSegmentedPicker<Value: Hashable>: View {
     let title: String
     let options: [(value: Value, label: String)]
     @Binding var selection: Value
     var accessibilityId: String? = nil
     var isEnabled = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionNamespace
 
     init(
         title: String,
@@ -953,14 +1085,48 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
     }
 
     var body: some View {
-        Picker(title, selection: $selection) {
+        HStack(spacing: DesignMetrics.segmentGap) {
             ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                Text(option.label).tag(option.value)
+                Button {
+                    selection = option.value
+                } label: {
+                    Text(option.label)
+                        .font(Typo.ui(DesignMetrics.segmentLabelSize))
+                        .foregroundStyle(selection == option.value ? DuskColors.accent : DuskColors.ink2)
+                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.segmentHeight)
+                        .padding(.horizontal, DesignMetrics.segmentHorizontalPadding)
+                        .background {
+                            if selection == option.value {
+                                RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous)
+                                    .fill(Color.clear)
+                                    .background {
+                                        SlateFace(
+                                            role: .quiet,
+                                            muted: false,
+                                            hovered: false,
+                                            baseOverride: DuskColors.accent50
+                                        )
+                                    }
+                                    .clipShape(RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous)
+                                            .stroke(DuskColors.lineSoft.overlaying(DuskColors.accent, opacity: 0.22), lineWidth: DesignMetrics.hairline)
+                                    }
+                                    .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
+                                    .shadow(color: .black.opacity(DesignMaterialAdapter.slateRestBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
+                                    .matchedGeometryEffect(id: "selected-segment", in: selectionNamespace)
+                            }
+                        }
+                }
+                .buttonStyle(DesignSegmentButtonStyle())
+                .disabled(!isEnabled)
             }
         }
-        .pickerStyle(.segmented)
-        .disabled(!isEnabled)
+        .padding(DesignMetrics.segmentBedPadding)
         .frame(minHeight: DesignMetrics.minimumTarget)
+        .designWell(cornerRadius: Radii.sm)
+        .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: selection)
         .accessibilityLabel(title)
         .accessibilityValue(isEnabled ? selectedLabel : "Disabled")
         .accessibilityIdentifier(accessibilityId ?? "")
@@ -1177,11 +1343,11 @@ struct DesignSelect<Value: Hashable>: View {
         HStack(spacing: Space.lg) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                     .foregroundStyle(DuskColors.ink)
                 if let detail {
                     Text(detail)
-                        .font(Typo.ui(TypeScale.xs))
+                        .font(Typo.ui(TypeScale.sm))
                         .foregroundStyle(DuskColors.ink3)
                 }
             }
@@ -1202,17 +1368,16 @@ struct DesignSelect<Value: Hashable>: View {
             } label: {
                 HStack(spacing: Space.xs) {
                     Text(currentLabel)
-                        .font(Typo.mono(TypeScale.base))
+                        .font(Typo.ui(DesignMetrics.controlLabelSize))
                         .foregroundStyle(DuskColors.ink)
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(Typo.mono(TypeScale.xs))
+                        .font(Typo.ui(TypeScale.sm, .medium))
                         .foregroundStyle(DuskColors.ink3)
                 }
-                .padding(.horizontal, Space.sm)
-                .padding(.vertical, Space.xs)
-                .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline))
+                .padding(.horizontal, Space.md)
+                .frame(minHeight: DesignMetrics.minimumTarget)
+                .designWell()
             }
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
@@ -1230,6 +1395,50 @@ struct DesignSelect<Value: Hashable>: View {
     }
 }
 
+private struct DesignSliderThumb: View {
+    let focused: Bool
+    let enabled: Bool
+
+    var body: some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    stops: [
+                        .init(color: DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.22), location: 0),
+                        .init(color: .clear, location: 0.72),
+                    ],
+                    center: UnitPoint(x: 0.5, y: 0.55),
+                    startRadius: 0,
+                    endRadius: DesignMetrics.sliderThumbSize
+                )
+            )
+            .overlay {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.05), DuskColors.paper],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .opacity(0.62)
+            }
+            .overlay {
+                Circle().stroke(DuskColors.line, lineWidth: DesignMetrics.hairline)
+            }
+            .overlay {
+                if focused {
+                    Circle().stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder).padding(DesignMetrics.focusBorderInset)
+                }
+            }
+            .clipShape(Circle())
+            .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
+            .shadow(color: .black.opacity(enabled ? 0.94 : DesignMaterialAdapter.slateDisabledBlack), radius: DesignMaterialAdapter.slateCastBlur, y: DesignMaterialAdapter.slateCastY)
+            .shadow(color: enabled ? DuskColors.accent.opacity(0.20) : .clear, radius: 2, y: 8)
+            .frame(width: DesignMetrics.sliderThumbSize, height: DesignMetrics.sliderThumbSize)
+    }
+}
+
 struct DesignSlider: View {
     let title: String
     @Binding var value: Double
@@ -1238,6 +1447,7 @@ struct DesignSlider: View {
     var format: ((Double) -> String)? = nil
     var accessibilityId: String? = nil
     var isEnabled = true
+    @FocusState private var focused: Bool
 
     init(
         title: String,
@@ -1259,30 +1469,102 @@ struct DesignSlider: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            HStack {
-                Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
-                    .foregroundStyle(DuskColors.ink)
-                Spacer(minLength: Space.sm)
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                .foregroundStyle(DuskColors.ink)
+            HStack(spacing: Space.md) {
+                ZStack {
+                    GeometryReader { proxy in
+                        let width = proxy.size.width
+                        let thumbX = min(max(normalizedValue * width, DesignMetrics.sliderThumbSize / 2), width - DesignMetrics.sliderThumbSize / 2)
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(DuskColors.bgSunk)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: DesignMetrics.sliderTrackHeight)
+                                .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity), radius: 0, y: 1)
+                                .offset(y: 18)
+                            Capsule()
+                                .fill(
+                                    DuskColors.accentSoft.overlaying(DuskColors.accent, opacity: 0.58)
+                                )
+                                .frame(width: max(0, width * normalizedValue), height: DesignMetrics.sliderTrackHeight)
+                                .offset(y: 18)
+                            DesignSliderThumb(focused: focused, enabled: isEnabled)
+                                .position(x: thumbX, y: 22)
+                        }
+                    }
+                    .allowsHitTesting(false)
+                    Slider(value: $value, in: range, step: step) { Text(title) }
+                        .labelsHidden()
+                        .tint(.clear)
+                        .opacity(0.01)
+                        .focused($focused)
+                        .disabled(!isEnabled)
+                        .accessibilityLabel(title)
+                        .accessibilityValue(isEnabled ? (format?(value) ?? String(value)) : "Disabled")
+                        .accessibilityIdentifier(accessibilityId ?? "")
+                }
+                .frame(minWidth: DesignMetrics.sliderMinimumTrackWidth, minHeight: DesignMetrics.minimumTarget)
                 if let format {
                     Text(format(value))
-                        .font(Typo.mono(TypeScale.base))
-                        .foregroundStyle(DuskColors.ink)
-                        .padding(.horizontal, Space.sm)
-                        .padding(.vertical, Space.xs)
-                        .background(DuskColors.bgElev, in: RoundedRectangle(cornerRadius: Radii.sm))
-                        .overlay(RoundedRectangle(cornerRadius: Radii.sm).stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline))
+                        .font(Typo.mono(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                        .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
                 }
             }
-            Slider(value: $value, in: range, step: step) { Text(title) }
-                .tint(DuskColors.accent)
-                .disabled(!isEnabled)
-                .accessibilityLabel(title)
-                .accessibilityValue(isEnabled ? (format?(value) ?? String(value)) : "Disabled")
         }
         .frame(minHeight: DesignMetrics.minimumTarget)
         .padding(.vertical, Space.sm)
-        .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var normalizedValue: CGFloat {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return CGFloat(min(max((value - range.lowerBound) / (range.upperBound - range.lowerBound), 0), 1))
+    }
+}
+
+private struct DesignChipButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+    let selected: Bool
+    let hovered: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled
+        let shape = Capsule()
+        configuration.label
+            .font(Typo.ui(DesignMetrics.controlLabelSize, selected ? .semibold : .regular))
+            .foregroundStyle(isEnabled ? (selected ? DuskColors.accent : DuskColors.ink2) : DuskColors.ink4)
+            .padding(.horizontal, Space.md)
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .background {
+                if selected {
+                    LinearGradient(
+                        colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk.overlaying(DuskColors.bgElev, opacity: 0.10)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                } else {
+                    SlateFace(role: .quiet, muted: !isEnabled, hovered: hovered)
+                }
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.stroke(selected ? Color.clear : DuskColors.line, lineWidth: DesignMetrics.hairline)
+            }
+            .shadow(color: selected ? DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity) : DuskColors.bgSunk.opacity(0.88), radius: 0, y: selected ? 1 : 2)
+            .shadow(
+                color: selected
+                    ? DuskColors.accent.opacity(hovered ? 0.34 : 0.28)
+                    : .black.opacity(isEnabled ? 0.90 : DesignMaterialAdapter.slateDisabledBlack),
+                radius: selected ? 2 : (pressed ? DesignMaterialAdapter.slatePressedShadowRadius : DesignMaterialAdapter.slateCastBlur),
+                y: selected ? 8 : (pressed ? DesignMaterialAdapter.slatePressedShadowY : DesignMaterialAdapter.slateCastY)
+            )
+            .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : hovered ? -1 : 0))
+            .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: hovered)
     }
 }
 
@@ -1292,6 +1574,7 @@ struct DesignChip: View {
     var isEnabled = true
     var accessibilityId: String? = nil
     let action: () -> Void
+    @State private var hovered = false
 
     init(
         title: String,
@@ -1309,17 +1592,54 @@ struct DesignChip: View {
 
     var body: some View {
         Button(title, action: action)
-            .font(Typo.ui(TypeScale.base, selected ? .semibold : .regular))
-            .foregroundStyle(isEnabled ? DuskColors.ink : DuskColors.ink4)
-            .padding(.horizontal, Space.md)
-            .frame(minHeight: DesignMetrics.minimumTarget)
-            .background(selected ? DuskColors.accentSoft : DuskColors.bgElev, in: Capsule())
-            .overlay(Capsule().stroke(selected ? DuskColors.accent : DuskColors.line, lineWidth: DesignMetrics.hairline))
+            .buttonStyle(DesignChipButtonStyle(selected: selected, hovered: hovered))
+            .onHover { hovered = $0 }
             .disabled(!isEnabled)
             .accessibilityLabel(title)
             .accessibilityValue(isEnabled ? (selected ? "Selected" : "Not selected") : "Disabled")
             .accessibilityIdentifier(accessibilityId ?? "")
             .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private struct DesignCheckboxStyle: ToggleStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button(action: { configuration.isOn.toggle() }) {
+            HStack(spacing: DesignMetrics.checkboxGap) {
+                ZStack {
+                    if configuration.isOn {
+                        SlateFace(role: .action, muted: false, hovered: false, baseOverride: DuskColors.accent)
+                    } else {
+                        LinearGradient(
+                            colors: [DuskColors.bgSunk.overlaying(.black, opacity: 0.05), DuskColors.bgSunk],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+                    RoundedRectangle(cornerRadius: DesignMetrics.checkboxCornerRadius, style: .continuous)
+                        .stroke(configuration.isOn ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.48) : DuskColors.line, lineWidth: DesignMetrics.hairline)
+                    if configuration.isOn {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(DuskColors.bgSunk)
+                    }
+                }
+                .frame(width: DesignMetrics.checkboxSize, height: DesignMetrics.checkboxSize)
+                .clipShape(RoundedRectangle(cornerRadius: DesignMetrics.checkboxCornerRadius, style: .continuous))
+                .shadow(color: DuskColors.bgSunk.opacity(0.88), radius: 0, y: 2)
+                .shadow(color: .black.opacity(isEnabled ? 0.90 : DesignMaterialAdapter.slateDisabledBlack), radius: isEnabled ? DesignMaterialAdapter.slateCastBlur : 3, y: isEnabled ? DesignMaterialAdapter.slateCastY : 4)
+                configuration.label
+                    .font(Typo.ui(DesignMetrics.controlLabelSize))
+                    .foregroundStyle(isEnabled ? DuskColors.ink2 : DuskColors.ink4)
+            }
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: configuration.isOn)
     }
 }
 
@@ -1330,9 +1650,8 @@ struct DesignCheckbox: View {
     var accessibilityId: String? = nil
 
     var body: some View {
-        Toggle(isOn: $isOn) { Text(title).font(Typo.ui(TypeScale.base)) }
-            .toggleStyle(.button)
-            .buttonStyle(DesignButtonStyle(role: .quiet))
+        Toggle(isOn: $isOn) { Text(title) }
+            .toggleStyle(DesignCheckboxStyle())
             .disabled(!isEnabled)
             .accessibilityLabel(title)
             .accessibilityValue(isEnabled ? (isOn ? "Checked" : "Unchecked") : "Disabled")
@@ -1458,7 +1777,7 @@ struct ElevatedUserAvatar: View {
                 y: 2
             )
             .shadow(color: .black.opacity(DesignMaterialAdapter.avatarShadowOpacity), radius: DesignMaterialAdapter.avatarShadowRadius, y: DesignMaterialAdapter.avatarShadowY)
-            .shadow(color: tint.accent.opacity(selected ? 0.80 : 0.40), radius: selected ? 6 : 4, y: selected ? 0 : 13)
+            .shadow(color: tint.accent.opacity(selected ? 0.60 : 0.24), radius: selected ? 5 : 2, y: selected ? 0 : 13)
             .saturation(disabled ? 0.35 : 1)
             .opacity(disabled ? DesignMaterialAdapter.avatarDisabledOpacity : 1)
             .accessibilityLabel(name)

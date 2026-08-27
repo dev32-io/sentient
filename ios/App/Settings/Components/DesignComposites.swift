@@ -79,7 +79,13 @@ struct DesignCard<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, Space.md)
-                .background(DuskColors.bgElev)
+                .background(
+                    LinearGradient(
+                        colors: [DuskColors.bgElev, DuskColors.bgElev.overlaying(DuskColors.paper, opacity: 0.60)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
                 .overlay(alignment: .bottom) { DesignDivider() }
         } else {
             VStack(alignment: .leading, spacing: Space.xs) {
@@ -391,7 +397,7 @@ struct DesignPinKeypad: View {
         } else {
             DesignActionButton(
                 title: key,
-                role: .quiet,
+                role: .secondary,
                 state: keyDisabled ? .disabled : .normal,
                 accessibilityId: "pin-key-\(key)",
                 fillsWidth: true,
@@ -820,6 +826,7 @@ struct DesignTextButton: View {
     private var tint: Color {
         switch role {
         case .action: DuskColors.accent
+        case .secondary: DuskColors.ink
         case .destructive: DuskColors.stop
         case .quiet: DuskColors.ink2
         }

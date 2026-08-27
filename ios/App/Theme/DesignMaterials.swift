@@ -83,11 +83,13 @@ enum DesignMaterialAdapter {
     static let slateDestructiveOverlay = 0.38
     static let slateMutedInk = 0.08
     static let slateContactY: CGFloat = 2
-    static let slateCastY: CGFloat = 9
+    // The negative CSS spread removes most of the nominal 9px blur footprint;
+    // a narrower native shadow preserves the same compact downward cast.
+    static let slateCastY: CGFloat = 7
     // CSS uses a negative spread on these shadows. SwiftUI's radius is a
     // blur radius without spread, so these are the visually equivalent native
     // blur widths rather than the raw CSS blur numbers.
-    static let slateCastBlur: CGFloat = 5
+    static let slateCastBlur: CGFloat = 1.5
     static let slateEmberY: CGFloat = 12
     static let slateEmberBlur: CGFloat = 4
 
@@ -108,13 +110,13 @@ enum DesignMaterialAdapter {
     static let wellFocusRingOpacity = 0.18
     static let wellFocusCastOpacity = 0.48
     static let wellFocusCastY: CGFloat = 8
-    static let wellFocusCastBlur: CGFloat = 18
+    static let wellFocusCastBlur: CGFloat = 4
 
     // plate-shadow / float-shadow
     static let plateCastY: CGFloat = 18
-    static let plateCastBlur: CGFloat = 8
+    static let plateCastBlur: CGFloat = 4
     static let floatCastY: CGFloat = 28
-    static let floatCastBlur: CGFloat = 36
+    static let floatCastBlur: CGFloat = 18
     static let floatEmberY: CGFloat = 24
     static let floatEmberBlur: CGFloat = 10
 
@@ -124,11 +126,20 @@ enum DesignMaterialAdapter {
     static let slatePressedBlack = 0.88
     static let slateRestBlack = 0.90
     static let slateDisabledBlack = 0.70
-    static let slatePressedShadowRadius: CGFloat = 2
-    static let slatePressedShadowY: CGFloat = 3
-    static let slateActionGlow = 0.58
-    static let slateDestructiveGlow = 0.72
-    static let slateQuietGlow = 0.42
+    static let slatePressedShadowRadius: CGFloat = 1
+    static let slatePressedShadowY: CGFloat = 2
+    static let slateHoverShadowRadius: CGFloat = 2.5
+    static let slateHoverShadowY: CGFloat = 8
+    static let slateHoverEmberBlur: CGFloat = 4
+    static let slateHoverEmberY: CGFloat = 14
+    static let slateHoverBlack = 0.94
+    // Negative CSS spread makes the web ember cast much narrower than a
+    // same-number SwiftUI shadow radius. These native alphas keep the cast
+    // localized instead of painting a halo into the next control.
+    static let slateActionGlow = 0.28
+    static let slateSecondaryGlow = 0.0
+    static let slateDestructiveGlow = 0.34
+    static let slateQuietGlow = 0.0
     static let slateDisabledBorder = 0.74
     static let slateDestructiveBorder = 0.76
     static let slateActionBorder = 0.64
@@ -151,16 +162,16 @@ enum DesignMaterialAdapter {
     static let mediaCardElevatedMix = 0.12
     static let mediaCardHoverSunkMix = 0.18
     static let mediaCardContactOpacity = 0.45
-    static let mediaCardRestBlack = 0.94
+    static let mediaCardRestBlack = 0.90
     static let selectDisabledOpacity = 0.5
 
     // User avatar native geometry
     static let avatarGlyphRatio = 0.34
     static let avatarGradientStartRadius: CGFloat = 1
     static let avatarSelectedBorder: CGFloat = 4
-    static let avatarShadowOpacity = 0.98
-    static let avatarShadowRadius: CGFloat = 5
-    static let avatarShadowY: CGFloat = 9
+    static let avatarShadowOpacity = 0.90
+    static let avatarShadowRadius: CGFloat = 2
+    static let avatarShadowY: CGFloat = 8
     static let avatarDisabledOpacity = 0.48
 }
 
