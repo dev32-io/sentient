@@ -133,7 +133,6 @@ struct DesignPane<Content: View>: View {
 
 private struct DominantVisualCardButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var focused
     let hovered: Bool
@@ -144,12 +143,11 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
         let raised = hovered && !pressed && isEnabled
         let shape = RoundedRectangle(cornerRadius: Radii.lg, style: .continuous)
         configuration.label
-            .background {
-                ZStack {
-                    DuskColors.paper
-                    DuskColors.bgElev.opacity(raised ? 0.18 : 0.12)
-                }
-            }
+            .background(
+                raised
+                    ? DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.mediaCardHoverSunkMix)
+                    : DuskColors.paper.overlaying(DuskColors.bgElev, opacity: DesignMaterialAdapter.mediaCardElevatedMix)
+            )
             .clipShape(shape)
             .overlay {
                 shape.stroke(
@@ -159,14 +157,12 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     lineWidth: DesignMetrics.hairline
                 )
             }
-            .overlay(alignment: .top) {
-                DuskColors.ink
-                    .opacity(contrast == .increased ? 0.13 : 0.05)
-                    .frame(height: DesignMetrics.hairline)
-                    .clipShape(shape)
-            }
-            .shadow(color: DuskColors.line.opacity(0.45), radius: 0, y: pressed ? 1 : 2)
-            .shadow(color: .black.opacity(pressed ? 0.88 : 0.90), radius: pressed ? 6 : 30, y: pressed ? 3 : 18)
+            .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.mediaCardContactOpacity), radius: 0, y: pressed ? 1 : 2)
+            .shadow(
+                color: .black.opacity(pressed ? 0.88 : DesignMaterialAdapter.mediaCardRestBlack),
+                radius: pressed ? 2 : DesignMaterialAdapter.plateCastBlur,
+                y: pressed ? 3 : DesignMaterialAdapter.plateCastY
+            )
             .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
             .opacity(isEnabled ? 1 : 0.58)
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion), value: pressed)
@@ -206,24 +202,16 @@ struct DesignDominantVisualCard<Visual: View>: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: Space.md) {
+            VStack(spacing: DesignMetrics.dominantCardGap) {
                 ZStack {
-                    DuskColors.bgSunk
                     visual()
                         .accessibilityHidden(true)
                         .frame(width: DesignMetrics.dominantAvatarSize, height: DesignMetrics.dominantAvatarSize)
                 }
                 .frame(width: DesignMetrics.dominantVisualSize, height: DesignMetrics.dominantVisualSize)
-                .clipShape(RoundedRectangle(cornerRadius: Radii.xl, style: .continuous))
-                .overlay(alignment: .top) {
-                    DuskColors.ink.opacity(0.07)
-                        .frame(height: DesignMetrics.hairline)
-                        .clipShape(RoundedRectangle(cornerRadius: Radii.xl, style: .continuous))
-                }
-                .shadow(color: DuskColors.line.opacity(0.45), radius: 0, y: 1)
-                .shadow(color: .black.opacity(0.72), radius: 6, y: 3)
+                .designWell(cornerRadius: Radii.xl, showsBorder: false, showsInsetHighlights: false)
 
-                VStack(spacing: Space.xs) {
+                VStack(spacing: DesignMetrics.dominantLabelGap) {
                     Text(title)
                         .font(Typo.display(TypeScale.lg, .medium))
                         .foregroundStyle(DuskColors.ink)
@@ -241,9 +229,9 @@ struct DesignDominantVisualCard<Visual: View>: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+            .padding(.horizontal, DesignMetrics.dominantCardPaddingH)
+            .padding(.vertical, DesignMetrics.dominantCardPaddingV)
             .frame(maxWidth: .infinity, minHeight: DesignMetrics.dominantCardMinimumHeight)
-            .padding(.horizontal, Space.md)
-            .padding(.vertical, Space.lg)
             .contentShape(Rectangle())
             .accessibilityElement(children: .ignore)
         }

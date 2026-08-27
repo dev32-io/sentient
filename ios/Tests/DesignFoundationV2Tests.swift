@@ -85,9 +85,9 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertEqual(DesignMaterialMetrics.slateFadeStop, 0.76)
         XCTAssertEqual(DesignMaterialMetrics.wellMiddleStop, 0.56)
         XCTAssertEqual(DesignMaterialMetrics.plateCastY, 18)
-        XCTAssertEqual(DesignMaterialMetrics.plateCastBlur, 30)
+        XCTAssertEqual(DesignMaterialMetrics.plateCastBlur, 8)
         XCTAssertEqual(DesignMaterialMetrics.floatCastY, 28)
-        XCTAssertEqual(DesignMaterialMetrics.floatCastBlur, 58)
+        XCTAssertEqual(DesignMaterialMetrics.floatCastBlur, 36)
         XCTAssertEqual(DesignMetrics.pressedDepth, 1)
     }
 

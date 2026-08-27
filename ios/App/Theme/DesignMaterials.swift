@@ -84,19 +84,25 @@ enum DesignMaterialAdapter {
     static let slateMutedInk = 0.08
     static let slateContactY: CGFloat = 2
     static let slateCastY: CGFloat = 9
-    static let slateCastBlur: CGFloat = 15
+    // CSS uses a negative spread on these shadows. SwiftUI's radius is a
+    // blur radius without spread, so these are the visually equivalent native
+    // blur widths rather than the raw CSS blur numbers.
+    static let slateCastBlur: CGFloat = 5
     static let slateEmberY: CGFloat = 12
-    static let slateEmberBlur: CGFloat = 20
+    static let slateEmberBlur: CGFloat = 4
 
     // well-face / well-shadow / well-shadow-focus
     static let wellMiddleStop = 0.56
     static let wellTopBlack = 0.05
     static let wellBottomElevated = 0.10
-    static let wellInsetOpacity = 0.72
-    static let wellInsetFocusOpacity = 0.76
-    static let wellInsetHeight: CGFloat = 6
-    static let wellBottomHighlightFocused = 0.08
-    static let wellBottomHighlight = 0.07
+    // SwiftUI has no inset-shadow primitive. A long, low-alpha gradient is a
+    // closer native adaptation of CSS's blurred inset occlusion than a solid
+    // one-point overlay (which reads as an accidental line on device).
+    static let wellInsetOpacity = 0.20
+    static let wellInsetFocusOpacity = 0.26
+    static let wellInsetHeight: CGFloat = 10
+    static let wellBottomHighlightFocused = 0.05
+    static let wellBottomHighlight = 0.04
     static let wellFocusMix = 0.44
     static let wellLineOpacity = 0.45
     static let wellFocusRingOpacity = 0.18
@@ -106,11 +112,11 @@ enum DesignMaterialAdapter {
 
     // plate-shadow / float-shadow
     static let plateCastY: CGFloat = 18
-    static let plateCastBlur: CGFloat = 30
+    static let plateCastBlur: CGFloat = 8
     static let floatCastY: CGFloat = 28
-    static let floatCastBlur: CGFloat = 58
+    static let floatCastBlur: CGFloat = 36
     static let floatEmberY: CGFloat = 24
-    static let floatEmberBlur: CGFloat = 40
+    static let floatEmberBlur: CGFloat = 10
 
     // Slate native interaction states
     static let slateTopLightContrast = 0.13
@@ -118,7 +124,7 @@ enum DesignMaterialAdapter {
     static let slatePressedBlack = 0.88
     static let slateRestBlack = 0.90
     static let slateDisabledBlack = 0.70
-    static let slatePressedShadowRadius: CGFloat = 6
+    static let slatePressedShadowRadius: CGFloat = 2
     static let slatePressedShadowY: CGFloat = 3
     static let slateActionGlow = 0.58
     static let slateDestructiveGlow = 0.72
@@ -139,15 +145,22 @@ enum DesignMaterialAdapter {
     static let slateElevatedBlack = 0.96
     static let slateElevatedEmber = 0.38
     static let slateNoEmber = 0.0
+
+    // Common composite media-card adaptation. Rest uses the quiet plate
+    // surface; pointer hover tightens the face toward the sunk canvas.
+    static let mediaCardElevatedMix = 0.12
+    static let mediaCardHoverSunkMix = 0.18
+    static let mediaCardContactOpacity = 0.45
+    static let mediaCardRestBlack = 0.94
     static let selectDisabledOpacity = 0.5
 
     // User avatar native geometry
     static let avatarGlyphRatio = 0.34
     static let avatarGradientStartRadius: CGFloat = 1
-    static let avatarSelectedBorder: CGFloat = 3
-    static let avatarShadowOpacity = 0.72
-    static let avatarShadowRadius: CGFloat = 8
-    static let avatarShadowY: CGFloat = 5
+    static let avatarSelectedBorder: CGFloat = 4
+    static let avatarShadowOpacity = 0.98
+    static let avatarShadowRadius: CGFloat = 5
+    static let avatarShadowY: CGFloat = 9
     static let avatarDisabledOpacity = 0.48
 }
 

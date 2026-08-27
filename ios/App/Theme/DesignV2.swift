@@ -213,6 +213,10 @@ enum DesignMetrics {
     static let dominantCardMinimumWidth: CGFloat = 144
     static let dominantCardMaximumWidth: CGFloat = 280
     static let dominantCardMinimumHeight: CGFloat = 220
+    static let dominantCardGap: CGFloat = 14
+    static let dominantLabelGap: CGFloat = 3
+    static let dominantCardPaddingH: CGFloat = 14
+    static let dominantCardPaddingV: CGFloat = 18
     static let dominantVisualSize: CGFloat = 104
     static let dominantAvatarSize: CGFloat = 82
     static let pinKeypadWidth: CGFloat = 276
