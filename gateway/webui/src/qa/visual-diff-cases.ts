@@ -4,25 +4,199 @@ export interface ActionButtonCase {
   disabled: boolean;
 }
 
-export function actionButtonCase(id: string): ActionButtonCase | undefined {
-  const match =
-    /^action-button--(primary|secondary|quiet|destructive)--(?:compact-)?(?:rest|hover|focus|pressed|disabled)$/.exec(
-      id,
-    );
-  if (!match) return undefined;
-  const role = match[1] as "primary" | "secondary" | "quiet" | "destructive";
-  const disabled = id.endsWith("-disabled");
+export type VisualDiffStateId = string;
+export type VisualDiffCaseStatus = "ready" | "missing-authority" | "unsupported";
+
+export interface VisualDiffVariantDefinition<TProps = unknown> {
+  readonly props: TProps;
+}
+
+export interface VisualDiffComponentDefinition<
+  TVariant extends VisualDiffVariantDefinition = VisualDiffVariantDefinition,
+> {
+  readonly id: string;
+  readonly fixtureAdapterId: string;
+  readonly productionComponent: string;
+  readonly authority: string;
+  readonly variants: Readonly<Record<string, TVariant>>;
+  readonly stateApplicability: Readonly<Record<string, readonly VisualDiffStateId[]>>;
+}
+
+export interface VisualDiffResolvedCase<TProps = unknown> {
+  readonly caseId: string;
+  readonly componentId: string;
+  readonly variantId: string;
+  readonly stateId: VisualDiffStateId;
+  readonly state: string;
+  readonly compact: boolean;
+  readonly fixtureAdapterId: string;
+  readonly productionComponent: string;
+  readonly authority: string;
+  readonly props: TProps;
+}
+
+export interface VisualDiffMissingAuthority {
+  readonly status: "missing-authority";
+  readonly caseId: string;
+  readonly componentId?: string;
+  readonly variantId?: string;
+  readonly stateId?: string;
+}
+
+export interface VisualDiffUnsupportedCase {
+  readonly status: "unsupported";
+  readonly caseId: string;
+  readonly componentId: string;
+  readonly variantId: string;
+  readonly stateId: string;
+  readonly reason: "variant" | "state";
+}
+
+export type VisualDiffCaseResolution =
+  | { readonly status: "ready"; readonly case: VisualDiffResolvedCase }
+  | VisualDiffMissingAuthority
+  | VisualDiffUnsupportedCase;
+
+export interface ActionButtonVariantProps {
+  readonly variant: ActionButtonCase["variant"];
+  readonly label: string;
+}
+
+type ActionButtonVariantDefinition = VisualDiffVariantDefinition<ActionButtonVariantProps>;
+
+const ACTION_BUTTON_VARIANTS = {
+  primary: { props: { variant: "primary", label: "Allow once" } },
+  secondary: { props: { variant: "default", label: "Always allow" } },
+  quiet: { props: { variant: "quiet", label: "Not now" } },
+  destructive: { props: { variant: "destructive", label: "Stop" } },
+} as const satisfies Readonly<Record<string, ActionButtonVariantDefinition>>;
+
+export const visualDiffComponentRegistry = {
+  "action-button": {
+    id: "action-button",
+    fixtureAdapterId: "action-button",
+    productionComponent: "gateway/webui/src/components/common/foundation.tsx#ActionButton",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: ACTION_BUTTON_VARIANTS,
+    stateApplicability: {
+      primary: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      secondary: ["compact-disabled", "compact-rest", "disabled", "focus", "hover", "pressed", "rest"],
+      quiet: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
+    },
+  },
+} as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
+
+function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
+  if (!Object.hasOwn(record, key)) return undefined;
+  return record[key];
+}
+
+interface ParsedVisualDiffCaseId {
+  componentId: string;
+  variantId: string;
+  stateId: string;
+}
+
+function parseCaseId(id: string): ParsedVisualDiffCaseId | undefined {
+  const variantSeparator = id.indexOf("--");
+  if (variantSeparator <= 0) return undefined;
+  const stateSeparator = id.indexOf("--", variantSeparator + 2);
+  if (stateSeparator <= variantSeparator + 2 || stateSeparator + 2 >= id.length) return undefined;
   return {
-    variant: role === "secondary" ? "default" : role,
-    label: disabled
-      ? "Unavailable"
-      : role === "primary"
-        ? "Allow once"
-        : role === "secondary"
-          ? "Always allow"
-          : role === "quiet"
-            ? "Not now"
-            : "Stop",
-    disabled,
+    componentId: id.slice(0, variantSeparator),
+    variantId: id.slice(variantSeparator + 2, stateSeparator),
+    stateId: id.slice(stateSeparator + 2),
+  };
+}
+
+function componentDefinition(id: string): VisualDiffComponentDefinition | undefined {
+  return ownRecordValue(visualDiffComponentRegistry, id);
+}
+
+function stateDetails(stateId: string): { state: string; compact: boolean } | undefined {
+  const compact = stateId.startsWith("compact-");
+  const state = compact ? stateId.slice("compact-".length) : stateId;
+  if (!state) return undefined;
+  return { state, compact };
+}
+
+export function resolveVisualDiffCase(id: string): VisualDiffCaseResolution {
+  const parsed = parseCaseId(id);
+  if (!parsed) return { status: "missing-authority", caseId: id };
+
+  const component = componentDefinition(parsed.componentId);
+  if (!component) {
+    return {
+      status: "missing-authority",
+      caseId: id,
+      componentId: parsed.componentId,
+      variantId: parsed.variantId,
+      stateId: parsed.stateId,
+    };
+  }
+
+  const variant = ownRecordValue(component.variants, parsed.variantId);
+  if (!variant) {
+    return {
+      status: "unsupported",
+      caseId: id,
+      componentId: parsed.componentId,
+      variantId: parsed.variantId,
+      stateId: parsed.stateId,
+      reason: "variant",
+    };
+  }
+
+  const applicableStates = ownRecordValue(component.stateApplicability, parsed.variantId);
+  if (!applicableStates?.some((stateId) => stateId === parsed.stateId)) {
+    return {
+      status: "unsupported",
+      caseId: id,
+      componentId: parsed.componentId,
+      variantId: parsed.variantId,
+      stateId: parsed.stateId,
+      reason: "state",
+    };
+  }
+
+  const details = stateDetails(parsed.stateId);
+  if (!details) {
+    return {
+      status: "unsupported",
+      caseId: id,
+      componentId: parsed.componentId,
+      variantId: parsed.variantId,
+      stateId: parsed.stateId,
+      reason: "state",
+    };
+  }
+
+  return {
+    status: "ready",
+    case: {
+      caseId: id,
+      componentId: component.id,
+      variantId: parsed.variantId,
+      stateId: parsed.stateId,
+      state: details.state,
+      compact: details.compact,
+      fixtureAdapterId: component.fixtureAdapterId,
+      productionComponent: component.productionComponent,
+      authority: component.authority,
+      props: variant.props,
+    },
+  };
+}
+
+/** Compatibility lookup for existing action-button callers. */
+export function actionButtonCase(id: string): ActionButtonCase | undefined {
+  const resolution = resolveVisualDiffCase(id);
+  if (resolution.status !== "ready" || resolution.case.componentId !== "action-button") return undefined;
+  const props = resolution.case.props as ActionButtonVariantProps;
+  return {
+    variant: props.variant,
+    label: resolution.case.state === "disabled" ? "Unavailable" : props.label,
+    disabled: resolution.case.state === "disabled",
   };
 }

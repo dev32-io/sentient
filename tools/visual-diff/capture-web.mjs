@@ -12,6 +12,7 @@ const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
 const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
+const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function usage() {
   return "Usage: capture-web --reference <png> [--output <png>] [--url <fixture-url>]";
@@ -116,11 +117,19 @@ async function localFontCss() {
   return rules.join("\n");
 }
 
+function visualDiffState(caseId) {
+  const separator = caseId.lastIndexOf("--");
+  if (separator < 0) return undefined;
+  const stateId = caseId.slice(separator + 2);
+  return stateId.startsWith("compact-") ? stateId.slice("compact-".length) : stateId;
+}
+
 async function applyState(page, caseId) {
-  const target = page.locator(".visual-diff-target");
-  if (caseId.endsWith("--hover")) await target.hover();
-  if (caseId.endsWith("--focus")) await target.focus();
-  if (caseId.endsWith("--pressed")) {
+  const target = page.locator(VISUAL_DIFF_TARGET_SELECTOR);
+  const state = visualDiffState(caseId);
+  if (state === "hover") await target.hover();
+  if (state === "focus") await target.focus();
+  if (state === "pressed") {
     const box = await target.boundingBox();
     if (!box) throw new Error(`Unable to locate the pressed target for ${caseId}`);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -134,7 +143,8 @@ function captureFrame(caseId, referenceSize) {
     height: referenceSize.height / HANDOFF_SCALE,
   };
   const compact = caseId.includes("--compact-");
-  const transformOffset = caseId.endsWith("--hover") ? -1 : caseId.endsWith("--pressed") ? 1 : 0;
+  const state = visualDiffState(caseId);
+  const transformOffset = state === "hover" ? -1 : state === "pressed" ? 1 : 0;
   if (compact) return { viewport: canvas };
 
   /* The isolated standard handoff canvases are cropped below the source's
@@ -182,7 +192,10 @@ async function capture() {
     const url = new URL(baseUrl);
     url.searchParams.set("case", caseId);
     await page.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await page.waitForFunction(() => document.documentElement.dataset.visualDiffFixture === "sentient-v1");
+    await page.waitForFunction(() => document.documentElement.dataset.visualDiffFixture === "sentient-v1"
+      || document.documentElement.dataset.visualDiffError);
+    const fixtureError = await page.evaluate(() => document.documentElement.dataset.visualDiffError);
+    if (fixtureError) throw new Error(`Visual diff fixture failed: ${fixtureError}`);
     await page.addStyleTag({ content: await localFontCss() });
     await page.waitForFunction(async () => {
       await document.fonts.ready;
