@@ -249,6 +249,8 @@ struct DesignActionButton: View {
 struct DesignIconButton: View {
     let systemName: String
     let label: String
+    // Existing contextual icon affordances remain quiet by default.
+    // Foundation fixtures request the neutral secondary role explicitly.
     var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
@@ -256,10 +258,20 @@ struct DesignIconButton: View {
     let action: () -> Void
     @State private var hovered = false
 
+    // The standard icon face follows the reviewed 40pt key geometry; the
+    // surrounding view remains the native 44pt semantic target. Larger product
+    // keys, such as the PIN keypad, retain their caller-owned face size.
+    private var visualSize: CGFloat {
+        minimumSize == DesignMetrics.minimumTarget
+            ? DesignMetrics.actionButtonVisualHeight
+            : minimumSize
+    }
+
     var body: some View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
             Image(systemName: systemName)
-                .frame(width: minimumSize, height: minimumSize)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .frame(width: visualSize, height: visualSize)
                 .contentShape(Rectangle())
         }
         .buttonStyle(
@@ -268,7 +280,7 @@ struct DesignIconButton: View {
                 hovered: hovered,
                 minimumHeight: minimumSize,
                 horizontalPadding: 0,
-                visualHeight: minimumSize
+                visualHeight: visualSize
             )
         )
         .onHover { hovered = $0 }
@@ -277,6 +289,8 @@ struct DesignIconButton: View {
         .accessibilityValue(state.accessibilityValue)
         .accessibilityIdentifier(accessibilityId ?? "")
         .accessibilityAddTraits(state.isSelected ? .isSelected : [])
+        .frame(width: minimumSize, height: minimumSize)
+        .contentShape(Rectangle())
     }
 }
 
@@ -344,6 +358,9 @@ struct DesignCompactButton<Label: View>: View {
 struct DesignCompactIconButton: View {
     let systemName: String
     let label: String
+    // Compact product affordances remain quiet by default, while approved
+    // foundation variants can request the same semantic role explicitly.
+    var role: DesignButtonRole = .quiet
     var state: DesignControlState = .normal
     var isEnabled = true
     var accessibilityId: String? = nil
@@ -353,6 +370,7 @@ struct DesignCompactIconButton: View {
     var body: some View {
         DesignCompactButton(
             accessibilityLabel: label,
+            role: role,
             state: state,
             isEnabled: isEnabled,
             accessibilityId: accessibilityId,
@@ -362,7 +380,7 @@ struct DesignCompactIconButton: View {
             action: action
         ) {
             Image(systemName: systemName)
-                .font(Typo.ui(TypeScale.base, .semibold))
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
                 .frame(width: DesignMetrics.minimumTarget, height: DesignMetrics.minimumTarget)
         }
     }

@@ -1,11 +1,11 @@
 import SwiftUI
-import UIKit
 @testable import SentientApp
 
 enum VisualDiffMissingAuthorityReason: Equatable {
     case unknownComponent
     case unknownCase
     case stateNotApplicable
+    case stateRequiresInteraction
 }
 
 struct VisualDiffFixtureSkip: Equatable, CustomStringConvertible {
@@ -16,6 +16,8 @@ struct VisualDiffFixtureSkip: Equatable, CustomStringConvertible {
         switch reason {
         case .stateNotApplicable:
             return "iPhone state is blocked or not applicable for \(caseID)"
+        case .stateRequiresInteraction:
+            return "iPhone static capture cannot hold native interaction state for \(caseID)"
         case .unknownComponent, .unknownCase:
             return "No iOS visual capture fixture exists yet for \(caseID)"
         }
@@ -89,9 +91,19 @@ struct VisualDiffPlateRenderConfiguration {
     let horizontalPadding: CGFloat
 }
 
+struct VisualDiffIconButtonRenderConfiguration {
+    let roleID: String
+    let role: DesignButtonRole
+    let systemName: String
+    let label: String
+    let state: DesignControlState
+    let compact: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
+        IconButtonFixtureCatalog.registration.componentID: IconButtonFixtureCatalog.registration,
         PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
     ]
 
@@ -140,6 +152,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffPlateRenderConfiguration? {
         PlateFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func iconButtonRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffIconButtonRenderConfiguration? {
+        IconButtonFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -217,37 +235,201 @@ private struct ActionButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {
     }
 }
 
-private enum PlateFixtureMetrics {
-    // The prototype assigns line boxes independently of native glyph metrics.
-    // Keep those boxes when the isolated fixture recomposes on iOS.
-    static let titleLineHeight = DesignMetrics.controlLabelSize * 1.35
-    static let subtitleLineHeight = TypeScale.sm * 1.5
-    static let bodyLineHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
+private struct IconButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffIconButtonRenderConfiguration]
 
-    // The bundled UI faces have individual native names. UIFont keeps the
-    // approved face and fractional point size while Text retains semantics.
-    static let titleFont = Font(
-        UIFont(name: "DMSans-SemiBold", size: DesignMetrics.controlLabelSize)!
-    )
-    static let subtitleFont = Font(
-        UIFont(name: "DMSans-Regular", size: TypeScale.sm)!
-    )
-    static let bodyFont = Font(
-        UIFont(name: "DMSans-Regular", size: TypeScale.base)!
-    )
-
-    // SwiftUI border overlays do not participate in child layout. These
-    // insets preserve the prototype's border-box and one-pixel divider math.
-    static let borderInset = DesignMetrics.hairline
-    static let canvasInset = Space.md * 2
-    static let headerTopPadding = 14 + borderInset
-    static let headerBottomPadding = Space.md + borderInset / 2
-    static let bodyTopPadding = Space.lg + borderInset
-    static let bodyBottomPadding = Space.lg - borderInset / 2
-
-    static func horizontalPadding(_ prototypePadding: CGFloat) -> CGFloat {
-        prototypePadding + borderInset
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(IconButtonFixture(configuration: configuration))
     }
+}
+
+private struct IconButtonFixture: View {
+    let configuration: VisualDiffIconButtonRenderConfiguration
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            if configuration.compact {
+                DesignCompactIconButton(
+                    systemName: configuration.systemName,
+                    label: configuration.label,
+                    role: configuration.role,
+                    state: configuration.state,
+                    action: {}
+                )
+            } else {
+                standardButton
+            }
+        }
+    }
+
+    private var standardButton: some View {
+        DesignIconButton(
+            systemName: configuration.systemName,
+            label: configuration.label,
+            role: configuration.role,
+            state: configuration.state,
+            action: {}
+        )
+    }
+}
+
+private enum IconButtonFixtureCatalog {
+    private struct Variant {
+        let id: String
+        let roleID: String
+        let role: DesignButtonRole
+        let systemName: String
+        let label: String
+        let states: [State]
+    }
+
+    private struct State {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+        let controlState: DesignControlState?
+        let compact: Bool
+
+        static func supported(
+            _ id: String,
+            state: DesignControlState = .normal,
+            compact: Bool = false
+        ) -> Self {
+            Self(
+                id: id,
+                applicability: .supported,
+                controlState: state,
+                compact: compact
+            )
+        }
+
+        static func compactRest() -> Self {
+            supported("compact-rest", compact: true)
+        }
+
+        static func compactDisabled() -> Self {
+            supported("compact-disabled", state: .disabled, compact: true)
+        }
+
+        static func unavailable(_ id: String, reason: VisualDiffMissingAuthorityReason) -> Self {
+            Self(
+                id: id,
+                applicability: .missingAuthority(reason),
+                controlState: nil,
+                compact: id.hasPrefix("compact-")
+            )
+        }
+    }
+
+    private static let variants: [Variant] = [
+        Variant(
+            id: "default",
+            roleID: "default",
+            role: .secondary,
+            systemName: "plus",
+            label: "Add item",
+            // iPhone has no pointer hover. Focus and press are native
+            // interaction states, but this static XCTest path cannot hold
+            // them without a test-only gesture/focus seam.
+            states: [
+                .supported("rest"),
+                .compactRest(),
+                .supported("disabled", state: .disabled),
+                .compactDisabled(),
+                .unavailable("focus", reason: .stateRequiresInteraction),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateRequiresInteraction),
+            ]
+        ),
+        Variant(
+            id: "quiet",
+            roleID: "quiet",
+            role: .quiet,
+            systemName: "ellipsis",
+            label: "More options",
+            states: [
+                .supported("rest"),
+                .compactRest(),
+                .unavailable("focus", reason: .stateRequiresInteraction),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateRequiresInteraction),
+            ]
+        ),
+        Variant(
+            id: "destructive",
+            roleID: "destructive",
+            role: .destructive,
+            systemName: "multiply",
+            label: "Delete item",
+            states: [
+                .supported("rest"),
+                .compactRest(),
+                .unavailable("focus", reason: .stateRequiresInteraction),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateRequiresInteraction),
+            ]
+        ),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffIconButtonRenderConfiguration?)] =
+        variants.flatMap { variant in
+            variant.states.map { state in
+                let fixture = VisualDiffFixtureCase(
+                    caseID: "icon-button--\(variant.id)--\(state.id)",
+                    componentID: "icon-button",
+                    variantID: variant.id,
+                    stateID: state.id
+                )
+                let configuration = state.controlState.map {
+                    VisualDiffIconButtonRenderConfiguration(
+                        roleID: variant.roleID,
+                        role: variant.role,
+                        systemName: $0 == .disabled ? "minus" : variant.systemName,
+                        label: $0 == .disabled ? "Unavailable action" : variant.label,
+                        state: $0,
+                        compact: state.compact
+                    )
+                }
+                return (
+                    VisualDiffFixtureRegistration(
+                        fixture: fixture,
+                        applicability: state.applicability
+                    ),
+                    configuration
+                )
+            }
+        }
+
+    static let renderConfigurations: [String: VisualDiffIconButtonRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "icon-button",
+        registrations: definitions.map(\.0),
+        adapter: IconButtonFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private enum PlateFixtureMetrics {
+    // These values follow the immutable plate CSS rather than compensating
+    // for a particular renderer: `.snt-plate__head` is 14px / 12px and the
+    // card subtitle's margin is 3px.
+    static let subtitleMargin: CGFloat = 3
+    static let canvasInset = Space.md * 2
+    static let headerTopPadding: CGFloat = 14
+    static let headerBottomPadding: CGFloat = 12
+    static let bodyVerticalPadding = Space.lg
+
+    // Use the same project typography adapter as native production surfaces.
+    static let titleFont = Typo.ui(DesignMetrics.controlLabelSize, .semibold)
+    static let subtitleFont = Typo.ui(TypeScale.sm)
+    static let bodyFont = Typo.ui(TypeScale.base)
 }
 
 private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
@@ -260,28 +442,19 @@ private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
 
         return AnyView(
             VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: Space.xs) {
+                VStack(alignment: .leading, spacing: PlateFixtureMetrics.subtitleMargin) {
                     Text("Foundation plate")
                         .font(PlateFixtureMetrics.titleFont)
                         // Mirrors `.snt-card-title { letter-spacing: -.005em; }`.
                         .kerning(-DesignMetrics.controlLabelSize * 0.005)
                         .foregroundStyle(DuskColors.ink)
-                        // Keep each native text run in one 2x compositing pass;
-                        // this is render-time SwiftUI composition, not image post-processing.
-                        .drawingGroup()
-                        .frame(minHeight: PlateFixtureMetrics.titleLineHeight, alignment: .topLeading)
                     Text("Stable low-elevation surface.")
                         .font(PlateFixtureMetrics.subtitleFont)
-                        // Native custom-font rasterization sits one physical
-                        // pixel below the CSS line's visual origin at 2x.
-                        .offset(y: -DesignMetrics.hairline / 2)
                         .foregroundStyle(DuskColors.ink2)
-                        .drawingGroup()
-                        .frame(minHeight: PlateFixtureMetrics.subtitleLineHeight, alignment: .topLeading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, PlateFixtureMetrics.headerTopPadding)
-                .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
+                .padding(.horizontal, configuration.horizontalPadding)
                 .padding(.bottom, PlateFixtureMetrics.headerBottomPadding)
                 .background(
                     LinearGradient(
@@ -302,11 +475,8 @@ private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
                 Text("Grouped content rests on a quiet slate.")
                     .font(PlateFixtureMetrics.bodyFont)
                     .foregroundStyle(DuskColors.ink2)
-                    .drawingGroup()
-                    .frame(minHeight: PlateFixtureMetrics.bodyLineHeight, alignment: .topLeading)
-                    .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
-                    .padding(.top, PlateFixtureMetrics.bodyTopPadding)
-                    .padding(.bottom, PlateFixtureMetrics.bodyBottomPadding)
+                    .padding(.horizontal, configuration.horizontalPadding)
+                    .padding(.vertical, PlateFixtureMetrics.bodyVerticalPadding)
             }
             .designPlate()
             .padding(PlateFixtureMetrics.canvasInset)

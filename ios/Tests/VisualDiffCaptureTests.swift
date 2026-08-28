@@ -58,7 +58,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             .frame(width: logicalSize.width, height: logicalSize.height)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, Calendar(identifier: .gregorian))
-            .environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+            .environment(\.timeZone, TimeZone(secondsFromGMT: 0) ?? .current)
             .environment(\.layoutDirection, .leftToRight)
             .environment(\.dynamicTypeSize, .large)
             .preferredColorScheme(.dark)
@@ -177,6 +177,87 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testIconButtonRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "icon-button--default--compact-disabled",
+            "icon-button--default--compact-rest",
+            "icon-button--default--disabled",
+            "icon-button--default--rest",
+            "icon-button--quiet--compact-rest",
+            "icon-button--quiet--rest",
+            "icon-button--destructive--compact-rest",
+            "icon-button--destructive--rest",
+        ])
+        let expectedHover = Set([
+            "icon-button--default--hover",
+            "icon-button--quiet--hover",
+            "icon-button--destructive--hover",
+        ])
+        let expectedInteractionStates = Set([
+            "icon-button--default--focus",
+            "icon-button--default--pressed",
+            "icon-button--quiet--focus",
+            "icon-button--quiet--pressed",
+            "icon-button--destructive--focus",
+            "icon-button--destructive--pressed",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "icon-button")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedHover).union(expectedInteractionStates))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedHover
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+    }
+
+    func testIconButtonRegistryPreservesNativeRoleStateAndCompactAdaptation() {
+        let expected: [(String, String, DesignButtonRole, DesignControlState, Bool, String, String)] = [
+            ("icon-button--default--rest", "default", .secondary, .normal, false, "plus", "Add item"),
+            ("icon-button--default--compact-rest", "default", .secondary, .normal, true, "plus", "Add item"),
+            ("icon-button--default--disabled", "default", .secondary, .disabled, false, "minus", "Unavailable action"),
+            ("icon-button--default--compact-disabled", "default", .secondary, .disabled, true, "minus", "Unavailable action"),
+            ("icon-button--quiet--rest", "quiet", .quiet, .normal, false, "ellipsis", "More options"),
+            ("icon-button--quiet--compact-rest", "quiet", .quiet, .normal, true, "ellipsis", "More options"),
+            ("icon-button--destructive--rest", "destructive", .destructive, .normal, false, "multiply", "Delete item"),
+            ("icon-button--destructive--compact-rest", "destructive", .destructive, .normal, true, "multiply", "Delete item"),
+        ]
+
+        for (caseID, roleID, role, state, compact, systemName, label) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.iconButtonRenderConfiguration(for: caseID) else {
+                XCTFail("Missing icon-button render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.roleID, roleID, caseID)
+            XCTAssertEqual(configuration.role, role, caseID)
+            XCTAssertEqual(configuration.state, state, caseID)
+            XCTAssertEqual(configuration.compact, compact, caseID)
+            XCTAssertEqual(configuration.systemName, systemName, caseID)
+            XCTAssertEqual(configuration.label, label, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.iconButtonRenderConfiguration(
+                for: "icon-button--default--hover"
+            )
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.iconButtonRenderConfiguration(
+                for: "icon-button--default--pressed"
+            )
+        )
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -236,6 +317,18 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
         XCTAssertEqual(skip.reason, .stateNotApplicable)
         XCTAssertEqual(skip.description, "iPhone state is blocked or not applicable for action-button--primary--hover")
+
+        guard case .missingAuthority(let interaction) = VisualDiffFixtureRegistry.resolve(
+            caseID: "icon-button--default--pressed"
+        ) else {
+            XCTFail("A static iPhone press must remain explicitly unavailable")
+            return
+        }
+        XCTAssertEqual(interaction.reason, .stateRequiresInteraction)
+        XCTAssertEqual(
+            interaction.description,
+            "iPhone static capture cannot hold native interaction state for icon-button--default--pressed"
+        )
 
         guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
             caseID: "future-component--default--rest"
