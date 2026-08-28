@@ -42,6 +42,143 @@ enum DesignButtonRole { case action, secondary, destructive, quiet }
 
 enum DesignNoticeKind { case loading, empty, error, success, warning }
 
+/// Draws the slate face as two full-bounds fields. Core Graphics applies the
+/// ellipse transform to the radial coordinate field while the face bounds stay
+/// fixed, avoiding the rectangular cutoff caused by transforming a SwiftUI
+/// gradient view.
+private struct SlateFaceRenderer: UIViewRepresentable {
+    let linearTop: Color
+    let linearBottom: Color
+    let radialCenter: Color
+    let radialRing: Color
+    let muted: Bool
+
+    func makeUIView(context: Context) -> SlateFaceView {
+        SlateFaceView()
+    }
+
+    func updateUIView(_ view: SlateFaceView, context: Context) {
+        view.recipe = SlateFaceView.Recipe(
+            linearTop: linearTop,
+            linearBottom: linearBottom,
+            radialCenter: radialCenter,
+            radialRing: muted ? radialCenter : radialRing,
+            centerStop: muted ? 0 : DesignMaterialAdapter.slateCenterStop,
+            fadeStop: muted ? DesignMaterialAdapter.slateMutedFadeStop : DesignMaterialAdapter.slateFadeStop,
+            radiusScale: DesignMaterialAdapter.slateRadialScale,
+            center: CGPoint(
+                x: DesignMaterialAdapter.slateRadialCenterX,
+                y: DesignMaterialAdapter.slateRadialCenterY
+            )
+        )
+        view.setNeedsDisplay()
+    }
+}
+
+private final class SlateFaceView: UIView {
+    struct Recipe {
+        let linearTop: Color
+        let linearBottom: Color
+        let radialCenter: Color
+        let radialRing: Color
+        let centerStop: CGFloat
+        let fadeStop: CGFloat
+        let radiusScale: CGSize
+        let center: CGPoint
+    }
+
+    var recipe = Recipe(
+        linearTop: .clear,
+        linearBottom: .clear,
+        radialCenter: .clear,
+        radialRing: .clear,
+        centerStop: 0,
+        fadeStop: 1,
+        radiusScale: CGSize(width: 1, height: 1),
+        center: CGPoint(x: 0.5, y: 0.5)
+    )
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        contentMode = .redraw
+        accessibilityElementsHidden = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ rect: CGRect) {
+        let faceBounds = bounds
+        guard let context = UIGraphicsGetCurrentContext(), faceBounds.width > 0, faceBounds.height > 0,
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return }
+
+        context.saveGState()
+        context.clip(to: faceBounds)
+
+        let linearColors = [UIColor(recipe.linearTop).cgColor, UIColor(recipe.linearBottom).cgColor]
+        if let linearGradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: linearColors as CFArray,
+            locations: [0, 1]
+        ) {
+            context.drawLinearGradient(
+                linearGradient,
+                start: CGPoint(x: faceBounds.midX, y: faceBounds.minY),
+                end: CGPoint(x: faceBounds.midX, y: faceBounds.maxY),
+                options: []
+            )
+        }
+
+        let radialColors = [
+            UIColor(recipe.radialCenter).cgColor,
+            UIColor(recipe.radialRing).cgColor,
+            UIColor(recipe.radialRing).withAlphaComponent(0).cgColor,
+        ]
+        guard let radialGradient = CGGradient(
+            colorsSpace: colorSpace,
+            colors: radialColors as CFArray,
+            locations: [0, recipe.centerStop, recipe.fadeStop]
+        ) else {
+            context.restoreGState()
+            return
+        }
+
+        let center = CGPoint(
+            x: faceBounds.width * recipe.center.x,
+            y: faceBounds.height * recipe.center.y
+        )
+        // CSS's 82%/105% values are radii of the face field. Transforming the
+        // context changes only the radial coordinates; the clip remains the
+        // complete face rectangle, so transparency fades into the foundation.
+        let radius = CGSize(
+            width: faceBounds.width * recipe.radiusScale.width,
+            height: faceBounds.height * recipe.radiusScale.height
+        )
+        guard radius.width > 0, radius.height > 0 else {
+            context.restoreGState()
+            return
+        }
+
+        context.saveGState()
+        context.translateBy(x: center.x, y: center.y)
+        context.scaleBy(x: radius.width, y: radius.height)
+        context.drawRadialGradient(
+            radialGradient,
+            startCenter: .zero,
+            startRadius: 0,
+            endCenter: .zero,
+            endRadius: 1,
+            options: []
+        )
+        context.restoreGState()
+        context.restoreGState()
+    }
+}
+
 private struct SlateFace: View {
     let role: DesignButtonRole
     let muted: Bool
@@ -49,11 +186,20 @@ private struct SlateFace: View {
     var baseOverride: Color? = nil
 
     private var base: Color {
-        if muted { return DuskColors.bgElev }
+        if muted {
+            return DuskColors.bgElev.overlaying(
+                DuskColors.ink4,
+                opacity: DesignMaterialAdapter.slateDisabledBaseInkMix
+            )
+        }
         if let baseOverride { return baseOverride }
         switch role {
         case .action: return DuskColors.accent
-        case .secondary: return DuskColors.paper
+        case .secondary:
+            return DuskColors.paper.overlaying(
+                DuskColors.ink2,
+                opacity: DesignMaterialAdapter.slateSecondaryInkMix
+            )
         case .destructive:
             return DuskColors.paper.overlaying(
                 DuskColors.stop,
@@ -65,33 +211,20 @@ private struct SlateFace: View {
 
     private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
 
-    private var radialStops: [Gradient.Stop] {
-        if muted {
-            return [
-                .init(
-                    color: base.overlaying(DuskColors.bgSunk, opacity: DesignMaterialAdapter.slateMutedCenterSunk),
-                    location: 0
-                ),
-                .init(color: .clear, location: DesignMaterialAdapter.slateMutedFadeStop),
-            ]
-        }
-        return [
-            .init(
-                color: base.overlaying(
-                    DuskColors.bgSunk,
-                    opacity: hovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
-                ),
-                location: 0
-            ),
-            .init(
-                color: base.overlaying(
-                    DuskColors.bgSunk,
-                    opacity: hovered ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
-                ),
-                location: DesignMaterialAdapter.slateCenterStop
-            ),
-            .init(color: .clear, location: DesignMaterialAdapter.slateFadeStop),
-        ]
+    private var radialCenterColor: Color {
+        base.overlaying(
+            DuskColors.bgSunk,
+            opacity: muted
+                ? DesignMaterialAdapter.slateMutedCenterSunk
+                : hovered ? DesignMaterialAdapter.slateHoverCenterSunk : DesignMaterialAdapter.slateCenterSunk
+        )
+    }
+
+    private var radialRingColor: Color {
+        base.overlaying(
+            DuskColors.bgSunk,
+            opacity: hovered ? DesignMaterialAdapter.slateHoverRingSunk : DesignMaterialAdapter.slateRingSunk
+        )
     }
 
     private var linearTop: Color {
@@ -107,22 +240,13 @@ private struct SlateFace: View {
     }
 
     var body: some View {
-        ZStack {
-            LinearGradient(colors: [linearTop, linearBottom], startPoint: .top, endPoint: .bottom)
-            EllipticalGradient(
-                stops: radialStops,
-                center: UnitPoint(
-                    x: DesignMaterialAdapter.slateRadialCenterX,
-                    y: DesignMaterialAdapter.slateRadialCenterY
-                ),
-                startRadiusFraction: DesignMaterialAdapter.slateRadialStartRadiusFraction,
-                endRadiusFraction: DesignMaterialAdapter.slateRadialEndRadiusFraction
-            )
-            .scaleEffect(
-                x: DesignMaterialAdapter.slateRadialScale.width,
-                y: DesignMaterialAdapter.slateRadialScale.height
-            )
-        }
+        SlateFaceRenderer(
+            linearTop: linearTop,
+            linearBottom: linearBottom,
+            radialCenter: radialCenterColor,
+            radialRing: radialRingColor,
+            muted: muted
+        )
     }
 }
 
@@ -141,46 +265,51 @@ struct DesignButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isFocused) private var focused
+    @Environment(\.colorSchemeContrast) private var contrast
     let role: DesignButtonRole
     var hovered = false
     var minimumHeight: CGFloat = DesignMetrics.minimumTarget
-    var horizontalPadding: CGFloat = Space.lg
+    var horizontalPadding: CGFloat = DesignMetrics.actionButtonHorizontalPadding
+    var visualHeight: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
         let raised = hovered && isEnabled
-        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignMetrics.actionButtonCornerRadius, style: .continuous)
+        let faceHeight = min(visualHeight ?? minimumHeight, minimumHeight)
+        let semanticHeight = max(minimumHeight, DesignMetrics.minimumTarget)
         configuration.label
-            .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+            // `.snt-surface button { font: inherit; }` is more specific than
+            // the presentation rule in the approved stylesheet, so the
+            // rendered recipe uses the inherited 15pt regular UI face.
+            .font(Typo.ui(TypeScale.base))
             .foregroundStyle(foreground)
-            .frame(minHeight: minimumHeight)
+            .frame(minHeight: faceHeight)
             .padding(.horizontal, horizontalPadding)
             .background { SlateFace(role: role, muted: !isEnabled, hovered: raised) }
             .clipShape(shape)
             .overlay {
-                shape
-                    .stroke(
-                        DuskColors.ink.opacity(
-                            raised
-                                ? DesignMaterialAdapter.slateTopLightContrast
-                                : DesignMaterialAdapter.slateTopLightOpacity
-                        ),
-                        lineWidth: DesignMetrics.hairline
-                    )
-                    .mask(
-                        LinearGradient(
-                            colors: [.white, .clear, .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
+                if let topLight = topLight(pressed: pressed, raised: raised) {
+                    shape
+                        // CSS borders paint inside the border box; use the
+                        // native inset form so the 44pt key does not grow by
+                        // the centered stroke width.
+                        .strokeBorder(topLight, lineWidth: DesignMetrics.hairline)
+                        .mask(
+                            LinearGradient(
+                                colors: [.white, .clear, .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
                         )
-                    )
+                }
             }
-            .overlay { shape.stroke(border(raised: raised), lineWidth: DesignMetrics.hairline) }
+            .overlay { shape.strokeBorder(border(raised: raised), lineWidth: DesignMetrics.hairline) }
             .overlay {
                 shape
                     .stroke(
                         focused ? DuskColors.accent : .clear,
-                        lineWidth: DesignMetrics.focusBorder
+                        lineWidth: contrast == .increased ? 3 : DesignMetrics.focusBorder
                     )
                     .padding(DesignMetrics.focusBorderInset)
             }
@@ -203,7 +332,11 @@ struct DesignButtonStyle: ButtonStyle {
                         color: contact(pressed: pressed, hovered: raised),
                         geometry: DesignDropShadowGeometry(
                             radius: 0,
-                            y: pressed ? 1 : DesignMaterialAdapter.slateContactY,
+                            y: !isEnabled
+                                ? DesignMaterialAdapter.slateDisabledContactY
+                                : pressed
+                                    ? 1
+                                    : DesignMaterialAdapter.slateContactY,
                             sourceInset: 1
                         )
                     )
@@ -216,12 +349,15 @@ struct DesignButtonStyle: ButtonStyle {
                 DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
                 value: raised
             )
+            .frame(minHeight: semanticHeight)
+            .contentShape(Rectangle())
     }
 
     private func castBlack(pressed: Bool, raised: Bool) -> Double {
         if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
         if pressed { return DesignMaterialAdapter.slatePressedBlack }
-        return raised ? DesignMaterialAdapter.slateHoverBlack : DesignMaterialAdapter.slateRestBlack
+        if raised { return DesignMaterialAdapter.slateHoverBlack }
+        return role == .action ? DesignMaterialAdapter.slateActionRestBlack : DesignMaterialAdapter.slateRestBlack
     }
 
     private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
@@ -241,40 +377,85 @@ struct DesignButtonStyle: ButtonStyle {
     }
 
     private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
-        if raised { return DesignMaterialShadowGeometry.slateHoverGlow }
-        if role == .destructive {
-            return DesignDropShadowGeometry(
-                radius: DesignMaterialAdapter.slateDestructiveGlowBlur,
-                y: DesignMaterialAdapter.slateDestructiveGlowY,
-                sourceInset: DesignMaterialAdapter.slateDestructiveGlowInset
-            )
+        if raised {
+            return role == .destructive
+                ? DesignMaterialShadowGeometry.slateDestructiveHoverGlow
+                : DesignMaterialShadowGeometry.slateHoverGlow
         }
-        return DesignMaterialShadowGeometry.slateGlow
+        switch role {
+        case .action: return DesignMaterialShadowGeometry.slateActionGlow
+        case .destructive: return DesignMaterialShadowGeometry.slateDestructiveGlow
+        case .secondary, .quiet: return DesignMaterialShadowGeometry.slateGlow
+        }
+    }
+
+    private func topLight(pressed: Bool, raised: Bool) -> Color? {
+        guard !pressed else { return nil }
+        if !isEnabled { return DuskColors.ink.opacity(DesignMaterialAdapter.slateDisabledTopLight) }
+        if raised {
+            return role == .destructive
+                ? .white.opacity(DesignMaterialAdapter.slateDestructiveHoverTopLight)
+                : DuskColors.ink.opacity(DesignMaterialAdapter.slateHoverTopLight)
+        }
+        switch role {
+        case .action: return .white.opacity(DesignMaterialAdapter.slateActionTopLight)
+        case .destructive: return .white.opacity(DesignMaterialAdapter.slateDestructiveTopLight)
+        case .secondary, .quiet: return DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
+        }
     }
 
     private var foreground: Color {
         if !isEnabled { return DuskColors.ink4 }
         switch role {
-        case .action: return DuskColors.bgSunk
-        case .secondary, .destructive: return DuskColors.ink
-        case .quiet: return DuskColors.ink2
+        case .action: return DuskColors.ink
+        case .secondary, .destructive, .quiet: return DuskColors.ink
         }
     }
 
     private func border(raised: Bool) -> Color {
-        if !isEnabled { return DuskColors.lineSoft.opacity(DesignMaterialAdapter.slateDisabledBorder) }
+        if !isEnabled {
+            return DuskColors.lineSoft.overlaying(
+                DuskColors.bg,
+                opacity: 1 - DesignMaterialAdapter.slateDisabledBorder
+            )
+        }
         if raised { return .clear }
+        if contrast == .increased { return DuskColors.ink3 }
         return switch role {
-        case .action: DuskColors.accent.opacity(DesignMaterialAdapter.slateActionBorder)
-        case .secondary, .quiet: DuskColors.line
-        case .destructive: DuskColors.stop.opacity(DesignMaterialAdapter.slateDestructiveBorder)
+        case .action:
+            DuskColors.accent.overlaying(
+                DuskColors.bgSunk,
+                opacity: 1 - DesignMaterialAdapter.slateActionBorder
+            )
+        case .secondary: DuskColors.line
+        case .quiet:
+            DuskColors.lineSoft.overlaying(
+                DuskColors.bg,
+                opacity: DesignMaterialAdapter.slateQuietBorderBackgroundMix
+            )
+        case .destructive:
+            DuskColors.stop.overlaying(
+                DuskColors.line,
+                opacity: 1 - DesignMaterialAdapter.slateDestructiveBorder
+            )
         }
     }
 
     private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
 
     private func contact(pressed: Bool, hovered: Bool) -> Color {
-        if pressed || hovered { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
+        if !isEnabled {
+            return DuskColors.bgSunk.overlaying(
+                DuskColors.line,
+                opacity: DesignMaterialAdapter.slateDisabledContactMix
+            )
+        }
+        if pressed { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
+        if hovered {
+            return role == .destructive
+                ? DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.46)
+                : DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10)
+        }
         switch role {
         case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
         case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
@@ -291,6 +472,7 @@ struct DesignActionButton: View {
     var fillsWidth = true
     var minimumHeight: CGFloat = DesignMetrics.minimumTarget
     let action: () -> Void
+    var visualHeight: CGFloat? = nil
     @State private var hovered = false
 
     var body: some View {
@@ -298,10 +480,24 @@ struct DesignActionButton: View {
             HStack(spacing: Space.sm) {
                 if state == .loading { ProgressView().controlSize(.small) }
                 Text(state == .loading ? "Loading" : title)
+                    // SwiftUI's custom-font line fragment places this run below
+                    // the CSS 1.55 line box; lift only the text, not the target.
+                    .baselineOffset(DesignMetrics.actionButtonTextBaselineOffset)
                     .frame(maxWidth: fillsWidth ? .infinity : nil)
             }
         }
-        .buttonStyle(DesignButtonStyle(role: role, hovered: hovered, minimumHeight: minimumHeight))
+        .buttonStyle(
+            DesignButtonStyle(
+                role: role,
+                hovered: hovered,
+                minimumHeight: minimumHeight,
+                // CSS auto-sized buttons include their 1pt border in the
+                // intrinsic box; SwiftUI's inset stroke does not, so reserve
+                // that border width in the native layout.
+                horizontalPadding: DesignMetrics.actionButtonHorizontalPadding + DesignMetrics.hairline,
+                visualHeight: visualHeight ?? (minimumHeight == DesignMetrics.minimumTarget ? DesignMetrics.actionButtonVisualHeight : minimumHeight)
+            )
+        )
         .onHover { hovered = $0 }
         .disabled(!state.isInteractive)
         .accessibilityLabel(title)
@@ -327,7 +523,15 @@ struct DesignIconButton: View {
                 .frame(width: minimumSize, height: minimumSize)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(DesignButtonStyle(role: role, hovered: hovered, minimumHeight: minimumSize, horizontalPadding: 0))
+        .buttonStyle(
+            DesignButtonStyle(
+                role: role,
+                hovered: hovered,
+                minimumHeight: minimumSize,
+                horizontalPadding: 0,
+                visualHeight: minimumSize
+            )
+        )
         .onHover { hovered = $0 }
         .disabled(!state.isInteractive)
         .accessibilityLabel(label)

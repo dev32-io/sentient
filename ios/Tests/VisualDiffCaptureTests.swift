@@ -104,17 +104,54 @@ final class VisualDiffCaptureTests: XCTestCase {
     }
 
     private func fixture(for caseID: String) throws -> AnyView {
-        switch caseID {
-        case "action-button--primary--rest":
-            AnyView(
-                ZStack {
-                    Color.clear
-                    DesignActionButton(title: "Allow once", fillsWidth: false, action: {})
-                }
-            )
+        let components = caseID.split(separator: "--").map(String.init)
+        guard components.count == 3,
+              components[0] == "action-button"
+        else {
+            throw XCTSkip("No iOS visual capture fixture exists yet for \(caseID)")
+        }
+
+        let role: DesignButtonRole
+        let title: String
+        switch components[1] {
+        case "primary":
+            role = .action
+            title = "Allow once"
+        case "secondary":
+            role = .secondary
+            title = "Always allow"
+        case "quiet":
+            role = .quiet
+            title = "Not now"
+        case "destructive":
+            role = .destructive
+            title = "Stop"
         default:
             throw XCTSkip("No iOS visual capture fixture exists yet for \(caseID)")
         }
+
+        let isDisabled = components[2] == "disabled" || components[2] == "compact-disabled"
+        let isCompact = components[2] == "compact-rest" || components[2] == "compact-disabled"
+        let isSupported = components[2] == "rest"
+            || components[2] == "compact-rest"
+            || isDisabled
+        guard isSupported else {
+            throw XCTSkip("iPhone state is blocked or not applicable for \(caseID)")
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                DesignActionButton(
+                    title: isDisabled ? "Unavailable" : title,
+                    role: role,
+                    state: isDisabled ? .disabled : .normal,
+                    fillsWidth: false,
+                    action: {},
+                    visualHeight: isCompact ? DesignMetrics.minimumTarget : DesignMetrics.actionButtonVisualHeight
+                )
+            }
+        )
     }
 
     private func pngPixelSize(at url: URL) throws -> CGSize {

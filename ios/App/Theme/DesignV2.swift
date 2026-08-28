@@ -235,6 +235,14 @@ enum DesignMetrics {
     static let segmentLabelSize: CGFloat = 14
     static let segmentHorizontalPadding: CGFloat = 13
     static let segmentCornerRadius: CGFloat = 6
+    // The approved key recipe uses a 40pt visual face; the control's
+    // semantic minimum remains the native 44pt hit target.
+    static let actionButtonVisualHeight: CGFloat = 40
+    static let actionButtonCornerRadius: CGFloat = 7
+    static let actionButtonHorizontalPadding: CGFloat = 15
+    // Native custom-font metrics place the glyph run below the CSS line box;
+    // this shared lift keeps text alignment separate from the hit target.
+    static let actionButtonTextBaselineOffset: CGFloat = 2
     static let checkboxSize: CGFloat = 22
     static let checkboxGap: CGFloat = 10
     static let checkboxCornerRadius: CGFloat = 6
