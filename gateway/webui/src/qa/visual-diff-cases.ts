@@ -1,3 +1,5 @@
+import type { IconName } from "../components/common/icon.tsx";
+
 export interface ActionButtonCase {
   variant: "primary" | "default" | "quiet" | "destructive";
   label: string;
@@ -64,12 +66,26 @@ export interface ActionButtonVariantProps {
 
 type ActionButtonVariantDefinition = VisualDiffVariantDefinition<ActionButtonVariantProps>;
 
+export interface IconButtonVariantProps {
+  readonly variant: "default" | "quiet" | "destructive";
+  readonly label: string;
+  readonly iconName: Extract<IconName, "plus" | "more-horizontal" | "x">;
+}
+
+type IconButtonVariantDefinition = VisualDiffVariantDefinition<IconButtonVariantProps>;
+
 const ACTION_BUTTON_VARIANTS = {
   primary: { props: { variant: "primary", label: "Allow once" } },
   secondary: { props: { variant: "default", label: "Always allow" } },
   quiet: { props: { variant: "quiet", label: "Not now" } },
   destructive: { props: { variant: "destructive", label: "Stop" } },
 } as const satisfies Readonly<Record<string, ActionButtonVariantDefinition>>;
+
+const ICON_BUTTON_VARIANTS = {
+  default: { props: { variant: "default", label: "Add item", iconName: "plus" } },
+  quiet: { props: { variant: "quiet", label: "More options", iconName: "more-horizontal" } },
+  destructive: { props: { variant: "destructive", label: "Delete item", iconName: "x" } },
+} as const satisfies Readonly<Record<string, IconButtonVariantDefinition>>;
 
 export interface PlateVariantProps {
   readonly variant: "default";
@@ -95,6 +111,18 @@ export const visualDiffComponentRegistry = {
       destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
     },
   },
+  "icon-button": {
+    id: "icon-button",
+    fixtureAdapterId: "icon-button",
+    productionComponent: "gateway/webui/src/components/common/foundation/buttons.tsx#FoundationIconButton",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: ICON_BUTTON_VARIANTS,
+    stateApplicability: {
+      default: ["compact-disabled", "compact-rest", "disabled", "focus", "hover", "pressed", "rest"],
+      quiet: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -106,6 +134,10 @@ export const visualDiffComponentRegistry = {
     },
   },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
+
+// These components have no authority for states outside their approved handoff
+// matrix. Keep action-button's established unsupported-state result unchanged.
+const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set(["icon-button", "plate"]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
   if (!Object.hasOwn(record, key)) return undefined;
@@ -141,6 +173,18 @@ function stateDetails(stateId: string): { state: string; compact: boolean } | un
   return { state, compact };
 }
 
+function stateResolutionFailure(
+  componentId: string,
+  caseId: string,
+  variantId: string,
+  stateId: string,
+): VisualDiffCaseResolution {
+  if (MISSING_AUTHORITY_STATE_COMPONENTS.has(componentId)) {
+    return { status: "missing-authority", caseId, componentId, variantId, stateId };
+  }
+  return { status: "unsupported", caseId, componentId, variantId, stateId, reason: "state" };
+}
+
 export function resolveVisualDiffCase(id: string): VisualDiffCaseResolution {
   const parsed = parseCaseId(id);
   if (!parsed) return { status: "missing-authority", caseId: id };
@@ -170,26 +214,12 @@ export function resolveVisualDiffCase(id: string): VisualDiffCaseResolution {
 
   const applicableStates = ownRecordValue(component.stateApplicability, parsed.variantId);
   if (!applicableStates?.some((stateId) => stateId === parsed.stateId)) {
-    return {
-      status: "unsupported",
-      caseId: id,
-      componentId: parsed.componentId,
-      variantId: parsed.variantId,
-      stateId: parsed.stateId,
-      reason: "state",
-    };
+    return stateResolutionFailure(component.id, id, parsed.variantId, parsed.stateId);
   }
 
   const details = stateDetails(parsed.stateId);
   if (!details) {
-    return {
-      status: "unsupported",
-      caseId: id,
-      componentId: parsed.componentId,
-      variantId: parsed.variantId,
-      stateId: parsed.stateId,
-      reason: "state",
-    };
+    return stateResolutionFailure(component.id, id, parsed.variantId, parsed.stateId);
   }
 
   return {

@@ -50,7 +50,7 @@ export interface FoundationIconButtonProps extends Omit<ActionButtonProps, "chil
   pressed?: boolean | undefined;
 }
 
-export function FoundationIconButton({ label, children, variant = "default", pressed, className, buttonRef, expanded, hasPopup, ...props }: FoundationIconButtonProps): JSX.Element {
+export function FoundationIconButton({ label, children, variant = "default", pressed, className, buttonRef, expanded, hasPopup, "aria-expanded": ariaExpanded, "aria-controls": ariaControls, "aria-pressed": ariaPressed, ...props }: FoundationIconButtonProps): JSX.Element {
   return (
     <button
       {...props}
@@ -58,8 +58,9 @@ export function FoundationIconButton({ label, children, variant = "default", pre
       type="button"
       class={classes("snt-icon-button", variant !== "default" && `snt-button--${variant}`, className)}
       aria-label={label}
-      aria-pressed={pressed}
-      aria-expanded={expanded}
+      aria-pressed={pressed ?? ariaPressed}
+      aria-expanded={ariaExpanded ?? expanded}
+      aria-controls={ariaControls}
       aria-haspopup={hasPopup}
       title={props.title ?? label}
     >

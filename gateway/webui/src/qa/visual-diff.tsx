@@ -3,9 +3,11 @@ import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, Plate } from "../components/common/foundation.tsx";
+import { ActionButton, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { Icon } from "../components/common/icon.tsx";
 import {
   type ActionButtonVariantProps,
+  type IconButtonVariantProps,
   type PlateVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
@@ -29,6 +31,24 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
         <ActionButton variant={button.variant} disabled={disabled} className="visual-diff-target">
           {disabled ? "Unavailable" : button.label}
         </ActionButton>
+      );
+    },
+  },
+  "icon-button": {
+    // This adapter deliberately renders the production FoundationIconButton,
+    // including its native button semantics and production icon anatomy.
+    render: (fixture) => {
+      const button = fixture.props as IconButtonVariantProps;
+      const disabled = fixture.state === "disabled";
+      return (
+        <FoundationIconButton
+          label={disabled ? "Unavailable action" : button.label}
+          variant={button.variant}
+          disabled={disabled}
+          className="visual-diff-target"
+        >
+          <Icon name={button.iconName} size={16} />
+        </FoundationIconButton>
       );
     },
   },

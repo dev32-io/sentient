@@ -26,6 +26,26 @@ const CURRENT_ACTION_BUTTON_CASES = [
   "action-button--secondary--rest",
 ] as const;
 
+const CURRENT_ICON_BUTTON_CASES = [
+  "icon-button--default--compact-disabled",
+  "icon-button--default--compact-rest",
+  "icon-button--default--disabled",
+  "icon-button--default--focus",
+  "icon-button--default--hover",
+  "icon-button--default--pressed",
+  "icon-button--default--rest",
+  "icon-button--destructive--compact-rest",
+  "icon-button--destructive--focus",
+  "icon-button--destructive--hover",
+  "icon-button--destructive--pressed",
+  "icon-button--destructive--rest",
+  "icon-button--quiet--compact-rest",
+  "icon-button--quiet--focus",
+  "icon-button--quiet--hover",
+  "icon-button--quiet--pressed",
+  "icon-button--quiet--rest",
+] as const;
+
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
 
 describe("visual diff component cases", () => {
@@ -61,7 +81,30 @@ describe("visual diff component cases", () => {
     expect(actionButton.productionComponent).toBe("gateway/webui/src/components/common/foundation.tsx#ActionButton");
   });
 
-  it("returns typed failures instead of inventing an unapproved fixture", () => {
+  it("registers the exact icon-button matrix and production provenance", () => {
+    const iconButton = visualDiffComponentRegistry["icon-button"];
+    expect(iconButton.stateApplicability).toEqual({
+      default: ["compact-disabled", "compact-rest", "disabled", "focus", "hover", "pressed", "rest"],
+      quiet: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
+    });
+    expect(iconButton.fixtureAdapterId).toBe("icon-button");
+    expect(iconButton.productionComponent).toBe(
+      "gateway/webui/src/components/common/foundation/buttons.tsx#FoundationIconButton",
+    );
+    expect(iconButton.authority).toBe("design/prototype/foundation-components/handoff/static");
+
+    for (const caseId of CURRENT_ICON_BUTTON_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("icon-button");
+        expect(resolution.case.fixtureAdapterId).toBe("icon-button");
+      }
+    }
+  });
+
+  it("keeps action-button's existing non-applicable state failure unsupported", () => {
     expect(resolveVisualDiffCase("action-button--primary--disabled")).toEqual({
       status: "unsupported",
       caseId: "action-button--primary--disabled",
@@ -70,13 +113,47 @@ describe("visual diff component cases", () => {
       stateId: "disabled",
       reason: "state",
     });
-    expect(resolveVisualDiffCase("icon-button--default--rest")).toEqual({
-      status: "missing-authority",
-      caseId: "icon-button--default--rest",
+  });
+
+  it("resolves unapproved icon-button states to missing authority", () => {
+    for (const caseId of [
+      "icon-button--default--selected",
+      "icon-button--default--loading",
+      "icon-button--default--error",
+      "icon-button--quiet--disabled",
+      "icon-button--destructive--disabled",
+    ]) {
+      const [componentId, variantId, stateId] = caseId.split("--");
+      expect(resolveVisualDiffCase(caseId)).toEqual({
+        status: "missing-authority",
+        caseId,
+        componentId,
+        variantId,
+        stateId,
+      });
+    }
+  });
+
+  it("keeps unknown variants, components, and malformed IDs typed", () => {
+    expect(resolveVisualDiffCase("icon-button--primary--rest")).toEqual({
+      status: "unsupported",
+      caseId: "icon-button--primary--rest",
       componentId: "icon-button",
+      variantId: "primary",
+      stateId: "rest",
+      reason: "variant",
+    });
+    expect(resolveVisualDiffCase("future-component--default--rest")).toEqual({
+      status: "missing-authority",
+      caseId: "future-component--default--rest",
+      componentId: "future-component",
       variantId: "default",
       stateId: "rest",
     });
+
+    for (const caseId of ["", "action-button", "action-button--default", "action-button--default--"]) {
+      expect(resolveVisualDiffCase(caseId)).toEqual({ status: "missing-authority", caseId });
+    }
   });
 
   it("registers only the approved plate rest cases and production provenance", () => {
@@ -97,15 +174,24 @@ describe("visual diff component cases", () => {
     }
   });
 
-  it("keeps unapproved plate interaction states unsupported", () => {
-    for (const stateId of ["hover", "focus", "pressed", "selected", "elevated", "loading", "error"]) {
+  it("resolves unapproved plate interaction states to missing authority", () => {
+    for (const stateId of [
+      "disabled",
+      "compact-disabled",
+      "hover",
+      "focus",
+      "pressed",
+      "selected",
+      "elevated",
+      "loading",
+      "error",
+    ]) {
       expect(resolveVisualDiffCase(`plate--default--${stateId}`)).toEqual({
-        status: "unsupported",
+        status: "missing-authority",
         caseId: `plate--default--${stateId}`,
         componentId: "plate",
         variantId: "default",
         stateId,
-        reason: "state",
       });
     }
   });
