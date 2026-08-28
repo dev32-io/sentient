@@ -88,6 +88,32 @@ export interface TextAreaVariantProps {
 
 type TextAreaVariantDefinition = VisualDiffVariantDefinition<TextAreaVariantProps>;
 
+export interface CheckboxVariantProps {
+  readonly label: string;
+  readonly checked: boolean;
+  readonly indeterminate?: boolean;
+  readonly disabled?: boolean;
+}
+
+type CheckboxVariantDefinition = VisualDiffVariantDefinition<CheckboxVariantProps>;
+
+const CHECKBOX_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0050ms",
+  "frame-002--0100ms",
+  "frame-003--0150ms",
+  "frame-004--0250ms",
+] as const;
+
+const CHECKBOX_VARIANTS = {
+  unchecked: { props: { label: "Not selected", checked: false } },
+  checked: { props: { label: "Selected", checked: true } },
+  mixed: { props: { label: "Mixed", checked: false, indeterminate: true } },
+  disabled: { props: { label: "Unavailable", checked: false, disabled: true } },
+  "unchecked-to-checked": { props: { label: "Not selected", checked: false } },
+  "unchecked-to-mixed": { props: { label: "Not selected", checked: false } },
+} as const satisfies Readonly<Record<string, CheckboxVariantDefinition>>;
+
 const ACTION_BUTTON_VARIANTS = {
   primary: { props: { variant: "primary", label: "Allow once" } },
   secondary: { props: { variant: "default", label: "Always allow" } },
@@ -165,6 +191,21 @@ export const visualDiffComponentRegistry = {
       filled: ["focus", "hover", "rest"],
     },
   },
+  checkbox: {
+    id: "checkbox",
+    fixtureAdapterId: "checkbox",
+    productionComponent: "gateway/webui/src/components/common/foundation/selection.tsx#CheckboxControl",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: CHECKBOX_VARIANTS,
+    stateApplicability: {
+      unchecked: ["focus", "hover", "pressed", "rest"],
+      checked: ["focus", "hover", "pressed", "rest"],
+      mixed: ["focus", "hover", "pressed", "rest"],
+      disabled: ["rest"],
+      "unchecked-to-checked": CHECKBOX_TRANSITION_FRAMES,
+      "unchecked-to-mixed": CHECKBOX_TRANSITION_FRAMES,
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -184,6 +225,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "plate",
   "text-field",
   "text-area",
+  "checkbox",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

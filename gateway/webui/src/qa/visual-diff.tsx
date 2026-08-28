@@ -1,13 +1,14 @@
 import { render } from "preact";
 import type { JSX } from "preact";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { ActionButton, CheckboxControl, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
   type ActionButtonVariantProps,
+  type CheckboxVariantProps,
   type IconButtonVariantProps,
   type PlateVariantProps,
   type TextAreaVariantProps,
@@ -22,6 +23,34 @@ const caseId = new URLSearchParams(location.search).get("case") ?? "";
 type InvalidVisualDiffCase = Exclude<VisualDiffCaseResolution, { status: "ready" }>;
 interface VisualDiffFixtureAdapter {
   render(fixture: VisualDiffResolvedCase): JSX.Element;
+}
+
+interface VisualDiffTransitionWindow extends Window {
+  __startVisualDiffTransition?: () => void;
+}
+
+type CheckboxTransitionDestination = "checked" | "mixed";
+
+function CheckboxTransitionFixture({ destination }: { destination: CheckboxTransitionDestination }): JSX.Element {
+  const [transitioned, setTransitioned] = useState(false);
+  useEffect(() => {
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setTransitioned(true);
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, []);
+  return (
+    <CheckboxControl
+      label="Not selected"
+      checked={destination === "checked" && transitioned}
+      indeterminate={destination === "mixed" && transitioned}
+      className="visual-diff-target"
+      onChange={() => {}}
+    />
+  );
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
@@ -81,6 +110,15 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
           inputClassName="visual-diff-target"
         />
       );
+    },
+  },
+  "checkbox": {
+    // This adapter deliberately renders the production native checkbox and its indeterminate effect.
+    render: (fixture) => {
+      if (fixture.variantId === "unchecked-to-checked") return <CheckboxTransitionFixture destination="checked" />;
+      if (fixture.variantId === "unchecked-to-mixed") return <CheckboxTransitionFixture destination="mixed" />;
+      const checkbox = fixture.props as CheckboxVariantProps;
+      return <CheckboxControl {...checkbox} className="visual-diff-target" onChange={() => {}} />;
     },
   },
   "plate": {

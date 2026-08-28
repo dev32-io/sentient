@@ -43,6 +43,14 @@ describe("Web foundation controls", () => {
     expect(onCheck).toHaveBeenCalledWith(true);
   });
 
+  it("synchronizes mixed state through the native checkbox property", () => {
+    render(<CheckboxControl label="Some items" checked={false} indeterminate onChange={vi.fn()} />);
+
+    const checkbox = screen.getByRole("checkbox", { name: "Some items" }) as HTMLInputElement;
+    expect(checkbox.indeterminate).toBe(true);
+    expect(checkbox.disabled).toBe(false);
+  });
+
   it("keeps the plain Field native, labelled, editable, and focusable", () => {
     const onInput = vi.fn();
     render(<Field label="Display name" value="Maya Chen" onInput={onInput} />);

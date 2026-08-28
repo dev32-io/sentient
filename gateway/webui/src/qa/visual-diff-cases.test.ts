@@ -60,6 +60,22 @@ const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--rest",
 ] as const;
 
+const CURRENT_CHECKBOX_CASES = [
+  "checkbox--checked--focus",
+  "checkbox--checked--hover",
+  "checkbox--checked--pressed",
+  "checkbox--checked--rest",
+  "checkbox--disabled--rest",
+  "checkbox--mixed--focus",
+  "checkbox--mixed--hover",
+  "checkbox--mixed--pressed",
+  "checkbox--mixed--rest",
+  "checkbox--unchecked--focus",
+  "checkbox--unchecked--hover",
+  "checkbox--unchecked--pressed",
+  "checkbox--unchecked--rest",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -239,6 +255,76 @@ describe("visual diff component cases", () => {
         caseId: `text-area--filled--${stateId}`,
         componentId: "text-area",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the exact checkbox matrix and native production provenance", () => {
+    const checkbox = visualDiffComponentRegistry.checkbox;
+    expect(checkbox.stateApplicability).toEqual({
+      unchecked: ["focus", "hover", "pressed", "rest"],
+      checked: ["focus", "hover", "pressed", "rest"],
+      mixed: ["focus", "hover", "pressed", "rest"],
+      disabled: ["rest"],
+      "unchecked-to-checked": [
+        "frame-000--0000ms",
+        "frame-001--0050ms",
+        "frame-002--0100ms",
+        "frame-003--0150ms",
+        "frame-004--0250ms",
+      ],
+      "unchecked-to-mixed": [
+        "frame-000--0000ms",
+        "frame-001--0050ms",
+        "frame-002--0100ms",
+        "frame-003--0150ms",
+        "frame-004--0250ms",
+      ],
+    });
+    expect(checkbox.fixtureAdapterId).toBe("checkbox");
+    expect(checkbox.productionComponent).toBe(
+      "gateway/webui/src/components/common/foundation/selection.tsx#CheckboxControl",
+    );
+    expect(checkbox.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(checkbox.variants.mixed.props).toEqual({ label: "Mixed", checked: false, indeterminate: true });
+
+    for (const caseId of CURRENT_CHECKBOX_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("checkbox");
+        expect(resolution.case.fixtureAdapterId).toBe("checkbox");
+      }
+    }
+  });
+
+  it("resolves every approved checkbox recording frame", () => {
+    for (const variantId of ["unchecked-to-checked", "unchecked-to-mixed"]) {
+      for (const stateId of [
+        "frame-000--0000ms",
+        "frame-001--0050ms",
+        "frame-002--0100ms",
+        "frame-003--0150ms",
+        "frame-004--0250ms",
+      ]) {
+        const resolution = resolveVisualDiffCase(`checkbox--${variantId}--${stateId}`);
+        expect(resolution.status).toBe("ready");
+        if (resolution.status === "ready") {
+          expect(resolution.case.variantId).toBe(variantId);
+          expect(resolution.case.stateId).toBe(stateId);
+        }
+      }
+    }
+  });
+
+  it("resolves unapproved checkbox states to missing authority", () => {
+    for (const stateId of ["compact-rest", "hover", "focus", "pressed", "disabled", "selected", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`checkbox--disabled--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `checkbox--disabled--${stateId}`,
+        componentId: "checkbox",
+        variantId: "disabled",
         stateId,
       });
     }

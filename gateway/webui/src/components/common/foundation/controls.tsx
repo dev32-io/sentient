@@ -85,26 +85,6 @@ export function ChipControl({ children, selected = false, disabled, onClick }: C
   return <button type="button" class="snt-chip" aria-pressed={selected} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
-export interface CheckboxControlProps {
-  label: ComponentChildren;
-  checked: boolean;
-  indeterminate?: boolean | undefined;
-  disabled?: boolean | undefined;
-  onChange: (checked: boolean) => void;
-}
-
-export function CheckboxControl({ label, checked, indeterminate, disabled, onChange }: CheckboxControlProps): JSX.Element {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (ref.current) ref.current.indeterminate = Boolean(indeterminate); }, [indeterminate]);
-  return (
-    <label class="snt-checkbox">
-      <input ref={ref} type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.currentTarget.checked)} />
-      <span class="snt-checkbox__box" aria-hidden="true" />
-      <span>{label}</span>
-    </label>
-  );
-}
-
 export interface ProgressControlProps {
   label: string;
   value?: number | undefined;

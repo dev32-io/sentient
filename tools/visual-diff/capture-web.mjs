@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 import { assertDisposableOutput, caseIdFromReference, defaultActualPath, readPngSize } from "./reference-image.mjs";
@@ -14,7 +14,7 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming fields must stay on the exact handoff canvas; the wider
 // frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["text-area", "text-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function usage() {
@@ -120,6 +120,20 @@ async function localFontCss() {
   return rules.join("\n");
 }
 
+function captureCaseId(referencePath) {
+  const frameCaseId = caseIdFromReference(referencePath);
+  const recordingId = basename(dirname(referencePath));
+  if (/^checkbox--unchecked-to-(?:checked|mixed)$/.test(recordingId)) {
+    return `${recordingId}--${frameCaseId}`;
+  }
+  return frameCaseId;
+}
+
+function checkboxTransitionTimeMs(caseId) {
+  const match = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
+  return match ? Number(match[1]) : undefined;
+}
+
 function visualDiffState(caseId) {
   const separator = caseId.lastIndexOf("--");
   if (separator < 0) return undefined;
@@ -131,7 +145,10 @@ async function applyState(page, caseId) {
   const target = page.locator(VISUAL_DIFF_TARGET_SELECTOR);
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
-  if (state === "focus") await target.focus();
+  if (state === "focus") {
+    if (caseId.startsWith("checkbox--")) await page.keyboard.press("Tab");
+    else await target.focus();
+  }
   if (state === "pressed") {
     const box = await target.boundingBox();
     if (!box) throw new Error(`Unable to locate the pressed target for ${caseId}`);
@@ -172,7 +189,8 @@ function captureFrame(caseId, referenceSize) {
 async function capture() {
   const input = parseArguments(process.argv.slice(2));
   await assertDisposableOutput(input.referencePath, input.outputPath, "web");
-  const caseId = caseIdFromReference(input.referencePath);
+  const caseId = captureCaseId(input.referencePath);
+  const transitionTimeMs = checkboxTransitionTimeMs(caseId);
   const referenceSize = await readPngSize(input.referencePath);
   if (referenceSize.width % HANDOFF_SCALE !== 0 || referenceSize.height % HANDOFF_SCALE !== 0) {
     throw new Error(`Reference canvas must be divisible by the handoff ${HANDOFF_SCALE}x scale: ${referenceSize.width}x${referenceSize.height}`);
@@ -190,7 +208,7 @@ async function capture() {
       deviceScaleFactor: HANDOFF_SCALE,
       colorScheme: "dark",
       locale: "en-US",
-      reducedMotion: "reduce",
+      reducedMotion: transitionTimeMs === undefined ? "reduce" : "no-preference",
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
@@ -209,12 +227,22 @@ async function capture() {
         && document.fonts.check('500 12px "JetBrains Mono"', "state");
     });
     await page.waitForFunction(() => document.documentElement.dataset.visualDiffReady === "true");
-    await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
-    await applyState(page, caseId);
+    if (transitionTimeMs === undefined) {
+      await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+      await applyState(page, caseId);
+    } else {
+      await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
+      await page.evaluate(() => {
+        const transitionWindow = window;
+        if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff transition is not ready");
+        transitionWindow.__startVisualDiffTransition();
+      });
+      if (transitionTimeMs > 0) await page.waitForTimeout(transitionTimeMs);
+    }
     await mkdir(dirname(input.outputPath), { recursive: true });
     await page.screenshot({
       path: input.outputPath,
-      animations: "disabled",
+      animations: transitionTimeMs === undefined ? "disabled" : "allow",
       caret: "hide",
       omitBackground: true,
       scale: "device",
