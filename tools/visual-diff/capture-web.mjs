@@ -12,6 +12,9 @@ const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
 const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
+// Non-transforming fields must stay on the exact handoff canvas; the wider
+// frame below is only needed for controls whose hover/press face translates.
+const FIXED_CANVAS_COMPONENTS = new Set(["text-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function usage() {
@@ -143,9 +146,11 @@ function captureFrame(caseId, referenceSize) {
     height: referenceSize.height / HANDOFF_SCALE,
   };
   const compact = caseId.includes("--compact-");
+  const componentId = caseId.split("--", 1)[0];
+  const fixedCanvas = FIXED_CANVAS_COMPONENTS.has(componentId);
   const state = visualDiffState(caseId);
-  const transformOffset = state === "hover" ? -1 : state === "pressed" ? 1 : 0;
-  if (compact) return { viewport: canvas };
+  const transformOffset = fixedCanvas ? 0 : state === "hover" ? -1 : state === "pressed" ? 1 : 0;
+  if (compact || fixedCanvas) return { viewport: canvas };
 
   /* The isolated standard handoff canvases are cropped below the source's
      responsive width. Render above the authoritative 620px query, then crop

@@ -43,6 +43,23 @@ describe("Web foundation controls", () => {
     expect(onCheck).toHaveBeenCalledWith(true);
   });
 
+  it("keeps the plain Field native, labelled, editable, and focusable", () => {
+    const onInput = vi.fn();
+    render(<Field label="Display name" value="Maya Chen" onInput={onInput} />);
+
+    const input = screen.getByRole("textbox", { name: "Display name" });
+    const label = screen.getByText("Display name");
+    expect(input.classList.contains("snt-input")).toBe(true);
+    expect(input.id).not.toBe("");
+    expect((label as HTMLLabelElement).htmlFor).toBe(input.id);
+    expect((input as HTMLInputElement).value).toBe("Maya Chen");
+
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    fireEvent.input(input, { target: { value: "Ada Lovelace" } });
+    expect(onInput).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps Plate semantic and compatible with caller classes", () => {
     render(<Plate className="qa-plate"><span>Plate content</span></Plate>);
     const plate = screen.getByText("Plate content").closest("section");

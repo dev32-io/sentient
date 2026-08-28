@@ -48,6 +48,12 @@ const CURRENT_ICON_BUTTON_CASES = [
 
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
 
+const CURRENT_TEXT_FIELD_CASES = [
+  "text-field--filled--focus",
+  "text-field--filled--hover",
+  "text-field--filled--rest",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -153,6 +159,39 @@ describe("visual diff component cases", () => {
 
     for (const caseId of ["", "action-button", "action-button--default", "action-button--default--"]) {
       expect(resolveVisualDiffCase(caseId)).toEqual({ status: "missing-authority", caseId });
+    }
+  });
+
+  it("registers the exact text-field matrix and canonical Field provenance", () => {
+    const textField = visualDiffComponentRegistry["text-field"];
+    expect(textField.stateApplicability).toEqual({
+      filled: ["focus", "hover", "rest"],
+    });
+    expect(textField.fixtureAdapterId).toBe("text-field");
+    expect(textField.productionComponent).toBe("gateway/webui/src/components/common/foundation/fields.tsx#Field");
+    expect(textField.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(textField.variants.filled.props).toEqual({ label: "Display name", value: "Maya Chen" });
+
+    for (const caseId of CURRENT_TEXT_FIELD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("text-field");
+        expect(resolution.case.fixtureAdapterId).toBe("text-field");
+        expect(resolution.case.props).toEqual({ label: "Display name", value: "Maya Chen" });
+      }
+    }
+  });
+
+  it("resolves unapproved text-field states to missing authority", () => {
+    for (const stateId of ["empty", "error", "disabled", "loading", "pressed", "selected"]) {
+      expect(resolveVisualDiffCase(`text-field--filled--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `text-field--filled--${stateId}`,
+        componentId: "text-field",
+        variantId: "filled",
+        stateId,
+      });
     }
   });
 

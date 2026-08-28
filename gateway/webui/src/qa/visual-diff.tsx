@@ -3,12 +3,13 @@ import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { ActionButton, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
   type ActionButtonVariantProps,
   type IconButtonVariantProps,
   type PlateVariantProps,
+  type TextFieldVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -49,6 +50,20 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
         >
           <Icon name={button.iconName} size={16} />
         </FoundationIconButton>
+      );
+    },
+  },
+  "text-field": {
+    // This adapter deliberately renders the production Field and its native input.
+    render: (fixture) => {
+      const field = fixture.props as TextFieldVariantProps;
+      return (
+        <Field
+          label={field.label}
+          value={field.value}
+          className="visual-diff-text-field"
+          inputClassName="visual-diff-target"
+        />
       );
     },
   },
@@ -127,6 +142,7 @@ style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
   .visual-diff-plate { width: min(360px, 100%); }
+  .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
 `;
 document.head.append(style);
