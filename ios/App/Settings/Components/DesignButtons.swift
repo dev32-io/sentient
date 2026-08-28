@@ -453,6 +453,7 @@ struct DesignCompactButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isFocused) private var focused
+    @Environment(\.colorSchemeContrast) private var contrast
     let pressedScale: CGFloat
     var role: DesignButtonRole = .quiet
     var selected = false
@@ -461,7 +462,10 @@ struct DesignCompactButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
         let raised = hovered && isEnabled
-        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        let shape = RoundedRectangle(
+            cornerRadius: selected ? Radii.sm : DesignMetrics.actionButtonCornerRadius,
+            style: .continuous
+        )
         configuration.label
             .background {
                 if selected {
@@ -472,8 +476,21 @@ struct DesignCompactButtonStyle: ButtonStyle {
             }
             .clipShape(shape)
             .overlay {
-                shape.stroke(
-                    selected || raised ? Color.clear : DuskColors.line,
+                if !selected, let topLight = topLight(pressed: pressed, raised: raised) {
+                    shape
+                        .strokeBorder(topLight, lineWidth: DesignMetrics.hairline)
+                        .mask(
+                            LinearGradient(
+                                colors: [.white, .clear, .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+            }
+            .overlay {
+                shape.strokeBorder(
+                    selected ? Color.clear : border(raised: raised),
                     lineWidth: DesignMetrics.hairline
                 )
             }
@@ -498,30 +515,31 @@ struct DesignCompactButtonStyle: ButtonStyle {
                     } else {
                         DesignSpreadShadow(
                             shape: shape,
-                            color: .black.opacity(
-                                isEnabled
-                                    ? pressed
-                                        ? DesignMaterialAdapter.slatePressedBlack
-                                        : raised
-                                            ? DesignMaterialAdapter.slateHoverBlack
-                                            : DesignMaterialAdapter.slateRestBlack
-                                    : DesignMaterialAdapter.slateDisabledBlack
-                            ),
-                            geometry: !isEnabled
-                                ? DesignMaterialShadowGeometry.slateDisabled
-                                : pressed
-                                    ? DesignMaterialShadowGeometry.slatePressed
-                                    : raised
-                                        ? DesignMaterialShadowGeometry.slateHover
-                                        : DesignMaterialShadowGeometry.slateRest
+                            color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                            geometry: castGeometry(pressed: pressed, raised: raised)
                         )
+                        if glowOpacity(pressed: pressed) > 0 {
+                            DesignSpreadShadow(
+                                shape: shape,
+                                color: glow.opacity(glowOpacity(pressed: pressed)),
+                                geometry: glowGeometry(raised: raised)
+                            )
+                        }
                     }
                     DesignSpreadShadow(
                         shape: shape,
-                        color: DuskColors.bgSunk.opacity(0.88),
+                        color: selected
+                            ? DuskColors.bgSunk.opacity(0.88)
+                            : contact(pressed: pressed, hovered: raised),
                         geometry: DesignDropShadowGeometry(
                             radius: 0,
-                            y: selected ? 1 : 2,
+                            y: selected
+                                ? 1
+                                : !isEnabled
+                                    ? DesignMaterialAdapter.slateDisabledContactY
+                                    : pressed
+                                        ? 1
+                                        : DesignMaterialAdapter.slateContactY,
                             sourceInset: 1
                         )
                     )
@@ -530,7 +548,113 @@ struct DesignCompactButtonStyle: ButtonStyle {
             .scaleEffect(pressed && !reduceMotion ? pressedScale : 1)
             .offset(y: selected ? (pressed ? 2 : 1) : (pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0))
             .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
+            .animation(
+                DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+                value: raised
+            )
             // Keep press feedback discrete; an interpolated shadow delays the
             // visual response of compact touch controls.
+    }
+
+    private func castBlack(pressed: Bool, raised: Bool) -> Double {
+        if !isEnabled { return DesignMaterialAdapter.slateDisabledBlack }
+        if pressed { return DesignMaterialAdapter.slatePressedBlack }
+        if raised { return DesignMaterialAdapter.slateHoverBlack }
+        return role == .action ? DesignMaterialAdapter.slateActionRestBlack : DesignMaterialAdapter.slateRestBlack
+    }
+
+    private func castGeometry(pressed: Bool, raised: Bool) -> DesignDropShadowGeometry {
+        if !isEnabled { return DesignMaterialShadowGeometry.slateDisabled }
+        if pressed { return DesignMaterialShadowGeometry.slatePressed }
+        return raised ? DesignMaterialShadowGeometry.slateHover : DesignMaterialShadowGeometry.slateRest
+    }
+
+    private func glowOpacity(pressed: Bool) -> Double {
+        guard isEnabled, !pressed else { return 0 }
+        return switch role {
+        case .action: DesignMaterialAdapter.slateActionGlow
+        case .secondary: DesignMaterialAdapter.slateSecondaryGlow
+        case .destructive: DesignMaterialAdapter.slateDestructiveGlow
+        case .quiet: DesignMaterialAdapter.slateQuietGlow
+        }
+    }
+
+    private func glowGeometry(raised: Bool) -> DesignDropShadowGeometry {
+        if raised {
+            return role == .destructive
+                ? DesignMaterialShadowGeometry.slateDestructiveHoverGlow
+                : DesignMaterialShadowGeometry.slateHoverGlow
+        }
+        switch role {
+        case .action: return DesignMaterialShadowGeometry.slateActionGlow
+        case .destructive: return DesignMaterialShadowGeometry.slateDestructiveGlow
+        case .secondary, .quiet: return DesignMaterialShadowGeometry.slateGlow
+        }
+    }
+
+    private func topLight(pressed: Bool, raised: Bool) -> Color? {
+        guard !pressed else { return nil }
+        if !isEnabled { return DuskColors.ink.opacity(DesignMaterialAdapter.slateDisabledTopLight) }
+        if raised {
+            return role == .destructive
+                ? .white.opacity(DesignMaterialAdapter.slateDestructiveHoverTopLight)
+                : DuskColors.ink.opacity(DesignMaterialAdapter.slateHoverTopLight)
+        }
+        switch role {
+        case .action: return .white.opacity(DesignMaterialAdapter.slateActionTopLight)
+        case .destructive: return .white.opacity(DesignMaterialAdapter.slateDestructiveTopLight)
+        case .secondary, .quiet: return DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
+        }
+    }
+
+    private func border(raised: Bool) -> Color {
+        if !isEnabled {
+            return DuskColors.lineSoft.overlaying(
+                DuskColors.bg,
+                opacity: 1 - DesignMaterialAdapter.slateDisabledBorder
+            )
+        }
+        if raised { return .clear }
+        if contrast == .increased { return DuskColors.ink3 }
+        return switch role {
+        case .action:
+            DuskColors.accent.overlaying(
+                DuskColors.bgSunk,
+                opacity: 1 - DesignMaterialAdapter.slateActionBorder
+            )
+        case .secondary: DuskColors.line
+        case .quiet:
+            DuskColors.lineSoft.overlaying(
+                DuskColors.bg,
+                opacity: DesignMaterialAdapter.slateQuietBorderBackgroundMix
+            )
+        case .destructive:
+            DuskColors.stop.overlaying(
+                DuskColors.line,
+                opacity: 1 - DesignMaterialAdapter.slateDestructiveBorder
+            )
+        }
+    }
+
+    private var glow: Color { role == .destructive ? DuskColors.stop : DuskColors.accent }
+
+    private func contact(pressed: Bool, hovered: Bool) -> Color {
+        if !isEnabled {
+            return DuskColors.bgSunk.overlaying(
+                DuskColors.line,
+                opacity: DesignMaterialAdapter.slateDisabledContactMix
+            )
+        }
+        if pressed { return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10) }
+        if hovered {
+            return role == .destructive
+                ? DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.46)
+                : DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.10)
+        }
+        switch role {
+        case .action: return DuskColors.bgSunk.overlaying(DuskColors.accent, opacity: 0.22)
+        case .secondary, .quiet: return DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12)
+        case .destructive: return DuskColors.bgSunk.overlaying(DuskColors.stop, opacity: 0.38)
+        }
     }
 }
