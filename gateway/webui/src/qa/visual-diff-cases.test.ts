@@ -54,6 +54,12 @@ const CURRENT_TEXT_FIELD_CASES = [
   "text-field--filled--rest",
 ] as const;
 
+const CURRENT_TEXT_AREA_CASES = [
+  "text-area--filled--focus",
+  "text-area--filled--hover",
+  "text-area--filled--rest",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -189,6 +195,49 @@ describe("visual diff component cases", () => {
         status: "missing-authority",
         caseId: `text-field--filled--${stateId}`,
         componentId: "text-field",
+        variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the exact text-area matrix and canonical TextArea provenance", () => {
+    const textArea = visualDiffComponentRegistry["text-area"];
+    expect(textArea.stateApplicability).toEqual({
+      filled: ["focus", "hover", "rest"],
+    });
+    expect(textArea.fixtureAdapterId).toBe("text-area");
+    expect(textArea.productionComponent).toBe("gateway/webui/src/components/common/foundation/fields.tsx#TextArea");
+    expect(textArea.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(textArea.variants.filled.props).toEqual({ label: "Description", value: "Add supporting details." });
+
+    for (const caseId of CURRENT_TEXT_AREA_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("text-area");
+        expect(resolution.case.fixtureAdapterId).toBe("text-area");
+        expect(resolution.case.props).toEqual({ label: "Description", value: "Add supporting details." });
+      }
+    }
+  });
+
+  it("resolves unapproved text-area states to missing authority", () => {
+    for (const stateId of [
+      "empty",
+      "placeholder",
+      "error",
+      "disabled",
+      "dirty",
+      "mono",
+      "loading",
+      "pressed",
+      "selected",
+    ]) {
+      expect(resolveVisualDiffCase(`text-area--filled--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `text-area--filled--${stateId}`,
+        componentId: "text-area",
         variantId: "filled",
         stateId,
       });

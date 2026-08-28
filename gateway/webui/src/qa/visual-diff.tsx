@@ -4,11 +4,13 @@ import { useEffect } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import { ActionButton, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
   type ActionButtonVariantProps,
   type IconButtonVariantProps,
   type PlateVariantProps,
+  type TextAreaVariantProps,
   type TextFieldVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
@@ -62,6 +64,20 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
           label={field.label}
           value={field.value}
           className="visual-diff-text-field"
+          inputClassName="visual-diff-target"
+        />
+      );
+    },
+  },
+  "text-area": {
+    // This adapter deliberately renders the production TextArea and its native textarea.
+    render: (fixture) => {
+      const field = fixture.props as TextAreaVariantProps;
+      return (
+        <TextArea
+          label={field.label}
+          value={field.value}
+          className="visual-diff-text-area"
           inputClassName="visual-diff-target"
         />
       );
@@ -143,6 +159,7 @@ style.textContent = `
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-text-field { width: min(320px, 100%); }
+  .visual-diff-text-area { width: min(320px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
 `;
 document.head.append(style);

@@ -81,6 +81,13 @@ export interface TextFieldVariantProps {
 
 type TextFieldVariantDefinition = VisualDiffVariantDefinition<TextFieldVariantProps>;
 
+export interface TextAreaVariantProps {
+  readonly label: string;
+  readonly value: string;
+}
+
+type TextAreaVariantDefinition = VisualDiffVariantDefinition<TextAreaVariantProps>;
+
 const ACTION_BUTTON_VARIANTS = {
   primary: { props: { variant: "primary", label: "Allow once" } },
   secondary: { props: { variant: "default", label: "Always allow" } },
@@ -97,6 +104,10 @@ const ICON_BUTTON_VARIANTS = {
 const TEXT_FIELD_VARIANTS = {
   filled: { props: { label: "Display name", value: "Maya Chen" } },
 } as const satisfies Readonly<Record<string, TextFieldVariantDefinition>>;
+
+const TEXT_AREA_VARIANTS = {
+  filled: { props: { label: "Description", value: "Add supporting details." } },
+} as const satisfies Readonly<Record<string, TextAreaVariantDefinition>>;
 
 export interface PlateVariantProps {
   readonly variant: "default";
@@ -144,6 +155,16 @@ export const visualDiffComponentRegistry = {
       filled: ["focus", "hover", "rest"],
     },
   },
+  "text-area": {
+    id: "text-area",
+    fixtureAdapterId: "text-area",
+    productionComponent: "gateway/webui/src/components/common/foundation/fields.tsx#TextArea",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: TEXT_AREA_VARIANTS,
+    stateApplicability: {
+      filled: ["focus", "hover", "rest"],
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -158,7 +179,12 @@ export const visualDiffComponentRegistry = {
 
 // These components have no authority for states outside their approved handoff
 // matrix. Keep action-button's established unsupported-state result unchanged.
-const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set(["icon-button", "plate", "text-field"]);
+const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
+  "icon-button",
+  "plate",
+  "text-field",
+  "text-area",
+]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
   if (!Object.hasOwn(record, key)) return undefined;

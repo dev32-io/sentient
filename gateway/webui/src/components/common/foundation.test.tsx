@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
-import { ActionButton, CheckboxControl, Field, Plate, SelectControl, TextField, ToggleControl } from "./foundation.tsx";
+import { ActionButton, CheckboxControl, Field, Plate, SelectControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -57,6 +57,40 @@ describe("Web foundation controls", () => {
     input.focus();
     expect(document.activeElement).toBe(input);
     fireEvent.input(input, { target: { value: "Ada Lovelace" } });
+    expect(onInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps TextArea native, labelled, multiline, and stateful", () => {
+    const onInput = vi.fn();
+    render(<TextArea
+      label="Description"
+      hint="Supporting details"
+      error="Required"
+      value="Add supporting details."
+      rows={5}
+      monospace
+      dirty
+      onInput={onInput}
+    />);
+
+    const textarea = screen.getByRole("textbox", { name: "Description" });
+    const label = screen.getByText("Description");
+    expect(textarea.tagName).toBe("TEXTAREA");
+    expect(textarea.id).not.toBe("");
+    expect((label as HTMLLabelElement).htmlFor).toBe(textarea.id);
+    expect((textarea as HTMLTextAreaElement).value).toBe("Add supporting details.");
+    expect((textarea as HTMLTextAreaElement).rows).toBe(5);
+    expect(textarea.getAttribute("aria-describedby")).toContain(`${textarea.id}-hint`);
+    expect(textarea.getAttribute("aria-describedby")).toContain(`${textarea.id}-error`);
+    expect(textarea.getAttribute("aria-invalid")).toBe("true");
+    expect(textarea.classList.contains("snt-textarea")).toBe(true);
+    expect(textarea.classList.contains("snt-textarea--mono")).toBe(true);
+    expect(textarea.classList.contains("snt-textarea--dirty")).toBe(true);
+    expect(textarea.getAttribute("data-dirty")).toBe("true");
+
+    textarea.focus();
+    expect(document.activeElement).toBe(textarea);
+    fireEvent.input(textarea, { target: { value: "Updated details." } });
     expect(onInput).toHaveBeenCalledTimes(1);
   });
 

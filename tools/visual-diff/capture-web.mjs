@@ -14,7 +14,7 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming fields must stay on the exact handoff canvas; the wider
 // frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["text-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["text-area", "text-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function usage() {
