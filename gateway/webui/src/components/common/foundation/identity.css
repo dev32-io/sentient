@@ -1,0 +1,81 @@
+/* Identity is a leaf primitive. User initials sit on a quiet Dusk surface;
+   Sentient artwork and internal motion remain owned by the canonical SVGs. */
+.snt-avatar {
+  --avatar-size: 28px;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  flex: 0 0 var(--avatar-size);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 50%;
+  background: var(--color-bg-elev);
+  color: var(--color-ink-2);
+  font: 600 calc(var(--avatar-size) * .42) / 1 var(--font-display);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-ink) 5%, transparent), 0 4px 8px -7px rgba(0, 0, 0, .86);
+}
+.snt-avatar--sm { --avatar-size: 28px; }
+.snt-avatar--lg { --avatar-size: 44px; }
+.snt-avatar--xl { --avatar-size: 56px; }
+.snt-avatar--user {
+  --avatar-accent: var(--color-accent);
+  --slate-base: color-mix(in oklab, var(--color-paper) 82%, var(--color-accent-soft));
+  --slate-border: color-mix(in oklab, var(--color-bg-sunk) 78%, var(--avatar-accent));
+  --slate-glow: var(--avatar-accent);
+  --avatar-face:
+    radial-gradient(
+      circle at 50% 54%,
+      color-mix(in oklab, var(--slate-base) 72%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--slate-base) 82%, var(--color-bg-sunk)) 48%,
+      var(--slate-base) 70%,
+      color-mix(in oklab, var(--color-bg-sunk) 90%, var(--avatar-accent)) 100%
+    );
+  border-color: transparent;
+  background: var(--avatar-face);
+  color: var(--avatar-accent);
+  box-shadow:
+    0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 96%, var(--avatar-accent)),
+    0 9px 13px -8px rgba(0, 0, 0, .98),
+    0 13px 19px -15px color-mix(in oklab, var(--avatar-accent) 40%, transparent);
+}
+.snt-avatar--terra {
+  --avatar-accent: var(--color-accent);
+  --slate-base: color-mix(in oklab, var(--color-paper) 82%, var(--color-accent-soft));
+}
+.snt-avatar--sage {
+  --avatar-accent: var(--color-sage);
+  --slate-base: color-mix(in oklab, var(--color-paper) 82%, var(--color-sage-soft));
+}
+.snt-avatar--amber {
+  --avatar-accent: var(--color-amber);
+  --slate-base: color-mix(in oklab, var(--color-paper) 84%, var(--color-amber));
+}
+.snt-avatar--clay {
+  --avatar-accent: var(--color-clay);
+  --slate-base: color-mix(in oklab, var(--color-paper) 80%, var(--color-clay));
+}
+.snt-avatar--fallback {
+  --avatar-accent: var(--color-ink-3);
+  --slate-base: color-mix(in oklab, var(--color-paper) 86%, var(--color-bg-elev));
+  --slate-border: var(--color-line-soft);
+}
+.snt-avatar--selected {
+  box-shadow:
+    0 2px 0 -1px color-mix(in oklab, var(--color-bg-sunk) 94%, var(--slate-border)),
+    0 8px 12px -8px rgba(0, 0, 0, .96),
+    0 0 0 2px var(--color-paper),
+    0 0 0 4px var(--avatar-accent),
+    0 0 17px -5px var(--avatar-accent);
+}
+.snt-avatar[aria-disabled="true"] {
+  border-color: color-mix(in oklab, var(--color-line-soft) 74%, var(--color-bg));
+  background: var(--slate-face-muted);
+  color: var(--color-ink-4);
+  box-shadow: var(--slate-shadow-disabled);
+  filter: saturate(.35);
+  opacity: .58;
+}
+.snt-avatar--sentient { padding: 0; border-color: transparent; background: transparent; box-shadow: none; color: transparent; }
+.snt-avatar--sentient sentient-avatar { --sentient-avatar-size: 100%; width: 100%; height: 100%; }

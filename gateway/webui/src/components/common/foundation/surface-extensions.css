@@ -1,0 +1,6 @@
+.snt-well { border: 1px solid var(--color-line); border-radius: var(--radius-sm); background: var(--well-face); box-shadow: var(--well-shadow); }
+.snt-pin { margin: 0; padding: 0; border: 0; }
+.sentient-identity { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; }
+.sentient-identity__canvas, .sentient-identity__fallback { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.sentient-identity__fallback { object-fit: contain; }
+.snt-float { box-shadow: var(--float-shadow); }

@@ -1,0 +1,77 @@
+/* Recessed receiving surfaces. */
+.snt-field { display: grid; gap: 7px; min-width: 0; }
+.snt-field__label { color: var(--color-ink); font-size: 14px; font-weight: 500; }
+.snt-field__hint { color: var(--color-ink-2); font-size: var(--font-size-sm); }
+.snt-input,
+.snt-textarea {
+  width: 100%;
+  min-height: 40px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--well-face);
+  color: var(--color-ink);
+  font-size: var(--font-size-base);
+  box-shadow: var(--well-shadow);
+  transition: border-color var(--motion-feedback), box-shadow var(--motion-state), background var(--motion-feedback);
+}
+.snt-textarea { min-height: 104px; resize: vertical; line-height: var(--line-height-normal); }
+.snt-textarea--mono { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.snt-textarea--dirty { border-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-line)); }
+.snt-input::placeholder,
+.snt-textarea::placeholder { color: var(--color-ink-3); }
+@media (hover: hover) and (pointer: fine) {
+  .snt-input:hover,
+  .snt-textarea:hover {
+    border-color: transparent;
+    box-shadow: var(--well-shadow), 0 10px 18px -15px color-mix(in oklab, var(--color-accent) 46%, transparent);
+  }
+}
+.snt-input:focus,
+.snt-textarea:focus {
+  border-color: color-mix(in oklab, var(--color-accent) 56%, var(--color-line));
+  background: var(--well-face);
+  box-shadow: var(--well-shadow-focus);
+}
+.snt-field--full { width: 100%; }
+.snt-input-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 40px;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  transition: border-color var(--motion-feedback), box-shadow var(--motion-state), background var(--motion-feedback);
+}
+.snt-input-group:focus-within {
+  border-color: color-mix(in oklab, var(--color-accent) 56%, var(--color-line));
+  box-shadow: var(--well-shadow-focus);
+}
+.snt-input-group__prefix,
+.snt-input-group__suffix {
+  flex: 0 0 auto;
+  color: var(--color-ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+.snt-input-group__input {
+  min-width: 0;
+  min-height: 38px;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+}
+.snt-input-group--mono .snt-input-group__input { font-family: var(--font-mono); font-size: var(--font-size-sm); }
+.snt-input-group__input::placeholder { color: var(--color-ink-3); }
+.snt-input-group[data-error="true"],
+.snt-field[data-error="true"] .snt-input-group { border-color: var(--color-stop); }
+.snt-input-group__input:disabled { color: var(--color-ink-4); cursor: not-allowed; opacity: .62; }

@@ -1,0 +1,4 @@
+.snt-search { position: relative; display: flex; flex: 1 1 220px; min-width: 0; }
+.snt-search .snt-input { padding-left: 38px; }
+.snt-search__icon { position: absolute; z-index: 1; left: 13px; top: 50%; color: var(--color-ink-3); pointer-events: none; transform: translateY(-50%); }
+.snt-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); min-width: 0; }

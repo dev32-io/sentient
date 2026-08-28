@@ -1,0 +1,5 @@
+.snt-progress { width: 100%; height: 8px; overflow: hidden; border: 0; border-radius: var(--radius-pill); appearance: none; background: var(--well-face); box-shadow: var(--well-shadow); }
+.snt-progress::-webkit-progress-bar { background: var(--well-face); }
+.snt-progress::-webkit-progress-value { border-radius: inherit; background: var(--color-accent); }
+.snt-progress::-moz-progress-bar { border-radius: inherit; background: var(--color-accent); }
+.snt-divider { width: 100%; height: 1px; margin: var(--space-md) 0; border: 0; background: var(--color-line-soft); }

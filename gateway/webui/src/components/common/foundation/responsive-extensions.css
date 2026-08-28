@@ -1,0 +1,12 @@
+@media (hover: none), (pointer: coarse) {
+  .snt-input, .snt-textarea, .snt-select, .snt-toggle, .snt-chip, .snt-secret__reveal { min-height: 44px; }
+  .snt-toggle { width: 48px; }
+}
+@media (max-width: 620px) {
+  .snt-page { padding: var(--space-lg); }
+  .snt-page-head { align-items: stretch; flex-direction: column; }
+  .snt-settings-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
+  .snt-settings-row > :last-child { width: 100%; }
+  .snt-action-row { justify-content: stretch; }
+  .snt-action-row > * { flex: 1 1 auto; }
+}
