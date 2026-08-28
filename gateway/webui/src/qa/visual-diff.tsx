@@ -3,9 +3,10 @@ import type { JSX } from "preact";
 import { useEffect } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton } from "../components/common/foundation.tsx";
+import { ActionButton, Plate } from "../components/common/foundation.tsx";
 import {
   type ActionButtonVariantProps,
+  type PlateVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -28,6 +29,26 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
         <ActionButton variant={button.variant} disabled={disabled} className="visual-diff-target">
           {disabled ? "Unavailable" : button.label}
         </ActionButton>
+      );
+    },
+  },
+  "plate": {
+    // This adapter deliberately renders the production Plate and its public anatomy.
+    render: (fixture) => {
+      const plate = fixture.props as PlateVariantProps;
+      if (plate.variant !== "default") throw new Error(`Unsupported plate variant: ${plate.variant}`);
+      return (
+        <Plate className="visual-diff-target visual-diff-plate">
+          <header class="snt-plate__head">
+            <div>
+              <h3 class="snt-card-title">Foundation plate</h3>
+              <p class="snt-card-subtitle">Stable low-elevation surface.</p>
+            </div>
+          </header>
+          <div class="snt-plate__body">
+            <p class="visual-diff-plate__copy">Grouped content rests on a quiet slate.</p>
+          </div>
+        </Plate>
       );
     },
   },
@@ -85,6 +106,8 @@ const style = document.createElement("style");
 style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
+  .visual-diff-plate { width: min(360px, 100%); }
+  .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
 `;
 document.head.append(style);
 

@@ -26,7 +26,9 @@ const CURRENT_ACTION_BUTTON_CASES = [
   "action-button--secondary--rest",
 ] as const;
 
-describe("visual diff action-button cases", () => {
+const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
+
+describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
       variant: "default",
@@ -75,6 +77,37 @@ describe("visual diff action-button cases", () => {
       variantId: "default",
       stateId: "rest",
     });
+  });
+
+  it("registers only the approved plate rest cases and production provenance", () => {
+    const plate = visualDiffComponentRegistry.plate;
+    expect(plate.fixtureAdapterId).toBe("plate");
+    expect(plate.productionComponent).toBe("gateway/webui/src/components/common/foundation/surfaces.tsx#Plate");
+    expect(plate.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(plate.stateApplicability).toEqual({ default: ["compact-rest", "rest"] });
+
+    for (const caseId of CURRENT_PLATE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("plate");
+        expect(resolution.case.fixtureAdapterId).toBe("plate");
+        expect(resolution.case.props).toEqual({ variant: "default" });
+      }
+    }
+  });
+
+  it("keeps unapproved plate interaction states unsupported", () => {
+    for (const stateId of ["hover", "focus", "pressed", "selected", "elevated", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`plate--default--${stateId}`)).toEqual({
+        status: "unsupported",
+        caseId: `plate--default--${stateId}`,
+        componentId: "plate",
+        variantId: "default",
+        stateId,
+        reason: "state",
+      });
+    }
   });
 
   it("does not resolve inherited registry keys", () => {

@@ -71,6 +71,16 @@ const ACTION_BUTTON_VARIANTS = {
   destructive: { props: { variant: "destructive", label: "Stop" } },
 } as const satisfies Readonly<Record<string, ActionButtonVariantDefinition>>;
 
+export interface PlateVariantProps {
+  readonly variant: "default";
+}
+
+type PlateVariantDefinition = VisualDiffVariantDefinition<PlateVariantProps>;
+
+const PLATE_VARIANTS = {
+  default: { props: { variant: "default" } },
+} as const satisfies Readonly<Record<string, PlateVariantDefinition>>;
+
 export const visualDiffComponentRegistry = {
   "action-button": {
     id: "action-button",
@@ -83,6 +93,16 @@ export const visualDiffComponentRegistry = {
       secondary: ["compact-disabled", "compact-rest", "disabled", "focus", "hover", "pressed", "rest"],
       quiet: ["compact-rest", "focus", "hover", "pressed", "rest"],
       destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
+    },
+  },
+  plate: {
+    id: "plate",
+    fixtureAdapterId: "plate",
+    productionComponent: "gateway/webui/src/components/common/foundation/surfaces.tsx#Plate",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: PLATE_VARIANTS,
+    stateApplicability: {
+      default: ["compact-rest", "rest"],
     },
   },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;

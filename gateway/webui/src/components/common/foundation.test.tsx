@@ -1,14 +1,24 @@
 import { fireEvent, render, screen } from "@testing-library/preact";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
-import { ActionButton, CheckboxControl, Field, SelectControl, TextField, ToggleControl } from "./foundation.tsx";
+import { ActionButton, CheckboxControl, Field, Plate, SelectControl, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
+
+const FOUNDATION_ENTRY_PATH = resolve(process.cwd(), "src/components/common/foundation.css");
+
+function readFoundationEntry(): string {
+  return readFileSync(FOUNDATION_ENTRY_PATH, "utf8");
+}
+
+function readFoundationCss(): string {
+  return readFoundationEntry().replace(/@import\s+["']([^"']+)["'];?/g, (_, importPath: string) => readFileSync(resolve(dirname(FOUNDATION_ENTRY_PATH), importPath), "utf8"));
+}
 
 describe("Web foundation controls", () => {
   it("uses native semantics for fields, selects, switches, and checkboxes", () => {
@@ -31,6 +41,13 @@ describe("Web foundation controls", () => {
     expect(onToggle).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByRole("checkbox", { name: "Remember me" }));
     expect(onCheck).toHaveBeenCalledWith(true);
+  });
+
+  it("keeps Plate semantic and compatible with caller classes", () => {
+    render(<Plate className="qa-plate"><span>Plate content</span></Plate>);
+    const plate = screen.getByText("Plate content").closest("section");
+    expect(plate).not.toBeNull();
+    expect(plate?.className).toBe("snt-plate qa-plate");
   });
 
   it("exposes loading and disabled action states without changing its label", () => {
@@ -57,8 +74,30 @@ describe("Web foundation controls", () => {
     expect(screen.getByRole("searchbox", { name: "Search" })).toBeTruthy();
   });
 
+  it("keeps focused stylesheets in their compatibility cascade order", () => {
+    const imports = [...readFoundationEntry().matchAll(/@import\s+["']([^"']+)["'];?/g)].map((match) => match[1]);
+    expect(imports).toEqual([
+      "./foundation/surfaces.css",
+      "./foundation/buttons.css",
+      "./foundation/fields.css",
+      "./foundation/controls.css",
+      "./foundation/identity.css",
+      "./foundation/responsive.css",
+      "./foundation/extensions.css",
+      "./foundation/fields-extensions.css",
+      "./foundation/controls-extensions.css",
+      "./foundation/compositions.css",
+      "./foundation/search.css",
+      "./foundation/status.css",
+      "./foundation/responsive-extensions.css",
+      "./foundation/surface-extensions.css",
+      "./foundation/select-menu.css",
+      "./foundation/focus.css",
+    ]);
+  });
+
   it("pins coarse-pointer targets, narrow reflow, Reduced Motion, and generated material recipes", () => {
-    const css = readFileSync(resolve(process.cwd(), "src/components/common/foundation.css"), "utf8");
+    const css = readFoundationCss();
     expect(css).toContain("(pointer: coarse)");
     expect(css).toMatch(/min-height:\s*44px/);
     expect(css).toContain("@media (max-width: 620px)");
