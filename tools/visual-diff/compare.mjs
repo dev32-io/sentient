@@ -4,6 +4,12 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { defaultActualPath } from "./reference-image.mjs";
 
+const PLATFORM_THRESHOLDS = Object.freeze({
+  web: 0.04,
+  ios: 0.04,
+  android: 0.04,
+});
+
 function usage() {
   return "Usage: compare --platform <web|ios|android> --reference <png>";
 }
@@ -119,8 +125,13 @@ if (input) {
       ? ["node", ["tools/visual-diff/capture-web.mjs", "--reference", input.referencePath, "--output", actualPath]]
       : ["bash", [`scripts/design/capture-${input.platform}-visual-diff.sh`, input.referencePath, actualPath]];
     const captureExit = await run(capture[0], capture[1]);
-    const diffArguments = ["tools/visual-diff/visual-diff.mjs", input.referencePath, actualPath];
-    if (input.platform === "android") diffArguments.push("--background", "#2B2621");
+    const diffArguments = [
+      "tools/visual-diff/visual-diff.mjs",
+      input.referencePath,
+      actualPath,
+      "--threshold",
+      String(PLATFORM_THRESHOLDS[input.platform]),
+    ];
     process.exitCode = captureExit === 0
       ? await run("node", diffArguments)
       : captureExit;

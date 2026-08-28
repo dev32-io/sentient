@@ -35,7 +35,7 @@ bun run visual:android:capture -- "$android_reference"
 bun run visual:diff -- "$android_reference" build/visual-captures/android/action-button--destructive--rest.png --background '#2B2621'
 ```
 
-Designer references are immutable inputs under `design/prototype/**/handoff/`. Actual images and diff artifacts are restricted to `build/visual-captures/`. The handoff currently emits transparent 2x canvases; platform fixtures must preserve the reference pixel dimensions and must not resize images merely to satisfy the comparator. Android's preview renderer emits an opaque canvas, so the Android adapter deliberately composites both images on canonical Dusk (`#2B2621`) before ODiff.
+Designer references are immutable inputs under `design/prototype/**/handoff/`. Actual images and diff artifacts are restricted to `build/visual-captures/`. The handoff currently emits transparent 2x canvases; platform fixtures must preserve the reference pixel dimensions and must not resize images merely to satisfy the comparator. By default every platform is composited on canonical Dusk (`#2B2621`) before ODiff, and the reported percentage is normalized by the union of non-transparent reference and actual pixels. Transparent canvas padding therefore cannot dilute the score.
 
 The iOS adapter requires exactly one booted iPhone 16 simulator by default. Set `VISUAL_DIFF_IOS_DESTINATION` to an explicit **iOS Simulator** destination when a different pinned simulator is intentional. `VISUAL_DIFF_TIMEOUT_MS` controls the agent wrapper's bounded capture timeout (default: 20 minutes).
 
@@ -54,16 +54,17 @@ node tools/visual-diff/visual-diff.mjs \
 
 The command writes compact JSON to stdout and, when pixels differ, writes `<actual-name>.visual-diff.png` beside the actual image.
 
-For tolerant comparison or a verification gate:
+For a reviewed verification gate:
 
 ```bash
 node tools/visual-diff/visual-diff.mjs reference.png actual.png \
-  --threshold 0.1 \
   --max-diff-percentage 1 \
   --diff build/visual-captures/diffs/action-button.diff.png
 ```
 
-- `--threshold` controls ODiff's per-pixel color tolerance.
+- The initial reviewed ODiff per-pixel threshold is `0.04` on Web, iOS, and Android; differences above it are counted after anti-alias detection. Platform wrappers pass their own profile explicitly so the thresholds can diverge after visual calibration. A diagnostic can override it with `--threshold`.
+- Both images are composited on canonical Dusk by default; `--background` selects another reviewed opaque canvas.
+- `diffPercentage` is `diffCount / visiblePixelCount`, where visible pixels are the alpha union of the original inputs. `canvasDiffPercentage` preserves ODiff's whole-canvas result for diagnostics.
 - Anti-aliased pixels are ignored by default; pass `--count-antialiasing` to include them.
 - Without `--max-diff-percentage`, a completed comparison is report-only and exits `0` even when differences are reported.
 - With `--max-diff-percentage`, exceeding the limit or encountering a layout mismatch exits `1`.

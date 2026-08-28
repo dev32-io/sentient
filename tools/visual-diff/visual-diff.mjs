@@ -4,20 +4,27 @@ import { lstat, mkdir, mkdtemp, realpath, rm, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { compositePng, parseHexColor } from "./image-background.mjs";
+import { compositePng, measureVisibleAlphaUnion, parseHexColor } from "./image-background.mjs";
+
+const DEFAULT_BACKGROUND = "#2B2621";
+const DEFAULT_THRESHOLD = 0.04;
 
 const USAGE = `Usage: visual-diff <reference-image> <actual-image> [options]
 
 Options:
   --diff <path>                 Diff PNG output path. Defaults beside the actual image.
-  --threshold <0..1>            Per-pixel color tolerance passed to ODiff. Default: 0.1.
+  --threshold <0..1>            Per-pixel color tolerance passed to ODiff. Default: 0.04.
   --max-diff-percentage <0..100>
-                                Exit 1 when changed pixels exceed this percentage.
+                                Exit 1 when changed visible pixels exceed this percentage.
                                 Without this option, comparison is report-only.
   --count-antialiasing          Count detected anti-aliased pixels as differences.
-  --background <#RRGGBB>        Composite both images on one reviewed opaque canvas.
+  --background <#RRGGBB>        Reviewed opaque canvas. Default: canonical Dusk (#2B2621).
   -h, --help                    Show this help.
 
+Images are compared on the selected background with anti-aliasing ignored by
+default. Remaining color differences above the reviewed 0.04 tolerance are counted.
+The reported percentage uses the union of non-transparent input pixels
+as its denominator, so transparent canvas padding cannot dilute the result.
 The command writes one compact JSON report to stdout. Invocation, decode, and
 filesystem errors exit 2. A valid report exits 0 unless --max-diff-percentage
 is supplied and exceeded.`;
@@ -40,10 +47,10 @@ export function parseArguments(argv) {
 	if (argv.includes("--help") || argv.includes("-h")) return { help: true };
 	const positional = [];
 	let diffPath;
-	let threshold = 0.1;
+	let threshold = DEFAULT_THRESHOLD;
 	let maxDiffPercentage;
 	let antialiasing = true;
-	let background;
+	let background = DEFAULT_BACKGROUND;
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const argument = argv[index];
@@ -136,18 +143,16 @@ export async function runVisualDiff(argv, dependencies = {}) {
 		}
 		await unlink(input.diffPath).catch(() => {});
 		const compare = dependencies.compare ?? (await import("odiff-bin")).compare;
-		let comparedReference = input.referencePath;
-		let comparedActual = input.actualPath;
-		if (input.background) {
-			temporaryDirectory = await mkdtemp(join(tmpdir(), "sentient-visual-diff-"));
-			comparedReference = join(temporaryDirectory, "reference.png");
-			comparedActual = join(temporaryDirectory, "actual.png");
-			const color = parseHexColor(input.background);
-			await Promise.all([
-				compositePng(input.referencePath, comparedReference, color),
-				compositePng(input.actualPath, comparedActual, color),
-			]);
-		}
+		const compositeImage = dependencies.compositeImage ?? compositePng;
+		const measureVisiblePixels = dependencies.measureVisiblePixels ?? measureVisibleAlphaUnion;
+		temporaryDirectory = await mkdtemp(join(tmpdir(), "sentient-visual-diff-"));
+		const comparedReference = join(temporaryDirectory, "reference.png");
+		const comparedActual = join(temporaryDirectory, "actual.png");
+		const color = parseHexColor(input.background);
+		await Promise.all([
+			compositeImage(input.referencePath, comparedReference, color),
+			compositeImage(input.actualPath, comparedActual, color),
+		]);
 		const result = await compare(comparedReference, comparedActual, input.diffPath, {
 			threshold: input.threshold,
 			antialiasing: input.antialiasing,
@@ -164,12 +169,22 @@ export async function runVisualDiff(argv, dependencies = {}) {
 			reason: result.match ? "match" : result.reason,
 			threshold: input.threshold,
 			antialiasingIgnored: input.antialiasing,
+			background: input.background,
+			percentageBasis: "visible-alpha-union",
 		};
-		if (input.background) report.background = input.background;
+		if (result.match || result.reason === "pixel-diff") {
+			const measurement = await measureVisiblePixels(input.referencePath, input.actualPath);
+			const diffCount = result.match ? 0 : result.diffCount;
+			report.diffCount = diffCount;
+			report.diffPercentage = measurement.visiblePixelCount === 0
+				? 0
+				: Number(((diffCount / measurement.visiblePixelCount) * 100).toFixed(2));
+			report.visiblePixelCount = measurement.visiblePixelCount;
+			report.canvasPixelCount = measurement.canvasPixelCount;
+			if (!result.match) report.canvasDiffPercentage = result.diffPercentage;
+		}
 		if (result.match) await unlink(input.diffPath).catch(() => {});
 		if (!result.match && result.reason === "pixel-diff") {
-			report.diffCount = result.diffCount;
-			report.diffPercentage = result.diffPercentage;
 			report.bounds = differenceBounds(result);
 			report.diffPath = input.diffPath;
 		}
@@ -177,7 +192,7 @@ export async function runVisualDiff(argv, dependencies = {}) {
 
 		let exitCode = result.reason === "file-not-exists" ? 2 : 0;
 		if (input.maxDiffPercentage !== undefined) {
-			const withinLimit = result.match || (result.reason === "pixel-diff" && result.diffPercentage <= input.maxDiffPercentage);
+			const withinLimit = result.match || (result.reason === "pixel-diff" && report.diffPercentage <= input.maxDiffPercentage);
 			report.maxDiffPercentage = input.maxDiffPercentage;
 			report.withinLimit = withinLimit;
 			if (!withinLimit && exitCode === 0) exitCode = 1;

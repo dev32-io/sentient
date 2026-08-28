@@ -10,6 +10,8 @@ import { assertDisposableOutput, caseIdFromReference, defaultActualPath, readPng
 
 const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
+const HANDOFF_SCALE = 2;
+const MOBILE_BREAKPOINT = 620;
 
 function usage() {
   return "Usage: capture-web --reference <png> [--output <png>] [--url <fixture-url>]";
@@ -126,14 +128,41 @@ async function applyState(page, caseId) {
   }
 }
 
+function captureFrame(caseId, referenceSize) {
+  const canvas = {
+    width: referenceSize.width / HANDOFF_SCALE,
+    height: referenceSize.height / HANDOFF_SCALE,
+  };
+  const compact = caseId.includes("--compact-");
+  const transformOffset = caseId.endsWith("--hover") ? -1 : caseId.endsWith("--pressed") ? 1 : 0;
+  if (compact) return { viewport: canvas };
+
+  /* The isolated standard handoff canvases are cropped below the source's
+     responsive width. Render above the authoritative 620px query, then crop
+     back to the handoff canvas instead of accidentally selecting the mobile
+     44px target. */
+  const renderWidth = Math.max(canvas.width, MOBILE_BREAKPOINT + 1);
+  const framePadding = Math.abs(transformOffset);
+  return {
+    viewport: { width: renderWidth, height: canvas.height + framePadding * 2 },
+    clip: {
+      x: Math.ceil((renderWidth - canvas.width) / 2),
+      y: framePadding + transformOffset,
+      width: canvas.width,
+      height: canvas.height,
+    },
+  };
+}
+
 async function capture() {
   const input = parseArguments(process.argv.slice(2));
   await assertDisposableOutput(input.referencePath, input.outputPath, "web");
   const caseId = caseIdFromReference(input.referencePath);
   const referenceSize = await readPngSize(input.referencePath);
-  if (referenceSize.width % 2 !== 0 || referenceSize.height % 2 !== 0) {
-    throw new Error(`Reference canvas must be divisible by the handoff 2x scale: ${referenceSize.width}x${referenceSize.height}`);
+  if (referenceSize.width % HANDOFF_SCALE !== 0 || referenceSize.height % HANDOFF_SCALE !== 0) {
+    throw new Error(`Reference canvas must be divisible by the handoff ${HANDOFF_SCALE}x scale: ${referenceSize.width}x${referenceSize.height}`);
   }
+  const frame = captureFrame(caseId, referenceSize);
 
   let server;
   let browser;
@@ -142,8 +171,8 @@ async function capture() {
     const baseUrl = input.url ?? server.url;
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
-      viewport: { width: referenceSize.width / 2, height: referenceSize.height / 2 },
-      deviceScaleFactor: 2,
+      viewport: frame.viewport,
+      deviceScaleFactor: HANDOFF_SCALE,
       colorScheme: "dark",
       locale: "en-US",
       reducedMotion: "reduce",
@@ -171,6 +200,7 @@ async function capture() {
       caret: "hide",
       omitBackground: true,
       scale: "device",
+      ...(frame.clip ? { clip: frame.clip } : {}),
     });
     console.log(JSON.stringify({ platform: "web", caseId, referenceSize, actualPath: input.outputPath }));
     await context.close();

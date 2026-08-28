@@ -3,25 +3,9 @@ import { useEffect } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import { ActionButton } from "../components/common/foundation.tsx";
+import { actionButtonCase } from "./visual-diff-cases.ts";
 
 const caseId = new URLSearchParams(location.search).get("case") ?? "";
-
-interface ActionButtonCase {
-  variant: "primary" | "default" | "quiet" | "destructive";
-  label: string;
-  disabled: boolean;
-}
-
-function actionButtonCase(id: string): ActionButtonCase | undefined {
-  const match = /^action-button--(primary|secondary|quiet|destructive)--(?:compact-)?(?:rest|hover|focus|pressed|disabled)$/.exec(id);
-  if (!match) return undefined;
-  const role = match[1] as "primary" | "secondary" | "quiet" | "destructive";
-  return {
-    variant: role === "secondary" ? "default" : role,
-    label: role === "primary" ? "Allow once" : role === "secondary" ? "Always allow" : role === "quiet" ? "Not now" : "Stop",
-    disabled: id.endsWith("--disabled"),
-  };
-}
 
 function VisualDiffFixture() {
   const button = actionButtonCase(caseId);

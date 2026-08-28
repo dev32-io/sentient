@@ -10,6 +10,8 @@ function harness(result) {
     stderr,
     dependencies: {
       compare: async () => result,
+      compositeImage: async () => {},
+      measureVisiblePixels: async () => ({ visiblePixelCount: 2_400, canvasPixelCount: 5_000 }),
       stdout: (line) => stdout.push(line),
       stderr: (line) => stderr.push(line),
     },
@@ -44,18 +46,24 @@ test("keeps pixel differences report-only without a reviewed gate", async () => 
   assert.equal(await runVisualDiff(["build/visual-captures/test/reference.png", "build/visual-captures/test/actual.png"], output.dependencies), 0);
   const report = JSON.parse(output.stdout[0]);
   assert.equal(report.diffPercentage, 0.5);
+  assert.equal(report.canvasDiffPercentage, 0.5);
+  assert.equal(report.percentageBasis, "visible-alpha-union");
+  assert.equal(report.background, "#2B2621");
+  assert.equal(report.threshold, 0.04);
+  assert.equal(report.antialiasingIgnored, true);
   assert.deepEqual(report.bounds, { left: 1, top: 2, right: 8, bottom: 4 });
 });
 
-test("fails only when a configured gate is exceeded", async () => {
+test("fails only when the visible-pixel percentage exceeds a configured gate", async () => {
   const output = harness({
     match: false,
     reason: "pixel-diff",
     diffCount: 20,
-    diffPercentage: 2,
+    diffPercentage: 0.4,
     diffLines: [1],
     diffCols: [1],
   });
+  output.dependencies.measureVisiblePixels = async () => ({ visiblePixelCount: 1_000, canvasPixelCount: 5_000 });
   assert.equal(
     await runVisualDiff([
       "build/visual-captures/test/reference.png",
