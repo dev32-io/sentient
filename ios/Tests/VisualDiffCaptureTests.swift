@@ -103,55 +103,107 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(captured.scale, 2)
     }
 
-    private func fixture(for caseID: String) throws -> AnyView {
-        let components = caseID.split(separator: "--").map(String.init)
-        guard components.count == 3,
-              components[0] == "action-button"
-        else {
-            throw XCTSkip("No iOS visual capture fixture exists yet for \(caseID)")
-        }
-
-        let role: DesignButtonRole
-        let title: String
-        switch components[1] {
-        case "primary":
-            role = .action
-            title = "Allow once"
-        case "secondary":
-            role = .secondary
-            title = "Always allow"
-        case "quiet":
-            role = .quiet
-            title = "Not now"
-        case "destructive":
-            role = .destructive
-            title = "Stop"
-        default:
-            throw XCTSkip("No iOS visual capture fixture exists yet for \(caseID)")
-        }
-
-        let isDisabled = components[2] == "disabled" || components[2] == "compact-disabled"
-        let isCompact = components[2] == "compact-rest" || components[2] == "compact-disabled"
-        let isSupported = components[2] == "rest"
-            || components[2] == "compact-rest"
-            || isDisabled
-        guard isSupported else {
-            throw XCTSkip("iPhone state is blocked or not applicable for \(caseID)")
-        }
-
-        return AnyView(
-            ZStack {
-                Color.clear
-                DesignActionButton(
-                    title: isDisabled ? "Unavailable" : title,
-                    role: role,
-                    state: isDisabled ? .disabled : .normal,
-                    fillsWidth: false,
-                    action: {},
-                    visualHeight: isCompact ? DesignMetrics.minimumTarget : DesignMetrics.actionButtonVisualHeight
-                )
-            }
+    func testActionButtonRegistryPreservesCurrentCaseApplicability() {
+        let expectedSupported = Set([
+            "action-button--destructive--compact-rest",
+            "action-button--destructive--rest",
+            "action-button--primary--compact-rest",
+            "action-button--primary--rest",
+            "action-button--quiet--compact-rest",
+            "action-button--quiet--rest",
+            "action-button--secondary--compact-disabled",
+            "action-button--secondary--compact-rest",
+            "action-button--secondary--disabled",
+            "action-button--secondary--rest",
+        ])
+        let expectedMissingAuthority = Set([
+            "action-button--destructive--focus",
+            "action-button--destructive--hover",
+            "action-button--destructive--pressed",
+            "action-button--primary--focus",
+            "action-button--primary--hover",
+            "action-button--primary--pressed",
+            "action-button--quiet--focus",
+            "action-button--quiet--hover",
+            "action-button--quiet--pressed",
+            "action-button--secondary--focus",
+            "action-button--secondary--hover",
+            "action-button--secondary--pressed",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "action-button")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedMissingAuthority))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
         )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedMissingAuthority
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.actionButtonRenderConfiguration(
+                for: "action-button--primary--hover"
+            )
+        )
+    }
+
+    func testActionButtonRegistryPreservesCurrentRenderMappings() {
+        let expected: [(String, String, String, DesignControlState, CGFloat)] = [
+            ("action-button--primary--rest", "primary", "Allow once", .normal, DesignMetrics.actionButtonVisualHeight),
+            ("action-button--primary--compact-rest", "primary", "Allow once", .normal, DesignMetrics.minimumTarget),
+            ("action-button--secondary--rest", "secondary", "Always allow", .normal, DesignMetrics.actionButtonVisualHeight),
+            ("action-button--secondary--compact-rest", "secondary", "Always allow", .normal, DesignMetrics.minimumTarget),
+            ("action-button--secondary--disabled", "secondary", "Unavailable", .disabled, DesignMetrics.actionButtonVisualHeight),
+            ("action-button--secondary--compact-disabled", "secondary", "Unavailable", .disabled, DesignMetrics.minimumTarget),
+            ("action-button--quiet--rest", "quiet", "Not now", .normal, DesignMetrics.actionButtonVisualHeight),
+            ("action-button--quiet--compact-rest", "quiet", "Not now", .normal, DesignMetrics.minimumTarget),
+            ("action-button--destructive--rest", "destructive", "Stop", .normal, DesignMetrics.actionButtonVisualHeight),
+            ("action-button--destructive--compact-rest", "destructive", "Stop", .normal, DesignMetrics.minimumTarget),
+        ]
+
+        for (caseID, roleID, title, state, visualHeight) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.actionButtonRenderConfiguration(for: caseID) else {
+                XCTFail("Missing action-button render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.roleID, roleID, caseID)
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.state, state, caseID)
+            XCTAssertEqual(configuration.fillsWidth, false, caseID)
+            XCTAssertEqual(configuration.visualHeight, visualHeight, caseID)
+        }
+    }
+
+    func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
+        guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
+            caseID: "action-button--primary--hover"
+        ) else {
+            XCTFail("An unavailable iPhone state must resolve to missing-authority")
+            return
+        }
+        XCTAssertEqual(skip.reason, .stateNotApplicable)
+        XCTAssertEqual(skip.description, "iPhone state is blocked or not applicable for action-button--primary--hover")
+
+        guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
+            caseID: "future-component--default--rest"
+        ) else {
+            XCTFail("An unregistered component must resolve to missing-authority")
+            return
+        }
+        XCTAssertEqual(unknown.reason, .unknownComponent)
+        XCTAssertEqual(unknown.description, "No iOS visual capture fixture exists yet for future-component--default--rest")
+    }
+
+    private func fixture(for caseID: String) throws -> AnyView {
+        switch VisualDiffFixtureRegistry.resolve(caseID: caseID) {
+        case .supported(let adapter, let fixture):
+            return try adapter.makeFixture(for: fixture)
+        case .missingAuthority(let skip):
+            throw XCTSkip(skip.description)
+        }
     }
 
     private func pngPixelSize(at url: URL) throws -> CGSize {
