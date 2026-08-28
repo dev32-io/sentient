@@ -177,6 +177,56 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testPlateRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "plate--default--compact-rest",
+            "plate--default--rest",
+        ])
+        let expectedNotApplicable = Set([
+            "plate--default--disabled",
+            "plate--default--error",
+            "plate--default--focus",
+            "plate--default--hover",
+            "plate--default--loading",
+            "plate--default--pressed",
+            "plate--default--selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "plate")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedNotApplicable))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedNotApplicable
+        )
+    }
+
+    func testPlateRegistryPreservesCompactNativeLayoutAdaptation() {
+        let expected: [(String, Bool, CGFloat)] = [
+            ("plate--default--rest", false, Space.lg),
+            ("plate--default--compact-rest", true, 14),
+        ]
+
+        for (caseID, compact, horizontalPadding) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.plateRenderConfiguration(for: caseID) else {
+                XCTFail("Missing plate render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.compact, compact, caseID)
+            XCTAssertEqual(configuration.horizontalPadding, horizontalPadding, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.plateRenderConfiguration(
+                for: "plate--default--hover"
+            )
+        )
+    }
+
     func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
         guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
             caseID: "action-button--primary--hover"

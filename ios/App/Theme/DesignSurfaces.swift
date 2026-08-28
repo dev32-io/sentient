@@ -141,10 +141,20 @@ private struct PlateSurface: ViewModifier {
             }
             .clipShape(shape)
             .overlay {
-                shape.stroke(
-                    contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
-                    lineWidth: DesignMetrics.hairline
-                )
+                if elevated {
+                    // Keep the existing float rendering unchanged.
+                    shape.stroke(
+                        contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
+                        lineWidth: DesignMetrics.hairline
+                    )
+                } else {
+                    // CSS borders paint inside the border box; the default
+                    // plate must not grow a half-stroke beyond its shape.
+                    shape.strokeBorder(
+                        contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
+                        lineWidth: DesignMetrics.hairline
+                    )
+                }
             }
             .background {
                 ZStack {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 @testable import SentientApp
 
 enum VisualDiffMissingAuthorityReason: Equatable {
@@ -83,9 +84,15 @@ struct VisualDiffActionButtonRenderConfiguration {
     let visualHeight: CGFloat
 }
 
+struct VisualDiffPlateRenderConfiguration {
+    let compact: Bool
+    let horizontalPadding: CGFloat
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
+        PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -127,6 +134,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffActionButtonRenderConfiguration? {
         ActionButtonFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func plateRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffPlateRenderConfiguration? {
+        PlateFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -202,6 +215,161 @@ private struct ActionButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {
             }
         )
     }
+}
+
+private enum PlateFixtureMetrics {
+    // The prototype assigns line boxes independently of native glyph metrics.
+    // Keep those boxes when the isolated fixture recomposes on iOS.
+    static let titleLineHeight = DesignMetrics.controlLabelSize * 1.35
+    static let subtitleLineHeight = TypeScale.sm * 1.5
+    static let bodyLineHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
+
+    // The bundled UI faces have individual native names. UIFont keeps the
+    // approved face and fractional point size while Text retains semantics.
+    static let titleFont = Font(
+        UIFont(name: "DMSans-SemiBold", size: DesignMetrics.controlLabelSize)!
+    )
+    static let subtitleFont = Font(
+        UIFont(name: "DMSans-Regular", size: TypeScale.sm)!
+    )
+    static let bodyFont = Font(
+        UIFont(name: "DMSans-Regular", size: TypeScale.base)!
+    )
+
+    // SwiftUI border overlays do not participate in child layout. These
+    // insets preserve the prototype's border-box and one-pixel divider math.
+    static let borderInset = DesignMetrics.hairline
+    static let canvasInset = Space.md * 2
+    static let headerTopPadding = 14 + borderInset
+    static let headerBottomPadding = Space.md + borderInset / 2
+    static let bodyTopPadding = Space.lg + borderInset
+    static let bodyBottomPadding = Space.lg - borderInset / 2
+
+    static func horizontalPadding(_ prototypePadding: CGFloat) -> CGFloat {
+        prototypePadding + borderInset
+    }
+}
+
+private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffPlateRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text("Foundation plate")
+                        .font(PlateFixtureMetrics.titleFont)
+                        // Mirrors `.snt-card-title { letter-spacing: -.005em; }`.
+                        .kerning(-DesignMetrics.controlLabelSize * 0.005)
+                        .foregroundStyle(DuskColors.ink)
+                        // Keep each native text run in one 2x compositing pass;
+                        // this is render-time SwiftUI composition, not image post-processing.
+                        .drawingGroup()
+                        .frame(minHeight: PlateFixtureMetrics.titleLineHeight, alignment: .topLeading)
+                    Text("Stable low-elevation surface.")
+                        .font(PlateFixtureMetrics.subtitleFont)
+                        // Native custom-font rasterization sits one physical
+                        // pixel below the CSS line's visual origin at 2x.
+                        .offset(y: -DesignMetrics.hairline / 2)
+                        .foregroundStyle(DuskColors.ink2)
+                        .drawingGroup()
+                        .frame(minHeight: PlateFixtureMetrics.subtitleLineHeight, alignment: .topLeading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, PlateFixtureMetrics.headerTopPadding)
+                .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
+                .padding(.bottom, PlateFixtureMetrics.headerBottomPadding)
+                .background(
+                    LinearGradient(
+                        colors: [
+                            DuskColors.bgElev,
+                            DuskColors.bgElev.overlaying(DuskColors.paper, opacity: 0.60),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(DuskColors.lineSoft)
+                        .frame(height: DesignMetrics.hairline)
+                }
+
+                Text("Grouped content rests on a quiet slate.")
+                    .font(PlateFixtureMetrics.bodyFont)
+                    .foregroundStyle(DuskColors.ink2)
+                    .drawingGroup()
+                    .frame(minHeight: PlateFixtureMetrics.bodyLineHeight, alignment: .topLeading)
+                    .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
+                    .padding(.top, PlateFixtureMetrics.bodyTopPadding)
+                    .padding(.bottom, PlateFixtureMetrics.bodyBottomPadding)
+            }
+            .designPlate()
+            .padding(PlateFixtureMetrics.canvasInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
+    }
+}
+
+private enum PlateFixtureCatalog {
+    private static let supportedCases: [(String, Bool)] = [
+        ("rest", false),
+        ("compact-rest", true),
+    ]
+    private static let notApplicableStates = [
+        "hover",
+        "focus",
+        "pressed",
+        "selected",
+        "disabled",
+        "loading",
+        "error",
+    ]
+
+    private static let definitions: [VisualDiffFixtureRegistration] =
+        supportedCases.map { stateID, _ in
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: "plate--default--\(stateID)",
+                    componentID: "plate",
+                    variantID: "default",
+                    stateID: stateID
+                ),
+                applicability: .supported
+            )
+        }
+        + notApplicableStates.map { stateID in
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: "plate--default--\(stateID)",
+                    componentID: "plate",
+                    variantID: "default",
+                    stateID: stateID
+                ),
+                applicability: .missingAuthority(.stateNotApplicable)
+            )
+        }
+
+    static let renderConfigurations: [String: VisualDiffPlateRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: supportedCases.map { stateID, compact in
+            (
+                "plate--default--\(stateID)",
+                VisualDiffPlateRenderConfiguration(
+                    compact: compact,
+                    horizontalPadding: compact ? 14 : Space.lg
+                )
+            )
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "plate",
+        registrations: definitions,
+        adapter: PlateFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private enum ActionButtonFixtureCatalog {
