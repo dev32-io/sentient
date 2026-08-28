@@ -7,13 +7,13 @@ import { pathToFileURL } from "node:url";
 import { compositePng, measureVisibleAlphaUnion, parseHexColor } from "./image-background.mjs";
 
 const DEFAULT_BACKGROUND = "#2B2621";
-const DEFAULT_THRESHOLD = 0.04;
+const DEFAULT_THRESHOLD = 0.56;
 
 const USAGE = `Usage: visual-diff <reference-image> <actual-image> [options]
 
 Options:
   --diff <path>                 Diff PNG output path. Defaults beside the actual image.
-  --threshold <0..1>            Per-pixel color tolerance passed to ODiff. Default: 0.04.
+  --threshold <0..1>            Per-pixel color tolerance passed to ODiff. Default: 0.56.
   --max-diff-percentage <0..100>
                                 Exit 1 when changed visible pixels exceed this percentage.
                                 Without this option, comparison is report-only.
@@ -22,7 +22,7 @@ Options:
   -h, --help                    Show this help.
 
 Images are compared on the selected background with anti-aliasing ignored by
-default. Remaining color differences above the reviewed 0.04 tolerance are counted.
+default. Remaining color differences above the reviewed 0.56 tolerance are counted.
 The reported percentage uses the union of non-transparent input pixels
 as its denominator, so transparent canvas padding cannot dilute the result.
 The command writes one compact JSON report to stdout. Invocation, decode, and

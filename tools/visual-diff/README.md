@@ -1,6 +1,6 @@
 # Sentient visual diff
 
-This repository-local copy of the PiBox example compares one designer-rendered component reference with one implementation screenshot. It is a report-only feedback loop for design implementation agents; it does not update references or enforce a CI threshold.
+This repository-local copy of the PiBox example compares one designer-rendered component reference with one implementation screenshot. The platform wrapper enforces the reviewed visual profile; it never updates immutable references.
 
 ## Sentient quick start
 
@@ -62,7 +62,7 @@ node tools/visual-diff/visual-diff.mjs reference.png actual.png \
   --diff build/visual-captures/diffs/action-button.diff.png
 ```
 
-- The initial reviewed ODiff per-pixel threshold is `0.04` on Web, iOS, and Android; differences above it are counted after anti-alias detection. Platform wrappers pass their own profile explicitly so the thresholds can diverge after visual calibration. A diagnostic can override it with `--threshold`.
+- The reviewed ODiff per-pixel threshold is `0.56` on Web, iOS, and Android; differences above it are counted after anti-alias detection. Platform wrappers pass this profile explicitly and require `diffPercentage <= 0.2%`. A diagnostic can override the tolerance with `--threshold` and the gate with `--max-diff-percentage`.
 - Both images are composited on canonical Dusk by default; `--background` selects another reviewed opaque canvas.
 - `diffPercentage` is `diffCount / visiblePixelCount`, where visible pixels are the alpha union of the original inputs. `canvasDiffPercentage` preserves ODiff's whole-canvas result for diagnostics.
 - Anti-aliased pixels are ignored by default; pass `--count-antialiasing` to include them.
@@ -82,7 +82,7 @@ Regardless of platform:
 2. Capture the isolated component rather than a specimen row, variant collection, or unrelated full application screen.
 3. Stabilize data, fonts, theme, locale, scale, and animation through the project's normal fixture facilities.
 4. Do not resize either image merely to make the comparison run; a layout mismatch is useful evidence.
-5. Start with report-only comparison while implementing. Add `--max-diff-percentage` only when the project has reviewed representative good and bad results.
+5. The platform wrapper applies the reviewed `0.56` tolerance and `0.2%` visible-difference gate. Use the underlying pairwise command without `--max-diff-percentage` only for explicit report-only diagnostics.
 6. For motion, compare the corresponding PNG keyframes individually. A project-owned loop or test parameterization is sufficient; PiBox does not require keyframe manifests or filename conventions.
 
 ### Vite and browser applications

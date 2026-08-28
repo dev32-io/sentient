@@ -49,7 +49,7 @@ test("keeps pixel differences report-only without a reviewed gate", async () => 
   assert.equal(report.canvasDiffPercentage, 0.5);
   assert.equal(report.percentageBasis, "visible-alpha-union");
   assert.equal(report.background, "#2B2621");
-  assert.equal(report.threshold, 0.04);
+  assert.equal(report.threshold, 0.56);
   assert.equal(report.antialiasingIgnored, true);
   assert.deepEqual(report.bounds, { left: 1, top: 2, right: 8, bottom: 4 });
 });

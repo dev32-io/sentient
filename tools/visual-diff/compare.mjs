@@ -4,10 +4,10 @@ import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 import { defaultActualPath } from "./reference-image.mjs";
 
-const PLATFORM_THRESHOLDS = Object.freeze({
-  web: 0.04,
-  ios: 0.04,
-  android: 0.04,
+const PLATFORM_PROFILES = Object.freeze({
+  web: { threshold: 0.56, maxDiffPercentage: 0.2 },
+  ios: { threshold: 0.56, maxDiffPercentage: 0.2 },
+  android: { threshold: 0.56, maxDiffPercentage: 0.2 },
 });
 
 function usage() {
@@ -125,12 +125,15 @@ if (input) {
       ? ["node", ["tools/visual-diff/capture-web.mjs", "--reference", input.referencePath, "--output", actualPath]]
       : ["bash", [`scripts/design/capture-${input.platform}-visual-diff.sh`, input.referencePath, actualPath]];
     const captureExit = await run(capture[0], capture[1]);
+    const profile = PLATFORM_PROFILES[input.platform];
     const diffArguments = [
       "tools/visual-diff/visual-diff.mjs",
       input.referencePath,
       actualPath,
       "--threshold",
-      String(PLATFORM_THRESHOLDS[input.platform]),
+      String(profile.threshold),
+      "--max-diff-percentage",
+      String(profile.maxDiffPercentage),
     ];
     process.exitCode = captureExit === 0
       ? await run("node", diffArguments)
