@@ -964,6 +964,50 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(unavailable.reason, .unknownCase)
     }
 
+    func testIntegratedWave2RegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
+        let integratedComponentIDs = [
+            "user-avatar",
+            "checkbox",
+            "icon-button",
+            "text-field",
+            "text-area",
+            "chip",
+            "range",
+            "search-field",
+            "segmented-control",
+            "sentient-identity",
+        ]
+        let registrations = integratedComponentIDs.flatMap {
+            VisualDiffFixtureRegistry.registrations(for: $0)
+        }
+        let caseIDs = registrations.map { $0.fixture.caseID }
+        XCTAssertEqual(Set(caseIDs).count, caseIDs.count, "Integrated iOS fixture case IDs must be globally unique")
+
+        for registration in registrations {
+            switch registration.applicability {
+            case .supported:
+                guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(
+                    caseID: registration.fixture.caseID
+                ) else {
+                    XCTFail("Supported fixture did not resolve: \(registration.fixture.caseID)")
+                    continue
+                }
+                do {
+                    _ = try adapter.makeFixture(for: fixture)
+                } catch {
+                    XCTFail("Supported fixture failed to build: \(registration.fixture.caseID): \(error)")
+                }
+            case .missingAuthority:
+                guard case .missingAuthority = VisualDiffFixtureRegistry.resolve(
+                    caseID: registration.fixture.caseID
+                ) else {
+                    XCTFail("Unavailable fixture resolved as supported: \(registration.fixture.caseID)")
+                    continue
+                }
+            }
+        }
+    }
+
     func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
         guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
             caseID: "action-button--primary--hover"
