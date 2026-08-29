@@ -165,6 +165,13 @@ struct VisualDiffSearchFieldRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffPinRenderConfiguration {
+    let entered: Int
+    let isSubmitting: Bool
+    let success: String?
+    let reducedMotion: Bool
+}
+
 struct VisualDiffSegmentOptionConfiguration {
     let value: String
     let label: String
@@ -317,6 +324,7 @@ enum VisualDiffFixtureRegistry {
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
         DisclosureFixtureCatalog.registration.componentID: DisclosureFixtureCatalog.registration,
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
+        PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -444,6 +452,12 @@ enum VisualDiffFixtureRegistry {
 
     static func disclosureCaptureTime(for caseID: String) -> TimeInterval? {
         DisclosureFixtureCatalog.captureTime(for: caseID)
+    }
+
+    static func pinRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffPinRenderConfiguration? {
+        PinEntryFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func sentientIdentityRenderConfiguration(
@@ -2555,6 +2569,155 @@ private enum UserAvatarFixtureCatalog {
             fallback: fallback
         )
     }
+}
+
+private struct PinEntryFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffPinRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(PinEntryFixture(configuration: configuration))
+    }
+}
+
+private enum PinEntryFixtureMetrics {
+    // The handoff canvas is 488×600 logical points; its 360×472 plate starts
+    // at the 52pt inset visible in the immutable 2x references.
+    static let canvasInset: CGFloat = 52
+    static let plateWidth: CGFloat = 360
+}
+
+private struct PinEntryFixture: View {
+    let configuration: VisualDiffPinRenderConfiguration
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            DesignCard(bodyStyle: .padded) {
+                PinPad(
+                    entered: configuration.entered,
+                    isSubmitting: configuration.isSubmitting,
+                    success: configuration.success,
+                    reducedMotionOverride: configuration.reducedMotion,
+                    onDigit: { _ in },
+                    onDelete: {}
+                )
+            }
+            .frame(width: PinEntryFixtureMetrics.plateWidth)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, PinEntryFixtureMetrics.canvasInset)
+        .padding(.top, PinEntryFixtureMetrics.canvasInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color.clear)
+    }
+}
+
+private enum PinEntryFixtureCatalog {
+    private static func definition(
+        _ caseID: String,
+        variantID: String,
+        stateID: String,
+        configuration: VisualDiffPinRenderConfiguration
+    ) -> (VisualDiffFixtureRegistration, VisualDiffPinRenderConfiguration) {
+        (
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: caseID,
+                    componentID: "pin-entry",
+                    variantID: variantID,
+                    stateID: stateID
+                ),
+                applicability: .supported
+            ),
+            configuration
+        )
+    }
+
+    private static let staticDefinitions = [
+        definition(
+            "pin-entry--4-digit--empty",
+            variantID: "4-digit",
+            stateID: "empty",
+            configuration: VisualDiffPinRenderConfiguration(entered: 0, isSubmitting: false, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--4-digit--one-digit",
+            variantID: "4-digit",
+            stateID: "one-digit",
+            configuration: VisualDiffPinRenderConfiguration(entered: 1, isSubmitting: false, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--4-digit--partial",
+            variantID: "4-digit",
+            stateID: "partial",
+            configuration: VisualDiffPinRenderConfiguration(entered: 3, isSubmitting: false, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--4-digit--checking",
+            variantID: "4-digit",
+            stateID: "checking",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--4-digit--checking-reduced-motion",
+            variantID: "4-digit",
+            stateID: "checking-reduced-motion",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: nil, reducedMotion: true)
+        ),
+        definition(
+            "pin-entry--4-digit--success",
+            variantID: "4-digit",
+            stateID: "success",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: "Pin accepted.", reducedMotion: false)
+        ),
+    ]
+
+    private static let motionDefinitions = [
+        definition(
+            "pin-entry--complete-to-success--frame-000--0000ms",
+            variantID: "complete-to-success",
+            stateID: "frame-000--0000ms",
+            configuration: VisualDiffPinRenderConfiguration(entered: 0, isSubmitting: false, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--complete-to-success--frame-001--0180ms",
+            variantID: "complete-to-success",
+            stateID: "frame-001--0180ms",
+            configuration: VisualDiffPinRenderConfiguration(entered: 2, isSubmitting: false, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--complete-to-success--frame-002--0360ms",
+            variantID: "complete-to-success",
+            stateID: "frame-002--0360ms",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--complete-to-success--frame-003--0700ms",
+            variantID: "complete-to-success",
+            stateID: "frame-003--0700ms",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: nil, reducedMotion: false)
+        ),
+        definition(
+            "pin-entry--complete-to-success--frame-004--1060ms",
+            variantID: "complete-to-success",
+            stateID: "frame-004--1060ms",
+            configuration: VisualDiffPinRenderConfiguration(entered: 4, isSubmitting: true, success: "Pin accepted.", reducedMotion: false)
+        ),
+    ]
+
+    private static let definitions = staticDefinitions + motionDefinitions
+
+    static let renderConfigurations = Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+        (registration.fixture.caseID, configuration)
+    })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "pin-entry",
+        registrations: definitions.map(\.0),
+        adapter: PinEntryFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private enum ActionButtonFixtureCatalog {

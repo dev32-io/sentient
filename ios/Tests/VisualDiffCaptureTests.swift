@@ -975,6 +975,77 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testPinEntryRegistryPreservesApprovedStaticAndMotionAuthority() {
+        let expectedStatic = Set([
+            "pin-entry--4-digit--checking-reduced-motion",
+            "pin-entry--4-digit--checking",
+            "pin-entry--4-digit--empty",
+            "pin-entry--4-digit--one-digit",
+            "pin-entry--4-digit--partial",
+            "pin-entry--4-digit--success",
+        ])
+        let expectedMotion = Set([
+            "pin-entry--complete-to-success--frame-000--0000ms",
+            "pin-entry--complete-to-success--frame-001--0180ms",
+            "pin-entry--complete-to-success--frame-002--0360ms",
+            "pin-entry--complete-to-success--frame-003--0700ms",
+            "pin-entry--complete-to-success--frame-004--1060ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "pin-entry")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedMotion)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        let expectedConfigurations: [(String, Int, Bool, String?, Bool)] = [
+            ("pin-entry--4-digit--empty", 0, false, nil, false),
+            ("pin-entry--4-digit--one-digit", 1, false, nil, false),
+            ("pin-entry--4-digit--partial", 3, false, nil, false),
+            ("pin-entry--4-digit--checking", 4, true, nil, false),
+            ("pin-entry--4-digit--checking-reduced-motion", 4, true, nil, true),
+            ("pin-entry--4-digit--success", 4, true, "Pin accepted.", false),
+        ]
+        for (caseID, entered, submitting, success, reducedMotion) in expectedConfigurations {
+            guard let configuration = VisualDiffFixtureRegistry.pinRenderConfiguration(for: caseID) else {
+                XCTFail("Missing PIN render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.entered, entered, caseID)
+            XCTAssertEqual(configuration.isSubmitting, submitting, caseID)
+            XCTAssertEqual(configuration.success, success, caseID)
+            XCTAssertEqual(configuration.reducedMotion, reducedMotion, caseID)
+        }
+
+        guard case .missingAuthority(let error) = VisualDiffFixtureRegistry.resolve(
+            caseID: "pin-entry--4-digit--error"
+        ) else {
+            XCTFail("The handoff does not authorize a PIN error fixture")
+            return
+        }
+        XCTAssertEqual(error.reason, .unknownCase)
+
+        guard case .missingAuthority(let verification) = VisualDiffFixtureRegistry.resolve(
+            caseID: "verification-code--empty--rest"
+        ) else {
+            XCTFail("iOS must not manufacture a verification-code owner")
+            return
+        }
+        XCTAssertEqual(verification.reason, .unknownComponent)
+    }
+
+    func testPinEntryMotionFrameResolvesFromNestedRecordingName() {
+        guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "pin-entry--complete-to-success--frame-004--1060ms"
+        ) else {
+            XCTFail("The approved PIN motion frame must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "pin-entry")
+        XCTAssertEqual(fixture.variantID, "complete-to-success")
+        XCTAssertEqual(fixture.stateID, "frame-004--1060ms")
+    }
+
     func testSentientIdentityRegistryPreservesStaticAndMotionAuthority() {
         let registrations = VisualDiffFixtureRegistry.registrations(for: "sentient-identity")
         let expectedStatic = Set([
@@ -1233,7 +1304,7 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(unavailable.reason, .unknownCase)
     }
 
-    func testIntegratedWave2RegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
+    func testIntegratedRegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
         let integratedComponentIDs = [
             "user-avatar",
             "checkbox",
@@ -1247,6 +1318,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "segmented-control",
             "disclosure",
             "sentient-identity",
+            "pin-entry",
         ]
         let registrations = integratedComponentIDs.flatMap {
             VisualDiffFixtureRegistry.registrations(for: $0)
@@ -1442,6 +1514,9 @@ final class VisualDiffCaptureTests: XCTestCase {
         let recordingID = referenceURL.deletingLastPathComponent().lastPathComponent
         if recordingID == "disclosure--closed-to-open" {
             return "disclosure--closed-to-open--\(frameID)"
+        }
+        if recordingID == "pin-entry--complete-to-success" {
+            return "pin-entry--complete-to-success--\(frameID)"
         }
         guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
         let variantID = String(recordingID.dropFirst("sentient-avatar--".count))

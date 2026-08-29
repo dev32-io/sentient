@@ -297,6 +297,8 @@ private struct PinShakeEffect: GeometryEffect {
 private enum DesignPinKeypadState {
     static let length = 4
     static let checkingCycle: TimeInterval = 0.9
+    // Source `.cmp-pin` spacing; the surrounding card owns its 18pt padding.
+    static let sectionGap: CGFloat = 14
     static let errorFeedbackDuration = Duration.milliseconds(Int((DesignV2.Motion.state * 1_000).rounded()))
 }
 
@@ -308,6 +310,8 @@ struct DesignPinKeypad: View {
     var error: String? = nil
     var success: String? = nil
     var errorRevision = 0
+    /// Explicit only for previews/capture; production follows the system value.
+    var reducedMotionOverride: Bool? = nil
     var statusAccessibilityId = "pin-status"
     let onDigit: (Character) -> Void
     let onDelete: () -> Void
@@ -318,16 +322,17 @@ struct DesignPinKeypad: View {
 
     private var isChecking: Bool { isSubmitting && success == nil && error == nil }
     private var keyDisabled: Bool { isSubmitting || success != nil || (error != nil && !errorReady) }
+    private var shouldReduceMotion: Bool { reducedMotionOverride ?? reduceMotion }
     private var status: String {
         if let success { return success }
         if let error { return error }
-        if isSubmitting { return "Checking PIN…" }
+        if isSubmitting { return "Checking Pin..." }
         if entered > 0 { return "\(entered) of \(DesignPinKeypadState.length) digits entered." }
-        return "Enter your four-digit PIN."
+        return "Enter your \(DesignPinKeypadState.length)-digit Pin."
     }
 
     var body: some View {
-        VStack(spacing: Space.md) {
+        VStack(spacing: DesignPinKeypadState.sectionGap) {
             progress
             Text(status)
                 .font(Typo.ui(TypeScale.sm))
@@ -383,24 +388,17 @@ struct DesignPinKeypad: View {
 
     @ViewBuilder
     private var progress: some View {
-        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || shouldReduceMotion)) { context in
             let cycle = context.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: DesignPinKeypadState.checkingCycle)
             let phase = (sin(cycle / DesignPinKeypadState.checkingCycle * 2 * .pi) + 1) / 2
             HStack(spacing: Space.md) {
                 ForEach(0..<DesignPinKeypadState.length, id: \.self) { index in
-                    Circle()
-                        .fill(dotColor(index: index))
-                        .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
-                        .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
-                        .shadow(color: dotGlow(index: index), radius: 5)
-                        .scaleEffect(isChecking ? 0.94 + (0.12 * phase) : entered > index ? 1.06 : 1)
-                        .opacity(isChecking ? 0.72 + (0.28 * phase) : 1)
-                        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: entered)
+                    dot(index: index, phase: phase)
                 }
             }
-            .modifier(PinShakeEffect(animatableData: reduceMotion ? 0 : CGFloat(errorRevision)))
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: errorRevision)
+            .modifier(PinShakeEffect(animatableData: shouldReduceMotion ? 0 : CGFloat(errorRevision)))
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: errorRevision)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("PIN entry")
             .accessibilityValue(success != nil ? "PIN accepted" : "\(entered) of \(DesignPinKeypadState.length) digits entered")
@@ -417,7 +415,7 @@ struct DesignPinKeypad: View {
             DesignIconButton(
                 systemName: "delete.left",
                 label: "Delete last digit",
-                role: .destructive,
+                role: .quiet,
                 state: keyDisabled ? .disabled : .normal,
                 accessibilityId: "pin-delete",
                 minimumSize: DesignMetrics.pinKeySize,
@@ -428,7 +426,7 @@ struct DesignPinKeypad: View {
         } else {
             DesignActionButton(
                 title: key,
-                role: .secondary,
+                role: .quiet,
                 state: keyDisabled ? .disabled : .normal,
                 accessibilityId: "pin-key-\(key)",
                 fillsWidth: true,
@@ -441,15 +439,36 @@ struct DesignPinKeypad: View {
     }
 
     private var statusColor: Color {
-        if success != nil { return DuskColors.ok }
         if error != nil { return DuskColors.stop }
         return DuskColors.ink2
     }
 
-    private func dotColor(index: Int) -> Color {
-        if success != nil { return DuskColors.ok }
-        if error != nil { return DuskColors.stop }
-        return entered > index ? DuskColors.accent : DuskColors.bgElev
+    @ViewBuilder
+    private func dot(index: Int, phase: Double) -> some View {
+        let scale = isChecking && !shouldReduceMotion
+            ? 0.94 + (0.12 * phase)
+            : entered > index ? 1.06 : 1
+        let opacity = isChecking && !shouldReduceMotion ? 0.72 + (0.28 * phase) : 1
+        dotFace(index: index)
+            .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
+            .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
+            .shadow(color: dotGlow(index: index), radius: 5)
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: entered)
+    }
+
+    @ViewBuilder
+    private func dotFace(index: Int) -> some View {
+        if success != nil {
+            Circle().fill(DuskColors.ok)
+        } else if error != nil {
+            Circle().fill(DuskColors.stop)
+        } else if entered > index {
+            Circle().fill(DuskColors.accent)
+        } else {
+            DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+        }
     }
 
     private func dotBorder(index: Int) -> Color {
