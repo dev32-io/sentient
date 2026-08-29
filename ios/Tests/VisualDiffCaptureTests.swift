@@ -1503,6 +1503,11 @@ final class VisualDiffCaptureTests: XCTestCase {
             "disclosure",
             "sentient-identity",
             "pin-entry",
+            "loading-state",
+            "notice",
+            "no-results",
+            "stale-banner",
+            "setting-row",
         ]
         let registrations = integratedComponentIDs.flatMap {
             VisualDiffFixtureRegistry.registrations(for: $0)
