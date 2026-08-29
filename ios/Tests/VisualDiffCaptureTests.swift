@@ -72,7 +72,9 @@ final class VisualDiffCaptureTests: XCTestCase {
         let caseID = visualDiffCaseID(for: referenceURL)
         let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
         let segmentedCaptureTime = VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID)
-        let isSegmentedFixture = segmentedCaptureTime != nil
+        let disclosureCaptureTime = VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID)
+        let timelineCaptureTime = segmentedCaptureTime ?? disclosureCaptureTime
+        let isTimelineFixture = timelineCaptureTime != nil
         let fixtureView: AnyView
         if let identityCapture {
             fixtureView = identityCapture.makeFixture(size: SentientIdentityFixtureMetrics.size)
@@ -88,7 +90,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             .environment(\.dynamicTypeSize, .large)
             .preferredColorScheme(.dark)
             .tint(DuskColors.accent)
-        let configuredFixture: AnyView = isSegmentedFixture
+        let configuredFixture: AnyView = isTimelineFixture
             ? AnyView(fixture)
             : AnyView(
                 fixture.transaction { transaction in
@@ -111,11 +113,10 @@ final class VisualDiffCaptureTests: XCTestCase {
             size: logicalSize,
             traits: traits
         )
-        var segmentedCaptureWindow: UIWindow?
-        if isSegmentedFixture {
-            // Segmented selection has a real first-layout reveal. Mount the
-            // native fixture briefly so the capture observes the same
-            // on-appear lifecycle as the reviewed source.
+        var timelineCaptureWindow: UIWindow?
+        if let timelineCaptureTime {
+            // Timeline fixtures use a real mounted SwiftUI view so the capture
+            // observes the production component's on-appear state transition.
             let window = UIWindow(frame: CGRect(origin: .zero, size: logicalSize))
             window.backgroundColor = .clear
             window.rootViewController = controller
@@ -125,9 +126,9 @@ final class VisualDiffCaptureTests: XCTestCase {
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
             RunLoop.main.run(
-                until: Date(timeIntervalSinceNow: segmentedCaptureTime ?? 0)
+                until: Date(timeIntervalSinceNow: timelineCaptureTime)
             )
-            segmentedCaptureWindow = window
+            timelineCaptureWindow = window
         }
         let usesNativeTextInputCapture =
             caseID.hasPrefix("text-field--")
@@ -166,9 +167,9 @@ final class VisualDiffCaptureTests: XCTestCase {
                 focusHostWindow.isHidden = true
                 focusHostWindow.rootViewController = nil
             }
-            segmentedCaptureWindow?.isHidden = true
-            segmentedCaptureWindow?.rootViewController = nil
-            segmentedCaptureWindow?.resignKey()
+            timelineCaptureWindow?.isHidden = true
+            timelineCaptureWindow?.rootViewController = nil
+            timelineCaptureWindow?.resignKey()
         }
         if caseID == "text-field--filled--focus" || caseID == "search-field--placeholder--focus" {
             guard let textField = textField(in: controller.view) else {
@@ -818,6 +819,73 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testDisclosureMotionHonorsReducedMotionFallback() {
+        XCTAssertNil(DesignDisclosureMotion.animation(isExpanded: true, reduceMotion: true))
+        XCTAssertNil(DesignDisclosureMotion.animation(isExpanded: false, reduceMotion: true))
+        XCTAssertNotNil(DesignDisclosureMotion.animation(isExpanded: true, reduceMotion: false))
+        XCTAssertNotNil(DesignDisclosureMotion.animation(isExpanded: false, reduceMotion: false))
+    }
+
+    func testDisclosureRegistryPreservesApprovedStaticAndMotionAuthority() {
+        let expectedStatic = Set([
+            "disclosure--advanced-options--closed",
+            "disclosure--advanced-options--open",
+            "disclosure--data-storage--closed",
+            "disclosure--data-storage--open",
+        ])
+        let expectedMotion = Set([
+            "disclosure--closed-to-open--frame-000--0000ms",
+            "disclosure--closed-to-open--frame-001--0062ms",
+            "disclosure--closed-to-open--frame-002--0125ms",
+            "disclosure--closed-to-open--frame-003--0188ms",
+            "disclosure--closed-to-open--frame-004--0250ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "disclosure")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedMotion)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+    }
+
+    func testDisclosureRegistryPreservesNativeMappingsAndTimeline() {
+        let expected: [(String, String, String, VisualDiffDisclosureBody, Bool)] = [
+            ("disclosure--advanced-options--closed", "Advanced options", "Additional controls for experienced users", .toggle, false),
+            ("disclosure--advanced-options--open", "Advanced options", "Additional controls for experienced users", .toggle, true),
+            ("disclosure--data-storage--closed", "Data and storage", "Retention and local cache", .paragraph, false),
+            ("disclosure--data-storage--open", "Data and storage", "Retention and local cache", .paragraph, true),
+        ]
+
+        for (caseID, title, description, body, initiallyExpanded) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.disclosureRenderConfiguration(for: caseID) else {
+                XCTFail("Missing disclosure render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.description, description, caseID)
+            XCTAssertEqual(configuration.body, body, caseID)
+            XCTAssertEqual(configuration.initiallyExpanded, initiallyExpanded, caseID)
+        }
+
+        let frames: [(String, TimeInterval)] = [
+            ("disclosure--closed-to-open--frame-000--0000ms", 0),
+            ("disclosure--closed-to-open--frame-001--0062ms", 0.062),
+            ("disclosure--closed-to-open--frame-002--0125ms", 0.125),
+            ("disclosure--closed-to-open--frame-003--0188ms", 0.188),
+            ("disclosure--closed-to-open--frame-004--0250ms", 0.25),
+        ]
+        for (caseID, frameTime) in frames {
+            XCTAssertEqual(VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID), frameTime, caseID)
+            guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Missing supported disclosure motion fixture for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "disclosure", caseID)
+            XCTAssertEqual(fixture.variantID, "closed-to-open", caseID)
+            XCTAssertEqual(fixture.stateID, caseID.replacingOccurrences(of: "disclosure--closed-to-open--", with: ""), caseID)
+        }
+    }
+
     func testSentientIdentityRegistryPreservesStaticAndMotionAuthority() {
         let registrations = VisualDiffFixtureRegistry.registrations(for: "sentient-identity")
         let expectedStatic = Set([
@@ -1087,6 +1155,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "range",
             "search-field",
             "segmented-control",
+            "disclosure",
             "sentient-identity",
         ]
         let registrations = integratedComponentIDs.flatMap {
@@ -1281,6 +1350,9 @@ final class VisualDiffCaptureTests: XCTestCase {
     private func visualDiffCaseID(for referenceURL: URL) -> String {
         let frameID = referenceURL.deletingPathExtension().lastPathComponent
         let recordingID = referenceURL.deletingLastPathComponent().lastPathComponent
+        if recordingID == "disclosure--closed-to-open" {
+            return "disclosure--closed-to-open--\(frameID)"
+        }
         guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
         let variantID = String(recordingID.dropFirst("sentient-avatar--".count))
         return "sentient-identity--\(variantID)--\(frameID)"

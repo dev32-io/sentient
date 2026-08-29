@@ -134,22 +134,18 @@ struct ToolsScreen: View {
             title: "Built-in capabilities",
             detail: "Related capabilities may be enabled or disabled together."
         ) {
-            HStack {
-                Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
-                    .font(Typo.ui(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink3)
-                Spacer()
+            DesignDisclosureGroup(isExpanded: builtInsOpen) {
                 DesignDisclosureButton(
                     isExpanded: builtInsOpen,
                     accessibilityLabel: builtInsOpen ? "Collapse built-in capabilities" : "Expand built-in capabilities",
                     accessibilityId: "settings-tools-hermes-expand",
                     action: { builtInsOpen.toggle() }
                 ) {
-                    EmptyView()
+                    Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
+                        .font(Typo.ui(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink3)
                 }
-            }
-            .padding(.vertical, Space.sm)
-            if builtInsOpen {
+            } content: {
                 ForEach(builtins, id: \.name) { tool in
                     DesignToggleRow(
                         title: capabilityName(tool.name),

@@ -1,0 +1,3 @@
+xcodebuild signed arm64 simulator build: passed
+Mach-O executable: arm64
+codesign --verify --deep --strict: passed

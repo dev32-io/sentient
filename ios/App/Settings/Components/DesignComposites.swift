@@ -590,29 +590,182 @@ struct DesignStatusBadge: View {
     }
 }
 
+private enum DesignDisclosureMetrics {
+    // The reviewed summary row is taller than the platform minimum target;
+    // its content remains flexible when Dynamic Type needs more room.
+    static let rowHeight: CGFloat = 68
+    static let chevronSize: CGFloat = 17
+    static let chevronFontSize: CGFloat = 14
+    static let chevronGlowRadius: CGFloat = 5
+    static let insertionOffset: CGFloat = -5
+    static let removalOffset: CGFloat = -4
+    static let expandedDetailBottomPadding = Space.sm
+    static let expandedBottomMargin = Space.sm
+}
+
+private struct DesignDisclosureButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isFocused) private var focused
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled && !reduceMotion
+        configuration.label
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                    .stroke(
+                        focused ? DuskColors.accent : .clear,
+                        lineWidth: contrast == .increased ? DesignMetrics.focusRing : DesignMetrics.focusBorder
+                    )
+                    .padding(DesignMetrics.focusBorderInset)
+            }
+            // Disclosure headers are native buttons. Pressing closes the air
+            // gap immediately; the expansion itself remains state-driven.
+            .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
+    }
+}
+
+private struct DesignDisclosureBodyTransition: ViewModifier {
+    let y: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .offset(y: y)
+    }
+}
+
+enum DesignDisclosureMotion {
+    static func animation(isExpanded: Bool, reduceMotion: Bool) -> Animation? {
+        DesignV2.Motion.animation(
+            duration: isExpanded ? DesignV2.Motion.state : DesignV2.Motion.feedback,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
 struct DesignDisclosureButton<Label: View>: View {
     let isExpanded: Bool
     let accessibilityLabel: String
     let accessibilityId: String
     let action: () -> Void
     @ViewBuilder let label: () -> Label
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
+    @State private var hovered = false
+
+    private var chevronRotation: Angle {
+        guard isExpanded else { return .zero }
+        return .degrees(layoutDirection == .leftToRight ? 90 : -90)
+    }
+
+    private var chevronHighlighted: Bool { isExpanded || hovered }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Space.sm) {
                 label()
                 Spacer(minLength: Space.sm)
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .foregroundStyle(DuskColors.ink3)
+                Image(systemName: "chevron.forward")
+                    .font(.system(size: DesignDisclosureMetrics.chevronFontSize, weight: .medium))
+                    .frame(width: DesignDisclosureMetrics.chevronSize, height: DesignDisclosureMetrics.chevronSize)
+                    .foregroundStyle(chevronHighlighted ? DuskColors.accent : DuskColors.ink3)
+                    .rotationEffect(chevronRotation)
+                    .shadow(
+                        color: chevronHighlighted
+                            ? DuskColors.accent.opacity(isExpanded ? 0.55 : 0.48)
+                            : .clear,
+                        radius: DesignDisclosureMetrics.chevronGlowRadius
+                    )
                     .accessibilityHidden(true)
             }
-            .frame(minHeight: DesignMetrics.minimumTarget)
+            .frame(maxWidth: .infinity, minHeight: DesignDisclosureMetrics.rowHeight, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DesignDisclosureButtonStyle())
+        .onHover { hovered = $0 }
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+            value: hovered
+        )
+        .animation(
+            DesignDisclosureMotion.animation(isExpanded: isExpanded, reduceMotion: reduceMotion),
+            value: isExpanded
+        )
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityIdentifier(accessibilityId)
+    }
+}
+
+/// Stateful disclosure layout with a caller-owned Bool/action pair. The
+/// trigger remains a native Button so existing Set-backed screen state and
+/// independent sibling controls continue to own their mutations.
+struct DesignDisclosureGroup<Header: View, Content: View>: View {
+    let isExpanded: Bool
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        isExpanded: Bool,
+        @ViewBuilder header: @escaping () -> Header,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.isExpanded = isExpanded
+        self.header = header
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header()
+            if isExpanded {
+                content()
+                    .transition(
+                        .asymmetric(
+                            insertion: .modifier(
+                                active: DesignDisclosureBodyTransition(
+                                    y: DesignDisclosureMetrics.insertionOffset,
+                                    opacity: 0
+                                ),
+                                identity: DesignDisclosureBodyTransition(y: 0, opacity: 1)
+                            ),
+                            removal: .modifier(
+                                active: DesignDisclosureBodyTransition(
+                                    y: DesignDisclosureMetrics.removalOffset,
+                                    opacity: 0
+                                ),
+                                identity: DesignDisclosureBodyTransition(y: 0, opacity: 1)
+                            )
+                        )
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, isExpanded ? Space.sm : 0)
+        .padding(.bottom, isExpanded ? DesignDisclosureMetrics.expandedDetailBottomPadding : 0)
+        // The open details well is a background surface, not an interactive
+        // layer, so the native header keeps the only disclosure target.
+        .background {
+            Color.clear
+                .designWell(cornerRadius: Radii.md, showsBorder: false)
+                .opacity(isExpanded ? 1 : 0)
+        }
+        .padding(.top, isExpanded ? Space.xs : 0)
+        .padding(.bottom, isExpanded ? DesignDisclosureMetrics.expandedBottomMargin : 0)
+        .animation(
+            DesignDisclosureMotion.animation(isExpanded: isExpanded, reduceMotion: reduceMotion),
+            value: isExpanded
+        )
+        .transaction { transaction in
+            if reduceMotion {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
     }
 }
 

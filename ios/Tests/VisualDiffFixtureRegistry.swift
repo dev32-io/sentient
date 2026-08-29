@@ -189,6 +189,23 @@ struct VisualDiffSettingRowRenderConfiguration {
     let control: VisualDiffSettingRowControl
 }
 
+enum VisualDiffDisclosureBody: Equatable {
+    case toggle
+    case paragraph
+}
+
+struct VisualDiffDisclosureRenderConfiguration: Equatable {
+    let title: String
+    let description: String
+    let body: VisualDiffDisclosureBody
+    let initiallyExpanded: Bool
+}
+
+struct VisualDiffDisclosureMotionRenderConfiguration: Equatable {
+    let configuration: VisualDiffDisclosureRenderConfiguration
+    let frameTime: TimeInterval
+}
+
 struct VisualDiffSentientIdentityRenderConfiguration: Equatable {
     let initialState: SentientIdentityState
     let targetState: SentientIdentityState?
@@ -287,6 +304,7 @@ enum VisualDiffFixtureRegistry {
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
+        DisclosureFixtureCatalog.registration.componentID: DisclosureFixtureCatalog.registration,
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
     ]
 
@@ -399,6 +417,16 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSettingRowRenderConfiguration? {
         SettingRowFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func disclosureRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffDisclosureRenderConfiguration? {
+        DisclosureFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func disclosureCaptureTime(for caseID: String) -> TimeInterval? {
+        DisclosureFixtureCatalog.captureTime(for: caseID)
     }
 
     static func sentientIdentityRenderConfiguration(
@@ -1102,6 +1130,298 @@ private enum SearchFieldFixtureCatalog {
         componentID: "search-field",
         registrations: definitions.map(\.0),
         adapter: SearchFieldFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private enum DisclosureFixtureMetrics {
+    // The common-composites visual-diff fixture uses the approved 540pt
+    // disclosure width and 52pt canvas inset. These are fixture placement
+    // values, not production layout constants.
+    static let width: CGFloat = 540
+    static let canvasInset: CGFloat = 52
+    static let bodyMinimumHeight: CGFloat = 68
+    static let bodyHorizontalPadding = Space.md + DesignMetrics.hairline
+}
+
+private struct DisclosureFixtureBodySurface<Content: View>: View {
+    let minimumHeight: CGFloat
+    let verticalPadding: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    init(
+        minimumHeight: CGFloat = 0,
+        verticalPadding: CGFloat = 14,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.minimumHeight = minimumHeight
+        self.verticalPadding = verticalPadding
+        self.content = content
+    }
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        content()
+            .padding(.horizontal, DisclosureFixtureMetrics.bodyHorizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: minimumHeight,
+                alignment: .leading
+            )
+            .background {
+                designSlateFace(
+                    role: .secondary,
+                    muted: false,
+                    hovered: false,
+                    baseOverride: DuskColors.paper
+                )
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
+            }
+            .overlay {
+                DesignTopEdgeLight(
+                    shape: shape,
+                    color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightOpacity)
+                )
+            }
+            .background {
+                ZStack {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
+                        geometry: DesignMaterialShadowGeometry.slateRest
+                    )
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.bgSunk.overlaying(
+                            DuskColors.line,
+                            opacity: DesignMaterialAdapter.plateRestContactMix
+                        ),
+                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                    )
+                }
+            }
+    }
+}
+
+private struct DisclosureFixture: View {
+    let configuration: VisualDiffDisclosureRenderConfiguration
+    let transitionFrameTime: TimeInterval?
+    @State private var expanded: Bool
+    @State private var diagnostics = false
+    @State private var transitionStarted = false
+
+    init(
+        configuration: VisualDiffDisclosureRenderConfiguration,
+        transitionFrameTime: TimeInterval? = nil
+    ) {
+        self.configuration = configuration
+        self.transitionFrameTime = transitionFrameTime
+        _expanded = State(initialValue: configuration.initiallyExpanded)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            DesignCard {
+                DesignDisclosureGroup(isExpanded: expanded) {
+                    DesignDisclosureButton(
+                        isExpanded: expanded,
+                        accessibilityLabel: "\(expanded ? "Collapse" : "Expand") \(configuration.title)",
+                        accessibilityId: "visual-diff-disclosure",
+                        action: { expanded.toggle() }
+                    ) {
+                        VStack(alignment: .leading, spacing: Space.xs) {
+                            Text(configuration.title)
+                                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                                .foregroundStyle(DuskColors.ink)
+                            Text(configuration.description)
+                                .font(Typo.ui(TypeScale.sm))
+                                .foregroundStyle(DuskColors.ink2)
+                        }
+                    }
+                } content: {
+                    bodyContent
+                }
+            }
+            .frame(width: DisclosureFixtureMetrics.width)
+            .padding(.leading, DisclosureFixtureMetrics.canvasInset)
+            .padding(.top, DisclosureFixtureMetrics.canvasInset)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            guard transitionFrameTime != nil, !transitionStarted else { return }
+            transitionStarted = true
+            DispatchQueue.main.async { expanded = true }
+        }
+    }
+
+    @ViewBuilder
+    private var bodyContent: some View {
+        switch configuration.body {
+        case .toggle:
+            DisclosureFixtureBodySurface(
+                minimumHeight: DisclosureFixtureMetrics.bodyMinimumHeight,
+                verticalPadding: Space.md
+            ) {
+                HStack(alignment: .center, spacing: Space.lg) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text("Detailed diagnostics")
+                            .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                            .foregroundStyle(DuskColors.ink)
+                        Text("Show sanitized identifiers and state transitions.")
+                            .font(Typo.ui(TypeScale.sm))
+                            .foregroundStyle(DuskColors.ink2)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    DesignToggleSwitch(
+                        label: "",
+                        isOn: $diagnostics,
+                        accessibilityId: "visual-diff-diagnostics"
+                    )
+                    .accessibilityLabel("Detailed diagnostics")
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        case .paragraph:
+            DisclosureFixtureBodySurface {
+                Text("Storage controls belong here when defined.")
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
+    }
+}
+
+private struct DisclosureFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffDisclosureRenderConfiguration]
+    let motionConfigurations: [String: VisualDiffDisclosureMotionRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        if let configuration = motionConfigurations[fixture.caseID] {
+            return AnyView(
+                DisclosureFixture(
+                    configuration: configuration.configuration,
+                    transitionFrameTime: configuration.frameTime
+                )
+            )
+        }
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(DisclosureFixture(configuration: configuration))
+    }
+}
+
+private enum DisclosureFixtureCatalog {
+    private static func entry(
+        variantID: String,
+        stateID: String,
+        configuration: VisualDiffDisclosureRenderConfiguration
+    ) -> VisualDiffFixtureRegistration {
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: "disclosure--\(variantID)--\(stateID)",
+                componentID: "disclosure",
+                variantID: variantID,
+                stateID: stateID
+            ),
+            applicability: .supported
+        )
+    }
+
+    private static let advancedOptions = VisualDiffDisclosureRenderConfiguration(
+        title: "Advanced options",
+        description: "Additional controls for experienced users",
+        body: .toggle,
+        initiallyExpanded: false
+    )
+    private static let dataStorage = VisualDiffDisclosureRenderConfiguration(
+        title: "Data and storage",
+        description: "Retention and local cache",
+        body: .paragraph,
+        initiallyExpanded: false
+    )
+
+    private static func expanded(
+        _ configuration: VisualDiffDisclosureRenderConfiguration
+    ) -> VisualDiffDisclosureRenderConfiguration {
+        VisualDiffDisclosureRenderConfiguration(
+            title: configuration.title,
+            description: configuration.description,
+            body: configuration.body,
+            initiallyExpanded: true
+        )
+    }
+
+    private static let advancedOptionsOpen = expanded(advancedOptions)
+    private static let dataStorageOpen = expanded(dataStorage)
+
+    private static let staticDefinitions: [(VisualDiffFixtureRegistration, VisualDiffDisclosureRenderConfiguration)] = [
+        (entry(variantID: "advanced-options", stateID: "closed", configuration: advancedOptions), advancedOptions),
+        (entry(variantID: "advanced-options", stateID: "open", configuration: advancedOptionsOpen), advancedOptionsOpen),
+        (entry(variantID: "data-storage", stateID: "closed", configuration: dataStorage), dataStorage),
+        (entry(variantID: "data-storage", stateID: "open", configuration: dataStorageOpen), dataStorageOpen),
+    ]
+
+    private static let motionDefinitions: [(VisualDiffFixtureRegistration, VisualDiffDisclosureMotionRenderConfiguration)] = [
+        (0, 0.0),
+        (1, 0.062),
+        (2, 0.125),
+        (3, 0.188),
+        (4, 0.250),
+    ].map { index, frameTime in
+        let frameID = String(format: "frame-%03d--%04dms", index, Int((frameTime * 1_000).rounded()))
+        let caseID = "disclosure--closed-to-open--\(frameID)"
+        let configuration = VisualDiffDisclosureRenderConfiguration(
+            title: dataStorage.title,
+            description: dataStorage.description,
+            body: dataStorage.body,
+            initiallyExpanded: false
+        )
+        return (
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: caseID,
+                    componentID: "disclosure",
+                    variantID: "closed-to-open",
+                    stateID: frameID
+                ),
+                applicability: .supported
+            ),
+            VisualDiffDisclosureMotionRenderConfiguration(
+                configuration: configuration,
+                frameTime: frameTime
+            )
+        )
+    }
+
+    static let renderConfigurations: [String: VisualDiffDisclosureRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: staticDefinitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        } + motionDefinitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration.configuration)
+        })
+
+    private static let motionRenderConfigurations: [String: VisualDiffDisclosureMotionRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: motionDefinitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static func captureTime(for caseID: String) -> TimeInterval? {
+        motionRenderConfigurations[caseID]?.frameTime
+    }
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "disclosure",
+        registrations: staticDefinitions.map(\.0) + motionDefinitions.map(\.0),
+        adapter: DisclosureFixtureAdapter(
+            configurations: renderConfigurations,
+            motionConfigurations: motionRenderConfigurations
+        )
     )
 }
 
