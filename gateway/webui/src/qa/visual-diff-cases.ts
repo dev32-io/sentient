@@ -153,6 +153,15 @@ export interface UserAvatarVariantProps {
 
 type UserAvatarVariantDefinition = VisualDiffVariantDefinition<UserAvatarVariantProps>;
 
+export interface NoticeVariantProps {
+  readonly tone: "info" | "warning" | "error";
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel?: string;
+}
+
+type NoticeVariantDefinition = VisualDiffVariantDefinition<NoticeVariantProps>;
+
 export interface SentientIdentityVariantProps {
   readonly state: SentientIdentityState;
   readonly transitionTo?: SentientIdentityState;
@@ -169,6 +178,32 @@ const USER_AVATAR_VARIANTS = {
   "clay-44": { props: { initial: "R", name: "Riley Chen", tint: "clay", size: "lg" } },
   "fallback-44": { props: { name: "Unknown user", size: "lg" } },
 } as const satisfies Readonly<Record<string, UserAvatarVariantDefinition>>;
+
+const NOTICE_VARIANTS = {
+  info: {
+    props: {
+      tone: "info",
+      title: "Changes apply to this device",
+      message: "Other household devices keep their current preference.",
+    },
+  },
+  warning: {
+    props: {
+      tone: "warning",
+      title: "Permission required",
+      message: "Review the requested scope before continuing.",
+      actionLabel: "Review",
+    },
+  },
+  error: {
+    props: {
+      tone: "error",
+      title: "Couldn’t save changes",
+      message: "Your edits are still here. Try again when the connection returns.",
+      actionLabel: "Retry",
+    },
+  },
+} as const satisfies Readonly<Record<string, NoticeVariantDefinition>>;
 
 const TOGGLE_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -386,6 +421,18 @@ export const visualDiffComponentRegistry = {
       "fallback-44": ["rest"],
     },
   },
+  notice: {
+    id: "notice",
+    fixtureAdapterId: "notice",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#Notice",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: NOTICE_VARIANTS,
+    stateApplicability: {
+      info: ["rest"],
+      warning: ["compact", "rest"],
+      error: ["compact", "rest"],
+    },
+  },
   "sentient-identity": {
     id: "sentient-identity",
     fixtureAdapterId: "sentient-identity",
@@ -538,6 +585,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "segmented-control",
   "user-avatar",
   "sentient-identity",
+  "notice",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
@@ -568,8 +616,8 @@ function componentDefinition(id: string): VisualDiffComponentDefinition | undefi
 }
 
 function stateDetails(stateId: string): { state: string; compact: boolean } | undefined {
-  const compact = stateId.startsWith("compact-");
-  const state = compact ? stateId.slice("compact-".length) : stateId;
+  const compact = stateId === "compact" || stateId.startsWith("compact-");
+  const state = stateId === "compact" ? "rest" : compact ? stateId.slice("compact-".length) : stateId;
   if (!state) return undefined;
   return { state, compact };
 }

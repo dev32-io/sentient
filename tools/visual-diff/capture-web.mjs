@@ -228,7 +228,7 @@ function captureFrame(caseId, referenceSize) {
   };
   const compact = caseId.startsWith("segmented-control--")
     ? caseId.endsWith("--compact-layout")
-    : caseId.includes("--compact-");
+    : caseId.includes("--compact-") || caseId.endsWith("--compact");
   const componentId = caseId.split("--", 1)[0];
   const fixedCanvas = FIXED_CANVAS_COMPONENTS.has(componentId);
   const state = visualDiffState(caseId);

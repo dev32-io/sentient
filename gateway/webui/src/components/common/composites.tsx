@@ -357,13 +357,47 @@ export function WipBadge({ label = "In progress", className }: WipBadgeProps): J
 
 export interface NoticeProps {
   children: ComponentChildren;
-  tone?: "info" | "success" | "error" | undefined;
+  tone?: "info" | "success" | "warning" | "error" | undefined;
   title?: string | undefined;
+  action?: JSX.Element | undefined;
 }
 
-export function Notice({ children, tone = "info", title }: NoticeProps): JSX.Element {
+function NoticeGlyph({ tone }: { tone: NoticeProps["tone"] }): JSX.Element {
+  if (tone === "info") {
+    return (
+      <svg class="snt-notice__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 11v5M12 8v.1" />
+      </svg>
+    );
+  }
+  if (tone === "success") {
+    return (
+      <svg class="snt-notice__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m5 12 4.5 4.5L19 7" />
+      </svg>
+    );
+  }
+  return (
+    <svg class="snt-notice__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M12 4 3.8 19h16.4L12 4Z" />
+      <path d="M12 9v4.5M12 16.5v.1" />
+    </svg>
+  );
+}
+
+export function Notice({ children, tone = "info", title, action }: NoticeProps): JSX.Element {
   const urgent = tone === "error";
-  return <div class={classes("snt-notice", tone !== "info" && `snt-notice--${tone}`)} role={urgent ? "alert" : "status"}>{title && <div class="snt-card-title">{title}</div>}{children}</div>;
+  return (
+    <div class={classes("snt-notice", tone !== "info" && `snt-notice--${tone}`)} role={urgent ? "alert" : "status"}>
+      <NoticeGlyph tone={tone} />
+      <div class="snt-notice__content">
+        {title && <strong class="snt-notice__title">{title}</strong>}
+        <div class={classes("snt-notice__message", title && "snt-notice__message--with-title")}>{children}</div>
+      </div>
+      {action && <div class="snt-notice__action">{action}</div>}
+    </div>
+  );
 }
 
 export interface AsyncStateProps {

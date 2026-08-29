@@ -37,6 +37,20 @@
 .connection-lost-banner__btn:hover {
   background: color-mix(in oklab, var(--color-ink) 85%, var(--color-accent));
 }
+.connection-lost-banner .snt-notice {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.connection-lost-banner .snt-notice__icon { display: none; }
+.connection-lost-banner .snt-notice__content { min-width: 0; }
+.connection-lost-banner .snt-notice__title { font-size: inherit; font-weight: inherit; line-height: inherit; }
+.connection-lost-banner .snt-notice__message { display: none; }
 
 html, body {
   margin: 0;

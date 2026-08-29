@@ -53,6 +53,14 @@ const CURRENT_LOADING_STATE_CASES = [
   "loading-state--settings--reduced-motion",
 ] as const;
 
+const CURRENT_NOTICE_CASES = [
+  "notice--info--rest",
+  "notice--warning--compact",
+  "notice--warning--rest",
+  "notice--error--compact",
+  "notice--error--rest",
+] as const;
+
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
   "user-avatar--terra-44--rest",
@@ -824,6 +832,46 @@ describe("visual diff component cases", () => {
         expect(resolution.case.fixtureAdapterId).toBe("plate");
         expect(resolution.case.props).toEqual({ variant: "default" });
       }
+    }
+  });
+
+  it("registers the approved notice tones and production provenance", () => {
+    const notice = visualDiffComponentRegistry.notice;
+    expect(notice.fixtureAdapterId).toBe("notice");
+    expect(notice.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#Notice");
+    expect(notice.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(notice.stateApplicability).toEqual({
+      info: ["rest"],
+      warning: ["compact", "rest"],
+      error: ["compact", "rest"],
+    });
+    expect(notice.variants.info.props).toEqual({
+      tone: "info",
+      title: "Changes apply to this device",
+      message: "Other household devices keep their current preference.",
+    });
+    expect(notice.variants.warning.props.actionLabel).toBe("Review");
+    expect(notice.variants.error.props.actionLabel).toBe("Retry");
+
+    for (const caseId of CURRENT_NOTICE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("notice");
+        expect(resolution.case.fixtureAdapterId).toBe("notice");
+      }
+    }
+  });
+
+  it("resolves unapproved notice states to missing authority", () => {
+    for (const stateId of ["compact-rest", "hover", "focus", "pressed", "disabled", "loading", "success"]) {
+      expect(resolveVisualDiffCase(`notice--info--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `notice--info--${stateId}`,
+        componentId: "notice",
+        variantId: "info",
+        stateId,
+      });
     }
   });
 

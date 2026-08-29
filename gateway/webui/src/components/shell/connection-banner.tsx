@@ -9,11 +9,11 @@ export interface ConnectionBannerProps {
 export function ConnectionBanner({ onReconnect }: ConnectionBannerProps): JSX.Element {
   return (
     <div class="connection-lost-banner">
-      <Notice tone="error" title="Connection lost">
-        <ActionButton variant="quiet" className="connection-lost-banner__btn" onClick={onReconnect}>
-          Reconnect
-        </ActionButton>
-      </Notice>
+      <Notice
+        tone="error"
+        title="Connection lost"
+        action={<ActionButton variant="quiet" className="connection-lost-banner__btn" onClick={onReconnect}>Reconnect</ActionButton>}
+      >{null}</Notice>
     </div>
   );
 }

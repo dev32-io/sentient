@@ -11,12 +11,14 @@ import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
+import { Notice } from "../components/common/composites.tsx";
 import {
   type ActionButtonVariantProps,
   type CheckboxVariantProps,
   type ChipVariantProps,
   type IconButtonVariantProps,
   type LoadingStateVariantProps,
+  type NoticeVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
   type SearchFieldVariantProps,
@@ -220,6 +222,20 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "notice": {
+    // This adapter keeps the approved notice artboard while mounting the production Notice and ActionButton.
+    render: (fixture) => {
+      const notice = fixture.props as NoticeVariantProps;
+      const action = notice.actionLabel
+        ? <ActionButton variant={notice.tone === "warning" ? "quiet" : "default"}>{notice.actionLabel}</ActionButton>
+        : undefined;
+      return (
+        <Plate className={`visual-diff-target visual-diff-notice${fixture.compact ? " visual-diff-notice--compact" : ""}`}>
+          <Notice tone={notice.tone} title={notice.title} action={action}>{notice.message}</Notice>
+        </Plate>
+      );
+    },
+  },
   "sentient-identity": {
     // This adapter mounts the production Rive-backed identity. The factory only
     // records the real runtime for deterministic capture control.
@@ -402,12 +418,18 @@ function VisualDiffFixture() {
 const style = document.createElement("style");
 style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
-  .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
+  .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-search-field { width: min(320px, 100%); }
   .visual-diff-text-area { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }
+  .visual-diff-notice { width: 100%; }
+  .visual-diff-canvas[data-case-id^="notice--"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 75px 52px;
+  }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
   .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
   .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }

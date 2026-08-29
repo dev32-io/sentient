@@ -102,9 +102,11 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
           }}
         />
         {showStaleErrorBanner && (
-          <Notice tone="error" title="History may be out of date">
-            <ActionButton variant="quiet" className="drawer__error-retry" onClick={() => void sessions.load()}>Retry</ActionButton>
-          </Notice>
+          <Notice
+            tone="error"
+            title="History may be out of date"
+            action={<ActionButton variant="quiet" className="drawer__error-retry" onClick={() => void sessions.load()}>Retry</ActionButton>}
+          >{null}</Notice>
         )}
         <div class="drawer__list">
           {showLoadingBlank ? (
