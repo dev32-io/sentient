@@ -147,7 +147,7 @@ function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
   if (frameCaseId === "no-results--empty") return "no-results--default--empty";
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
@@ -193,7 +193,9 @@ function visualDiffTransitionTimeMs(caseId) {
   const toggleMatch = /^toggle--off-to-on--frame-\d+--(\d+)ms$/.exec(caseId);
   if (toggleMatch) return Number(toggleMatch[1]);
   const segmentedMatch = /^segmented-control--comfortable-to-compact--frame-\d+--(\d+)ms$/.exec(caseId);
-  return segmentedMatch ? Number(segmentedMatch[1]) : undefined;
+  if (segmentedMatch) return Number(segmentedMatch[1]);
+  const disclosureMatch = /^disclosure--closed-to-open--frame-\d+--(\d+)ms$/.exec(caseId);
+  return disclosureMatch ? Number(disclosureMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
@@ -421,6 +423,29 @@ async function freezeSegmentedTransition(page, transitionTimeMs) {
   }, transitionTimeMs);
 }
 
+async function freezeDisclosureTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff disclosure transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  if (transitionTimeMs === 0) return;
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-disclosure");
+    return target && target.getAnimations({ subtree: true }).length > 0;
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-disclosure");
+    if (!target) throw new Error("Visual diff disclosure target is not ready");
+    const animations = target.getAnimations({ subtree: true });
+    if (!animations.length) throw new Error("Visual diff disclosure transition is not running");
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
 async function chipTransitionClip(page, frame) {
   if (!frame.normalizeTranslatedPaint || !frame.clip) return frame.clip;
   const translatedOffset = await page.evaluate(() => {
@@ -502,6 +527,8 @@ async function capture() {
         await freezeToggleTransition(page, transitionTimeMs);
       } else if (caseId.startsWith("segmented-control--comfortable-to-compact--")) {
         await freezeSegmentedTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("disclosure--closed-to-open--")) {
+        await freezeDisclosureTransition(page, transitionTimeMs);
       } else {
         await page.evaluate(() => {
           const transitionWindow = window;

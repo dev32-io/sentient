@@ -162,6 +162,14 @@ export interface NoticeVariantProps {
 
 type NoticeVariantDefinition = VisualDiffVariantDefinition<NoticeVariantProps>;
 
+export interface DisclosureVariantProps {
+  readonly title: string;
+  readonly description: string;
+  readonly body: "toggle" | "paragraph";
+}
+
+type DisclosureVariantDefinition = VisualDiffVariantDefinition<DisclosureVariantProps>;
+
 export interface SentientIdentityVariantProps {
   readonly state: SentientIdentityState;
   readonly transitionTo?: SentientIdentityState;
@@ -226,6 +234,38 @@ const TOGGLE_VARIANTS = {
   on: { props: { label: "Automatic updates", checked: true } },
   "off-to-on": { props: { label: "Automatic updates", checked: false } },
 } as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
+const DISCLOSURE_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const DISCLOSURE_VARIANTS = {
+  "advanced-options": {
+    props: {
+      title: "Advanced options",
+      description: "Additional controls for experienced users",
+      body: "toggle",
+    },
+  },
+  "data-storage": {
+    props: {
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    },
+  },
+  "closed-to-open": {
+    props: {
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    },
+  },
+} as const satisfies Readonly<Record<string, DisclosureVariantDefinition>>;
 
 const SEGMENTED_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -589,6 +629,18 @@ export const visualDiffComponentRegistry = {
       "comfortable-to-compact": SEGMENTED_TRANSITION_FRAMES,
     },
   },
+  disclosure: {
+    id: "disclosure",
+    fixtureAdapterId: "disclosure",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#Disclosure",
+    authority: "design/prototype/common-composites/handoff",
+    variants: DISCLOSURE_VARIANTS,
+    stateApplicability: {
+      "advanced-options": ["closed", "open"],
+      "data-storage": ["closed", "open"],
+      "closed-to-open": DISCLOSURE_TRANSITION_FRAMES,
+    },
+  },
   checkbox: {
     id: "checkbox",
     fixtureAdapterId: "checkbox",
@@ -675,6 +727,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "no-results",
   "stale-banner",
   "pane-header",
+  "disclosure",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

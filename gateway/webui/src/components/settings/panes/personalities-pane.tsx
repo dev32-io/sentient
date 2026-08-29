@@ -2,7 +2,7 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { PersonalityList, ProfileApi } from "../../../services/profile-api.js";
-import { ActionButton, ActionRow, AsyncState, Field, PaneChrome, SettingsCard, TextArea } from "../../common/index.ts";
+import { ActionButton, ActionRow, AsyncState, Disclosure, Field, PaneChrome, SettingsCard, TextArea } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "personalities-pane"]);
@@ -66,15 +66,20 @@ export function PersonalitiesPane({ api, token, onMark }: PersonalitiesPaneProps
               return (
                 <div key={personality.name} class={`lst-row${isActive ? " on" : ""}${isOpen ? " open" : ""}`}>
                   <div class="lst-row-main">
-                    <ActionButton className="lst-row-btn" variant="quiet" onClick={() => setOpenId(isOpen ? null : personality.name)} aria-expanded={isOpen}>
-                      <Icon name="chevron" size={14} /> <span class="lst-title">{personality.name}{isActive && <span class="tag tag-active">Active</span>}</span>
-                    </ActionButton>
+                    <Disclosure
+                      className="lst-disclosure"
+                      mode="button"
+                      title={<>{personality.name}{isActive && <span class="tag tag-active">Active</span>}</>}
+                      open={isOpen}
+                      onOpenChange={(nextOpen) => setOpenId(nextOpen ? personality.name : null)}
+                    >
+                      <div class="lst-edit"><TextArea label={`${personality.name} instructions`} value={draft} rows={10} monospace dirty={draft !== personality.body} onInput={(event) => { const body = event.currentTarget.value; setEditDrafts((values) => ({ ...values, [personality.name]: body })); if (body !== personality.body) onMark({ key: `personalities.${personality.name}`, kind: "slow", payload: { body } }); }} /></div>
+                    </Disclosure>
                     <ActionRow>
                       {!isActive && <ActionButton variant="quiet" onClick={() => onMark({ key: "personalities.active", kind: "fast", payload: { name: personality.name } })}>Activate</ActionButton>}
                       <ActionButton variant="destructive" onClick={() => onMark({ key: `personalities.delete:${personality.name}`, kind: "slow", payload: { name: personality.name } })}>Delete</ActionButton>
                     </ActionRow>
                   </div>
-                  {isOpen && <div class="lst-edit"><TextArea label={`${personality.name} instructions`} value={draft} rows={10} monospace dirty={draft !== personality.body} onInput={(event) => { const body = event.currentTarget.value; setEditDrafts((values) => ({ ...values, [personality.name]: body })); if (body !== personality.body) onMark({ key: `personalities.${personality.name}`, kind: "slow", payload: { body } }); }} /></div>}
                 </div>
               );
             })}

@@ -203,6 +203,21 @@ const CURRENT_SEGMENTED_CONTROL_CASES = [
   "segmented-control--density--compact-selected",
 ] as const;
 
+const CURRENT_DISCLOSURE_CASES = [
+  "disclosure--advanced-options--closed",
+  "disclosure--advanced-options--open",
+  "disclosure--data-storage--closed",
+  "disclosure--data-storage--open",
+] as const;
+
+const DISCLOSURE_TRANSITION_CASES = [
+  "disclosure--closed-to-open--frame-000--0000ms",
+  "disclosure--closed-to-open--frame-001--0062ms",
+  "disclosure--closed-to-open--frame-002--0125ms",
+  "disclosure--closed-to-open--frame-003--0188ms",
+  "disclosure--closed-to-open--frame-004--0250ms",
+] as const;
+
 const SEGMENTED_TRANSITION_CASES = [
   "segmented-control--comfortable-to-compact--frame-000--0000ms",
   "segmented-control--comfortable-to-compact--frame-001--0055ms",
@@ -753,6 +768,63 @@ describe("visual diff component cases", () => {
         stateId,
       });
     }
+  });
+
+  it("registers the exact disclosure matrix and native production provenance", () => {
+    const disclosure = visualDiffComponentRegistry.disclosure;
+    expect(disclosure.stateApplicability).toEqual({
+      "advanced-options": ["closed", "open"],
+      "data-storage": ["closed", "open"],
+      "closed-to-open": [
+        "frame-000--0000ms",
+        "frame-001--0062ms",
+        "frame-002--0125ms",
+        "frame-003--0188ms",
+        "frame-004--0250ms",
+      ],
+    });
+    expect(disclosure.fixtureAdapterId).toBe("disclosure");
+    expect(disclosure.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#Disclosure");
+    expect(disclosure.authority).toBe("design/prototype/common-composites/handoff");
+    expect(disclosure.variants["advanced-options"].props).toEqual({
+      title: "Advanced options",
+      description: "Additional controls for experienced users",
+      body: "toggle",
+    });
+    expect(disclosure.variants["data-storage"].props).toEqual({
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    });
+
+    for (const caseId of [...CURRENT_DISCLOSURE_CASES, ...DISCLOSURE_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("disclosure");
+        expect(resolution.case.fixtureAdapterId).toBe("disclosure");
+      }
+    }
+  });
+
+  it("resolves unapproved disclosure states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "selected", "loading"]) {
+      expect(resolveVisualDiffCase(`disclosure--advanced-options--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `disclosure--advanced-options--${stateId}`,
+        componentId: "disclosure",
+        variantId: "advanced-options",
+        stateId,
+      });
+    }
+    expect(resolveVisualDiffCase("disclosure--unknown--closed")).toEqual({
+      status: "unsupported",
+      caseId: "disclosure--unknown--closed",
+      componentId: "disclosure",
+      variantId: "unknown",
+      stateId: "closed",
+      reason: "variant",
+    });
   });
 
   it("registers the exact checkbox matrix and native production provenance", () => {

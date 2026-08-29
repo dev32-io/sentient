@@ -5,9 +5,8 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
-import { AsyncState, NoResultsState, PaneChrome } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, NoResultsState, PaneChrome } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
-import { PaneChrome } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -17,6 +16,7 @@ import {
   type ActionButtonVariantProps,
   type CheckboxVariantProps,
   type ChipVariantProps,
+  type DisclosureVariantProps,
   type IconButtonVariantProps,
   type LoadingStateVariantProps,
   type NoResultsStateVariantProps,
@@ -135,6 +135,42 @@ function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   }, [fixture.variantId]);
 
   return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
+}
+
+function DisclosureFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as DisclosureVariantProps;
+  const isTransition = fixture.variantId === "closed-to-open";
+  const [open, setOpen] = useState(fixture.state === "open");
+
+  useEffect(() => {
+    if (!isTransition) return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setOpen(true);
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [isTransition]);
+
+  const body = props.body === "toggle"
+    ? (
+      <div class="visual-diff-disclosure-setting">
+        <div><strong>Detailed diagnostics</strong><span>Show sanitized identifiers and state transitions.</span></div>
+        <ToggleControl label="Detailed diagnostics" checked={false} onChange={() => {}} />
+      </div>
+    )
+    : <p class="visual-diff-disclosure-paragraph">Storage controls belong here when defined.</p>;
+
+  return (
+    <Plate className="visual-diff-target visual-diff-disclosure">
+      <div class="snt-disclosures">
+        <Disclosure title={props.title} description={props.description} open={open} onOpenChange={setOpen}>
+          {body}
+        </Disclosure>
+      </div>
+    </Plate>
+  );
 }
 
 const visualDiffRiveFactory: RiveFactory = (configuration) => {
@@ -358,6 +394,12 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // This adapter deliberately renders the production PaneChrome with a real Plate and ActionButton.
     render: (fixture) => <PaneHeaderFixture fixture={fixture} />,
   },
+  disclosure: {
+    // This adapter deliberately renders the production Disclosure and its native
+    // details/summary semantics for every approved static and motion case.
+    render: (fixture) => <DisclosureFixture fixture={fixture} />,
+  }
+  },
   "plate": {
     // This adapter deliberately renders the production Plate and its public anatomy.
     render: (fixture) => {
@@ -465,7 +507,7 @@ function VisualDiffFixture() {
   }, []);
 
   return (
-    <main class={`visual-diff-canvas visual-diff-canvas--${fixture.componentId} snt-surface`} data-case-id={caseId} data-component-id={fixture.componentId}>
+    <main class={`visual-diff-canvas visual-diff-canvas--${fixture.componentId}${fixture.componentId === "disclosure" ? " visual-diff-canvas--disclosure" : ""} snt-surface`} data-case-id={caseId} data-component-id={fixture.componentId}>
       {fixtureAdapter.render(fixture)}
     </main>
   );
@@ -477,6 +519,7 @@ style.textContent = `
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
   /* Common-composite handoff canvases retain their source specimen gutter. */
   .visual-diff-canvas--stale-banner { padding: 0 24px 24px 0; }
+  .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-stale-banner { width: min(480px, 100%); }
   /* Preserve the handoff artboard's lower breathing room around the source margin. */
@@ -503,6 +546,26 @@ style.textContent = `
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
   .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
   .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }
+  .visual-diff-disclosure { width: min(540px, 100%); }
+  .visual-diff-disclosure-setting,
+  .visual-diff-disclosure-paragraph {
+    border: 1px solid var(--color-line-soft);
+    border-radius: var(--radius-sm);
+    background: var(--slate-face);
+    box-shadow: var(--plate-shadow);
+  }
+  .visual-diff-disclosure-setting {
+    min-height: 68px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 14px;
+  }
+  .visual-diff-disclosure-setting > div { min-width: 0; }
+  .visual-diff-disclosure-setting strong { display: block; color: var(--color-ink); font-size: 14px; font-weight: 500; }
+  .visual-diff-disclosure-setting span { display: block; margin-top: 3px; color: var(--color-ink-2); font-size: var(--font-size-sm); line-height: 1.5; }
+  .visual-diff-disclosure-paragraph { margin: 0; padding: 14px; color: var(--color-ink-2); font-size: var(--font-size-sm); line-height: 1.5; }
 `;
 document.head.append(style);
 

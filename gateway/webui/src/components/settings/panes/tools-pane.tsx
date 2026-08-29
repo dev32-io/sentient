@@ -9,7 +9,7 @@ import type {
   ProfileApi,
   ProfileV1,
 } from "../../../services/profile-api.js";
-import { ActionButton, AsyncState, PaneHeader, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
+import { ActionButton, AsyncState, Disclosure, PaneHeader, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 import {
   effectiveToolPermission,
@@ -209,15 +209,15 @@ function McpServerSection(props: McpServerSectionProps): JSX.Element {
 
   return (
     <div class="mcp">
-      <div class="mcp-h">
-        <ActionButton className="mcp-h-btn" variant="quiet" aria-expanded={isOpen} onClick={onToggleOpen}>
-          <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}><Icon name="chevron" size={14} /></span>
-          <span class="mcp-id"><span class="mcp-name"><code class="kbd">{id}</code></span>{entry.description && <span class="mcp-desc dim">{entry.description}</span>}</span>
-          <span class="mcp-count dim">{toolsActive}/{toolsTotal} tools</span>
-        </ActionButton>
-        <ToggleControl label={`Enable ${id} capabilities`} checked={masterOn} onChange={onMasterToggle} />
-      </div>
-      {isOpen && (
+      <Disclosure
+        className="mcp-disclosure"
+        mode="button"
+        title={<span class="mcp-name"><code class="kbd">{id}</code></span>}
+        description={entry.description ? <span class="mcp-desc dim">{entry.description}</span> : undefined}
+        summaryTrailing={<span class="mcp-count dim">{toolsActive}/{toolsTotal} tools</span>}
+        open={isOpen}
+        onOpenChange={onToggleOpen}
+      >
         <PermissionToolTable
           rows={entry.tools.map((t) => ({
             key: t.name,
@@ -228,7 +228,8 @@ function McpServerSection(props: McpServerSectionProps): JSX.Element {
             onChange: (permission: ToolPermission) => onToolChange(t.name, permission),
           }))}
         />
-      )}
+      </Disclosure>
+      <ToggleControl label={`Enable ${id} capabilities`} checked={masterOn} onChange={onMasterToggle} />
     </div>
   );
 }
@@ -263,13 +264,16 @@ function BuiltinToolsCard(props: BuiltinToolsCardProps): JSX.Element {
   return (
     <SettingsCard title="Assistant capabilities" subtitle="Built-in capabilities grouped by purpose." padded={false}>
       <div class="mcp-list">
-        <div class="mcp">
-          <ActionButton className="mcp-h mcp-h-btn" variant="quiet" aria-expanded={isOpen} onClick={onToggleOpen}>
-            <span class={["mcp-chev", isOpen && "open"].filter(Boolean).join(" ")}><Icon name="chevron" size={14} /></span>
-            <span class="mcp-id"><span class="mcp-name">Built in</span><span class="mcp-desc dim">Capabilities provided by the assistant, including memory, lists, web access, and browsing. A switch controls its entire capability group.</span></span>
-            <span class="mcp-count dim">{activeCount}/{totalCount} tools</span>
-          </ActionButton>
-          {isOpen && (
+        <div class="mcp mcp--without-master">
+          <Disclosure
+            className="mcp-disclosure"
+            mode="button"
+            title="Built in"
+            description={<span class="mcp-desc dim">Capabilities provided by the assistant, including memory, lists, web access, and browsing. A switch controls its entire capability group.</span>}
+            summaryTrailing={<span class="mcp-count dim">{activeCount}/{totalCount} tools</span>}
+            open={isOpen}
+            onOpenChange={onToggleOpen}
+          >
             <ToggleToolTable
               rows={sorted.map((t) => ({
                 key: t.name,
@@ -280,7 +284,7 @@ function BuiltinToolsCard(props: BuiltinToolsCardProps): JSX.Element {
                 onChange: () => onToggleToolset(t.toolset),
               }))}
             />
-          )}
+          </Disclosure>
         </div>
       </div>
     </SettingsCard>

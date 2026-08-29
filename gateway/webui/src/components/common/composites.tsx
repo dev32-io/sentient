@@ -1,7 +1,8 @@
 import type { ComponentChildren, JSX } from "preact";
-import { useEffect, useId, useRef, useState } from "preact/hooks";
-import { ActionButton, Field, type FieldProps, Plate } from "./foundation.tsx";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { ActionButton, Field, type FieldProps, Plate, ProgressControl } from "./foundation.tsx";
 import { BackspaceIcon } from "./icons/backspace.tsx";
+import { ChevronIcon } from "./icons/chevron.tsx";
 import { SearchIcon } from "./icons/search.tsx";
 
 function classes(...values: Array<string | false | null | undefined>): string {
@@ -80,6 +81,199 @@ export function SettingsCard({ title, subtitle, action, children, padded = true 
       {(title || subtitle || action) && <header class="snt-plate__head"><div>{title && <h3 class="snt-card-title">{title}</h3>}{subtitle && <p class="snt-card-subtitle">{subtitle}</p>}</div>{action}</header>}
       <div class={padded ? "snt-plate__body" : undefined}>{children}</div>
     </Plate>
+  );
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+export interface DisclosureProps {
+  title: ComponentChildren;
+  description?: ComponentChildren | undefined;
+  children: ComponentChildren;
+  open?: boolean | undefined;
+  defaultOpen?: boolean | undefined;
+  mode?: "details" | "button" | undefined;
+  onOpenChange?: ((open: boolean) => void) | undefined;
+  summaryTrailing?: ComponentChildren | undefined;
+  className?: string | undefined;
+  contentClassName?: string | undefined;
+  id?: string | undefined;
+}
+
+/** Native details or button disclosure with source-derived body behavior. */
+export function Disclosure({
+  title,
+  description,
+  children,
+  open,
+  defaultOpen = false,
+  mode = "details",
+  onOpenChange,
+  summaryTrailing,
+  className,
+  contentClassName,
+  id,
+}: DisclosureProps): JSX.Element {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<Animation | null>(null);
+  const initializedRef = useRef(false);
+  const desiredOpenRef = useRef(open ?? defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const semanticOpen = open ?? uncontrolledOpen;
+  const disclosureId = useId();
+  const bodyId = `${id ?? "snt-disclosure"}-content-${disclosureId}`;
+
+  const clearBodyStyles = (): void => {
+    const body = bodyRef.current;
+    if (!body) return;
+    body.style.removeProperty("overflow");
+    body.style.removeProperty("height");
+    body.style.removeProperty("opacity");
+    body.style.removeProperty("transform");
+  };
+
+  const cancelAnimation = (): void => {
+    const animation = animationRef.current;
+    if (!animation) return;
+    const details = detailsRef.current;
+    const body = bodyRef.current;
+    if (details?.open && body) {
+      const height = body.getBoundingClientRect().height;
+      const opacity = window.getComputedStyle(body).opacity;
+      const transform = window.getComputedStyle(body).transform;
+      animation.cancel();
+      body.style.overflow = "hidden";
+      body.style.height = `${height}px`;
+      body.style.opacity = opacity;
+      body.style.transform = transform === "none" ? "translateY(0)" : transform;
+    } else {
+      animation.cancel();
+    }
+    animationRef.current = null;
+  };
+
+  const transitionTo = (nextOpen: boolean): void => {
+    const details = detailsRef.current;
+    const body = bodyRef.current;
+    if (!details || !body) return;
+
+    cancelAnimation();
+    const wasOpen = details.open;
+    if (prefersReducedMotion() || typeof body.animate !== "function") {
+      details.open = nextOpen;
+      clearBodyStyles();
+      return;
+    }
+    if (wasOpen === nextOpen) {
+      if (!nextOpen) clearBodyStyles();
+      return;
+    }
+
+    body.style.overflow = "hidden";
+    if (nextOpen) {
+      details.open = true;
+      const height = body.scrollHeight;
+      const startHeight = wasOpen ? body.getBoundingClientRect().height : 0;
+      const computed = window.getComputedStyle(body);
+      const animation = body.animate(
+        [
+          {
+            height: `${startHeight}px`,
+            opacity: wasOpen ? computed.opacity : 0,
+            transform: wasOpen && computed.transform !== "none" ? computed.transform : "translateY(-5px)",
+          },
+          { height: `${height}px`, opacity: 1, transform: "translateY(0)" },
+        ],
+        { duration: 250, easing: "cubic-bezier(.2,.72,.24,1)", fill: "both" },
+      );
+      animationRef.current = animation;
+      animation.finished.catch(() => {}).then(() => {
+        if (animationRef.current !== animation) return;
+        animationRef.current = null;
+        details.open = true;
+        clearBodyStyles();
+      });
+      return;
+    }
+
+    const height = body.getBoundingClientRect().height;
+    const computed = window.getComputedStyle(body);
+    const animation = body.animate(
+      [
+        { height: `${height}px`, opacity: computed.opacity, transform: computed.transform === "none" ? "translateY(0)" : computed.transform },
+        { height: "0px", opacity: 0, transform: "translateY(-4px)" },
+      ],
+      { duration: 150, easing: "ease-in", fill: "both" },
+    );
+    animationRef.current = animation;
+    animation.finished.catch(() => {}).then(() => {
+      if (animationRef.current !== animation) return;
+      animationRef.current = null;
+      details.open = false;
+      clearBodyStyles();
+    });
+  };
+
+  useLayoutEffect(() => {
+    desiredOpenRef.current = semanticOpen;
+    const body = bodyRef.current;
+    if (!body) return;
+    if (mode === "button") {
+      body.hidden = !semanticOpen;
+      initializedRef.current = true;
+      return;
+    }
+    const details = detailsRef.current;
+    if (!details) return;
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      details.open = semanticOpen;
+      return;
+    }
+    transitionTo(semanticOpen);
+  }, [mode, semanticOpen]);
+
+  useEffect(() => () => {
+    animationRef.current?.cancel();
+    animationRef.current = null;
+  }, []);
+
+  const handleSummaryClick = (event: MouseEvent): void => {
+    event.preventDefault();
+    const nextOpen = !desiredOpenRef.current;
+    desiredOpenRef.current = nextOpen;
+    if (open === undefined) setUncontrolledOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
+
+  const summaryContent = (
+    <>
+      <span class="snt-disclosure__summary-copy"><strong>{title}</strong>{description !== undefined && <small>{description}</small>}</span>
+      <span class="snt-disclosure__summary-trailing">{summaryTrailing}<ChevronIcon size={17} /></span>
+    </>
+  );
+
+  if (mode === "button") {
+    return (
+      <div id={id} data-open={semanticOpen} class={classes("snt-disclosure", "snt-disclosure--button", className)}>
+        <ActionButton className="snt-disclosure__button" aria-expanded={semanticOpen} aria-controls={bodyId} onClick={handleSummaryClick}>
+          {summaryContent}
+        </ActionButton>
+        <div ref={bodyRef} id={bodyId} class={classes("snt-disclosure__body", contentClassName)} hidden={!semanticOpen}>{children}</div>
+      </div>
+    );
+  }
+
+  return (
+    <details ref={detailsRef} id={id} class={classes("snt-disclosure", className)}>
+      <summary class="snt-disclosure__summary" aria-expanded={semanticOpen} aria-controls={bodyId} onClick={handleSummaryClick}>
+        {summaryContent}
+      </summary>
+      <div ref={bodyRef} id={bodyId} class={classes("snt-disclosure__body", contentClassName)}>{children}</div>
+    </details>
   );
 }
 

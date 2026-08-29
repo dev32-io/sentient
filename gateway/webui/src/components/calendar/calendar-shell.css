@@ -473,61 +473,6 @@
   display: grid;
 }
 
-.calendar-filter-disclosure {
-  border-bottom: 1px solid var(--color-line-soft);
-}
-
-.calendar-filter-disclosure summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 54px;
-  align-items: center;
-  gap: var(--space-md);
-  cursor: pointer;
-  list-style: none;
-}
-
-.calendar-filter-disclosure summary::-webkit-details-marker {
-  display: none;
-}
-
-.calendar-filter-disclosure summary > span {
-  display: grid;
-  min-width: 0;
-  gap: var(--space-xs);
-}
-
-.calendar-filter-disclosure summary strong {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-}
-
-.calendar-filter-disclosure summary small {
-  overflow: hidden;
-  color: var(--color-ink-3);
-  font-size: var(--font-size-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.calendar-filter-disclosure summary svg {
-  color: var(--color-ink-3);
-  transition: transform var(--motion-state);
-}
-
-.calendar-filter-disclosure[open] summary svg {
-  color: var(--color-accent);
-  transform: rotate(90deg);
-}
-
-.calendar-filter-disclosure[open] {
-  padding: 0 var(--space-sm) var(--space-md);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: var(--well-face);
-  box-shadow: var(--well-shadow);
-}
-
 .calendar-active-filters {
   display: flex;
   min-width: 0;
