@@ -1,4 +1,5 @@
 import { signal } from "@preact/signals";
+import type { SessionRow } from "@sentient/protocol";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { useState } from "preact/hooks";
 import { describe, expect, it, vi } from "vitest";
@@ -8,14 +9,17 @@ import type { UseSessions } from "../../hooks/use-sessions.ts";
 import { Drawer } from "./drawer.tsx";
 
 function sessionsFixture(): UseSessions {
+  const searchHits = signal<SessionRow[] | null>(null);
   return {
     items: signal([{ sessionId: "session-1", rootId: "session-1", title: "Earlier chat", startedAt: Date.now(), lastActiveAt: Date.now(), messageCount: 2, isActive: true }]),
-    searchHits: signal(null),
+    searchHits,
     loading: signal(false),
     error: signal(null),
     currentId: signal(null),
     load: vi.fn().mockResolvedValue(undefined),
-    search: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn(async (q: string) => {
+      if (!q.trim()) searchHits.value = null;
+    }),
     switchTo: vi.fn().mockResolvedValue(undefined),
     newChat: vi.fn().mockResolvedValue(undefined),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -101,6 +105,28 @@ describe("History drawer", () => {
     fireEvent.click(trigger);
     fireEvent.click(container.querySelector(".drawer__backdrop") as HTMLElement);
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("renders no-match recovery and clears the active search", async () => {
+    const sessions = sessionsFixture();
+    sessions.searchHits.value = [];
+    render(<Harness sessions={sessions} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open history" }));
+
+    const status = await screen.findByRole("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(screen.getByText("No matching results")).toBeTruthy();
+    expect(screen.getByText("Try a broader term or clear one of the filters.")).toBeTruthy();
+    const search = screen.getByRole("searchbox", { name: "Search past chats" }) as HTMLInputElement;
+    fireEvent.input(search, { target: { value: "unfindable" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    await waitFor(() => {
+      expect(sessions.search).toHaveBeenCalledWith("");
+      expect(screen.queryByText("No matching results")).toBeNull();
+      expect(search.value).toBe("");
+    });
+    expect(document.activeElement).toBe(search);
   });
 
   it("restores prior sessions and starts a new chat through the existing session actions", async () => {

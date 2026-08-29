@@ -5,8 +5,8 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
+import { AsyncState, NoResultsState } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
-import { AsyncState } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -18,6 +18,7 @@ import {
   type ChipVariantProps,
   type IconButtonVariantProps,
   type LoadingStateVariantProps,
+  type NoResultsStateVariantProps,
   type NoticeVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
@@ -365,6 +366,17 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "no-results": {
+    // This adapter deliberately renders the production no-match recovery.
+    render: (fixture) => {
+      const noResults = fixture.props as NoResultsStateVariantProps;
+      return (
+        <div class="visual-diff-no-results">
+          <NoResultsState {...noResults} onClear={() => {}} />
+        </div>
+      );
+    },
+  },
 };
 
 function failFixture(resolution: InvalidVisualDiffCase): never {
@@ -420,6 +432,8 @@ style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
   .visual-diff-plate { width: min(360px, 100%); }
+  /* Preserve the handoff artboard's lower breathing room around the source margin. */
+  .visual-diff-no-results { width: min(468px, 100%); margin-bottom: 10px; }
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-search-field { width: min(320px, 100%); }
   .visual-diff-text-area { width: min(320px, 100%); }

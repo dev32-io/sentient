@@ -7,7 +7,7 @@ import { RenameDialog } from "./rename-dialog.tsx";
 import { SessionList } from "./session-list.tsx";
 import { SessionSearchBox } from "./session-search-box.tsx";
 import { ActionButton, FoundationIconButton } from "../common/foundation.tsx";
-import { AsyncState, Notice } from "../common/composites.tsx";
+import { AsyncState, NoResultsState, Notice } from "../common/composites.tsx";
 import { XIcon } from "../common/icons/x.tsx";
 
 const EMPTY_DEFAULT = "No past chats yet.";
@@ -25,7 +25,7 @@ export interface DrawerProps {
 
 export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
   const sessions = useSessionsContext();
-  const [query, setQuery] = useState("");
+  const [clearSearchSignal, setClearSearchSignal] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<PendingTarget | null>(null);
   const [deleting, setDeleting] = useState<PendingTarget | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -72,13 +72,14 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
   const searchActive = sessions.searchHits.value !== null;
   const visible = sessions.searchHits.value ?? sessions.items.value;
   const hasError = sessions.error.value !== null;
-  const emptyMessage = hasError
-    ? EMPTY_LOAD_FAIL
-    : searchActive
-      ? `No matches for "${query.trim()}"`
-      : EMPTY_DEFAULT;
+  const emptyMessage = hasError ? EMPTY_LOAD_FAIL : EMPTY_DEFAULT;
   const showLoadingBlank = sessions.loading.value && sessions.items.value.length === 0;
+  const showNoResults = searchActive && !hasError && !showLoadingBlank && visible.length === 0;
   const showStaleErrorBanner = hasError && visible.length > 0;
+  const clearSearch = (): void => {
+    setClearSearchSignal((value) => (value ?? 0) + 1);
+    void sessions.search("");
+  };
 
   return (
     <div
@@ -96,7 +97,7 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
           </FoundationIconButton>
         </header>
         <SessionSearchBox
-          onQueryInput={(q) => setQuery(q)}
+          clearSignal={clearSearchSignal ?? undefined}
           onChange={(q) => {
             void sessions.search(q);
           }}
@@ -111,6 +112,8 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
         <div class="drawer__list">
           {showLoadingBlank ? (
             <AsyncState state="loading" title="Loading past chats" />
+          ) : showNoResults ? (
+            <NoResultsState onClear={clearSearch} />
           ) : visible.length === 0 ? (
             <AsyncState
               state={hasError ? "error" : "empty"}

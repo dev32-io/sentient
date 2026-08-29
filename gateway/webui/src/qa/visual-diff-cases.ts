@@ -169,6 +169,14 @@ export interface SentientIdentityVariantProps {
 
 type SentientIdentityVariantDefinition = VisualDiffVariantDefinition<SentientIdentityVariantProps>;
 
+export interface NoResultsStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel: string;
+}
+
+type NoResultsStateVariantDefinition = VisualDiffVariantDefinition<NoResultsStateVariantProps>;
+
 const USER_AVATAR_VARIANTS = {
   "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
   "terra-44": { props: { initial: "M", name: "Maya Chen", size: "lg" } },
@@ -379,6 +387,16 @@ const LOADING_STATE_VARIANTS = {
   settings: { props: { title: "Loading", message: "Fetching current settings…" } },
 } as const satisfies Readonly<Record<string, LoadingStateVariantDefinition>>;
 
+const NO_RESULTS_VARIANTS = {
+  default: {
+    props: {
+      title: "No matching results",
+      message: "Try a broader term or clear one of the filters.",
+      actionLabel: "Clear filters",
+    },
+  },
+} as const satisfies Readonly<Record<string, NoResultsStateVariantDefinition>>;
+
 export const visualDiffComponentRegistry = {
   "action-button": {
     id: "action-button",
@@ -568,6 +586,16 @@ export const visualDiffComponentRegistry = {
       settings: ["active", "reduced-motion"],
     },
   },
+  "no-results": {
+    id: "no-results",
+    fixtureAdapterId: "no-results",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#NoResultsState",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: NO_RESULTS_VARIANTS,
+    stateApplicability: {
+      default: ["empty"],
+    },
+  },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
 
 // These components have no authority for states outside their approved handoff
@@ -586,6 +614,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "user-avatar",
   "sentient-identity",
   "notice",
+  "no-results",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

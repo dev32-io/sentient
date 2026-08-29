@@ -1386,16 +1386,20 @@
           "result": "pass"
         },
         "minimumTarget": {
-          "applicable": false,
-          "reason": "Rendered search has no matches has no interactive target."
+          "applicable": true,
+          "value": 40,
+          "unit": "css-px",
+          "result": "needs-review"
         },
         "focus": {
-          "applicable": false,
-          "reason": "Rendered search has no matches has no focusable control."
+          "applicable": true,
+          "value": 1,
+          "unit": "css-px",
+          "result": "pass"
         }
       },
       "nativeAdaptation": "",
-      "reviewerNotes": "web.history.no-results: rendered the production component specimen for “search has no matches” in desktop, narrow, 200% zoom, and Reduced Motion captures. Observed maximum horizontal overflow 0px, no applicable target, and focusable-count range 0–0; any nonzero overflow or sub-44px target is retained as needs-review rather than hidden."
+      "reviewerNotes": "web.history.no-results: rendered the production no-match recovery in desktop, narrow, 200% zoom, and Reduced Motion captures. Observed maximum horizontal overflow 0px, minimum target 40px on precise-pointer configurations and 44px at the narrow breakpoint, and focusable-count range 1–1; the source-faithful quiet action remains keyboard reachable and its sub-44px precise-pointer face is retained as needs-review rather than hidden."
     },
     {
       "evidenceId": "VE-WEB-HISTORY-ERROR",

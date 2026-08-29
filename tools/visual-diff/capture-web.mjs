@@ -145,6 +145,7 @@ async function localFontCss() {
 
 function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
+  if (frameCaseId === "no-results--empty") return "no-results--default--empty";
   const recordingId = basename(dirname(referencePath));
   if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;

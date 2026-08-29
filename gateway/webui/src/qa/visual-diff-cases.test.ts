@@ -47,6 +47,7 @@ const CURRENT_ICON_BUTTON_CASES = [
 ] as const;
 
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
+const CURRENT_NO_RESULTS_CASES = ["no-results--default--empty"] as const;
 
 const CURRENT_LOADING_STATE_CASES = [
   "loading-state--settings--active",
@@ -919,6 +920,28 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the approved no-results recovery and production provenance", () => {
+    const noResults = visualDiffComponentRegistry["no-results"];
+    expect(noResults.fixtureAdapterId).toBe("no-results");
+    expect(noResults.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#NoResultsState");
+    expect(noResults.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(noResults.stateApplicability).toEqual({ default: ["empty"] });
+    expect(noResults.variants.default.props).toEqual({
+      title: "No matching results",
+      message: "Try a broader term or clear one of the filters.",
+      actionLabel: "Clear filters",
+    });
+
+    for (const caseId of CURRENT_NO_RESULTS_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("no-results");
+        expect(resolution.case.fixtureAdapterId).toBe("no-results");
+      }
+    }
+  });
+
   it("resolves unapproved loading-state variants and states", () => {
     expect(resolveVisualDiffCase("loading-state--unknown--active")).toEqual({
       status: "unsupported",
@@ -936,6 +959,18 @@ describe("visual diff component cases", () => {
         variantId: "settings",
         stateId,
         reason: "state",
+      });
+    }
+  });
+
+  it("resolves unapproved no-results states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`no-results--default--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `no-results--default--${stateId}`,
+        componentId: "no-results",
+        variantId: "default",
+        stateId,
       });
     }
   });

@@ -422,6 +422,28 @@ export function AsyncState({ state, title, message, action }: AsyncStateProps): 
   return <div class="snt-async-state" {...liveProps}><div><h3 class="snt-card-title">{title}</h3>{message && <p class="snt-card-subtitle">{message}</p>}</div>{action}</div>;
 }
 
+export interface NoResultsStateProps {
+  onClear(): void;
+  title?: string | undefined;
+  message?: string | undefined;
+  actionLabel?: string | undefined;
+}
+
+export function NoResultsState({
+  onClear,
+  title = "No matching results",
+  message = "Try a broader term or clear one of the filters.",
+  actionLabel = "Clear filters",
+}: NoResultsStateProps): JSX.Element {
+  return (
+    <div class="snt-no-results" role="status" aria-live="polite">
+      <span class="snt-no-results__mark" aria-hidden="true"><SearchIcon size={20} /></span>
+      <span class="snt-no-results__copy"><strong>{title}</strong><small>{message}</small></span>
+      <ActionButton variant="quiet" className="snt-no-results__action" onClick={onClear}>{actionLabel}</ActionButton>
+    </div>
+  );
+}
+
 export function ActionRow({ children }: { children: ComponentChildren }): JSX.Element {
   return <div class="snt-action-row">{children}</div>;
 }
