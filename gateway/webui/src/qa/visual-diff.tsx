@@ -5,8 +5,9 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
-import { AsyncState, NoResultsState } from "../components/common/composites.tsx";
+import { AsyncState, NoResultsState, PaneChrome } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { PaneChrome } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -20,6 +21,7 @@ import {
   type LoadingStateVariantProps,
   type NoResultsStateVariantProps,
   type NoticeVariantProps,
+  type PaneHeaderVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
   type SearchFieldVariantProps,
@@ -175,6 +177,24 @@ function SentientIdentityFixture({ fixture }: { fixture: VisualDiffResolvedCase 
     };
   }, [identity.transitionTo]);
   return <SentientIdentity state={state} size={56} className="visual-diff-target" riveFactory={visualDiffRiveFactory} />;
+}
+
+function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const header = fixture.props as PaneHeaderVariantProps;
+  return (
+    <div class="visual-diff-pane-header-frame">
+      <Plate className="visual-diff-target visual-diff-pane-header">
+        <PaneChrome
+          eyebrow={header.eyebrow}
+          title={header.title}
+          subtitle={header.subtitle}
+          action={<ActionButton variant="primary">{header.actionLabel}</ActionButton>}
+        >
+          {null}
+        </PaneChrome>
+      </Plate>
+    </div>
+  );
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
@@ -334,6 +354,10 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // and its native buttons for every approved static and motion case.
     render: (fixture) => <SegmentedControlFixture fixture={fixture} />,
   },
+  "pane-header": {
+    // This adapter deliberately renders the production PaneChrome with a real Plate and ActionButton.
+    render: (fixture) => <PaneHeaderFixture fixture={fixture} />,
+  },
   "plate": {
     // This adapter deliberately renders the production Plate and its public anatomy.
     render: (fixture) => {
@@ -467,6 +491,15 @@ style.textContent = `
     justify-content: flex-start;
     padding: 52px 76px 75px 52px;
   }
+  .visual-diff-pane-header-frame {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px 24px 0;
+  }
+  .visual-diff-pane-header { width: min(620px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
   .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
   .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }

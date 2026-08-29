@@ -9,7 +9,7 @@ import type {
   ProfileApi,
   ProfileV1,
 } from "../../../services/profile-api.js";
-import { ActionButton, AsyncState, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
+import { ActionButton, AsyncState, PaneHeader, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
 import { Icon } from "../../common/icon.tsx";
 import {
   effectiveToolPermission,
@@ -120,7 +120,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
   if (!catalog) {
     return (
       <>
-        <header class="snt-page-head"><div><h2 class="snt-page-title">Tools</h2><p class="snt-page-subtitle">Loading available capabilities…</p></div></header>
+        <PaneHeader title="Tools" subtitle="Loading available capabilities…" />
         {error ? <AsyncState state="error" title="Couldn't load tools" message="Your permissions were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} /> : <AsyncState state="loading" title="Loading tools" />}
       </>
     );
@@ -131,7 +131,7 @@ export function ToolsPane({ api, token, draft, onDraftTools }: ToolsPaneProps): 
 
   return (
     <>
-      <header class="snt-page-head"><div><h2 class="snt-page-title">Tools</h2><p class="snt-page-subtitle">Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings.</p></div></header>
+      <PaneHeader title="Tools" subtitle="Choose whether each capability can run, ask first, be refused, or stay hidden. Changes apply after you save settings." />
 
       <SettingsCard title="Connected capabilities" padded={false}>
         <div class="mcp-list">

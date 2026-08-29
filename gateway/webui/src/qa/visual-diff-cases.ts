@@ -366,6 +366,26 @@ const SENTIENT_IDENTITY_VARIANTS = {
   "responding-loop": { props: { state: "responding" } },
 } as const satisfies Readonly<Record<string, SentientIdentityVariantDefinition>>;
 
+export interface PaneHeaderVariantProps {
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly actionLabel: string;
+}
+
+type PaneHeaderVariantDefinition = VisualDiffVariantDefinition<PaneHeaderVariantProps>;
+
+const PANE_HEADER_VARIANTS = {
+  preferences: {
+    props: {
+      eyebrow: "Household",
+      title: "Preferences",
+      subtitle: "Control shared defaults and personal behavior.",
+      actionLabel: "Save changes",
+    },
+  },
+} as const satisfies Readonly<Record<string, PaneHeaderVariantDefinition>>;
+
 export interface PlateVariantProps {
   readonly variant: "default";
 }
@@ -584,6 +604,16 @@ export const visualDiffComponentRegistry = {
       "unchecked-to-mixed": CHECKBOX_TRANSITION_FRAMES,
     },
   },
+  "pane-header": {
+    id: "pane-header",
+    fixtureAdapterId: "pane-header",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#PaneChrome",
+    authority: "design/prototype/common-composites/handoff/static/pane-header--preferences--rest.png",
+    variants: PANE_HEADER_VARIANTS,
+    stateApplicability: {
+      preferences: ["rest"],
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -644,6 +674,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "notice",
   "no-results",
   "stale-banner",
+  "pane-header",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

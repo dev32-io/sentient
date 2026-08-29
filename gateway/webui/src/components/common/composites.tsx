@@ -28,7 +28,28 @@ export function PageChrome({ title, subtitle, action, children, className }: Pag
   );
 }
 
+export interface PaneHeaderProps {
+  eyebrow?: string | undefined;
+  title?: string | undefined;
+  subtitle?: string | undefined;
+  action?: JSX.Element | undefined;
+}
+
+export function PaneHeader({ eyebrow, title, subtitle, action }: PaneHeaderProps): JSX.Element {
+  return (
+    <header class="snt-pane-head">
+      <div class="snt-pane-head__copy">
+        {eyebrow && <span class="snt-pane-head__eyebrow">{eyebrow}</span>}
+        {title && <h2 class="snt-page-title">{title}</h2>}
+        {subtitle && <p class="snt-page-subtitle">{subtitle}</p>}
+      </div>
+      {action}
+    </header>
+  );
+}
+
 export interface PaneChromeProps {
+  eyebrow?: string | undefined;
   title?: string | undefined;
   subtitle?: string | undefined;
   action?: JSX.Element | undefined;
@@ -36,10 +57,10 @@ export interface PaneChromeProps {
   className?: string | undefined;
 }
 
-export function PaneChrome({ title, subtitle, action, children, className }: PaneChromeProps): JSX.Element {
+export function PaneChrome({ eyebrow, title, subtitle, action, children, className }: PaneChromeProps): JSX.Element {
   return (
     <section class={classes("snt-pane", className)}>
-      {(title || subtitle || action) && <header class="snt-page-head"><div>{title && <h2 class="snt-page-title">{title}</h2>}{subtitle && <p class="snt-page-subtitle">{subtitle}</p>}</div>{action}</header>}
+      {(eyebrow || title || subtitle || action) && <PaneHeader eyebrow={eyebrow} title={title} subtitle={subtitle} action={action} />}
       {children}
     </section>
   );

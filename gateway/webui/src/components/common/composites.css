@@ -1,5 +1,34 @@
 /* Shared WebUI composites. Product surfaces compose these classes rather than restyling them locally. */
 
+/* Pane header */
+.snt-pane-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  min-width: 0;
+  padding: 20px;
+}
+.snt-pane-head__copy { min-width: 0; flex: 1 1 auto; }
+.snt-pane-head__eyebrow {
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) / normal var(--font-mono);
+  letter-spacing: .025em;
+}
+.snt-pane-head .snt-page-title { letter-spacing: normal; }
+.snt-pane-head__eyebrow + .snt-page-title { margin-top: 3px; }
+.snt-pane-head .snt-page-subtitle {
+  margin: 3px 0 0;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+.snt-pane-head > .snt-button { flex: 0 0 auto; }
+
+@media (max-width: 620px) {
+  .snt-pane-head { align-items: flex-start; }
+}
+
 /* Dominant visual action card */
 .snt-media-card-grid {
   display: grid;

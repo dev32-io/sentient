@@ -67,6 +67,8 @@ const CURRENT_STALE_BANNER_CASES = [
   "stale-banner--saved-results--rest",
 ] as const;
 
+const CURRENT_PANE_HEADER_CASES = ["pane-header--preferences--rest"] as const;
+
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
   "user-avatar--terra-44--rest",
@@ -818,6 +820,43 @@ describe("visual diff component cases", () => {
         caseId: `checkbox--disabled--${stateId}`,
         componentId: "checkbox",
         variantId: "disabled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the approved pane-header rest case and production provenance", () => {
+    const paneHeader = visualDiffComponentRegistry["pane-header"];
+    expect(paneHeader.fixtureAdapterId).toBe("pane-header");
+    expect(paneHeader.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#PaneChrome");
+    expect(paneHeader.authority).toBe(
+      "design/prototype/common-composites/handoff/static/pane-header--preferences--rest.png",
+    );
+    expect(paneHeader.stateApplicability).toEqual({ preferences: ["rest"] });
+    expect(paneHeader.variants.preferences.props).toEqual({
+      eyebrow: "Household",
+      title: "Preferences",
+      subtitle: "Control shared defaults and personal behavior.",
+      actionLabel: "Save changes",
+    });
+
+    for (const caseId of CURRENT_PANE_HEADER_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("pane-header");
+        expect(resolution.case.fixtureAdapterId).toBe("pane-header");
+      }
+    }
+  });
+
+  it("resolves unapproved pane-header states to missing authority", () => {
+    for (const stateId of ["compact-rest", "hover", "focus", "pressed", "disabled", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`pane-header--preferences--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `pane-header--preferences--${stateId}`,
+        componentId: "pane-header",
+        variantId: "preferences",
         stateId,
       });
     }
