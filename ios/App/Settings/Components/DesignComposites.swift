@@ -1433,42 +1433,405 @@ struct SearchFilterRow<Filters: View>: View {
     }
 }
 
+private enum DesignNoticeMetrics {
+    // These values are the reviewed notice's CSS box model translated to
+    // points. The 78pt notice sits inside a 1pt plate edge on each side.
+    static let surfaceMinHeight: CGFloat = 80
+    // The native plate keeps its 1pt edge inside the shape, so the content
+    // insets include that edge while preserving the source's inner padding.
+    static let horizontalPadding: CGFloat = 15
+    static let verticalPadding: CGFloat = 14
+    static let contentGap: CGFloat = 13
+    static let compactActionGap: CGFloat = 13
+    static let iconSize: CGFloat = 38
+    static let iconRadialRadius: CGFloat = 19
+    static let noticeAuraCenter: CGFloat = 58
+    static let noticeAuraRadius: CGFloat = 150
+    static let iconCastOpacity: Double = 0.90
+    static let iconContactMix: Double = 0.12
+    // The source title inherits 1.55 line height at 14px; its detail sets a
+    // slightly tighter 1.45 line height at the supporting 12.5px size.
+    static let titleLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    static let titleLineSpacing = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal - 1)
+    static let detailLineHeight = TypeScale.sm * 1.45
+    // CoreText supplies part of the line advance for a custom font; this
+    // native spacing reaches the reviewed 1.45 supporting line box without
+    // exaggerating the gap when detail wraps.
+    static let detailLineSpacing = TypeScale.sm * 0.13
+    static let detailTitleGap: CGFloat = 3
+}
+
+private struct DesignNoticeRecipe {
+    let color: Color
+    let aura: Double
+    let leading: Double
+    let tail: Double
+    let face: Double
+    let edge: Double
+    let cast: Double
+}
+
+/// Native equivalent of the reviewed responsive notice grid. A custom Layout
+/// keeps the action in the trailing column when its intrinsic content fits and
+/// recomposes it below the message when it does not, without browser widths or
+/// presentation-only wrappers.
+private struct DesignNoticeLayout: Layout {
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    private struct Measurement {
+        let compact: Bool
+        let width: CGFloat
+        let height: CGFloat
+        let iconSize: CGSize
+        let bodySize: CGSize
+        let actionSize: CGSize
+        let bodyWidth: CGFloat
+
+        var size: CGSize { CGSize(width: width, height: height) }
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        measure(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let measurement = measure(
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height),
+            subviews: subviews
+        )
+        guard subviews.count >= 2 else { return }
+
+        let isRightToLeft = layoutDirection == .rightToLeft
+        let iconX = isRightToLeft
+            ? bounds.maxX - measurement.iconSize.width / 2
+            : bounds.minX + measurement.iconSize.width / 2
+        let bodyX = isRightToLeft
+            ? bounds.maxX - measurement.iconSize.width - DesignNoticeMetrics.contentGap - measurement.bodyWidth
+            : bounds.minX + measurement.iconSize.width + DesignNoticeMetrics.contentGap
+        if measurement.compact {
+            let firstRowHeight = max(measurement.iconSize.height, measurement.bodySize.height)
+            subviews[0].place(
+                at: CGPoint(
+                    x: iconX,
+                    y: bounds.minY + (firstRowHeight / 2)
+                ),
+                anchor: .center,
+                proposal: ProposedViewSize(
+                    width: measurement.iconSize.width,
+                    height: measurement.iconSize.height
+                )
+            )
+            subviews[1].place(
+                at: CGPoint(x: bodyX, y: bounds.minY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(
+                    width: measurement.bodyWidth,
+                    height: measurement.bodySize.height
+                )
+            )
+            if subviews.count > 2 {
+                let actionX = isRightToLeft
+                    ? bodyX + measurement.bodyWidth - measurement.actionSize.width
+                    : bodyX
+                subviews[2].place(
+                    at: CGPoint(
+                        x: actionX,
+                        y: bounds.minY + firstRowHeight + DesignNoticeMetrics.compactActionGap
+                    ),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(
+                        width: measurement.actionSize.width,
+                        height: measurement.actionSize.height
+                    )
+                )
+            }
+            return
+        }
+
+        let centerY = bounds.minY + measurement.height / 2
+        subviews[0].place(
+            at: CGPoint(x: iconX, y: centerY),
+            anchor: .center,
+            proposal: ProposedViewSize(
+                width: measurement.iconSize.width,
+                height: measurement.iconSize.height
+            )
+        )
+        subviews[1].place(
+            at: CGPoint(x: bodyX, y: bounds.minY + (measurement.height - measurement.bodySize.height) / 2),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: measurement.bodyWidth,
+                height: measurement.bodySize.height
+            )
+        )
+        if subviews.count > 2 {
+            let actionX = isRightToLeft ? bounds.minX : bounds.maxX - measurement.actionSize.width
+            subviews[2].place(
+                at: CGPoint(
+                    x: actionX,
+                    y: bounds.minY + (measurement.height - measurement.actionSize.height) / 2
+                ),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(
+                    width: measurement.actionSize.width,
+                    height: measurement.actionSize.height
+                )
+            )
+        }
+    }
+
+    private func measure(proposal: ProposedViewSize, subviews: Subviews) -> Measurement {
+        guard subviews.count >= 2 else {
+            return Measurement(
+                compact: false,
+                width: 0,
+                height: 0,
+                iconSize: .zero,
+                bodySize: .zero,
+                actionSize: .zero,
+                bodyWidth: 0
+            )
+        }
+
+        let iconSize = subviews[0].sizeThatFits(.unspecified)
+        let body = subviews[1]
+        let actionSize = subviews.count > 2 ? subviews[2].sizeThatFits(.unspecified) : .zero
+        let bodyIdealSize = body.sizeThatFits(.unspecified)
+        let availableWidth = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        let hasAction = subviews.count > 2
+        let wideIdealWidth = iconSize.width
+            + DesignNoticeMetrics.contentGap
+            + bodyIdealSize.width
+            + (hasAction ? DesignNoticeMetrics.contentGap + actionSize.width : 0)
+        let compact = hasAction && availableWidth.map { wideIdealWidth > $0 } == true
+        let width = availableWidth ?? wideIdealWidth
+
+        if compact {
+            let bodyWidth = max(0, width - iconSize.width - DesignNoticeMetrics.contentGap)
+            let bodySize = body.sizeThatFits(ProposedViewSize(width: bodyWidth, height: nil))
+            let firstRowHeight = max(iconSize.height, bodySize.height)
+            return Measurement(
+                compact: true,
+                width: width,
+                height: firstRowHeight + DesignNoticeMetrics.compactActionGap + actionSize.height,
+                iconSize: iconSize,
+                bodySize: bodySize,
+                actionSize: actionSize,
+                bodyWidth: bodyWidth
+            )
+        }
+
+        let bodyWidth = max(
+            0,
+            width - iconSize.width - DesignNoticeMetrics.contentGap
+                - (hasAction ? DesignNoticeMetrics.contentGap + actionSize.width : 0)
+        )
+        let bodySize = body.sizeThatFits(ProposedViewSize(width: bodyWidth, height: nil))
+        return Measurement(
+            compact: false,
+            width: width,
+            height: max(iconSize.height, max(bodySize.height, actionSize.height)),
+            iconSize: iconSize,
+            bodySize: bodySize,
+            actionSize: actionSize,
+            bodyWidth: bodyWidth
+        )
+    }
+}
+
+private struct DesignNoticeIcon: View {
+    let kind: DesignNoticeKind
+    let recipe: DesignNoticeRecipe
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        ZStack {
+            shape.fill(
+                LinearGradient(
+                    colors: [
+                        DuskColors.paper.overlaying(recipe.color, opacity: recipe.face),
+                        DuskColors.paper.overlaying(recipe.color, opacity: 0.08),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            shape.fill(
+                RadialGradient(
+                    colors: [
+                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.34),
+                        .clear,
+                    ],
+                    center: UnitPoint(x: 0.5, y: 0.58),
+                    startRadius: 0,
+                    endRadius: DesignNoticeMetrics.iconRadialRadius
+                )
+            )
+            glyph
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(recipe.color.overlaying(DuskColors.ink, opacity: 0.12))
+                .accessibilityHidden(true)
+        }
+        .frame(width: DesignNoticeMetrics.iconSize, height: DesignNoticeMetrics.iconSize)
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(
+                contrast == .increased
+                    ? DuskColors.ink3
+                    : recipe.color.overlaying(DuskColors.line, opacity: 1 - recipe.edge),
+                lineWidth: DesignMetrics.hairline
+            )
+        }
+        .background {
+            ZStack {
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: recipe.color.opacity(recipe.cast),
+                    geometry: DesignMaterialShadowGeometry.slateGlow
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: .black.opacity(DesignNoticeMetrics.iconCastOpacity),
+                    geometry: DesignMaterialShadowGeometry.slateRest
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk.overlaying(
+                        DuskColors.line,
+                        opacity: DesignNoticeMetrics.iconContactMix
+                    ),
+                    geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch kind {
+        case .loading:
+            ProgressView().tint(recipe.color).controlSize(.small)
+        case .empty:
+            Image(systemName: "tray")
+        case .info:
+            Image(systemName: "info.circle")
+        case .error, .warning:
+            Image(systemName: "exclamationmark.triangle")
+        case .success:
+            Image(systemName: "checkmark.circle")
+        }
+    }
+}
+
 struct AsyncNotice: View {
     let kind: DesignNoticeKind
     let title: String
     var detail: String? = nil
     var retry: (() -> Void)? = nil
     var accessibilityId: String? = nil
+    // Existing retry callers keep the same label; contextual owners may name
+    // an additive action without taking ownership away from their closure.
+    var actionTitle = "Retry"
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    private var recipe: DesignNoticeRecipe {
+        switch kind {
+        case .info:
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.12, leading: 0.10, tail: 0.03, face: 0.16, edge: 0.42, cast: 0.42)
+        case .warning:
+            DesignNoticeRecipe(color: DuskColors.amber, aura: 0.24, leading: 0.22, tail: 0.08, face: 0.30, edge: 0.60, cast: 0.68)
+        case .error:
+            DesignNoticeRecipe(color: DuskColors.stop, aura: 0.21, leading: 0.19, tail: 0.07, face: 0.27, edge: 0.56, cast: 0.62)
+        case .loading:
+            DesignNoticeRecipe(color: DuskColors.accent, aura: 0.08, leading: 0.06, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.40)
+        case .empty:
+            DesignNoticeRecipe(color: DuskColors.ink3, aura: 0, leading: 0, tail: 0, face: 0.08, edge: 0.30, cast: 0.20)
+        case .success:
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.10, leading: 0.08, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.38)
+        }
+    }
+
+    private var actionRole: DesignButtonRole {
+        kind == .error ? .secondary : .quiet
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Space.md) {
-            symbol
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(Typo.ui(TypeScale.base, .semibold))
-                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2) }
-                if let retry {
-                    DesignActionButton(title: "Retry", role: .quiet, accessibilityId: nil, action: retry)
+        DesignNoticeLayout {
+            DesignNoticeIcon(kind: kind, recipe: recipe)
+            VStack(alignment: .leading, spacing: DesignNoticeMetrics.detailTitleGap) {
+                Text(title)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                    .lineSpacing(DesignNoticeMetrics.titleLineSpacing)
+                    .foregroundStyle(DuskColors.ink)
+                    .frame(minHeight: DesignNoticeMetrics.titleLineHeight, alignment: .leading)
+                if let detail {
+                    Text(detail)
+                        .font(Typo.ui(TypeScale.sm))
+                        .lineSpacing(DesignNoticeMetrics.detailLineSpacing)
+                        .foregroundStyle(DuskColors.ink2)
+                        .frame(minHeight: DesignNoticeMetrics.detailLineHeight, alignment: .leading)
                 }
             }
-            Spacer()
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: actionRole,
+                    accessibilityId: nil,
+                    action: retry
+                )
+            }
         }
-        .padding(Space.md)
+        .padding(.horizontal, DesignNoticeMetrics.horizontalPadding)
+        .padding(.vertical, DesignNoticeMetrics.verticalPadding)
+        .frame(maxWidth: .infinity, minHeight: DesignNoticeMetrics.surfaceMinHeight, alignment: .leading)
+        .background {
+            GeometryReader { proxy in
+                ZStack {
+                    LinearGradient(
+                        stops: [
+                            .init(
+                                color: DuskColors.bgElev.overlaying(recipe.color, opacity: recipe.leading),
+                                location: 0
+                            ),
+                            .init(
+                                color: DuskColors.bgElev.overlaying(recipe.color, opacity: recipe.tail),
+                                location: 0.58
+                            ),
+                            .init(color: DuskColors.bgElev, location: 1)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    RadialGradient(
+                        colors: [recipe.color.opacity(recipe.aura), .clear],
+                        center: UnitPoint(
+                            x: layoutDirection == .rightToLeft
+                                ? 1 - min(DesignNoticeMetrics.noticeAuraCenter, max(proxy.size.width, 1)) / max(proxy.size.width, 1)
+                                : min(DesignNoticeMetrics.noticeAuraCenter, max(proxy.size.width, 1)) / max(proxy.size.width, 1),
+                            y: 0.5
+                        ),
+                        startRadius: 0,
+                        endRadius: DesignNoticeMetrics.noticeAuraRadius
+                    )
+                }
+            }
+        }
         .designPlate()
         .accessibilityElement(children: retry == nil ? .combine : .contain)
         .accessibilityLabel(title)
         .accessibilityValue(detail ?? kind.accessibilityValue)
         .accessibilityIdentifier(accessibilityId ?? "")
-    }
-
-    @ViewBuilder
-    private var symbol: some View {
-        switch kind {
-        case .loading: ProgressView().tint(DuskColors.accent).accessibilityHidden(true)
-        case .empty: Image(systemName: "tray").accessibilityHidden(true)
-        case .error: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DuskColors.stop).accessibilityHidden(true)
-        case .success: Image(systemName: "checkmark.circle.fill").foregroundStyle(DuskColors.ok).accessibilityHidden(true)
-        case .warning: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(DuskColors.warn).accessibilityHidden(true)
-        }
     }
 }
 
@@ -1477,6 +1840,7 @@ private extension DesignNoticeKind {
         switch self {
         case .loading: "Loading"
         case .empty: "Empty"
+        case .info: "Information"
         case .error: "Error"
         case .success: "Success"
         case .warning: "Warning"

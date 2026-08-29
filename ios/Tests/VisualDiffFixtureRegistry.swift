@@ -230,6 +230,14 @@ struct VisualDiffSentientIdentityRenderConfiguration: Equatable {
     let timeMs: Int
 }
 
+struct VisualDiffNoticeRenderConfiguration {
+    let kind: DesignNoticeKind
+    let title: String
+    let detail: String
+    let actionTitle: String?
+    let compact: Bool
+}
+
 /// Capture controller for the identity fixture. It pauses the real Rive view
 /// and advances the authored state machine by explicit elapsed intervals; it
 /// does not synthesize artwork or replace the production view.
@@ -326,6 +334,7 @@ enum VisualDiffFixtureRegistry {
         DisclosureFixtureCatalog.registration.componentID: DisclosureFixtureCatalog.registration,
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
+        NoticeFixtureCatalog.registration.componentID: NoticeFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -473,6 +482,12 @@ enum VisualDiffFixtureRegistry {
         SentientIdentityFixtureCatalog.renderConfigurations[caseID]
     }
 
+    static func noticeRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffNoticeRenderConfiguration? {
+        NoticeFixtureCatalog.renderConfigurations[caseID]
+    }
+
     @MainActor
     static func sentientIdentityCapture(
         for caseID: String
@@ -482,6 +497,134 @@ enum VisualDiffFixtureRegistry {
         }
         return VisualDiffSentientIdentityCapture(configuration: configuration)
     }
+}
+
+private enum NoticeFixtureMetrics {
+    // The reviewed notice artboards use the same transparent framing as the
+    // approved Web fixture: 52pt leading/top and 76pt trailing inset.
+    static let topPadding: CGFloat = 52
+    static let leadingPadding: CGFloat = 52
+    static let trailingPadding: CGFloat = 76
+}
+
+private struct NoticeFixture: View {
+    let configuration: VisualDiffNoticeRenderConfiguration
+
+    private var retry: (() -> Void)? {
+        configuration.actionTitle == nil ? nil : {}
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            AsyncNotice(
+                kind: configuration.kind,
+                title: configuration.title,
+                detail: configuration.detail,
+                retry: retry,
+                accessibilityId: "visual-diff-notice",
+                actionTitle: configuration.actionTitle ?? "Retry"
+            )
+            .padding(.top, NoticeFixtureMetrics.topPadding)
+            .padding(.leading, NoticeFixtureMetrics.leadingPadding)
+            .padding(.trailing, NoticeFixtureMetrics.trailingPadding)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ignoresSafeArea()
+    }
+}
+
+private struct NoticeFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffNoticeRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(NoticeFixture(configuration: configuration))
+    }
+}
+
+private enum NoticeFixtureCatalog {
+    private static func definition(
+        variantID: String,
+        stateID: String,
+        kind: DesignNoticeKind,
+        title: String,
+        detail: String,
+        actionTitle: String? = nil
+    ) -> (VisualDiffFixtureRegistration, VisualDiffNoticeRenderConfiguration) {
+        let caseID = "notice--\(variantID)--\(stateID)"
+        let fixture = VisualDiffFixtureCase(
+            caseID: caseID,
+            componentID: "notice",
+            variantID: variantID,
+            stateID: stateID
+        )
+        return (
+            VisualDiffFixtureRegistration(fixture: fixture, applicability: .supported),
+            VisualDiffNoticeRenderConfiguration(
+                kind: kind,
+                title: title,
+                detail: detail,
+                actionTitle: actionTitle,
+                compact: stateID == "compact"
+            )
+        )
+    }
+
+    private static let definitions = [
+        definition(
+            variantID: "info",
+            stateID: "rest",
+            kind: .info,
+            title: "Changes apply to this device",
+            detail: "Other household devices keep their current preference."
+        ),
+        definition(
+            variantID: "warning",
+            stateID: "rest",
+            kind: .warning,
+            title: "Permission required",
+            detail: "Review the requested scope before continuing.",
+            actionTitle: "Review"
+        ),
+        definition(
+            variantID: "warning",
+            stateID: "compact",
+            kind: .warning,
+            title: "Permission required",
+            detail: "Review the requested scope before continuing.",
+            actionTitle: "Review"
+        ),
+        definition(
+            variantID: "error",
+            stateID: "rest",
+            kind: .error,
+            title: "Couldn’t save changes",
+            detail: "Your edits are still here. Try again when the connection returns.",
+            actionTitle: "Retry"
+        ),
+        definition(
+            variantID: "error",
+            stateID: "compact",
+            kind: .error,
+            title: "Couldn’t save changes",
+            detail: "Your edits are still here. Try again when the connection returns.",
+            actionTitle: "Retry"
+        ),
+    ]
+
+    static let renderConfigurations: [String: VisualDiffNoticeRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "notice",
+        registrations: definitions.map(\.0),
+        adapter: NoticeFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 enum SentientIdentityFixtureMetrics {

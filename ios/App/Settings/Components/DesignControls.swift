@@ -40,7 +40,7 @@ enum DesignControlState: Equatable {
 
 enum DesignButtonRole { case action, secondary, destructive, quiet }
 
-enum DesignNoticeKind { case loading, empty, error, success, warning }
+enum DesignNoticeKind: Equatable { case loading, empty, info, error, success, warning }
 
 /// Draws the slate face as two full-bounds fields. Core Graphics applies the
 /// ellipse transform to the radial coordinate field while the face bounds stay

@@ -1046,6 +1046,40 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(fixture.stateID, "frame-004--1060ms")
     }
 
+    func testNoticeRegistryPreservesApprovedCasesAndMappings() throws {
+        let expected: [(String, DesignNoticeKind, String, String, String?, Bool)] = [
+            ("notice--info--rest", .info, "Changes apply to this device", "Other household devices keep their current preference.", nil, false),
+            ("notice--warning--compact", .warning, "Permission required", "Review the requested scope before continuing.", "Review", true),
+            ("notice--warning--rest", .warning, "Permission required", "Review the requested scope before continuing.", "Review", false),
+            ("notice--error--compact", .error, "Couldn’t save changes", "Your edits are still here. Try again when the connection returns.", "Retry", true),
+            ("notice--error--rest", .error, "Couldn’t save changes", "Your edits are still here. Try again when the connection returns.", "Retry", false),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "notice")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, kind, title, detail, actionTitle, compact) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.noticeRenderConfiguration(for: caseID) else {
+                XCTFail("Missing notice render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.kind, kind, caseID)
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+            XCTAssertEqual(configuration.actionTitle, actionTitle, caseID)
+            XCTAssertEqual(configuration.compact, compact, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved notice case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
     func testSentientIdentityRegistryPreservesStaticAndMotionAuthority() {
         let registrations = VisualDiffFixtureRegistry.registrations(for: "sentient-identity")
         let expectedStatic = Set([
