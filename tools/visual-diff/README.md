@@ -62,7 +62,7 @@ node tools/visual-diff/visual-diff.mjs reference.png actual.png \
   --diff build/visual-captures/diffs/action-button.diff.png
 ```
 
-- The reviewed ODiff per-pixel thresholds are Web `0.56`, iOS `0.035`, and Android `0.56`; differences above the selected platform tolerance are counted after anti-alias detection. Platform wrappers pass these profiles explicitly and require `diffPercentage <= 0.2%`. A diagnostic can override the tolerance with `--threshold` and the gate with `--max-diff-percentage`.
+- The reviewed ODiff per-pixel thresholds are Web `0.56`, iOS `0.035`, and Android `0.56`; differences above the selected platform tolerance are counted after anti-alias detection. Platform wrappers pass these profiles explicitly. Web and Android require `diffPercentage <= 0.2%`; iOS permits `diffPercentage <= 5.25%` because native text and platform rasterization differ from the browser references. A diagnostic can override the tolerance with `--threshold` and the gate with `--max-diff-percentage`.
 - Both images are composited on canonical Dusk by default; `--background` selects another reviewed opaque canvas.
 - `diffPercentage` is `diffCount / visiblePixelCount`, where visible pixels are the alpha union of the original inputs. `canvasDiffPercentage` preserves ODiff's whole-canvas result for diagnostics.
 - Anti-aliased pixels are ignored by default; pass `--count-antialiasing` to include them.
@@ -82,7 +82,7 @@ Regardless of platform:
 2. Capture the isolated component rather than a specimen row, variant collection, or unrelated full application screen.
 3. Stabilize data, fonts, theme, locale, scale, and animation through the project's normal fixture facilities.
 4. Do not resize either image merely to make the comparison run; a layout mismatch is useful evidence.
-5. The platform wrapper applies its reviewed tolerance (Web `0.56`, iOS `0.035`, Android `0.56`) and the shared `0.2%` visible-difference gate. Use the underlying pairwise command without `--max-diff-percentage` only for explicit report-only diagnostics.
+5. The platform wrapper applies its reviewed tolerance and visible-difference gate: Web `0.56 / 0.2%`, iOS `0.035 / 5.25%`, and Android `0.56 / 0.2%`. An iOS numeric pass is necessary but not sufficient: inspect the report and resolve visible non-text differences before completion. Use the underlying pairwise command without `--max-diff-percentage` only for explicit report-only diagnostics.
 6. For motion, compare the corresponding PNG keyframes individually. A project-owned loop or test parameterization is sufficient; PiBox does not require keyframe manifests or filename conventions.
 
 ### Vite and browser applications
