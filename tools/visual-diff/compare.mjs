@@ -6,7 +6,7 @@ import { defaultActualPath } from "./reference-image.mjs";
 
 const PLATFORM_PROFILES = Object.freeze({
   web: { threshold: 0.56, maxDiffPercentage: 0.2 },
-  ios: { threshold: 0.15, maxDiffPercentage: 0.2 },
+  ios: { threshold: 0.035, maxDiffPercentage: 0.2 },
   android: { threshold: 0.56, maxDiffPercentage: 0.2 },
 });
 
