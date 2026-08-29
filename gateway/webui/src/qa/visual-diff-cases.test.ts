@@ -69,6 +69,23 @@ const CURRENT_STALE_BANNER_CASES = [
 
 const CURRENT_PANE_HEADER_CASES = ["pane-header--preferences--rest"] as const;
 
+const CURRENT_PIN_ENTRY_CASES = [
+  "pin-entry--4-digit--checking",
+  "pin-entry--4-digit--checking-reduced-motion",
+  "pin-entry--4-digit--empty",
+  "pin-entry--4-digit--one-digit",
+  "pin-entry--4-digit--partial",
+  "pin-entry--4-digit--success",
+] as const;
+
+const PIN_ENTRY_TRANSITION_CASES = [
+  "pin-entry--complete-to-success--frame-000--0000ms",
+  "pin-entry--complete-to-success--frame-001--0180ms",
+  "pin-entry--complete-to-success--frame-002--0360ms",
+  "pin-entry--complete-to-success--frame-003--0700ms",
+  "pin-entry--complete-to-success--frame-004--1060ms",
+] as const;
+
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
   "user-avatar--terra-44--rest",
@@ -233,6 +250,46 @@ const SEGMENTED_TRANSITION_CASES = [
 ] as const;
 
 describe("visual diff component cases", () => {
+  it("registers the exact pin-entry matrix and canonical PinKeypad provenance", () => {
+    const pinEntry = visualDiffComponentRegistry["pin-entry"];
+    expect(pinEntry.stateApplicability).toEqual({
+      "4-digit": ["checking", "checking-reduced-motion", "empty", "one-digit", "partial", "success"],
+      "complete-to-success": [
+        "frame-000--0000ms",
+        "frame-001--0180ms",
+        "frame-002--0360ms",
+        "frame-003--0700ms",
+        "frame-004--1060ms",
+      ],
+    });
+    expect(pinEntry.fixtureAdapterId).toBe("pin-entry");
+    expect(pinEntry.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#PinKeypad");
+    expect(pinEntry.authority).toBe("design/prototype/common-composites/handoff.md");
+    expect(pinEntry.variants["4-digit"].props).toEqual({ length: 4 });
+
+    for (const caseId of [...CURRENT_PIN_ENTRY_CASES, ...PIN_ENTRY_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("pin-entry");
+        expect(resolution.case.fixtureAdapterId).toBe("pin-entry");
+        expect(resolution.case.props).toEqual(pinEntry.variants["4-digit"].props);
+      }
+    }
+  });
+
+  it("resolves unapproved pin-entry states to missing authority", () => {
+    for (const stateId of ["error", "disabled", "hover", "focus", "pressed", "loading"]) {
+      expect(resolveVisualDiffCase(`pin-entry--4-digit--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `pin-entry--4-digit--${stateId}`,
+        componentId: "pin-entry",
+        variantId: "4-digit",
+        stateId,
+      });
+    }
+  });
+
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
       variant: "default",

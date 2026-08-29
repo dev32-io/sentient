@@ -402,10 +402,10 @@ export function PinKeypad({ onSubmit, resetSignal, error, success }: PinKeypadPr
     : showError
       ? error
       : submitted
-        ? "Checking PIN…"
+        ? "Checking Pin..."
         : digits.length > 0
           ? `${digits.length} of ${PIN_LENGTH} digits entered.`
-          : "Enter your four-digit PIN.";
+          : `Enter your ${PIN_LENGTH}-digit Pin.`;
 
   return (
     <div
@@ -438,7 +438,7 @@ export function PinKeypad({ onSubmit, resetSignal, error, success }: PinKeypadPr
           if (key === "") return <span key="blank" class="snt-pin-keypad__key snt-pin-keypad__key--blank" aria-hidden="true" />;
           if (key === "delete") {
             return (
-              <ActionButton key={key} variant="destructive" className="snt-pin-keypad__key" disabled={submitted || showSuccess || (showError && !errorReady)} onClick={() => handleKey(key)} ariaLabel="Delete last digit" title="Delete last digit">
+              <ActionButton key={key} className="snt-pin-keypad__key" disabled={submitted || showSuccess || (showError && !errorReady)} onClick={() => handleKey(key)} ariaLabel="Delete last digit" title="Delete last digit">
                 <BackspaceIcon size={24} />
               </ActionButton>
             );

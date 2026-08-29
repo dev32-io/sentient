@@ -469,6 +469,25 @@ const PANE_HEADER_VARIANTS = {
   },
 } as const satisfies Readonly<Record<string, PaneHeaderVariantDefinition>>;
 
+export interface PinEntryVariantProps {
+  readonly length: 4;
+}
+
+type PinEntryVariantDefinition = VisualDiffVariantDefinition<PinEntryVariantProps>;
+
+const PIN_ENTRY_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0180ms",
+  "frame-002--0360ms",
+  "frame-003--0700ms",
+  "frame-004--1060ms",
+] as const;
+
+const PIN_ENTRY_VARIANTS = {
+  "4-digit": { props: { length: 4 } },
+  "complete-to-success": { props: { length: 4 } },
+} as const satisfies Readonly<Record<string, PinEntryVariantDefinition>>;
+
 export interface PlateVariantProps {
   readonly variant: "default";
 }
@@ -721,6 +740,17 @@ export const visualDiffComponentRegistry = {
       preferences: ["rest"],
     },
   },
+  "pin-entry": {
+    id: "pin-entry",
+    fixtureAdapterId: "pin-entry",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#PinKeypad",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: PIN_ENTRY_VARIANTS,
+    stateApplicability: {
+      "4-digit": ["checking", "checking-reduced-motion", "empty", "one-digit", "partial", "success"],
+      "complete-to-success": PIN_ENTRY_TRANSITION_FRAMES,
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -784,6 +814,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "stale-banner",
   "pane-header",
   "disclosure",
+  "pin-entry",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

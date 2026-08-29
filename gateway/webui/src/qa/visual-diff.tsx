@@ -5,9 +5,8 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
-import { AsyncState, Disclosure, NoResultsState, PaneChrome } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, NoResultsState, PaneChrome, PinKeypad, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
-import { ValidatedField } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -23,6 +22,7 @@ import {
   type NoResultsStateVariantProps,
   type NoticeVariantProps,
   type PaneHeaderVariantProps,
+  type PinEntryVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
   type SearchFieldVariantProps,
@@ -31,9 +31,9 @@ import {
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
-  type ValidatedFieldVariantProps,
   type ToggleVariantProps,
   type UserAvatarVariantProps,
+  type ValidatedFieldVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -172,6 +172,55 @@ function DisclosureFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JS
         </Disclosure>
       </div>
     </Plate>
+  );
+}
+
+function pinEntryDigits(stateId: string): readonly string[] {
+  if (stateId === "one-digit") return ["1"];
+  if (stateId === "partial") return ["1", "2", "3"];
+  if (stateId === "frame-001--0180ms") return ["1", "2"];
+  if (stateId === "checking" || stateId === "checking-reduced-motion" || stateId === "success" || stateId === "frame-002--0360ms" || stateId === "frame-003--0700ms" || stateId === "frame-004--1060ms") return ["1", "2", "3", "4"];
+  return [];
+}
+
+function PinEntryFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const pin = fixture.props as PinEntryVariantProps;
+  const digits = pinEntryDigits(fixture.stateId).slice(0, pin.length);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const enter = (index: number): void => {
+      if (cancelled) return;
+      const digit = digits[index];
+      if (digit === undefined) return;
+      const button = document.querySelector<HTMLButtonElement>(`[aria-label="PIN digit ${digit}"]`);
+      if (!button) {
+        requestAnimationFrame(() => enter(index));
+        return;
+      }
+      button.click();
+      window.setTimeout(() => enter(index + 1), 0);
+    };
+    enter(0);
+    return () => {
+      cancelled = true;
+    };
+  }, [fixture.stateId]);
+
+  return (
+    <div class="visual-diff-pin-entry-frame">
+      <Plate className="visual-diff-target visual-diff-pin-entry">
+        <PinKeypad
+          onSubmit={() => {
+            if (fixture.stateId === "success" || fixture.stateId === "frame-004--1060ms") setSuccess(true);
+          }}
+          success={success ? "Pin accepted." : undefined}
+        />
+      </Plate>
+    </div>
+  );
+}
   );
 }
 
@@ -407,7 +456,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // This adapter deliberately renders the production Disclosure and its native
     // details/summary semantics for every approved static and motion case.
     render: (fixture) => <DisclosureFixture fixture={fixture} />,
-  }
+  },
+  "pin-entry": {
+    // Drive the production keypad through its public digit-button semantics so
+    // each approved state exercises the same entry path as a user.
+    render: (fixture) => <PinEntryFixture fixture={fixture} />,
   },
   "plate": {
     // This adapter deliberately renders the production Plate and its public anatomy.
@@ -507,12 +560,32 @@ function requireFixtureAdapter(fixtureCase: VisualDiffResolvedCase): VisualDiffF
 
 const fixtureAdapter = requireFixtureAdapter(fixture);
 
+function pinEntryFixtureReady(stateId: string): boolean {
+  const expected = stateId === "empty" || stateId === "frame-000--0000ms"
+    ? { state: "idle", filled: 0 }
+    : stateId === "one-digit"
+      ? { state: "active", filled: 1 }
+      : stateId === "partial" || stateId === "frame-001--0180ms"
+        ? { state: "active", filled: stateId === "partial" ? 3 : 2 }
+        : stateId === "success" || stateId === "frame-004--1060ms"
+          ? { state: "success", filled: 4 }
+          : { state: "checking", filled: 4 };
+  const keypad = document.querySelector<HTMLElement>(".snt-pin-keypad");
+  return keypad?.dataset.state === expected.state
+    && keypad.querySelectorAll('[data-filled="true"]').length === expected.filled;
+}
+
 function VisualDiffFixture() {
   useEffect(() => {
     document.documentElement.dataset.visualDiffFixture = "sentient-v1";
-    requestAnimationFrame(() => {
+    const markReady = () => {
+      if (fixture.componentId === "pin-entry" && !pinEntryFixtureReady(fixture.stateId)) {
+        requestAnimationFrame(markReady);
+        return;
+      }
       document.documentElement.dataset.visualDiffReady = "true";
-    });
+    };
+    requestAnimationFrame(markReady);
   }, []);
 
   return (
@@ -531,6 +604,8 @@ style.textContent = `
   .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-stale-banner { width: min(480px, 100%); }
+  .visual-diff-pin-entry-frame { width: min(384px, 100%); height: 496px; display: flex; align-items: flex-start; justify-content: flex-start; }
+  .visual-diff-pin-entry { width: 360px; }
   /* Preserve the handoff artboard's lower breathing room around the source margin. */
   .visual-diff-no-results { width: min(468px, 100%); margin-bottom: 10px; }
   .visual-diff-text-field { width: min(320px, 100%); }
