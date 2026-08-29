@@ -508,8 +508,11 @@ struct DesignChip: View {
 
 private struct DesignCheckboxMark: View {
     @Environment(\.designControlPressed) private var pressed
+    @Environment(\.colorSchemeContrast) private var contrast
     let isOn: Bool
     let isEnabled: Bool
+    let hovered: Bool
+    let focused: Bool
 
     private var shape: RoundedRectangle {
         RoundedRectangle(
@@ -518,34 +521,46 @@ private struct DesignCheckboxMark: View {
         )
     }
 
+    private var isPressed: Bool { pressed && isEnabled }
+    private var isHovered: Bool { hovered && isEnabled && !isPressed }
+
     var body: some View {
         ZStack {
             if !isEnabled {
+                // Keep a disabled checked value visually truthful if a future
+                // owner supplies one; the current iOS surfaces are binary and
+                // do not manufacture an indeterminate state locally.
                 designSlateFace(role: .quiet, muted: true, hovered: false)
             } else if isOn {
                 designSlateFace(
                     role: .action,
                     muted: false,
-                    hovered: false,
+                    hovered: isHovered,
                     baseOverride: DuskColors.accent
                 )
             } else {
                 DesignWellFace(shape: shape, focused: false, showsInsetHighlights: true)
             }
-            shape.stroke(
-                isOn && isEnabled
-                    ? DuskColors.line.overlaying(DuskColors.accent, opacity: 0.48)
-                    : DuskColors.line,
-                lineWidth: DesignMetrics.hairline
-            )
-            if isOn {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(isEnabled ? DuskColors.bgSunk : DuskColors.ink4)
-            }
+            shape.strokeBorder(borderColor, lineWidth: DesignMetrics.hairline)
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(isEnabled ? DuskColors.bgSunk : DuskColors.ink4)
+                .opacity(isOn ? 1 : 0)
+                .scaleEffect(isOn ? 1 : 0.7)
+                .accessibilityHidden(true)
         }
         .frame(width: DesignMetrics.checkboxSize, height: DesignMetrics.checkboxSize)
         .clipShape(shape)
+        .overlay {
+            if focused {
+                shape
+                    .stroke(
+                        DuskColors.accent,
+                        lineWidth: contrast == .increased ? 3 : DesignMetrics.focusBorder
+                    )
+                    .padding(-DesignMetrics.focusRing)
+            }
+        }
         .background {
             ZStack {
                 if !isEnabled {
@@ -554,7 +569,7 @@ private struct DesignCheckboxMark: View {
                         color: .black.opacity(DesignMaterialAdapter.slateDisabledBlack),
                         geometry: DesignMaterialShadowGeometry.slateDisabled
                     )
-                } else if pressed {
+                } else if isPressed {
                     DesignSpreadShadow(
                         shape: shape,
                         color: .black.opacity(DesignMaterialAdapter.slatePressedBlack),
@@ -563,33 +578,86 @@ private struct DesignCheckboxMark: View {
                 } else if isOn {
                     DesignSpreadShadow(
                         shape: shape,
-                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
-                        geometry: DesignMaterialShadowGeometry.slateRest
+                        color: .black.opacity(
+                            isHovered
+                                ? DesignMaterialAdapter.slateHoverBlack
+                                : DesignMaterialAdapter.slateRestBlack
+                        ),
+                        geometry: isHovered
+                            ? DesignMaterialShadowGeometry.slateHover
+                            : DesignMaterialShadowGeometry.slateRest
                     )
                     DesignSpreadShadow(
                         shape: shape,
-                        color: DuskColors.accent.opacity(0.50),
-                        geometry: DesignDropShadowGeometry(radius: 15, y: 9, sourceInset: 12)
+                        color: DuskColors.accent.opacity(isHovered ? 0.56 : 0.50),
+                        geometry: isHovered
+                            ? DesignMaterialShadowGeometry.slateHoverGlow
+                            : DesignDropShadowGeometry(radius: 15, y: 9, sourceInset: 12)
+                    )
+                } else if isHovered {
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: DuskColors.accent,
+                        geometry: DesignDropShadowGeometry(radius: 12, y: 0, sourceInset: 8)
                     )
                 }
                 DesignSpreadShadow(
                     shape: shape,
-                    color: DuskColors.bgSunk.opacity(0.88),
-                    geometry: DesignDropShadowGeometry(radius: 0, y: pressed ? 1 : 2, sourceInset: 1)
+                    color: isOn
+                        ? DuskColors.bgSunk.opacity(0.88)
+                        : DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity),
+                    geometry: DesignDropShadowGeometry(
+                        radius: 0,
+                        y: !isEnabled || isPressed ? 1 : 2,
+                        sourceInset: 1
+                    )
                 )
             }
         }
+        .offset(y: isPressed ? DesignMetrics.pressedDepth : isHovered && isOn ? -DesignMetrics.pressedDepth : 0)
+    }
+
+    private var borderColor: Color {
+        if contrast == .increased { return DuskColors.ink3 }
+        if !isEnabled {
+            return DuskColors.lineSoft.overlaying(
+                DuskColors.bg,
+                opacity: 1 - DesignMaterialAdapter.slateDisabledBorder
+            )
+        }
+        if isHovered && isOn { return .clear }
+        if isOn {
+            return DuskColors.line.overlaying(DuskColors.accent, opacity: 0.48)
+        }
+        if isHovered { return DuskColors.line.overlaying(DuskColors.accent, opacity: 0.26) }
+        return DuskColors.line
+    }
+}
+
+private struct DesignCheckboxPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            // The source presses only the checkbox face. The label remains in
+            // place while the mark closes its air gap through the environment.
+            .environment(\.designControlPressed, configuration.isPressed)
     }
 }
 
 private struct DesignCheckboxStyle: ToggleStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isFocused) private var focused
+    let hovered: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         Button(action: { configuration.isOn.toggle() }) {
             HStack(spacing: DesignMetrics.checkboxGap) {
-                DesignCheckboxMark(isOn: configuration.isOn, isEnabled: isEnabled)
+                DesignCheckboxMark(
+                    isOn: configuration.isOn,
+                    isEnabled: isEnabled,
+                    hovered: hovered,
+                    focused: focused
+                )
                 configuration.label
                     .font(Typo.ui(DesignMetrics.controlLabelSize))
                     .foregroundStyle(isEnabled ? DuskColors.ink2 : DuskColors.ink4)
@@ -597,10 +665,14 @@ private struct DesignCheckboxStyle: ToggleStyle {
             .frame(minHeight: DesignMetrics.minimumTarget)
             .contentShape(Rectangle())
         }
-        .buttonStyle(DesignTogglePressStyle())
+        .buttonStyle(DesignCheckboxPressStyle())
         .animation(
             DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
             value: configuration.isOn
+        )
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: hovered
         )
     }
 }
@@ -610,14 +682,15 @@ struct DesignCheckbox: View {
     @Binding var isOn: Bool
     var isEnabled = true
     var accessibilityId: String? = nil
+    @State private var hovered = false
 
     var body: some View {
         Toggle(isOn: $isOn) { Text(title) }
-            .toggleStyle(DesignCheckboxStyle())
+            .toggleStyle(DesignCheckboxStyle(hovered: hovered))
+            .onHover { hovered = $0 }
             .disabled(!isEnabled)
             .accessibilityLabel(title)
             .accessibilityValue(isEnabled ? (isOn ? "Checked" : "Unchecked") : "Disabled")
             .accessibilityIdentifier(accessibilityId ?? "")
-            .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

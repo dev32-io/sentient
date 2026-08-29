@@ -111,10 +111,17 @@ struct VisualDiffUserAvatarRenderConfiguration {
     let fallback: Bool
 }
 
+struct VisualDiffCheckboxRenderConfiguration {
+    let title: String
+    let isOn: Bool
+    let isEnabled: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
         IconButtonFixtureCatalog.registration.componentID: IconButtonFixtureCatalog.registration,
+        CheckboxFixtureCatalog.registration.componentID: CheckboxFixtureCatalog.registration,
         PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
         UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
     ]
@@ -176,6 +183,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffUserAvatarRenderConfiguration? {
         UserAvatarFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func checkboxRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffCheckboxRenderConfiguration? {
+        CheckboxFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -431,6 +444,151 @@ private enum IconButtonFixtureCatalog {
         componentID: "icon-button",
         registrations: definitions.map(\.0),
         adapter: IconButtonFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct CheckboxFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffCheckboxRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(CheckboxFixture(configuration: configuration))
+    }
+}
+
+private struct CheckboxFixture: View {
+    let configuration: VisualDiffCheckboxRenderConfiguration
+    @State private var isOn: Bool
+
+    init(configuration: VisualDiffCheckboxRenderConfiguration) {
+        self.configuration = configuration
+        _isOn = State(initialValue: configuration.isOn)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            DesignCheckbox(
+                title: configuration.title,
+                isOn: $isOn,
+                isEnabled: configuration.isEnabled
+            )
+        }
+    }
+}
+
+private enum CheckboxFixtureCatalog {
+    private struct Variant {
+        let id: String
+        let title: String
+        let isOn: Bool
+        let isEnabled: Bool
+        let states: [State]
+    }
+
+    private struct State {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+
+        static func supported(_ id: String) -> Self {
+            Self(id: id, applicability: .supported)
+        }
+
+        static func unavailable(
+            _ id: String,
+            reason: VisualDiffMissingAuthorityReason
+        ) -> Self {
+            Self(id: id, applicability: .missingAuthority(reason))
+        }
+    }
+
+    private static let variants: [Variant] = [
+        Variant(
+            id: "checked",
+            title: "Selected",
+            isOn: true,
+            isEnabled: true,
+            states: [
+                .supported("rest"),
+                .unavailable("focus", reason: .stateRequiresInteraction),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateRequiresInteraction),
+            ]
+        ),
+        Variant(
+            id: "unchecked",
+            title: "Not selected",
+            isOn: false,
+            isEnabled: true,
+            states: [
+                .supported("rest"),
+                .unavailable("focus", reason: .stateRequiresInteraction),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateRequiresInteraction),
+            ]
+        ),
+        Variant(
+            id: "mixed",
+            title: "Mixed",
+            isOn: false,
+            isEnabled: true,
+            // iOS has no authoritative mixed value in the current product
+            // model. Keep these handoff cases explicit rather than rendering
+            // a fabricated state through the binary native Toggle API.
+            states: [
+                .unavailable("rest", reason: .stateNotApplicable),
+                .unavailable("focus", reason: .stateNotApplicable),
+                .unavailable("hover", reason: .stateNotApplicable),
+                .unavailable("pressed", reason: .stateNotApplicable),
+            ]
+        ),
+        Variant(
+            id: "disabled",
+            title: "Unavailable",
+            isOn: false,
+            isEnabled: false,
+            states: [.supported("rest")]
+        ),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffCheckboxRenderConfiguration?)] =
+        variants.flatMap { variant in
+            variant.states.map { state in
+                let fixture = VisualDiffFixtureCase(
+                    caseID: "checkbox--\(variant.id)--\(state.id)",
+                    componentID: "checkbox",
+                    variantID: variant.id,
+                    stateID: state.id
+                )
+                let configuration = state.applicability == .supported
+                    ? VisualDiffCheckboxRenderConfiguration(
+                        title: variant.title,
+                        isOn: variant.isOn,
+                        isEnabled: variant.isEnabled
+                    )
+                    : nil
+                return (
+                    VisualDiffFixtureRegistration(
+                        fixture: fixture,
+                        applicability: state.applicability
+                    ),
+                    configuration
+                )
+            }
+        }
+
+    static let renderConfigurations: [String: VisualDiffCheckboxRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "checkbox",
+        registrations: definitions.map(\.0),
+        adapter: CheckboxFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

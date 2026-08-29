@@ -258,6 +258,73 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testCheckboxRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "checkbox--checked--rest",
+            "checkbox--disabled--rest",
+            "checkbox--unchecked--rest",
+        ])
+        let expectedInteractionStates = Set([
+            "checkbox--checked--focus",
+            "checkbox--checked--pressed",
+            "checkbox--unchecked--focus",
+            "checkbox--unchecked--pressed",
+        ])
+        let expectedUnavailableStates = Set([
+            "checkbox--checked--hover",
+            "checkbox--mixed--focus",
+            "checkbox--mixed--hover",
+            "checkbox--mixed--pressed",
+            "checkbox--mixed--rest",
+            "checkbox--unchecked--hover",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "checkbox")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(
+            actualCaseIDs,
+            expectedSupported.union(expectedInteractionStates).union(expectedUnavailableStates)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedUnavailableStates
+        )
+    }
+
+    func testCheckboxRegistryPreservesNativeStateMappings() {
+        let expected: [(String, String, Bool, Bool)] = [
+            ("checkbox--unchecked--rest", "Not selected", false, true),
+            ("checkbox--checked--rest", "Selected", true, true),
+            ("checkbox--disabled--rest", "Unavailable", false, false),
+        ]
+
+        for (caseID, title, isOn, isEnabled) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.checkboxRenderConfiguration(for: caseID) else {
+                XCTFail("Missing checkbox render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.isOn, isOn, caseID)
+            XCTAssertEqual(configuration.isEnabled, isEnabled, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.checkboxRenderConfiguration(
+                for: "checkbox--mixed--rest"
+            )
+        )
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -377,6 +444,18 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(
             interaction.description,
             "iPhone static capture cannot hold native interaction state for icon-button--default--pressed"
+        )
+
+        guard case .missingAuthority(let mixed) = VisualDiffFixtureRegistry.resolve(
+            caseID: "checkbox--mixed--rest"
+        ) else {
+            XCTFail("A mixed checkbox capture must remain behind an authoritative state owner")
+            return
+        }
+        XCTAssertEqual(mixed.reason, .stateNotApplicable)
+        XCTAssertEqual(
+            mixed.description,
+            "iPhone state is blocked or not applicable for checkbox--mixed--rest"
         )
 
         guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
