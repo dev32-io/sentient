@@ -134,6 +134,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             caseID.hasPrefix("text-field--")
                 || caseID.hasPrefix("text-area--")
                 || caseID.hasPrefix("search-field--")
+                || caseID.hasPrefix("validated-field--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
         if usesNativeTextInputCapture {
@@ -542,6 +543,94 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertNil(
             VisualDiffFixtureRegistry.textFieldRenderConfiguration(
                 for: "text-field--filled--hover"
+            )
+        )
+    }
+
+    func testValidatedFieldRegistryPreservesApprovedCasesAndMappings() {
+        let expected: [(String, String, String, ValidatedFieldStatus?, ValidatedFieldCounter?, Bool, Int?)] = [
+            (
+                "validated-field--confirmation--error",
+                "Confirmation",
+                "warm emb",
+                .error("The values do not match."),
+                nil,
+                false,
+                nil
+            ),
+            (
+                "validated-field--recovery-phrase--valid",
+                "Recovery phrase",
+                "warm ember",
+                .valid("Available"),
+                nil,
+                false,
+                nil
+            ),
+            (
+                "validated-field--supporting-note--counter",
+                "Supporting note",
+                "A concise note that helps others understand this choice.",
+                nil,
+                ValidatedFieldCounter(current: 58, max: 160),
+                true,
+                160
+            ),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "validated-field")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, title, value, status, counter, multiline, maxLength) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.validatedFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing validated-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.status, status, caseID)
+            XCTAssertEqual(configuration.counter, counter, caseID)
+            XCTAssertEqual(configuration.multiline, multiline, caseID)
+            XCTAssertEqual(configuration.maxLength, maxLength, caseID)
+            XCTAssertFalse(configuration.shouldFocus, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved validated-field case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testValidatedFieldStatusAndCounterContractsRemainCallerOwned() {
+        XCTAssertEqual(ValidatedFieldStatus.valid("Available").message, "Available")
+        XCTAssertFalse(ValidatedFieldStatus.valid("Available").isError)
+        XCTAssertEqual(ValidatedFieldStatus.error("The values do not match.").message, "The values do not match.")
+        XCTAssertTrue(ValidatedFieldStatus.error("The values do not match.").isError)
+        XCTAssertEqual(
+            ValidatedFieldCounter(current: 58, max: 160).displayText,
+            "58 of 160 characters"
+        )
+        XCTAssertEqual(
+            ValidatedFieldCounter(current: 58, max: 160, unit: "sílabas").displayText,
+            "58 of 160 sílabas"
+        )
+    }
+
+    func testValidatedFieldUnapprovedStatesDoNotResolveToSupported() {
+        guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
+            caseID: "validated-field--confirmation--rest"
+        ) else {
+            XCTFail("Unapproved validated-field state must remain unavailable")
+            return
+        }
+        XCTAssertEqual(unknown.reason, .unknownCase)
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.validatedFieldRenderConfiguration(
+                for: "validated-field--supporting-note--valid"
             )
         )
     }
@@ -1154,6 +1243,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "chip",
             "range",
             "search-field",
+            "validated-field",
             "segmented-control",
             "disclosure",
             "sentient-identity",

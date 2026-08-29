@@ -837,14 +837,376 @@ struct DesignSelectableCard<Content: View>: View {
     }
 }
 
+enum ValidatedFieldStatus: Equatable {
+    case valid(String)
+    case error(String)
+
+    var message: String {
+        switch self {
+        case .valid(let message), .error(let message): message
+        }
+    }
+
+    var isError: Bool {
+        switch self {
+        case .valid: false
+        case .error: true
+        }
+    }
+}
+
+struct ValidatedFieldCounter: Equatable {
+    let current: Int
+    let max: Int
+    var unit: String = "characters"
+
+    var displayText: String { "\(current) of \(max) \(unit)" }
+}
+
+private enum ValidatedFieldMetrics {
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal) + 18 + DesignMetrics.hairline
+    static let focusCastRadius: CGFloat = 18
+    static let focusCastSourceInset: CGFloat = 14
+    static let editorVerticalInset: CGFloat = 3
+}
+
+/// A caller-owned validation composite over native text inputs. Validation is
+/// deliberately supplied as state or the compatibility `validate` closure;
+/// this view does not choose when validation runs.
 struct ValidatedField: View {
     let title: String
     var prompt: String = ""
     @Binding var text: String
-    let validate: (String) -> String?
+    var placeholder: String? = nil
+    var validate: ((String) -> String?)? = nil
+    var error: String? = nil
+    var status: ValidatedFieldStatus? = nil
+    var counter: ValidatedFieldCounter? = nil
+    var multiline = false
+    var maxLength: Int? = nil
+    var accessibilityId: String? = nil
+    var isEnabled = true
+    var focused: FocusState<Bool>.Binding? = nil
+    var autocapitalization: TextInputAutocapitalization? = nil
+    var autocorrectionDisabled = false
+    var submitLabel: SubmitLabel? = nil
+    var onSubmit: (() -> Void)? = nil
+    var onChange: ((String) -> Void)? = nil
+    @Environment(\.colorSchemeContrast) private var contrast
+    @FocusState private var internalFocused: Bool
+
+    init(
+        title: String,
+        prompt: String = "",
+        text: Binding<String>,
+        placeholder: String? = nil,
+        validate: ((String) -> String?)? = nil,
+        error: String? = nil,
+        status: ValidatedFieldStatus? = nil,
+        counter: ValidatedFieldCounter? = nil,
+        multiline: Bool = false,
+        maxLength: Int? = nil,
+        accessibilityId: String? = nil,
+        isEnabled: Bool = true,
+        focused: FocusState<Bool>.Binding? = nil,
+        autocapitalization: TextInputAutocapitalization? = nil,
+        autocorrectionDisabled: Bool = false,
+        submitLabel: SubmitLabel? = nil,
+        onSubmit: (() -> Void)? = nil,
+        onChange: ((String) -> Void)? = nil
+    ) {
+        self.title = title
+        self.prompt = prompt
+        self.placeholder = placeholder
+        _text = text
+        self.validate = validate
+        self.error = error
+        self.status = status
+        self.counter = counter
+        self.multiline = multiline
+        self.maxLength = maxLength
+        self.accessibilityId = accessibilityId
+        self.isEnabled = isEnabled
+        self.focused = focused
+        self.autocapitalization = autocapitalization
+        self.autocorrectionDisabled = autocorrectionDisabled
+        self.submitLabel = submitLabel
+        self.onSubmit = onSubmit
+        self.onChange = onChange
+    }
+
+    private var resolvedError: String? {
+        if let error { return error }
+        if let validationError = validate?(text) { return validationError }
+        if case .error(let message) = status { return message }
+        return nil
+    }
+
+    private var resolvedStatus: ValidatedFieldStatus? {
+        if let resolvedError { return .error(resolvedError) }
+        if case .valid = status { return status }
+        return nil
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
+    }
+
+    private var fieldAccessibilityValue: String {
+        if !isEnabled { return "Disabled" }
+        if let resolvedError { return "Error: \(resolvedError)" }
+        return text.isEmpty ? "Empty" : text
+    }
+
+    private var fieldAccessibilityHint: String {
+        if !isEnabled { return "Disabled" }
+        if let resolvedError { return "Error: \(resolvedError)" }
+        return ""
+    }
 
     var body: some View {
-        DesignField(title: title, prompt: prompt, text: $text, error: validate(text))
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            if multiline {
+                multilineField
+            } else {
+                singleLineField
+            }
+            if let resolvedStatus {
+                ValidatedFieldStatusView(
+                    status: resolvedStatus,
+                    accessibilityId: accessibilityId.map { "\($0)-\(resolvedStatus.isError ? "error" : "status")" }
+                )
+            }
+            if let counter {
+                Text(counter.displayText)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(counter.displayText)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .accessibilityIdentifier(accessibilityId.map { "\($0)-count" } ?? "")
+            }
+        }
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+            .foregroundStyle(DuskColors.ink)
+            .frame(minHeight: ValidatedFieldMetrics.labelLineHeight, alignment: .leading)
+    }
+
+    private var singleLineField: some View {
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            label
+            focusableSingleLine
+        }
+    }
+
+    @ViewBuilder
+    private var focusableSingleLine: some View {
+        if let focused {
+            singleLineInput.focused(focused)
+        } else {
+            singleLineInput.focused($internalFocused)
+        }
+    }
+
+    private var singleLineInput: some View {
+        TextField(prompt, text: cappedBinding)
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink)
+            .textFieldStyle(.plain)
+            .padding(.horizontal, Space.md + DesignMetrics.hairline)
+            .frame(minHeight: ValidatedFieldMetrics.visualHeight)
+            .lineLimit(1)
+            .designWell(focused: false, error: false)
+            .background { stateBackground }
+            .overlay { stateOverlay }
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .contentShape(Rectangle())
+            .disabled(!isEnabled)
+            .submitLabel(submitLabel ?? .return)
+            .onSubmit { onSubmit?() }
+            .onChange(of: text) { _, value in onChange?(value) }
+            .textInputAutocapitalization(autocapitalization ?? .sentences)
+            .autocorrectionDisabled(autocorrectionDisabled)
+            .accessibilityLabel(title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(fieldAccessibilityHint)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var multilineField: some View {
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            label
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty, let placeholder = placeholder ?? (prompt.isEmpty ? nil : prompt) {
+                    Text(placeholder)
+                        .font(Typo.ui(TypeScale.base))
+                        .foregroundStyle(DuskColors.ink3)
+                        .padding(.horizontal, DesignMetrics.editorPlaceholderInsetH)
+                        .padding(.vertical, DesignMetrics.editorPlaceholderInsetV)
+                        .allowsHitTesting(false)
+                }
+                focusableMultiline
+            }
+            .frame(height: DesignMetrics.multilineEditorMinHeight)
+            .designWell(
+                focused: false,
+                error: false,
+                showsBorder: false
+            )
+            .background { stateBackground }
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                    .strokeBorder(multilineBorderColor, lineWidth: DesignMetrics.hairline)
+                    .allowsHitTesting(false)
+            }
+            .overlay { focusOverlay }
+        }
+    }
+
+    @ViewBuilder
+    private var focusableMultiline: some View {
+        if let focused {
+            multilineInput.focused(focused)
+        } else {
+            multilineInput.focused($internalFocused)
+        }
+    }
+
+    private var multilineInput: some View {
+        TextEditor(text: cappedBinding)
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink)
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, DesignMetrics.editorInset)
+            .padding(.vertical, ValidatedFieldMetrics.editorVerticalInset)
+            .disabled(!isEnabled)
+            .onChange(of: text) { _, value in onChange?(value) }
+            .accessibilityLabel(title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(fieldAccessibilityHint)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var multilineBorderColor: Color {
+        if resolvedError != nil {
+            return DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
+        }
+        if isFocused {
+            return DuskColors.accent.overlaying(
+                DuskColors.line,
+                opacity: DesignMaterialAdapter.wellFocusMix
+            )
+        }
+        return contrast == .increased ? DuskColors.ink3 : DuskColors.line
+    }
+
+    private var stateBorderColor: Color {
+        resolvedError == nil
+            ? DuskColors.line
+            : DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
+    }
+
+    @ViewBuilder
+    private var stateBackground: some View {
+        if resolvedError != nil {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(DuskColors.stop.opacity(0.14), lineWidth: DesignMetrics.focusRing)
+                .padding(-(DesignMetrics.focusRing / 2))
+        }
+        focusBackground
+    }
+
+    @ViewBuilder
+    private var stateOverlay: some View {
+        if resolvedError != nil {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(stateBorderColor, lineWidth: DesignMetrics.hairline)
+                .allowsHitTesting(false)
+        }
+        focusOverlay
+    }
+
+    @ViewBuilder
+    private var focusBackground: some View {
+        if isFocused {
+            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+            ZStack {
+                shape.stroke(
+                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
+                    lineWidth: DesignMetrics.focusRing * 2
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                    geometry: DesignDropShadowGeometry(
+                        radius: ValidatedFieldMetrics.focusCastRadius,
+                        y: DesignMaterialAdapter.wellFocusCastY,
+                        sourceInset: ValidatedFieldMetrics.focusCastSourceInset
+                    )
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(
+                    DuskColors.accent.overlaying(
+                        DuskColors.line,
+                        opacity: DesignMaterialAdapter.wellFocusMix
+                    ),
+                    lineWidth: DesignMetrics.hairline
+                )
+            RoundedRectangle(
+                cornerRadius: Radii.sm + DesignMetrics.focusRing,
+                style: .continuous
+            )
+            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var cappedBinding: Binding<String> {
+        Binding(
+            get: { text },
+            set: { newValue in
+                let capped = maxLength.map { String(newValue.prefix($0)) } ?? newValue
+                text = capped
+            }
+        )
+    }
+}
+
+private struct ValidatedFieldStatusView: View {
+    let status: ValidatedFieldStatus
+    let accessibilityId: String?
+
+    var body: some View {
+        Label {
+            Text(status.message)
+        } icon: {
+            Image(systemName: status.isError ? "exclamationmark.triangle" : "checkmark")
+                .accessibilityHidden(true)
+        }
+        .font(Typo.ui(TypeScale.sm))
+        .foregroundStyle(
+            status.isError
+                ? DuskColors.stop.overlaying(DuskColors.ink, opacity: 0.30)
+                : DuskColors.sage
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.isError ? "Error: \(status.message)" : status.message)
+        .accessibilityIdentifier(accessibilityId ?? "")
     }
 }
 

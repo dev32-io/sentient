@@ -133,6 +133,16 @@ struct VisualDiffTextAreaRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffValidatedFieldRenderConfiguration {
+    let title: String
+    let value: String
+    let status: ValidatedFieldStatus?
+    let counter: ValidatedFieldCounter?
+    let multiline: Bool
+    let maxLength: Int?
+    let shouldFocus: Bool
+}
+
 struct VisualDiffChipRenderConfiguration {
     let title: String
     let selected: Bool
@@ -299,6 +309,7 @@ enum VisualDiffFixtureRegistry {
         UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
         TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
+        ValidatedFieldFixtureCatalog.registration.componentID: ValidatedFieldFixtureCatalog.registration,
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
@@ -383,6 +394,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffTextAreaRenderConfiguration? {
         TextAreaFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func validatedFieldRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffValidatedFieldRenderConfiguration? {
+        ValidatedFieldFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func chipRenderConfiguration(
@@ -1852,6 +1869,118 @@ private enum TextAreaFixtureCatalog {
         componentID: "text-area",
         registrations: definitions.map(\.0),
         adapter: TextAreaFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct ValidatedFieldFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffValidatedFieldRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(ValidatedFieldFixture(configuration: configuration))
+    }
+}
+
+private struct ValidatedFieldFixture: View {
+    let configuration: VisualDiffValidatedFieldRenderConfiguration
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(configuration: VisualDiffValidatedFieldRenderConfiguration) {
+        self.configuration = configuration
+        _text = State(initialValue: configuration.value)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            ValidatedField(
+                title: configuration.title,
+                text: $text,
+                status: configuration.status,
+                counter: configuration.counter,
+                multiline: configuration.multiline,
+                maxLength: configuration.maxLength,
+                accessibilityId: "visual-diff-validated-field",
+                focused: $focused
+            )
+            .frame(width: 320)
+        }
+        .ignoresSafeArea()
+        .task {
+            if configuration.shouldFocus { focused = true }
+        }
+    }
+}
+
+private enum ValidatedFieldFixtureCatalog {
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffValidatedFieldRenderConfiguration)] = [
+        definition(
+            variantID: "confirmation",
+            stateID: "error",
+            title: "Confirmation",
+            value: "warm emb",
+            status: .error("The values do not match.")
+        ),
+        definition(
+            variantID: "recovery-phrase",
+            stateID: "valid",
+            title: "Recovery phrase",
+            value: "warm ember",
+            status: .valid("Available")
+        ),
+        definition(
+            variantID: "supporting-note",
+            stateID: "counter",
+            title: "Supporting note",
+            value: "A concise note that helps others understand this choice.",
+            counter: ValidatedFieldCounter(current: 58, max: 160),
+            multiline: true,
+            maxLength: 160
+        ),
+    ]
+
+    private static func definition(
+        variantID: String,
+        stateID: String,
+        title: String,
+        value: String,
+        status: ValidatedFieldStatus? = nil,
+        counter: ValidatedFieldCounter? = nil,
+        multiline: Bool = false,
+        maxLength: Int? = nil
+    ) -> (VisualDiffFixtureRegistration, VisualDiffValidatedFieldRenderConfiguration) {
+        let fixture = VisualDiffFixtureCase(
+            caseID: "validated-field--\(variantID)--\(stateID)",
+            componentID: "validated-field",
+            variantID: variantID,
+            stateID: stateID
+        )
+        return (
+            VisualDiffFixtureRegistration(fixture: fixture, applicability: .supported),
+            VisualDiffValidatedFieldRenderConfiguration(
+                title: title,
+                value: value,
+                status: status,
+                counter: counter,
+                multiline: multiline,
+                maxLength: maxLength,
+                shouldFocus: false
+            )
+        )
+    }
+
+    static let renderConfigurations: [String: VisualDiffValidatedFieldRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "validated-field",
+        registrations: definitions.map(\.0),
+        adapter: ValidatedFieldFixtureAdapter(configurations: renderConfigurations)
     )
 }
 
