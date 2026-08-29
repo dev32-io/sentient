@@ -144,6 +144,13 @@ struct VisualDiffSliderRenderConfiguration {
     let isEnabled: Bool
 }
 
+struct VisualDiffSearchFieldRenderConfiguration {
+    let title: String
+    let prompt: String
+    let value: String
+    let shouldFocus: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -155,6 +162,7 @@ enum VisualDiffFixtureRegistry {
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
+        SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -244,6 +252,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSliderRenderConfiguration? {
         RangeFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func searchFieldRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSearchFieldRenderConfiguration? {
+        SearchFieldFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -484,6 +498,113 @@ private enum RangeFixtureCatalog {
         componentID: "range",
         registrations: definitions.map(\.0),
         adapter: RangeFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct SearchFieldFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSearchFieldRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(SearchFieldFixture(configuration: configuration))
+    }
+}
+
+private struct SearchFieldFixture: View {
+    let configuration: VisualDiffSearchFieldRenderConfiguration
+    @State private var query: String
+    @FocusState private var focused: Bool
+
+    init(configuration: VisualDiffSearchFieldRenderConfiguration) {
+        self.configuration = configuration
+        _query = State(initialValue: configuration.value)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            DesignSearchField(
+                prompt: configuration.prompt,
+                query: $query,
+                title: configuration.title,
+                focused: $focused
+            )
+            .frame(width: 320)
+        }
+        .task {
+            // Request focus through the native FocusState so the approved
+            // focus fixture exercises the same responder path as production.
+            if configuration.shouldFocus { focused = true }
+        }
+    }
+}
+
+private enum SearchFieldFixtureCatalog {
+    private struct State {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+        let shouldFocus: Bool
+
+        static func supported(_ id: String, shouldFocus: Bool = false) -> Self {
+            Self(id: id, applicability: .supported, shouldFocus: shouldFocus)
+        }
+
+        static func missingAuthority(_ id: String) -> Self {
+            Self(id: id, applicability: .missingAuthority(.stateNotApplicable), shouldFocus: false)
+        }
+    }
+
+    private static let states: [State] = [
+        .supported("rest"),
+        .missingAuthority("hover"),
+        .supported("focus", shouldFocus: true),
+        .missingAuthority("filled"),
+        .missingAuthority("clear"),
+        .missingAuthority("disabled"),
+        .missingAuthority("error"),
+        .missingAuthority("loading"),
+        .missingAuthority("pressed"),
+        .missingAuthority("reduced-motion"),
+        .missingAuthority("selected"),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffSearchFieldRenderConfiguration?)] =
+        states.map { state in
+            let fixture = VisualDiffFixtureCase(
+                caseID: "search-field--placeholder--\(state.id)",
+                componentID: "search-field",
+                variantID: "placeholder",
+                stateID: state.id
+            )
+            let configuration = state.applicability == .supported
+                ? VisualDiffSearchFieldRenderConfiguration(
+                    title: "Search",
+                    prompt: "Search conversations",
+                    value: "",
+                    shouldFocus: state.shouldFocus
+                )
+                : nil
+            return (
+                VisualDiffFixtureRegistration(
+                    fixture: fixture,
+                    applicability: state.applicability
+                ),
+                configuration
+            )
+        }
+
+    static let renderConfigurations: [String: VisualDiffSearchFieldRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "search-field",
+        registrations: definitions.map(\.0),
+        adapter: SearchFieldFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

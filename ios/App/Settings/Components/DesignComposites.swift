@@ -681,7 +681,20 @@ struct IdentityFieldGroup: View {
     }
 }
 
+private enum DesignSearchFieldMetrics {
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    // The browser's 40px minimum grows to its inherited line box plus vertical
+    // padding. SwiftUI's centered hairline supplies the second CSS border edge.
+    static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
+        + 18
+        + DesignMetrics.hairline
+    static let focusCastRadius: CGFloat = 18
+    static let focusCastSourceInset: CGFloat = 14
+}
+
 struct DesignSearchField: View {
+    let title: String
     let prompt: String
     @Binding var query: String
     var accessibilityId: String? = nil
@@ -689,6 +702,8 @@ struct DesignSearchField: View {
     var textFont: Font = Typo.ui(TypeScale.base)
     var leadingPadding: CGFloat = Space.md
     var trailingPadding: CGFloat = Space.md
+    var focused: FocusState<Bool>.Binding? = nil
+    @FocusState private var internalFocused: Bool
 
     init(
         prompt: String,
@@ -697,8 +712,11 @@ struct DesignSearchField: View {
         onClear: (() -> Void)? = nil,
         textFont: Font = Typo.ui(TypeScale.base),
         leadingPadding: CGFloat = Space.md,
-        trailingPadding: CGFloat = Space.md
+        trailingPadding: CGFloat = Space.md,
+        title: String = "Search",
+        focused: FocusState<Bool>.Binding? = nil
     ) {
+        self.title = title
         self.prompt = prompt
         _query = query
         self.accessibilityId = accessibilityId
@@ -706,18 +724,32 @@ struct DesignSearchField: View {
         self.textFont = textFont
         self.leadingPadding = leadingPadding
         self.trailingPadding = trailingPadding
+        self.focused = focused
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: DesignSearchFieldMetrics.labelGap) {
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                .foregroundStyle(DuskColors.ink)
+                .frame(minHeight: DesignSearchFieldMetrics.labelLineHeight)
+            fieldSurface
+        }
+    }
+
+    @ViewBuilder
+    private var fieldSurface: some View {
         HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").accessibilityHidden(true)
-            TextField(prompt, text: $query)
-                .font(textFont)
-                .textFieldStyle(.plain)
+            focusableInput
             if let onClear, !query.isEmpty {
                 DesignCompactIconButton(
                     systemName: "xmark.circle.fill",
                     label: "Clear search",
+                    accessibilityId: accessibilityId.map { "\($0)-clear" },
                     action: onClear
                 )
                 .foregroundStyle(DuskColors.ink3)
@@ -725,9 +757,76 @@ struct DesignSearchField: View {
         }
         .padding(.leading, leadingPadding)
         .padding(.trailing, trailingPadding)
+        .frame(minHeight: DesignSearchFieldMetrics.visualHeight)
+        .designWell(focused: false)
+        .background { focusBackground }
+        .overlay { focusOverlay }
         .frame(minHeight: DesignMetrics.minimumTarget)
-        .designWell()
-        .accessibilityLabel(prompt)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var focusBackground: some View {
+        if isFocused {
+            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+            ZStack {
+                shape.stroke(
+                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
+                    lineWidth: DesignMetrics.focusRing * 2
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                    geometry: DesignDropShadowGeometry(
+                        radius: DesignSearchFieldMetrics.focusCastRadius,
+                        y: DesignMaterialAdapter.wellFocusCastY,
+                        sourceInset: DesignSearchFieldMetrics.focusCastSourceInset
+                    )
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(
+                    DuskColors.accent.overlaying(
+                        DuskColors.line,
+                        opacity: DesignMaterialAdapter.wellFocusMix
+                    ),
+                    lineWidth: DesignMetrics.hairline
+                )
+            RoundedRectangle(
+                cornerRadius: Radii.sm + DesignMetrics.focusRing,
+                style: .continuous
+            )
+            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+        }
+    }
+
+    @ViewBuilder
+    private var focusableInput: some View {
+        if let focused {
+            input.focused(focused)
+        } else {
+            input.focused($internalFocused)
+        }
+    }
+
+    private var input: some View {
+        TextField(
+            "",
+            text: $query,
+            prompt: Text(prompt).foregroundStyle(DuskColors.ink3)
+        )
+        .font(textFont)
+        .foregroundStyle(DuskColors.ink)
+        .textFieldStyle(.plain)
+        .submitLabel(.search)
+        .accessibilityLabel(title)
         .accessibilityValue(query.isEmpty ? "Empty" : query)
         .accessibilityIdentifier(accessibilityId ?? "")
     }

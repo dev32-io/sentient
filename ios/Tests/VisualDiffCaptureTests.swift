@@ -491,6 +491,60 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testSearchFieldRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "search-field--placeholder--focus",
+            "search-field--placeholder--rest",
+        ])
+        let expectedMissingAuthority = Set([
+            "search-field--placeholder--clear",
+            "search-field--placeholder--disabled",
+            "search-field--placeholder--error",
+            "search-field--placeholder--filled",
+            "search-field--placeholder--hover",
+            "search-field--placeholder--loading",
+            "search-field--placeholder--pressed",
+            "search-field--placeholder--reduced-motion",
+            "search-field--placeholder--selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "search-field")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedMissingAuthority))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedMissingAuthority
+        )
+    }
+
+    func testSearchFieldRegistryPreservesNativeConfigurationAndFocusMapping() {
+        let expected: [(String, String, String, String, Bool)] = [
+            ("search-field--placeholder--rest", "Search", "Search conversations", "", false),
+            ("search-field--placeholder--focus", "Search", "Search conversations", "", true),
+        ]
+
+        for (caseID, title, prompt, value, shouldFocus) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.searchFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing search-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.prompt, prompt, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.shouldFocus, shouldFocus, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.searchFieldRenderConfiguration(
+                for: "search-field--placeholder--hover"
+            )
+        )
+    }
+
     func testChipRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "chip--selected--compact-rest",
