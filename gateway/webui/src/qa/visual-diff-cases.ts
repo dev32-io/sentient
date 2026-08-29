@@ -98,6 +98,23 @@ export interface TextAreaVariantProps {
 
 type TextAreaVariantDefinition = VisualDiffVariantDefinition<TextAreaVariantProps>;
 
+export interface ValidatedFieldVariantProps {
+  readonly label: string;
+  readonly value: string;
+  readonly status?: {
+    readonly tone: "valid" | "error";
+    readonly message: string;
+  };
+  readonly multiline?: boolean;
+  readonly maxLength?: number;
+  readonly counter?: {
+    readonly current: number;
+    readonly max: number;
+  };
+}
+
+type ValidatedFieldVariantDefinition = VisualDiffVariantDefinition<ValidatedFieldVariantProps>;
+
 export interface RangeVariantProps {
   readonly label: string;
   readonly value: number;
@@ -366,6 +383,32 @@ const TEXT_AREA_VARIANTS = {
   filled: { props: { label: "Description", value: "Add supporting details." } },
 } as const satisfies Readonly<Record<string, TextAreaVariantDefinition>>;
 
+const VALIDATED_FIELD_VARIANTS = {
+  confirmation: {
+    props: {
+      label: "Confirmation",
+      value: "warm emb",
+      status: { tone: "error", message: "The values do not match." },
+    },
+  },
+  "recovery-phrase": {
+    props: {
+      label: "Recovery phrase",
+      value: "warm ember",
+      status: { tone: "valid", message: "Available" },
+    },
+  },
+  "supporting-note": {
+    props: {
+      label: "Supporting note",
+      value: "A concise note that helps others understand this choice.",
+      multiline: true,
+      maxLength: 160,
+      counter: { current: 58, max: 160 },
+    },
+  },
+} as const satisfies Readonly<Record<string, ValidatedFieldVariantDefinition>>;
+
 const RANGE_VARIANTS = {
   "62": { props: { label: "Interface scale", value: 62, min: 0, max: 100, step: 1 } },
 } as const satisfies Readonly<Record<string, RangeVariantDefinition>>;
@@ -576,6 +619,18 @@ export const visualDiffComponentRegistry = {
       filled: ["focus", "hover", "rest"],
     },
   },
+  "validated-field": {
+    id: "validated-field",
+    fixtureAdapterId: "validated-field",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#ValidatedField",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: VALIDATED_FIELD_VARIANTS,
+    stateApplicability: {
+      confirmation: ["error"],
+      "recovery-phrase": ["valid"],
+      "supporting-note": ["counter"],
+    },
+  },
   range: {
     id: "range",
     fixtureAdapterId: "range",
@@ -716,6 +771,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "text-field",
   "search-field",
   "text-area",
+  "validated-field",
   "range",
   "checkbox",
   "chip",

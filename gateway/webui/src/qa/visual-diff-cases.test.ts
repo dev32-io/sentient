@@ -132,6 +132,12 @@ const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--rest",
 ] as const;
 
+const CURRENT_VALIDATED_FIELD_CASES = [
+  "validated-field--confirmation--error",
+  "validated-field--recovery-phrase--valid",
+  "validated-field--supporting-note--counter",
+] as const;
+
 const CURRENT_RANGE_CASES = ["range--62--disabled", "range--62--focus", "range--62--hover", "range--62--rest"] as const;
 
 const CURRENT_CHECKBOX_CASES = [
@@ -568,6 +574,62 @@ describe("visual diff component cases", () => {
         caseId: `text-area--filled--${stateId}`,
         componentId: "text-area",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the approved ValidatedField states and production provenance", () => {
+    const validatedField = visualDiffComponentRegistry["validated-field"];
+    expect(validatedField.stateApplicability).toEqual({
+      confirmation: ["error"],
+      "recovery-phrase": ["valid"],
+      "supporting-note": ["counter"],
+    });
+    expect(validatedField.fixtureAdapterId).toBe("validated-field");
+    expect(validatedField.productionComponent).toBe(
+      "gateway/webui/src/components/common/composites.tsx#ValidatedField",
+    );
+    expect(validatedField.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(validatedField.variants.confirmation.props).toEqual({
+      label: "Confirmation",
+      value: "warm emb",
+      status: { tone: "error", message: "The values do not match." },
+    });
+    expect(validatedField.variants["recovery-phrase"].props).toEqual({
+      label: "Recovery phrase",
+      value: "warm ember",
+      status: { tone: "valid", message: "Available" },
+    });
+    expect(validatedField.variants["supporting-note"].props).toEqual({
+      label: "Supporting note",
+      value: "A concise note that helps others understand this choice.",
+      multiline: true,
+      maxLength: 160,
+      counter: { current: 58, max: 160 },
+    });
+
+    for (const caseId of CURRENT_VALIDATED_FIELD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("validated-field");
+        expect(resolution.case.fixtureAdapterId).toBe("validated-field");
+      }
+    }
+  });
+
+  it("resolves unapproved ValidatedField states to missing authority", () => {
+    for (const [variantId, stateId] of [
+      ["confirmation", "rest"],
+      ["recovery-phrase", "error"],
+      ["supporting-note", "valid"],
+    ] as const) {
+      expect(resolveVisualDiffCase(`validated-field--${variantId}--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `validated-field--${variantId}--${stateId}`,
+        componentId: "validated-field",
+        variantId,
         stateId,
       });
     }

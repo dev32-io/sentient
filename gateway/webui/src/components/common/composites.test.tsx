@@ -1,9 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActionButton } from "./foundation.tsx";
-import { AsyncState, Notice, PaneChrome } from "./composites.tsx";
+import { AsyncState, Notice, PaneChrome, ValidatedField } from "./composites.tsx";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   document.body.innerHTML = "";
 });
 
@@ -78,5 +79,78 @@ describe("PaneChrome", () => {
     const header = document.querySelector(".snt-pane-head");
     expect(header?.firstElementChild?.className).toBe("snt-pane-head__copy");
     expect(screen.getByRole("button", { name: "Add item" })).toBeTruthy();
+  });
+});
+
+describe("ValidatedField", () => {
+  it("preserves the labelled native input API and announces error status", () => {
+    const onInput = vi.fn();
+    render(
+      <ValidatedField
+        id="confirmation"
+        label="Confirmation"
+        value="warm emb"
+        autoComplete="off"
+        inputMode="text"
+        error="The values do not match."
+        onInput={onInput}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Confirmation" }) as HTMLInputElement;
+    const label = screen.getByText("Confirmation") as HTMLLabelElement;
+    const status = screen.getByRole("alert");
+
+    expect(input.id).toBe("confirmation");
+    expect(label.htmlFor).toBe(input.id);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toBe("confirmation-error");
+    expect(status.id).toBe("confirmation-error");
+    expect(status.textContent).toContain("The values do not match.");
+    expect(input.autocomplete).toBe("off");
+
+    fireEvent.input(input, { target: { value: "warm ember" } });
+    expect(onInput).toHaveBeenCalledTimes(1);
+    input.focus();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("renders valid feedback with a polite live status and the source association", () => {
+    render(
+      <ValidatedField
+        id="recovery-phrase"
+        label="Recovery phrase"
+        value="warm ember"
+        status={{ tone: "valid", message: "Available" }}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Recovery phrase" });
+    const status = screen.getByRole("status", { name: "Available" });
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+    expect(input.getAttribute("aria-describedby")).toBe("recovery-phrase-status");
+    expect(status.id).toBe("recovery-phrase-status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("renders a native multiline counter without linking it as a description", () => {
+    render(
+      <ValidatedField
+        multiline
+        label="Supporting note"
+        value="A concise note that helps others understand this choice."
+        maxLength={160}
+        counter={{ current: 58, max: 160, unit: "characters" }}
+      />,
+    );
+
+    const textarea = screen.getByRole("textbox", { name: "Supporting note" }) as HTMLTextAreaElement;
+    const counter = screen.getByRole("status", { name: "58 of 160 characters" });
+    expect(textarea.tagName).toBe("TEXTAREA");
+    expect(textarea.maxLength).toBe(160);
+    expect(textarea.getAttribute("aria-invalid")).toBeNull();
+    expect(textarea.getAttribute("aria-describedby")).toBeNull();
+    expect(counter.id).toBe("");
+    expect(counter.getAttribute("aria-live")).toBe("polite");
   });
 });

@@ -7,6 +7,7 @@ import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import { AsyncState, Disclosure, NoResultsState, PaneChrome } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { ValidatedField } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -30,6 +31,7 @@ import {
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
+  type ValidatedFieldVariantProps,
   type ToggleVariantProps,
   type UserAvatarVariantProps,
   resolveVisualDiffCase,
@@ -344,6 +346,13 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "validated-field": {
+    // This adapter deliberately renders the production ValidatedField and its native input/textarea.
+    render: (fixture) => {
+      const field = fixture.props as ValidatedFieldVariantProps;
+      return <ValidatedField {...field} className="visual-diff-validated-field" inputClassName="visual-diff-target" />;
+    },
+  },
   range: {
     // This adapter deliberately renders the production SliderControl and its native range input.
     render: (fixture) => {
@@ -527,6 +536,7 @@ style.textContent = `
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-search-field { width: min(320px, 100%); }
   .visual-diff-text-area { width: min(320px, 100%); }
+  .visual-diff-validated-field { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }
   .visual-diff-notice { width: 100%; }
   .visual-diff-canvas[data-case-id^="notice--"] {

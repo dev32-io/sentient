@@ -1,9 +1,10 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ActionButton, Field, type FieldProps, Plate, ProgressControl } from "./foundation.tsx";
+import { ActionButton, Field, type FieldProps, Plate, ProgressControl, type TextAreaProps } from "./foundation.tsx";
 import { BackspaceIcon } from "./icons/backspace.tsx";
 import { ChevronIcon } from "./icons/chevron.tsx";
 import { SearchIcon } from "./icons/search.tsx";
+import "./validated-field.css";
 
 function classes(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -453,8 +454,142 @@ export function PinKeypad({ onSubmit, resetSignal, error, success }: PinKeypadPr
   );
 }
 
-export function ValidatedField(props: FieldProps): JSX.Element {
-  return <Field {...props} />;
+export interface ValidatedFieldStatus {
+  tone: "valid" | "error";
+  message: string;
+}
+
+export interface ValidatedFieldCounter {
+  current: number;
+  max: number;
+  unit?: string | undefined;
+}
+
+interface ValidatedFieldDecorations {
+  status?: ValidatedFieldStatus | undefined;
+  counter?: ValidatedFieldCounter | undefined;
+}
+
+export interface ValidatedFieldInputProps extends FieldProps, ValidatedFieldDecorations {
+  multiline?: false | undefined;
+}
+
+export interface ValidatedFieldTextareaProps extends Omit<TextAreaProps, "label" | "hint" | "error" | "id" | "className" | "inputClassName">, ValidatedFieldDecorations {
+  multiline: true;
+  label?: string | undefined;
+  hint?: string | undefined;
+  error?: string | undefined;
+  id?: string | undefined;
+  className?: string | undefined;
+  inputClassName?: string | undefined;
+}
+
+export type ValidatedFieldProps = ValidatedFieldInputProps | ValidatedFieldTextareaProps;
+
+interface ValidatedFieldIds {
+  id: string;
+  describedBy?: string | undefined;
+}
+
+interface ValidatedFieldShellProps {
+  label?: string | undefined;
+  hint?: string | undefined;
+  status?: ValidatedFieldStatus | undefined;
+  counter?: ValidatedFieldCounter | undefined;
+  invalid: boolean;
+  id?: string | undefined;
+  children: (ids: ValidatedFieldIds) => ComponentChildren;
+  className?: string | undefined;
+}
+
+function ValidatedFieldShell({ label, hint, status, counter, invalid, id: suppliedId, children, className }: ValidatedFieldShellProps): JSX.Element {
+  const generatedId = useId();
+  const id = suppliedId ?? generatedId;
+  const hintId = hint ? `${id}-hint` : undefined;
+  const statusId = status ? `${id}-${status.tone === "error" ? "error" : "status"}` : undefined;
+  const describedBy = [hintId, statusId].filter(Boolean).join(" ") || undefined;
+  const counterText = counter ? `${counter.current} of ${counter.max} ${counter.unit ?? "characters"}` : undefined;
+  return (
+    <div class={classes("snt-field", "snt-validated-field", className)} data-validation={status?.tone} data-invalid={invalid || undefined}>
+      {label && <label class="snt-field__label" for={id}>{label}</label>}
+      {children({ id, describedBy })}
+      {hint && <span class="snt-field__hint" id={hintId}>{hint}</span>}
+      {status && (
+        <span
+          class={classes("snt-validated-field__status", `snt-validated-field__status--${status.tone}`)}
+          id={statusId}
+          role={status.tone === "error" ? "alert" : "status"}
+          aria-live={status.tone === "error" ? "assertive" : "polite"}
+          aria-atomic="true"
+          aria-label={status.message}
+        >
+          <ValidatedFieldStatusIcon tone={status.tone} />
+          {status.message}
+        </span>
+      )}
+      {counter && <span class="snt-validated-field__counter" role="status" aria-live="polite" aria-atomic="true" aria-label={counterText}>{counterText}</span>}
+    </div>
+  );
+}
+
+function ValidatedFieldStatusIcon({ tone }: { tone: ValidatedFieldStatus["tone"] }): JSX.Element {
+  return (
+    <svg class="snt-validated-field__status-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {tone === "valid" ? <path d="m5 12 4.5 4.5L19 7" /> : <>
+        <path d="M12 4 3.8 19h16.4L12 4Z" />
+        <path d="M12 9v4.5M12 16.5v.1" />
+      </>}
+    </svg>
+  );
+}
+
+function ValidatedInput({ props, id, describedBy, invalid }: { props: ValidatedFieldInputProps; id: string; describedBy?: string | undefined; invalid: boolean }): JSX.Element {
+  const {
+    label: _label,
+    hint: _hint,
+    error: _error,
+    id: _suppliedId,
+    status: _status,
+    counter: _counter,
+    className: _className,
+    inputClassName,
+    inputRef,
+    ariaLabel,
+    multiline: _multiline,
+    ...input
+  } = props;
+  return <input {...input} {...(inputRef ? { ref: inputRef } : {})} id={id} aria-label={ariaLabel} aria-describedby={describedBy} class={classes("snt-input", inputClassName)} aria-invalid={invalid || undefined} />;
+}
+
+function ValidatedTextarea({ props, id, describedBy, invalid }: { props: ValidatedFieldTextareaProps; id: string; describedBy?: string | undefined; invalid: boolean }): JSX.Element {
+  const {
+    label: _label,
+    hint: _hint,
+    error: _error,
+    id: _suppliedId,
+    status: _status,
+    counter: _counter,
+    className: _className,
+    inputClassName,
+    monospace = false,
+    dirty = false,
+    multiline: _multiline,
+    ...input
+  } = props;
+  return <textarea {...input} id={id} aria-describedby={describedBy} class={classes("snt-textarea", monospace && "snt-textarea--mono", dirty && "snt-textarea--dirty", inputClassName)} data-dirty={dirty || undefined} aria-invalid={invalid || undefined} />;
+}
+
+export function ValidatedField(props: ValidatedFieldProps): JSX.Element {
+  const { label, hint, error, id, status, counter, className } = props;
+  const resolvedStatus = error ? { tone: "error" as const, message: error } : status;
+  const invalid = Boolean(error) || resolvedStatus?.tone === "error";
+  return (
+    <ValidatedFieldShell label={label} hint={hint} status={resolvedStatus} counter={counter} invalid={invalid} id={id} className={className}>
+      {(ids) => props.multiline
+        ? <ValidatedTextarea props={props} {...ids} invalid={invalid} />
+        : <ValidatedInput props={props} {...ids} invalid={invalid} />}
+    </ValidatedFieldShell>
+  );
 }
 
 export interface SecretFieldProps extends Omit<FieldProps, "type"> {
