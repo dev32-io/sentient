@@ -131,28 +131,35 @@ private final class DesignSpreadShadowView: UIView {
     }
 }
 
-/// CSS `inset 0 1px 0` is an inner edge line, not a stroke on the outer
-/// border. Drawing it in a full-size Canvas keeps the line inside the border
-/// box while the shape clip preserves rounded corners.
-struct DesignTopEdgeLight<S: Shape>: View {
+/// Renders CSS `inset 0 1px 0` from the rounded inner border contour.
+///
+/// A zero-blur inset shadow is the area of the inner contour that is not
+/// covered by that same contour translated by its positive y offset. The
+/// even-odd fill preserves the directional corner portions of that
+/// difference, rather than approximating the shadow with a rectangular line
+/// clipped to the face. Canvas keeps the existing SwiftUI color pipeline for
+/// the already-converged shine color.
+struct DesignTopEdgeLight<S: InsettableShape>: View {
     let shape: S
     let color: Color
 
     var body: some View {
         Canvas { context, size in
+            let faceRect = CGRect(origin: .zero, size: size)
+            let innerPath = shape.inset(by: DesignMetrics.hairline).path(in: faceRect)
+            let translatedPath = innerPath.applying(
+                CGAffineTransform(translationX: 0, y: DesignMetrics.hairline)
+            )
+            var difference = innerPath
+            difference.addPath(translatedPath)
+
+            context.clip(to: innerPath)
             context.fill(
-                Path(
-                    CGRect(
-                        x: 0,
-                        y: DesignMetrics.hairline,
-                        width: size.width,
-                        height: DesignMetrics.hairline
-                    )
-                ),
-                with: .color(color)
+                difference,
+                with: .color(color),
+                style: FillStyle(eoFill: true)
             )
         }
-        .clipShape(shape)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

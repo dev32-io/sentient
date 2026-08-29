@@ -14,7 +14,7 @@ struct DesignButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed && isEnabled
         let raised = hovered && isEnabled
-        let shape = RoundedRectangle(cornerRadius: DesignMetrics.actionButtonCornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignMetrics.actionButtonCornerRadius, style: .circular)
         let faceHeight = min(visualHeight ?? minimumHeight, minimumHeight)
         let semanticHeight = max(minimumHeight, DesignMetrics.minimumTarget)
         configuration.label
