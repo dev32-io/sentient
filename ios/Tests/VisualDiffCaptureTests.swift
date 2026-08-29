@@ -20,6 +20,8 @@ private final class VisualDiffCanvasViewController: UIViewController {
     }
 }
 
+private let loadingStateActiveCaptureDuration: TimeInterval = 0.366
+
 /// Exports one deterministic implementation PNG for the repository-local ODiff
 /// feedback loop. Ordinary unit-test runs skip this test unless the capture
 /// script owns a fresh, serialized request file.
@@ -75,6 +77,8 @@ final class VisualDiffCaptureTests: XCTestCase {
         let disclosureCaptureTime = VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID)
         let timelineCaptureTime = segmentedCaptureTime ?? disclosureCaptureTime
         let isTimelineFixture = timelineCaptureTime != nil
+        let loadingStateConfiguration = VisualDiffFixtureRegistry.loadingStateRenderConfiguration(for: caseID)
+        let isLoadingStateActiveFixture = loadingStateConfiguration?.reducedMotion == false
         let fixtureView: AnyView
         if let identityCapture {
             fixtureView = identityCapture.makeFixture(size: SentientIdentityFixtureMetrics.size)
@@ -90,7 +94,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             .environment(\.dynamicTypeSize, .large)
             .preferredColorScheme(.dark)
             .tint(DuskColors.accent)
-        let configuredFixture: AnyView = isTimelineFixture
+        let configuredFixture: AnyView = isTimelineFixture || isLoadingStateActiveFixture
             ? AnyView(fixture)
             : AnyView(
                 fixture.transaction { transaction in
@@ -129,6 +133,22 @@ final class VisualDiffCaptureTests: XCTestCase {
                 until: Date(timeIntervalSinceNow: timelineCaptureTime)
             )
             timelineCaptureWindow = window
+        }
+        var loadingCaptureWindow: UIWindow?
+        if isLoadingStateActiveFixture {
+            // The active handoff is a static 366ms frame of the source's 900ms
+            // rotation. Let the real SwiftUI animation advance on one mounted
+            // simulator window; the production view is not given a capture API.
+            let window = UIWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            window.backgroundColor = .clear
+            window.rootViewController = controller
+            window.isHidden = false
+            window.makeKeyAndVisible()
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: loadingStateActiveCaptureDuration))
+            loadingCaptureWindow = window
         }
         let usesNativeTextInputCapture =
             caseID.hasPrefix("text-field--")
@@ -171,6 +191,9 @@ final class VisualDiffCaptureTests: XCTestCase {
             timelineCaptureWindow?.isHidden = true
             timelineCaptureWindow?.rootViewController = nil
             timelineCaptureWindow?.resignKey()
+            loadingCaptureWindow?.isHidden = true
+            loadingCaptureWindow?.rootViewController = nil
+            loadingCaptureWindow?.resignKey()
         }
         if caseID == "text-field--filled--focus" || caseID == "search-field--placeholder--focus" {
             guard let textField = textField(in: controller.view) else {
@@ -268,6 +291,35 @@ final class VisualDiffCaptureTests: XCTestCase {
         guard let captured = image else { return }
         XCTAssertEqual(captured.size, logicalSize)
         XCTAssertEqual(captured.scale, 2)
+    }
+
+    func testLoadingStateRegistryPreservesApprovedMotionStates() {
+        let expectedCaseIDs = Set([
+            "loading-state--settings--active",
+            "loading-state--settings--reduced-motion",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "loading-state")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), expectedCaseIDs)
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for caseID in expectedCaseIDs {
+            guard let configuration = VisualDiffFixtureRegistry.loadingStateRenderConfiguration(for: caseID) else {
+                XCTFail("Missing loading-state render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, "Loading", caseID)
+            XCTAssertEqual(configuration.detail, "Fetching current settings…", caseID)
+            XCTAssertEqual(
+                configuration.reducedMotion,
+                caseID.hasSuffix("--reduced-motion"),
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved loading-state case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
     }
 
     func testActionButtonRegistryPreservesCurrentCaseApplicability() {

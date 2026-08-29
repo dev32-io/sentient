@@ -1433,6 +1433,62 @@ struct SearchFilterRow<Filters: View>: View {
     }
 }
 
+private enum AsyncNoticeMetrics {
+    // The loading composite has its own approved anatomy rather than the
+    // foundation progress primitive: a 26pt ring, 7pt rhythm, and 900ms orbit.
+    static let loadingGap: CGFloat = 7
+    static let loadingSpinnerSize: CGFloat = 26
+    static let loadingSpinnerLineWidth: CGFloat = 2
+    static let loadingArcFraction: CGFloat = 0.25
+    static let loadingAnimationDuration = 0.9
+}
+
+/// Decorative loading cue for the common async-state composite. Status meaning
+/// remains owned by `AsyncNotice`; the ring is hidden from VoiceOver.
+private struct AsyncLoadingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(DuskColors.line, lineWidth: AsyncNoticeMetrics.loadingSpinnerLineWidth)
+            Circle()
+                .trim(from: 0, to: AsyncNoticeMetrics.loadingArcFraction)
+                .stroke(
+                    DuskColors.accent,
+                    style: StrokeStyle(
+                        lineWidth: AsyncNoticeMetrics.loadingSpinnerLineWidth,
+                        lineCap: .butt
+                    )
+                )
+                .padding(AsyncNoticeMetrics.loadingSpinnerLineWidth / 2)
+                .rotationEffect(.degrees(-135 + rotation))
+        }
+        .frame(
+            width: AsyncNoticeMetrics.loadingSpinnerSize,
+            height: AsyncNoticeMetrics.loadingSpinnerSize
+        )
+        .onAppear { startAnimation() }
+        .onChange(of: reduceMotion) { _, reduced in
+            rotation = reduced ? 0 : 360
+        }
+        .animation(
+            reduceMotion
+                ? nil
+                : .linear(duration: AsyncNoticeMetrics.loadingAnimationDuration)
+                    .repeatForever(autoreverses: false),
+            value: rotation
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func startAnimation() {
+        guard !reduceMotion else { return }
+        rotation = 360
+    }
+}
+
 private enum DesignNoticeMetrics {
     // These values are the reviewed notice's CSS box model translated to
     // points. The 78pt notice sits inside a 1pt plate edge on each side.
@@ -1767,6 +1823,54 @@ struct AsyncNotice: View {
     }
 
     var body: some View {
+        content
+            .designPlate()
+            .accessibilityElement(children: retry == nil ? .combine : .contain)
+            .accessibilityLabel(title)
+            .accessibilityValue(detail ?? kind.accessibilityValue)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch kind {
+        case .loading:
+            loadingContent.padding(Space.lg + DesignMetrics.hairline)
+        case .empty, .info, .error, .success, .warning:
+            noticeContent
+        }
+    }
+
+    private var loadingContent: some View {
+        VStack(spacing: AsyncNoticeMetrics.loadingGap) {
+            AsyncLoadingIndicator()
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .frame(
+                    minHeight: DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal),
+                    alignment: .center
+                )
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minHeight: TypeScale.sm * 1.45, alignment: .center)
+            }
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: .quiet,
+                    accessibilityId: nil,
+                    action: retry
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+    }
+
+    private var noticeContent: some View {
         DesignNoticeLayout {
             DesignNoticeIcon(kind: kind, recipe: recipe)
             VStack(alignment: .leading, spacing: DesignNoticeMetrics.detailTitleGap) {
@@ -1827,11 +1931,6 @@ struct AsyncNotice: View {
                 }
             }
         }
-        .designPlate()
-        .accessibilityElement(children: retry == nil ? .combine : .contain)
-        .accessibilityLabel(title)
-        .accessibilityValue(detail ?? kind.accessibilityValue)
-        .accessibilityIdentifier(accessibilityId ?? "")
     }
 }
 

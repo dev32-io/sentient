@@ -172,6 +172,12 @@ struct VisualDiffPinRenderConfiguration {
     let reducedMotion: Bool
 }
 
+struct VisualDiffLoadingStateRenderConfiguration {
+    let title: String
+    let detail: String
+    let reducedMotion: Bool
+}
+
 struct VisualDiffSegmentOptionConfiguration {
     let value: String
     let label: String
@@ -335,6 +341,7 @@ enum VisualDiffFixtureRegistry {
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
         NoticeFixtureCatalog.registration.componentID: NoticeFixtureCatalog.registration,
+        LoadingStateFixtureCatalog.registration.componentID: LoadingStateFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -442,6 +449,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSearchFieldRenderConfiguration? {
         SearchFieldFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func loadingStateRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffLoadingStateRenderConfiguration? {
+        LoadingStateFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func segmentedControlRenderConfiguration(
@@ -643,6 +656,67 @@ private struct SentientIdentityFixtureAdapter: VisualDiffNativeFixtureAdapter {
         return VisualDiffSentientIdentityCapture(configuration: configuration)
             .makeFixture(size: SentientIdentityFixtureMetrics.size)
     }
+}
+
+private struct LoadingStateFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffLoadingStateRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            AsyncNotice(kind: .loading, title: configuration.title, detail: configuration.detail)
+                .frame(width: LoadingStateFixtureMetrics.width)
+                .padding(LoadingStateFixtureMetrics.canvasInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
+    }
+}
+
+private enum LoadingStateFixtureMetrics {
+    // The Web fixture maps the source's 52px logical inset directly. Keep the
+    // same isolated canvas placement without shifting or cropping the native view.
+    static let canvasInset: CGFloat = 52
+    static let width: CGFloat = 260
+}
+
+private enum LoadingStateFixtureCatalog {
+    private static let cases: [(String, Bool)] = [
+        ("loading-state--settings--active", false),
+        ("loading-state--settings--reduced-motion", true),
+    ]
+
+    static let renderConfigurations: [String: VisualDiffLoadingStateRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: cases.map { caseID, reducedMotion in
+            (
+                caseID,
+                VisualDiffLoadingStateRenderConfiguration(
+                    title: "Loading",
+                    detail: "Fetching current settings…",
+                    reducedMotion: reducedMotion
+                )
+            )
+        })
+
+    private static let definitions = cases.map { caseID, reducedMotion in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "loading-state",
+                variantID: "settings",
+                stateID: reducedMotion ? "reduced-motion" : "active"
+            ),
+            applicability: .supported
+        )
+    }
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "loading-state",
+        registrations: definitions,
+        adapter: LoadingStateFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private enum SentientIdentityFixtureCatalog {
