@@ -7,7 +7,7 @@ import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/settings/apply-bar/apply-bar.css";
 import "../components/settings/settings-shell.css";
-import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ResultsList, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { SelectMenu } from "../components/common/select-menu.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
@@ -35,6 +35,7 @@ import {
   type PinEntryVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
+  type ResultsListVariantProps,
   type SearchFieldVariantProps,
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
@@ -715,6 +716,29 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "results-list": {
+    // This adapter mounts the production list and drives each approved state through its public props.
+    render: (fixture) => {
+      const results = fixture.props as ResultsListVariantProps;
+      const appended = fixture.stateId === "appended";
+      const items = appended
+        ? [...results.items, { id: "guest", leading: "D", title: "Guest profile", detail: "Shared · Added just now", tone: "sage" as const }]
+        : results.items;
+      return (
+        <ResultsList
+          {...results}
+          className="visual-diff-target visual-diff-results-list"
+          items={items.map((item) => ({ ...item, onActivate: () => {} }))}
+          previousDisabled
+          loadingMore={fixture.stateId === "loading-more"}
+          appendedItemId={appended ? "guest" : undefined}
+          onClear={() => {}}
+          onPrevious={() => {}}
+          onLoadMore={() => {}}
+        />
+      );
+    },
+  },
   "no-results": {
     // This adapter deliberately renders the production no-match recovery.
     render: (fixture) => {
@@ -852,6 +876,12 @@ style.textContent = `
   .visual-diff-canvas--stale-banner { padding: 0 24px 24px 0; }
   .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
+  .visual-diff-canvas[data-component-id="results-list"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 0 52px;
+  }
+  .visual-diff-results-list { width: min(600px, 100%); }
   .visual-diff-stale-banner { width: min(480px, 100%); }
   .visual-diff-canvas--apply-bar { align-items: flex-start; justify-content: flex-start; padding: 52px; }
   .visual-diff-apply-bar-frame { width: 680px; min-height: 74px; display: block; }

@@ -150,6 +150,10 @@ function captureCaseId(referencePath) {
   const filterSelection = /^filter-bar--(ready|shared|offline)-selected$/.exec(frameCaseId);
   if (filterSelection) return `filter-bar--${filterSelection[1]}--selected`;
   if (frameCaseId === "filter-bar--sort-open") return "filter-bar--sort--open";
+  if (frameCaseId === "results-list--page-1") return "results-list--default--page-1";
+  if (frameCaseId === "results-list--page-1--compact") return "results-list--default--compact-page-1";
+  if (frameCaseId === "results-list--loading-more") return "results-list--default--loading-more";
+  if (frameCaseId === "results-list--appended") return "results-list--default--appended";
   const recordingId = basename(dirname(referencePath));
   if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;

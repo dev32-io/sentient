@@ -287,6 +287,22 @@ const SEGMENTED_TRANSITION_CASES = [
 ] as const;
 
 describe("visual diff component cases", () => {
+  it("registers the exact results-list matrix and production provenance", () => {
+    const resultsList = visualDiffComponentRegistry["results-list"];
+    expect(resultsList.stateApplicability).toEqual({
+      default: ["page-1", "compact-page-1", "loading-more", "appended"],
+    });
+    expect(resultsList.fixtureAdapterId).toBe("results-list");
+    expect(resultsList.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#ResultsList");
+    expect(resultsList.authority).toBe("design/prototype/common-composites/handoff.md");
+
+    for (const stateId of resultsList.stateApplicability.default) {
+      const resolution = resolveVisualDiffCase(`results-list--default--${stateId}`);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("results-list");
+    }
+  });
+
   it("registers the exact pin-entry matrix and canonical PinKeypad provenance", () => {
     const pinEntry = visualDiffComponentRegistry["pin-entry"];
     expect(pinEntry.stateApplicability).toEqual({

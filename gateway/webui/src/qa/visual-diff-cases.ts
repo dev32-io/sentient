@@ -225,6 +225,25 @@ export interface SentientIdentityVariantProps {
 
 type SentientIdentityVariantDefinition = VisualDiffVariantDefinition<SentientIdentityVariantProps>;
 
+export interface ResultsListVariantProps {
+  readonly countLabel: string;
+  readonly summary: string;
+  readonly clearLabel: string;
+  readonly pageLabel: string;
+  readonly previousLabel: string;
+  readonly loadMoreLabel: string;
+  readonly loadingLabel: string;
+  readonly items: readonly {
+    readonly id: string;
+    readonly leading: string;
+    readonly title: string;
+    readonly detail: string;
+    readonly tone?: "terra" | "sage";
+  }[];
+}
+
+type ResultsListVariantDefinition = VisualDiffVariantDefinition<ResultsListVariantProps>;
+
 export interface NoResultsStateVariantProps {
   readonly title: string;
   readonly message: string;
@@ -615,6 +634,25 @@ const LOADING_STATE_VARIANTS = {
   settings: { props: { title: "Loading", message: "Fetching current settings…" } },
 } as const satisfies Readonly<Record<string, LoadingStateVariantDefinition>>;
 
+const RESULTS_LIST_VARIANTS = {
+  default: {
+    props: {
+      countLabel: "24 results",
+      summary: "Filtered by ready and shared",
+      clearLabel: "Clear filters",
+      pageLabel: "Page 1 of 8",
+      previousLabel: "Previous",
+      loadMoreLabel: "Load more",
+      loadingLabel: "Loading…",
+      items: [
+        { id: "household", leading: "A", title: "Household profile", detail: "Ready · Used today" },
+        { id: "quiet", leading: "B", title: "Quiet profile", detail: "Shared · Used yesterday", tone: "sage" },
+        { id: "travel", leading: "C", title: "Travel profile", detail: "Offline · Updated last week" },
+      ],
+    },
+  },
+} as const satisfies Readonly<Record<string, ResultsListVariantDefinition>>;
+
 const NO_RESULTS_VARIANTS = {
   default: {
     props: {
@@ -958,6 +996,16 @@ export const visualDiffComponentRegistry = {
       settings: ["active", "reduced-motion"],
     },
   },
+  "results-list": {
+    id: "results-list",
+    fixtureAdapterId: "results-list",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#ResultsList",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: RESULTS_LIST_VARIANTS,
+    stateApplicability: {
+      default: ["page-1", "compact-page-1", "loading-more", "appended"],
+    },
+  },
   "no-results": {
     id: "no-results",
     fixtureAdapterId: "no-results",
@@ -1022,6 +1070,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "media-action-card",
   "sentient-identity",
   "notice",
+  "results-list",
   "no-results",
   "stale-banner",
   "pane-header",

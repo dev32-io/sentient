@@ -349,6 +349,82 @@ export function SettingsRow({ label, hint, children, vertical, dirty }: Settings
   );
 }
 
+export type ResultsListItemTone = "terra" | "sage";
+
+export interface ResultsListItem {
+  id: string;
+  leading: ComponentChildren;
+  title: string;
+  detail: string;
+  onActivate: () => void;
+  tone?: ResultsListItemTone | undefined;
+}
+
+export interface ResultsListProps {
+  countLabel: string;
+  summary: string;
+  clearLabel: string;
+  items: readonly ResultsListItem[];
+  pageLabel: string;
+  previousLabel: string;
+  loadMoreLabel: string;
+  loadingLabel: string;
+  onClear: () => void;
+  onPrevious: () => void;
+  onLoadMore: () => void;
+  previousDisabled?: boolean | undefined;
+  loadingMore?: boolean | undefined;
+  appendedItemId?: string | undefined;
+  className?: string | undefined;
+}
+
+/** A bounded result summary, native action-row list, and incremental pagination. */
+export function ResultsList({
+  countLabel,
+  summary,
+  clearLabel,
+  items,
+  pageLabel,
+  previousLabel,
+  loadMoreLabel,
+  loadingLabel,
+  onClear,
+  onPrevious,
+  onLoadMore,
+  previousDisabled = false,
+  loadingMore = false,
+  appendedItemId,
+  className,
+}: ResultsListProps): JSX.Element {
+  return (
+    <Plate className={classes("snt-results-list", className)}>
+      <header class="snt-results-list__head">
+        <span class="snt-results-list__summary">
+          <strong>{countLabel}</strong>
+          <small>{summary}</small>
+        </span>
+        <ActionButton variant="quiet" onClick={onClear}>{clearLabel}</ActionButton>
+      </header>
+      <ul class="snt-results-list__items">
+        {items.map((item) => (
+          <li key={item.id} class={item.id === appendedItemId ? "snt-results-list__item--appended" : undefined}>
+            <button type="button" class="snt-results-list__item" onClick={item.onActivate}>
+              <span class={classes("snt-results-list__icon", item.tone === "sage" && "snt-results-list__icon--sage")} aria-hidden="true">{item.leading}</span>
+              <span class="snt-results-list__copy"><strong>{item.title}</strong><small>{item.detail}</small></span>
+              <span class="snt-results-list__chevron" aria-hidden="true"><ChevronIcon size={17} /></span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <footer class="snt-results-list__pagination">
+        <ActionButton variant="quiet" disabled={previousDisabled} onClick={onPrevious}>{previousLabel}</ActionButton>
+        <span>{pageLabel}</span>
+        <ActionButton disabled={loadingMore} onClick={onLoadMore}>{loadingMore ? loadingLabel : loadMoreLabel}</ActionButton>
+      </footer>
+    </Plate>
+  );
+}
+
 export interface DominantVisualCardProps {
   label: string;
   description?: string | undefined;
