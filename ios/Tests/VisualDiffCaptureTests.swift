@@ -1489,6 +1489,8 @@ final class VisualDiffCaptureTests: XCTestCase {
 
     func testIntegratedRegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
         let integratedComponentIDs = [
+            "action-button",
+            "plate",
             "user-avatar",
             "media-action-card",
             "checkbox",
