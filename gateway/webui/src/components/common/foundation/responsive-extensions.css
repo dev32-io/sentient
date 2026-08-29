@@ -5,8 +5,14 @@
 @media (max-width: 620px) {
   .snt-page { padding: var(--space-lg); }
   .snt-page-head { align-items: stretch; flex-direction: column; }
-  .snt-settings-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-sm); }
-  .snt-settings-row > :last-child { width: 100%; }
+  .snt-settings-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .snt-settings-row__control { width: 100%; justify-self: stretch; }
+  .snt-settings-row__control:has(> .snt-toggle) { display: flex; justify-content: flex-end; }
+  .snt-settings-row__control > .snt-field:has(.snt-select),
+  .snt-settings-row__control > .snt-field:has(.snt-range-row),
+  .snt-settings-row__control > .snt-segmented { width: 100%; max-width: none; }
+  .snt-settings-row__control .snt-select,
+  .snt-settings-row__control .snt-range-row { width: 100%; }
   .snt-action-row { justify-content: stretch; }
   .snt-action-row > * { flex: 1 1 auto; }
 }

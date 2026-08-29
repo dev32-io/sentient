@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/preact";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
+import { PinEntry, SearchFilterBar, SettingsRow, WipBadge } from "./composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SegmentedControl, SelectControl, SliderControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
@@ -49,6 +49,23 @@ describe("Web foundation controls", () => {
     const checkbox = screen.getByRole("checkbox", { name: "Some items" }) as HTMLInputElement;
     expect(checkbox.indeterminate).toBe(true);
     expect(checkbox.disabled).toBe(false);
+  });
+
+  it("associates a SettingsRow label and hint with its control group", () => {
+    render(
+      <SettingsRow label="Language" hint="Used for interface labels.">
+        <SelectControl label="Language" value="English" options={[{ value: "English", label: "English" }]} onChange={vi.fn()} />
+      </SettingsRow>,
+    );
+
+    const row = screen.getByRole("group", { name: "Language" });
+    const label = row.querySelector(".snt-settings-row__label");
+    const hint = row.querySelector(".snt-settings-row__hint");
+    expect(label?.id).toBeTruthy();
+    expect(hint?.id).toBeTruthy();
+    expect(row.getAttribute("aria-labelledby")).toBe(label?.id);
+    expect(row.getAttribute("aria-describedby")).toBe(hint?.id);
+    expect(screen.getByRole("combobox", { name: "Language" })).toBeTruthy();
   });
 
   it("keeps SegmentedControl controlled, native, and disabled per option", () => {

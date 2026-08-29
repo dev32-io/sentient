@@ -71,10 +71,21 @@ export interface SettingsRowProps {
 }
 
 export function SettingsRow({ label, hint, children, vertical, dirty }: SettingsRowProps): JSX.Element {
+  const rowId = useId();
+  const labelId = `${rowId}-label`;
+  const hintId = hint ? `${rowId}-hint` : undefined;
   return (
-    <div class={classes("snt-settings-row", vertical && "snt-settings-row--vertical")}>
-      <div><div class="snt-settings-row__label">{label}{dirty && <span class="snt-kicker"> · Changed</span>}</div>{hint && <p class="snt-settings-row__hint">{hint}</p>}</div>
-      <div>{children}</div>
+    <div
+      class={classes("snt-settings-row", vertical && "snt-settings-row--vertical")}
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={hintId}
+    >
+      <div class="snt-settings-row__content">
+        <div id={labelId} class="snt-settings-row__label">{label}{dirty && <span class="snt-kicker"> · Changed</span>}</div>
+        {hint && <p id={hintId} class="snt-settings-row__hint">{hint}</p>}
+      </div>
+      <div class="snt-settings-row__control">{children}</div>
     </div>
   );
 }
