@@ -33,6 +33,7 @@ export const WEB_FOUNDATION_TRANSITIONAL_ALLOWLIST: readonly TransitionalAllowli
   { path: "src/components/calendar/event-preview.css", reason: "calendar product surface" },
   { path: "src/components/permission/permission-dialog.css", reason: "permission product surface" },
   { path: "src/components/sessions/drawer.css", reason: "history drawer product surface" },
+  { path: "src/components/sessions/stale-banner.css", reason: "history drawer product composition" },
   { path: "src/components/settings/apply-bar/apply-bar.css", reason: "settings product composition" },
   { path: "src/components/settings/panes/panes.css", reason: "settings product composition" },
   { path: "src/components/settings/settings-shell.css", reason: "settings product composition" },
