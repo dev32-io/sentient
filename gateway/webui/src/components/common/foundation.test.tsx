@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
-import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SelectControl, SliderControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SegmentedControl, SelectControl, SliderControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,6 +49,41 @@ describe("Web foundation controls", () => {
     const checkbox = screen.getByRole("checkbox", { name: "Some items" }) as HTMLInputElement;
     expect(checkbox.indeterminate).toBe(true);
     expect(checkbox.disabled).toBe(false);
+  });
+
+  it("keeps SegmentedControl controlled, native, and disabled per option", () => {
+    const onChange = vi.fn();
+    const options = [
+      { value: "comfortable", label: "Comfortable" },
+      { value: "compact", label: "Compact" },
+      { value: "unavailable", label: "Unavailable", disabled: true },
+    ] as const;
+    const { rerender } = render(<SegmentedControl label="View density" value="comfortable" options={options} onChange={onChange} />);
+
+    const group = screen.getByRole("group", { name: "View density" });
+    const buttons = [...group.querySelectorAll("button")] as HTMLButtonElement[];
+    const comfortable = buttons[0];
+    const compact = buttons[1];
+    const unavailable = buttons[2];
+    if (!comfortable || !compact || !unavailable) throw new Error("SegmentedControl did not render all options");
+    expect(buttons).toHaveLength(3);
+    expect(comfortable.type).toBe("button");
+    expect(comfortable.getAttribute("aria-pressed")).toBe("true");
+    expect(compact.getAttribute("aria-pressed")).toBe("false");
+    expect(compact.disabled).toBe(false);
+    expect(unavailable.disabled).toBe(true);
+
+    compact.click();
+    expect(onChange).toHaveBeenCalledWith("compact");
+    unavailable.click();
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    rerender(<SegmentedControl label="View density" value="compact" options={options} onChange={onChange} disabled />);
+    const disabledComfortable = screen.getByRole("button", { name: "Comfortable" }) as HTMLButtonElement;
+    const selectedCompact = screen.getByRole("button", { name: "Compact" }) as HTMLButtonElement;
+    expect(disabledComfortable.disabled).toBe(true);
+    expect(disabledComfortable.getAttribute("aria-pressed")).toBe("false");
+    expect(selectedCompact.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("keeps the plain Field native, labelled, editable, and focusable", () => {

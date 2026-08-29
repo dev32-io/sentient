@@ -3,7 +3,7 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
@@ -15,6 +15,7 @@ import {
   type PlateVariantProps,
   type RangeVariantProps,
   type SearchFieldVariantProps,
+  type SegmentedControlVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
@@ -93,6 +94,34 @@ function ToggleTransitionFixture({ label }: { label: string }): JSX.Element {
     };
   }, []);
   return <ToggleControl label={label} checked={checked} onChange={setChecked} />;
+}
+
+function segmentedInitialValue(fixture: VisualDiffResolvedCase): string {
+  if (fixture.variantId === "avatar-state") {
+    if (fixture.stateId === "thinking-selected") return "thinking";
+    if (fixture.stateId === "responding-selected") return "responding";
+  }
+  if (fixture.variantId === "density" && fixture.stateId === "compact-selected") return "compact";
+  const props = fixture.props as SegmentedControlVariantProps;
+  return props.initialValue;
+}
+
+function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as SegmentedControlVariantProps;
+  const [value, setValue] = useState(() => segmentedInitialValue(fixture));
+
+  useEffect(() => {
+    if (fixture.variantId !== "comfortable-to-compact") return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setValue("compact");
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [fixture.variantId]);
+
+  return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
@@ -227,6 +256,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       if (fixture.variantId === "off-to-on") return <ToggleTransitionFixture label={toggle.label} />;
       return <ToggleControl label={toggle.label} checked={toggle.checked} onChange={() => {}} />;
     },
+  },
+  "segmented-control": {
+    // This adapter deliberately renders the production controlled SegmentedControl
+    // and its native buttons for every approved static and motion case.
+    render: (fixture) => <SegmentedControlFixture fixture={fixture} />,
   },
   "plate": {
     // This adapter deliberately renders the production Plate and its public anatomy.

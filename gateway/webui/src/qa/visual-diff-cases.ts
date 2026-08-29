@@ -130,6 +130,19 @@ export interface ToggleVariantProps {
 
 type ToggleVariantDefinition = VisualDiffVariantDefinition<ToggleVariantProps>;
 
+export interface SegmentedControlOption {
+  readonly value: string;
+  readonly label: string;
+}
+
+export interface SegmentedControlVariantProps {
+  readonly label: string;
+  readonly initialValue: string;
+  readonly options: readonly SegmentedControlOption[];
+}
+
+type SegmentedControlVariantDefinition = VisualDiffVariantDefinition<SegmentedControlVariantProps>;
+
 export interface UserAvatarVariantProps {
   readonly initial?: string;
   readonly name: string;
@@ -162,6 +175,49 @@ const TOGGLE_VARIANTS = {
   on: { props: { label: "Automatic updates", checked: true } },
   "off-to-on": { props: { label: "Automatic updates", checked: false } },
 } as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
+const SEGMENTED_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0055ms",
+  "frame-002--0110ms",
+  "frame-003--0165ms",
+  "frame-004--0220ms",
+] as const;
+
+const SEGMENTED_AVATAR_OPTIONS = [
+  { value: "idle", label: "Idle" },
+  { value: "thinking", label: "Thinking" },
+  { value: "responding", label: "Responding" },
+] as const;
+
+const SEGMENTED_DENSITY_OPTIONS = [
+  { value: "comfortable", label: "Comfortable" },
+  { value: "compact", label: "Compact" },
+] as const;
+
+const SEGMENTED_CONTROL_VARIANTS = {
+  "avatar-state": {
+    props: {
+      label: "Sentient avatar state",
+      initialValue: "idle",
+      options: SEGMENTED_AVATAR_OPTIONS,
+    },
+  },
+  density: {
+    props: {
+      label: "View density",
+      initialValue: "comfortable",
+      options: SEGMENTED_DENSITY_OPTIONS,
+    },
+  },
+  "comfortable-to-compact": {
+    props: {
+      label: "View density",
+      initialValue: "comfortable",
+      options: SEGMENTED_DENSITY_OPTIONS,
+    },
+  },
+} as const satisfies Readonly<Record<string, SegmentedControlVariantDefinition>>;
 
 const CHIP_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -339,6 +395,25 @@ export const visualDiffComponentRegistry = {
       "off-to-on": TOGGLE_TRANSITION_FRAMES,
     },
   },
+  "segmented-control": {
+    id: "segmented-control",
+    fixtureAdapterId: "segmented-control",
+    productionComponent: "gateway/webui/src/components/common/foundation/controls.tsx#SegmentedControl",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: SEGMENTED_CONTROL_VARIANTS,
+    stateApplicability: {
+      "avatar-state": ["compact-layout", "idle-selected", "responding-selected", "thinking-selected"],
+      density: [
+        "comfortable-selected",
+        "compact-focus",
+        "compact-hover",
+        "compact-layout",
+        "compact-pressed",
+        "compact-selected",
+      ],
+      "comfortable-to-compact": SEGMENTED_TRANSITION_FRAMES,
+    },
+  },
   checkbox: {
     id: "checkbox",
     fixtureAdapterId: "checkbox",
@@ -378,6 +453,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "checkbox",
   "chip",
   "toggle",
+  "segmented-control",
   "user-avatar",
 ]);
 

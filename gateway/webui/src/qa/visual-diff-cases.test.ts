@@ -136,6 +136,27 @@ const TOGGLE_TRANSITION_CASES = [
   "toggle--off-to-on--frame-004--0200ms",
 ] as const;
 
+const CURRENT_SEGMENTED_CONTROL_CASES = [
+  "segmented-control--avatar-state--compact-layout",
+  "segmented-control--avatar-state--idle-selected",
+  "segmented-control--avatar-state--responding-selected",
+  "segmented-control--avatar-state--thinking-selected",
+  "segmented-control--density--comfortable-selected",
+  "segmented-control--density--compact-focus",
+  "segmented-control--density--compact-hover",
+  "segmented-control--density--compact-layout",
+  "segmented-control--density--compact-pressed",
+  "segmented-control--density--compact-selected",
+] as const;
+
+const SEGMENTED_TRANSITION_CASES = [
+  "segmented-control--comfortable-to-compact--frame-000--0000ms",
+  "segmented-control--comfortable-to-compact--frame-001--0055ms",
+  "segmented-control--comfortable-to-compact--frame-002--0110ms",
+  "segmented-control--comfortable-to-compact--frame-003--0165ms",
+  "segmented-control--comfortable-to-compact--frame-004--0220ms",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -540,6 +561,76 @@ describe("visual diff component cases", () => {
           stateId,
         });
       }
+    }
+  });
+
+  it("registers the exact segmented-control matrix and controlled native production provenance", () => {
+    const segmentedControl = visualDiffComponentRegistry["segmented-control"];
+    expect(segmentedControl.stateApplicability).toEqual({
+      "avatar-state": ["compact-layout", "idle-selected", "responding-selected", "thinking-selected"],
+      density: [
+        "comfortable-selected",
+        "compact-focus",
+        "compact-hover",
+        "compact-layout",
+        "compact-pressed",
+        "compact-selected",
+      ],
+      "comfortable-to-compact": [
+        "frame-000--0000ms",
+        "frame-001--0055ms",
+        "frame-002--0110ms",
+        "frame-003--0165ms",
+        "frame-004--0220ms",
+      ],
+    });
+    expect(segmentedControl.fixtureAdapterId).toBe("segmented-control");
+    expect(segmentedControl.productionComponent).toBe(
+      "gateway/webui/src/components/common/foundation/controls.tsx#SegmentedControl",
+    );
+    expect(segmentedControl.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(segmentedControl.variants["avatar-state"].props).toEqual({
+      label: "Sentient avatar state",
+      initialValue: "idle",
+      options: [
+        { value: "idle", label: "Idle" },
+        { value: "thinking", label: "Thinking" },
+        { value: "responding", label: "Responding" },
+      ],
+    });
+    expect(segmentedControl.variants.density.props).toEqual({
+      label: "View density",
+      initialValue: "comfortable",
+      options: [
+        { value: "comfortable", label: "Comfortable" },
+        { value: "compact", label: "Compact" },
+      ],
+    });
+
+    for (const caseId of [...CURRENT_SEGMENTED_CONTROL_CASES, ...SEGMENTED_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("segmented-control");
+        expect(resolution.case.fixtureAdapterId).toBe("segmented-control");
+      }
+    }
+  });
+
+  it("resolves unapproved segmented-control states to missing authority", () => {
+    for (const [variantId, stateId] of [
+      ["avatar-state", "focus"],
+      ["density", "rest"],
+      ["density", "disabled"],
+      ["comfortable-to-compact", "rest"],
+    ] as const) {
+      expect(resolveVisualDiffCase(`segmented-control--${variantId}--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `segmented-control--${variantId}--${stateId}`,
+        componentId: "segmented-control",
+        variantId,
+        stateId,
+      });
     }
   });
 
