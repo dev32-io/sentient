@@ -3,7 +3,7 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, ToggleControl } from "../components/common/foundation.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
@@ -14,6 +14,7 @@ import {
   type PlateVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
+  type ToggleVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -70,6 +71,24 @@ function ChipTransitionFixture({ label }: { label: string }): JSX.Element {
     };
   }, []);
   return <ChipControl selected={selected} onClick={() => setSelected(true)}>{label}</ChipControl>;
+}
+
+function ToggleTransitionFixture({ label }: { label: string }): JSX.Element {
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => {
+      const target = document.querySelector<HTMLButtonElement>(".snt-toggle");
+      if (!target) throw new Error("Visual diff toggle target is not ready");
+      target.click();
+    };
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, []);
+  return <ToggleControl label={label} checked={checked} onChange={setChecked} />;
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
@@ -146,6 +165,14 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       const chip = fixture.props as ChipVariantProps;
       if (fixture.variantId === "unselected-to-selected") return <ChipTransitionFixture label={chip.label} />;
       return <ChipControl selected={chip.selected}>{chip.label}</ChipControl>;
+    },
+  },
+  "toggle": {
+    // This adapter deliberately renders the production controlled native ToggleControl.
+    render: (fixture) => {
+      const toggle = fixture.props as ToggleVariantProps;
+      if (fixture.variantId === "off-to-on") return <ToggleTransitionFixture label={toggle.label} />;
+      return <ToggleControl label={toggle.label} checked={toggle.checked} onChange={() => {}} />;
     },
   },
   "plate": {

@@ -97,6 +97,25 @@ const CHIP_TRANSITION_CASES = [
   "chip--unselected-to-selected--frame-004--0150ms",
 ] as const;
 
+const CURRENT_TOGGLE_CASES = [
+  "toggle--off--focus",
+  "toggle--off--hover",
+  "toggle--off--pressed",
+  "toggle--off--rest",
+  "toggle--on--focus",
+  "toggle--on--hover",
+  "toggle--on--pressed",
+  "toggle--on--rest",
+] as const;
+
+const TOGGLE_TRANSITION_CASES = [
+  "toggle--off-to-on--frame-000--0000ms",
+  "toggle--off-to-on--frame-001--0050ms",
+  "toggle--off-to-on--frame-002--0100ms",
+  "toggle--off-to-on--frame-003--0150ms",
+  "toggle--off-to-on--frame-004--0200ms",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -320,6 +339,52 @@ describe("visual diff component cases", () => {
         variantId: "unselected",
         stateId,
       });
+    }
+  });
+
+  it("registers the exact toggle matrix and controlled native production provenance", () => {
+    const toggle = visualDiffComponentRegistry.toggle;
+    expect(toggle.stateApplicability).toEqual({
+      off: ["focus", "hover", "pressed", "rest"],
+      on: ["focus", "hover", "pressed", "rest"],
+      "off-to-on": [
+        "frame-000--0000ms",
+        "frame-001--0050ms",
+        "frame-002--0100ms",
+        "frame-003--0150ms",
+        "frame-004--0200ms",
+      ],
+    });
+    expect(toggle.fixtureAdapterId).toBe("toggle");
+    expect(toggle.productionComponent).toBe(
+      "gateway/webui/src/components/common/foundation/controls.tsx#ToggleControl",
+    );
+    expect(toggle.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(toggle.variants.off.props).toEqual({ label: "Automatic updates", checked: false });
+    expect(toggle.variants.on.props).toEqual({ label: "Automatic updates", checked: true });
+    expect(toggle.variants["off-to-on"].props).toEqual({ label: "Automatic updates", checked: false });
+
+    for (const caseId of [...CURRENT_TOGGLE_CASES, ...TOGGLE_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("toggle");
+        expect(resolution.case.fixtureAdapterId).toBe("toggle");
+      }
+    }
+  });
+
+  it("resolves unapproved toggle states to missing authority", () => {
+    for (const variantId of ["off", "on"]) {
+      for (const stateId of ["compact-rest", "disabled", "selected", "loading", "error"]) {
+        expect(resolveVisualDiffCase(`toggle--${variantId}--${stateId}`)).toEqual({
+          status: "missing-authority",
+          caseId: `toggle--${variantId}--${stateId}`,
+          componentId: "toggle",
+          variantId,
+          stateId,
+        });
+      }
     }
   });
 

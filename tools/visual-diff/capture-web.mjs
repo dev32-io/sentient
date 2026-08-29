@@ -12,13 +12,15 @@ const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
 const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
-// Non-transforming fields must stay on the exact handoff canvas; the wider
-// frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field"]);
+// Non-transforming component boundaries must stay on the exact handoff canvas;
+// the wider frame below is only needed for controls whose hover/press face translates.
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field", "toggle"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function targetSelector(caseId) {
-  return caseId.startsWith("chip--") ? ".snt-chip" : VISUAL_DIFF_TARGET_SELECTOR;
+  if (caseId.startsWith("chip--")) return ".snt-chip";
+  if (caseId.startsWith("toggle--")) return ".snt-toggle";
+  return VISUAL_DIFF_TARGET_SELECTOR;
 }
 
 function usage() {
@@ -127,7 +129,7 @@ async function localFontCss() {
 function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   return frameCaseId;
@@ -137,7 +139,9 @@ function visualDiffTransitionTimeMs(caseId) {
   const checkboxMatch = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
   if (checkboxMatch) return Number(checkboxMatch[1]);
   const chipMatch = /^chip--unselected-to-selected--frame-\d+--(\d+)ms$/.exec(caseId);
-  return chipMatch ? Number(chipMatch[1]) : undefined;
+  if (chipMatch) return Number(chipMatch[1]);
+  const toggleMatch = /^toggle--off-to-on--frame-\d+--(\d+)ms$/.exec(caseId);
+  return toggleMatch ? Number(toggleMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
@@ -152,7 +156,7 @@ async function applyState(page, caseId) {
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
   if (state === "focus") {
-    if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--")) await page.keyboard.press("Tab");
+    if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--") || caseId.startsWith("toggle--")) await page.keyboard.press("Tab");
     else await target.focus();
   }
   if (state === "pressed") {
@@ -241,6 +245,30 @@ async function freezeChipTransition(page, transitionTimeMs) {
   }, transitionTimeMs);
 }
 
+async function freezeToggleTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  await page.waitForFunction(() => document.querySelector(".snt-toggle")?.getAttribute("aria-checked") === "true");
+  if (transitionTimeMs === 0) return;
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-toggle");
+    return target && document.getAnimations().some((animation) => animation.effect?.target === target);
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-toggle");
+    if (!target) throw new Error("Visual diff toggle target is not ready");
+    const animations = document.getAnimations().filter((animation) => animation.effect?.target === target);
+    if (!animations.length) throw new Error("Visual diff toggle transition is not running");
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
 async function chipTransitionClip(page, frame) {
   if (!frame.normalizeTranslatedPaint || !frame.clip) return frame.clip;
   const translatedOffset = await page.evaluate(() => {
@@ -300,6 +328,8 @@ async function capture() {
       await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
       if (caseId.startsWith("chip--unselected-to-selected--")) {
         await freezeChipTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("toggle--off-to-on--")) {
+        await freezeToggleTransition(page, transitionTimeMs);
       } else {
         await page.evaluate(() => {
           const transitionWindow = window;

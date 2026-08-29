@@ -104,6 +104,27 @@ export interface ChipVariantProps {
 
 type ChipVariantDefinition = VisualDiffVariantDefinition<ChipVariantProps>;
 
+export interface ToggleVariantProps {
+  readonly label: string;
+  readonly checked: boolean;
+}
+
+type ToggleVariantDefinition = VisualDiffVariantDefinition<ToggleVariantProps>;
+
+const TOGGLE_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0050ms",
+  "frame-002--0100ms",
+  "frame-003--0150ms",
+  "frame-004--0200ms",
+] as const;
+
+const TOGGLE_VARIANTS = {
+  off: { props: { label: "Automatic updates", checked: false } },
+  on: { props: { label: "Automatic updates", checked: true } },
+  "off-to-on": { props: { label: "Automatic updates", checked: false } },
+} as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
 const CHIP_TRANSITION_FRAMES = [
   "frame-000--0000ms",
   "frame-001--0040ms",
@@ -224,6 +245,18 @@ export const visualDiffComponentRegistry = {
       "unselected-to-selected": CHIP_TRANSITION_FRAMES,
     },
   },
+  toggle: {
+    id: "toggle",
+    fixtureAdapterId: "toggle",
+    productionComponent: "gateway/webui/src/components/common/foundation/controls.tsx#ToggleControl",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: TOGGLE_VARIANTS,
+    stateApplicability: {
+      off: ["focus", "hover", "pressed", "rest"],
+      on: ["focus", "hover", "pressed", "rest"],
+      "off-to-on": TOGGLE_TRANSITION_FRAMES,
+    },
+  },
   checkbox: {
     id: "checkbox",
     fixtureAdapterId: "checkbox",
@@ -260,6 +293,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "text-area",
   "checkbox",
   "chip",
+  "toggle",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
