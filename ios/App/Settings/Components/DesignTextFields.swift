@@ -318,6 +318,15 @@ struct DesignMaskedField: View {
     }
 }
 
+private enum DesignMultilineEditorMetrics {
+    // `.snt-field` uses a seven-point label-to-control grid gap and inherits
+    // the foundation's normal line-height for its label.
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    // The native text container supplies the remaining vertical inset.
+    static let editorVerticalInset: CGFloat = 3
+}
+
 struct DesignMultilineEditor: View {
     let title: String?
     @Binding var text: String
@@ -326,7 +335,14 @@ struct DesignMultilineEditor: View {
     var error: String? = nil
     var accessibilityId: String? = nil
     var isEnabled = true
-    @FocusState private var focused: Bool
+    /// Callers may own focus when a flow needs to move focus explicitly;
+    /// otherwise the editor keeps its own native FocusState.
+    var focused: FocusState<Bool>.Binding? = nil
+    @Environment(\.colorSchemeContrast) private var contrast
+    /// Text areas use the UI face by default; mono remains available to the
+    /// compatibility editor used for system-style text.
+    var usesMonospacedText = false
+    @FocusState private var internalFocused: Bool
 
     init(
         title: String? = nil,
@@ -335,7 +351,9 @@ struct DesignMultilineEditor: View {
         maxLength: Int? = nil,
         error: String? = nil,
         accessibilityId: String? = nil,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        usesMonospacedText: Bool = false,
+        focused: FocusState<Bool>.Binding? = nil
     ) {
         self.title = title
         _text = text
@@ -344,38 +362,123 @@ struct DesignMultilineEditor: View {
         self.error = error
         self.accessibilityId = accessibilityId
         self.isEnabled = isEnabled
+        self.usesMonospacedText = usesMonospacedText
+        self.focused = focused
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
+    }
+
+    private var editorFont: Font {
+        usesMonospacedText ? Typo.mono(TypeScale.sm) : Typo.ui(TypeScale.base)
+    }
+
+    private var wellBorderColor: Color {
+        if error != nil { return DuskColors.stop }
+        if isFocused {
+            return DuskColors.accent.overlaying(
+                DuskColors.line,
+                opacity: DesignMaterialAdapter.wellFocusMix
+            )
+        }
+        return contrast == .increased ? DuskColors.ink3 : DuskColors.line
+    }
+
+    private var editor: some View {
+        TextEditor(text: cappedBinding)
+            .font(editorFont)
+            .foregroundStyle(DuskColors.ink)
+            .scrollContentBackground(.hidden)
+            // TextEditor supplies a native vertical text-container
+            // inset; keep the explicit horizontal inset while using
+            // half the shared inset vertically to match the authored
+            // field padding without moving the native editor itself.
+            .padding(.horizontal, DesignMetrics.editorInset)
+            .padding(.vertical, DesignMultilineEditorMetrics.editorVerticalInset)
+            .disabled(!isEnabled)
+            .accessibilityLabel(title ?? "Text editor")
+            .accessibilityValue(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? (text.isEmpty ? "Empty" : text))
+            .accessibilityHint(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? "")
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    @ViewBuilder
+    private var focusableEditor: some View {
+        if let focused {
+            editor.focused(focused)
+        } else {
+            editor.focused($internalFocused)
+        }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: DesignMultilineEditorMetrics.labelGap) {
             if let title {
                 Text(title)
                     .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                     .foregroundStyle(DuskColors.ink)
+                    .frame(
+                        minHeight: DesignMultilineEditorMetrics.labelLineHeight,
+                        alignment: .topLeading
+                    )
             }
             ZStack(alignment: .topLeading) {
                 if text.isEmpty, let placeholder {
                     Text(placeholder)
-                        .font(Typo.mono(TypeScale.sm))
+                        .font(editorFont)
                         .foregroundStyle(DuskColors.ink4)
                         .padding(.horizontal, DesignMetrics.editorPlaceholderInsetH)
                         .padding(.vertical, DesignMetrics.editorPlaceholderInsetV)
                         .allowsHitTesting(false)
                 }
-                TextEditor(text: cappedBinding)
-                    .font(Typo.mono(TypeScale.sm))
-                    .foregroundStyle(DuskColors.ink)
-                    .scrollContentBackground(.hidden)
-                    .padding(DesignMetrics.editorInset)
-                    .disabled(!isEnabled)
-                    .focused($focused)
-                    .accessibilityLabel(title ?? "Text editor")
-                    .accessibilityValue(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? (text.isEmpty ? "Empty" : text))
-                    .accessibilityHint(!isEnabled ? "Disabled" : error.map { "Error: \($0)" } ?? "")
-                    .accessibilityIdentifier(accessibilityId ?? "")
+                focusableEditor
             }
-            .frame(minHeight: DesignMetrics.multilineEditorMinHeight)
-            .designWell(focused: focused, error: error != nil)
+            // TextEditor has a larger intrinsic height than the foundation
+            // field. Give the well its authored visual height and let the
+            // native editor scroll when its content needs more room.
+            .frame(height: DesignMetrics.multilineEditorMinHeight)
+            // Keep the shared face, inset, and contact layers, but replace
+            // its generic focus blur with the source's negative-spread cast.
+            .designWell(
+                focused: false,
+                error: error != nil,
+                showsBorder: false
+            )
+            .background {
+                if isFocused {
+                    DesignSpreadShadow(
+                        shape: RoundedRectangle(cornerRadius: Radii.sm, style: .continuous),
+                        color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                        geometry: DesignDropShadowGeometry(
+                            radius: 18,
+                            y: DesignMaterialAdapter.wellFocusCastY,
+                            sourceInset: 14
+                        )
+                    )
+                }
+            }
+            .overlay {
+                if isFocused {
+                    RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                        .stroke(DuskColors.accent.opacity(0.18), lineWidth: 6)
+                        .padding(-3)
+                }
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                    .strokeBorder(wellBorderColor, lineWidth: DesignMetrics.hairline)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm + DesignMetrics.focusRing, style: .continuous)
+                    .stroke(
+                        isFocused ? DuskColors.accent : .clear,
+                        lineWidth: DesignMetrics.focusBorder
+                    )
+                    .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+                    .allowsHitTesting(false)
+            }
             if let maxLength {
                 Text("\(text.count) / \(maxLength)")
                     .font(Typo.mono(TypeScale.xs))

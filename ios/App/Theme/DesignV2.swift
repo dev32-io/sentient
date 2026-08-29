@@ -204,7 +204,9 @@ enum DesignMetrics {
     static let pressedDepth: CGFloat = 1
     static let categoryIconSlot: CGFloat = 26
     static let progressWidth: CGFloat = 64
-    static let multilineEditorMinHeight: CGFloat = 160
+    // The native editor keeps the foundation text-area's 104pt visual
+    // minimum while TextEditor itself retains native scrolling and editing.
+    static let multilineEditorMinHeight: CGFloat = 104
     static let editorInset: CGFloat = 8
     static let editorPlaceholderInsetH: CGFloat = 14
     static let editorPlaceholderInsetV: CGFloat = 16

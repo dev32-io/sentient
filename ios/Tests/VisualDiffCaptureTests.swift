@@ -93,10 +93,13 @@ final class VisualDiffCaptureTests: XCTestCase {
             size: logicalSize,
             traits: traits
         )
-        let usesNativeTextFieldCapture = caseID.hasPrefix("text-field--")
+        let usesNativeTextInputCapture =
+            caseID.hasPrefix("text-field--")
+                || caseID.hasPrefix("text-area--")
+                || caseID.hasPrefix("search-field--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
-        if usesNativeTextFieldCapture {
+        if usesNativeTextInputCapture {
             controller.safeAreaRegions = []
             let hostWindow = VisualDiffFocusWindow(frame: CGRect(origin: .zero, size: logicalSize))
             let container = VisualDiffCanvasViewController()
@@ -128,17 +131,19 @@ final class VisualDiffCaptureTests: XCTestCase {
                 focusHostWindow.rootViewController = nil
             }
         }
-        if usesNativeTextFieldCapture && caseID == "text-field--filled--focus" {
+        if caseID == "text-field--filled--focus" || caseID == "search-field--placeholder--focus" {
             guard let textField = textField(in: controller.view) else {
-                XCTFail("The focused fixture must mount a native UITextField")
+                XCTFail("The focused text-field fixture must mount a native UITextField")
                 return
             }
-            // Keep the native responder active without letting the simulator
-            // keyboard resize the fixed visual review canvas.
-            textField.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
-            // The Web capture harness hides its caret; keep the genuine native
-            // focus while applying the same non-content capture treatment.
-            textField.tintColor = .clear
+            if caseID == "text-field--filled--focus" {
+                // Keep the native responder active without letting the simulator
+                // keyboard resize the fixed visual review canvas.
+                textField.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                // Keep the genuine native focus while applying the same
+                // non-content capture treatment as the text-field report.
+                textField.tintColor = .clear
+            }
             XCTAssertTrue(textField.becomeFirstResponder(), "The focused fixture must accept native focus")
             let focused = XCTNSPredicateExpectation(
                 predicate: NSPredicate { [weak controller] _, _ in
@@ -148,14 +153,35 @@ final class VisualDiffCaptureTests: XCTestCase {
                 object: nil
             )
             wait(for: [focused], timeout: 2)
-            XCTAssertTrue(textField.isFirstResponder, "The focused fixture must hold native TextField focus")
+            XCTAssertTrue(textField.isFirstResponder, "The focused text-field fixture must hold native focus")
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+        } else if caseID == "text-area--filled--focus" {
+            guard let textView = textView(in: controller.view) else {
+                XCTFail("The focused text-area fixture must mount a native UITextView")
+                return
+            }
+            // Keep the native responder active without presenting a keyboard or
+            // caret in the fixed visual review canvas.
+            textView.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            textView.tintColor = .clear
+            XCTAssertTrue(textView.becomeFirstResponder(), "The focused fixture must accept native focus")
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate { [weak controller] _, _ in
+                    guard let controller else { return false }
+                    return self.firstResponder(in: controller.view) != nil
+                },
+                object: nil
+            )
+            wait(for: [focused], timeout: 2)
+            XCTAssertTrue(textView.isFirstResponder, "The focused text-area fixture must hold native focus")
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
         }
 
         let rendered = expectation(description: "Render \(caseID)")
         var image: UIImage?
-        if usesNativeTextFieldCapture {
+        if usesNativeTextInputCapture {
             // The handoff PNGs are standard-sRGB references. Keep the native
             // view unchanged, but prevent the simulator's automatic Display-P3
             // renderer from changing the encoded comparison colors.
@@ -621,6 +647,14 @@ final class VisualDiffCaptureTests: XCTestCase {
         if let textField = view as? UITextField { return textField }
         for subview in view.subviews {
             if let textField = textField(in: subview) { return textField }
+        }
+        return nil
+    }
+
+    private func textView(in view: UIView) -> UITextView? {
+        if let textView = view as? UITextView { return textView }
+        for subview in view.subviews {
+            if let textView = textView(in: subview) { return textView }
         }
         return nil
     }
