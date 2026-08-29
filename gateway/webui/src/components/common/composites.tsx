@@ -891,7 +891,17 @@ export function AsyncState({ state, title, message, action }: AsyncStateProps): 
       </div>
     );
   }
-  return <div class="snt-async-state" {...liveProps}><div><h3 class="snt-card-title">{title}</h3>{message && <p class="snt-card-subtitle">{message}</p>}</div>{action}</div>;
+  if (state === "empty") {
+    return (
+      <div class="snt-async-state" data-state={state} {...liveProps}>
+        <span class="snt-async-state__mark" aria-hidden="true">＋</span>
+        <h3 class="snt-card-title">{title}</h3>
+        {message && <p class="snt-card-subtitle">{message}</p>}
+        {action}
+      </div>
+    );
+  }
+  return <div class="snt-async-state" data-state={state} {...liveProps}><div><h3 class="snt-card-title">{title}</h3>{message && <p class="snt-card-subtitle">{message}</p>}</div>{action}</div>;
 }
 
 export interface NoResultsStateProps {

@@ -24,6 +24,7 @@ import {
   type CheckboxVariantProps,
   type ChipVariantProps,
   type DisclosureVariantProps,
+  type EmptyStateVariantProps,
   type FilterBarVariantProps,
   type IconButtonVariantProps,
   type InlineSecretEditorVariantProps,
@@ -739,6 +740,23 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "empty-state": {
+    // The reference action is fixture copy only; production callers continue
+    // to own whether an action exists, its label, and its activation behavior.
+    render: (fixture) => {
+      const empty = fixture.props as EmptyStateVariantProps;
+      return (
+        <Plate className="visual-diff-target visual-diff-empty-state">
+          <AsyncState
+            state="empty"
+            title={empty.title}
+            message={empty.message}
+            action={<ActionButton variant="quiet">{empty.actionLabel}</ActionButton>}
+          />
+        </Plate>
+      );
+    },
+  },
   "no-results": {
     // This adapter deliberately renders the production no-match recovery.
     render: (fixture) => {
@@ -948,8 +966,10 @@ style.textContent = `
     padding: 52px;
   }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
-  .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
+  .visual-diff-canvas[data-component-id="loading-state"],
+  .visual-diff-canvas[data-component-id="empty-state"] { display: block; }
   .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }
+  .visual-diff-empty-state { width: 280px; margin: 52px; }
   .visual-diff-disclosure { width: min(540px, 100%); }
   .visual-diff-disclosure-setting,
   .visual-diff-disclosure-paragraph {

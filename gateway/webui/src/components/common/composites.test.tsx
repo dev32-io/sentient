@@ -27,7 +27,7 @@ describe("SettingsGroup", () => {
   });
 });
 
-describe("AsyncState loading", () => {
+describe("AsyncState", () => {
   it("names the loading status and keeps its progress cue decorative", () => {
     render(<AsyncState state="loading" title="Loading" message="Fetching current settings…" />);
 
@@ -37,6 +37,33 @@ describe("AsyncState loading", () => {
     expect(screen.getByText("Fetching current settings…")).toBeTruthy();
     expect(status.querySelector(".snt-async-state__spinner")?.getAttribute("aria-hidden")).toBe("true");
     expect(status.querySelector("progress")).toBeNull();
+  });
+
+  it("gives empty content a decorative mark while preserving caller-owned copy and action", () => {
+    const onAdd = vi.fn();
+    render(
+      <AsyncState
+        state="empty"
+        title="Nothing here yet"
+        message="Add an item when you’re ready."
+        action={<ActionButton variant="quiet" onClick={onAdd}>Add item</ActionButton>}
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("data-state")).toBe("empty");
+    expect(status.querySelector(".snt-async-state__mark")?.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("heading", { level: 3, name: "Nothing here yet" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add item" }));
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps errors visually and semantically distinct from empty content", () => {
+    render(<AsyncState state="error" title="Couldn’t load items" />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert.getAttribute("data-state")).toBe("error");
+    expect(alert.querySelector(".snt-async-state__mark")).toBeNull();
   });
 });
 

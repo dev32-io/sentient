@@ -674,6 +674,33 @@
   .snt-async-state__spinner { animation: none; }
 }
 
+/* Empty state: distinct from loading, errors, and filtered no-results recovery. */
+.snt-async-state[data-state="empty"] {
+  align-content: center;
+  gap: 7px;
+  min-height: 174px;
+  padding: var(--space-lg);
+}
+.snt-async-state[data-state="empty"] > .snt-card-title {
+  line-height: var(--line-height-normal);
+}
+.snt-async-state[data-state="empty"] > .snt-card-subtitle {
+  margin: 0;
+  line-height: 1.45;
+}
+.snt-async-state__mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-bg-sunk);
+  box-shadow: var(--well-shadow);
+  color: var(--color-ink-3);
+  font-size: 20px;
+  line-height: 1;
+}
+
 @media (prefers-contrast: more) {
   .snt-disclosure { border-color: var(--color-ink-3); }
 }

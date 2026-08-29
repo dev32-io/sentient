@@ -653,6 +653,24 @@ const RESULTS_LIST_VARIANTS = {
   },
 } as const satisfies Readonly<Record<string, ResultsListVariantDefinition>>;
 
+export interface EmptyStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel: string;
+}
+
+type EmptyStateVariantDefinition = VisualDiffVariantDefinition<EmptyStateVariantProps>;
+
+const EMPTY_STATE_VARIANTS = {
+  settings: {
+    props: {
+      title: "Nothing here yet",
+      message: "Add an item when you’re ready.",
+      actionLabel: "Add item",
+    },
+  },
+} as const satisfies Readonly<Record<string, EmptyStateVariantDefinition>>;
+
 const NO_RESULTS_VARIANTS = {
   default: {
     props: {
@@ -1006,6 +1024,16 @@ export const visualDiffComponentRegistry = {
       default: ["page-1", "compact-page-1", "loading-more", "appended"],
     },
   },
+  "empty-state": {
+    id: "empty-state",
+    fixtureAdapterId: "empty-state",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#AsyncState",
+    authority: "design/prototype/common-composites/handoff/static/empty-state--settings--rest.png",
+    variants: EMPTY_STATE_VARIANTS,
+    stateApplicability: {
+      settings: ["rest"],
+    },
+  },
   "no-results": {
     id: "no-results",
     fixtureAdapterId: "no-results",
@@ -1055,6 +1083,7 @@ export const visualDiffComponentRegistry = {
 // matrix. Keep action-button's established unsupported-state result unchanged.
 const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "icon-button",
+  "empty-state",
   "plate",
   "text-field",
   "search-field",

@@ -53,6 +53,7 @@ const CURRENT_LOADING_STATE_CASES = [
   "loading-state--settings--active",
   "loading-state--settings--reduced-motion",
 ] as const;
+const CURRENT_EMPTY_STATE_CASES = ["empty-state--settings--rest"] as const;
 
 const CURRENT_NOTICE_CASES = [
   "notice--info--rest",
@@ -1323,6 +1324,31 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers only the approved empty-state rest fixture and AsyncState provenance", () => {
+    const emptyState = visualDiffComponentRegistry["empty-state"];
+    expect(emptyState.fixtureAdapterId).toBe("empty-state");
+    expect(emptyState.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#AsyncState");
+    expect(emptyState.authority).toBe(
+      "design/prototype/common-composites/handoff/static/empty-state--settings--rest.png",
+    );
+    expect(emptyState.stateApplicability).toEqual({ settings: ["rest"] });
+    expect(emptyState.variants.settings.props).toEqual({
+      title: "Nothing here yet",
+      message: "Add an item when you’re ready.",
+      actionLabel: "Add item",
+    });
+
+    for (const caseId of CURRENT_EMPTY_STATE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("empty-state");
+        expect(resolution.case.fixtureAdapterId).toBe("empty-state");
+        expect(resolution.case.props).toEqual(emptyState.variants.settings.props);
+      }
+    }
+  });
+
   it("registers the approved no-results recovery and production provenance", () => {
     const noResults = visualDiffComponentRegistry["no-results"];
     expect(noResults.fixtureAdapterId).toBe("no-results");
@@ -1419,6 +1445,18 @@ describe("visual diff component cases", () => {
         variantId: "settings",
         stateId,
         reason: "state",
+      });
+    }
+  });
+
+  it("resolves unapproved empty-state states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "loading", "error", "reduced-motion"]) {
+      expect(resolveVisualDiffCase(`empty-state--settings--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `empty-state--settings--${stateId}`,
+        componentId: "empty-state",
+        variantId: "settings",
+        stateId,
       });
     }
   });
