@@ -60,6 +60,39 @@ const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-44--disabled",
 ] as const;
 
+const CURRENT_SENTIENT_IDENTITY_CASES = [
+  "sentient-identity--idle--reduced-motion",
+  "sentient-identity--idle--rest",
+  "sentient-identity--thinking--reduced-motion",
+  "sentient-identity--thinking--rest",
+  "sentient-identity--responding--reduced-motion",
+  "sentient-identity--responding--rest",
+  "sentient-identity--idle-to-thinking--frame-000--0000ms",
+  "sentient-identity--idle-to-thinking--frame-001--0120ms",
+  "sentient-identity--idle-to-thinking--frame-002--0138ms",
+  "sentient-identity--idle-to-thinking--frame-003--0250ms",
+  "sentient-identity--thinking-to-responding--frame-000--0000ms",
+  "sentient-identity--thinking-to-responding--frame-001--0120ms",
+  "sentient-identity--thinking-to-responding--frame-002--0138ms",
+  "sentient-identity--thinking-to-responding--frame-003--0250ms",
+  "sentient-identity--responding-to-idle--frame-000--0000ms",
+  "sentient-identity--responding-to-idle--frame-001--0120ms",
+  "sentient-identity--responding-to-idle--frame-002--0138ms",
+  "sentient-identity--responding-to-idle--frame-003--0250ms",
+  "sentient-identity--thinking-loop--frame-000--0000ms",
+  "sentient-identity--thinking-loop--frame-001--0270ms",
+  "sentient-identity--thinking-loop--frame-002--0540ms",
+  "sentient-identity--thinking-loop--frame-003--0810ms",
+  "sentient-identity--thinking-loop--frame-004--1080ms",
+  "sentient-identity--thinking-loop--frame-005--1350ms",
+  "sentient-identity--responding-loop--frame-000--0000ms",
+  "sentient-identity--responding-loop--frame-001--0310ms",
+  "sentient-identity--responding-loop--frame-002--0620ms",
+  "sentient-identity--responding-loop--frame-003--0930ms",
+  "sentient-identity--responding-loop--frame-004--1240ms",
+  "sentient-identity--responding-loop--frame-005--1550ms",
+] as const;
+
 const CURRENT_TEXT_FIELD_CASES = [
   "text-field--filled--focus",
   "text-field--filled--hover",
@@ -313,6 +346,73 @@ describe("visual diff component cases", () => {
         stateId,
       });
     }
+  });
+
+  it("registers the complete Sentient identity matrix and canonical production provenance", () => {
+    const identity = visualDiffComponentRegistry["sentient-identity"];
+    expect(identity.stateApplicability).toEqual({
+      idle: ["reduced-motion", "rest"],
+      thinking: ["reduced-motion", "rest"],
+      responding: ["reduced-motion", "rest"],
+      "idle-to-thinking": ["frame-000--0000ms", "frame-001--0120ms", "frame-002--0138ms", "frame-003--0250ms"],
+      "thinking-to-responding": ["frame-000--0000ms", "frame-001--0120ms", "frame-002--0138ms", "frame-003--0250ms"],
+      "responding-to-idle": ["frame-000--0000ms", "frame-001--0120ms", "frame-002--0138ms", "frame-003--0250ms"],
+      "thinking-loop": [
+        "frame-000--0000ms",
+        "frame-001--0270ms",
+        "frame-002--0540ms",
+        "frame-003--0810ms",
+        "frame-004--1080ms",
+        "frame-005--1350ms",
+      ],
+      "responding-loop": [
+        "frame-000--0000ms",
+        "frame-001--0310ms",
+        "frame-002--0620ms",
+        "frame-003--0930ms",
+        "frame-004--1240ms",
+        "frame-005--1550ms",
+      ],
+    });
+    expect(identity.fixtureAdapterId).toBe("sentient-identity");
+    expect(identity.productionComponent).toBe(
+      "gateway/webui/src/components/common/sentient-identity.tsx#SentientIdentity",
+    );
+    expect(identity.authority).toBe("design/prototype/foundation-components/handoff");
+    expect(identity.variants.idle.props).toEqual({ state: "idle" });
+    expect(identity.variants["thinking-to-responding"].props).toEqual({
+      state: "thinking",
+      transitionTo: "responding",
+    });
+
+    for (const caseId of CURRENT_SENTIENT_IDENTITY_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("sentient-identity");
+        expect(resolution.case.fixtureAdapterId).toBe("sentient-identity");
+      }
+    }
+  });
+
+  it("resolves unapproved Sentient identity states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "listening", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`sentient-identity--idle--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `sentient-identity--idle--${stateId}`,
+        componentId: "sentient-identity",
+        variantId: "idle",
+        stateId,
+      });
+    }
+    expect(resolveVisualDiffCase("sentient-identity--unknown--rest")).toEqual({
+      status: "unsupported",
+      caseId: "sentient-identity--unknown--rest",
+      componentId: "sentient-identity",
+      variantId: "unknown",
+      stateId: "rest",
+      reason: "variant",
+    });
   });
 
   it("registers the exact text-field matrix and canonical Field provenance", () => {

@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/preact";
 import type { StateMachineInput } from "@rive-app/canvas";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SentientIdentity, type RiveFactory } from "./sentient-identity.tsx";
+import { SentientIdentity, type RiveFactory, normalizeSentientIdentityState } from "./sentient-identity.tsx";
 
 class QueryList {
   matches: boolean;
@@ -34,6 +34,20 @@ afterEach(() => {
 });
 
 describe("SentientIdentity", () => {
+  it("normalizes invalid runtime states to idle for both the machine and accessibility status", async () => {
+    vi.stubGlobal("matchMedia", () => new QueryList(false));
+    const inputs = [input("reducedMotion"), input("toIdle"), input("toThinking"), input("toResponding")];
+    const harness = adapterFactory(inputs);
+    render(<SentientIdentity state={"listening" as never} riveFactory={harness.factory} />);
+
+    await act(async () => harness.configuration?.onLoad());
+    await waitFor(() => expect(inputs[1]?.fire).toHaveBeenCalledTimes(1));
+    expect(inputs[2]?.fire).not.toHaveBeenCalled();
+    expect(inputs[3]?.fire).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "Sentient is idle" })).toBeTruthy();
+    expect(normalizeSentientIdentityState("listening")).toBe("idle");
+  });
+
   it("maps only the latest semantic state and Reduced Motion into the Avatar machine", async () => {
     const query = new QueryList(true);
     vi.stubGlobal("matchMedia", () => query);
@@ -43,8 +57,10 @@ describe("SentientIdentity", () => {
     view.rerender(<SentientIdentity state="responding" riveFactory={harness.factory} />);
     view.rerender(<SentientIdentity state="idle" riveFactory={harness.factory} />);
 
+    expect(harness.configuration?.src).toBe("/assets/sentient-avatar.riv");
     expect(harness.configuration?.artboard).toBe("SentientAvatar");
     expect(harness.configuration?.stateMachines).toBe("Avatar");
+    expect(harness.configuration?.autoplay).toBe(true);
     await act(async () => harness.configuration?.onLoad());
     await waitFor(() => expect(inputs[1]?.fire).toHaveBeenCalledTimes(1));
     expect(inputs[0]?.value).toBe(true);

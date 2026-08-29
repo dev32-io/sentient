@@ -14,8 +14,18 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "search-field", "text-area", "text-field", "toggle", "user-avatar"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "search-field", "sentient-identity", "text-area", "text-field", "toggle", "user-avatar"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
+const SENTIENT_IDENTITY_VARIANTS = new Set([
+  "idle",
+  "thinking",
+  "responding",
+  "idle-to-thinking",
+  "thinking-to-responding",
+  "responding-to-idle",
+  "thinking-loop",
+  "responding-loop",
+]);
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
@@ -135,7 +145,35 @@ function captureCaseId(referencePath) {
   if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
+  const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
+  if (sentientRecording && SENTIENT_IDENTITY_VARIANTS.has(sentientRecording[1])) {
+    return `sentient-identity--${sentientRecording[1]}--${frameCaseId}`;
+  }
   return frameCaseId;
+}
+
+function isSentientIdentityCase(caseId) {
+  return caseId.startsWith("sentient-identity--");
+}
+
+function sentientIdentityVariant(caseId) {
+  return caseId.split("--")[1];
+}
+
+function sentientIdentityKeyframeTimeMs(caseId) {
+  if (!isSentientIdentityCase(caseId)) return undefined;
+  const frameMatch = /^sentient-identity--.+--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (frameMatch) return Number(frameMatch[1]);
+  if (caseId.endsWith("--reduced-motion")) return 0;
+  const variant = sentientIdentityVariant(caseId);
+  if (variant === "thinking") return 1_000;
+  if (variant === "responding") return 2_000;
+  if (variant === "idle") return 0;
+  throw new Error(`Unsupported Sentient identity keyframe: ${caseId}`);
+}
+
+function isSentientIdentityTransition(caseId) {
+  return /^sentient-identity--(?:idle-to-thinking|thinking-to-responding|responding-to-idle)--/.test(caseId);
 }
 
 function visualDiffTransitionTimeMs(caseId) {
@@ -232,6 +270,43 @@ function captureFrame(caseId, referenceSize) {
     },
     ...(chipTransition ? { normalizeTranslatedPaint: true } : {}),
   };
+}
+
+async function renderSentientIdentityAt(page, timeMs) {
+  await page.evaluate((elapsedMs) => {
+    const rive = window.__visualDiffRive;
+    if (!rive) throw new Error("Visual diff identity Rive runtime is not ready");
+    const internalRive = rive;
+    rive.stopRendering();
+    internalRive.lastRenderTime = 0;
+    // Rive's public wrapper does not expose a clocked state-machine advance.
+    // The pinned canvas runtime's renderer accepts an explicit rAF timestamp;
+    // use it only in this capture fixture to render exact elapsed keyframes.
+    internalRive.draw(1);
+    rive.stopRendering();
+    internalRive.lastRenderTime = document.timeline.currentTime;
+    rive.drawFrame();
+    rive.stopRendering();
+    internalRive.lastRenderTime = 1;
+    internalRive.draw(1 + elapsedMs);
+    rive.stopRendering();
+    internalRive.lastRenderTime = document.timeline.currentTime;
+    rive.drawFrame();
+    rive.stopRendering();
+  }, timeMs);
+}
+
+async function captureSentientIdentityKeyframe(page, caseId, timeMs) {
+  if (isSentientIdentityTransition(caseId)) {
+    await renderSentientIdentityAt(page, 0);
+    await page.evaluate(() => {
+      const transitionWindow = window;
+      if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff identity transition is not ready");
+      transitionWindow.__startVisualDiffTransition();
+    });
+    await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionStarted === "true");
+  }
+  await renderSentientIdentityAt(page, timeMs);
 }
 
 async function freezeChipTransition(page, transitionTimeMs) {
@@ -339,6 +414,8 @@ async function capture() {
   await assertDisposableOutput(input.referencePath, input.outputPath, "web");
   const caseId = captureCaseId(input.referencePath);
   const transitionTimeMs = visualDiffTransitionTimeMs(caseId);
+  const identityKeyframeTimeMs = sentientIdentityKeyframeTimeMs(caseId);
+  const identityCase = identityKeyframeTimeMs !== undefined;
   const referenceSize = await readPngSize(input.referencePath);
   if (referenceSize.width % HANDOFF_SCALE !== 0 || referenceSize.height % HANDOFF_SCALE !== 0) {
     throw new Error(`Reference canvas must be divisible by the handoff ${HANDOFF_SCALE}x scale: ${referenceSize.width}x${referenceSize.height}`);
@@ -356,7 +433,9 @@ async function capture() {
       deviceScaleFactor: HANDOFF_SCALE,
       colorScheme: "dark",
       locale: "en-US",
-      reducedMotion: transitionTimeMs === undefined ? "reduce" : "no-preference",
+      reducedMotion: identityCase
+        ? caseId.endsWith("--reduced-motion") ? "reduce" : "no-preference"
+        : transitionTimeMs === undefined ? "reduce" : "no-preference",
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
@@ -374,8 +453,17 @@ async function capture() {
         && document.fonts.check('500 22px "Fraunces"', "Sentient")
         && document.fonts.check('500 12px "JetBrains Mono"', "state");
     });
-    await page.waitForFunction(() => document.documentElement.dataset.visualDiffReady === "true");
-    if (transitionTimeMs === undefined) {
+    await page.waitForFunction(() => document.documentElement.dataset.visualDiffReady === "true"
+      || document.documentElement.dataset.visualDiffRiveReady === "true");
+    if (identityCase) {
+      await page.waitForFunction(() => document.documentElement.dataset.visualDiffRiveReady === "true"
+        && document.querySelector(".sentient-identity__canvas")
+        && !document.querySelector(".sentient-identity__fallback"));
+      if (isSentientIdentityTransition(caseId)) {
+        await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
+      }
+      await captureSentientIdentityKeyframe(page, caseId, identityKeyframeTimeMs);
+    } else if (transitionTimeMs === undefined) {
       await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
       await applyState(page, caseId);
     } else {

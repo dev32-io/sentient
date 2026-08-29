@@ -1,5 +1,6 @@
 import type { AvatarSize, AvatarTint } from "../components/common/avatar.tsx";
 import type { IconName } from "../components/common/icon.tsx";
+import type { SentientIdentityState } from "../components/common/sentient-identity.tsx";
 
 export interface ActionButtonCase {
   variant: "primary" | "default" | "quiet" | "destructive";
@@ -152,6 +153,13 @@ export interface UserAvatarVariantProps {
 
 type UserAvatarVariantDefinition = VisualDiffVariantDefinition<UserAvatarVariantProps>;
 
+export interface SentientIdentityVariantProps {
+  readonly state: SentientIdentityState;
+  readonly transitionTo?: SentientIdentityState;
+}
+
+type SentientIdentityVariantDefinition = VisualDiffVariantDefinition<SentientIdentityVariantProps>;
+
 const USER_AVATAR_VARIANTS = {
   "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
   "terra-44": { props: { initial: "M", name: "Maya Chen", size: "lg" } },
@@ -279,6 +287,42 @@ const RANGE_VARIANTS = {
   "62": { props: { label: "Interface scale", value: 62, min: 0, max: 100, step: 1 } },
 } as const satisfies Readonly<Record<string, RangeVariantDefinition>>;
 
+const SENTIENT_IDENTITY_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0120ms",
+  "frame-002--0138ms",
+  "frame-003--0250ms",
+] as const;
+
+const SENTIENT_IDENTITY_THINKING_LOOP_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0270ms",
+  "frame-002--0540ms",
+  "frame-003--0810ms",
+  "frame-004--1080ms",
+  "frame-005--1350ms",
+] as const;
+
+const SENTIENT_IDENTITY_RESPONDING_LOOP_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0310ms",
+  "frame-002--0620ms",
+  "frame-003--0930ms",
+  "frame-004--1240ms",
+  "frame-005--1550ms",
+] as const;
+
+const SENTIENT_IDENTITY_VARIANTS = {
+  idle: { props: { state: "idle" } },
+  thinking: { props: { state: "thinking" } },
+  responding: { props: { state: "responding" } },
+  "idle-to-thinking": { props: { state: "idle", transitionTo: "thinking" } },
+  "thinking-to-responding": { props: { state: "thinking", transitionTo: "responding" } },
+  "responding-to-idle": { props: { state: "responding", transitionTo: "idle" } },
+  "thinking-loop": { props: { state: "thinking" } },
+  "responding-loop": { props: { state: "responding" } },
+} as const satisfies Readonly<Record<string, SentientIdentityVariantDefinition>>;
+
 export interface PlateVariantProps {
   readonly variant: "default";
 }
@@ -329,6 +373,23 @@ export const visualDiffComponentRegistry = {
       "amber-44": ["rest"],
       "clay-44": ["rest"],
       "fallback-44": ["rest"],
+    },
+  },
+  "sentient-identity": {
+    id: "sentient-identity",
+    fixtureAdapterId: "sentient-identity",
+    productionComponent: "gateway/webui/src/components/common/sentient-identity.tsx#SentientIdentity",
+    authority: "design/prototype/foundation-components/handoff",
+    variants: SENTIENT_IDENTITY_VARIANTS,
+    stateApplicability: {
+      idle: ["reduced-motion", "rest"],
+      thinking: ["reduced-motion", "rest"],
+      responding: ["reduced-motion", "rest"],
+      "idle-to-thinking": SENTIENT_IDENTITY_TRANSITION_FRAMES,
+      "thinking-to-responding": SENTIENT_IDENTITY_TRANSITION_FRAMES,
+      "responding-to-idle": SENTIENT_IDENTITY_TRANSITION_FRAMES,
+      "thinking-loop": SENTIENT_IDENTITY_THINKING_LOOP_FRAMES,
+      "responding-loop": SENTIENT_IDENTITY_RESPONDING_LOOP_FRAMES,
     },
   },
   "text-field": {
@@ -455,6 +516,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "toggle",
   "segmented-control",
   "user-avatar",
+  "sentient-identity",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

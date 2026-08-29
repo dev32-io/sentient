@@ -1,3 +1,4 @@
+import { Rive } from "@rive-app/canvas";
 import { render } from "preact";
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
@@ -5,6 +6,7 @@ import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
+import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
@@ -16,6 +18,7 @@ import {
   type RangeVariantProps,
   type SearchFieldVariantProps,
   type SegmentedControlVariantProps,
+  type SentientIdentityVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
@@ -34,6 +37,7 @@ interface VisualDiffFixtureAdapter {
 
 interface VisualDiffTransitionWindow extends Window {
   __startVisualDiffTransition?: () => void;
+  __visualDiffRive?: Pick<Rive, "stopRendering">;
 }
 
 type CheckboxTransitionDestination = "checked" | "mixed";
@@ -124,6 +128,48 @@ function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
 }
 
+const visualDiffRiveFactory: RiveFactory = (configuration) => {
+  const rive = new Rive({
+    ...configuration,
+    onLoad: () => {
+      const transitionWindow = window as VisualDiffTransitionWindow;
+      transitionWindow.__visualDiffRive = rive;
+      configuration.onLoad();
+      queueMicrotask(() => {
+        rive.stopRendering();
+        document.documentElement.dataset.visualDiffRiveReady = "true";
+      });
+    },
+    onLoadError: () => configuration.onLoadError(),
+  });
+  return rive;
+};
+
+function SentientIdentityFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const identity = fixture.props as SentientIdentityVariantProps;
+  const [state, setState] = useState(identity.state);
+  useEffect(() => {
+    const transitionTo = identity.transitionTo;
+    if (!transitionTo) return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => {
+      setState(transitionTo);
+      requestAnimationFrame(() => {
+        document.documentElement.dataset.visualDiffTransitionStarted = "true";
+      });
+    };
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete transitionWindow.__visualDiffRive;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+      delete document.documentElement.dataset.visualDiffTransitionStarted;
+      delete document.documentElement.dataset.visualDiffRiveReady;
+    };
+  }, [identity.transitionTo]);
+  return <SentientIdentity state={state} size={56} className="visual-diff-target" riveFactory={visualDiffRiveFactory} />;
+}
+
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
   "action-button": {
     // This adapter deliberately renders the production ActionButton, not a fixture substitute.
@@ -170,6 +216,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
         />
       );
     },
+  },
+  "sentient-identity": {
+    // This adapter mounts the production Rive-backed identity. The factory only
+    // records the real runtime for deterministic capture control.
+    render: (fixture) => <SentientIdentityFixture fixture={fixture} />,
   },
   "text-field": {
     // This adapter deliberately renders the production Field and its native input.

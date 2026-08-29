@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 export type SentientIdentityState = "idle" | "thinking" | "responding";
 
+export function normalizeSentientIdentityState(value: unknown): SentientIdentityState {
+  return value === "thinking" || value === "responding" ? value : "idle";
+}
+
 const TRIGGERS: Record<SentientIdentityState, string> = {
   idle: "toIdle",
   thinking: "toThinking",
@@ -45,14 +49,15 @@ function motionPreference(): MediaQueryList | null {
 }
 
 export function SentientIdentity({ state = "idle", size = 28, className = "", label = "Sentient", riveFactory = defaultRiveFactory }: SentientIdentityProps): JSX.Element {
+  const normalizedState = normalizeSentientIdentityState(state);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const instanceRef = useRef<RiveAdapter | null>(null);
   const inputsRef = useRef<StateMachineInput[]>([]);
-  const latestStateRef = useRef(state);
+  const latestStateRef = useRef<SentientIdentityState>(normalizedState);
   const reducedMotionRef = useRef(Boolean(motionPreference()?.matches));
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  latestStateRef.current = state;
+  latestStateRef.current = normalizedState;
 
   const applyLatest = (): void => {
     const inputs = inputsRef.current;
@@ -105,9 +110,9 @@ export function SentientIdentity({ state = "idle", size = 28, className = "", la
   }, [riveFactory]);
 
   useEffect(() => {
-    latestStateRef.current = state;
+    latestStateRef.current = normalizedState;
     applyLatest();
-  }, [state]);
+  }, [normalizedState]);
 
   useEffect(() => {
     const query = motionPreference();
@@ -121,7 +126,7 @@ export function SentientIdentity({ state = "idle", size = 28, className = "", la
     return () => query.removeEventListener?.("change", update);
   }, []);
 
-  const status = state === "idle" ? `${label} is idle` : `${label} is ${state}`;
+  const status = normalizedState === "idle" ? `${label} is idle` : `${label} is ${normalizedState}`;
   return (
     <span class={`sentient-identity${className ? ` ${className}` : ""}`} style={{ width: `${size}px`, height: `${size}px` }} role="status" aria-label={status}>
       {!failed && <canvas ref={canvasRef} class="sentient-identity__canvas" width={size} height={size} aria-hidden="true" />}
