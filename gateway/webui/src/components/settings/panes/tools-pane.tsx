@@ -10,7 +10,6 @@ import type {
   ProfileV1,
 } from "../../../services/profile-api.js";
 import { ActionButton, AsyncState, Disclosure, PaneHeader, SelectControl, SettingsCard, ToggleControl, type SelectOption } from "../../common/index.ts";
-import { Icon } from "../../common/icon.tsx";
 import {
   effectiveToolPermission,
   effectiveWildcardPermission,

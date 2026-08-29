@@ -1,6 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
-import { ActionButton, Field, type FieldProps, Plate, ProgressControl, type TextAreaProps } from "./foundation.tsx";
+import { ActionButton, Field, type FieldProps, Plate, type TextAreaProps } from "./foundation.tsx";
 import { BackspaceIcon } from "./icons/backspace.tsx";
 import { ChevronIcon } from "./icons/chevron.tsx";
 import { SearchIcon } from "./icons/search.tsx";

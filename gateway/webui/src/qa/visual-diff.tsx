@@ -222,8 +222,6 @@ function PinEntryFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.
     </div>
   );
 }
-  );
-}
 
 const visualDiffRiveFactory: RiveFactory = (configuration) => {
   const rive = new Rive({
@@ -538,9 +536,6 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
           className="visual-diff-stale-banner visual-diff-target"
           onRetry={() => {}}
         />
-      );
-    },
-  },
       );
     },
   },
