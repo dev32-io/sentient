@@ -314,6 +314,7 @@ enum VisualDiffFixtureRegistry {
         CheckboxFixtureCatalog.registration.componentID: CheckboxFixtureCatalog.registration,
         PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
         UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
+        MediaActionCardFixtureCatalog.registration.componentID: MediaActionCardFixtureCatalog.registration,
         TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
         ValidatedFieldFixtureCatalog.registration.componentID: ValidatedFieldFixtureCatalog.registration,
@@ -384,6 +385,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffUserAvatarRenderConfiguration? {
         UserAvatarFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func mediaActionCardRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffMediaActionCardRenderConfiguration? {
+        MediaActionCardFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func checkboxRenderConfiguration(
@@ -2717,6 +2724,137 @@ private enum PinEntryFixtureCatalog {
         componentID: "pin-entry",
         registrations: definitions.map(\.0),
         adapter: PinEntryFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+struct VisualDiffMediaActionCardRenderConfiguration {
+    let name: String
+    let initial: String
+    let tint: DesignUserAvatarTint
+    let detail: String
+}
+
+private struct MediaActionCardFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffMediaActionCardRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(MediaActionCardFixture(configuration: configuration))
+    }
+}
+
+private enum MediaActionCardFixtureMetrics {
+    // The approved 2x references retain a 52pt transparent frame around a
+    // 260pt card. These bounds belong to the isolated capture, not production.
+    static let cardWidth: CGFloat = 260
+    static let canvasInset: CGFloat = 52
+}
+
+private struct MediaActionCardFixture: View {
+    let configuration: VisualDiffMediaActionCardRenderConfiguration
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            DesignDominantVisualCard(
+                title: configuration.name,
+                detail: configuration.detail,
+                accessibilityLabel: "Continue as \(configuration.name)",
+                accessibilityId: "visual-diff-media-action-card",
+                quietHoverBorder: true,
+                action: {}
+            ) {
+                ElevatedUserAvatar(
+                    name: configuration.name,
+                    size: DesignMetrics.dominantAvatarSize,
+                    tint: configuration.tint,
+                    initial: configuration.initial
+                )
+            }
+            .frame(width: MediaActionCardFixtureMetrics.cardWidth)
+        }
+        .padding(MediaActionCardFixtureMetrics.canvasInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private enum MediaActionCardFixtureCatalog {
+    private struct State {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+
+        static func supported(_ id: String) -> Self {
+            Self(id: id, applicability: .supported)
+        }
+
+        static func unavailable(_ id: String, reason: VisualDiffMissingAuthorityReason) -> Self {
+            Self(id: id, applicability: .missingAuthority(reason))
+        }
+    }
+
+    private struct Variant {
+        let id: String
+        let configuration: VisualDiffMediaActionCardRenderConfiguration
+    }
+
+    private static let variants = [
+        Variant(
+            id: "user-sage",
+            configuration: VisualDiffMediaActionCardRenderConfiguration(
+                name: "Alex",
+                initial: "A",
+                tint: .sage,
+                detail: "Household member"
+            )
+        ),
+        Variant(
+            id: "user-terra",
+            configuration: VisualDiffMediaActionCardRenderConfiguration(
+                name: "Maya",
+                initial: "M",
+                tint: .terra,
+                detail: "Household owner"
+            )
+        ),
+    ]
+
+    private static let states = [
+        State.supported("rest"),
+        State.unavailable("hover", reason: .stateNotApplicable),
+        State.unavailable("focus", reason: .stateRequiresInteraction),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffMediaActionCardRenderConfiguration?)] =
+        variants.flatMap { variant in
+            states.map { state in
+                let fixture = VisualDiffFixtureCase(
+                    caseID: "media-action-card--\(variant.id)--\(state.id)",
+                    componentID: "media-action-card",
+                    variantID: variant.id,
+                    stateID: state.id
+                )
+                return (
+                    VisualDiffFixtureRegistration(
+                        fixture: fixture,
+                        applicability: state.applicability
+                    ),
+                    state.applicability == .supported ? variant.configuration : nil
+                )
+            }
+        }
+
+    static let renderConfigurations: [String: VisualDiffMediaActionCardRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "media-action-card",
+        registrations: definitions.map(\.0),
+        adapter: MediaActionCardFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

@@ -1304,9 +1304,85 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(unavailable.reason, .unknownCase)
     }
 
+    func testMediaActionCardRegistryPreservesReachableUserCases() throws {
+        let expectedSupported = Set([
+            "media-action-card--user-sage--rest",
+            "media-action-card--user-terra--rest",
+        ])
+        let expectedUnavailable = Set([
+            "media-action-card--user-sage--focus",
+            "media-action-card--user-sage--hover",
+            "media-action-card--user-terra--focus",
+            "media-action-card--user-terra--hover",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "media-action-card")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedSupported.union(expectedUnavailable)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            Set([
+                "media-action-card--user-sage--hover",
+                "media-action-card--user-terra--hover",
+            ])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            Set([
+                "media-action-card--user-sage--focus",
+                "media-action-card--user-terra--focus",
+            ])
+        )
+
+        let expectedMappings: [(String, String, String, DesignUserAvatarTint, String)] = [
+            ("media-action-card--user-sage--rest", "Alex", "A", .sage, "Household member"),
+            ("media-action-card--user-terra--rest", "Maya", "M", .terra, "Household owner"),
+        ]
+        for (caseID, name, initial, tint, detail) in expectedMappings {
+            guard let configuration = VisualDiffFixtureRegistry.mediaActionCardRenderConfiguration(for: caseID) else {
+                XCTFail("Missing media-action-card render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.name, name, caseID)
+            XCTAssertEqual(configuration.initial, initial, caseID)
+            XCTAssertEqual(configuration.tint, tint, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Reachable media-action-card case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+
+        guard case .missingAuthority(let iconCase) = VisualDiffFixtureRegistry.resolve(
+            caseID: "media-action-card--icon--rest"
+        ) else {
+            XCTFail("Icon media cards must remain outside the iOS fixture until a production owner exists")
+            return
+        }
+        XCTAssertEqual(iconCase.reason, .unknownCase)
+        guard case .missingAuthority(let imageCase) = VisualDiffFixtureRegistry.resolve(
+            caseID: "media-action-card--image--rest"
+        ) else {
+            XCTFail("Image media cards must remain outside the iOS fixture until media behavior is defined")
+            return
+        }
+        XCTAssertEqual(imageCase.reason, .unknownCase)
+    }
+
     func testIntegratedRegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
         let integratedComponentIDs = [
             "user-avatar",
+            "media-action-card",
             "checkbox",
             "icon-button",
             "text-field",

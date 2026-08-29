@@ -184,7 +184,10 @@ enum DesignMaterialAdapter {
     // surface; pointer hover tightens the face toward the sunk canvas.
     static let mediaCardElevatedMix = 0.12
     static let mediaCardHoverSunkMix = 0.18
-    static let mediaCardContactOpacity = 0.45
+    static let mediaCardHoverContactMix = 0.10
+    static let mediaCardHoverBlack = 0.94
+    static let mediaCardHoverShadowRadius: CGFloat = 28
+    static let mediaCardHoverShadowInset: CGFloat = 23
     static let mediaCardRestBlack = 0.90
     static let selectDisabledOpacity = 0.5
 
@@ -299,6 +302,11 @@ enum DesignMaterialShadowGeometry {
         radius: DesignMaterialAdapter.plateCastBlur,
         y: DesignMaterialAdapter.plateCastY,
         sourceInset: DesignMaterialAdapter.plateCastInset
+    )
+    static let mediaCardHover = DesignDropShadowGeometry(
+        radius: DesignMaterialAdapter.mediaCardHoverShadowRadius,
+        y: DesignMaterialAdapter.plateCastY,
+        sourceInset: DesignMaterialAdapter.mediaCardHoverShadowInset
     )
     static let float = DesignDropShadowGeometry(
         radius: DesignMaterialAdapter.floatCastBlur,

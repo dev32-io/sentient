@@ -139,6 +139,7 @@ struct DesignPane<Content: View>: View {
 
 private struct DominantVisualCardButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var focused
     let hovered: Bool
@@ -157,6 +158,9 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                 DuskColors.bgElev,
                 opacity: DesignMaterialAdapter.mediaCardElevatedMix
             )
+        let contactMix = pressed || raised
+            ? DesignMaterialAdapter.mediaCardHoverContactMix
+            : DesignMaterialAdapter.plateRestContactMix
         configuration.label
             .background {
                 shape.fill(
@@ -171,10 +175,12 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
             }
             .clipShape(shape)
             .overlay {
-                shape.stroke(
+                shape.strokeBorder(
                     focused
                         ? DuskColors.accent
-                        : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
+                        : contrast == .increased
+                            ? DuskColors.ink3
+                            : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
                     lineWidth: DesignMetrics.hairline
                 )
             }
@@ -183,15 +189,24 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     DesignSpreadShadow(
                         shape: shape,
                         color: .black.opacity(
-                            pressed ? 0.88 : DesignMaterialAdapter.mediaCardRestBlack
+                            pressed
+                                ? 0.88
+                                : raised
+                                    ? DesignMaterialAdapter.mediaCardHoverBlack
+                                    : DesignMaterialAdapter.mediaCardRestBlack
                         ),
                         geometry: pressed
                             ? DesignMaterialShadowGeometry.slatePressed
-                            : DesignMaterialShadowGeometry.plate
+                            : raised
+                                ? DesignMaterialShadowGeometry.mediaCardHover
+                                : DesignMaterialShadowGeometry.plate
                     )
                     DesignSpreadShadow(
                         shape: shape,
-                        color: DuskColors.line.opacity(DesignMaterialAdapter.mediaCardContactOpacity),
+                        color: DuskColors.bgSunk.overlaying(
+                            DuskColors.line,
+                            opacity: contactMix
+                        ),
                         geometry: DesignDropShadowGeometry(
                             radius: 0,
                             y: pressed ? 1 : 2,
@@ -200,7 +215,7 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     )
                 }
             }
-            .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
+            .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
             .opacity(isEnabled ? 1 : 0.58)
             // Touch-down is immediate; only pointer hover gets a transition.
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: raised)
