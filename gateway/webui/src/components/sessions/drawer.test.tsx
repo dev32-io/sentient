@@ -39,6 +39,40 @@ function Harness({ sessions }: { sessions: UseSessions }) {
 }
 
 describe("History drawer", () => {
+  it("renders the saved-results stale state and keeps retry on the session loader", async () => {
+    const sessions = sessionsFixture();
+    sessions.error.value = "network unavailable";
+    render(
+      <SessionsProvider value={sessions}>
+        <Drawer open onClose={() => {}} />
+      </SessionsProvider>,
+    );
+
+    await waitFor(() => expect(sessions.load).toHaveBeenCalledOnce());
+    const banner = screen.getByRole("alert");
+    expect(banner.textContent).toContain("Showing saved results");
+    expect(banner.textContent).toContain("Couldn’t refresh just now.");
+    expect(banner.querySelector("[data-state='checking']")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(sessions.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("derives checking from the authoritative refresh signal and disables retry", async () => {
+    const sessions = sessionsFixture();
+    sessions.loading.value = true;
+    render(
+      <SessionsProvider value={sessions}>
+        <Drawer open onClose={() => {}} />
+      </SessionsProvider>,
+    );
+
+    await waitFor(() => expect(sessions.load).toHaveBeenCalledOnce());
+    const banner = screen.getByRole("alert");
+    expect(banner.getAttribute("data-state")).toBe("checking");
+    expect((screen.getByRole("button", { name: "Checking…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(sessions.items.value).toHaveLength(1);
+  });
+
   it("keeps every closed drawer control out of sequential keyboard navigation", async () => {
     const sessions = sessionsFixture();
     const { container } = render(<Harness sessions={sessions} />);

@@ -11,7 +11,7 @@ import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
-import { Notice } from "../components/common/composites.tsx";
+import { StaleBanner } from "../components/sessions/stale-banner.tsx";
 import {
   type ActionButtonVariantProps,
   type CheckboxVariantProps,
@@ -25,6 +25,7 @@ import {
   type SearchFieldVariantProps,
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
+  type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
@@ -377,6 +378,25 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "stale-banner": {
+    // This adapter deliberately renders the production stale-banner composite.
+    render: (fixture) => {
+      const banner = fixture.props as StaleBannerVariantProps;
+      if (banner.title !== "Showing saved results" || banner.detail !== "Couldn’t refresh just now." || banner.actionLabel !== "Retry") {
+        throw new Error("Unsupported stale-banner fixture copy");
+      }
+      return (
+        <StaleBanner
+          checking={fixture.state === "checking"}
+          className="visual-diff-stale-banner visual-diff-target"
+          onRetry={() => {}}
+        />
+      );
+    },
+  },
+      );
+    },
+  },
 };
 
 function failFixture(resolution: InvalidVisualDiffCase): never {
@@ -421,7 +441,7 @@ function VisualDiffFixture() {
   }, []);
 
   return (
-    <main class="visual-diff-canvas snt-surface" data-case-id={caseId} data-component-id={fixture.componentId}>
+    <main class={`visual-diff-canvas visual-diff-canvas--${fixture.componentId} snt-surface`} data-case-id={caseId} data-component-id={fixture.componentId}>
       {fixtureAdapter.render(fixture)}
     </main>
   );
@@ -431,7 +451,10 @@ const style = document.createElement("style");
 style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
+  /* Common-composite handoff canvases retain their source specimen gutter. */
+  .visual-diff-canvas--stale-banner { padding: 0 24px 24px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
+  .visual-diff-stale-banner { width: min(480px, 100%); }
   /* Preserve the handoff artboard's lower breathing room around the source margin. */
   .visual-diff-no-results { width: min(468px, 100%); margin-bottom: 10px; }
   .visual-diff-text-field { width: min(320px, 100%); }

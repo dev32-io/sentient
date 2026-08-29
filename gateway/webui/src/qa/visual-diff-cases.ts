@@ -397,6 +397,24 @@ const NO_RESULTS_VARIANTS = {
   },
 } as const satisfies Readonly<Record<string, NoResultsStateVariantDefinition>>;
 
+export interface StaleBannerVariantProps {
+  readonly title: string;
+  readonly detail: string;
+  readonly actionLabel: string;
+}
+
+type StaleBannerVariantDefinition = VisualDiffVariantDefinition<StaleBannerVariantProps>;
+
+const STALE_BANNER_VARIANTS = {
+  "saved-results": {
+    props: {
+      title: "Showing saved results",
+      detail: "Couldn’t refresh just now.",
+      actionLabel: "Retry",
+    },
+  },
+} as const satisfies Readonly<Record<string, StaleBannerVariantDefinition>>;
+
 export const visualDiffComponentRegistry = {
   "action-button": {
     id: "action-button",
@@ -596,6 +614,16 @@ export const visualDiffComponentRegistry = {
       default: ["empty"],
     },
   },
+  "stale-banner": {
+    id: "stale-banner",
+    fixtureAdapterId: "stale-banner",
+    productionComponent: "gateway/webui/src/components/sessions/stale-banner.tsx#StaleBanner",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: STALE_BANNER_VARIANTS,
+    stateApplicability: {
+      "saved-results": ["checking", "rest"],
+    },
+  },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
 
 // These components have no authority for states outside their approved handoff
@@ -615,6 +643,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "sentient-identity",
   "notice",
   "no-results",
+  "stale-banner",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

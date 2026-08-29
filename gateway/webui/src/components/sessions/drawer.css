@@ -71,39 +71,6 @@
 }
 .drawer__close { flex: 0 0 auto; }
 
-/* ─── Error banner ─── */
-
-.drawer__error {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  background: color-mix(in oklab, var(--color-warn) 18%, var(--color-bg-elev));
-  border: 1px solid color-mix(in oklab, var(--color-warn) 35%, var(--color-line-soft));
-  border-radius: var(--radius-md);
-  color: var(--color-ink);
-  font-size: var(--font-size-xs);
-}
-.drawer__error-retry {
-  background: transparent;
-  border: 1px solid color-mix(in oklab, var(--color-warn) 50%, var(--color-line));
-  border-radius: var(--radius-pill);
-  padding: 2px 10px;
-  color: var(--color-ink);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--motion-fast), border-color var(--motion-fast);
-}
-.drawer__error-retry:hover {
-  background: color-mix(in oklab, var(--color-warn) 22%, transparent);
-}
-.drawer__error-retry--inline {
-  margin-top: var(--space-md);
-}
-
 /* ─── List scroll region ─── */
 
 .drawer__list {

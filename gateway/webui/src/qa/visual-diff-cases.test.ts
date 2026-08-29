@@ -62,6 +62,11 @@ const CURRENT_NOTICE_CASES = [
   "notice--error--rest",
 ] as const;
 
+const CURRENT_STALE_BANNER_CASES = [
+  "stale-banner--saved-results--checking",
+  "stale-banner--saved-results--rest",
+] as const;
+
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
   "user-avatar--terra-44--rest",
@@ -942,6 +947,28 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the approved stale-banner states and production provenance", () => {
+    const staleBanner = visualDiffComponentRegistry["stale-banner"];
+    expect(staleBanner.fixtureAdapterId).toBe("stale-banner");
+    expect(staleBanner.productionComponent).toBe("gateway/webui/src/components/sessions/stale-banner.tsx#StaleBanner");
+    expect(staleBanner.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(staleBanner.stateApplicability).toEqual({ "saved-results": ["checking", "rest"] });
+    expect(staleBanner.variants["saved-results"].props).toEqual({
+      title: "Showing saved results",
+      detail: "Couldn’t refresh just now.",
+      actionLabel: "Retry",
+    });
+
+    for (const caseId of CURRENT_STALE_BANNER_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("stale-banner");
+        expect(resolution.case.fixtureAdapterId).toBe("stale-banner");
+      }
+    }
+  });
+
   it("resolves unapproved loading-state variants and states", () => {
     expect(resolveVisualDiffCase("loading-state--unknown--active")).toEqual({
       status: "unsupported",
@@ -973,6 +1000,16 @@ describe("visual diff component cases", () => {
         stateId,
       });
     }
+  });
+
+  it("resolves unapproved stale-banner states to missing authority", () => {
+    expect(resolveVisualDiffCase("stale-banner--saved-results--hover")).toEqual({
+      status: "missing-authority",
+      caseId: "stale-banner--saved-results--hover",
+      componentId: "stale-banner",
+      variantId: "saved-results",
+      stateId: "hover",
+    });
   });
 
   it("does not resolve inherited registry keys", () => {

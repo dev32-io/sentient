@@ -7,8 +7,9 @@ import { RenameDialog } from "./rename-dialog.tsx";
 import { SessionList } from "./session-list.tsx";
 import { SessionSearchBox } from "./session-search-box.tsx";
 import { ActionButton, FoundationIconButton } from "../common/foundation.tsx";
-import { AsyncState, NoResultsState, Notice } from "../common/composites.tsx";
+import { AsyncState, NoResultsState } from "../common/composites.tsx";
 import { XIcon } from "../common/icons/x.tsx";
+import { StaleBanner } from "./stale-banner.tsx";
 
 const EMPTY_DEFAULT = "No past chats yet.";
 const EMPTY_LOAD_FAIL = "Couldn't load sessions — try again.";
@@ -75,7 +76,7 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
   const emptyMessage = hasError ? EMPTY_LOAD_FAIL : EMPTY_DEFAULT;
   const showLoadingBlank = sessions.loading.value && sessions.items.value.length === 0;
   const showNoResults = searchActive && !hasError && !showLoadingBlank && visible.length === 0;
-  const showStaleErrorBanner = hasError && visible.length > 0;
+  const showStaleBanner = visible.length > 0 && (hasError || sessions.loading.value);
   const clearSearch = (): void => {
     setClearSearchSignal((value) => (value ?? 0) + 1);
     void sessions.search("");
@@ -102,13 +103,7 @@ export function Drawer({ open, onClose }: DrawerProps): JSX.Element {
             void sessions.search(q);
           }}
         />
-        {showStaleErrorBanner && (
-          <Notice
-            tone="error"
-            title="History may be out of date"
-            action={<ActionButton variant="quiet" className="drawer__error-retry" onClick={() => void sessions.load()}>Retry</ActionButton>}
-          >{null}</Notice>
-        )}
+        {showStaleBanner && <StaleBanner checking={sessions.loading.value} onRetry={() => void sessions.load()} />}
         <div class="drawer__list">
           {showLoadingBlank ? (
             <AsyncState state="loading" title="Loading past chats" />
