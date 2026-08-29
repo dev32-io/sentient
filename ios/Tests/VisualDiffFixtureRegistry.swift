@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 @testable import SentientApp
 
 enum VisualDiffMissingAuthorityReason: Equatable {
@@ -420,16 +421,39 @@ private enum PlateFixtureMetrics {
     // These values follow the immutable plate CSS rather than compensating
     // for a particular renderer: `.snt-plate__head` is 14px / 12px and the
     // card subtitle's margin is 3px.
+    static let titleLineHeight = DesignMetrics.controlLabelSize * 1.35
+    static let subtitleLineHeight = TypeScale.sm * 1.5
+    static let bodyLineHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
     static let subtitleMargin: CGFloat = 3
-    static let canvasInset = Space.md * 2
-    static let headerTopPadding: CGFloat = 14
-    static let headerBottomPadding: CGFloat = 12
-    static let bodyVerticalPadding = Space.lg
 
-    // Use the same project typography adapter as native production surfaces.
-    static let titleFont = Typo.ui(DesignMetrics.controlLabelSize, .semibold)
-    static let subtitleFont = Typo.ui(TypeScale.sm)
-    static let bodyFont = Typo.ui(TypeScale.base)
+    // SwiftUI's overlay border does not consume layout. These insets preserve
+    // the CSS border-box before applying the source padding values.
+    static let borderInset = DesignMetrics.hairline
+    static let canvasInset = Space.md * 2
+    static let headerTopPadding = 14 + borderInset
+    // SwiftUI rounds this fractional line box at the 2x handoff scale;
+    // retaining the half-point leading keeps the divider in the same physical
+    // row as the CSS border-box.
+    static let headerBottomPadding = 12 + borderInset + borderInset / 2
+    static let bodyTopPadding = Space.lg + borderInset
+    static let bodyBottomPadding = Space.lg - borderInset / 2
+
+    // The handoff captures fixed CSS px at the default accessibility size. Use
+    // the bundled faces directly so SwiftUI's relative text scaling does not
+    // change the isolated reference geometry.
+    static let titleFont = Font(
+        UIFont(name: "DMSans-SemiBold", size: DesignMetrics.controlLabelSize)!
+    )
+    static let subtitleFont = Font(
+        UIFont(name: "DMSans-Regular", size: TypeScale.sm)!
+    )
+    static let bodyFont = Font(
+        UIFont(name: "DMSans-Regular", size: TypeScale.base)!
+    )
+
+    static func horizontalPadding(_ prototypePadding: CGFloat) -> CGFloat {
+        prototypePadding + borderInset
+    }
 }
 
 private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
@@ -448,13 +472,22 @@ private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
                         // Mirrors `.snt-card-title { letter-spacing: -.005em; }`.
                         .kerning(-DesignMetrics.controlLabelSize * 0.005)
                         .foregroundStyle(DuskColors.ink)
+                        // Keep each native text run in one render-time
+                        // compositing pass; this is not output post-processing.
+                        .drawingGroup()
+                        .frame(minHeight: PlateFixtureMetrics.titleLineHeight, alignment: .topLeading)
                     Text("Stable low-elevation surface.")
                         .font(PlateFixtureMetrics.subtitleFont)
+                        // CoreText places this face one half-point higher than
+                        // the CSS line box; keep the baseline in that box.
+                        .baselineOffset(-PlateFixtureMetrics.borderInset / 2)
                         .foregroundStyle(DuskColors.ink2)
+                        .drawingGroup()
+                        .frame(minHeight: PlateFixtureMetrics.subtitleLineHeight, alignment: .topLeading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, PlateFixtureMetrics.headerTopPadding)
-                .padding(.horizontal, configuration.horizontalPadding)
+                .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
                 .padding(.bottom, PlateFixtureMetrics.headerBottomPadding)
                 .background(
                     LinearGradient(
@@ -475,8 +508,11 @@ private struct PlateFixtureAdapter: VisualDiffNativeFixtureAdapter {
                 Text("Grouped content rests on a quiet slate.")
                     .font(PlateFixtureMetrics.bodyFont)
                     .foregroundStyle(DuskColors.ink2)
-                    .padding(.horizontal, configuration.horizontalPadding)
-                    .padding(.vertical, PlateFixtureMetrics.bodyVerticalPadding)
+                    .drawingGroup()
+                    .frame(minHeight: PlateFixtureMetrics.bodyLineHeight, alignment: .topLeading)
+                    .padding(.horizontal, PlateFixtureMetrics.horizontalPadding(configuration.horizontalPadding))
+                    .padding(.top, PlateFixtureMetrics.bodyTopPadding)
+                    .padding(.bottom, PlateFixtureMetrics.bodyBottomPadding)
             }
             .designPlate()
             .padding(PlateFixtureMetrics.canvasInset)
