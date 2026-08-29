@@ -741,6 +741,28 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testStaleBannerRegistryPreservesApprovedStatesAndMappings() {
+        let expected: [(String, Bool)] = [
+            ("stale-banner--saved-results--rest", false),
+            ("stale-banner--saved-results--checking", true),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "stale-banner")
+
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map(\.0))
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, checking) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.staleBannerRenderConfiguration(for: caseID) else {
+                XCTFail("Missing stale-banner render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.checking, checking, caseID)
+        }
+    }
+
     func testChipRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "chip--selected--compact-rest",

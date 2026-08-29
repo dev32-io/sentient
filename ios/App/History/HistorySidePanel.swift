@@ -51,10 +51,11 @@ struct HistorySidePanel: View {
         model.error != nil && model.visible.isEmpty && !model.loading
     }
 
-    /// True when a re-fetch failed but rows are still loaded — a thin stale
-    /// banner sits above the (stale) list. Mirrors drawer.tsx showStaleErrorBanner.
+    /// True when saved rows remain visible during a refresh or after that
+    /// refresh fails. `loading` and `error` are the existing HistoryViewModel
+    /// signals; the panel does not create a second freshness owner.
     private var showsStaleBanner: Bool {
-        model.error != nil && !model.visible.isEmpty
+        !model.visible.isEmpty && (model.error != nil || model.loading)
     }
 
     /// Spinner while the first load is still pending (the open slide + initial
@@ -76,7 +77,12 @@ struct HistorySidePanel: View {
                 searchField
                 pastChatsTitle
                 if showsStaleBanner {
-                    SessionsStaleBanner(onRetry: { Task { await model.refresh() } })
+                    SessionsStaleBanner(
+                        onRetry: { Task { await model.refresh() } },
+                        checking: model.loading
+                    )
+                    .padding(.horizontal, Space.md)
+                    .padding(.bottom, Space.xs)
                 }
                 if showsErrorEmpty {
                     SessionsErrorEmpty(onRetry: { Task { await model.refresh() } })

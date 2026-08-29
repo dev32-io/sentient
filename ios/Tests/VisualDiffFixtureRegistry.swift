@@ -178,6 +178,10 @@ struct VisualDiffLoadingStateRenderConfiguration {
     let reducedMotion: Bool
 }
 
+struct VisualDiffStaleBannerRenderConfiguration: Equatable {
+    let checking: Bool
+}
+
 struct VisualDiffSegmentOptionConfiguration {
     let value: String
     let label: String
@@ -335,6 +339,7 @@ enum VisualDiffFixtureRegistry {
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
+        StaleBannerFixtureCatalog.registration.componentID: StaleBannerFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
         DisclosureFixtureCatalog.registration.componentID: DisclosureFixtureCatalog.registration,
@@ -456,6 +461,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffLoadingStateRenderConfiguration? {
         LoadingStateFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func staleBannerRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffStaleBannerRenderConfiguration? {
+        StaleBannerFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func segmentedControlRenderConfiguration(
@@ -1719,6 +1730,69 @@ private enum DisclosureFixtureCatalog {
             configurations: renderConfigurations,
             motionConfigurations: motionRenderConfigurations
         )
+    )
+}
+
+private struct StaleBannerFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffStaleBannerRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                SessionsStaleBanner(
+                    onRetry: {},
+                    checking: configuration.checking
+                )
+                .frame(width: StaleBannerFixtureMetrics.width)
+            }
+            // The handoff canvas retains the common-composite specimen's
+            // trailing and bottom gutter around the 480pt banner.
+            .padding(.trailing, StaleBannerFixtureMetrics.canvasGutter)
+            .padding(.bottom, StaleBannerFixtureMetrics.canvasGutter)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        )
+    }
+}
+
+private enum StaleBannerFixtureMetrics {
+    static let width: CGFloat = 480
+    static let canvasGutter = Space.md * 2
+}
+
+private enum StaleBannerFixtureCatalog {
+    private static let states = [
+        ("rest", false),
+        ("checking", true),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffStaleBannerRenderConfiguration)] =
+        states.map { stateID, checking in
+            let fixture = VisualDiffFixtureCase(
+                caseID: "stale-banner--saved-results--\(stateID)",
+                componentID: "stale-banner",
+                variantID: "saved-results",
+                stateID: stateID
+            )
+            return (
+                VisualDiffFixtureRegistration(fixture: fixture, applicability: .supported),
+                VisualDiffStaleBannerRenderConfiguration(checking: checking)
+            )
+        }
+
+    static let renderConfigurations: [String: VisualDiffStaleBannerRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "stale-banner",
+        registrations: definitions.map(\.0),
+        adapter: StaleBannerFixtureAdapter(configurations: renderConfigurations)
     )
 }
 
