@@ -1,0 +1,42 @@
+{
+  "component": "inline-secret-editor",
+  "platform": "web",
+  "profile": {
+    "background": "#2B2621",
+    "threshold": 0.56,
+    "maxDiffPercentage": 0.2,
+    "percentageBasis": "visible-alpha-union",
+    "antialiasingIgnored": true
+  },
+  "securityAdaptation": "Production reports presence only. Captures intentionally contain no stored, reconstructed, masked, suffixed, or fixture secret value.",
+  "captures": [
+    {
+      "state": "read",
+      "actual": "read.png",
+      "sha256": "567ea6823106fb17b74e6b42b7bf78dab9e92ce641e97717afb77ee0fc47b534",
+      "diffCount": 1400,
+      "diffPercentage": 0.88,
+      "withinLimit": false,
+      "issue": "The immutable reference uses timestamp and masked-suffix content unavailable under the production presence-only contract."
+    },
+    {
+      "state": "editing",
+      "actual": "editing.png",
+      "sha256": "642e69a2777c291c816a14d73954989e53080c2bc1d5a51afdbe0c517a095a5e",
+      "diffCount": 4317,
+      "diffPercentage": 0.82,
+      "withinLimit": false,
+      "issue": "The immutable reference pre-fills a secret-like value; the production-safe fixture keeps the write-only field empty and the save action disabled."
+    }
+  ],
+  "heldStates": [
+    {
+      "state": "saving",
+      "reason": "A faithful static capture requires populating the write-only field; no secret material was fabricated for evidence."
+    },
+    {
+      "state": "managed-disabled",
+      "reason": "Production has no managed-value owner or API state."
+    }
+  ]
+}

@@ -233,6 +233,17 @@ export interface NoResultsStateVariantProps {
 
 type NoResultsStateVariantDefinition = VisualDiffVariantDefinition<NoResultsStateVariantProps>;
 
+export interface InlineSecretEditorVariantProps {
+  readonly label: string;
+  readonly hasKey: boolean;
+}
+
+type InlineSecretEditorVariantDefinition = VisualDiffVariantDefinition<InlineSecretEditorVariantProps>;
+
+const INLINE_SECRET_EDITOR_VARIANTS = {
+  "access-key": { props: { label: "Access key", hasKey: true } },
+} as const satisfies Readonly<Record<string, InlineSecretEditorVariantDefinition>>;
+
 const USER_AVATAR_VARIANTS = {
   "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
   "terra-44": { props: { initial: "M", name: "Maya Chen", size: "lg" } },
@@ -980,6 +991,16 @@ export const visualDiffComponentRegistry = {
       "dirty-to-done": APPLY_BAR_TRANSITION_FRAMES,
     },
   },
+  "inline-secret-editor": {
+    id: "inline-secret-editor",
+    fixtureAdapterId: "inline-secret-editor",
+    productionComponent: "gateway/webui/src/components/settings/panes/secret-row.tsx#SecretRow",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: INLINE_SECRET_EDITOR_VARIANTS,
+    stateApplicability: {
+      "access-key": ["editing", "read"],
+    },
+  },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
 
 // These components have no authority for states outside their approved handoff
@@ -1010,6 +1031,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "apply-bar",
   "settings-group",
   "settings-editor",
+  "inline-secret-editor",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

@@ -6,6 +6,7 @@ import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/settings/apply-bar/apply-bar.css";
+import "../components/settings/settings-shell.css";
 import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { SelectMenu } from "../components/common/select-menu.tsx";
@@ -16,6 +17,7 @@ import { Icon } from "../components/common/icon.tsx";
 import { StaleBanner } from "../components/sessions/stale-banner.tsx";
 import { ApplyBar } from "../components/settings/apply-bar/apply-bar.tsx";
 import type { ApplyDeps, PendingOpWithPayload } from "../components/settings/apply-bar/apply-bar-machine.ts";
+import { SecretRow } from "../components/settings/panes/secret-row.tsx";
 import {
   type ActionButtonVariantProps,
   type ApplyBarVariantProps,
@@ -24,6 +26,7 @@ import {
   type DisclosureVariantProps,
   type FilterBarVariantProps,
   type IconButtonVariantProps,
+  type InlineSecretEditorVariantProps,
   type LoadingStateVariantProps,
   type MediaActionCardVariantProps,
   type NoResultsStateVariantProps,
@@ -744,6 +747,25 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // contract; it does not replace the async state machine with specimen DOM.
     render: (fixture) => <ApplyBarFixture fixture={fixture} />,
   },
+  "inline-secret-editor": {
+    // The fixture mounts the production write-only editor. Presence copy is the
+    // only safe adaptation because the production API never returns a suffix.
+    render: (fixture) => {
+      const editor = fixture.props as InlineSecretEditorVariantProps;
+      return (
+        <div class="visual-diff-inline-secret-editor visual-diff-target">
+          <SecretRow
+            label={editor.label}
+            status={{ has_key: editor.hasKey }}
+            editing={fixture.state === "editing"}
+            onStartEdit={() => {}}
+            onCancel={() => {}}
+            onSave={() => Promise.resolve()}
+          />
+        </div>
+      );
+    },
+  },
 };
 
 function failFixture(resolution: InvalidVisualDiffCase): never {
@@ -838,6 +860,12 @@ style.textContent = `
     width: 100%;
     transform: none;
   }
+  .visual-diff-canvas--inline-secret-editor {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 64px;
+  }
+  .visual-diff-inline-secret-editor { width: 500px; }
   .visual-diff-pin-entry-frame { width: min(384px, 100%); height: 496px; display: flex; align-items: flex-start; justify-content: flex-start; }
   .visual-diff-pin-entry { width: 360px; }
   /* Preserve the handoff artboard's lower breathing room around the source margin. */

@@ -1448,6 +1448,26 @@ describe("visual diff component cases", () => {
     });
   });
 
+  it("registers only production-safe inline secret editor states", () => {
+    const editor = visualDiffComponentRegistry["inline-secret-editor"];
+    expect(editor.productionComponent).toBe("gateway/webui/src/components/settings/panes/secret-row.tsx#SecretRow");
+    expect(editor.stateApplicability).toEqual({ "access-key": ["editing", "read"] });
+    expect(editor.variants["access-key"].props).toEqual({ label: "Access key", hasKey: true });
+
+    for (const stateId of ["editing", "read"]) {
+      expect(resolveVisualDiffCase(`inline-secret-editor--access-key--${stateId}`).status).toBe("ready");
+    }
+    for (const stateId of ["saving", "disabled"]) {
+      expect(resolveVisualDiffCase(`inline-secret-editor--access-key--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `inline-secret-editor--access-key--${stateId}`,
+        componentId: "inline-secret-editor",
+        variantId: "access-key",
+        stateId,
+      });
+    }
+  });
+
   it("keeps every registered fixture case globally unique", () => {
     const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
       Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>
