@@ -18,7 +18,7 @@ enum SentientIdentityState: CaseIterable, Equatable {
 
     var statusLabel: String {
         switch self {
-        case .idle: "Sentient is ready"
+        case .idle: "Sentient is idle"
         case .thinking: "Sentient is thinking"
         case .responding: "Sentient is responding"
         }
@@ -61,6 +61,10 @@ final class SentientIdentityStateController {
         guard reducedMotion != reduced else { return }
         reducedMotion = reduced
         driver.setReducedMotion(reduced)
+        // The authored machine has separate reduced-motion variants. Re-apply
+        // the latest state after changing the input so a live identity leaves
+        // any in-flight transition and settles on the matching variant.
+        driver.transition(to: state)
     }
 }
 
@@ -71,6 +75,8 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
 
     init(
         initialState: SentientIdentityState,
+        reducedMotion: Bool = false,
+        autoPlay: Bool = true,
         bundle: Bundle = .main,
         resourceExists: (Bundle) -> Bool = {
             $0.url(forResource: "sentient-avatar", withExtension: "riv") != nil
@@ -78,7 +84,11 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
     ) {
         guard resourceExists(bundle) else {
             riveViewModel = nil
-            controller = SentientIdentityStateController(state: initialState, driver: MissingIdentityDriver())
+            controller = SentientIdentityStateController(
+                state: initialState,
+                reducedMotion: reducedMotion,
+                driver: MissingIdentityDriver()
+            )
             return
         }
 
@@ -94,13 +104,21 @@ final class RiveIdentityModel: ObservableObject, SentientIdentityDriving {
                 stateMachineName: "Avatar",
                 fit: .contain,
                 alignment: .center,
-                autoPlay: true,
+                autoPlay: autoPlay,
                 artboardName: "SentientAvatar"
             )
-            controller = SentientIdentityStateController(state: initialState, driver: self)
+            controller = SentientIdentityStateController(
+                state: initialState,
+                reducedMotion: reducedMotion,
+                driver: self
+            )
         } catch {
             riveViewModel = nil
-            controller = SentientIdentityStateController(state: initialState, driver: MissingIdentityDriver())
+            controller = SentientIdentityStateController(
+                state: initialState,
+                reducedMotion: reducedMotion,
+                driver: MissingIdentityDriver()
+            )
         }
     }
 
@@ -124,14 +142,35 @@ private final class MissingIdentityDriver: SentientIdentityDriving {
 struct RiveSentientIdentity: View {
     let state: SentientIdentityState
     let size: CGFloat
+    private let reducedMotionOverride: Bool?
 
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @StateObject private var model: RiveIdentityModel
 
     init(state: SentientIdentityState, size: CGFloat = SentientMarkLayout.defaultSize) {
+        self.init(
+            state: state,
+            size: size,
+            model: RiveIdentityModel(initialState: state)
+        )
+    }
+
+    /// Internal injection keeps deterministic capture on the same production
+    /// view while leaving the shipped model configuration unchanged.
+    init(
+        state: SentientIdentityState,
+        size: CGFloat,
+        model: RiveIdentityModel,
+        reducedMotionOverride: Bool? = nil
+    ) {
         self.state = state
         self.size = size
-        _model = StateObject(wrappedValue: RiveIdentityModel(initialState: state))
+        self.reducedMotionOverride = reducedMotionOverride
+        _model = StateObject(wrappedValue: model)
+    }
+
+    private var effectiveReducedMotion: Bool {
+        reducedMotionOverride ?? reducedMotion
     }
 
     var body: some View {
@@ -148,9 +187,12 @@ struct RiveSentientIdentity: View {
         .frame(width: size, height: size)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.statusLabel)
-        .onAppear { model.controller.setReducedMotion(reducedMotion) }
+        .onAppear { model.controller.setReducedMotion(effectiveReducedMotion) }
         .onChange(of: state) { _, latest in model.controller.request(latest) }
-        .onChange(of: reducedMotion) { _, reduced in model.controller.setReducedMotion(reduced) }
+        .onChange(of: reducedMotion) { _, reduced in
+            guard reducedMotionOverride == nil else { return }
+            model.controller.setReducedMotion(reduced)
+        }
     }
 }
 

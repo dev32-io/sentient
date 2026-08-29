@@ -1,4 +1,5 @@
 import ImageIO
+import MetalKit
 import SnapshotTesting
 import SwiftUI
 import UIKit
@@ -22,6 +23,7 @@ private final class VisualDiffCanvasViewController: UIViewController {
 /// Exports one deterministic implementation PNG for the repository-local ODiff
 /// feedback loop. Ordinary unit-test runs skip this test unless the capture
 /// script owns a fresh, serialized request file.
+@MainActor
 final class VisualDiffCaptureTests: XCTestCase {
     func testCaptureRequestedReference() throws {
         let requestURL = URL(fileURLWithPath: "/tmp/sentient-visual-diff-request")
@@ -67,8 +69,15 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
 
         let logicalSize = CGSize(width: pixelSize.width / 2, height: pixelSize.height / 2)
-        let caseID = referenceURL.deletingPathExtension().lastPathComponent
-        let fixture = try fixture(for: caseID)
+        let caseID = visualDiffCaseID(for: referenceURL)
+        let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
+        let fixtureView: AnyView
+        if let identityCapture {
+            fixtureView = identityCapture.makeFixture(size: SentientIdentityFixtureMetrics.size)
+        } else {
+            fixtureView = try fixture(for: caseID)
+        }
+        let fixture = fixtureView
             .frame(width: logicalSize.width, height: logicalSize.height)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, Calendar(identifier: .gregorian))
@@ -89,6 +98,9 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
         let controller = UIHostingController(rootView: AnyView(fixture))
         controller.view.backgroundColor = .clear
+        if identityCapture != nil {
+            controller.safeAreaRegions = []
+        }
         let strategy = Snapshotting<UIViewController, UIImage>.image(
             size: logicalSize,
             traits: traits
@@ -181,7 +193,22 @@ final class VisualDiffCaptureTests: XCTestCase {
 
         let rendered = expectation(description: "Render \(caseID)")
         var image: UIImage?
-        if usesNativeTextInputCapture {
+        if let identityCapture {
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            image = try captureRiveIdentity(
+                identityCapture,
+                controller: controller,
+                size: logicalSize
+            )
+            XCTAssertTrue(
+                identityCapture.didPrepare,
+                identityCapture.preparationError.map(String.init(describing:)) ?? "Rive identity capture did not prepare"
+            )
+            XCTAssertNil(identityCapture.preparationError)
+            rendered.fulfill()
+        } else if usesNativeTextInputCapture {
             // The handoff PNGs are standard-sRGB references. Keep the native
             // view unchanged, but prevent the simulator's automatic Display-P3
             // renderer from changing the encoded comparison colors.
@@ -764,6 +791,80 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testSentientIdentityRegistryPreservesStaticAndMotionAuthority() {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "sentient-identity")
+        let expectedStatic = Set([
+            "sentient-identity--idle--rest",
+            "sentient-identity--idle--reduced-motion",
+            "sentient-identity--thinking--rest",
+            "sentient-identity--thinking--reduced-motion",
+            "sentient-identity--responding--rest",
+            "sentient-identity--responding--reduced-motion",
+        ])
+        let transitionNames = ["idle-to-thinking", "thinking-to-responding", "responding-to-idle"]
+        let frameNames = [
+            "frame-000--0000ms",
+            "frame-001--0120ms",
+            "frame-002--0138ms",
+            "frame-003--0250ms",
+        ]
+        let expectedTransitions = Set(
+            transitionNames.flatMap { transition in
+                frameNames.map { "sentient-identity--\(transition)--\($0)" }
+            }
+        )
+        let expectedLoops = Set([
+            "sentient-identity--thinking-loop--frame-000--0000ms",
+            "sentient-identity--thinking-loop--frame-001--0270ms",
+            "sentient-identity--thinking-loop--frame-002--0540ms",
+            "sentient-identity--thinking-loop--frame-003--0810ms",
+            "sentient-identity--thinking-loop--frame-004--1080ms",
+            "sentient-identity--thinking-loop--frame-005--1350ms",
+            "sentient-identity--responding-loop--frame-000--0000ms",
+            "sentient-identity--responding-loop--frame-001--0310ms",
+            "sentient-identity--responding-loop--frame-002--0620ms",
+            "sentient-identity--responding-loop--frame-003--0930ms",
+            "sentient-identity--responding-loop--frame-004--1240ms",
+            "sentient-identity--responding-loop--frame-005--1550ms",
+        ])
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedTransitions).union(expectedLoops)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        let transition = "sentient-identity--idle-to-thinking--frame-002--0138ms"
+        guard let configuration = VisualDiffFixtureRegistry.sentientIdentityRenderConfiguration(for: transition) else {
+            XCTFail("Missing identity transition configuration")
+            return
+        }
+        XCTAssertEqual(configuration.initialState, .idle)
+        XCTAssertEqual(configuration.targetState, .thinking)
+        XCTAssertFalse(configuration.reducedMotion)
+        XCTAssertEqual(configuration.timeMs, 138)
+
+        let reduced = "sentient-identity--responding--reduced-motion"
+        guard let reducedConfiguration = VisualDiffFixtureRegistry.sentientIdentityRenderConfiguration(for: reduced) else {
+            XCTFail("Missing identity reduced-motion configuration")
+            return
+        }
+        XCTAssertEqual(reducedConfiguration.initialState, .responding)
+        XCTAssertNil(reducedConfiguration.targetState)
+        XCTAssertTrue(reducedConfiguration.reducedMotion)
+        XCTAssertEqual(reducedConfiguration.timeMs, 0)
+    }
+
+    func testSentientIdentityFrameCaseResolvesFromTheNestedRecordingName() {
+        guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "sentient-identity--responding-loop--frame-005--1550ms"
+        ) else {
+            XCTFail("The approved responding-loop frame must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.variantID, "responding-loop")
+        XCTAssertEqual(fixture.stateID, "frame-005--1550ms")
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -905,6 +1006,128 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
         XCTAssertEqual(unknown.reason, .unknownComponent)
         XCTAssertEqual(unknown.description, "No iOS visual capture fixture exists yet for future-component--default--rest")
+    }
+
+    private func captureRiveIdentity(
+        _ capture: VisualDiffSentientIdentityCapture,
+        controller: UIViewController,
+        size: CGSize
+    ) throws -> UIImage {
+        let rootViewController = VisualDiffCanvasViewController()
+        rootViewController.view.backgroundColor = .clear
+        rootViewController.view.frame = CGRect(origin: .zero, size: size)
+        rootViewController.addChild(controller)
+        rootViewController.view.addSubview(controller.view)
+        controller.view.frame = rootViewController.view.bounds
+        controller.didMove(toParent: rootViewController)
+
+        let window = VisualDiffFocusWindow(frame: CGRect(origin: .zero, size: size))
+        window.backgroundColor = .clear
+        window.rootViewController = rootViewController
+        window.makeKeyAndVisible()
+        rootViewController.beginAppearanceTransition(true, animated: false)
+        rootViewController.endAppearanceTransition()
+        defer {
+            rootViewController.beginAppearanceTransition(false, animated: false)
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            controller.didMove(toParent: nil)
+            rootViewController.endAppearanceTransition()
+            window.rootViewController = nil
+            window.isHidden = true
+        }
+
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        guard let riveView = capture.model.riveViewModel?.riveView else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: capture.configuration.initialState.triggerName)
+        }
+        riveView.framebufferOnly = false
+        riveView.contentScaleFactor = 2
+        riveView.drawableSize = CGSize(
+            width: riveView.bounds.width * riveView.contentScaleFactor,
+            height: riveView.bounds.height * riveView.contentScaleFactor
+        )
+
+        let deadline = Date().addingTimeInterval(5)
+        while (!capture.didPrepare || riveView.currentDrawable == nil), Date() < deadline {
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard capture.didPrepare, capture.preparationError == nil else {
+            throw capture.preparationError ?? VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        guard let drawable = riveView.currentDrawable else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+
+        // Retain the drawable's texture before rendering. MetalKit may hand
+        // out a fresh currentDrawable after presentation; reading that next
+        // drawable would incorrectly produce an all-transparent capture.
+        let texture = drawable.texture
+        let gpuComplete = DispatchSemaphore(value: 0)
+        riveView.draw(in: riveView.bounds) { _ in gpuComplete.signal() }
+        guard gpuComplete.wait(timeout: .now() + 5) == .success else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        let width = texture.width
+        let height = texture.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            texture.getBytes(
+                baseAddress,
+                bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height),
+                mipmapLevel: 0
+            )
+        }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: width * 4,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo(
+                      rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue
+                          | CGBitmapInfo.byteOrder32Little.rawValue
+                  ),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              )
+        else {
+            throw NSError(
+                domain: "VisualDiffCaptureTests",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to read the Rive Metal drawable"]
+            )
+        }
+
+        // The Rive view is the only rendered child. Place its GPU readback at
+        // the measured native frame inside the fixed transparent handoff
+        // canvas; no reference pixels or visual transforms are introduced.
+        let componentFrame = riveView.convert(riveView.bounds, to: controller.view)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            context.cgContext.draw(image, in: componentFrame)
+        }
+    }
+
+    private func visualDiffCaseID(for referenceURL: URL) -> String {
+        let frameID = referenceURL.deletingPathExtension().lastPathComponent
+        let recordingID = referenceURL.deletingLastPathComponent().lastPathComponent
+        guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
+        let variantID = String(recordingID.dropFirst("sentient-avatar--".count))
+        return "sentient-identity--\(variantID)--\(frameID)"
     }
 
     private func fixture(for caseID: String) throws -> AnyView {

@@ -42,17 +42,21 @@ struct VisualDiffFixtureRegistration: Equatable {
     let applicability: VisualDiffFixtureApplicability
 }
 
+@MainActor
 protocol VisualDiffNativeFixtureAdapter {
     func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView
 }
 
 enum VisualDiffFixtureAdapterError: Error, CustomStringConvertible {
     case missingConfiguration(caseID: String)
+    case riveViewUnavailable(caseID: String)
 
     var description: String {
         switch self {
         case .missingConfiguration(let caseID):
             return "The iOS visual fixture adapter has no configuration for \(caseID)"
+        case .riveViewUnavailable(let caseID):
+            return "The iOS visual fixture adapter could not mount Rive for \(caseID)"
         }
     }
 }
@@ -172,6 +176,90 @@ struct VisualDiffSegmentedMotionRenderConfiguration {
     let frameTime: TimeInterval
 }
 
+struct VisualDiffSentientIdentityRenderConfiguration: Equatable {
+    let initialState: SentientIdentityState
+    let targetState: SentientIdentityState?
+    let reducedMotion: Bool
+    let timeMs: Int
+}
+
+/// Capture controller for the identity fixture. It pauses the real Rive view
+/// and advances the authored state machine by explicit elapsed intervals; it
+/// does not synthesize artwork or replace the production view.
+@MainActor
+final class VisualDiffSentientIdentityCapture {
+    let configuration: VisualDiffSentientIdentityRenderConfiguration
+    let model: RiveIdentityModel
+    private(set) var didPrepare = false
+    private(set) var preparationError: Error?
+
+    init(configuration: VisualDiffSentientIdentityRenderConfiguration) {
+        self.configuration = configuration
+        model = RiveIdentityModel(
+            initialState: configuration.initialState,
+            reducedMotion: configuration.reducedMotion,
+            autoPlay: false
+        )
+    }
+
+    func makeFixture(size: CGFloat) -> AnyView {
+        AnyView(
+            ZStack {
+                Color.clear
+                RiveSentientIdentity(
+                    state: configuration.initialState,
+                    size: size,
+                    model: model,
+                    reducedMotionOverride: configuration.reducedMotion
+                )
+                .onAppear { self.prepareForSnapshot() }
+            }
+            .ignoresSafeArea()
+        )
+    }
+
+    private func prepareForSnapshot() {
+        guard !didPrepare else { return }
+        do {
+            try prepare()
+            if configuration.targetState != nil {
+                try beginTransition()
+            }
+            try advance(to: configuration.timeMs)
+            didPrepare = true
+        } catch {
+            preparationError = error
+        }
+    }
+
+    private func prepare() throws {
+        guard let rive = model.riveViewModel?.riveView else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        model.riveViewModel?.pause()
+        rive.advance(delta: 0)
+    }
+
+    private func beginTransition() throws {
+        guard let targetState = configuration.targetState,
+              let rive = model.riveViewModel?.riveView
+        else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity-transition")
+        }
+        model.controller.request(targetState)
+        model.riveViewModel?.pause()
+        rive.advance(delta: 0)
+    }
+
+    private func advance(to timeMs: Int) throws {
+        guard let rive = model.riveViewModel?.riveView else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        model.riveViewModel?.pause()
+        rive.advance(delta: Double(timeMs) / 1_000)
+    }
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -185,6 +273,7 @@ enum VisualDiffFixtureRegistry {
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
+        SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -291,6 +380,149 @@ enum VisualDiffFixtureRegistry {
     static func segmentedControlCaptureTime(for caseID: String) -> TimeInterval? {
         SegmentedControlFixtureCatalog.captureTime(for: caseID)
     }
+
+    static func sentientIdentityRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSentientIdentityRenderConfiguration? {
+        SentientIdentityFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    @MainActor
+    static func sentientIdentityCapture(
+        for caseID: String
+    ) -> VisualDiffSentientIdentityCapture? {
+        guard let configuration = sentientIdentityRenderConfiguration(for: caseID) else {
+            return nil
+        }
+        return VisualDiffSentientIdentityCapture(configuration: configuration)
+    }
+}
+
+enum SentientIdentityFixtureMetrics {
+    // The handoff uses a 208px 2x canvas around the 56px identity specimen;
+    // the surrounding 104pt fixture remains owned by the capture test.
+    static let size: CGFloat = 56
+}
+
+private struct SentientIdentityFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSentientIdentityRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return VisualDiffSentientIdentityCapture(configuration: configuration)
+            .makeFixture(size: SentientIdentityFixtureMetrics.size)
+    }
+}
+
+private enum SentientIdentityFixtureCatalog {
+    private static let transitionFrames = [
+        ("frame-000--0000ms", 0),
+        ("frame-001--0120ms", 120),
+        ("frame-002--0138ms", 138),
+        ("frame-003--0250ms", 250),
+    ]
+
+    private static let thinkingLoopFrames = [
+        ("frame-000--0000ms", 0),
+        ("frame-001--0270ms", 270),
+        ("frame-002--0540ms", 540),
+        ("frame-003--0810ms", 810),
+        ("frame-004--1080ms", 1_080),
+        ("frame-005--1350ms", 1_350),
+    ]
+
+    private static let respondingLoopFrames = [
+        ("frame-000--0000ms", 0),
+        ("frame-001--0310ms", 310),
+        ("frame-002--0620ms", 620),
+        ("frame-003--0930ms", 930),
+        ("frame-004--1240ms", 1_240),
+        ("frame-005--1550ms", 1_550),
+    ]
+
+    private static func entry(
+        variantID: String,
+        stateID: String,
+        initialState: SentientIdentityState,
+        targetState: SentientIdentityState? = nil,
+        reducedMotion: Bool = false,
+        timeMs: Int
+    ) -> (VisualDiffFixtureRegistration, VisualDiffSentientIdentityRenderConfiguration) {
+        let caseID = "sentient-identity--\(variantID)--\(stateID)"
+        let fixture = VisualDiffFixtureCase(
+            caseID: caseID,
+            componentID: "sentient-identity",
+            variantID: variantID,
+            stateID: stateID
+        )
+        return (
+            VisualDiffFixtureRegistration(fixture: fixture, applicability: .supported),
+            VisualDiffSentientIdentityRenderConfiguration(
+                initialState: initialState,
+                targetState: targetState,
+                reducedMotion: reducedMotion,
+                timeMs: timeMs
+            )
+        )
+    }
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffSentientIdentityRenderConfiguration)] = {
+        var definitions = [
+            entry(variantID: "idle", stateID: "rest", initialState: .idle, timeMs: 0),
+            entry(variantID: "idle", stateID: "reduced-motion", initialState: .idle, reducedMotion: true, timeMs: 0),
+            entry(variantID: "thinking", stateID: "rest", initialState: .thinking, timeMs: 1_000),
+            entry(variantID: "thinking", stateID: "reduced-motion", initialState: .thinking, reducedMotion: true, timeMs: 0),
+            entry(variantID: "responding", stateID: "rest", initialState: .responding, timeMs: 2_000),
+            entry(variantID: "responding", stateID: "reduced-motion", initialState: .responding, reducedMotion: true, timeMs: 0),
+        ]
+
+        for (variantID, initialState, targetState) in [
+            ("idle-to-thinking", SentientIdentityState.idle, SentientIdentityState.thinking),
+            ("thinking-to-responding", SentientIdentityState.thinking, SentientIdentityState.responding),
+            ("responding-to-idle", SentientIdentityState.responding, SentientIdentityState.idle),
+        ] {
+            definitions += transitionFrames.map { stateID, timeMs in
+                entry(
+                    variantID: variantID,
+                    stateID: stateID,
+                    initialState: initialState,
+                    targetState: targetState,
+                    timeMs: timeMs
+                )
+            }
+        }
+
+        definitions += thinkingLoopFrames.map { stateID, timeMs in
+            entry(
+                variantID: "thinking-loop",
+                stateID: stateID,
+                initialState: .thinking,
+                timeMs: timeMs
+            )
+        }
+        definitions += respondingLoopFrames.map { stateID, timeMs in
+            entry(
+                variantID: "responding-loop",
+                stateID: stateID,
+                initialState: .responding,
+                timeMs: timeMs
+            )
+        }
+        return definitions
+    }()
+
+    static let renderConfigurations: [String: VisualDiffSentientIdentityRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "sentient-identity",
+        registrations: definitions.map(\.0),
+        adapter: SentientIdentityFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private struct ActionButtonVariantDefinition {
