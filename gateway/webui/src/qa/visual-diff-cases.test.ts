@@ -66,6 +66,12 @@ const CURRENT_TEXT_FIELD_CASES = [
   "text-field--filled--rest",
 ] as const;
 
+const CURRENT_SEARCH_FIELD_CASES = [
+  "search-field--placeholder--focus",
+  "search-field--placeholder--hover",
+  "search-field--placeholder--rest",
+] as const;
+
 const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--focus",
   "text-area--filled--hover",
@@ -316,6 +322,52 @@ describe("visual diff component cases", () => {
         caseId: `text-field--filled--${stateId}`,
         componentId: "text-field",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers search-field as the labelled generic Field alias", () => {
+    const searchField = visualDiffComponentRegistry["search-field"];
+    expect(searchField.stateApplicability).toEqual({
+      placeholder: ["focus", "hover", "rest"],
+    });
+    expect(searchField.fixtureAdapterId).toBe("search-field");
+    expect(searchField.productionComponent).toBe("gateway/webui/src/components/common/foundation/fields.tsx#Field");
+    expect(searchField.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(searchField.variants.placeholder.props).toEqual({
+      label: "Search",
+      placeholder: "Search conversations",
+      value: "",
+    });
+
+    for (const caseId of CURRENT_SEARCH_FIELD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("search-field");
+        expect(resolution.case.fixtureAdapterId).toBe("search-field");
+        expect(resolution.case.props).toEqual(searchField.variants.placeholder.props);
+      }
+    }
+  });
+
+  it("resolves unapproved search-field states to missing authority", () => {
+    for (const stateId of [
+      "filled",
+      "disabled",
+      "error",
+      "clear",
+      "reduced-motion",
+      "loading",
+      "pressed",
+      "selected",
+    ]) {
+      expect(resolveVisualDiffCase(`search-field--placeholder--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `search-field--placeholder--${stateId}`,
+        componentId: "search-field",
+        variantId: "placeholder",
         stateId,
       });
     }

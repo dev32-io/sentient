@@ -14,7 +14,7 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "text-area", "text-field", "toggle", "user-avatar"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "search-field", "text-area", "text-field", "toggle", "user-avatar"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function targetSelector(caseId) {

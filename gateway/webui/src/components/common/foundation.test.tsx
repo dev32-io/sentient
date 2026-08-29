@@ -102,6 +102,25 @@ describe("Web foundation controls", () => {
     expect(onInput).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the search-field authority on a labelled native search Field", () => {
+    const onInput = vi.fn();
+    render(<Field label="Search" type="search" value="" placeholder="Search conversations" onInput={onInput} />);
+
+    const input = screen.getByRole("searchbox", { name: "Search" });
+    const label = screen.getByText("Search");
+    expect(input.classList.contains("snt-input")).toBe(true);
+    expect((input as HTMLInputElement).type).toBe("search");
+    expect((input as HTMLInputElement).placeholder).toBe("Search conversations");
+    expect((label as HTMLLabelElement).htmlFor).toBe(input.id);
+    expect(input.closest(".snt-search")).toBeNull();
+    expect(input.parentElement?.querySelector("svg")).toBeNull();
+
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    fireEvent.input(input, { target: { value: "Ada" } });
+    expect(onInput).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps Plate semantic and compatible with caller classes", () => {
     render(<Plate className="qa-plate"><span>Plate content</span></Plate>);
     const plate = screen.getByText("Plate content").closest("section");

@@ -82,6 +82,14 @@ export interface TextFieldVariantProps {
 
 type TextFieldVariantDefinition = VisualDiffVariantDefinition<TextFieldVariantProps>;
 
+export interface SearchFieldVariantProps {
+  readonly label: string;
+  readonly placeholder: string;
+  readonly value: string;
+}
+
+type SearchFieldVariantDefinition = VisualDiffVariantDefinition<SearchFieldVariantProps>;
+
 export interface TextAreaVariantProps {
   readonly label: string;
   readonly value: string;
@@ -203,6 +211,10 @@ const TEXT_FIELD_VARIANTS = {
   filled: { props: { label: "Display name", value: "Maya Chen" } },
 } as const satisfies Readonly<Record<string, TextFieldVariantDefinition>>;
 
+const SEARCH_FIELD_VARIANTS = {
+  placeholder: { props: { label: "Search", placeholder: "Search conversations", value: "" } },
+} as const satisfies Readonly<Record<string, SearchFieldVariantDefinition>>;
+
 const TEXT_AREA_VARIANTS = {
   filled: { props: { label: "Description", value: "Add supporting details." } },
 } as const satisfies Readonly<Record<string, TextAreaVariantDefinition>>;
@@ -271,6 +283,16 @@ export const visualDiffComponentRegistry = {
     variants: TEXT_FIELD_VARIANTS,
     stateApplicability: {
       filled: ["focus", "hover", "rest"],
+    },
+  },
+  "search-field": {
+    id: "search-field",
+    fixtureAdapterId: "search-field",
+    productionComponent: "gateway/webui/src/components/common/foundation/fields.tsx#Field",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: SEARCH_FIELD_VARIANTS,
+    stateApplicability: {
+      placeholder: ["focus", "hover", "rest"],
     },
   },
   "text-area": {
@@ -350,6 +372,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "icon-button",
   "plate",
   "text-field",
+  "search-field",
   "text-area",
   "range",
   "checkbox",

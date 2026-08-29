@@ -14,6 +14,7 @@ import {
   type IconButtonVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
+  type SearchFieldVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
@@ -155,6 +156,23 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "search-field": {
+    // The handoff's labelled, icon-free search field is the reachable generic
+    // Field seam; the unused icon-led SearchField/SearchFilterBar wrapper is not mounted.
+    render: (fixture) => {
+      const field = fixture.props as SearchFieldVariantProps;
+      return (
+        <Field
+          label={field.label}
+          type="search"
+          value={field.value}
+          placeholder={field.placeholder}
+          className="visual-diff-search-field"
+          inputClassName="visual-diff-target"
+        />
+      );
+    },
+  },
   "text-area": {
     // This adapter deliberately renders the production TextArea and its native textarea.
     render: (fixture) => {
@@ -286,6 +304,7 @@ style.textContent = `
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-text-field { width: min(320px, 100%); }
+  .visual-diff-search-field { width: min(320px, 100%); }
   .visual-diff-text-area { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
