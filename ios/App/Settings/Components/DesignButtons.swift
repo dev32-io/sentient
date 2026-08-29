@@ -28,22 +28,16 @@ struct DesignButtonStyle: ButtonStyle {
             .background { designSlateFace(role: role, muted: !isEnabled, hovered: raised) }
             .clipShape(shape)
             .overlay {
+                // CSS borders paint inside the border box; use the native
+                // inset form so the 44pt key does not grow by the centered
+                // stroke width.
+                shape.strokeBorder(border(raised: raised), lineWidth: DesignMetrics.hairline)
+            }
+            .overlay {
                 if let topLight = topLight(pressed: pressed, raised: raised) {
-                    shape
-                        // CSS borders paint inside the border box; use the
-                        // native inset form so the 44pt key does not grow by
-                        // the centered stroke width.
-                        .strokeBorder(topLight, lineWidth: DesignMetrics.hairline)
-                        .mask(
-                            LinearGradient(
-                                colors: [.white, .clear, .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
+                    DesignTopEdgeLight(shape: shape, color: topLight)
                 }
             }
-            .overlay { shape.strokeBorder(border(raised: raised), lineWidth: DesignMetrics.hairline) }
             .overlay {
                 shape
                     .stroke(
@@ -54,11 +48,9 @@ struct DesignButtonStyle: ButtonStyle {
             }
             .background {
                 ZStack {
-                    DesignSpreadShadow(
-                        shape: shape,
-                        color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
-                        geometry: castGeometry(pressed: pressed, raised: raised)
-                    )
+                    // CSS lists the black cast before the ember cast, so the
+                    // cast is composited over the glow where their envelopes
+                    // overlap while the glow remains visible at its edge.
                     if glowOpacity(pressed: pressed) > 0 {
                         DesignSpreadShadow(
                             shape: shape,
@@ -66,6 +58,11 @@ struct DesignButtonStyle: ButtonStyle {
                             geometry: glowGeometry(raised: raised)
                         )
                     }
+                    DesignSpreadShadow(
+                        shape: shape,
+                        color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                        geometry: castGeometry(pressed: pressed, raised: raised)
+                    )
                     DesignSpreadShadow(
                         shape: shape,
                         color: contact(pressed: pressed, hovered: raised),
@@ -476,23 +473,15 @@ struct DesignCompactButtonStyle: ButtonStyle {
             }
             .clipShape(shape)
             .overlay {
-                if !selected, let topLight = topLight(pressed: pressed, raised: raised) {
-                    shape
-                        .strokeBorder(topLight, lineWidth: DesignMetrics.hairline)
-                        .mask(
-                            LinearGradient(
-                                colors: [.white, .clear, .clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                }
-            }
-            .overlay {
                 shape.strokeBorder(
                     selected ? Color.clear : border(raised: raised),
                     lineWidth: DesignMetrics.hairline
                 )
+            }
+            .overlay {
+                if !selected, let topLight = topLight(pressed: pressed, raised: raised) {
+                    DesignTopEdgeLight(shape: shape, color: topLight)
+                }
             }
             .overlay {
                 if focused {
@@ -513,11 +502,8 @@ struct DesignCompactButtonStyle: ButtonStyle {
                                 : DesignDropShadowGeometry(radius: 16, y: 8, sourceInset: 14)
                         )
                     } else {
-                        DesignSpreadShadow(
-                            shape: shape,
-                            color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
-                            geometry: castGeometry(pressed: pressed, raised: raised)
-                        )
+                        // See the standalone action style above: the CSS
+                        // black cast is above the ember cast in the list.
                         if glowOpacity(pressed: pressed) > 0 {
                             DesignSpreadShadow(
                                 shape: shape,
@@ -525,6 +511,11 @@ struct DesignCompactButtonStyle: ButtonStyle {
                                 geometry: glowGeometry(raised: raised)
                             )
                         }
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: .black.opacity(castBlack(pressed: pressed, raised: raised)),
+                            geometry: castGeometry(pressed: pressed, raised: raised)
+                        )
                     }
                     DesignSpreadShadow(
                         shape: shape,

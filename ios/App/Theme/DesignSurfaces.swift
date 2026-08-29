@@ -1,44 +1,158 @@
 import SwiftUI
+import UIKit
 
-/// Renders the geometry of a CSS drop shadow with negative spread. Canvas's
-/// `shadowOnly` option guarantees that the opaque source used to create the
-/// blur is never painted into the component.
+/// Renders a CSS box-shadow source with a negative spread using a native
+/// Core Graphics shadow operation. The source path is still inset before the
+/// blur, which is the CSS spread operation rather than a visual approximation
+/// of it; the view is expanded so the transparent shadow tail remains visible.
 struct DesignSpreadShadow<S: InsettableShape>: View {
     let shape: S
     let color: Color
     let geometry: DesignDropShadowGeometry
 
     private var extent: CGFloat {
-        geometry.radius + max(abs(geometry.x), abs(geometry.y))
+        // A negative spread moves the source edge inward before the blur. The
+        // expanded drawing field must include that inset as well as the
+        // translated blur envelope; otherwise the outer CSS tail is clipped.
+        geometry.sourceInset + geometry.radius + max(abs(geometry.x), abs(geometry.y))
     }
 
     var body: some View {
         GeometryReader { proxy in
-            Canvas { context, size in
-                let sourceRect = CGRect(
-                    x: extent,
-                    y: extent,
-                    width: max(0, size.width - (extent * 2)),
-                    height: max(0, size.height - (extent * 2))
-                )
-                let path = shape.inset(by: geometry.sourceInset).path(in: sourceRect)
-                context.addFilter(
-                    .shadow(
-                        color: color,
-                        radius: geometry.radius,
-                        x: geometry.x,
-                        y: geometry.y,
-                        options: .shadowOnly
-                    )
-                )
-                context.fill(path, with: .color(.white))
-            }
+            DesignSpreadShadowRenderer(
+                shape: shape,
+                color: color,
+                geometry: geometry,
+                extent: extent,
+                faceSize: proxy.size
+            )
             .frame(
                 width: proxy.size.width + (extent * 2),
                 height: proxy.size.height + (extent * 2)
             )
             .offset(x: -extent, y: -extent)
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct DesignSpreadShadowRenderer<S: InsettableShape>: UIViewRepresentable {
+    let shape: S
+    let color: Color
+    let geometry: DesignDropShadowGeometry
+    let extent: CGFloat
+    let faceSize: CGSize
+
+    func makeUIView(context: Context) -> DesignSpreadShadowView {
+        DesignSpreadShadowView(
+            path: sourcePath,
+            color: color,
+            geometry: geometry,
+            extent: extent,
+            faceSize: faceSize
+        )
+    }
+
+    func updateUIView(_ view: DesignSpreadShadowView, context: Context) {
+        view.path = sourcePath
+        view.color = color
+        view.geometry = geometry
+        view.extent = extent
+        view.faceSize = faceSize
+        view.setNeedsDisplay()
+    }
+
+    private var sourcePath: (CGRect) -> CGPath {
+        { faceRect in
+            shape.inset(by: geometry.sourceInset).path(in: faceRect).cgPath
+        }
+    }
+}
+
+private final class DesignSpreadShadowView: UIView {
+    var path: (CGRect) -> CGPath
+    var color: Color
+    var geometry: DesignDropShadowGeometry
+    var extent: CGFloat
+    var faceSize: CGSize
+
+    init(
+        path: @escaping (CGRect) -> CGPath,
+        color: Color,
+        geometry: DesignDropShadowGeometry,
+        extent: CGFloat,
+        faceSize: CGSize
+    ) {
+        self.path = path
+        self.color = color
+        self.geometry = geometry
+        self.extent = extent
+        self.faceSize = faceSize
+        super.init(frame: .zero)
+        isOpaque = false
+        backgroundColor = .clear
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext(), bounds.width > 0, bounds.height > 0 else { return }
+
+        let faceRect = CGRect(
+            x: extent,
+            y: extent,
+            width: faceSize.width,
+            height: faceSize.height
+        )
+        let sourcePath = path(faceRect)
+        context.saveGState()
+        context.setShadow(
+            offset: CGSize(width: geometry.x, height: geometry.y),
+            blur: geometry.radius,
+            color: UIColor(color).cgColor
+        )
+        context.setFillColor(UIColor.white.cgColor)
+        context.addPath(sourcePath)
+        context.fillPath()
+        context.restoreGState()
+
+        // The source shape is rendered only to seed the shadow. Clear that
+        // seed from this transparent view so the face remains owned by the
+        // SwiftUI material above it.
+        context.saveGState()
+        context.setBlendMode(.clear)
+        context.addPath(sourcePath)
+        context.fillPath()
+        context.restoreGState()
+    }
+}
+
+/// CSS `inset 0 1px 0` is an inner edge line, not a stroke on the outer
+/// border. Drawing it in a full-size Canvas keeps the line inside the border
+/// box while the shape clip preserves rounded corners.
+struct DesignTopEdgeLight<S: Shape>: View {
+    let shape: S
+    let color: Color
+
+    var body: some View {
+        Canvas { context, size in
+            context.fill(
+                Path(
+                    CGRect(
+                        x: 0,
+                        y: DesignMetrics.hairline,
+                        width: size.width,
+                        height: DesignMetrics.hairline
+                    )
+                ),
+                with: .color(color)
+            )
+        }
+        .clipShape(shape)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
