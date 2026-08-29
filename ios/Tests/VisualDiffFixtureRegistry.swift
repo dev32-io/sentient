@@ -129,6 +129,12 @@ struct VisualDiffTextAreaRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffChipRenderConfiguration {
+    let title: String
+    let selected: Bool
+    let compact: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -138,6 +144,7 @@ enum VisualDiffFixtureRegistry {
         UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
         TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
+        ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -216,6 +223,12 @@ enum VisualDiffFixtureRegistry {
     ) -> VisualDiffTextAreaRenderConfiguration? {
         TextAreaFixtureCatalog.renderConfigurations[caseID]
     }
+
+    static func chipRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffChipRenderConfiguration? {
+        ChipFixtureCatalog.renderConfigurations[caseID]
+    }
 }
 
 private struct ActionButtonVariantDefinition {
@@ -290,6 +303,100 @@ private struct ActionButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {
             }
         )
     }
+}
+
+private struct ChipFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffChipRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                DesignChip(
+                    title: configuration.title,
+                    selected: configuration.selected,
+                    action: {}
+                )
+            }
+        )
+    }
+}
+
+private enum ChipFixtureCatalog {
+    private struct Variant {
+        let id: String
+        let title: String
+        let selected: Bool
+    }
+
+    private struct State {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+        let compact: Bool
+
+        static func supported(_ id: String, compact: Bool = false) -> Self {
+            Self(id: id, applicability: .supported, compact: compact)
+        }
+
+        static func unavailable(_ id: String, reason: VisualDiffMissingAuthorityReason) -> Self {
+            Self(id: id, applicability: .missingAuthority(reason), compact: id == "compact-rest")
+        }
+    }
+
+    private static let variants = [
+        Variant(id: "selected", title: "Family", selected: true),
+        Variant(id: "unselected", title: "School", selected: false),
+    ]
+
+    private static let states = [
+        State.supported("compact-rest", compact: true),
+        State.supported("rest"),
+        State.unavailable("focus", reason: .stateRequiresInteraction),
+        State.unavailable("hover", reason: .stateNotApplicable),
+        State.unavailable("pressed", reason: .stateRequiresInteraction),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffChipRenderConfiguration?)] =
+        variants.flatMap { variant in
+            states.map { state in
+                let fixture = VisualDiffFixtureCase(
+                    caseID: "chip--\(variant.id)--\(state.id)",
+                    componentID: "chip",
+                    variantID: variant.id,
+                    stateID: state.id
+                )
+                let configuration: VisualDiffChipRenderConfiguration? = state.applicability == .supported
+                    ? VisualDiffChipRenderConfiguration(
+                        title: variant.title,
+                        selected: variant.selected,
+                        compact: state.compact
+                    )
+                    : nil
+                return (
+                    VisualDiffFixtureRegistration(
+                        fixture: fixture,
+                        applicability: state.applicability
+                    ),
+                    configuration
+                )
+            }
+        }
+
+    static let renderConfigurations: [String: VisualDiffChipRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "chip",
+        registrations: definitions.map(\.0),
+        adapter: ChipFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private struct TextFieldFixtureAdapter: VisualDiffNativeFixtureAdapter {

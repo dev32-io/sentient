@@ -491,6 +491,68 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testChipRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "chip--selected--compact-rest",
+            "chip--selected--rest",
+            "chip--unselected--compact-rest",
+            "chip--unselected--rest",
+        ])
+        let expectedHover = Set([
+            "chip--selected--hover",
+            "chip--unselected--hover",
+        ])
+        let expectedInteractionStates = Set([
+            "chip--selected--focus",
+            "chip--selected--pressed",
+            "chip--unselected--focus",
+            "chip--unselected--pressed",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "chip")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedHover).union(expectedInteractionStates))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedHover
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+    }
+
+    func testChipRegistryPreservesNativeSelectionAndCompactAdaptation() {
+        let expected: [(String, String, Bool, Bool)] = [
+            ("chip--selected--rest", "Family", true, false),
+            ("chip--selected--compact-rest", "Family", true, true),
+            ("chip--unselected--rest", "School", false, false),
+            ("chip--unselected--compact-rest", "School", false, true),
+        ]
+
+        for (caseID, title, selected, compact) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.chipRenderConfiguration(for: caseID) else {
+                XCTFail("Missing chip render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.selected, selected, caseID)
+            XCTAssertEqual(configuration.compact, compact, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.chipRenderConfiguration(
+                for: "chip--selected--hover"
+            )
+        )
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
