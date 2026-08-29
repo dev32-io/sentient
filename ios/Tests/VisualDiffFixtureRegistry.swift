@@ -342,6 +342,7 @@ enum VisualDiffFixtureRegistry {
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
         NoticeFixtureCatalog.registration.componentID: NoticeFixtureCatalog.registration,
         LoadingStateFixtureCatalog.registration.componentID: LoadingStateFixtureCatalog.registration,
+        NoResultsFixtureCatalog.registration.componentID: NoResultsFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -637,6 +638,47 @@ private enum NoticeFixtureCatalog {
         componentID: "notice",
         registrations: definitions.map(\.0),
         adapter: NoticeFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct NoResultsFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    nonisolated init() {}
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard fixture.caseID == "no-results--empty" else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(
+            ZStack {
+                Color.clear
+                HistorySearchNoMatchState()
+                    .frame(width: NoResultsFixtureMetrics.contentWidth)
+            }
+        )
+    }
+}
+
+private enum NoResultsFixtureMetrics {
+    // The reference's 468pt fixture wrapper leaves the source 14pt side
+    // margins around the 440pt no-results surface.
+    static let contentWidth: CGFloat = 468
+}
+
+private enum NoResultsFixtureCatalog {
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "no-results",
+        registrations: [
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: "no-results--empty",
+                    componentID: "no-results",
+                    variantID: "default",
+                    stateID: "empty"
+                ),
+                applicability: .supported
+            ),
+        ],
+        adapter: NoResultsFixtureAdapter()
     )
 }
 

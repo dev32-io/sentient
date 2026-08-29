@@ -1513,6 +1513,26 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testNoResultsFixtureUsesTheReachableHistoryNoMatchOwner() {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "no-results")
+        XCTAssertEqual(
+            registrations.map { $0.fixture.caseID },
+            ["no-results--empty"]
+        )
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "no-results--empty"
+        ) else {
+            XCTFail("The reachable History no-match fixture must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "no-results")
+        XCTAssertEqual(fixture.variantID, "default")
+        XCTAssertEqual(fixture.stateID, "empty")
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
+    }
+
     func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
         guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
             caseID: "action-button--primary--hover"

@@ -150,16 +150,19 @@ struct HistorySidePanel: View {
         }
     }
 
+    @ViewBuilder
     private var historyEmptyState: some View {
-        ContentUnavailableView {
-            Label(
-                model.isSearching ? "No matching chats" : "No past chats",
-                systemImage: model.isSearching ? "magnifyingglass" : "bubble.left.and.bubble.right"
-            )
-        } description: {
-            Text(model.isSearching ? "Try another search." : "Start a new chat to see it here.")
+        if model.isSearching {
+            HistorySearchNoMatchState()
+                .accessibilityIdentifier("history-no-match")
+        } else {
+            ContentUnavailableView {
+                Label("No past chats", systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text("Start a new chat to see it here.")
+            }
+            .accessibilityIdentifier("history-empty")
         }
-        .accessibilityIdentifier(model.isSearching ? "history-no-match" : "history-empty")
     }
 
     // ── History loading spinner ───────────────────────────────────────────────
@@ -190,6 +193,61 @@ struct HistorySidePanel: View {
         .padding(Space.lg)
         .accessibilityIdentifier("history-new-chat")
     }
+}
+
+/// Product-owned no-match state for the searchable History panel. It stays
+/// separate from the genuine empty-history branch so loading, error, and
+/// new-chat behavior remain unchanged.
+struct HistorySearchNoMatchState: View {
+    var body: some View {
+        HStack(alignment: .center, spacing: HistoryNoMatchLayout.contentGap) {
+            ZStack(alignment: .leading) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: HistoryNoMatchLayout.iconSize, weight: .regular))
+                    .foregroundStyle(DuskColors.ink3)
+                    .frame(width: HistoryNoMatchLayout.markSize, height: HistoryNoMatchLayout.markSize)
+                    .background {
+                        DesignWellFace(
+                            shape: Circle(),
+                            focused: false,
+                            showsInsetHighlights: true
+                        )
+                    }
+                    .clipShape(Circle())
+            }
+            .frame(width: HistoryNoMatchLayout.markSlotSize, height: HistoryNoMatchLayout.markSlotSize)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("No matching chats")
+                    .font(Typo.ui(HistoryNoMatchLayout.titleSize, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                Text("Try another search.")
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(HistoryNoMatchLayout.contentPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .designWell(cornerRadius: Radii.sm)
+        .padding(.horizontal, HistoryNoMatchLayout.outerMargin)
+        .padding(.bottom, HistoryNoMatchLayout.outerMargin)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("No matching chats")
+        .accessibilityValue("Try another search.")
+    }
+}
+
+private enum HistoryNoMatchLayout {
+    static let contentGap: CGFloat = 12
+    static let contentPadding: CGFloat = 12
+    static let outerMargin: CGFloat = 14
+    static let markSize: CGFloat = 34
+    static let markSlotSize: CGFloat = 38
+    static let iconSize: CGFloat = 20
+    static let titleSize: CGFloat = 14
 }
 
 // ---------------------------------------------------------------------------
