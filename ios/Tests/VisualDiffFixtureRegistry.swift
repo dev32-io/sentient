@@ -117,6 +117,12 @@ struct VisualDiffCheckboxRenderConfiguration {
     let isEnabled: Bool
 }
 
+struct VisualDiffTextFieldRenderConfiguration {
+    let title: String
+    let value: String
+    let shouldFocus: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -124,6 +130,7 @@ enum VisualDiffFixtureRegistry {
         CheckboxFixtureCatalog.registration.componentID: CheckboxFixtureCatalog.registration,
         PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
         UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
+        TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -189,6 +196,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffCheckboxRenderConfiguration? {
         CheckboxFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func textFieldRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffTextFieldRenderConfiguration? {
+        TextFieldFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -264,6 +277,113 @@ private struct ActionButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {
             }
         )
     }
+}
+
+private struct TextFieldFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffTextFieldRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(TextFieldFixture(configuration: configuration))
+    }
+}
+
+private struct TextFieldFixture: View {
+    let configuration: VisualDiffTextFieldRenderConfiguration
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(configuration: VisualDiffTextFieldRenderConfiguration) {
+        self.configuration = configuration
+        _text = State(initialValue: configuration.value)
+    }
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            DesignField(
+                title: configuration.title,
+                text: $text,
+                accessibilityId: "visual-diff-text-field",
+                focused: $focused
+            )
+            // The approved handoff's 736px canvas and the web fixture both use
+            // a 320pt logical field. The native field retains its 44pt target.
+            .frame(width: 320)
+        }
+        // Native focus may present a keyboard, but the capture harness owns the
+        // fixed review canvas and requests focus after the native field mounts.
+        .ignoresSafeArea()
+    }
+}
+
+private enum TextFieldFixtureCatalog {
+    private struct StateDefinition {
+        let id: String
+        let applicability: VisualDiffFixtureApplicability
+        let shouldFocus: Bool
+
+        static func supported(_ id: String, shouldFocus: Bool = false) -> Self {
+            Self(id: id, applicability: .supported, shouldFocus: shouldFocus)
+        }
+
+        static func missingAuthority(
+            _ id: String,
+            reason: VisualDiffMissingAuthorityReason = .stateNotApplicable
+        ) -> Self {
+            Self(id: id, applicability: .missingAuthority(reason), shouldFocus: false)
+        }
+    }
+
+    private static let states: [StateDefinition] = [
+        .supported("rest"),
+        .missingAuthority("hover"),
+        .supported("focus", shouldFocus: true),
+        .missingAuthority("empty"),
+        .missingAuthority("error"),
+        .missingAuthority("disabled"),
+        .missingAuthority("loading"),
+        .missingAuthority("pressed"),
+        .missingAuthority("selected"),
+    ]
+
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffTextFieldRenderConfiguration?)] =
+        states.map { state in
+            let fixture = VisualDiffFixtureCase(
+                caseID: "text-field--filled--\(state.id)",
+                componentID: "text-field",
+                variantID: "filled",
+                stateID: state.id
+            )
+            let configuration = state.applicability == .supported
+                ? VisualDiffTextFieldRenderConfiguration(
+                    title: "Display name",
+                    value: "Maya Chen",
+                    shouldFocus: state.shouldFocus
+                )
+                : nil
+            return (
+                VisualDiffFixtureRegistration(
+                    fixture: fixture,
+                    applicability: state.applicability
+                ),
+                configuration
+            )
+        }
+
+    static let renderConfigurations: [String: VisualDiffTextFieldRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "text-field",
+        registrations: definitions.map(\.0),
+        adapter: TextFieldFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private struct IconButtonFixtureAdapter: VisualDiffNativeFixtureAdapter {

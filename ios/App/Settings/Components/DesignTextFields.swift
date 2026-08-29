@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+private enum DesignFieldMetrics {
+    // The web input's 40px minimum grows to its inherited 1.55 line-height
+    // plus its 9px vertical padding and 1px border at the reviewed content
+    // size. Preserve that source-derived face while keeping a separate 44pt
+    // semantic target.
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    // The native well border is centered on its shape, so one hairline is
+    // removed from the CSS border-box height to preserve the visible extent.
+    static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal) + 18 + DesignMetrics.hairline
+    static let focusCastRadius: CGFloat = 18
+    static let focusCastSourceInset: CGFloat = 14
+}
+
 struct DesignField: View {
     let title: String
     var prompt: String = ""
@@ -63,12 +77,31 @@ struct DesignField: View {
         focused?.wrappedValue ?? internalFocused
     }
 
+    private var faceHeight: CGFloat {
+        min(
+            minimumHeight == DesignMetrics.minimumTarget ? DesignFieldMetrics.visualHeight : minimumHeight,
+            minimumHeight
+        )
+    }
+
+    private var semanticHeight: CGFloat {
+        max(minimumHeight, DesignMetrics.minimumTarget)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: DesignFieldMetrics.labelGap) {
             if showsTitle {
                 Text(title)
-                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                    .font(.custom(
+                        "DMSans-Medium",
+                        size: DesignMetrics.controlLabelSize,
+                        relativeTo: .footnote
+                    ))
+                    // Native custom-font line metrics sit one half-point below
+                    // the CSS label baseline at the reviewed scale.
+                    .baselineOffset(0.5)
                     .foregroundStyle(DuskColors.ink)
+                    .frame(minHeight: DesignFieldMetrics.labelLineHeight)
             }
             focusableField
             if let error {
@@ -97,16 +130,73 @@ struct DesignField: View {
 
     private var baseInput: some View {
         nativeField
-            .font(Typo.ui(TypeScale.base))
+            .font(.custom("DMSans-Regular", size: TypeScale.base, relativeTo: .body))
+            // Match the CSS border-box content inset: 1px border + 12px pad.
+            // Native TextField centers its glyph run below the browser line
+            // box; this positive baseline adjustment restores the source's
+            // 9px top inset without changing the semantic target.
+            .baselineOffset(0.5)
+            .foregroundStyle(DuskColors.ink)
             .textFieldStyle(.plain)
-            .padding(.horizontal, Space.md)
-            .frame(minHeight: minimumHeight)
+            .padding(.horizontal, Space.md + DesignMetrics.hairline)
+            .frame(minHeight: faceHeight)
     }
 
     private var surfacedInput: some View {
         baseInput
             .lineLimit(lineLimit)
-            .designWell(focused: isFocused, error: error != nil)
+            // Keep the shared well face and rest construction. Its focused
+            // cast uses a native blur without CSS's negative spread, so the
+            // field supplies that one focused layer through the shared
+            // spread-shadow renderer below.
+            .designWell(focused: false, error: error != nil)
+            .background {
+                if isFocused {
+                    ZStack {
+                        // The focused well has the source's positive three-pixel
+                        // spread behind the native outline. A six-point stroke
+                        // supplies that outside ring while the well face covers
+                        // its inward half.
+                        RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                            .stroke(
+                                DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
+                                lineWidth: DesignMetrics.focusRing * 2
+                            )
+                        DesignSpreadShadow(
+                            shape: RoundedRectangle(cornerRadius: Radii.sm, style: .continuous),
+                            color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                            geometry: DesignDropShadowGeometry(
+                                radius: DesignFieldMetrics.focusCastRadius,
+                                y: DesignMaterialAdapter.wellFocusCastY,
+                                sourceInset: DesignFieldMetrics.focusCastSourceInset
+                            )
+                        )
+                    }
+                }
+            }
+            .overlay {
+                if isFocused {
+                    RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                        .stroke(
+                            DuskColors.accent.overlaying(
+                                DuskColors.line,
+                                opacity: DesignMaterialAdapter.wellFocusMix
+                            ),
+                            lineWidth: DesignMetrics.hairline
+                        )
+                }
+                // The web field's keyboard-focus outline is a 2px ember
+                // stroke with a 3px outside offset; native focus supplies the
+                // same cue without changing the control's hit target.
+                RoundedRectangle(cornerRadius: Radii.sm + DesignMetrics.focusRing, style: .continuous)
+                    .stroke(
+                        isFocused ? DuskColors.accent : .clear,
+                        lineWidth: DesignMetrics.focusBorder
+                    )
+                    .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+            }
+            .frame(minHeight: semanticHeight)
+            .contentShape(Rectangle())
             .disabled(!isEnabled)
     }
 
