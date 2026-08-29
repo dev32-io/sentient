@@ -67,6 +67,16 @@ const CURRENT_STALE_BANNER_CASES = [
   "stale-banner--saved-results--rest",
 ] as const;
 
+const CURRENT_SETTING_ROW_CASES = [
+  "setting-row--toggle--off",
+  "setting-row--toggle--on",
+  "setting-row--segmented--default-selected",
+  "setting-row--segmented--expert-selected",
+  "setting-row--select--english-closed",
+  "setting-row--select--spanish-selected",
+  "setting-row--range--62",
+] as const;
+
 const CURRENT_PANE_HEADER_CASES = ["pane-header--preferences--rest"] as const;
 
 const CURRENT_PIN_ENTRY_CASES = [
@@ -879,6 +889,36 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the setting-row control matrix and preserves native open-select adaptation", () => {
+    const settingRow = visualDiffComponentRegistry["setting-row"];
+    expect(settingRow.fixtureAdapterId).toBe("setting-row");
+    expect(settingRow.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsRow");
+    expect(settingRow.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(settingRow.stateApplicability).toEqual({
+      toggle: ["off", "on"],
+      segmented: ["default-selected", "expert-selected"],
+      select: ["english-closed", "spanish-selected"],
+      range: ["62"],
+    });
+
+    for (const caseId of CURRENT_SETTING_ROW_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("setting-row");
+        expect(resolution.case.fixtureAdapterId).toBe("setting-row");
+      }
+    }
+
+    expect(resolveVisualDiffCase("setting-row--select--english-open")).toEqual({
+      status: "missing-authority",
+      caseId: "setting-row--select--english-open",
+      componentId: "setting-row",
+      variantId: "select",
+      stateId: "english-open",
+    });
+  });
+
   it("registers the exact segmented-control matrix and controlled native production provenance", () => {
     const segmentedControl = visualDiffComponentRegistry["segmented-control"];
     expect(segmentedControl.stateApplicability).toEqual({
@@ -1300,6 +1340,15 @@ describe("visual diff component cases", () => {
       variantId: "saved-results",
       stateId: "hover",
     });
+  });
+
+  it("keeps every registered fixture case globally unique", () => {
+    const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
+      Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>
+        stateIds.map((stateId: string) => `${component.id}--${variantId}--${stateId}`),
+      ),
+    );
+    expect(new Set(caseIds).size).toBe(caseIds.length);
   });
 
   it("does not resolve inherited registry keys", () => {

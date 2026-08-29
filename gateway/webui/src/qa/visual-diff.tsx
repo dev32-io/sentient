@@ -5,8 +5,8 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
-import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ValidatedField } from "../components/common/composites.tsx";
-import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -29,6 +29,7 @@ import {
   type SearchFieldVariantProps,
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
+  type SettingRowVariantProps,
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
@@ -138,6 +139,51 @@ function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   }, [fixture.variantId]);
 
   return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
+}
+
+function SettingRowFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const row = fixture.props as SettingRowVariantProps;
+  const control = row.control === "toggle"
+    ? <ToggleControl label={row.label} checked={fixture.state === "on"} onChange={() => {}} />
+    : row.control === "segmented"
+      ? (
+        <SegmentedControl
+          label={row.label}
+          value={fixture.state === "expert-selected" ? "expert" : "default"}
+          options={[{ value: "default", label: "Default" }, { value: "expert", label: "Expert" }]}
+          onChange={() => {}}
+        />
+      )
+      : row.control === "select"
+        ? (
+          <SelectControl
+            label={row.label}
+            value={fixture.state === "spanish-selected" ? "Spanish" : "English"}
+            options={[{ value: "English", label: "English" }, { value: "Spanish", label: "Spanish" }, { value: "French", label: "French" }]}
+            onChange={() => {}}
+          />
+        )
+        : (
+          <SliderControl
+            label={row.label}
+            value={62}
+            min={0}
+            max={100}
+            step={1}
+            format={(value) => `${Math.round(value)}%`}
+            onChange={() => {}}
+          />
+        );
+
+  return (
+    <div class="visual-diff-setting-row-frame">
+      <Plate className="visual-diff-target visual-diff-setting-row">
+        <div class="visual-diff-setting-row__list">
+          <SettingsRow label={row.label} hint={row.hint}>{control}</SettingsRow>
+        </div>
+      </Plate>
+    </div>
+  );
 }
 
 function DisclosureFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
@@ -465,6 +511,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // and its native buttons for every approved static and motion case.
     render: (fixture) => <SegmentedControlFixture fixture={fixture} />,
   },
+  "setting-row": {
+    // This adapter composes the production SettingsRow with its native control
+    // owner; the open native select popup remains intentionally unregistered.
+    render: (fixture) => <SettingRowFixture fixture={fixture} />,
+  },
   "pane-header": {
     // This adapter deliberately renders the production PaneChrome with a real Plate and ActionButton.
     render: (fixture) => <PaneHeaderFixture fixture={fixture} />,
@@ -642,6 +693,13 @@ style.textContent = `
     padding: 0 24px 24px 0;
   }
   .visual-diff-pane-header { width: min(620px, 100%); }
+  .visual-diff-canvas[data-component-id="setting-row"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 0 52px;
+  }
+  .visual-diff-setting-row { width: 600px; }
+  .visual-diff-setting-row__list { padding: 0 16px; }
   .visual-diff-media-card { width: 260px; }
   /* Composite references retain a 52px logical frame around the card. */
   .visual-diff-canvas[data-case-id^="media-action-card--"] {

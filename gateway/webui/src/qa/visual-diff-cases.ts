@@ -148,6 +148,14 @@ export interface ToggleVariantProps {
 
 type ToggleVariantDefinition = VisualDiffVariantDefinition<ToggleVariantProps>;
 
+export interface SettingRowVariantProps {
+  readonly control: "toggle" | "segmented" | "select" | "range";
+  readonly label: string;
+  readonly hint: string;
+}
+
+type SettingRowVariantDefinition = VisualDiffVariantDefinition<SettingRowVariantProps>;
+
 export interface SegmentedControlOption {
   readonly value: string;
   readonly label: string;
@@ -267,6 +275,37 @@ const TOGGLE_VARIANTS = {
   on: { props: { label: "Automatic updates", checked: true } },
   "off-to-on": { props: { label: "Automatic updates", checked: false } },
 } as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
+const SETTING_ROW_VARIANTS = {
+  toggle: {
+    props: {
+      control: "toggle",
+      label: "Automatic updates",
+      hint: "Install trusted updates when the household is idle.",
+    },
+  },
+  segmented: {
+    props: {
+      control: "segmented",
+      label: "Detail level",
+      hint: "Choose how much supporting information appears.",
+    },
+  },
+  select: {
+    props: {
+      control: "select",
+      label: "Language",
+      hint: "Used for interface labels and spoken responses.",
+    },
+  },
+  range: {
+    props: {
+      control: "range",
+      label: "Interface scale",
+      hint: "Preview changes before applying them.",
+    },
+  },
+} as const satisfies Readonly<Record<string, SettingRowVariantDefinition>>;
 
 const DISCLOSURE_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -711,6 +750,19 @@ export const visualDiffComponentRegistry = {
       "off-to-on": TOGGLE_TRANSITION_FRAMES,
     },
   },
+  "setting-row": {
+    id: "setting-row",
+    fixtureAdapterId: "setting-row",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsRow",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: SETTING_ROW_VARIANTS,
+    stateApplicability: {
+      toggle: ["off", "on"],
+      segmented: ["default-selected", "expert-selected"],
+      select: ["english-closed", "spanish-selected"],
+      range: ["62"],
+    },
+  },
   "segmented-control": {
     id: "segmented-control",
     fixtureAdapterId: "segmented-control",
@@ -843,6 +895,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "pane-header",
   "disclosure",
   "pin-entry",
+  "setting-row",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
