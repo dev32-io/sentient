@@ -1,6 +1,6 @@
 import type { ComponentChildren, JSX } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
-import { ActionButton, Field, type FieldProps, Plate, ProgressControl } from "./foundation.tsx";
+import { ActionButton, Field, type FieldProps, Plate } from "./foundation.tsx";
 import { BackspaceIcon } from "./icons/backspace.tsx";
 import { SearchIcon } from "./icons/search.tsx";
 
@@ -374,7 +374,18 @@ export interface AsyncStateProps {
 }
 
 export function AsyncState({ state, title, message, action }: AsyncStateProps): JSX.Element {
-  return <div class="snt-async-state" role={state === "error" ? "alert" : "status"} aria-live={state === "error" ? "assertive" : "polite"}>{state === "loading" && <ProgressControl label={title} />}<div><h3 class="snt-card-title">{title}</h3>{message && <p class="snt-card-subtitle">{message}</p>}</div>{action}</div>;
+  const liveProps = { role: state === "error" ? "alert" : "status", "aria-live": state === "error" ? "assertive" : "polite" } as const;
+  if (state === "loading") {
+    return (
+      <div class="snt-async-state" data-state={state} {...liveProps}>
+        <span class="snt-async-state__spinner" aria-hidden="true" />
+        <h3 class="snt-card-title">{title}</h3>
+        {message && <p class="snt-card-subtitle">{message}</p>}
+        {action}
+      </div>
+    );
+  }
+  return <div class="snt-async-state" {...liveProps}><div><h3 class="snt-card-title">{title}</h3>{message && <p class="snt-card-subtitle">{message}</p>}</div>{action}</div>;
 }
 
 export function ActionRow({ children }: { children: ComponentChildren }): JSX.Element {

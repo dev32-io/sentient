@@ -333,6 +333,17 @@ const PLATE_VARIANTS = {
   default: { props: { variant: "default" } },
 } as const satisfies Readonly<Record<string, PlateVariantDefinition>>;
 
+export interface LoadingStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+}
+
+type LoadingStateVariantDefinition = VisualDiffVariantDefinition<LoadingStateVariantProps>;
+
+const LOADING_STATE_VARIANTS = {
+  settings: { props: { title: "Loading", message: "Fetching current settings…" } },
+} as const satisfies Readonly<Record<string, LoadingStateVariantDefinition>>;
+
 export const visualDiffComponentRegistry = {
   "action-button": {
     id: "action-button",
@@ -498,6 +509,16 @@ export const visualDiffComponentRegistry = {
     variants: PLATE_VARIANTS,
     stateApplicability: {
       default: ["compact-rest", "rest"],
+    },
+  },
+  "loading-state": {
+    id: "loading-state",
+    fixtureAdapterId: "loading-state",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#AsyncState",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: LOADING_STATE_VARIANTS,
+    stateApplicability: {
+      settings: ["active", "reduced-motion"],
     },
   },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;

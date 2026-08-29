@@ -48,6 +48,11 @@ const CURRENT_ICON_BUTTON_CASES = [
 
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
 
+const CURRENT_LOADING_STATE_CASES = [
+  "loading-state--settings--active",
+  "loading-state--settings--reduced-motion",
+] as const;
+
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
   "user-avatar--terra-44--rest",
@@ -840,6 +845,49 @@ describe("visual diff component cases", () => {
         componentId: "plate",
         variantId: "default",
         stateId,
+      });
+    }
+  });
+
+  it("registers the approved loading-state matrix and AsyncState provenance", () => {
+    const loadingState = visualDiffComponentRegistry["loading-state"];
+    expect(loadingState.fixtureAdapterId).toBe("loading-state");
+    expect(loadingState.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#AsyncState");
+    expect(loadingState.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(loadingState.stateApplicability).toEqual({ settings: ["active", "reduced-motion"] });
+    expect(loadingState.variants.settings.props).toEqual({
+      title: "Loading",
+      message: "Fetching current settings…",
+    });
+
+    for (const caseId of CURRENT_LOADING_STATE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("loading-state");
+        expect(resolution.case.fixtureAdapterId).toBe("loading-state");
+        expect(resolution.case.props).toEqual(loadingState.variants.settings.props);
+      }
+    }
+  });
+
+  it("resolves unapproved loading-state variants and states", () => {
+    expect(resolveVisualDiffCase("loading-state--unknown--active")).toEqual({
+      status: "unsupported",
+      caseId: "loading-state--unknown--active",
+      componentId: "loading-state",
+      variantId: "unknown",
+      stateId: "active",
+      reason: "variant",
+    });
+    for (const stateId of ["rest", "error", "empty", "hover", "focus"]) {
+      expect(resolveVisualDiffCase(`loading-state--settings--${stateId}`)).toEqual({
+        status: "unsupported",
+        caseId: `loading-state--settings--${stateId}`,
+        componentId: "loading-state",
+        variantId: "settings",
+        stateId,
+        reason: "state",
       });
     }
   });

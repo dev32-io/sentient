@@ -186,3 +186,33 @@
     transition-duration: .01ms !important;
   }
 }
+
+/* Loading state: a named status with the reviewed circular progress cue. */
+.snt-async-state[data-state="loading"] {
+  align-content: center;
+  gap: 7px;
+  min-height: 0;
+  padding: var(--space-lg);
+}
+.snt-async-state[data-state="loading"] > .snt-card-title {
+  line-height: var(--line-height-normal);
+}
+.snt-async-state[data-state="loading"] > .snt-card-subtitle {
+  margin: 0;
+  line-height: 1.45;
+}
+.snt-async-state__spinner {
+  width: 26px;
+  height: 26px;
+  display: block;
+  border: 2px solid var(--color-line);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: snt-async-state-spin 900ms linear infinite;
+}
+@keyframes snt-async-state-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snt-async-state__spinner { animation: none; }
+}

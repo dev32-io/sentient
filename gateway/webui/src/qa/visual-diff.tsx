@@ -4,7 +4,9 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
+import "../components/common/composites.css";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { AsyncState } from "../components/common/composites.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -14,6 +16,7 @@ import {
   type CheckboxVariantProps,
   type ChipVariantProps,
   type IconButtonVariantProps,
+  type LoadingStateVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
   type SearchFieldVariantProps,
@@ -333,6 +336,19 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "loading-state": {
+    // The handoff retains the plate host around the loading composite. The
+    // state itself remains the production AsyncState used by settings, gates,
+    // sessions, and voice surfaces.
+    render: (fixture) => {
+      const loading = fixture.props as LoadingStateVariantProps;
+      return (
+        <Plate className="visual-diff-target visual-diff-loading-state">
+          <AsyncState state="loading" title={loading.title} message={loading.message} />
+        </Plate>
+      );
+    },
+  },
 };
 
 function failFixture(resolution: InvalidVisualDiffCase): never {
@@ -377,7 +393,7 @@ function VisualDiffFixture() {
   }, []);
 
   return (
-    <main class="visual-diff-canvas snt-surface" data-case-id={caseId}>
+    <main class="visual-diff-canvas snt-surface" data-case-id={caseId} data-component-id={fixture.componentId}>
       {fixtureAdapter.render(fixture)}
     </main>
   );
@@ -393,6 +409,8 @@ style.textContent = `
   .visual-diff-text-area { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
+  .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
+  .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }
 `;
 document.head.append(style);
 

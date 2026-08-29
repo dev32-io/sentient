@@ -12,9 +12,13 @@ const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
 const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
+// The active loading handoff is a static frame from the source's 900ms
+// rotation. Freeze its measured handoff phase so the approved frame is
+// reproducible without changing the production animation.
+const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "search-field", "sentient-identity", "text-area", "text-field", "toggle", "user-avatar"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "loading-state", "range", "search-field", "sentient-identity", "text-area", "text-field", "toggle", "user-avatar"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",
@@ -154,6 +158,10 @@ function captureCaseId(referencePath) {
 
 function isSentientIdentityCase(caseId) {
   return caseId.startsWith("sentient-identity--");
+}
+
+function isLoadingStateActiveCase(caseId) {
+  return caseId === "loading-state--settings--active";
 }
 
 function sentientIdentityVariant(caseId) {
@@ -373,6 +381,20 @@ async function resetSegmentedIndicator(page) {
   });
 }
 
+async function freezeLoadingState(page) {
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-async-state__spinner");
+    return target && target.getAnimations().length > 0;
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-async-state__spinner");
+    const animation = target?.getAnimations()[0];
+    if (!animation) throw new Error("Visual diff loading-state animation is not running");
+    animation.pause();
+    animation.currentTime = timeMs;
+  }, LOADING_ACTIVE_REFERENCE_PHASE_MS);
+}
+
 async function freezeSegmentedTransition(page, transitionTimeMs) {
   await resetSegmentedIndicator(page);
   if (transitionTimeMs === 0) return;
@@ -435,7 +457,8 @@ async function capture() {
       locale: "en-US",
       reducedMotion: identityCase
         ? caseId.endsWith("--reduced-motion") ? "reduce" : "no-preference"
-        : transitionTimeMs === undefined ? "reduce" : "no-preference",
+        : isLoadingStateActiveCase(caseId) ? "no-preference"
+          : transitionTimeMs === undefined ? "reduce" : "no-preference",
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
@@ -464,8 +487,12 @@ async function capture() {
       }
       await captureSentientIdentityKeyframe(page, caseId, identityKeyframeTimeMs);
     } else if (transitionTimeMs === undefined) {
-      await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
-      await applyState(page, caseId);
+      if (isLoadingStateActiveCase(caseId)) {
+        await freezeLoadingState(page);
+      } else {
+        await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+        await applyState(page, caseId);
+      }
     } else {
       await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
       if (caseId.startsWith("chip--unselected-to-selected--")) {
@@ -487,7 +514,7 @@ async function capture() {
     const clip = await chipTransitionClip(page, frame);
     await page.screenshot({
       path: input.outputPath,
-      animations: transitionTimeMs === undefined ? "disabled" : "allow",
+      animations: transitionTimeMs === undefined && !isLoadingStateActiveCase(caseId) ? "disabled" : "allow",
       caret: "hide",
       omitBackground: true,
       scale: "device",
