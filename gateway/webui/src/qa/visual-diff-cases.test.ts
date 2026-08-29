@@ -98,6 +98,15 @@ const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-44--disabled",
 ] as const;
 
+const CURRENT_MEDIA_ACTION_CARD_CASES = [
+  "media-action-card--user-sage--rest",
+  "media-action-card--user-sage--hover",
+  "media-action-card--user-sage--focus",
+  "media-action-card--user-terra--rest",
+  "media-action-card--user-terra--hover",
+  "media-action-card--user-terra--focus",
+] as const;
+
 const CURRENT_SENTIENT_IDENTITY_CASES = [
   "sentient-identity--idle--reduced-motion",
   "sentient-identity--idle--rest",
@@ -442,6 +451,57 @@ describe("visual diff component cases", () => {
         caseId: `user-avatar--terra-44--${stateId}`,
         componentId: "user-avatar",
         variantId: "terra-44",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the production-backed media action card variants and states", () => {
+    const mediaCard = visualDiffComponentRegistry["media-action-card"];
+    expect(mediaCard.stateApplicability).toEqual({
+      "user-sage": ["focus", "hover", "rest"],
+      "user-terra": ["focus", "hover", "rest"],
+    });
+    expect(mediaCard.fixtureAdapterId).toBe("media-action-card");
+    expect(mediaCard.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#DominantVisualCard");
+    expect(mediaCard.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(mediaCard.variants["user-sage"].props).toEqual({
+      initial: "A",
+      name: "Alex",
+      tint: "sage",
+      description: "Household member",
+    });
+
+    for (const caseId of CURRENT_MEDIA_ACTION_CARD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("media-action-card");
+        expect(resolution.case.fixtureAdapterId).toBe("media-action-card");
+      }
+    }
+  });
+
+  it("holds unowned media variants and undefined card states", () => {
+    for (const variantId of ["icon", "image"]) {
+      for (const stateId of ["rest", "hover", "focus"]) {
+        expect(resolveVisualDiffCase(`media-action-card--${variantId}--${stateId}`)).toEqual({
+          status: "unsupported",
+          caseId: `media-action-card--${variantId}--${stateId}`,
+          componentId: "media-action-card",
+          variantId,
+          stateId,
+          reason: "variant",
+        });
+      }
+    }
+
+    for (const stateId of ["pressed", "selected", "disabled", "loading", "error", "image-loading", "crop", "failure"]) {
+      expect(resolveVisualDiffCase(`media-action-card--user-terra--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `media-action-card--user-terra--${stateId}`,
+        componentId: "media-action-card",
+        variantId: "user-terra",
         stateId,
       });
     }

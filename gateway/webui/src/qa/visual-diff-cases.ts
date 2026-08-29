@@ -238,6 +238,22 @@ const NOTICE_VARIANTS = {
   },
 } as const satisfies Readonly<Record<string, NoticeVariantDefinition>>;
 
+export interface MediaActionCardVariantProps {
+  readonly initial: string;
+  readonly name: string;
+  readonly tint: AvatarTint;
+  readonly description: string;
+}
+
+type MediaActionCardVariantDefinition = VisualDiffVariantDefinition<MediaActionCardVariantProps>;
+
+// Only user variants are registered: icon/image media loading, crop, and
+// failure behavior have no production Web owner or defined contract yet.
+const MEDIA_ACTION_CARD_VARIANTS = {
+  "user-sage": { props: { initial: "A", name: "Alex", tint: "sage", description: "Household member" } },
+  "user-terra": { props: { initial: "M", name: "Maya", tint: "terra", description: "Household owner" } },
+} as const satisfies Readonly<Record<string, MediaActionCardVariantDefinition>>;
+
 const TOGGLE_TRANSITION_FRAMES = [
   "frame-000--0000ms",
   "frame-001--0050ms",
@@ -591,6 +607,17 @@ export const visualDiffComponentRegistry = {
       error: ["compact", "rest"],
     },
   },
+  "media-action-card": {
+    id: "media-action-card",
+    fixtureAdapterId: "media-action-card",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#DominantVisualCard",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: MEDIA_ACTION_CARD_VARIANTS,
+    stateApplicability: {
+      "user-sage": ["focus", "hover", "rest"],
+      "user-terra": ["focus", "hover", "rest"],
+    },
+  },
   "sentient-identity": {
     id: "sentient-identity",
     fixtureAdapterId: "sentient-identity",
@@ -808,6 +835,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "toggle",
   "segmented-control",
   "user-avatar",
+  "media-action-card",
   "sentient-identity",
   "notice",
   "no-results",

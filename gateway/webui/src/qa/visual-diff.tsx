@@ -5,7 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
-import { AsyncState, Disclosure, NoResultsState, PaneChrome, PinKeypad, ValidatedField } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
@@ -19,6 +19,7 @@ import {
   type DisclosureVariantProps,
   type IconButtonVariantProps,
   type LoadingStateVariantProps,
+  type MediaActionCardVariantProps,
   type NoResultsStateVariantProps,
   type NoticeVariantProps,
   type PaneHeaderVariantProps,
@@ -345,6 +346,24 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "media-action-card": {
+    // This adapter mounts the production card and avatar primitives with the
+    // reference's fixed user data. Icon/image variants stay unresolved until
+    // production media ownership and failure behavior are defined.
+    render: (fixture) => {
+      const card = fixture.props as MediaActionCardVariantProps;
+      return (
+        <DominantVisualCard
+          className="visual-diff-target visual-diff-media-card"
+          label={card.name}
+          description={card.description}
+          visual={<Avatar kind="user" initial={card.initial} name={card.name} tint={card.tint} size="xl" />}
+          ariaLabel={`Continue as ${card.name}`}
+          onActivate={() => {}}
+        />
+      );
+    },
+  },
   "sentient-identity": {
     // This adapter mounts the production Rive-backed identity. The factory only
     // records the real runtime for deterministic capture control.
@@ -628,6 +647,14 @@ style.textContent = `
     padding: 0 24px 24px 0;
   }
   .visual-diff-pane-header { width: min(620px, 100%); }
+  .visual-diff-media-card { width: 260px; }
+  /* Composite references retain a 52px logical frame around the card. */
+  .visual-diff-canvas[data-case-id^="media-action-card--"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    box-sizing: border-box;
+    padding: 52px;
+  }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
   .visual-diff-canvas[data-component-id="loading-state"] { display: block; }
   .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }
