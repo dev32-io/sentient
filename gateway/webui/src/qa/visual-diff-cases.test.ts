@@ -76,6 +76,27 @@ const CURRENT_CHECKBOX_CASES = [
   "checkbox--unchecked--rest",
 ] as const;
 
+const CURRENT_CHIP_CASES = [
+  "chip--selected--compact-rest",
+  "chip--selected--focus",
+  "chip--selected--hover",
+  "chip--selected--pressed",
+  "chip--selected--rest",
+  "chip--unselected--compact-rest",
+  "chip--unselected--focus",
+  "chip--unselected--hover",
+  "chip--unselected--pressed",
+  "chip--unselected--rest",
+] as const;
+
+const CHIP_TRANSITION_CASES = [
+  "chip--unselected-to-selected--frame-000--0000ms",
+  "chip--unselected-to-selected--frame-001--0040ms",
+  "chip--unselected-to-selected--frame-002--0080ms",
+  "chip--unselected-to-selected--frame-003--0120ms",
+  "chip--unselected-to-selected--frame-004--0150ms",
+] as const;
+
 describe("visual diff component cases", () => {
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
@@ -255,6 +276,48 @@ describe("visual diff component cases", () => {
         caseId: `text-area--filled--${stateId}`,
         componentId: "text-area",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the exact chip matrix and controlled native production provenance", () => {
+    const chip = visualDiffComponentRegistry.chip;
+    expect(chip.stateApplicability).toEqual({
+      unselected: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      selected: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      "unselected-to-selected": [
+        "frame-000--0000ms",
+        "frame-001--0040ms",
+        "frame-002--0080ms",
+        "frame-003--0120ms",
+        "frame-004--0150ms",
+      ],
+    });
+    expect(chip.fixtureAdapterId).toBe("chip");
+    expect(chip.productionComponent).toBe("gateway/webui/src/components/common/foundation/controls.tsx#ChipControl");
+    expect(chip.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(chip.variants.unselected.props).toEqual({ label: "School", selected: false });
+    expect(chip.variants.selected.props).toEqual({ label: "Family", selected: true });
+    expect(chip.variants["unselected-to-selected"].props).toEqual({ label: "School", selected: false });
+
+    for (const caseId of [...CURRENT_CHIP_CASES, ...CHIP_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("chip");
+        expect(resolution.case.fixtureAdapterId).toBe("chip");
+      }
+    }
+  });
+
+  it("resolves unapproved chip states to missing authority", () => {
+    for (const stateId of ["disabled", "selected", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`chip--unselected--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `chip--unselected--${stateId}`,
+        componentId: "chip",
+        variantId: "unselected",
         stateId,
       });
     }

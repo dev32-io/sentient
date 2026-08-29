@@ -17,6 +17,10 @@ const MOBILE_BREAKPOINT = 620;
 const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
+function targetSelector(caseId) {
+  return caseId.startsWith("chip--") ? ".snt-chip" : VISUAL_DIFF_TARGET_SELECTOR;
+}
+
 function usage() {
   return "Usage: capture-web --reference <png> [--output <png>] [--url <fixture-url>]";
 }
@@ -123,15 +127,17 @@ async function localFontCss() {
 function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
   const recordingId = basename(dirname(referencePath));
-  if (/^checkbox--unchecked-to-(?:checked|mixed)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   return frameCaseId;
 }
 
-function checkboxTransitionTimeMs(caseId) {
-  const match = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
-  return match ? Number(match[1]) : undefined;
+function visualDiffTransitionTimeMs(caseId) {
+  const checkboxMatch = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (checkboxMatch) return Number(checkboxMatch[1]);
+  const chipMatch = /^chip--unselected-to-selected--frame-\d+--(\d+)ms$/.exec(caseId);
+  return chipMatch ? Number(chipMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
@@ -142,11 +148,11 @@ function visualDiffState(caseId) {
 }
 
 async function applyState(page, caseId) {
-  const target = page.locator(VISUAL_DIFF_TARGET_SELECTOR);
+  const target = page.locator(targetSelector(caseId));
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
   if (state === "focus") {
-    if (caseId.startsWith("checkbox--")) await page.keyboard.press("Tab");
+    if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--")) await page.keyboard.press("Tab");
     else await target.focus();
   }
   if (state === "pressed") {
@@ -166,15 +172,41 @@ function captureFrame(caseId, referenceSize) {
   const componentId = caseId.split("--", 1)[0];
   const fixedCanvas = FIXED_CANVAS_COMPONENTS.has(componentId);
   const state = visualDiffState(caseId);
-  const transformOffset = fixedCanvas ? 0 : state === "hover" ? -1 : state === "pressed" ? 1 : 0;
-  if (compact || fixedCanvas) return { viewport: canvas };
+  const chipTransition = /^chip--unselected-to-selected--frame-\d+--\d+ms$/.test(caseId);
+  const selectedChip = caseId.startsWith("chip--selected--");
+  const transformOffset = fixedCanvas
+    ? 0
+    : chipTransition
+      ? 0
+      : selectedChip
+        ? state === "pressed" ? 2 : 1
+        : state === "hover" ? -1
+          : state === "pressed" ? 1 : 0;
+  const framePadding = chipTransition ? 1 : Math.abs(transformOffset);
+  if (fixedCanvas) return { viewport: canvas };
+
+  /* Compact references can use their handoff width directly. Add a small
+     source-derived frame only when the component's translated paint needs a
+     boundary that follows the translated control. */
+  if (compact) {
+    if (!selectedChip && !chipTransition) return { viewport: canvas };
+    if (framePadding === 0) return { viewport: canvas };
+    return {
+      viewport: { width: canvas.width, height: canvas.height + framePadding * 2 },
+      clip: {
+        x: 0,
+        y: framePadding + transformOffset,
+        width: canvas.width,
+        height: canvas.height,
+      },
+    };
+  }
 
   /* The isolated standard handoff canvases are cropped below the source's
      responsive width. Render above the authoritative 620px query, then crop
      back to the handoff canvas instead of accidentally selecting the mobile
      44px target. */
   const renderWidth = Math.max(canvas.width, MOBILE_BREAKPOINT + 1);
-  const framePadding = Math.abs(transformOffset);
   return {
     viewport: { width: renderWidth, height: canvas.height + framePadding * 2 },
     clip: {
@@ -183,14 +215,48 @@ function captureFrame(caseId, referenceSize) {
       width: canvas.width,
       height: canvas.height,
     },
+    ...(chipTransition ? { normalizeTranslatedPaint: true } : {}),
   };
+}
+
+async function freezeChipTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  if (transitionTimeMs === 0) return;
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-chip");
+    return target && document.getAnimations().some((animation) => animation.effect?.target === target);
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-chip");
+    if (!target) throw new Error("Visual diff chip target is not ready");
+    for (const animation of document.getAnimations()) {
+      if (animation.effect?.target !== target) continue;
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
+async function chipTransitionClip(page, frame) {
+  if (!frame.normalizeTranslatedPaint || !frame.clip) return frame.clip;
+  const translatedOffset = await page.evaluate(() => {
+    const target = document.querySelector(".snt-chip");
+    if (!target) throw new Error("Visual diff chip target is not ready");
+    const bounds = target.getBoundingClientRect();
+    return bounds.top - (window.innerHeight - bounds.height) / 2;
+  });
+  return { ...frame.clip, y: frame.clip.y + Math.ceil(translatedOffset) };
 }
 
 async function capture() {
   const input = parseArguments(process.argv.slice(2));
   await assertDisposableOutput(input.referencePath, input.outputPath, "web");
   const caseId = captureCaseId(input.referencePath);
-  const transitionTimeMs = checkboxTransitionTimeMs(caseId);
+  const transitionTimeMs = visualDiffTransitionTimeMs(caseId);
   const referenceSize = await readPngSize(input.referencePath);
   if (referenceSize.width % HANDOFF_SCALE !== 0 || referenceSize.height % HANDOFF_SCALE !== 0) {
     throw new Error(`Reference canvas must be divisible by the handoff ${HANDOFF_SCALE}x scale: ${referenceSize.width}x${referenceSize.height}`);
@@ -232,21 +298,26 @@ async function capture() {
       await applyState(page, caseId);
     } else {
       await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
-      await page.evaluate(() => {
-        const transitionWindow = window;
-        if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff transition is not ready");
-        transitionWindow.__startVisualDiffTransition();
-      });
-      if (transitionTimeMs > 0) await page.waitForTimeout(transitionTimeMs);
+      if (caseId.startsWith("chip--unselected-to-selected--")) {
+        await freezeChipTransition(page, transitionTimeMs);
+      } else {
+        await page.evaluate(() => {
+          const transitionWindow = window;
+          if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff transition is not ready");
+          transitionWindow.__startVisualDiffTransition();
+        });
+        if (transitionTimeMs > 0) await page.waitForTimeout(transitionTimeMs);
+      }
     }
     await mkdir(dirname(input.outputPath), { recursive: true });
+    const clip = await chipTransitionClip(page, frame);
     await page.screenshot({
       path: input.outputPath,
       animations: transitionTimeMs === undefined ? "disabled" : "allow",
       caret: "hide",
       omitBackground: true,
       scale: "device",
-      ...(frame.clip ? { clip: frame.clip } : {}),
+      ...(clip ? { clip } : {}),
     });
     console.log(JSON.stringify({ platform: "web", caseId, referenceSize, actualPath: input.outputPath }));
     await context.close();

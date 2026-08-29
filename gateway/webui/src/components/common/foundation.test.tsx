@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
-import { ActionButton, CheckboxControl, Field, Plate, SelectControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SelectControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -114,6 +114,22 @@ describe("Web foundation controls", () => {
     const button = screen.getByRole("button", { name: "Save changes" });
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(button.getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("keeps ChipControl controlled, native, and pressed-state accessible", () => {
+    const onClick = vi.fn();
+    render(<div><ChipControl selected onClick={onClick}>Family</ChipControl><ChipControl disabled>Unavailable</ChipControl></div>);
+
+    const chip = screen.getByRole("button", { name: "Family" }) as HTMLButtonElement;
+    expect(chip.type).toBe("button");
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    expect(chip.disabled).toBe(false);
+    fireEvent.click(chip);
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    const unavailable = screen.getByRole("button", { name: "Unavailable" }) as HTMLButtonElement;
+    expect(unavailable.disabled).toBe(true);
+    expect(unavailable.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("delegates adorned fields and badges to shared semantic primitives", () => {

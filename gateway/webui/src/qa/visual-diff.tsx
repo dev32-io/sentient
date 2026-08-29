@@ -3,12 +3,13 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, CheckboxControl, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate } from "../components/common/foundation.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
   type ActionButtonVariantProps,
   type CheckboxVariantProps,
+  type ChipVariantProps,
   type IconButtonVariantProps,
   type PlateVariantProps,
   type TextAreaVariantProps,
@@ -51,6 +52,24 @@ function CheckboxTransitionFixture({ destination }: { destination: CheckboxTrans
       onChange={() => {}}
     />
   );
+}
+
+function ChipTransitionFixture({ label }: { label: string }): JSX.Element {
+  const [selected, setSelected] = useState(false);
+  useEffect(() => {
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => {
+      const target = document.querySelector<HTMLButtonElement>(".snt-chip");
+      if (!target) throw new Error("Visual diff chip target is not ready");
+      target.click();
+    };
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, []);
+  return <ChipControl selected={selected} onClick={() => setSelected(true)}>{label}</ChipControl>;
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
@@ -119,6 +138,14 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       if (fixture.variantId === "unchecked-to-mixed") return <CheckboxTransitionFixture destination="mixed" />;
       const checkbox = fixture.props as CheckboxVariantProps;
       return <CheckboxControl {...checkbox} className="visual-diff-target" onChange={() => {}} />;
+    },
+  },
+  "chip": {
+    // This adapter deliberately renders the production controlled native ChipControl.
+    render: (fixture) => {
+      const chip = fixture.props as ChipVariantProps;
+      if (fixture.variantId === "unselected-to-selected") return <ChipTransitionFixture label={chip.label} />;
+      return <ChipControl selected={chip.selected}>{chip.label}</ChipControl>;
     },
   },
   "plate": {

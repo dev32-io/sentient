@@ -97,6 +97,27 @@ export interface CheckboxVariantProps {
 
 type CheckboxVariantDefinition = VisualDiffVariantDefinition<CheckboxVariantProps>;
 
+export interface ChipVariantProps {
+  readonly label: string;
+  readonly selected: boolean;
+}
+
+type ChipVariantDefinition = VisualDiffVariantDefinition<ChipVariantProps>;
+
+const CHIP_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0040ms",
+  "frame-002--0080ms",
+  "frame-003--0120ms",
+  "frame-004--0150ms",
+] as const;
+
+const CHIP_VARIANTS = {
+  unselected: { props: { label: "School", selected: false } },
+  selected: { props: { label: "Family", selected: true } },
+  "unselected-to-selected": { props: { label: "School", selected: false } },
+} as const satisfies Readonly<Record<string, ChipVariantDefinition>>;
+
 const CHECKBOX_TRANSITION_FRAMES = [
   "frame-000--0000ms",
   "frame-001--0050ms",
@@ -191,6 +212,18 @@ export const visualDiffComponentRegistry = {
       filled: ["focus", "hover", "rest"],
     },
   },
+  chip: {
+    id: "chip",
+    fixtureAdapterId: "chip",
+    productionComponent: "gateway/webui/src/components/common/foundation/controls.tsx#ChipControl",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: CHIP_VARIANTS,
+    stateApplicability: {
+      unselected: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      selected: ["compact-rest", "focus", "hover", "pressed", "rest"],
+      "unselected-to-selected": CHIP_TRANSITION_FRAMES,
+    },
+  },
   checkbox: {
     id: "checkbox",
     fixtureAdapterId: "checkbox",
@@ -226,6 +259,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "text-field",
   "text-area",
   "checkbox",
+  "chip",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
