@@ -553,6 +553,71 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testRangeRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "range--62--disabled",
+            "range--62--rest",
+        ])
+        let expectedNotApplicable = Set([
+            "range--62--hover",
+        ])
+        let expectedInteractionStates = Set([
+            "range--62--focus",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "range")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(
+            actualCaseIDs,
+            expectedSupported.union(expectedNotApplicable).union(expectedInteractionStates)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedNotApplicable
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+    }
+
+    func testRangeRegistryPreservesNativeValueAndDisabledMapping() {
+        let expected: [(String, Bool)] = [
+            ("range--62--rest", true),
+            ("range--62--disabled", false),
+        ]
+
+        for (caseID, isEnabled) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.sliderRenderConfiguration(for: caseID) else {
+                XCTFail("Missing range render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, "Interface scale", caseID)
+            XCTAssertEqual(configuration.value, 62, caseID)
+            XCTAssertEqual(configuration.range, 0...100, caseID)
+            XCTAssertEqual(configuration.step, 1, caseID)
+            XCTAssertEqual(configuration.format(configuration.value), "62%", caseID)
+            XCTAssertEqual(configuration.isEnabled, isEnabled, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.sliderRenderConfiguration(
+                for: "range--62--hover"
+            )
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.sliderRenderConfiguration(
+                for: "range--62--focus"
+            )
+        )
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",

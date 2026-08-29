@@ -135,6 +135,15 @@ struct VisualDiffChipRenderConfiguration {
     let compact: Bool
 }
 
+struct VisualDiffSliderRenderConfiguration {
+    let title: String
+    let value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let format: (Double) -> String
+    let isEnabled: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -145,6 +154,7 @@ enum VisualDiffFixtureRegistry {
         TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
+        RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -228,6 +238,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffChipRenderConfiguration? {
         ChipFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func sliderRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSliderRenderConfiguration? {
+        RangeFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -396,6 +412,78 @@ private enum ChipFixtureCatalog {
         componentID: "chip",
         registrations: definitions.map(\.0),
         adapter: ChipFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct RangeFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSliderRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                DesignSlider(
+                    title: configuration.title,
+                    value: .constant(configuration.value),
+                    range: configuration.range,
+                    step: configuration.step,
+                    format: configuration.format,
+                    isEnabled: configuration.isEnabled
+                )
+                .padding(.horizontal, Space.md * 2)
+            }
+        )
+    }
+}
+
+private enum RangeFixtureCatalog {
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffSliderRenderConfiguration?)] = [
+        (fixture("rest"), configuration(isEnabled: true)),
+        (fixture("hover", applicability: .missingAuthority(.stateNotApplicable)), nil),
+        (fixture("focus", applicability: .missingAuthority(.stateRequiresInteraction)), nil),
+        (fixture("disabled"), configuration(isEnabled: false)),
+    ]
+
+    private static func fixture(
+        _ stateID: String,
+        applicability: VisualDiffFixtureApplicability = .supported
+    ) -> VisualDiffFixtureRegistration {
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: "range--62--\(stateID)",
+                componentID: "range",
+                variantID: "62",
+                stateID: stateID
+            ),
+            applicability: applicability
+        )
+    }
+
+    private static func configuration(isEnabled: Bool) -> VisualDiffSliderRenderConfiguration {
+        VisualDiffSliderRenderConfiguration(
+            title: "Interface scale",
+            value: 62,
+            range: 0...100,
+            step: 1,
+            format: { "\(Int($0.rounded()))%" },
+            isEnabled: isEnabled
+        )
+    }
+
+    static let renderConfigurations: [String: VisualDiffSliderRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "range",
+        registrations: definitions.map(\.0),
+        adapter: RangeFixtureAdapter(configurations: renderConfigurations)
     )
 }
 
