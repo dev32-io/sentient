@@ -308,6 +308,55 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testUserAvatarRegistryPreservesApprovedCasesAndMappings() throws {
+        let expected: [(String, String, String, CGFloat, DesignUserAvatarTint, Bool, Bool, Bool)] = [
+            ("user-avatar--amber-44--rest", "Jordan Chen", "J", 44, .amber, false, false, false),
+            ("user-avatar--clay-44--rest", "Riley Chen", "R", 44, .clay, false, false, false),
+            ("user-avatar--fallback-44--rest", "Unknown user", "?", 44, .fallback, false, false, true),
+            ("user-avatar--sage-44--rest", "Alex Chen", "A", 44, .sage, false, false, false),
+            ("user-avatar--terra-28--rest", "Maya Chen", "M", 28, .terra, false, false, false),
+            ("user-avatar--terra-44--disabled", "Maya Chen", "M", 44, .terra, false, true, false),
+            ("user-avatar--terra-44--rest", "Maya Chen", "M", 44, .terra, false, false, false),
+            ("user-avatar--terra-44--selected", "Maya Chen", "M", 44, .terra, true, false, false),
+            ("user-avatar--terra-56--rest", "Maya Chen", "M", 56, .terra, false, false, false),
+        ]
+
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "user-avatar")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, name, initial, size, tint, selected, disabled, fallback) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.userAvatarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing user-avatar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.name, name, caseID)
+            XCTAssertEqual(configuration.initial, initial, caseID)
+            XCTAssertEqual(configuration.size, size, caseID)
+            XCTAssertEqual(configuration.tint, tint, caseID)
+            XCTAssertEqual(configuration.selected, selected, caseID)
+            XCTAssertEqual(configuration.disabled, disabled, caseID)
+            XCTAssertEqual(configuration.fallback, fallback, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved user-avatar case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+
+        guard case .missingAuthority(let unavailable) = VisualDiffFixtureRegistry.resolve(
+            caseID: "user-avatar--terra-44--hover"
+        ) else {
+            XCTFail("Unapproved user-avatar interaction state must remain missing authority")
+            return
+        }
+        XCTAssertEqual(unavailable.reason, .unknownCase)
+    }
+
     func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
         guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
             caseID: "action-button--primary--hover"

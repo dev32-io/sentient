@@ -101,11 +101,22 @@ struct VisualDiffIconButtonRenderConfiguration {
     let compact: Bool
 }
 
+struct VisualDiffUserAvatarRenderConfiguration {
+    let name: String
+    let initial: String
+    let size: CGFloat
+    let tint: DesignUserAvatarTint
+    let selected: Bool
+    let disabled: Bool
+    let fallback: Bool
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
         IconButtonFixtureCatalog.registration.componentID: IconButtonFixtureCatalog.registration,
         PlateFixtureCatalog.registration.componentID: PlateFixtureCatalog.registration,
+        UserAvatarFixtureCatalog.registration.componentID: UserAvatarFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -159,6 +170,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffIconButtonRenderConfiguration? {
         IconButtonFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func userAvatarRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffUserAvatarRenderConfiguration? {
+        UserAvatarFixtureCatalog.renderConfigurations[caseID]
     }
 }
 
@@ -576,6 +593,92 @@ private enum PlateFixtureCatalog {
         registrations: definitions,
         adapter: PlateFixtureAdapter(configurations: renderConfigurations)
     )
+}
+
+private struct UserAvatarFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffUserAvatarRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                ElevatedUserAvatar(
+                    name: configuration.name,
+                    size: configuration.size,
+                    tint: configuration.tint,
+                    selected: configuration.selected,
+                    disabled: configuration.disabled,
+                    fallback: configuration.fallback,
+                    initial: configuration.initial
+                )
+            }
+        )
+    }
+}
+
+private enum UserAvatarFixtureCatalog {
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffUserAvatarRenderConfiguration)] = [
+        (definition("amber-44"), configuration(size: 44, tint: .amber, name: "Jordan Chen", initial: "J")),
+        (definition("clay-44"), configuration(size: 44, tint: .clay, name: "Riley Chen", initial: "R")),
+        (definition("fallback-44"), configuration(size: 44, tint: .fallback, name: "Unknown user", initial: "?", fallback: true)),
+        (definition("sage-44"), configuration(size: 44, tint: .sage, name: "Alex Chen", initial: "A")),
+        (definition("terra-28"), configuration(size: 28, tint: .terra, name: "Maya Chen", initial: "M")),
+        (definition("terra-44", stateID: "disabled"), configuration(size: 44, tint: .terra, name: "Maya Chen", initial: "M", disabled: true)),
+        (definition("terra-44"), configuration(size: 44, tint: .terra, name: "Maya Chen", initial: "M")),
+        (definition("terra-44", stateID: "selected"), configuration(size: 44, tint: .terra, name: "Maya Chen", initial: "M", selected: true)),
+        (definition("terra-56"), configuration(size: 56, tint: .terra, name: "Maya Chen", initial: "M")),
+    ]
+
+    static let renderConfigurations: [String: VisualDiffUserAvatarRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: definitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "user-avatar",
+        registrations: definitions.map(\.0),
+        adapter: UserAvatarFixtureAdapter(configurations: renderConfigurations)
+    )
+
+    private static func definition(
+        _ variantID: String,
+        stateID: String = "rest"
+    ) -> VisualDiffFixtureRegistration {
+        let caseID = "user-avatar--\(variantID)--\(stateID)"
+        return VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "user-avatar",
+                variantID: variantID,
+                stateID: stateID
+            ),
+            applicability: .supported
+        )
+    }
+
+    private static func configuration(
+        size: CGFloat,
+        tint: DesignUserAvatarTint,
+        name: String,
+        initial: String,
+        selected: Bool = false,
+        disabled: Bool = false,
+        fallback: Bool = false
+    ) -> VisualDiffUserAvatarRenderConfiguration {
+        VisualDiffUserAvatarRenderConfiguration(
+            name: name,
+            initial: initial,
+            size: size,
+            tint: tint,
+            selected: selected,
+            disabled: disabled,
+            fallback: fallback
+        )
+    }
 }
 
 private enum ActionButtonFixtureCatalog {
