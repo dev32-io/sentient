@@ -48,6 +48,18 @@ const CURRENT_ICON_BUTTON_CASES = [
 
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
 
+const CURRENT_USER_AVATAR_CASES = [
+  "user-avatar--terra-28--rest",
+  "user-avatar--terra-44--rest",
+  "user-avatar--terra-56--rest",
+  "user-avatar--sage-44--rest",
+  "user-avatar--amber-44--rest",
+  "user-avatar--clay-44--rest",
+  "user-avatar--fallback-44--rest",
+  "user-avatar--terra-44--selected",
+  "user-avatar--terra-44--disabled",
+] as const;
+
 const CURRENT_TEXT_FIELD_CASES = [
   "text-field--filled--focus",
   "text-field--filled--hover",
@@ -221,6 +233,56 @@ describe("visual diff component cases", () => {
 
     for (const caseId of ["", "action-button", "action-button--default", "action-button--default--"]) {
       expect(resolveVisualDiffCase(caseId)).toEqual({ status: "missing-authority", caseId });
+    }
+  });
+
+  it("registers the exact user-avatar matrix and canonical Avatar provenance", () => {
+    const userAvatar = visualDiffComponentRegistry["user-avatar"];
+    expect(userAvatar.stateApplicability).toEqual({
+      "terra-28": ["rest"],
+      "terra-44": ["disabled", "rest", "selected"],
+      "terra-56": ["rest"],
+      "sage-44": ["rest"],
+      "amber-44": ["rest"],
+      "clay-44": ["rest"],
+      "fallback-44": ["rest"],
+    });
+    expect(userAvatar.fixtureAdapterId).toBe("user-avatar");
+    expect(userAvatar.productionComponent).toBe("gateway/webui/src/components/common/avatar.tsx#Avatar");
+    expect(userAvatar.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(userAvatar.variants["terra-28"].props).toEqual({ initial: "M", name: "Maya Chen", size: "sm" });
+    expect(userAvatar.variants["sage-44"].props).toEqual({ initial: "A", name: "Alex Chen", tint: "sage", size: "lg" });
+    expect(userAvatar.variants["fallback-44"].props).toEqual({ name: "Unknown user", size: "lg" });
+
+    for (const caseId of CURRENT_USER_AVATAR_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("user-avatar");
+        expect(resolution.case.fixtureAdapterId).toBe("user-avatar");
+      }
+    }
+  });
+
+  it("resolves unapproved user-avatar states to missing authority", () => {
+    for (const stateId of [
+      "image-loading",
+      "crop",
+      "privacy",
+      "failure",
+      "loading",
+      "error",
+      "hover",
+      "focus",
+      "pressed",
+    ]) {
+      expect(resolveVisualDiffCase(`user-avatar--terra-44--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `user-avatar--terra-44--${stateId}`,
+        componentId: "user-avatar",
+        variantId: "terra-44",
+        stateId,
+      });
     }
   });
 

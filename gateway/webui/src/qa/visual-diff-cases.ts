@@ -1,3 +1,4 @@
+import type { AvatarSize, AvatarTint } from "../components/common/avatar.tsx";
 import type { IconName } from "../components/common/icon.tsx";
 
 export interface ActionButtonCase {
@@ -111,6 +112,25 @@ export interface ToggleVariantProps {
 
 type ToggleVariantDefinition = VisualDiffVariantDefinition<ToggleVariantProps>;
 
+export interface UserAvatarVariantProps {
+  readonly initial?: string;
+  readonly name: string;
+  readonly tint?: AvatarTint;
+  readonly size: AvatarSize;
+}
+
+type UserAvatarVariantDefinition = VisualDiffVariantDefinition<UserAvatarVariantProps>;
+
+const USER_AVATAR_VARIANTS = {
+  "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
+  "terra-44": { props: { initial: "M", name: "Maya Chen", size: "lg" } },
+  "terra-56": { props: { initial: "M", name: "Maya Chen", size: "xl" } },
+  "sage-44": { props: { initial: "A", name: "Alex Chen", tint: "sage", size: "lg" } },
+  "amber-44": { props: { initial: "J", name: "Jordan Chen", tint: "amber", size: "lg" } },
+  "clay-44": { props: { initial: "R", name: "Riley Chen", tint: "clay", size: "lg" } },
+  "fallback-44": { props: { name: "Unknown user", size: "lg" } },
+} as const satisfies Readonly<Record<string, UserAvatarVariantDefinition>>;
+
 const TOGGLE_TRANSITION_FRAMES = [
   "frame-000--0000ms",
   "frame-001--0050ms",
@@ -213,6 +233,22 @@ export const visualDiffComponentRegistry = {
       destructive: ["compact-rest", "focus", "hover", "pressed", "rest"],
     },
   },
+  "user-avatar": {
+    id: "user-avatar",
+    fixtureAdapterId: "user-avatar",
+    productionComponent: "gateway/webui/src/components/common/avatar.tsx#Avatar",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: USER_AVATAR_VARIANTS,
+    stateApplicability: {
+      "terra-28": ["rest"],
+      "terra-44": ["disabled", "rest", "selected"],
+      "terra-56": ["rest"],
+      "sage-44": ["rest"],
+      "amber-44": ["rest"],
+      "clay-44": ["rest"],
+      "fallback-44": ["rest"],
+    },
+  },
   "text-field": {
     id: "text-field",
     fixtureAdapterId: "text-field",
@@ -294,6 +330,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "checkbox",
   "chip",
   "toggle",
+  "user-avatar",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

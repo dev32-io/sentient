@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, ToggleControl } from "../components/common/foundation.tsx";
+import { Avatar } from "../components/common/avatar.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import {
@@ -15,6 +16,7 @@ import {
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
+  type UserAvatarVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -119,6 +121,22 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
         >
           <Icon name={button.iconName} size={16} />
         </FoundationIconButton>
+      );
+    },
+  },
+  "user-avatar": {
+    // This adapter deliberately renders the production Avatar user branch and its native image semantics.
+    render: (fixture) => {
+      const avatar = fixture.props as UserAvatarVariantProps;
+      const name = fixture.state === "disabled" ? "Unavailable user" : avatar.name;
+      return (
+        <Avatar
+          {...avatar}
+          kind="user"
+          name={name}
+          selected={fixture.state === "selected"}
+          disabled={fixture.state === "disabled"}
+        />
       );
     },
   },

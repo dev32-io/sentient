@@ -14,12 +14,13 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field", "toggle"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field", "toggle", "user-avatar"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
   if (caseId.startsWith("toggle--")) return ".snt-toggle";
+  if (caseId.startsWith("user-avatar--")) return ".snt-avatar--user";
   return VISUAL_DIFF_TARGET_SELECTOR;
 }
 

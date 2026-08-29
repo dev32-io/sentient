@@ -26,14 +26,18 @@ export function Avatar({ kind, initial, name, tint = "terra", size = "sm", mode 
       </span>
     );
   }
-  const fallback = initial?.trim().slice(0, 2).toLocaleUpperCase() || "?";
+  const trimmedInitial = initial?.trim();
+  const isFallback = !trimmedInitial;
+  const displayedInitial = trimmedInitial?.slice(0, 2).toLocaleUpperCase() || "?";
+  const accessibleName = name ?? `User ${displayedInitial}`;
   return (
     <span
-      class={`snt-avatar snt-avatar--user snt-avatar--${tint} ${foundationSize}${selected ? " snt-avatar--selected" : ""}`}
-      aria-label={name ?? `User ${fallback}`}
+      role="img"
+      class={`snt-avatar snt-avatar--user snt-avatar--${isFallback ? "fallback" : tint} ${foundationSize}${selected ? " snt-avatar--selected" : ""}`}
+      aria-label={selected ? `${accessibleName}, selected` : accessibleName}
       aria-disabled={disabled || undefined}
     >
-      {fallback}
+      <span aria-hidden="true">{displayedInitial}</span>
     </span>
   );
 }
