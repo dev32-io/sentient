@@ -208,34 +208,51 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
     @Binding var selection: Value
     var accessibilityId: String? = nil
     var isEnabled = true
+    var visualHeight: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var selectionNamespace
+    @State private var indicatorProgress: CGFloat = 0
+
+    private let selectionAnimationDuration = 0.22
 
     init(
         title: String,
         options: [(value: Value, label: String)],
         selection: Binding<Value>,
         accessibilityId: String? = nil,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        visualHeight: CGFloat = DesignMetrics.minimumTarget
     ) {
         self.title = title
         self.options = options
         _selection = selection
         self.accessibilityId = accessibilityId
         self.isEnabled = isEnabled
+        self.visualHeight = visualHeight
     }
 
     var body: some View {
-        HStack(spacing: DesignMetrics.segmentGap) {
+        ZStack {
+            HStack(spacing: DesignMetrics.segmentGap) {
             ForEach(Array(options.enumerated()), id: \.offset) { _, option in
                 Button {
                     selection = option.value
                 } label: {
                     Text(option.label)
-                        .font(Typo.ui(DesignMetrics.segmentLabelSize))
-                        .foregroundStyle(selection == option.value ? DuskColors.accent : DuskColors.ink2)
-                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.segmentHeight)
-                        .padding(.horizontal, DesignMetrics.segmentHorizontalPadding)
+                        // A 15pt native DM Sans run preserves the reviewed
+                        // 14px browser label's intrinsic visual footprint.
+                        .font(Typo.ui(TypeScale.base))
+                        // Match the source line box without moving the
+                        // control's 44pt target; the shared action text
+                        // adaptation is one half-point high for this face.
+                        .baselineOffset(DesignMetrics.actionButtonTextBaselineOffset - DesignMetrics.hairline / 2)
+                        .foregroundStyle(selection == option.value ? DuskColors.accent : DuskColors.ink)
+                        .frame(maxWidth: .infinity, minHeight: segmentFaceHeight)
+                        // CSS reserves one transparent border point on each
+                        // segment. SwiftUI's overlay stroke does not consume
+                        // layout, so include that source border-box space in
+                        // the native label's horizontal measurement.
+                        .padding(.horizontal, DesignMetrics.segmentHorizontalPadding + DesignMetrics.hairline)
                         .background {
                             if selection == option.value {
                                 RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous)
@@ -250,11 +267,20 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                                     }
                                     .clipShape(RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous))
                                     .overlay {
-                                        RoundedRectangle(cornerRadius: DesignMetrics.segmentCornerRadius, style: .continuous)
-                                            .stroke(
+                                        let shape = RoundedRectangle(
+                                            cornerRadius: DesignMetrics.segmentCornerRadius,
+                                            style: .continuous
+                                        )
+                                        ZStack {
+                                            shape.stroke(
                                                 DuskColors.lineSoft.overlaying(DuskColors.accent, opacity: 0.22),
                                                 lineWidth: DesignMetrics.hairline
                                             )
+                                            DesignTopEdgeLight(
+                                                shape: shape,
+                                                color: DuskColors.ink.opacity(DesignMaterialAdapter.slateTopLightRest)
+                                            )
+                                        }
                                     }
                                     .background {
                                         let shape = RoundedRectangle(
@@ -262,6 +288,11 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                                             style: .continuous
                                         )
                                         ZStack {
+                                            DesignSpreadShadow(
+                                                shape: shape,
+                                                color: DuskColors.accent.opacity(DesignMaterialAdapter.slateQuietGlow),
+                                                geometry: DesignMaterialShadowGeometry.slateGlow
+                                            )
                                             DesignSpreadShadow(
                                                 shape: shape,
                                                 color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
@@ -279,21 +310,50 @@ struct DesignSegmentedPicker<Value: Hashable>: View {
                                         }
                                     }
                                     .matchedGeometryEffect(id: "selected-segment", in: selectionNamespace)
+                                    // The prototype's first layout grows the
+                                    // measured slate from zero width while its
+                                    // opacity comes in; keep that reveal on
+                                    // the native surface, not in the fixture.
+                                    .scaleEffect(x: indicatorProgress, y: 1, anchor: .leading)
+                                    .opacity(indicatorProgress)
                             }
                         }
                 }
                 .buttonStyle(DesignSegmentButtonStyle())
                 .disabled(!isEnabled)
             }
+            }
+            .padding(DesignMetrics.segmentBedPadding)
+            // Keep the native control's 44pt semantic target while allowing
+            // the standard handoff to retain its 40pt visual bed. Compact
+            // layouts use the full 44pt bed through the same public variant.
+            .frame(minHeight: visualHeight)
+            .designWell(cornerRadius: Radii.sm)
         }
-        .padding(DesignMetrics.segmentBedPadding)
         .frame(minHeight: DesignMetrics.minimumTarget)
-        .designWell(cornerRadius: Radii.sm)
         .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: selection)
+        .animation(selectionAnimation, value: selection)
+        .onAppear {
+            guard indicatorProgress == 0 else { return }
+            withAnimation(selectionAnimation) {
+                indicatorProgress = 1
+            }
+        }
         .accessibilityLabel(title)
         .accessibilityValue(isEnabled ? selectedLabel : "Disabled")
         .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var selectionAnimation: Animation? {
+        reduceMotion
+            ? nil
+            : .timingCurve(0.2, 0.8, 0.2, 1, duration: selectionAnimationDuration)
+    }
+
+    private var segmentFaceHeight: CGFloat {
+        visualHeight == DesignMetrics.actionButtonVisualHeight
+            ? DesignMetrics.segmentHeight - DesignMetrics.segmentBedPadding
+            : DesignMetrics.segmentHeight
     }
 
     private var selectedLabel: String {

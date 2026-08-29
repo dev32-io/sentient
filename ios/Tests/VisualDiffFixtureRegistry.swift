@@ -151,6 +151,27 @@ struct VisualDiffSearchFieldRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffSegmentOptionConfiguration {
+    let value: String
+    let label: String
+}
+
+struct VisualDiffSegmentedRenderConfiguration {
+    let title: String
+    let options: [VisualDiffSegmentOptionConfiguration]
+    let selection: String
+    let visualHeight: CGFloat
+}
+
+struct VisualDiffSegmentedMotionRenderConfiguration {
+    let title: String
+    let options: [VisualDiffSegmentOptionConfiguration]
+    let initialSelection: String
+    let targetSelection: String
+    let visualHeight: CGFloat
+    let frameTime: TimeInterval
+}
+
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
@@ -163,16 +184,17 @@ enum VisualDiffFixtureRegistry {
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
+        SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
-        guard let componentID = caseID
+        let componentID = caseID
             .split(separator: "--", maxSplits: 1, omittingEmptySubsequences: false)
             .first
-            .map(String.init),
-            !componentID.isEmpty,
-            let component = components[componentID]
-        else {
+            .map(String.init)
+        let component = componentID.flatMap { components[$0] }
+            ?? components.values.first { $0.cases[caseID] != nil }
+        guard let component else {
             return .missingAuthority(
                 VisualDiffFixtureSkip(caseID: caseID, reason: .unknownComponent)
             )
@@ -258,6 +280,16 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSearchFieldRenderConfiguration? {
         SearchFieldFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func segmentedControlRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSegmentedRenderConfiguration? {
+        SegmentedControlFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func segmentedControlCaptureTime(for caseID: String) -> TimeInterval? {
+        SegmentedControlFixtureCatalog.captureTime(for: caseID)
     }
 }
 
@@ -605,6 +637,229 @@ private enum SearchFieldFixtureCatalog {
         componentID: "search-field",
         registrations: definitions.map(\.0),
         adapter: SearchFieldFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct SegmentedControlFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSegmentedRenderConfiguration]
+    let motionConfigurations: [String: VisualDiffSegmentedMotionRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        if let configuration = motionConfigurations[fixture.caseID] {
+            return AnyView(
+                ZStack {
+                    Color.clear
+                    SegmentedMotionFixture(configuration: configuration)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            )
+        }
+
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack {
+                Color.clear
+                DesignSegmentedPicker(
+                    title: configuration.title,
+                    options: configuration.options.map { (value: $0.value, label: $0.label) },
+                    selection: .constant(configuration.selection),
+                    visualHeight: configuration.visualHeight
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        )
+    }
+}
+
+private struct SegmentedMotionFixture: View {
+    let configuration: VisualDiffSegmentedMotionRenderConfiguration
+    @State private var selection: String
+    @State private var transitionStarted = false
+
+    init(configuration: VisualDiffSegmentedMotionRenderConfiguration) {
+        self.configuration = configuration
+        _selection = State(initialValue: configuration.initialSelection)
+    }
+
+    var body: some View {
+        DesignSegmentedPicker(
+            title: configuration.title,
+            options: configuration.options.map { (value: $0.value, label: $0.label) },
+            selection: $selection,
+            visualHeight: configuration.visualHeight
+        )
+        .onAppear {
+            guard !transitionStarted else { return }
+            transitionStarted = true
+            DispatchQueue.main.async {
+                selection = configuration.targetSelection
+            }
+        }
+    }
+}
+
+private enum SegmentedControlFixtureCatalog {
+    private static func option(_ value: String, _ label: String) -> VisualDiffSegmentOptionConfiguration {
+        VisualDiffSegmentOptionConfiguration(value: value, label: label)
+    }
+
+    private static let avatarOptions = [
+        option("idle", "Idle"),
+        option("thinking", "Thinking"),
+        option("responding", "Responding"),
+    ]
+    private static let densityOptions = [
+        option("comfortable", "Comfortable"),
+        option("compact", "Compact"),
+    ]
+
+    private static let supportedConfigurations: [String: VisualDiffSegmentedRenderConfiguration] = [
+        "segmented-control--avatar-state--compact-layout": VisualDiffSegmentedRenderConfiguration(
+            title: "Avatar state",
+            options: avatarOptions,
+            selection: "idle",
+            visualHeight: DesignMetrics.minimumTarget
+        ),
+        "segmented-control--avatar-state--idle-selected": VisualDiffSegmentedRenderConfiguration(
+            title: "Avatar state",
+            options: avatarOptions,
+            selection: "idle",
+            visualHeight: DesignMetrics.actionButtonVisualHeight
+        ),
+        "segmented-control--avatar-state--responding-selected": VisualDiffSegmentedRenderConfiguration(
+            title: "Avatar state",
+            options: avatarOptions,
+            selection: "responding",
+            visualHeight: DesignMetrics.actionButtonVisualHeight
+        ),
+        "segmented-control--avatar-state--thinking-selected": VisualDiffSegmentedRenderConfiguration(
+            title: "Avatar state",
+            options: avatarOptions,
+            selection: "thinking",
+            visualHeight: DesignMetrics.actionButtonVisualHeight
+        ),
+        "segmented-control--density--comfortable-selected": VisualDiffSegmentedRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            selection: "comfortable",
+            visualHeight: DesignMetrics.actionButtonVisualHeight
+        ),
+        "segmented-control--density--compact-layout": VisualDiffSegmentedRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            selection: "comfortable",
+            visualHeight: DesignMetrics.minimumTarget
+        ),
+        "segmented-control--density--compact-selected": VisualDiffSegmentedRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            selection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight
+        ),
+    ]
+
+    private static let unavailableStates: [(String, VisualDiffMissingAuthorityReason)] = [
+        ("compact-focus", .stateRequiresInteraction),
+        ("compact-hover", .stateNotApplicable),
+        ("compact-pressed", .stateRequiresInteraction),
+    ]
+
+    private static let motionConfigurations: [String: VisualDiffSegmentedMotionRenderConfiguration] = [
+        "frame-000--0000ms": VisualDiffSegmentedMotionRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            initialSelection: "comfortable",
+            targetSelection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight,
+            frameTime: 0
+        ),
+        "frame-001--0055ms": VisualDiffSegmentedMotionRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            initialSelection: "comfortable",
+            targetSelection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight,
+            frameTime: 0.055
+        ),
+        "frame-002--0110ms": VisualDiffSegmentedMotionRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            initialSelection: "comfortable",
+            targetSelection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight,
+            frameTime: 0.11
+        ),
+        "frame-003--0165ms": VisualDiffSegmentedMotionRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            initialSelection: "comfortable",
+            targetSelection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight,
+            frameTime: 0.165
+        ),
+        "frame-004--0220ms": VisualDiffSegmentedMotionRenderConfiguration(
+            title: "View density",
+            options: densityOptions,
+            initialSelection: "comfortable",
+            targetSelection: "compact",
+            visualHeight: DesignMetrics.actionButtonVisualHeight,
+            frameTime: 0.22
+        ),
+    ]
+
+    private static let definitions: [VisualDiffFixtureRegistration] = supportedConfigurations.keys.map { caseID in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "segmented-control",
+                variantID: caseID.split(separator: "--").dropFirst().first.map(String.init) ?? "",
+                stateID: caseID.split(separator: "--").last.map(String.init) ?? ""
+            ),
+            applicability: .supported
+        )
+    } + unavailableStates.map { stateID, reason in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: "segmented-control--density--\(stateID)",
+                componentID: "segmented-control",
+                variantID: "density",
+                stateID: stateID
+            ),
+            applicability: .missingAuthority(reason)
+        )
+    } + motionConfigurations.keys.map { caseID in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "segmented-control",
+                variantID: "comfortable-to-compact",
+                stateID: caseID
+            ),
+            applicability: .supported
+        )
+    }
+
+    static let renderConfigurations = supportedConfigurations
+
+    static func captureTime(for caseID: String) -> TimeInterval? {
+        if let frameTime = motionConfigurations[caseID]?.frameTime {
+            return frameTime
+        }
+        // Static handoff captures preserve the first rendered transition
+        // sample after requestAnimationFrame measures the continuous slate.
+        return supportedConfigurations[caseID] == nil ? nil : 1.0 / 60.0
+    }
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "segmented-control",
+        registrations: definitions,
+        adapter: SegmentedControlFixtureAdapter(
+            configurations: renderConfigurations,
+            motionConfigurations: motionConfigurations
+        )
     )
 }
 

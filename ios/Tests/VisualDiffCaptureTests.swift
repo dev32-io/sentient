@@ -672,6 +672,98 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testSegmentedControlRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "segmented-control--avatar-state--compact-layout",
+            "segmented-control--avatar-state--idle-selected",
+            "segmented-control--avatar-state--responding-selected",
+            "segmented-control--avatar-state--thinking-selected",
+            "segmented-control--density--comfortable-selected",
+            "segmented-control--density--compact-layout",
+            "segmented-control--density--compact-selected",
+        ])
+        let expectedFocusAndPress = Set([
+            "segmented-control--density--compact-focus",
+            "segmented-control--density--compact-pressed",
+        ])
+        let expectedHover = Set([
+            "segmented-control--density--compact-hover",
+        ])
+        let expectedMotion = Set([
+            "frame-000--0000ms",
+            "frame-001--0055ms",
+            "frame-002--0110ms",
+            "frame-003--0165ms",
+            "frame-004--0220ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "segmented-control")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedFocusAndPress).union(expectedHover).union(expectedMotion))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported.union(expectedMotion)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedFocusAndPress
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedHover
+        )
+    }
+
+    func testSegmentedControlRegistryPreservesControlledFixtureMappings() {
+        let expected: [(String, String, String, String, CGFloat)] = [
+            ("segmented-control--avatar-state--idle-selected", "Avatar state", "idle", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--avatar-state--thinking-selected", "Avatar state", "thinking", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--avatar-state--responding-selected", "Avatar state", "responding", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--density--comfortable-selected", "View density", "comfortable", "Comfortable,Compact", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--density--compact-layout", "View density", "comfortable", "Comfortable,Compact", DesignMetrics.minimumTarget),
+            ("segmented-control--density--compact-selected", "View density", "compact", "Comfortable,Compact", DesignMetrics.actionButtonVisualHeight),
+        ]
+
+        for (caseID, title, selection, labels, visualHeight) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.segmentedControlRenderConfiguration(for: caseID) else {
+                XCTFail("Missing segmented-control render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.selection, selection, caseID)
+            XCTAssertEqual(configuration.options.map(\.label).joined(separator: ","), labels, caseID)
+            XCTAssertEqual(configuration.visualHeight, visualHeight, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.segmentedControlRenderConfiguration(
+                for: "segmented-control--density--compact-focus"
+            )
+        )
+    }
+
+    func testSegmentedControlMotionFixturesPreserveSourceTimeline() {
+        let expected: [(String, TimeInterval)] = [
+            ("frame-000--0000ms", 0),
+            ("frame-001--0055ms", 0.055),
+            ("frame-002--0110ms", 0.11),
+            ("frame-003--0165ms", 0.165),
+            ("frame-004--0220ms", 0.22),
+        ]
+
+        for (caseID, frameTime) in expected {
+            XCTAssertEqual(VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID), frameTime, caseID)
+            guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Missing supported motion fixture for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "segmented-control", caseID)
+            XCTAssertEqual(fixture.variantID, "comfortable-to-compact", caseID)
+        }
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
