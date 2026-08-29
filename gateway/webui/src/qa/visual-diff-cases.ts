@@ -89,6 +89,16 @@ export interface TextAreaVariantProps {
 
 type TextAreaVariantDefinition = VisualDiffVariantDefinition<TextAreaVariantProps>;
 
+export interface RangeVariantProps {
+  readonly label: string;
+  readonly value: number;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+}
+
+type RangeVariantDefinition = VisualDiffVariantDefinition<RangeVariantProps>;
+
 export interface CheckboxVariantProps {
   readonly label: string;
   readonly checked: boolean;
@@ -197,6 +207,10 @@ const TEXT_AREA_VARIANTS = {
   filled: { props: { label: "Description", value: "Add supporting details." } },
 } as const satisfies Readonly<Record<string, TextAreaVariantDefinition>>;
 
+const RANGE_VARIANTS = {
+  "62": { props: { label: "Interface scale", value: 62, min: 0, max: 100, step: 1 } },
+} as const satisfies Readonly<Record<string, RangeVariantDefinition>>;
+
 export interface PlateVariantProps {
   readonly variant: "default";
 }
@@ -269,6 +283,16 @@ export const visualDiffComponentRegistry = {
       filled: ["focus", "hover", "rest"],
     },
   },
+  range: {
+    id: "range",
+    fixtureAdapterId: "range",
+    productionComponent: "gateway/webui/src/components/common/foundation/controls.tsx#SliderControl",
+    authority: "design/prototype/foundation-components/handoff/static",
+    variants: RANGE_VARIANTS,
+    stateApplicability: {
+      "62": ["disabled", "focus", "hover", "rest"],
+    },
+  },
   chip: {
     id: "chip",
     fixtureAdapterId: "chip",
@@ -327,6 +351,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "plate",
   "text-field",
   "text-area",
+  "range",
   "checkbox",
   "chip",
   "toggle",

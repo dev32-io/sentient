@@ -14,11 +14,12 @@ const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "text-area", "text-field", "toggle", "user-avatar"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "text-area", "text-field", "toggle", "user-avatar"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
+  if (caseId.startsWith("range--")) return ".snt-range";
   if (caseId.startsWith("toggle--")) return ".snt-toggle";
   if (caseId.startsWith("user-avatar--")) return ".snt-avatar--user";
   return VISUAL_DIFF_TARGET_SELECTOR;
@@ -157,7 +158,7 @@ async function applyState(page, caseId) {
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
   if (state === "focus") {
-    if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--") || caseId.startsWith("toggle--")) await page.keyboard.press("Tab");
+    if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--") || caseId.startsWith("range--") || caseId.startsWith("toggle--")) await page.keyboard.press("Tab");
     else await target.focus();
   }
   if (state === "pressed") {

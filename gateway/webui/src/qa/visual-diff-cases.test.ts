@@ -72,6 +72,8 @@ const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--rest",
 ] as const;
 
+const CURRENT_RANGE_CASES = ["range--62--disabled", "range--62--focus", "range--62--hover", "range--62--rest"] as const;
+
 const CURRENT_CHECKBOX_CASES = [
   "checkbox--checked--focus",
   "checkbox--checked--hover",
@@ -357,6 +359,45 @@ describe("visual diff component cases", () => {
         caseId: `text-area--filled--${stateId}`,
         componentId: "text-area",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the exact range matrix and native SliderControl provenance", () => {
+    const range = visualDiffComponentRegistry.range;
+    expect(range.stateApplicability).toEqual({
+      "62": ["disabled", "focus", "hover", "rest"],
+    });
+    expect(range.fixtureAdapterId).toBe("range");
+    expect(range.productionComponent).toBe("gateway/webui/src/components/common/foundation/controls.tsx#SliderControl");
+    expect(range.authority).toBe("design/prototype/foundation-components/handoff/static");
+    expect(range.variants["62"].props).toEqual({
+      label: "Interface scale",
+      value: 62,
+      min: 0,
+      max: 100,
+      step: 1,
+    });
+
+    for (const caseId of CURRENT_RANGE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("range");
+        expect(resolution.case.fixtureAdapterId).toBe("range");
+        expect(resolution.case.props).toEqual(range.variants["62"].props);
+      }
+    }
+  });
+
+  it("resolves unapproved range states to missing authority", () => {
+    for (const stateId of ["pressed", "loading", "error", "motion", "selected"]) {
+      expect(resolveVisualDiffCase(`range--62--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `range--62--${stateId}`,
+        componentId: "range",
+        variantId: "62",
         stateId,
       });
     }

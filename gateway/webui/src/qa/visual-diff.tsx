@@ -3,7 +3,7 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, ToggleControl } from "../components/common/foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
@@ -13,6 +13,7 @@ import {
   type ChipVariantProps,
   type IconButtonVariantProps,
   type PlateVariantProps,
+  type RangeVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
   type ToggleVariantProps,
@@ -168,6 +169,22 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  range: {
+    // This adapter deliberately renders the production SliderControl and its native range input.
+    render: (fixture) => {
+      const range = fixture.props as RangeVariantProps;
+      return (
+        <div class="visual-diff-range">
+          <SliderControl
+            {...range}
+            disabled={fixture.state === "disabled"}
+            format={(value) => `${Math.round(value)}%`}
+            onChange={() => {}}
+          />
+        </div>
+      );
+    },
+  },
   "checkbox": {
     // This adapter deliberately renders the production native checkbox and its indeterminate effect.
     render: (fixture) => {
@@ -270,6 +287,7 @@ style.textContent = `
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-text-area { width: min(320px, 100%); }
+  .visual-diff-range { width: min(360px, 100%); }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
 `;
 document.head.append(style);

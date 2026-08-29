@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PinEntry, SearchFilterBar, WipBadge } from "./composites.tsx";
-import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SelectControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, Plate, SelectControl, SliderControl, TextArea, TextField, ToggleControl } from "./foundation.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -107,6 +107,43 @@ describe("Web foundation controls", () => {
     const plate = screen.getByText("Plate content").closest("section");
     expect(plate).not.toBeNull();
     expect(plate?.className).toBe("snt-plate qa-plate");
+  });
+
+  it("keeps SliderControl native, labelled, controlled, and value-visible", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SliderControl
+        label="Interface scale"
+        value={62}
+        min={0}
+        max={100}
+        format={(value) => `${Math.round(value)}%`}
+        onChange={onChange}
+      />,
+    );
+
+    const slider = screen.getByRole("slider", { name: "Interface scale" }) as HTMLInputElement;
+    expect(slider.type).toBe("range");
+    expect(slider.min).toBe("0");
+    expect(slider.max).toBe("100");
+    expect(slider.value).toBe("62");
+    expect(slider.getAttribute("aria-label")).toBe("Interface scale");
+    expect(screen.getByText("62%").tagName).toBe("OUTPUT");
+
+    fireEvent.input(slider, { target: { value: "75" } });
+    expect(onChange).toHaveBeenCalledWith(75);
+
+    rerender(
+      <SliderControl
+        label="Interface scale"
+        value={75}
+        min={0}
+        max={100}
+        format={(value) => `${Math.round(value)}%`}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getByText("75%")).toBeTruthy();
   });
 
   it("exposes loading and disabled action states without changing its label", () => {

@@ -18,7 +18,7 @@ export function SliderControl({ label, value, min, max, step = 1, disabled, form
     <label class="snt-field">
       {label && <span class="snt-field__label">{label}</span>}
       <span class="snt-range-row">
-        <input class="snt-range" style={{ "--snt-range-progress": `${progress}%` }} type="range" value={value} min={min} max={max} step={step} disabled={disabled} onInput={(event) => onChange(Number(event.currentTarget.value))} />
+        <input class="snt-range" style={{ "--snt-range-progress": `${progress}%` }} type="range" value={value} min={min} max={max} step={step} disabled={disabled} aria-label={label} onInput={(event) => onChange(Number(event.currentTarget.value))} />
         <output>{format(value)}</output>
       </span>
     </label>
