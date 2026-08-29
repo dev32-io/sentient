@@ -1,0 +1,26 @@
+{
+  "platform": "ios",
+  "component": "setting-row",
+  "profile": {
+    "odiffThreshold": 0.035,
+    "visibleAlphaUnionMaxPercent": 5.25,
+    "background": "#2B2621",
+    "antialiasingIgnored": true,
+    "simulator": "iPhone 16",
+    "scale": 2
+  },
+  "observations": {
+    "regular": "DesignSettingsRow uses a flexible leading label column, Space.lg trailing separation, and a trailing accessory without moving label content.",
+    "accessibilitySize": "DesignSettingsRow switches to a leading VStack and keeps the accessory trailing in a separate 44pt-capable row.",
+    "labelControlSemantics": "The row uses accessibilityElement(children: .contain), so its label/detail remain exposed while native accessory labels, values, actions, and bindings remain owned by the control.",
+    "dynamicType": "Row text uses Typo UI roles and relative SwiftUI text styles; label content is allowed to wrap rather than truncate.",
+    "rtl": "The implementation uses SwiftUI stacks and leading alignment; no physical left/right offsets or direction-specific fixture branches were added.",
+    "localization": "Title and detail remain caller-provided strings; no source copy is transformed or hard-coded in production.",
+    "reducedMotion": "The row adds no motion. Existing segmented/toggle/range controls retain their own accessibilityReduceMotion handling.",
+    "contrast": "Dusk semantic ink roles are used; row details and canonical toggle/select row details use ink2 for supporting text.",
+    "targets": "The row content measure is 56pt and all existing native control owners retain their 44pt minimum target rules.",
+    "nativeSelect": "Closed and selected values use the reachable SwiftUI Menu owner. The approved custom open listbox is documented as a native adaptation, not reproduced.",
+    "nativeRange": "The reachable DesignSlider owner is retained; its native track/value composition differs from the desktop trailing-range reference and remains documented in the final diff.",
+    "hoverFocusPressed": "iPhone hover is not applicable. Static focus/pressed states are not fabricated; native controls retain live interaction behavior outside static capture."
+  }
+}

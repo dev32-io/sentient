@@ -465,6 +465,13 @@ struct DesignPinKeypad: View {
     }
 }
 
+private enum DesignSettingsRowMetrics {
+    // DesignCard's rows body contributes 8pt above and below the row. Keep
+    // the native content measure at 56pt so the card-hosted composite retains
+    // the handoff's 70pt row rhythm without shrinking its 44pt controls.
+    static let minimumHeight = DesignMetrics.minimumTarget + Space.md
+}
+
 /// Compatibility card API. New callers should use `DesignCard` directly.
 struct DesignSettingsRow<Accessory: View>: View {
     let title: String
@@ -474,19 +481,49 @@ struct DesignSettingsRow<Accessory: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.sm))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: Space.lg))
-        layout {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(Typo.ui(TypeScale.base, .medium))
-                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3) }
+        rowContent
+            .frame(maxWidth: .infinity, minHeight: DesignSettingsRowMetrics.minimumHeight, alignment: .leading)
+            // Keep the label and its native control in one accessibility
+            // container without collapsing the accessory's semantics.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                labelContent
+                HStack {
+                    Spacer(minLength: 0)
+                    accessory()
+                }
             }
-            Spacer(minLength: Space.sm)
-            accessory()
+        } else {
+            HStack(alignment: .center, spacing: Space.lg) {
+                labelContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Match the source grid's flexible label column while the
+                    // trailing accessory keeps its intrinsic control width.
+                    .layoutPriority(1)
+                accessory()
+            }
         }
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    @ViewBuilder
+    private var labelContent: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                .foregroundStyle(DuskColors.ink)
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .lineSpacing(TypeScale.sm * CGFloat(DesignV2.Typography.lineNormal - 1))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
     }
 }
 

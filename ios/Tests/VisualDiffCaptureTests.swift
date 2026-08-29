@@ -892,6 +892,91 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(fixture.stateID, "frame-005--1550ms")
     }
 
+    func testSettingRowRegistryPreservesApprovedCasesAndNativeAdaptation() {
+        let expectedSupported = Set([
+            "setting-row--range--62",
+            "setting-row--segmented--default-selected",
+            "setting-row--segmented--expert-selected",
+            "setting-row--select--english-closed",
+            "setting-row--select--spanish-selected",
+            "setting-row--toggle--off",
+            "setting-row--toggle--on",
+        ])
+        let expectedNativeMenuAdaptation = Set([
+            "setting-row--select--english-open",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "setting-row")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedNativeMenuAdaptation))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedNativeMenuAdaptation
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.settingRowRenderConfiguration(
+                for: "setting-row--select--english-open"
+            )
+        )
+    }
+
+    func testSettingRowRegistryPreservesSourceContentAndControlMappings() {
+        let expected: [(String, String, String)] = [
+            ("setting-row--toggle--off", "Automatic updates", "Install trusted updates when the household is idle."),
+            ("setting-row--toggle--on", "Automatic updates", "Install trusted updates when the household is idle."),
+            ("setting-row--segmented--default-selected", "Detail level", "Choose how much supporting information appears."),
+            ("setting-row--segmented--expert-selected", "Detail level", "Choose how much supporting information appears."),
+            ("setting-row--select--english-closed", "Language", "Used for interface labels and spoken responses."),
+            ("setting-row--select--spanish-selected", "Language", "Used for interface labels and spoken responses."),
+            ("setting-row--range--62", "Interface scale", "Preview changes before applying them."),
+        ]
+
+        for (caseID, title, detail) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: caseID) else {
+                XCTFail("Missing setting-row render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+        }
+
+        guard let off = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--toggle--off"),
+              let on = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--toggle--on"),
+              let defaultSelected = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--segmented--default-selected"),
+              let expertSelected = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--segmented--expert-selected"),
+              let english = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--select--english-closed"),
+              let spanish = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--select--spanish-selected"),
+              let range = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--range--62")
+        else {
+            XCTFail("The supported setting-row fixtures must all have configurations")
+            return
+        }
+        if case .toggle(let isOn) = off.control { XCTAssertFalse(isOn) } else { XCTFail("Toggle off mapping changed") }
+        if case .toggle(let isOn) = on.control { XCTAssertTrue(isOn) } else { XCTFail("Toggle on mapping changed") }
+        if case .segmented(let options, let selection) = defaultSelected.control {
+            XCTAssertEqual(options.map(\.label), ["Default", "Expert"])
+            XCTAssertEqual(selection, "default")
+        } else { XCTFail("Default segmented mapping changed") }
+        if case .segmented(let options, let selection) = expertSelected.control {
+            XCTAssertEqual(options.map(\.label), ["Default", "Expert"])
+            XCTAssertEqual(selection, "expert")
+        } else { XCTFail("Expert segmented mapping changed") }
+        if case .select(let options, let selection) = english.control {
+            XCTAssertEqual(options.map(\.label), ["English", "Spanish", "French"])
+            XCTAssertEqual(selection, "english")
+        } else { XCTFail("English select mapping changed") }
+        if case .select(let options, let selection) = spanish.control {
+            XCTAssertEqual(options.map(\.label), ["English", "Spanish", "French"])
+            XCTAssertEqual(selection, "spanish")
+        } else { XCTFail("Spanish select mapping changed") }
+        if case .range(let value) = range.control { XCTAssertEqual(value, 62) } else { XCTFail("Range mapping changed") }
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",

@@ -176,6 +176,19 @@ struct VisualDiffSegmentedMotionRenderConfiguration {
     let frameTime: TimeInterval
 }
 
+enum VisualDiffSettingRowControl {
+    case toggle(isOn: Bool)
+    case segmented(options: [VisualDiffSegmentOptionConfiguration], selection: String)
+    case select(options: [VisualDiffSegmentOptionConfiguration], selection: String)
+    case range(value: Double)
+}
+
+struct VisualDiffSettingRowRenderConfiguration {
+    let title: String
+    let detail: String
+    let control: VisualDiffSettingRowControl
+}
+
 struct VisualDiffSentientIdentityRenderConfiguration: Equatable {
     let initialState: SentientIdentityState
     let targetState: SentientIdentityState?
@@ -273,6 +286,7 @@ enum VisualDiffFixtureRegistry {
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
+        SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
     ]
 
@@ -379,6 +393,12 @@ enum VisualDiffFixtureRegistry {
 
     static func segmentedControlCaptureTime(for caseID: String) -> TimeInterval? {
         SegmentedControlFixtureCatalog.captureTime(for: caseID)
+    }
+
+    static func settingRowRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSettingRowRenderConfiguration? {
+        SettingRowFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func sentientIdentityRenderConfiguration(
@@ -762,6 +782,219 @@ private enum RangeFixtureCatalog {
         componentID: "range",
         registrations: definitions.map(\.0),
         adapter: RangeFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct SettingRowFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSettingRowRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+
+        return AnyView(
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                SettingRowFixture(configuration: configuration)
+                    .frame(width: SettingRowFixtureMetrics.contentWidth)
+                    .padding(.leading, SettingRowFixtureMetrics.canvasInset)
+                    .padding(.top, SettingRowFixtureMetrics.canvasInset)
+            }
+        )
+    }
+}
+
+private enum SettingRowFixtureMetrics {
+    // The approved 2x row captures retain a 52pt transparent inset around a
+    // 600pt-wide plate inside their 728pt logical canvas.
+    static let canvasInset = Space.xxxl + Space.md
+    static let contentWidth: CGFloat = 600
+}
+
+private struct SettingRowFixture: View {
+    let configuration: VisualDiffSettingRowRenderConfiguration
+
+    var body: some View {
+        DesignCard(bodyStyle: .rows) {
+            settingContent
+        }
+    }
+
+    @ViewBuilder
+    private var settingContent: some View {
+        switch configuration.control {
+        case .toggle(let isOn):
+            DesignSettingsRow(title: configuration.title, detail: configuration.detail) {
+                DesignToggleSwitch(
+                    label: "",
+                    isOn: .constant(isOn),
+                    accessibilityId: "visual-diff-setting-row-control"
+                )
+                .accessibilityLabel(configuration.title)
+                .accessibilityHint(configuration.detail)
+            }
+        case .segmented(let options, let selection):
+            DesignSettingsRow(title: configuration.title, detail: configuration.detail) {
+                DesignSegmentedPicker(
+                    title: configuration.title,
+                    options: options.map { (value: $0.value, label: $0.label) },
+                    selection: .constant(selection),
+                    visualHeight: DesignMetrics.actionButtonVisualHeight
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        case .select(let options, let selection):
+            // DesignSelect is the reachable iOS owner for a native menu row;
+            // its Menu remains the platform-owned control and is not opened
+            // by the static visual capture path.
+            DesignSelect(
+                title: configuration.title,
+                detail: configuration.detail,
+                options: options.map { (value: $0.value, label: $0.label) },
+                selection: .constant(selection),
+                accessibilityId: "visual-diff-setting-row-control"
+            )
+        case .range(let value):
+            // DesignSlider is the reachable iOS owner for a native range row.
+            // Its displayed value and native Slider remain production-owned.
+            DesignSlider(
+                title: configuration.title,
+                value: .constant(value),
+                range: 0...100,
+                format: { "\(Int($0.rounded()))%" },
+                accessibilityId: "visual-diff-setting-row-control"
+            )
+        }
+    }
+}
+
+private enum SettingRowFixtureCatalog {
+    private static let languageOptions = [
+        VisualDiffSegmentOptionConfiguration(value: "english", label: "English"),
+        VisualDiffSegmentOptionConfiguration(value: "spanish", label: "Spanish"),
+        VisualDiffSegmentOptionConfiguration(value: "french", label: "French"),
+    ]
+    private static let detailOptions = [
+        VisualDiffSegmentOptionConfiguration(value: "default", label: "Default"),
+        VisualDiffSegmentOptionConfiguration(value: "expert", label: "Expert"),
+    ]
+
+    private static func supported(
+        _ variantID: String,
+        _ stateID: String,
+        configuration: VisualDiffSettingRowRenderConfiguration
+    ) -> (VisualDiffFixtureRegistration, VisualDiffSettingRowRenderConfiguration) {
+        let fixture = VisualDiffFixtureCase(
+            caseID: "setting-row--\(variantID)--\(stateID)",
+            componentID: "setting-row",
+            variantID: variantID,
+            stateID: stateID
+        )
+        return (
+            VisualDiffFixtureRegistration(fixture: fixture, applicability: .supported),
+            configuration
+        )
+    }
+
+    private static func unavailable(
+        _ variantID: String,
+        _ stateID: String,
+        reason: VisualDiffMissingAuthorityReason
+    ) -> VisualDiffFixtureRegistration {
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: "setting-row--\(variantID)--\(stateID)",
+                componentID: "setting-row",
+                variantID: variantID,
+                stateID: stateID
+            ),
+            applicability: .missingAuthority(reason)
+        )
+    }
+
+    private static let supportedDefinitions: [(VisualDiffFixtureRegistration, VisualDiffSettingRowRenderConfiguration)] = [
+        supported(
+            "toggle",
+            "off",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Automatic updates",
+                detail: "Install trusted updates when the household is idle.",
+                control: .toggle(isOn: false)
+            )
+        ),
+        supported(
+            "toggle",
+            "on",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Automatic updates",
+                detail: "Install trusted updates when the household is idle.",
+                control: .toggle(isOn: true)
+            )
+        ),
+        supported(
+            "segmented",
+            "default-selected",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Detail level",
+                detail: "Choose how much supporting information appears.",
+                control: .segmented(options: detailOptions, selection: "default")
+            )
+        ),
+        supported(
+            "segmented",
+            "expert-selected",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Detail level",
+                detail: "Choose how much supporting information appears.",
+                control: .segmented(options: detailOptions, selection: "expert")
+            )
+        ),
+        supported(
+            "select",
+            "english-closed",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Language",
+                detail: "Used for interface labels and spoken responses.",
+                control: .select(options: languageOptions, selection: "english")
+            )
+        ),
+        supported(
+            "select",
+            "spanish-selected",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Language",
+                detail: "Used for interface labels and spoken responses.",
+                control: .select(options: languageOptions, selection: "spanish")
+            )
+        ),
+        supported(
+            "range",
+            "62",
+            configuration: VisualDiffSettingRowRenderConfiguration(
+                title: "Interface scale",
+                detail: "Preview changes before applying them.",
+                control: .range(value: 62)
+            )
+        ),
+    ]
+
+    private static let unavailableDefinitions = [
+        unavailable("select", "english-open", reason: .stateNotApplicable),
+    ]
+
+    private static let definitions: [VisualDiffFixtureRegistration] =
+        supportedDefinitions.map(\.0) + unavailableDefinitions
+
+    static let renderConfigurations: [String: VisualDiffSettingRowRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: supportedDefinitions.map { registration, configuration in
+            (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "setting-row",
+        registrations: definitions,
+        adapter: SettingRowFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

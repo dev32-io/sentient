@@ -178,7 +178,7 @@ struct DesignToggleRow: View {
         Toggle(isOn: $isOn) {
             VStack(alignment: .leading, spacing: Space.xs) {
                 Text(title).font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
-                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3) }
+                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2) }
             }
         }
         .toggleStyle(DesignToggleStyle())
@@ -397,7 +397,7 @@ struct DesignSelect<Value: Hashable>: View {
                 if let detail {
                     Text(detail)
                         .font(Typo.ui(TypeScale.sm))
-                        .foregroundStyle(DuskColors.ink3)
+                        .foregroundStyle(DuskColors.ink2)
                 }
             }
             Spacer(minLength: Space.sm)
@@ -422,7 +422,7 @@ struct DesignSelect<Value: Hashable>: View {
                         .lineLimit(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(Typo.ui(TypeScale.sm, .medium))
-                        .foregroundStyle(DuskColors.ink3)
+                        .foregroundStyle(DuskColors.ink2)
                 }
                 .padding(.horizontal, Space.md)
                 .frame(minHeight: DesignMetrics.minimumTarget)
