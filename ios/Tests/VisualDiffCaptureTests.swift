@@ -71,6 +71,8 @@ final class VisualDiffCaptureTests: XCTestCase {
         let logicalSize = CGSize(width: pixelSize.width / 2, height: pixelSize.height / 2)
         let caseID = visualDiffCaseID(for: referenceURL)
         let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
+        let segmentedCaptureTime = VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID)
+        let isSegmentedFixture = segmentedCaptureTime != nil
         let fixtureView: AnyView
         if let identityCapture {
             fixtureView = identityCapture.makeFixture(size: SentientIdentityFixtureMetrics.size)
@@ -86,17 +88,21 @@ final class VisualDiffCaptureTests: XCTestCase {
             .environment(\.dynamicTypeSize, .large)
             .preferredColorScheme(.dark)
             .tint(DuskColors.accent)
-            .transaction { transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
+        let configuredFixture: AnyView = isSegmentedFixture
+            ? AnyView(fixture)
+            : AnyView(
+                fixture.transaction { transaction in
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            )
 
         let traits = UITraitCollection { mutableTraits in
             mutableTraits.userInterfaceStyle = .dark
             mutableTraits.preferredContentSizeCategory = .large
             mutableTraits.displayScale = 2
         }
-        let controller = UIHostingController(rootView: AnyView(fixture))
+        let controller = UIHostingController(rootView: configuredFixture)
         controller.view.backgroundColor = .clear
         if identityCapture != nil {
             controller.safeAreaRegions = []
@@ -105,6 +111,24 @@ final class VisualDiffCaptureTests: XCTestCase {
             size: logicalSize,
             traits: traits
         )
+        var segmentedCaptureWindow: UIWindow?
+        if isSegmentedFixture {
+            // Segmented selection has a real first-layout reveal. Mount the
+            // native fixture briefly so the capture observes the same
+            // on-appear lifecycle as the reviewed source.
+            let window = UIWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            window.backgroundColor = .clear
+            window.rootViewController = controller
+            window.isHidden = false
+            window.makeKeyAndVisible()
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(
+                until: Date(timeIntervalSinceNow: segmentedCaptureTime ?? 0)
+            )
+            segmentedCaptureWindow = window
+        }
         let usesNativeTextInputCapture =
             caseID.hasPrefix("text-field--")
                 || caseID.hasPrefix("text-area--")
@@ -142,6 +166,9 @@ final class VisualDiffCaptureTests: XCTestCase {
                 focusHostWindow.isHidden = true
                 focusHostWindow.rootViewController = nil
             }
+            segmentedCaptureWindow?.isHidden = true
+            segmentedCaptureWindow?.rootViewController = nil
+            segmentedCaptureWindow?.resignKey()
         }
         if caseID == "text-field--filled--focus" || caseID == "search-field--placeholder--focus" {
             guard let textField = textField(in: controller.view) else {
