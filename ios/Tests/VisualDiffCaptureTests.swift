@@ -293,6 +293,34 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(captured.scale, 2)
     }
 
+    func testApplyBarRegistryPreservesExistingDraftAndApplyStates() {
+        let expected: [(String, Bool, DesignApplyState)] = [
+            ("apply-bar--dirty--rest", true, .idle),
+            ("apply-bar--applying--active", true, .saving),
+            ("apply-bar--done--success", false, .applied),
+            ("apply-bar--dirty-to-done--frame-000--0000ms", true, .idle),
+            ("apply-bar--dirty-to-done--frame-001--0300ms", true, .saving),
+            ("apply-bar--dirty-to-done--frame-002--0900ms", false, .applied),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "apply-bar")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.map(\.0)))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, isDirty, state) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.applyBarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing apply-bar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.isDirty, isDirty, caseID)
+            XCTAssertEqual(configuration.state, state, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved apply-bar case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
     func testLoadingStateRegistryPreservesApprovedMotionStates() {
         let expectedCaseIDs = Set([
             "loading-state--settings--active",
@@ -1506,6 +1534,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "sentient-identity",
             "pin-entry",
             "loading-state",
+            "apply-bar",
             "notice",
             "no-results",
             "stale-banner",
@@ -1728,6 +1757,9 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
         if recordingID == "pin-entry--complete-to-success" {
             return "pin-entry--complete-to-success--\(frameID)"
+        }
+        if recordingID == "apply-bar--dirty-to-done" {
+            return "apply-bar--dirty-to-done--\(frameID)"
         }
         guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
         let variantID = String(recordingID.dropFirst("sentient-avatar--".count))

@@ -2037,6 +2037,212 @@ enum DesignApplyState: Equatable {
     case failed(String)
 }
 
+private enum DesignApplyBarPhase: Equatable {
+    case dirty
+    case applying
+    case done
+}
+
+private enum DesignApplyBarMetrics {
+    // The source's 72px border-box retains a 74pt native plate face once the
+    // shared inset edge and flexible Dynamic Type line boxes are represented.
+    static let minimumHeight: CGFloat = 74
+    static let horizontalPadding: CGFloat = 14
+    static let markerSize: CGFloat = 7
+    static let markerTextGap: CGFloat = 10
+    static let markerGlowRadius: CGFloat = 4
+    static let markerPulseDuration: TimeInterval = 0.45
+}
+
+/// Native action surface for the existing settings draft/apply lifecycle. The
+/// screen remains the sole owner of dirty state, persistence, discard, and all
+/// terminal outcomes; this view only derives presentation and emits actions.
+struct DesignApplyBar: View {
+    let isDirty: Bool
+    let state: DesignApplyState
+    var dirtyTitle = "Unsaved changes"
+    var dirtyDetail = "Review before applying to the household."
+    var discardAccessibilityId: String? = nil
+    var applyAccessibilityId: String? = nil
+    let onDiscard: () -> Void
+    let onApply: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var markerPulse = false
+
+    private var phase: DesignApplyBarPhase? {
+        switch state {
+        case .saving, .restarting:
+            return .applying
+        case .applied:
+            return isDirty ? .dirty : .done
+        case .idle, .alreadyApplying, .failed:
+            return isDirty ? .dirty : nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: Space.sm) {
+            switch state {
+            case .alreadyApplying, .failed:
+                DesignApplyFeedback(state: state)
+            case .idle, .saving, .restarting, .applied:
+                EmptyView()
+            }
+            if let phase {
+                bar(phase)
+            }
+        }
+    }
+
+    private func bar(_ phase: DesignApplyBarPhase) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.lg) {
+                status(phase)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                actions(phase, fillsWidth: false)
+            }
+            VStack(alignment: .leading, spacing: Space.md) {
+                status(phase)
+                actions(phase, fillsWidth: true)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, DesignApplyBarMetrics.horizontalPadding)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, minHeight: DesignApplyBarMetrics.minimumHeight)
+        .background(phaseTint(phase))
+        .designPlate()
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: phase
+        )
+        .task(id: "\(phase)-\(reduceMotion)") {
+            markerPulse = false
+            guard phase == .applying, !reduceMotion else { return }
+            await Task.yield()
+            markerPulse = true
+        }
+    }
+
+    private func status(_ phase: DesignApplyBarPhase) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignApplyBarMetrics.markerTextGap) {
+            Circle()
+                .fill(phase == .done ? DuskColors.ok : DuskColors.accent)
+                .frame(width: DesignApplyBarMetrics.markerSize, height: DesignApplyBarMetrics.markerSize)
+                .shadow(
+                    color: phase == .done ? .clear : DuskColors.accent,
+                    radius: DesignApplyBarMetrics.markerGlowRadius
+                )
+                .scaleEffect(phase == .applying && markerPulse ? 0.72 : phase == .done ? 1.08 : 1)
+                .opacity(phase == .applying && markerPulse ? 0.65 : 1)
+                .animation(
+                    reduceMotion || phase != .applying
+                        ? nil
+                        : .easeInOut(duration: DesignApplyBarMetrics.markerPulseDuration).repeatForever(),
+                    value: markerPulse
+                )
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(phase == .done ? "Changes applied" : dirtyTitle)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                Text(phase == .done ? "The household preference is up to date." : dirtyDetail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func actions(_ phase: DesignApplyBarPhase, fillsWidth: Bool) -> some View {
+        HStack(spacing: Space.sm) {
+            DesignActionButton(
+                title: "Discard",
+                role: .quiet,
+                state: isDirty ? .normal : .disabled,
+                accessibilityId: discardAccessibilityId,
+                fillsWidth: fillsWidth,
+                action: onDiscard
+            )
+            DesignActionButton(
+                title: phase == .applying ? "Applying…" : phase == .done ? "Applied" : "Apply changes",
+                state: phase == .dirty ? .normal : .disabled,
+                accessibilityId: applyAccessibilityId,
+                fillsWidth: fillsWidth,
+                action: onApply
+            )
+        }
+    }
+
+    private func phaseTint(_ phase: DesignApplyBarPhase) -> Color {
+        switch phase {
+        case .dirty: .clear
+        case .applying: DuskColors.accent50.opacity(0.24)
+        case .done: DuskColors.ok.opacity(0.07)
+        }
+    }
+}
+
+private struct DesignApplyBarDockModifier: ViewModifier {
+    let isDirty: Bool
+    let state: DesignApplyState
+    let discardAccessibilityId: String
+    let applyAccessibilityId: String
+    let onDiscard: () -> Void
+    let onApply: () -> Void
+
+    private var isPresented: Bool {
+        if isDirty { return true }
+        switch state {
+        case .idle: return false
+        case .saving, .restarting, .alreadyApplying, .applied, .failed: return true
+        }
+    }
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            if isPresented {
+                DesignApplyBar(
+                    isDirty: isDirty,
+                    state: state,
+                    discardAccessibilityId: discardAccessibilityId,
+                    applyAccessibilityId: applyAccessibilityId,
+                    onDiscard: onDiscard,
+                    onApply: onApply
+                )
+                .padding(.horizontal, Space.lg)
+                .padding(.vertical, Space.sm)
+                .background(DuskColors.bg)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Keeps the existing settings apply owner reachable above the keyboard and
+    /// home indicator without introducing a second draft or persistence owner.
+    func designApplyBarDock(
+        isDirty: Bool,
+        state: DesignApplyState,
+        discardAccessibilityId: String,
+        applyAccessibilityId: String,
+        onDiscard: @escaping () -> Void,
+        onApply: @escaping () -> Void
+    ) -> some View {
+        modifier(
+            DesignApplyBarDockModifier(
+                isDirty: isDirty,
+                state: state,
+                discardAccessibilityId: discardAccessibilityId,
+                applyAccessibilityId: applyAccessibilityId,
+                onDiscard: onDiscard,
+                onApply: onApply
+            )
+        )
+    }
+}
+
 struct DesignApplyFeedback: View {
     let state: DesignApplyState
     var successMessage: String? = nil

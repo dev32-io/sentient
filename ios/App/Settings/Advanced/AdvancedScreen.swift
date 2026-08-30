@@ -5,8 +5,8 @@
 // (PUT profile → apply-with-restart) — the applying banner shows while the
 // assistant restarts.
 //
-// Save chrome + discard-on-dirty-back are the shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -50,24 +50,26 @@ struct AdvancedScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                saveBanner
                 contextCard
                 promptCard
             }
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-advanced-discard",
+            applyAccessibilityId: "settings-advanced-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
+        // hide it + show the custom back that shares the apply bar's discard confirm
         // (gesture is intentionally disabled only while a draft is unsaved).
         .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
             if vm.isDirty {
                 ToolbarItem(placement: .navigation) {
                     SoulBackButton(accessibilityId: "settings-advanced-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-advanced-save") {
-                        Task { await vm.save() }
-                    }
                 }
             }
         }
@@ -76,10 +78,6 @@ struct AdvancedScreen: View {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-    }
-
-    private var saveBanner: some View {
-        DesignApplyFeedback(state: applyState)
     }
 
     private var applyState: DesignApplyState {

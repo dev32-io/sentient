@@ -1,0 +1,6 @@
+xcodebuild build: passed
+Configuration: Debug iOS Simulator
+Architecture: arm64 (ONLY_ACTIVE_ARCH=YES)
+Code signing: enabled; Sign to Run Locally
+codesign --verify --deep --strict: passed
+Expected warning: MobileData objects target iOS simulator 18.5 while app deployment target is 18.0.

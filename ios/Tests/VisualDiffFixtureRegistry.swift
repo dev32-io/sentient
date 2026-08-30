@@ -178,6 +178,11 @@ struct VisualDiffLoadingStateRenderConfiguration {
     let reducedMotion: Bool
 }
 
+struct VisualDiffApplyBarRenderConfiguration {
+    let isDirty: Bool
+    let state: DesignApplyState
+}
+
 struct VisualDiffStaleBannerRenderConfiguration: Equatable {
     let checking: Bool
 }
@@ -347,6 +352,7 @@ enum VisualDiffFixtureRegistry {
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
         NoticeFixtureCatalog.registration.componentID: NoticeFixtureCatalog.registration,
         LoadingStateFixtureCatalog.registration.componentID: LoadingStateFixtureCatalog.registration,
+        ApplyBarFixtureCatalog.registration.componentID: ApplyBarFixtureCatalog.registration,
         NoResultsFixtureCatalog.registration.componentID: NoResultsFixtureCatalog.registration,
     ]
 
@@ -389,6 +395,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffActionButtonRenderConfiguration? {
         ActionButtonFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func applyBarRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffApplyBarRenderConfiguration? {
+        ApplyBarFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func plateRenderConfiguration(
@@ -769,6 +781,85 @@ private enum LoadingStateFixtureCatalog {
         componentID: "loading-state",
         registrations: definitions,
         adapter: LoadingStateFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct ApplyBarFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffApplyBarRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(
+            DesignApplyBar(
+                isDirty: configuration.isDirty,
+                state: configuration.state,
+                dirtyTitle: "3 unsaved changes",
+                onDiscard: {},
+                onApply: {}
+            )
+            .frame(width: ApplyBarFixtureMetrics.width)
+            .padding(ApplyBarFixtureMetrics.canvasInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
+    }
+}
+
+private enum ApplyBarFixtureMetrics {
+    // The approved 2x canvas places the 680pt composite at a 52pt content inset.
+    static let width: CGFloat = 680
+    static let canvasInset: CGFloat = 52
+}
+
+private enum ApplyBarFixtureCatalog {
+    private static let cases: [(String, String, String, VisualDiffApplyBarRenderConfiguration)] = [
+        (
+            "apply-bar--dirty--rest", "dirty", "rest",
+            VisualDiffApplyBarRenderConfiguration(isDirty: true, state: .idle)
+        ),
+        (
+            "apply-bar--applying--active", "applying", "active",
+            VisualDiffApplyBarRenderConfiguration(isDirty: true, state: .saving)
+        ),
+        (
+            "apply-bar--done--success", "done", "success",
+            VisualDiffApplyBarRenderConfiguration(isDirty: false, state: .applied)
+        ),
+        (
+            "apply-bar--dirty-to-done--frame-000--0000ms", "dirty-to-done", "frame-000--0000ms",
+            VisualDiffApplyBarRenderConfiguration(isDirty: true, state: .idle)
+        ),
+        (
+            "apply-bar--dirty-to-done--frame-001--0300ms", "dirty-to-done", "frame-001--0300ms",
+            VisualDiffApplyBarRenderConfiguration(isDirty: true, state: .saving)
+        ),
+        (
+            "apply-bar--dirty-to-done--frame-002--0900ms", "dirty-to-done", "frame-002--0900ms",
+            VisualDiffApplyBarRenderConfiguration(isDirty: false, state: .applied)
+        ),
+    ]
+
+    static let renderConfigurations = Dictionary(uniqueKeysWithValues: cases.map { caseID, _, _, configuration in
+        (caseID, configuration)
+    })
+
+    private static let definitions = cases.map { caseID, variantID, stateID, _ in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "apply-bar",
+                variantID: variantID,
+                stateID: stateID
+            ),
+            applicability: .supported
+        )
+    }
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "apply-bar",
+        registrations: definitions,
+        adapter: ApplyBarFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

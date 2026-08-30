@@ -8,8 +8,8 @@
 //
 // The permission-resolution semantics live in ToolsViewModel (pinned to the
 // webui tools-pane); this view resolves them into stateless ToolsServerCard /
-// ToolPermissionRow inputs. Save chrome + discard-on-dirty-back are shared
-// SoulPageChrome pieces.
+// ToolPermissionRow inputs. The shared apply bar receives the existing dirty,
+// save, and native discard-confirmation actions.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -39,24 +39,26 @@ struct ToolsScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                saveBanner
                 groupsSection
                 builtInCard
             }
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-tools-discard",
+            applyAccessibilityId: "settings-tools-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
+        // hide it + show the custom back that shares the apply bar's discard confirm
         // (gesture is intentionally disabled only while a draft is unsaved).
         .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
             if vm.isDirty {
                 ToolbarItem(placement: .navigation) {
                     SoulBackButton(accessibilityId: "settings-tools-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-tools-save") {
-                        Task { await vm.save() }
-                    }
                 }
             }
         }
@@ -65,10 +67,6 @@ struct ToolsScreen: View {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-    }
-
-    private var saveBanner: some View {
-        DesignApplyFeedback(state: applyState)
     }
 
     private var applyState: DesignApplyState {

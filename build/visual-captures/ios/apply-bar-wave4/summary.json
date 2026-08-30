@@ -1,0 +1,77 @@
+{
+  "platform": "ios",
+  "component": "apply-bar",
+  "profile": {
+    "threshold": 0.035,
+    "maxVisibleAlphaUnionPercentage": 5.25,
+    "background": "#2B2621",
+    "antialiasingIgnored": true
+  },
+  "simulator": "iPhone 16 (arm64), 9FF4D060-0C5C-483B-ABEC-B74B7D6D492C",
+  "serializedCaptureBoundary": "scripts/design/capture-ios-visual-diff.sh",
+  "comparisons": [
+    {
+      "caseId": "apply-bar--dirty--rest",
+      "diffPercentage": 2.17,
+      "withinLimit": true,
+      "diffCount": 7009,
+      "visiblePixelCount": 322742
+    },
+    {
+      "caseId": "apply-bar--applying--active",
+      "diffPercentage": 2.21,
+      "withinLimit": true,
+      "diffCount": 7137,
+      "visiblePixelCount": 322836
+    },
+    {
+      "caseId": "apply-bar--done--success",
+      "diffPercentage": 1.95,
+      "withinLimit": true,
+      "diffCount": 6311,
+      "visiblePixelCount": 322836
+    },
+    {
+      "caseId": "apply-bar--dirty-to-done--frame-000--0000ms",
+      "diffPercentage": 2.17,
+      "withinLimit": true,
+      "diffCount": 7009,
+      "visiblePixelCount": 322742
+    },
+    {
+      "caseId": "apply-bar--dirty-to-done--frame-001--0300ms",
+      "diffPercentage": 2.59,
+      "withinLimit": true,
+      "diffCount": 8360,
+      "visiblePixelCount": 322836
+    },
+    {
+      "caseId": "apply-bar--dirty-to-done--frame-002--0900ms",
+      "diffPercentage": 2.61,
+      "withinLimit": true,
+      "diffCount": 8431,
+      "visiblePixelCount": 322836
+    }
+  ],
+  "checks": {
+    "focusedVisualDiffTests": "41 tests, 1 request-driven skip, 0 failures",
+    "fullIosTests": "72 XCTest + 123 Swift Testing, 0 failures; request-driven capture excluded",
+    "signedArm64Build": "passed",
+    "codesign": "passed",
+    "visualTools": "10/10 passed",
+    "inventory": "passed",
+    "foundationFull": "expected exit 1 on unchanged iOS boundary debt",
+    "boundaryComparison": {
+      "baseCount": 71,
+      "currentCount": 71,
+      "new": 0,
+      "resolved": 0
+    },
+    "gitDiffCheck": "passed"
+  },
+  "intentionalNativeAdaptations": [
+    "safe-area bottom dock keeps actions above the keyboard and home indicator",
+    "responsive ViewThatFits recomposition preserves Dynamic Type and localized copy",
+    "done-state Discard is disabled because the existing owner has no post-apply draft to discard"
+  ]
+}

@@ -4,8 +4,8 @@
 // toggle, and a char-capped mono editor with a live counter. SLOW save (PUT
 // memory → apply-with-restart) puts every dirty slot.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -42,7 +42,6 @@ struct MemoryScreen: View {
 
     var body: some View {
         SettingsPageScaffold(title: "Memory", screenId: "settings-memory-screen") {
-            saveBanner
             DesignSegmentedPicker(
                 title: "Memory file",
                 options: slotOptions.map { (value: $0.id, label: $0.label) },
@@ -51,19 +50,22 @@ struct MemoryScreen: View {
             )
             slotCard
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-memory-discard",
+            applyAccessibilityId: "settings-memory-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
+        // hide it + show the custom back that shares the apply bar's discard confirm
         // (gesture is intentionally disabled only while a draft is unsaved).
         .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
             if vm.isDirty {
                 ToolbarItem(placement: .navigation) {
                     SoulBackButton(accessibilityId: "settings-memory-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-memory-save") {
-                        Task { await vm.save() }
-                    }
                 }
             }
         }
@@ -72,10 +74,6 @@ struct MemoryScreen: View {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-    }
-
-    private var saveBanner: some View {
-        DesignApplyFeedback(state: applyState)
     }
 
     private var applyState: DesignApplyState {
