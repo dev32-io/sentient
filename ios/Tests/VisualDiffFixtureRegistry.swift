@@ -226,6 +226,10 @@ struct VisualDiffSettingRowRenderConfiguration {
     let control: VisualDiffSettingRowControl
 }
 
+struct VisualDiffSettingsGroupRenderConfiguration {
+    let rows: [VisualDiffSettingRowRenderConfiguration]
+}
+
 enum VisualDiffDisclosureBody: Equatable {
     case toggle
     case paragraph
@@ -353,6 +357,7 @@ enum VisualDiffFixtureRegistry {
         StaleBannerFixtureCatalog.registration.componentID: StaleBannerFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
+        SettingsGroupFixtureCatalog.registration.componentID: SettingsGroupFixtureCatalog.registration,
         DisclosureFixtureCatalog.registration.componentID: DisclosureFixtureCatalog.registration,
         SentientIdentityFixtureCatalog.registration.componentID: SentientIdentityFixtureCatalog.registration,
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
@@ -507,6 +512,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSettingRowRenderConfiguration? {
         SettingRowFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func settingsGroupRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSettingsGroupRenderConfiguration? {
+        SettingsGroupFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func disclosureRenderConfiguration(
@@ -1440,10 +1451,14 @@ private enum SettingRowFixtureCatalog {
 private struct FilterBarFixtureAdapter: VisualDiffNativeFixtureAdapter {
     let configurations: [String: VisualDiffFilterBarRenderConfiguration]
 
+private struct SettingsGroupFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSettingsGroupRenderConfiguration]
+
     func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
         guard let configuration = configurations[fixture.caseID] else {
             throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
         }
+<<<<<<< HEAD
         return AnyView(FilterBarFixture(configuration: configuration))
     }
 }
@@ -1546,6 +1561,133 @@ private enum FilterBarFixtureCatalog {
         componentID: "filter-bar",
         registrations: supportedDefinitions.map(\.0) + [sortOpen],
         adapter: FilterBarFixtureAdapter(configurations: renderConfigurations)
+=======
+
+        return AnyView(
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                SettingsGroupFixture(configuration: configuration)
+                    .frame(width: SettingsGroupFixtureMetrics.contentWidth)
+                    .padding(.leading, SettingsGroupFixtureMetrics.canvasLeading)
+                    .padding(.top, SettingsGroupFixtureMetrics.canvasTop)
+            }
+        )
+    }
+}
+
+private enum SettingsGroupFixtureMetrics {
+    // The 778×410pt handoff canvas places a 650pt group at source x/y 52.
+    // Shadows remain outside that natural plate frame and are never cropped.
+    static let contentWidth: CGFloat = 650
+    static let contentHeight: CGFloat = (4 * 70) + (3 * DesignMetrics.hairline)
+    static let canvasLeading: CGFloat = 52
+    static let canvasTop: CGFloat = 52
+}
+
+private struct SettingsGroupFixture: View {
+    let configuration: VisualDiffSettingsGroupRenderConfiguration
+
+    var body: some View {
+        DesignCard(bodyStyle: .settingsGroup) {
+            ForEach(Array(configuration.rows.enumerated()), id: \.offset) { _, row in
+                settingContent(row)
+            }
+        }
+        // The isolated canvas proposes its full height; pin the approved four
+        // source rows while production remains vertically adaptive in ScrollView.
+        .frame(height: SettingsGroupFixtureMetrics.contentHeight)
+    }
+
+    @ViewBuilder
+    private func settingContent(_ configuration: VisualDiffSettingRowRenderConfiguration) -> some View {
+        switch configuration.control {
+        case .toggle(let isOn):
+            DesignSettingsRow(title: configuration.title, detail: configuration.detail) {
+                DesignToggleSwitch(label: configuration.title, isOn: .constant(isOn))
+            }
+        case .segmented(let options, let selection):
+            DesignSettingsRow(title: configuration.title, detail: configuration.detail) {
+                DesignSegmentedPicker(
+                    title: configuration.title,
+                    options: options.map { (value: $0.value, label: $0.label) },
+                    selection: .constant(selection),
+                    visualHeight: DesignMetrics.actionButtonVisualHeight
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
+        case .select(let options, let selection):
+            DesignSettingsSelectRow(
+                title: configuration.title,
+                detail: configuration.detail,
+                options: options.map { (value: $0.value, label: $0.label) },
+                selection: .constant(selection)
+            )
+        case .range(let value):
+            DesignSettingsSliderRow(
+                title: configuration.title,
+                detail: configuration.detail,
+                value: .constant(value),
+                range: 0...100,
+                format: { "\(Int($0.rounded()))%" }
+            )
+        }
+    }
+}
+
+private enum SettingsGroupFixtureCatalog {
+    private static let caseID = "settings-group--general--rest"
+    private static let detailOptions = [
+        VisualDiffSegmentOptionConfiguration(value: "default", label: "Default"),
+        VisualDiffSegmentOptionConfiguration(value: "expert", label: "Expert"),
+    ]
+    private static let languageOptions = [
+        VisualDiffSegmentOptionConfiguration(value: "english", label: "English"),
+        VisualDiffSegmentOptionConfiguration(value: "spanish", label: "Spanish"),
+        VisualDiffSegmentOptionConfiguration(value: "french", label: "French"),
+    ]
+
+    static let renderConfigurations = [
+        caseID: VisualDiffSettingsGroupRenderConfiguration(
+            rows: [
+                VisualDiffSettingRowRenderConfiguration(
+                    title: "Automatic updates",
+                    detail: "Install trusted updates when the household is idle.",
+                    control: .toggle(isOn: true)
+                ),
+                VisualDiffSettingRowRenderConfiguration(
+                    title: "Language",
+                    detail: "Used for interface labels and spoken responses.",
+                    control: .select(options: languageOptions, selection: "english")
+                ),
+                VisualDiffSettingRowRenderConfiguration(
+                    title: "Detail level",
+                    detail: "Choose how much supporting information appears.",
+                    control: .segmented(options: detailOptions, selection: "default")
+                ),
+                VisualDiffSettingRowRenderConfiguration(
+                    title: "Interface scale",
+                    detail: "Preview changes before applying them.",
+                    control: .range(value: 62)
+                ),
+            ]
+        ),
+    ]
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "settings-group",
+        registrations: [
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: caseID,
+                    componentID: "settings-group",
+                    variantID: "general",
+                    stateID: "rest"
+                ),
+                applicability: .supported
+            ),
+        ],
+        adapter: SettingsGroupFixtureAdapter(configurations: renderConfigurations)
+>>>>>>> 1773dd54 (feat(ios): refine settings group)
     )
 }
 

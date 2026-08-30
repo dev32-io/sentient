@@ -92,15 +92,14 @@ struct AdvancedScreen: View {
     }
 
     private var contextCard: some View {
-        DesignCard(title: "Context") {
-            DesignSelect(
+        DesignCard(title: "Context", bodyStyle: .settingsGroup) {
+            DesignSettingsSelectRow(
                 title: "Reasoning",
                 options: reasoningOptions.map { (value: $0.id, label: $0.label) },
                 selection: Binding(get: { vm.reasoningEffort }, set: { vm.reasoningEffort = $0 }),
                 accessibilityId: "settings-advanced-reasoning"
             )
-            DesignDivider()
-            DesignSlider(
+            DesignSettingsSliderRow(
                 title: "Compression threshold",
                 value: Binding(get: { vm.threshold }, set: { vm.threshold = $0 }),
                 range: compressionRange,
@@ -108,8 +107,7 @@ struct AdvancedScreen: View {
                 format: { String(format: "%.2f", $0) },
                 accessibilityId: "settings-advanced-compression"
             )
-            DesignDivider()
-            DesignSlider(
+            DesignSettingsSliderRow(
                 title: "Max tokens",
                 value: Binding(get: { vm.maxTokens }, set: { vm.maxTokens = $0 }),
                 range: maxTokensRange,
@@ -139,15 +137,14 @@ struct AdvancedScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Advanced", screenId: "settings-advanced-screen") {
-            DesignCard(title: "Context") {
-                DesignSelect(
+            DesignCard(title: "Context", bodyStyle: .settingsGroup) {
+                DesignSettingsSelectRow(
                     title: "Reasoning",
                     options: [(value: "minimal", label: "Minimal")],
                     selection: .constant("minimal"),
                     accessibilityId: "settings-advanced-reasoning"
                 )
-                DesignDivider()
-                DesignSlider(
+                DesignSettingsSliderRow(
                     title: "Compression threshold", value: .constant(0.3), range: 0...1, step: 0.05,
                     format: { String(format: "%.2f", $0) },
                     accessibilityId: "settings-advanced-compression"

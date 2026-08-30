@@ -79,14 +79,13 @@ struct AudioScreen: View {
     }
 
     private var outputCard: some View {
-        DesignCard(title: "Output", detail: "Takes effect on the next reply.") {
+        DesignCard(title: "Output", detail: "Takes effect on the next reply.", bodyStyle: .settingsGroup) {
             DesignToggleRow(
                 title: "Speak responses",
                 detail: "When off, replies are silent — text still streams to chat.",
                 isOn: Binding(get: { vm.ttsEnabled }, set: { vm.ttsEnabled = $0 }),
                 accessibilityId: "settings-audio-tts"
             )
-            DesignDivider()
             VStack(alignment: .leading, spacing: Space.sm) {
                 Text("Reply channel")
                     .font(Typo.ui(TypeScale.sm, .medium))
@@ -110,13 +109,12 @@ struct AudioScreen: View {
 #Preview("ready") {
     NavigationStack {
         SettingsPageScaffold(title: "Audio", screenId: "settings-audio-screen") {
-            DesignCard(title: "Output", detail: "Takes effect on the next reply.") {
+            DesignCard(title: "Output", detail: "Takes effect on the next reply.", bodyStyle: .settingsGroup) {
                 DesignToggleRow(
                     title: "Speak responses",
                     detail: "When off, replies are silent — text still streams to chat.",
                     isOn: .constant(true), accessibilityId: "settings-audio-tts"
                 )
-                DesignDivider()
                 VStack(alignment: .leading, spacing: Space.sm) {
                     Text("Reply channel").font(Typo.ui(TypeScale.sm, .medium)).foregroundStyle(DuskColors.ink)
                     DesignSegmentedPicker(

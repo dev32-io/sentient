@@ -39,7 +39,14 @@ struct DesignPageChrome<Content: View>: View {
 }
 
 enum DesignCardHeaderStyle { case elevated, quiet }
-enum DesignCardBodyStyle { case rows, padded }
+enum DesignCardBodyStyle { case rows, settingsGroup, padded }
+
+private enum DesignSettingsGroupMetrics {
+    // Source `.cmp-setting-row` minimum, including its responsive content air.
+    static let rowHeight: CGFloat = 70
+    static let selectWidth: CGFloat = 180
+    static let rangeWidth: CGFloat = 210
+}
 
 /// The one card surface used by settings. Header and body styles preserve the
 /// old pane/card spacing without maintaining two separate visual renderers.
@@ -101,6 +108,7 @@ struct DesignCard<Content: View>: View {
             Text(title ?? "")
                 .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
                 .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
             if let detail {
                 Text(detail)
                     .font(Typo.ui(TypeScale.sm))
@@ -116,6 +124,23 @@ struct DesignCard<Content: View>: View {
             VStack(alignment: .leading, spacing: 0, content: content)
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, Space.sm)
+        case .settingsGroup:
+            Group(subviews: content()) { subviews in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(subviews) { subview in
+                        subview
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: DesignSettingsGroupMetrics.rowHeight,
+                                alignment: .leading
+                            )
+                        if subview.id != subviews.last?.id {
+                            DesignDivider()
+                        }
+                    }
+                }
+                .padding(.horizontal, Space.lg)
+            }
         case .padded:
             VStack(alignment: .leading, spacing: Space.md, content: content)
                 .padding(Space.lg)
@@ -557,6 +582,90 @@ struct DesignSettingsRow<Accessory: View>: View {
                     .lineSpacing(TypeScale.sm * CGFloat(DesignV2.Typography.lineNormal - 1))
                     .foregroundStyle(DuskColors.ink2)
             }
+        }
+    }
+}
+
+struct DesignSettingsSelectRow<Value: Hashable>: View {
+    let title: String
+    var detail: String? = nil
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        DesignSettingsRow(title: title, detail: detail) {
+            Menu {
+                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                    Button {
+                        selection = option.value
+                    } label: {
+                        if option.value == selection {
+                            Label(option.label, systemImage: "checkmark")
+                        } else {
+                            Text(option.label)
+                        }
+                    }
+                }
+            } label: {
+                menuLabel
+            }
+            .accessibilityLabel(title)
+            .accessibilityValue(currentLabel)
+            .accessibilityHint(detail ?? "")
+            .accessibilityIdentifier(accessibilityId ?? "")
+        }
+    }
+
+    private var menuLabel: some View {
+        HStack(spacing: Space.sm) {
+            Text(currentLabel)
+                .font(Typo.ui(DesignMetrics.controlLabelSize))
+                .foregroundStyle(DuskColors.ink)
+                .lineLimit(1)
+            Spacer(minLength: Space.sm)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(Typo.ui(TypeScale.sm, .medium))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .padding(.horizontal, Space.md)
+        .frame(width: DesignSettingsGroupMetrics.selectWidth)
+        .frame(minHeight: DesignMetrics.minimumTarget)
+        .designWell()
+    }
+
+    private var currentLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? "Select…"
+    }
+}
+
+struct DesignSettingsSliderRow: View {
+    let title: String
+    var detail: String? = nil
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 1
+    let format: (Double) -> String
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        DesignSettingsRow(title: title, detail: detail) {
+            HStack(spacing: Space.md) {
+                Slider(value: $value, in: range, step: step)
+                    .tint(DuskColors.accent)
+                    .frame(minHeight: DesignMetrics.minimumTarget)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(format(value))
+                    .accessibilityHint(detail ?? "")
+                    .accessibilityIdentifier(accessibilityId ?? "")
+                Text(format(value))
+                    .font(Typo.mono(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
+                    .accessibilityHidden(true)
+            }
+            .frame(width: DesignSettingsGroupMetrics.rangeWidth)
+            .frame(minHeight: DesignMetrics.minimumTarget)
         }
     }
 }

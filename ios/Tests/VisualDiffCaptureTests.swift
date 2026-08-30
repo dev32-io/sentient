@@ -1390,6 +1390,35 @@ final class VisualDiffCaptureTests: XCTestCase {
         if case .range(let value) = range.control { XCTAssertEqual(value, 62) } else { XCTFail("Range mapping changed") }
     }
 
+    func testSettingsGroupRegistryPreservesApprovedProductionComposition() throws {
+        let caseID = "settings-group--general--rest"
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "settings-group")
+        XCTAssertEqual(registrations.map { $0.fixture.caseID }, [caseID])
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        let configuration = try XCTUnwrap(
+            VisualDiffFixtureRegistry.settingsGroupRenderConfiguration(for: caseID)
+        )
+        XCTAssertEqual(
+            configuration.rows.map(\.title),
+            ["Automatic updates", "Language", "Detail level", "Interface scale"]
+        )
+        XCTAssertEqual(
+            configuration.rows.map(\.detail),
+            [
+                "Install trusted updates when the household is idle.",
+                "Used for interface labels and spoken responses.",
+                "Choose how much supporting information appears.",
+                "Preview changes before applying them.",
+            ]
+        )
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+            XCTFail("Approved settings group must resolve to its native production composition")
+            return
+        }
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -1588,6 +1617,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "no-results",
             "stale-banner",
             "setting-row",
+            "settings-group",
         ]
         let registrations = integratedComponentIDs.flatMap {
             VisualDiffFixtureRegistry.registrations(for: $0)
