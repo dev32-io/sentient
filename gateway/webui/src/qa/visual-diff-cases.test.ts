@@ -171,6 +171,15 @@ const CURRENT_SEARCH_FIELD_CASES = [
   "search-field--placeholder--rest",
 ] as const;
 
+const CURRENT_FILTER_BAR_CASES = [
+  "filter-bar--default--compact",
+  "filter-bar--default--rest",
+  "filter-bar--ready--selected",
+  "filter-bar--shared--selected",
+  "filter-bar--offline--selected",
+  "filter-bar--sort--open",
+] as const;
+
 const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--focus",
   "text-area--filled--hover",
@@ -648,6 +657,23 @@ describe("visual diff component cases", () => {
         expect(resolution.case.fixtureAdapterId).toBe("search-field");
         expect(resolution.case.props).toEqual(searchField.variants.placeholder.props);
       }
+    }
+  });
+
+  it("registers every approved filter-bar state against the production search/filter shell", () => {
+    const filterBar = visualDiffComponentRegistry["filter-bar"];
+    expect(filterBar.stateApplicability).toEqual({
+      default: ["compact", "rest"],
+      ready: ["selected"],
+      shared: ["selected"],
+      offline: ["selected"],
+      sort: ["open"],
+    });
+    expect(filterBar.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SearchFilterBar");
+    for (const caseId of CURRENT_FILTER_BAR_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("filter-bar");
     }
   });
 

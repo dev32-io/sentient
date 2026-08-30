@@ -92,7 +92,8 @@ export function SelectMenu({ value, onChange, options, placeholder = "Select…"
           }
         }}
       >
-        {current?.icon}<span>{current?.label ?? placeholder}</span><span aria-hidden="true">⌄</span>
+        {current?.icon}<span>{current?.label ?? placeholder}</span>
+        <svg class="snt-select-menu__chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
       </button>
       {open && (
         <div id={menuId} class="snt-select-menu__options snt-float" role="listbox" aria-label={placeholder}>
@@ -120,6 +121,7 @@ export function SelectMenu({ value, onChange, options, placeholder = "Select…"
               }}
             >
               {option.icon}<span>{option.label}</span>{option.tag && <span class="snt-kicker">{option.tag}</span>}
+              <svg class="snt-select-menu__check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7" /></svg>
             </div>
           ))}
         </div>

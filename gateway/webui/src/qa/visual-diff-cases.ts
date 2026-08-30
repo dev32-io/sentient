@@ -91,6 +91,12 @@ export interface SearchFieldVariantProps {
 
 type SearchFieldVariantDefinition = VisualDiffVariantDefinition<SearchFieldVariantProps>;
 
+export interface FilterBarVariantProps {
+  readonly selected: "all" | "ready" | "shared" | "offline";
+}
+
+type FilterBarVariantDefinition = VisualDiffVariantDefinition<FilterBarVariantProps>;
+
 export interface TextAreaVariantProps {
   readonly label: string;
   readonly value: string;
@@ -597,6 +603,14 @@ const APPLY_BAR_VARIANTS = {
   "dirty-to-done": { props: { pendingCount: 3 } },
 } as const satisfies Readonly<Record<string, ApplyBarVariantDefinition>>;
 
+const FILTER_BAR_VARIANTS = {
+  default: { props: { selected: "all" } },
+  ready: { props: { selected: "ready" } },
+  shared: { props: { selected: "shared" } },
+  offline: { props: { selected: "offline" } },
+  sort: { props: { selected: "all" } },
+} as const satisfies Readonly<Record<string, FilterBarVariantDefinition>>;
+
 const STALE_BANNER_VARIANTS = {
   "saved-results": {
     props: {
@@ -707,6 +721,20 @@ export const visualDiffComponentRegistry = {
     variants: SEARCH_FIELD_VARIANTS,
     stateApplicability: {
       placeholder: ["focus", "hover", "rest"],
+    },
+  },
+  "filter-bar": {
+    id: "filter-bar",
+    fixtureAdapterId: "filter-bar",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SearchFilterBar",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: FILTER_BAR_VARIANTS,
+    stateApplicability: {
+      default: ["compact", "rest"],
+      ready: ["selected"],
+      shared: ["selected"],
+      offline: ["selected"],
+      sort: ["open"],
     },
   },
   "text-area": {
@@ -907,6 +935,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "plate",
   "text-field",
   "search-field",
+  "filter-bar",
   "text-area",
   "validated-field",
   "range",

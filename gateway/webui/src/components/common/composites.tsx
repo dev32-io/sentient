@@ -681,17 +681,20 @@ export interface SearchFilterBarProps {
   placeholder?: string | undefined;
   label?: string | undefined;
   children?: ComponentChildren | undefined;
+  filters?: ComponentChildren | undefined;
+  filtersLabel?: string | undefined;
 }
 
-export function SearchFilterBar({ value, onChange, placeholder = "Search", label = "Search", children }: SearchFilterBarProps): JSX.Element {
+export function SearchFilterBar({ value, onChange, placeholder = "Search", label = "Search", children, filters, filtersLabel = "Filters" }: SearchFilterBarProps): JSX.Element {
   return (
     <div class="snt-filter-bar" role="search">
       <label class="snt-search">
-        <span class="snt-search__icon" aria-hidden="true"><SearchIcon size={16} /></span>
+        <span class="snt-search__icon" aria-hidden="true"><SearchIcon size={18} /></span>
         <span class="sr-only">{label}</span>
         <input type="search" class="snt-input" value={value} placeholder={placeholder} onInput={(event) => onChange(event.currentTarget.value)} />
       </label>
       {children}
+      {filters && <div class="snt-filter-bar__filters" role="group" aria-label={filtersLabel}>{filters}</div>}
     </div>
   );
 }

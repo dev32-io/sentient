@@ -6,8 +6,9 @@ import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/settings/apply-bar/apply-bar.css";
-import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { SelectMenu } from "../components/common/select-menu.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
@@ -21,6 +22,7 @@ import {
   type CheckboxVariantProps,
   type ChipVariantProps,
   type DisclosureVariantProps,
+  type FilterBarVariantProps,
   type IconButtonVariantProps,
   type LoadingStateVariantProps,
   type MediaActionCardVariantProps,
@@ -143,6 +145,44 @@ function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   }, [fixture.variantId]);
 
   return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
+}
+
+function FilterBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as FilterBarVariantProps;
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("recent");
+  const [selected, setSelected] = useState(props.selected);
+
+  const filters = ["all", "ready", "shared", "offline"] as const;
+  return (
+    <div class={`visual-diff-filter-bar-frame${fixture.compact ? " visual-diff-filter-bar-frame--compact" : ""}`}>
+      <Plate className="visual-diff-target visual-diff-filter-bar">
+        <SearchFilterBar
+          value={query}
+          onChange={setQuery}
+          label="Search items"
+          placeholder="Search items"
+          filters={filters.map((filter) => (
+            <ChipControl key={filter} selected={selected === filter} onClick={() => setSelected(filter)}>
+              {filter[0]?.toUpperCase()}{filter.slice(1)}
+            </ChipControl>
+          ))}
+        >
+          <SelectMenu
+            className="snt-filter-bar__sort"
+            placeholder="Sort by"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "recent", label: "Recently used" },
+              { value: "name", label: "Name" },
+              { value: "status", label: "Status" },
+            ]}
+          />
+        </SearchFilterBar>
+      </Plate>
+    </div>
+  );
 }
 
 function SettingRowFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
@@ -471,9 +511,14 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "filter-bar": {
+    // Mount the production controlled search/filter shell and shared controls;
+    // fixture state is driven through the same public callbacks and trigger action.
+    render: (fixture) => <FilterBarFixture fixture={fixture} />,
+  },
   "search-field": {
     // The handoff's labelled, icon-free search field is the reachable generic
-    // Field seam; the unused icon-led SearchField/SearchFilterBar wrapper is not mounted.
+    // Field seam; the icon-led SearchFilterBar is covered by its composite fixture.
     render: (fixture) => {
       const field = fixture.props as SearchFieldVariantProps;
       return (
@@ -739,6 +784,10 @@ style.textContent = `
   .visual-diff-no-results { width: min(468px, 100%); margin-bottom: 10px; }
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-search-field { width: min(320px, 100%); }
+  .visual-diff-filter-bar-frame { width: 100%; height: 100%; padding: 52px; }
+  .visual-diff-filter-bar { width: 680px; overflow: visible; }
+  .visual-diff-filter-bar-frame--compact { padding: 52px 76px 0 52px; }
+  .visual-diff-filter-bar-frame--compact .visual-diff-filter-bar { width: 390px; }
   .visual-diff-text-area { width: min(320px, 100%); }
   .visual-diff-validated-field { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }

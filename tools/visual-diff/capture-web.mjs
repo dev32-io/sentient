@@ -18,7 +18,7 @@ const MOBILE_BREAKPOINT = 620;
 const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "text-area", "text-field", "toggle", "user-avatar", "validated-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "filter-bar", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "text-area", "text-field", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",
@@ -146,6 +146,10 @@ async function localFontCss() {
 function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
   if (frameCaseId === "no-results--empty") return "no-results--default--empty";
+  if (frameCaseId === "filter-bar--default") return "filter-bar--default--rest";
+  const filterSelection = /^filter-bar--(ready|shared|offline)-selected$/.exec(frameCaseId);
+  if (filterSelection) return `filter-bar--${filterSelection[1]}--selected`;
+  if (frameCaseId === "filter-bar--sort-open") return "filter-bar--sort--open";
   const recordingId = basename(dirname(referencePath));
   if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
@@ -221,6 +225,10 @@ async function applyState(page, caseId) {
   const target = page.locator(targetSelector(caseId));
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
+  if (state === "open" && caseId.startsWith("filter-bar--")) {
+    await page.locator(".snt-filter-bar__sort > .snt-menu-trigger").click();
+    await page.getByRole("listbox").waitFor();
+  }
   if (state === "focus") {
     if (caseId.startsWith("segmented-control--")) {
       await page.locator(".snt-segment").first().focus();
