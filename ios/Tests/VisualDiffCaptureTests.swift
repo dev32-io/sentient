@@ -1720,6 +1720,8 @@ final class VisualDiffCaptureTests: XCTestCase {
             "loading-state",
             "empty-state",
             "apply-bar",
+            "filter-bar",
+            "settings-editor",
             "notice",
             "no-results",
             "results-list",
