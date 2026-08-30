@@ -1288,6 +1288,8 @@ struct DesignSearchField: View {
     var textFont: Font = Typo.ui(TypeScale.base)
     var leadingPadding: CGFloat = Space.md
     var trailingPadding: CGFloat = Space.md
+    var showsTitle = true
+    var showsSearchIcon = false
     var focused: FocusState<Bool>.Binding? = nil
     @FocusState private var internalFocused: Bool
 
@@ -1300,6 +1302,8 @@ struct DesignSearchField: View {
         leadingPadding: CGFloat = Space.md,
         trailingPadding: CGFloat = Space.md,
         title: String = "Search",
+        showsTitle: Bool = true,
+        showsSearchIcon: Bool = false,
         focused: FocusState<Bool>.Binding? = nil
     ) {
         self.title = title
@@ -1310,6 +1314,8 @@ struct DesignSearchField: View {
         self.textFont = textFont
         self.leadingPadding = leadingPadding
         self.trailingPadding = trailingPadding
+        self.showsTitle = showsTitle
+        self.showsSearchIcon = showsSearchIcon
         self.focused = focused
     }
 
@@ -1319,10 +1325,12 @@ struct DesignSearchField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignSearchFieldMetrics.labelGap) {
-            Text(title)
-                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
-                .foregroundStyle(DuskColors.ink)
-                .frame(minHeight: DesignSearchFieldMetrics.labelLineHeight)
+            if showsTitle {
+                Text(title)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                    .foregroundStyle(DuskColors.ink)
+                    .frame(minHeight: DesignSearchFieldMetrics.labelLineHeight)
+            }
             fieldSurface
         }
     }
@@ -1330,6 +1338,12 @@ struct DesignSearchField: View {
     @ViewBuilder
     private var fieldSurface: some View {
         HStack(spacing: Space.sm) {
+            if showsSearchIcon {
+                Image(systemName: "magnifyingglass")
+                    .font(Typo.ui(TypeScale.lg, .regular))
+                    .foregroundStyle(DuskColors.ink3)
+                    .accessibilityHidden(true)
+            }
             focusableInput
             if let onClear, !query.isEmpty {
                 DesignCompactIconButton(
@@ -1418,18 +1432,138 @@ struct DesignSearchField: View {
     }
 }
 
-struct SearchFilterRow<Filters: View>: View {
+private enum DesignFilterBarMetrics {
+    static let minimumSearchWidth: CGFloat = 220
+    static let menuWidth: CGFloat = 170
+    static let menuVisualHeight: CGFloat = 42
+}
+
+struct DesignFilterMenu<Value: Hashable>: View {
+    let title: String
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        Menu {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: Space.md) {
+                Text(currentLabel)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize))
+                    .foregroundStyle(DuskColors.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .padding(.horizontal, Space.md)
+            .frame(
+                minWidth: DesignFilterBarMetrics.menuWidth,
+                maxWidth: .infinity,
+                minHeight: DesignFilterBarMetrics.menuVisualHeight
+            )
+            .designWell()
+            .frame(minHeight: DesignMetrics.minimumTarget)
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(currentLabel)
+        .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var currentLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? "Not selected"
+    }
+}
+
+struct SearchFilterRow<PrimaryFilter: View, Filters: View>: View {
     let prompt: String
     @Binding var query: String
     var accessibilityId: String? = nil
+    @ViewBuilder let primaryFilter: () -> PrimaryFilter
     @ViewBuilder let filters: () -> Filters
 
+    init(
+        prompt: String,
+        query: Binding<String>,
+        accessibilityId: String? = nil,
+        @ViewBuilder primaryFilter: @escaping () -> PrimaryFilter,
+        @ViewBuilder filters: @escaping () -> Filters
+    ) {
+        self.prompt = prompt
+        _query = query
+        self.accessibilityId = accessibilityId
+        self.primaryFilter = primaryFilter
+        self.filters = filters
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            DesignSearchField(prompt: prompt, query: $query)
-            filters()
+        VStack(alignment: .leading, spacing: Space.md) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    searchField
+                    primaryFilter()
+                        .frame(width: DesignFilterBarMetrics.menuWidth)
+                }
+                VStack(alignment: .leading, spacing: Space.md) {
+                    searchField
+                    primaryFilter()
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Space.sm) {
+                    filters()
+                }
+                .padding(2)
+            }
+            .accessibilityLabel("Filters")
         }
+        .padding(Space.lg - 2)
+        .designPlate()
         .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var searchField: some View {
+        DesignSearchField(
+            prompt: prompt,
+            query: $query,
+            onClear: query.isEmpty ? nil : { query = "" },
+            showsTitle: false,
+            showsSearchIcon: true
+        )
+        // Preserve the source grid's minimum search measure. ViewThatFits then
+        // recomposes the native controls vertically when search and menu cannot
+        // both retain useful content width.
+        .frame(minWidth: DesignFilterBarMetrics.minimumSearchWidth, maxWidth: .infinity)
+    }
+}
+
+extension SearchFilterRow where PrimaryFilter == EmptyView {
+    init(
+        prompt: String,
+        query: Binding<String>,
+        accessibilityId: String? = nil,
+        @ViewBuilder filters: @escaping () -> Filters
+    ) {
+        self.init(
+            prompt: prompt,
+            query: query,
+            accessibilityId: accessibilityId,
+            primaryFilter: { EmptyView() },
+            filters: filters
+        )
     }
 }
 

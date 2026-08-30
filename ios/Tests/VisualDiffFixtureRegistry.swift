@@ -165,6 +165,11 @@ struct VisualDiffSearchFieldRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffFilterBarRenderConfiguration {
+    let compact: Bool
+    let selectedFilter: String
+}
+
 struct VisualDiffPinRenderConfiguration {
     let entered: Int
     let isSubmitting: Bool
@@ -344,6 +349,7 @@ enum VisualDiffFixtureRegistry {
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
+        FilterBarFixtureCatalog.registration.componentID: FilterBarFixtureCatalog.registration,
         StaleBannerFixtureCatalog.registration.componentID: StaleBannerFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
@@ -467,6 +473,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffSearchFieldRenderConfiguration? {
         SearchFieldFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func filterBarRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffFilterBarRenderConfiguration? {
+        FilterBarFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func loadingStateRenderConfiguration(
@@ -1422,6 +1434,118 @@ private enum SettingRowFixtureCatalog {
         componentID: "setting-row",
         registrations: definitions,
         adapter: SettingRowFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct FilterBarFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffFilterBarRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(FilterBarFixture(configuration: configuration))
+    }
+}
+
+private struct FilterBarFixture: View {
+    let configuration: VisualDiffFilterBarRenderConfiguration
+    @State private var query = ""
+    @State private var sort = "recent"
+    @State private var selectedFilter: String
+
+    private let sortOptions = [
+        (value: "recent", label: "Recently used"),
+        (value: "name", label: "Name"),
+        (value: "status", label: "Status"),
+    ]
+    private let filterOptions = ["All", "Ready", "Shared", "Offline"]
+
+    init(configuration: VisualDiffFilterBarRenderConfiguration) {
+        self.configuration = configuration
+        _selectedFilter = State(initialValue: configuration.selectedFilter)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            SearchFilterRow(
+                prompt: "Search items",
+                query: $query,
+                primaryFilter: {
+                    DesignFilterMenu(
+                        title: "Sort by",
+                        options: sortOptions,
+                        selection: $sort
+                    )
+                },
+                filters: {
+                    ForEach(filterOptions, id: \.self) { filter in
+                        DesignChip(title: filter, selected: selectedFilter == filter) {
+                            selectedFilter = filter
+                        }
+                    }
+                }
+            )
+            .frame(width: configuration.compact ? 390 : 680)
+            .padding(52)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private enum FilterBarFixtureCatalog {
+    private static func supported(
+        _ caseID: String,
+        compact: Bool = false,
+        selectedFilter: String = "All"
+    ) -> (VisualDiffFixtureRegistration, VisualDiffFilterBarRenderConfiguration?) {
+        let parts = caseID.split(separator: "--")
+        return (
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: caseID,
+                    componentID: "filter-bar",
+                    variantID: parts.count > 1 ? String(parts[1]) : "default",
+                    stateID: parts.count > 2 ? parts.dropFirst(2).joined(separator: "--") : "default"
+                ),
+                applicability: .supported
+            ),
+            VisualDiffFilterBarRenderConfiguration(
+                compact: compact,
+                selectedFilter: selectedFilter
+            )
+        )
+    }
+
+    private static let supportedDefinitions = [
+        supported("filter-bar--default--compact", compact: true),
+        supported("filter-bar--default"),
+        supported("filter-bar--offline-selected", selectedFilter: "Offline"),
+        supported("filter-bar--ready-selected", selectedFilter: "Ready"),
+        supported("filter-bar--shared-selected", selectedFilter: "Shared"),
+    ]
+
+    private static let sortOpen = VisualDiffFixtureRegistration(
+        fixture: VisualDiffFixtureCase(
+            caseID: "filter-bar--sort-open",
+            componentID: "filter-bar",
+            variantID: "sort",
+            stateID: "open"
+        ),
+        applicability: .missingAuthority(.stateNotApplicable)
+    )
+
+    static let renderConfigurations: [String: VisualDiffFilterBarRenderConfiguration] =
+        Dictionary(uniqueKeysWithValues: supportedDefinitions.compactMap { registration, configuration in
+            guard let configuration else { return nil }
+            return (registration.fixture.caseID, configuration)
+        })
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "filter-bar",
+        registrations: supportedDefinitions.map(\.0) + [sortOpen],
+        adapter: FilterBarFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

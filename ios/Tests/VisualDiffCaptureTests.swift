@@ -154,6 +154,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             caseID.hasPrefix("text-field--")
                 || caseID.hasPrefix("text-area--")
                 || caseID.hasPrefix("search-field--")
+                || caseID.hasPrefix("filter-bar--")
                 || caseID.hasPrefix("validated-field--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
@@ -767,6 +768,54 @@ final class VisualDiffCaptureTests: XCTestCase {
                 for: "search-field--placeholder--hover"
             )
         )
+    }
+
+    func testFilterBarRegistryPreservesApprovedCasesAndNativeMenuAdaptation() {
+        let expectedSupported = Set([
+            "filter-bar--default--compact",
+            "filter-bar--default",
+            "filter-bar--offline-selected",
+            "filter-bar--ready-selected",
+            "filter-bar--shared-selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "filter-bar")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedSupported.union(["filter-bar--sort-open"])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            registrations.first { $0.fixture.caseID == "filter-bar--sort-open" }?.applicability,
+            .missingAuthority(.stateNotApplicable)
+        )
+    }
+
+    func testFilterBarRegistryPreservesResponsiveAndSelectionMappings() {
+        let expected: [(String, Bool, String)] = [
+            ("filter-bar--default--compact", true, "All"),
+            ("filter-bar--default", false, "All"),
+            ("filter-bar--offline-selected", false, "Offline"),
+            ("filter-bar--ready-selected", false, "Ready"),
+            ("filter-bar--shared-selected", false, "Shared"),
+        ]
+
+        for (caseID, compact, selectedFilter) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.filterBarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing filter-bar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.compact, compact, caseID)
+            XCTAssertEqual(configuration.selectedFilter, selectedFilter, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved filter-bar case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+        XCTAssertNil(VisualDiffFixtureRegistry.filterBarRenderConfiguration(for: "filter-bar--sort-open"))
     }
 
     func testStaleBannerRegistryPreservesApprovedStatesAndMappings() {
