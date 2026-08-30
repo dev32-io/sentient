@@ -1451,14 +1451,10 @@ private enum SettingRowFixtureCatalog {
 private struct FilterBarFixtureAdapter: VisualDiffNativeFixtureAdapter {
     let configurations: [String: VisualDiffFilterBarRenderConfiguration]
 
-private struct SettingsGroupFixtureAdapter: VisualDiffNativeFixtureAdapter {
-    let configurations: [String: VisualDiffSettingsGroupRenderConfiguration]
-
     func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
         guard let configuration = configurations[fixture.caseID] else {
             throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
         }
-<<<<<<< HEAD
         return AnyView(FilterBarFixture(configuration: configuration))
     }
 }
@@ -1561,7 +1557,16 @@ private enum FilterBarFixtureCatalog {
         componentID: "filter-bar",
         registrations: supportedDefinitions.map(\.0) + [sortOpen],
         adapter: FilterBarFixtureAdapter(configurations: renderConfigurations)
-=======
+    )
+}
+
+private struct SettingsGroupFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSettingsGroupRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
 
         return AnyView(
             ZStack(alignment: .topLeading) {
@@ -1687,7 +1692,6 @@ private enum SettingsGroupFixtureCatalog {
             ),
         ],
         adapter: SettingsGroupFixtureAdapter(configurations: renderConfigurations)
->>>>>>> 1773dd54 (feat(ios): refine settings group)
     )
 }
 
