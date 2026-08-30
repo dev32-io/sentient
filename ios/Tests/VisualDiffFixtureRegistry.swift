@@ -196,6 +196,10 @@ struct VisualDiffStaleBannerRenderConfiguration: Equatable {
     let checking: Bool
 }
 
+struct VisualDiffInlineSecretEditorRenderConfiguration: Equatable {
+    let isEditing: Bool
+}
+
 struct VisualDiffSegmentOptionConfiguration {
     let value: String
     let label: String
@@ -360,6 +364,7 @@ enum VisualDiffFixtureRegistry {
         SearchFieldFixtureCatalog.registration.componentID: SearchFieldFixtureCatalog.registration,
         FilterBarFixtureCatalog.registration.componentID: FilterBarFixtureCatalog.registration,
         StaleBannerFixtureCatalog.registration.componentID: StaleBannerFixtureCatalog.registration,
+        InlineSecretEditorFixtureCatalog.registration.componentID: InlineSecretEditorFixtureCatalog.registration,
         SegmentedControlFixtureCatalog.registration.componentID: SegmentedControlFixtureCatalog.registration,
         SettingRowFixtureCatalog.registration.componentID: SettingRowFixtureCatalog.registration,
         SettingsGroupFixtureCatalog.registration.componentID: SettingsGroupFixtureCatalog.registration,
@@ -507,6 +512,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffStaleBannerRenderConfiguration? {
         StaleBannerFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func inlineSecretEditorRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffInlineSecretEditorRenderConfiguration? {
+        InlineSecretEditorFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func segmentedControlRenderConfiguration(
@@ -682,6 +693,97 @@ private struct NoticeFixture: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .ignoresSafeArea()
     }
+}
+
+private enum InlineSecretEditorFixtureMetrics {
+    // The isolated handoff retains a 64pt transparent frame around its
+    // 500pt editor surface. Production remains adaptive and width-agnostic.
+    static let canvasInset: CGFloat = 64
+    static let contentWidth: CGFloat = 500
+}
+
+private struct InlineSecretEditorFixture: View {
+    let configuration: VisualDiffInlineSecretEditorRenderConfiguration
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            SecretKeyRow(
+                label: "Access key",
+                idKey: "visual-diff",
+                hasKey: true,
+                isActive: false,
+                isEditing: configuration.isEditing,
+                isSaving: false,
+                onSetActive: nil,
+                onStartEdit: {},
+                onCancel: {},
+                onSave: { _ in }
+            )
+            .frame(width: InlineSecretEditorFixtureMetrics.contentWidth)
+            .padding(InlineSecretEditorFixtureMetrics.canvasInset)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct InlineSecretEditorFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffInlineSecretEditorRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(InlineSecretEditorFixture(configuration: configuration))
+    }
+}
+
+private enum InlineSecretEditorFixtureCatalog {
+    private static func fixture(
+        _ caseID: String,
+        variantID: String,
+        stateID: String,
+        applicability: VisualDiffFixtureApplicability
+    ) -> VisualDiffFixtureRegistration {
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: caseID,
+                componentID: "inline-secret-editor",
+                variantID: variantID,
+                stateID: stateID
+            ),
+            applicability: applicability
+        )
+    }
+
+    private static let readCaseID = "inline-secret-editor--access-key--read"
+    private static let editingCaseID = "inline-secret-editor--access-key--editing"
+
+    static let renderConfigurations: [String: VisualDiffInlineSecretEditorRenderConfiguration] = [
+        readCaseID: VisualDiffInlineSecretEditorRenderConfiguration(isEditing: false),
+        editingCaseID: VisualDiffInlineSecretEditorRenderConfiguration(isEditing: true),
+    ]
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "inline-secret-editor",
+        registrations: [
+            fixture(readCaseID, variantID: "access-key", stateID: "read", applicability: .supported),
+            fixture(editingCaseID, variantID: "access-key", stateID: "editing", applicability: .supported),
+            fixture(
+                "inline-secret-editor--access-key--saving",
+                variantID: "access-key",
+                stateID: "saving",
+                applicability: .missingAuthority(.stateRequiresInteraction)
+            ),
+            fixture(
+                "inline-secret-editor--managed-value--disabled",
+                variantID: "managed-value",
+                stateID: "disabled",
+                applicability: .missingAuthority(.stateNotApplicable)
+            ),
+        ],
+        adapter: InlineSecretEditorFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private struct NoticeFixtureAdapter: VisualDiffNativeFixtureAdapter {

@@ -210,6 +210,8 @@ enum DesignMetrics {
     static let editorInset: CGFloat = 8
     static let editorPlaceholderInsetH: CGFloat = 14
     static let editorPlaceholderInsetV: CGFloat = 16
+    static let inlineEditorReadMinimumHeight: CGFloat = 78
+    static let inlineEditorFormPadding: CGFloat = 14
     static let narrowPreviewWidth: CGFloat = 320
     static let padPreviewWidth: CGFloat = 768
     static let dominantCardMinimumWidth: CGFloat = 144

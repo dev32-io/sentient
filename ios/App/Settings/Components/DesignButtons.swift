@@ -202,6 +202,7 @@ struct DesignButtonStyle: ButtonStyle {
 
 struct DesignActionButton: View {
     let title: String
+    var loadingTitle = "Loading"
     var role: DesignButtonRole = .action
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
@@ -215,7 +216,7 @@ struct DesignActionButton: View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
             HStack(spacing: Space.sm) {
                 if state == .loading { ProgressView().controlSize(.small) }
-                Text(state == .loading ? "Loading" : title)
+                Text(state == .loading ? loadingTitle : title)
                     // SwiftUI's custom-font line fragment places this run below
                     // the CSS 1.55 line box; lift only the text, not the target.
                     .baselineOffset(DesignMetrics.actionButtonTextBaselineOffset)

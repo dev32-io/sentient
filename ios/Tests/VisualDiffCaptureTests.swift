@@ -157,6 +157,7 @@ final class VisualDiffCaptureTests: XCTestCase {
                 || caseID.hasPrefix("filter-bar--")
                 || caseID.hasPrefix("settings-editor--")
                 || caseID.hasPrefix("validated-field--")
+                || caseID.hasPrefix("inline-secret-editor--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
         if usesNativeTextInputCapture {
@@ -317,6 +318,59 @@ final class VisualDiffCaptureTests: XCTestCase {
             XCTAssertEqual(configuration.state, state, caseID)
             guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
                 XCTFail("Approved apply-bar case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testInlineSecretEditorRegistryKeepsFixturesPresenceOnly() throws {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "inline-secret-editor")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set([
+                "inline-secret-editor--access-key--read",
+                "inline-secret-editor--access-key--editing",
+                "inline-secret-editor--access-key--saving",
+                "inline-secret-editor--managed-value--disabled",
+            ])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            Set([
+                "inline-secret-editor--access-key--read",
+                "inline-secret-editor--access-key--editing",
+            ])
+        )
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--read"
+            ),
+            VisualDiffInlineSecretEditorRenderConfiguration(isEditing: false)
+        )
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--editing"
+            ),
+            VisualDiffInlineSecretEditorRenderConfiguration(isEditing: true)
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--saving"
+            )
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--managed-value--disabled"
+            )
+        )
+
+        for caseID in [
+            "inline-secret-editor--access-key--read",
+            "inline-secret-editor--access-key--editing",
+        ] {
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Safe inline-secret-editor case must resolve: \(caseID)")
                 continue
             }
             XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
@@ -1642,6 +1696,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "stale-banner",
             "setting-row",
             "settings-group",
+            "inline-secret-editor",
         ]
         let registrations = integratedComponentIDs.flatMap {
             VisualDiffFixtureRegistry.registrations(for: $0)
