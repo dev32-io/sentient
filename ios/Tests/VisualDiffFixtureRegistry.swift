@@ -192,6 +192,12 @@ struct VisualDiffApplyBarRenderConfiguration {
     let state: DesignApplyState
 }
 
+struct VisualDiffEmptyStateRenderConfiguration: Equatable {
+    let title: String
+    let detail: String
+    let actionTitle: String
+}
+
 struct VisualDiffStaleBannerRenderConfiguration: Equatable {
     let checking: Bool
 }
@@ -379,6 +385,7 @@ enum VisualDiffFixtureRegistry {
         PinEntryFixtureCatalog.registration.componentID: PinEntryFixtureCatalog.registration,
         NoticeFixtureCatalog.registration.componentID: NoticeFixtureCatalog.registration,
         LoadingStateFixtureCatalog.registration.componentID: LoadingStateFixtureCatalog.registration,
+        EmptyStateFixtureCatalog.registration.componentID: EmptyStateFixtureCatalog.registration,
         ApplyBarFixtureCatalog.registration.componentID: ApplyBarFixtureCatalog.registration,
         NoResultsFixtureCatalog.registration.componentID: NoResultsFixtureCatalog.registration,
         ResultsListFixtureCatalog.registration.componentID: ResultsListFixtureCatalog.registration,
@@ -513,6 +520,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffLoadingStateRenderConfiguration? {
         LoadingStateFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func emptyStateRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffEmptyStateRenderConfiguration? {
+        EmptyStateFixtureCatalog.renderConfigurations[caseID]
     }
 
     static func staleBannerRenderConfiguration(
@@ -1024,6 +1037,61 @@ private enum ResultsListFixtureCatalog {
         componentID: "results-list",
         registrations: definitions.map(\.0),
         adapter: ResultsListFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private struct EmptyStateFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffEmptyStateRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(
+            AsyncNotice(
+                kind: .empty,
+                title: configuration.title,
+                detail: configuration.detail,
+                retry: {},
+                actionTitle: configuration.actionTitle
+            )
+            .frame(width: EmptyStateFixtureMetrics.width)
+            .padding(EmptyStateFixtureMetrics.canvasInset)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        )
+    }
+}
+
+private enum EmptyStateFixtureMetrics {
+    // The approved isolated state uses the same 52pt top/leading fixture inset
+    // as loading, with a 280pt plate sized by its caller-owned action.
+    static let canvasInset: CGFloat = 52
+    static let width: CGFloat = 280
+}
+
+private enum EmptyStateFixtureCatalog {
+    static let renderConfigurations = [
+        "empty-state--settings--rest": VisualDiffEmptyStateRenderConfiguration(
+            title: "Nothing here yet",
+            detail: "Add an item when you’re ready.",
+            actionTitle: "Add item"
+        ),
+    ]
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "empty-state",
+        registrations: [
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: "empty-state--settings--rest",
+                    componentID: "empty-state",
+                    variantID: "settings",
+                    stateID: "rest"
+                ),
+                applicability: .supported
+            ),
+        ],
+        adapter: EmptyStateFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

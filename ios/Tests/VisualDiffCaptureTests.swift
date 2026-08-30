@@ -406,6 +406,34 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
     }
 
+    func testEmptyStateRegistryPreservesCallerOwnedContentAndStateBoundary() {
+        let caseID = "empty-state--settings--rest"
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "empty-state")
+        XCTAssertEqual(registrations.map { $0.fixture.caseID }, [caseID])
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: caseID),
+            VisualDiffEmptyStateRenderConfiguration(
+                title: "Nothing here yet",
+                detail: "Add an item when you’re ready.",
+                actionTitle: "Add item"
+            )
+        )
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "no-results--empty"))
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "loading-state--settings--active"))
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "notice--error--rest"))
+
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+            XCTFail("Approved empty-state case must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "empty-state")
+        XCTAssertEqual(fixture.variantID, "settings")
+        XCTAssertEqual(fixture.stateID, "rest")
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
+    }
+
     func testActionButtonRegistryPreservesCurrentCaseApplicability() {
         let expectedSupported = Set([
             "action-button--destructive--compact-rest",
@@ -1690,6 +1718,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "sentient-identity",
             "pin-entry",
             "loading-state",
+            "empty-state",
             "apply-bar",
             "notice",
             "no-results",

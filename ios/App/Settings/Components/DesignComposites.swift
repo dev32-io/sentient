@@ -2054,13 +2054,30 @@ extension SearchFilterRow where PrimaryFilter == EmptyView {
 }
 
 private enum AsyncNoticeMetrics {
-    // The loading composite has its own approved anatomy rather than the
-    // foundation progress primitive: a 26pt ring, 7pt rhythm, and 900ms orbit.
-    static let loadingGap: CGFloat = 7
+    // Loading and empty use the approved centered async-state anatomy rather
+    // than the horizontal notice grid.
+    static let stateGap: CGFloat = 7
+    static let statePadding = Space.lg + DesignMetrics.hairline
     static let loadingSpinnerSize: CGFloat = 26
     static let loadingSpinnerLineWidth: CGFloat = 2
     static let loadingArcFraction: CGFloat = 0.25
     static let loadingAnimationDuration = 0.9
+    static let emptyMarkSize: CGFloat = 34
+}
+
+/// Decorative recessed mark for a genuine empty collection. The caller-owned
+/// title, detail, and action remain the accessible source of meaning.
+private struct AsyncEmptyMark: View {
+    var body: some View {
+        Text("＋")
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink3)
+            .frame(width: AsyncNoticeMetrics.emptyMarkSize, height: AsyncNoticeMetrics.emptyMarkSize)
+            .background {
+                DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+            }
+            .accessibilityHidden(true)
+    }
 }
 
 /// Decorative loading cue for the common async-state composite. Status meaning
@@ -2448,6 +2465,7 @@ struct AsyncNotice: View {
             .accessibilityElement(children: retry == nil ? .combine : .contain)
             .accessibilityLabel(title)
             .accessibilityValue(detail ?? kind.accessibilityValue)
+            .accessibilityAddTraits(kind == .empty ? .isHeader : [])
             .accessibilityIdentifier(accessibilityId ?? "")
     }
 
@@ -2455,14 +2473,16 @@ struct AsyncNotice: View {
     private var content: some View {
         switch kind {
         case .loading:
-            loadingContent.padding(Space.lg + DesignMetrics.hairline)
-        case .empty, .info, .error, .success, .warning:
+            loadingContent.padding(AsyncNoticeMetrics.statePadding)
+        case .empty:
+            emptyContent.padding(AsyncNoticeMetrics.statePadding)
+        case .info, .error, .success, .warning:
             noticeContent
         }
     }
 
     private var loadingContent: some View {
-        VStack(spacing: AsyncNoticeMetrics.loadingGap) {
+        VStack(spacing: AsyncNoticeMetrics.stateGap) {
             AsyncLoadingIndicator()
             Text(title)
                 .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
@@ -2482,6 +2502,33 @@ struct AsyncNotice: View {
                     title: actionTitle,
                     role: .quiet,
                     accessibilityId: nil,
+                    action: retry
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+    }
+
+    private var emptyContent: some View {
+        VStack(spacing: AsyncNoticeMetrics.stateGap) {
+            AsyncEmptyMark()
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .frame(minHeight: DesignNoticeMetrics.titleLineHeight, alignment: .center)
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minHeight: DesignNoticeMetrics.detailLineHeight, alignment: .center)
+            }
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: .quiet,
+                    accessibilityId: nil,
+                    fillsWidth: false,
                     action: retry
                 )
             }
