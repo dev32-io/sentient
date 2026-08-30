@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+private enum DesignFieldMetrics {
+    // `.snt-field` uses a 7px grid gap and a 40px input face; iOS keeps a
+    // separate 44pt semantic target around that visual face.
+    static let labelGap: CGFloat = 7
+    static let visualHeight: CGFloat = 40
+}
+
 struct DesignField: View {
     let title: String
     var prompt: String = ""
@@ -63,11 +70,29 @@ struct DesignField: View {
         focused?.wrappedValue ?? internalFocused
     }
 
+    private var faceHeight: CGFloat {
+        min(
+            minimumHeight == DesignMetrics.minimumTarget ? DesignFieldMetrics.visualHeight : minimumHeight,
+            minimumHeight
+        )
+    }
+
+    private var semanticHeight: CGFloat {
+        max(minimumHeight, DesignMetrics.minimumTarget)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: DesignFieldMetrics.labelGap) {
             if showsTitle {
                 Text(title)
-                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                    .font(.custom(
+                        "DMSans-Medium",
+                        size: DesignMetrics.controlLabelSize,
+                        relativeTo: .footnote
+                    ))
+                    // Native custom-font line metrics sit one half-point below
+                    // the CSS label baseline at the reviewed scale.
+                    .baselineOffset(0.5)
                     .foregroundStyle(DuskColors.ink)
             }
             focusableField
@@ -97,16 +122,33 @@ struct DesignField: View {
 
     private var baseInput: some View {
         nativeField
-            .font(Typo.ui(TypeScale.base))
+            .font(.custom("DMSans-Regular", size: TypeScale.base, relativeTo: .body))
+            // Match the CSS border-box content inset: 1px border + 12px pad.
+            .baselineOffset(-0.5)
+            .foregroundStyle(DuskColors.ink)
             .textFieldStyle(.plain)
-            .padding(.horizontal, Space.md)
-            .frame(minHeight: minimumHeight)
+            .padding(.horizontal, Space.md + DesignMetrics.hairline)
+            .frame(minHeight: faceHeight)
     }
 
     private var surfacedInput: some View {
         baseInput
             .lineLimit(lineLimit)
             .designWell(focused: isFocused, error: error != nil)
+            // The web field's keyboard-focus outline is a 2px ember stroke
+            // with a 3px outside offset; native focus supplies the same cue.
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm + DesignMetrics.focusRing, style: .continuous)
+                    .stroke(
+                        isFocused ? DuskColors.accent : .clear,
+                        lineWidth: DesignMetrics.focusBorder
+                    )
+                    // Stroke is centered on the SwiftUI shape; the extra
+                    // hairline preserves the CSS outline's outside extent.
+                    .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+            }
+            .frame(minHeight: semanticHeight)
+            .contentShape(Rectangle())
             .disabled(!isEnabled)
     }
 

@@ -5,6 +5,20 @@ import UIKit
 import XCTest
 @testable import SentientApp
 
+private final class VisualDiffFocusWindow: UIWindow {
+    override var safeAreaInsets: UIEdgeInsets { .zero }
+}
+
+private final class VisualDiffCanvasView: UIView {
+    override var safeAreaInsets: UIEdgeInsets { .zero }
+}
+
+private final class VisualDiffCanvasViewController: UIViewController {
+    override func loadView() {
+        view = VisualDiffCanvasView()
+    }
+}
+
 /// Exports one deterministic implementation PNG for the repository-local ODiff
 /// feedback loop. Ordinary unit-test runs skip this test unless the capture
 /// script owns a fresh, serialized request file.
@@ -79,17 +93,88 @@ final class VisualDiffCaptureTests: XCTestCase {
             size: logicalSize,
             traits: traits
         )
+        let usesNativeTextFieldCapture = caseID.hasPrefix("text-field--")
+        var focusHostWindow: VisualDiffFocusWindow?
+        var focusContainer: VisualDiffCanvasViewController?
+        if usesNativeTextFieldCapture {
+            controller.safeAreaRegions = []
+            let hostWindow = VisualDiffFocusWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            let container = VisualDiffCanvasViewController()
+            container.view.backgroundColor = .clear
+            container.view.frame = hostWindow.bounds
+            container.addChild(controller)
+            container.view.addSubview(controller.view)
+            controller.view.frame = container.view.bounds
+            controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            controller.didMove(toParent: container)
+            hostWindow.rootViewController = container
+            hostWindow.isHidden = false
+            container.beginAppearanceTransition(true, animated: false)
+            container.endAppearanceTransition()
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            focusHostWindow = hostWindow
+            focusContainer = container
+        }
+        defer {
+            if let focusContainer, let focusHostWindow {
+                focusContainer.beginAppearanceTransition(false, animated: false)
+                controller.willMove(toParent: nil)
+                controller.view.removeFromSuperview()
+                controller.removeFromParent()
+                controller.didMove(toParent: nil)
+                focusContainer.endAppearanceTransition()
+                focusHostWindow.isHidden = true
+                focusHostWindow.rootViewController = nil
+            }
+        }
+        if usesNativeTextFieldCapture && caseID == "text-field--filled--focus" {
+            guard let textField = textField(in: controller.view) else {
+                XCTFail("The focused fixture must mount a native UITextField")
+                return
+            }
+            // Keep the native responder active without letting the simulator
+            // keyboard resize the fixed visual review canvas.
+            textField.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            // The Web capture harness hides its caret; keep the genuine native
+            // focus while applying the same non-content capture treatment.
+            textField.tintColor = .clear
+            XCTAssertTrue(textField.becomeFirstResponder(), "The focused fixture must accept native focus")
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate { [weak controller] _, _ in
+                    guard let controller else { return false }
+                    return self.firstResponder(in: controller.view) != nil
+                },
+                object: nil
+            )
+            wait(for: [focused], timeout: 2)
+            XCTAssertTrue(textField.isFirstResponder, "The focused fixture must hold native TextField focus")
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+        }
 
         let rendered = expectation(description: "Render \(caseID)")
         var image: UIImage?
-        strategy.snapshot(controller).run { snapshot in
-            image = snapshot
+        if usesNativeTextFieldCapture {
+            // The handoff PNGs are standard-sRGB references. Keep the native
+            // view unchanged, but prevent the simulator's automatic Display-P3
+            // renderer from changing the encoded comparison colors.
+            let format = UIGraphicsImageRendererFormat(for: traits)
+            format.preferredRange = .standard
+            image = UIGraphicsImageRenderer(bounds: controller.view.bounds, format: format).image { context in
+                controller.view.layer.render(in: context.cgContext)
+            }
             rendered.fulfill()
+        } else {
+            strategy.snapshot(controller).run { snapshot in
+                image = snapshot
+                rendered.fulfill()
+            }
         }
         wait(for: [rendered], timeout: 10)
 
         guard let data = image?.pngData() else {
-            XCTFail("SnapshotTesting did not produce a PNG for \(caseID)")
+            XCTFail("Visual diff capture did not produce a PNG for \(caseID)")
             return
         }
         try FileManager.default.createDirectory(
@@ -258,6 +343,61 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testTextFieldRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "text-field--filled--focus",
+            "text-field--filled--rest",
+        ])
+        let expectedMissingAuthority = Set([
+            "text-field--filled--disabled",
+            "text-field--filled--empty",
+            "text-field--filled--error",
+            "text-field--filled--hover",
+            "text-field--filled--loading",
+            "text-field--filled--pressed",
+            "text-field--filled--selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "text-field")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedMissingAuthority))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedMissingAuthority
+        )
+        XCTAssertEqual(
+            registrations.first { $0.fixture.stateID == "hover" }?.applicability,
+            .missingAuthority(.stateNotApplicable)
+        )
+    }
+
+    func testTextFieldRegistryPreservesNativeConfigurationAndFocusMapping() {
+        let expected: [(String, String, String, Bool)] = [
+            ("text-field--filled--rest", "Display name", "Maya Chen", false),
+            ("text-field--filled--focus", "Display name", "Maya Chen", true),
+        ]
+
+        for (caseID, title, value, shouldFocus) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.textFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing text-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.shouldFocus, shouldFocus, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.textFieldRenderConfiguration(
+                for: "text-field--filled--hover"
+            )
+        )
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -347,6 +487,22 @@ final class VisualDiffCaptureTests: XCTestCase {
         case .missingAuthority(let skip):
             throw XCTSkip(skip.description)
         }
+    }
+
+    private func textField(in view: UIView) -> UITextField? {
+        if let textField = view as? UITextField { return textField }
+        for subview in view.subviews {
+            if let textField = textField(in: subview) { return textField }
+        }
+        return nil
+    }
+
+    private func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for subview in view.subviews {
+            if let responder = firstResponder(in: subview) { return responder }
+        }
+        return nil
     }
 
     private func pngPixelSize(at url: URL) throws -> CGSize {

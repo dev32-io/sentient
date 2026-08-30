@@ -44,7 +44,7 @@ orchestrator:
 
 limits:
   maxConcurrency: 4
-  maxActiveSubagentsPerSession: 16
+  maxActiveSubagentsPerSession: 64
   maxSubagentDepth: 1
   protocolNudges: 1
   repairRounds: 6
