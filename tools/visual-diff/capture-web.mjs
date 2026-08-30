@@ -18,7 +18,7 @@ const MOBILE_BREAKPOINT = 620;
 const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toast", "toggle", "user-avatar", "validated-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "local-navigation", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toast", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",
@@ -33,6 +33,7 @@ const SENTIENT_IDENTITY_VARIANTS = new Set([
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
+  if (caseId.startsWith("local-navigation--settings--privacy-")) return '.s-nav-i[title="Privacy"]';
   if (caseId.startsWith("range--")) return ".snt-range";
   if (caseId.startsWith("toggle--")) return ".snt-toggle";
   if (caseId.startsWith("segmented-control--")) return ".snt-segmented .snt-segment:nth-child(2)";
@@ -155,7 +156,7 @@ function captureCaseId(referencePath) {
   if (frameCaseId === "results-list--loading-more") return "results-list--default--loading-more";
   if (frameCaseId === "results-list--appended") return "results-list--default--appended";
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done|toast--open)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|local-navigation--general-to-privacy|pin-entry--complete-to-success|apply-bar--dirty-to-done|toast--open)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
@@ -212,6 +213,8 @@ function visualDiffTransitionTimeMs(caseId) {
   if (segmentedMatch) return Number(segmentedMatch[1]);
   const disclosureMatch = /^disclosure--closed-to-open--frame-\d+--(\d+)ms$/.exec(caseId);
   if (disclosureMatch) return Number(disclosureMatch[1]);
+  const localNavigationMatch = /^local-navigation--general-to-privacy--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (localNavigationMatch) return Number(localNavigationMatch[1]);
   const pinEntryMatch = /^pin-entry--complete-to-success--frame-\d+--(\d+)ms$/.exec(caseId);
   if (pinEntryMatch) return Number(pinEntryMatch[1]);
   const applyBarMatch = /^apply-bar--dirty-to-done--frame-\d+--(\d+)ms$/.exec(caseId);
@@ -224,6 +227,10 @@ function visualDiffState(caseId) {
   const separator = caseId.lastIndexOf("--");
   if (separator < 0) return undefined;
   const stateId = caseId.slice(separator + 2);
+  if (caseId.startsWith("local-navigation--settings--privacy-")) {
+    if (stateId.endsWith("-focus")) return "focus";
+    if (stateId.endsWith("-hover")) return "hover";
+  }
   return stateId.startsWith("compact-") ? stateId.slice("compact-".length) : stateId;
 }
 
@@ -238,6 +245,9 @@ async function applyState(page, caseId) {
   if (state === "focus") {
     if (caseId.startsWith("segmented-control--")) {
       await page.locator(".snt-segment").first().focus();
+      await page.keyboard.press("Tab");
+    } else if (caseId.startsWith("local-navigation--")) {
+      await page.keyboard.press("Tab");
       await page.keyboard.press("Tab");
     } else if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--") || caseId.startsWith("range--") || caseId.startsWith("toggle--")) await page.keyboard.press("Tab");
     else await target.focus();
@@ -488,6 +498,25 @@ async function freezeDisclosureTransition(page, transitionTimeMs) {
   }, transitionTimeMs);
 }
 
+async function freezeLocalNavigationTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff local-navigation transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  await page.waitForFunction(() => document.querySelector('.s-nav-i[title="Privacy"]')?.getAttribute("aria-current") === "page");
+  await page.waitForFunction(() => document.querySelector(".s-nav-current")?.getAnimations().length > 0);
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".s-nav-current");
+    const animations = target?.getAnimations() ?? [];
+    if (!animations.length) throw new Error("Visual diff local-navigation transition is not running");
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
 async function chipTransitionClip(page, frame) {
   if (!frame.normalizeTranslatedPaint || !frame.clip) return frame.clip;
   const translatedOffset = await page.evaluate(() => {
@@ -579,6 +608,8 @@ async function capture() {
         await freezeDisclosureTransition(page, transitionTimeMs);
       } else if (caseId.startsWith("toast--open--")) {
         await freezeToastTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("local-navigation--general-to-privacy--")) {
+        await freezeLocalNavigationTransition(page, transitionTimeMs);
       } else {
         await page.evaluate(() => {
           const transitionWindow = window;

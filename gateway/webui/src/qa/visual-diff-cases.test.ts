@@ -1570,6 +1570,54 @@ describe("visual diff component cases", () => {
     });
   });
 
+  it("registers the complete local-navigation state and transition matrix", () => {
+    const localNavigation = visualDiffComponentRegistry["local-navigation"];
+    expect(localNavigation.fixtureAdapterId).toBe("local-navigation");
+    expect(localNavigation.productionComponent).toBe(
+      "gateway/webui/src/components/settings/sidebar/sidebar-nav.tsx#LocalNavigation",
+    );
+    expect(localNavigation.authority).toBe("design/prototype/common-composites/handoff");
+    expect(localNavigation.stateApplicability).toEqual({
+      settings: ["account-current", "general-current", "privacy-current", "privacy-focus", "privacy-hover"],
+      "general-to-privacy": [
+        "frame-000--0000ms",
+        "frame-001--0062ms",
+        "frame-002--0125ms",
+        "frame-003--0188ms",
+        "frame-004--0250ms",
+      ],
+    });
+
+    for (const caseId of [
+      "local-navigation--settings--account-current",
+      "local-navigation--settings--general-current",
+      "local-navigation--settings--privacy-current",
+      "local-navigation--settings--privacy-focus",
+      "local-navigation--settings--privacy-hover",
+      "local-navigation--general-to-privacy--frame-000--0000ms",
+      "local-navigation--general-to-privacy--frame-001--0062ms",
+      "local-navigation--general-to-privacy--frame-002--0125ms",
+      "local-navigation--general-to-privacy--frame-003--0188ms",
+      "local-navigation--general-to-privacy--frame-004--0250ms",
+    ]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("local-navigation");
+    }
+  });
+
+  it("keeps undefined local-navigation states outside the fixture contract", () => {
+    for (const stateId of ["pressed", "disabled", "loading", "error", "compact"]) {
+      expect(resolveVisualDiffCase(`local-navigation--settings--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `local-navigation--settings--${stateId}`,
+        componentId: "local-navigation",
+        variantId: "settings",
+        stateId,
+      });
+    }
+  });
+
   it("keeps every registered fixture case globally unique", () => {
     const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
       Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>

@@ -8,6 +8,7 @@ import "../components/common/composites.css";
 import "../components/common/toast.css";
 import "../components/settings/apply-bar/apply-bar.css";
 import "../components/settings/settings-shell.css";
+import "../components/settings/sidebar/sidebar.css";
 import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ResultsList, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { SelectMenu } from "../components/common/select-menu.tsx";
@@ -21,6 +22,7 @@ import { ToastProvider, useToast } from "../hooks/use-toast.tsx";
 import { ApplyBar } from "../components/settings/apply-bar/apply-bar.tsx";
 import type { ApplyDeps, PendingOpWithPayload } from "../components/settings/apply-bar/apply-bar-machine.ts";
 import { SecretRow } from "../components/settings/panes/secret-row.tsx";
+import { LocalNavigation } from "../components/settings/sidebar/sidebar-nav.tsx";
 import {
   type ActionButtonVariantProps,
   type ApplyBarVariantProps,
@@ -32,6 +34,7 @@ import {
   type IconButtonVariantProps,
   type InlineSecretEditorVariantProps,
   type LoadingStateVariantProps,
+  type LocalNavigationVariantProps,
   type MediaActionCardVariantProps,
   type NoResultsStateVariantProps,
   type NoticeVariantProps,
@@ -489,6 +492,57 @@ function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JS
   );
 }
 
+function LocalNavigationFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as LocalNavigationVariantProps;
+  const staticActive = fixture.stateId === "privacy-current"
+    ? "privacy"
+    : fixture.stateId === "account-current"
+      ? "account"
+      : props.initialActive;
+  const [active, setActive] = useState<"general" | "privacy" | "account">(staticActive);
+
+  useEffect(() => {
+    if (fixture.variantId !== "general-to-privacy") return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setActive("privacy");
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [fixture.variantId]);
+
+  const sliders = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h7M15 7h5M4 17h4M12 17h8"/><circle cx="13" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+  );
+  const lock = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/></svg>
+  );
+  const user = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.6-4.1 3-6.2 7-6.2s6.4 2.1 7 6.2"/></svg>
+  );
+
+  return (
+    <div class="visual-diff-local-navigation-frame">
+      <Plate className="visual-diff-target visual-diff-local-navigation">
+        <LocalNavigation
+          active={active}
+          ariaLabel="Settings"
+          groups={[{
+            key: "settings",
+            items: [
+              { key: "general", label: "General", description: "Defaults and behavior", icon: sliders, dirty: true },
+              { key: "privacy", label: "Privacy", description: "Scope and permissions", icon: lock, navigable: true },
+              { key: "account", label: "Account", description: "Identity and access", icon: user, navigable: true },
+            ],
+          }]}
+          onChange={setActive}
+        />
+      </Plate>
+    </div>
+  );
+}
+
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
   toast: {
     // This adapter mounts the production queue owner and host, then drives its
@@ -714,6 +768,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // This adapter deliberately renders the production PaneChrome with a real Plate and ActionButton.
     render: (fixture) => <PaneHeaderFixture fixture={fixture} />,
   },
+  "local-navigation": {
+    // The fixture supplies the handoff's reviewed labels and icons to the same
+    // production LocalNavigation renderer that owns settings navigation.
+    render: (fixture) => <LocalNavigationFixture fixture={fixture} />,
+  },
   disclosure: {
     // This adapter deliberately renders the production Disclosure and its native
     // details/summary semantics for every approved static and motion case.
@@ -910,6 +969,7 @@ function VisualDiffFixture() {
       if (
         (fixture.componentId === "pin-entry" && !pinEntryFixtureReady(fixture.stateId))
         || (fixture.componentId === "apply-bar" && !applyBarFixtureReady(fixture))
+        || (fixture.componentId === "local-navigation" && document.querySelector(".s-nav")?.getAttribute("data-snt-ready") !== "true")
       ) {
         requestAnimationFrame(markReady);
         return;
@@ -992,6 +1052,24 @@ style.textContent = `
     padding: 0 24px 24px 0;
   }
   .visual-diff-pane-header { width: min(620px, 100%); }
+  .visual-diff-local-navigation-frame {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px 24px 0;
+  }
+  .visual-diff-local-navigation { width: 400px; }
+  .visual-diff-local-navigation .s-nav-icon > svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
   .visual-diff-canvas[data-component-id="settings-group"],
   .visual-diff-canvas[data-component-id="setting-row"] {
     align-items: flex-start;

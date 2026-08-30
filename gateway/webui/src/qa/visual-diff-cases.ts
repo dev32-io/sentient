@@ -271,6 +271,12 @@ const INLINE_SECRET_EDITOR_VARIANTS = {
   "access-key": { props: { label: "Access key", hasKey: true } },
 } as const satisfies Readonly<Record<string, InlineSecretEditorVariantDefinition>>;
 
+export interface LocalNavigationVariantProps {
+  readonly initialActive: "general" | "privacy" | "account";
+}
+
+type LocalNavigationVariantDefinition = VisualDiffVariantDefinition<LocalNavigationVariantProps>;
+
 const USER_AVATAR_VARIANTS = {
   "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
   "terra-44": { props: { initial: "M", name: "Maya Chen", size: "lg" } },
@@ -714,6 +720,19 @@ const NO_RESULTS_VARIANTS = {
   },
 } as const satisfies Readonly<Record<string, NoResultsStateVariantDefinition>>;
 
+const LOCAL_NAVIGATION_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const LOCAL_NAVIGATION_VARIANTS = {
+  settings: { props: { initialActive: "general" } },
+  "general-to-privacy": { props: { initialActive: "general" } },
+} as const satisfies Readonly<Record<string, LocalNavigationVariantDefinition>>;
+
 export interface StaleBannerVariantProps {
   readonly title: string;
   readonly detail: string;
@@ -1027,6 +1046,17 @@ export const visualDiffComponentRegistry = {
       preferences: ["rest"],
     },
   },
+  "local-navigation": {
+    id: "local-navigation",
+    fixtureAdapterId: "local-navigation",
+    productionComponent: "gateway/webui/src/components/settings/sidebar/sidebar-nav.tsx#LocalNavigation",
+    authority: "design/prototype/common-composites/handoff",
+    variants: LOCAL_NAVIGATION_VARIANTS,
+    stateApplicability: {
+      settings: ["account-current", "general-current", "privacy-current", "privacy-focus", "privacy-hover"],
+      "general-to-privacy": LOCAL_NAVIGATION_TRANSITION_FRAMES,
+    },
+  },
   "pin-entry": {
     id: "pin-entry",
     fixtureAdapterId: "pin-entry",
@@ -1148,6 +1178,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "no-results",
   "stale-banner",
   "pane-header",
+  "local-navigation",
   "disclosure",
   "pin-entry",
   "setting-row",
