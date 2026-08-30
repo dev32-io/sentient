@@ -4,6 +4,7 @@ import "./styles/tokens/compatibility.css";
 import "./styles/components.css";
 import "./components/common/foundation.css";
 import "./components/common/composites.css";
+import "./components/common/toast.css";
 import "./components/settings/settings-shell.css";
 import "./components/settings/sidebar/sidebar.css";
 import "./components/settings/apply-bar/apply-bar.css";

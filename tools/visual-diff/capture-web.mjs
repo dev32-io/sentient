@@ -18,7 +18,7 @@ const MOBILE_BREAKPOINT = 620;
 const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toggle", "user-avatar", "validated-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toast", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",
@@ -155,7 +155,7 @@ function captureCaseId(referencePath) {
   if (frameCaseId === "results-list--loading-more") return "results-list--default--loading-more";
   if (frameCaseId === "results-list--appended") return "results-list--default--appended";
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done|toast--open)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
@@ -215,7 +215,9 @@ function visualDiffTransitionTimeMs(caseId) {
   const pinEntryMatch = /^pin-entry--complete-to-success--frame-\d+--(\d+)ms$/.exec(caseId);
   if (pinEntryMatch) return Number(pinEntryMatch[1]);
   const applyBarMatch = /^apply-bar--dirty-to-done--frame-\d+--(\d+)ms$/.exec(caseId);
-  return applyBarMatch ? Number(applyBarMatch[1]) : undefined;
+  if (applyBarMatch) return Number(applyBarMatch[1]);
+  const toastMatch = /^toast--open--frame-\d+--(\d+)ms$/.exec(caseId);
+  return toastMatch ? Number(toastMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
@@ -447,6 +449,22 @@ async function freezeSegmentedTransition(page, transitionTimeMs) {
   }, transitionTimeMs);
 }
 
+async function freezeToastTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff toast transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  await page.waitForFunction(() => document.querySelector(".toast")?.getAnimations().length > 0);
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".toast");
+    const animation = target?.getAnimations()[0];
+    if (!animation) throw new Error("Visual diff toast transition is not running");
+    animation.pause();
+    animation.currentTime = timeMs;
+  }, transitionTimeMs);
+}
+
 async function freezeDisclosureTransition(page, transitionTimeMs) {
   await page.evaluate(() => {
     const transitionWindow = window;
@@ -559,6 +577,8 @@ async function capture() {
         await freezeSegmentedTransition(page, transitionTimeMs);
       } else if (caseId.startsWith("disclosure--closed-to-open--")) {
         await freezeDisclosureTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("toast--open--")) {
+        await freezeToastTransition(page, transitionTimeMs);
       } else {
         await page.evaluate(() => {
           const transitionWindow = window;

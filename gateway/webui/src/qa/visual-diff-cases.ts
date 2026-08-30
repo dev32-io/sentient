@@ -210,6 +210,14 @@ export interface NoticeVariantProps {
 
 type NoticeVariantDefinition = VisualDiffVariantDefinition<NoticeVariantProps>;
 
+export interface ToastVariantProps {
+  readonly message: string;
+  readonly detail: string;
+  readonly tone: "success";
+}
+
+type ToastVariantDefinition = VisualDiffVariantDefinition<ToastVariantProps>;
+
 export interface DisclosureVariantProps {
   readonly title: string;
   readonly description: string;
@@ -272,6 +280,31 @@ const USER_AVATAR_VARIANTS = {
   "clay-44": { props: { initial: "R", name: "Riley Chen", tint: "clay", size: "lg" } },
   "fallback-44": { props: { name: "Unknown user", size: "lg" } },
 } as const satisfies Readonly<Record<string, UserAvatarVariantDefinition>>;
+
+const TOAST_OPEN_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const TOAST_VARIANTS = {
+  saved: {
+    props: {
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    },
+  },
+  open: {
+    props: {
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    },
+  },
+} as const satisfies Readonly<Record<string, ToastVariantDefinition>>;
 
 const NOTICE_VARIANTS = {
   info: {
@@ -764,6 +797,17 @@ export const visualDiffComponentRegistry = {
       "fallback-44": ["rest"],
     },
   },
+  toast: {
+    id: "toast",
+    fixtureAdapterId: "toast",
+    productionComponent: "gateway/webui/src/components/common/toast.tsx#ToastHost",
+    authority: "design/prototype/common-composites/handoff",
+    variants: TOAST_VARIANTS,
+    stateApplicability: {
+      saved: ["compact-visible", "desktop-visible"],
+      open: TOAST_OPEN_FRAMES,
+    },
+  },
   notice: {
     id: "notice",
     fixtureAdapterId: "notice",
@@ -1100,6 +1144,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "sentient-identity",
   "notice",
   "results-list",
+  "toast",
   "no-results",
   "stale-banner",
   "pane-header",

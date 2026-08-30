@@ -1,0 +1,92 @@
+.toast-host {
+  position: fixed;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(20px, env(safe-area-inset-bottom));
+  z-index: 50;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-sm);
+  pointer-events: none;
+}
+.toast {
+  min-width: min(340px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  padding: var(--space-md);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  box-shadow: var(--float-shadow);
+  font-family: var(--font-ui);
+  transform-origin: bottom right;
+  animation: toast-slide-in 250ms cubic-bezier(.2, .72, .24, 1) both;
+  pointer-events: auto;
+}
+.toast--closing {
+  animation: toast-slide-out 150ms ease-in both;
+  pointer-events: none;
+}
+.toast__icon {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--color-ok);
+}
+.toast--error .toast__icon { color: var(--color-stop); }
+.toast__content { min-width: 0; }
+.toast__content strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--line-height-normal);
+}
+.toast__content small {
+  display: block;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+.toast__dismiss {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink-2);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.toast__dismiss:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translateY(8px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes toast-slide-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(.98); }
+}
+@media (max-width: 620px) {
+  .toast-host {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: max(16px, env(safe-area-inset-left));
+  }
+  .toast { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+  .toast--closing { visibility: hidden; }
+}
+@media (prefers-contrast: more) {
+  .toast { border-color: var(--color-ink-3); }
+}

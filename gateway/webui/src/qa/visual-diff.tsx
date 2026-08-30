@@ -5,6 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
+import "../components/common/toast.css";
 import "../components/settings/apply-bar/apply-bar.css";
 import "../components/settings/settings-shell.css";
 import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ResultsList, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
@@ -15,6 +16,8 @@ import { SentientIdentity, type RiveFactory } from "../components/common/sentien
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import { StaleBanner } from "../components/sessions/stale-banner.tsx";
+import { ToastHost } from "../components/common/toast.tsx";
+import { ToastProvider, useToast } from "../hooks/use-toast.tsx";
 import { ApplyBar } from "../components/settings/apply-bar/apply-bar.tsx";
 import type { ApplyDeps, PendingOpWithPayload } from "../components/settings/apply-bar/apply-bar-machine.ts";
 import { SecretRow } from "../components/settings/panes/secret-row.tsx";
@@ -46,6 +49,7 @@ import {
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
+  type ToastVariantProps,
   type ToggleVariantProps,
   type UserAvatarVariantProps,
   type ValidatedFieldVariantProps,
@@ -436,6 +440,37 @@ function ApplyBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.
   );
 }
 
+function ToastFixtureContent({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const { show } = useToast();
+  const props = fixture.props as ToastVariantProps;
+  const isTransition = fixture.variantId === "open";
+
+  useEffect(() => {
+    const showFixture = () => show(props.message, props.tone, props.detail);
+    if (!isTransition) {
+      showFixture();
+      return;
+    }
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = showFixture;
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [isTransition, props.detail, props.message, props.tone, show]);
+
+  return <ToastHost />;
+}
+
+function ToastFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  return (
+    <ToastProvider>
+      <ToastFixtureContent fixture={fixture} />
+    </ToastProvider>
+  );
+}
+
 function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
   const header = fixture.props as PaneHeaderVariantProps;
   return (
@@ -455,6 +490,11 @@ function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JS
 }
 
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
+  toast: {
+    // This adapter mounts the production queue owner and host, then drives its
+    // public show API with the approved saved-notification content.
+    render: (fixture) => <ToastFixture fixture={fixture} />,
+  },
   "action-button": {
     // This adapter deliberately renders the production ActionButton, not a fixture substitute.
     render: (fixture) => {
@@ -890,6 +930,16 @@ const style = document.createElement("style");
 style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
   .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
+  .visual-diff-canvas[data-component-id="toast"] {
+    position: relative;
+    display: block;
+    padding: 52px 76px 76px 52px;
+  }
+  .visual-diff-canvas[data-component-id="toast"] .toast-host {
+    position: static;
+    width: 100%;
+  }
+  .visual-diff-canvas[data-component-id="toast"] .toast { width: 100%; min-width: 0; }
   /* Common-composite handoff canvases retain their source specimen gutter. */
   .visual-diff-canvas--stale-banner { padding: 0 24px 24px 0; }
   .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }

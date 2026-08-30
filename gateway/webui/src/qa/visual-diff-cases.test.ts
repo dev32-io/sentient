@@ -1522,6 +1522,54 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the approved toast static and opening states on the production owner", () => {
+    const toast = visualDiffComponentRegistry.toast;
+    expect(toast.fixtureAdapterId).toBe("toast");
+    expect(toast.productionComponent).toBe("gateway/webui/src/components/common/toast.tsx#ToastHost");
+    expect(toast.authority).toBe("design/prototype/common-composites/handoff");
+    expect(toast.stateApplicability).toEqual({
+      saved: ["compact-visible", "desktop-visible"],
+      open: ["frame-000--0000ms", "frame-001--0062ms", "frame-002--0125ms", "frame-003--0188ms", "frame-004--0250ms"],
+    });
+    expect(toast.variants.saved.props).toEqual({
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    });
+
+    for (const caseId of [
+      "toast--saved--compact-visible",
+      "toast--saved--desktop-visible",
+      "toast--open--frame-000--0000ms",
+      "toast--open--frame-001--0062ms",
+      "toast--open--frame-002--0125ms",
+      "toast--open--frame-003--0188ms",
+      "toast--open--frame-004--0250ms",
+    ]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("toast");
+    }
+  });
+
+  it("keeps unapproved toast tones and states unresolved", () => {
+    expect(resolveVisualDiffCase("toast--error--visible")).toEqual({
+      status: "unsupported",
+      caseId: "toast--error--visible",
+      componentId: "toast",
+      variantId: "error",
+      stateId: "visible",
+      reason: "variant",
+    });
+    expect(resolveVisualDiffCase("toast--saved--dismissed")).toEqual({
+      status: "missing-authority",
+      caseId: "toast--saved--dismissed",
+      componentId: "toast",
+      variantId: "saved",
+      stateId: "dismissed",
+    });
+  });
+
   it("keeps every registered fixture case globally unique", () => {
     const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
       Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>

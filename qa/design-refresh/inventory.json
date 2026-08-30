@@ -1907,8 +1907,8 @@
       "surfaceType": "overlay",
       "state": "success",
       "designAuthority": [
-        "design/prototype/chat-message-bubbles/README.md",
-        "design/prototype/chat-message-bubbles/handoff.md"
+        "design/prototype/common-composites/README.md",
+        "design/prototype/common-composites/handoff.md"
       ],
       "implementationPath": "gateway/webui/src/components/common/toast.tsx",
       "taskOwner": "refresh-web-chat-composer",
@@ -1942,8 +1942,8 @@
       "surfaceType": "overlay",
       "state": "error",
       "designAuthority": [
-        "design/prototype/chat-message-bubbles/README.md",
-        "design/prototype/chat-message-bubbles/handoff.md"
+        "design/prototype/common-composites/README.md",
+        "design/prototype/common-composites/handoff.md"
       ],
       "implementationPath": "gateway/webui/src/components/common/toast.tsx",
       "taskOwner": "refresh-web-chat-composer",
