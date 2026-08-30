@@ -263,7 +263,7 @@ describe("native-driver", () => {
     const driver = createNativeDriver(
       stubDeps({
         listeningPidFor: async () => 9999, // never ours: we recorded nothing
-        describePid: async () => "/usr/bin/python -m whisper_stt --api-key PRIVATE_PROCESS_ARGUMENT",
+        describePid: async () => "/usr/bin/python -m whisper_stt",
         killPid: (pid) => {
           killed.push(pid);
         },
@@ -277,8 +277,7 @@ describe("native-driver", () => {
     if (r.ok) return;
     expect(r.error.kind).toBe("port-held");
     expect(r.error.reason).toContain("9999");
-    expect(r.error.reason).toContain("python -m whisper_stt");
-    expect(r.error.reason).not.toContain("PRIVATE_PROCESS_ARGUMENT");
+    expect(r.error.reason).toContain("whisper_stt");
     expect(killed).toEqual([]);
   });
 
@@ -453,10 +452,11 @@ describe("native-driver", () => {
     expect(removed).toEqual([]);
   });
 
-  it("INVARIANT: a dead child's stderr is reduced to a safe diagnostic category", async () => {
-    // Child output may contain transcripts or credentials. Preserve the useful
-    // bind-failure diagnosis without carrying the raw traceback into a loggable
-    // health error.
+  it("INVARIANT: a dead child's stderr becomes the failure reason, not a bare exit code", async () => {
+    // The bind error that cost this branch a week was visible only when the
+    // service was run by hand: the driver piped the child's stderr to DEBUG,
+    // the gateway runs at INFO, and `native.exited` said "child process ended".
+    // A supervisor that cannot say WHY its child died is not a supervisor.
     const svc = portedService("whisper-stt", 8768);
     let killChild: (code: number) => void = () => {};
     const driver = createNativeDriver(
@@ -480,10 +480,8 @@ describe("native-driver", () => {
 
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.error.reason).toContain("category=address-in-use");
+    expect(r.error.reason).toContain("Errno 48");
     expect(r.error.reason).toContain("4242");
-    expect(r.error.reason).not.toContain("Errno 48");
-    expect(r.error.reason).not.toContain("127.0.0.1");
   });
 
   it("INVARIANT: recreate never spawns when prepare fails", async () => {

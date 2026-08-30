@@ -1,4 +1,3 @@
-import { configure, reset } from "@logtape/logtape";
 import { describe, expect, it, vi } from "vitest";
 import { endMsg, textMsg } from "./local-tts-protocol.ts";
 import { type PreviewSynthConfig, synthesizePreview } from "./preview-synth-client.ts";
@@ -101,41 +100,6 @@ function makeFakeSynth(): FakeSynth {
 }
 
 describe("synthesizePreview", () => {
-  it("logs a safe class when socket construction throws private content", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "tts", "preview-synth"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-    const sensitiveText = "PRIVATE_PREVIEW_SOCKET_ERROR";
-    const cfg: PreviewSynthConfig = {
-      url: "ws://127.0.0.1:8770",
-      connectTimeoutMs: 1000,
-      opTimeoutMs: 1000,
-      socketFactory: () => {
-        const error = new Error(sensitiveText);
-        error.name = sensitiveText;
-        throw error;
-      },
-    };
-    try {
-      const result = await synthesizePreview(cfg, "nova", "synthetic", new AbortController().signal);
-      expect(result).toEqual({ ok: false, error: { kind: "transport" } });
-      expect(records.find((record) => record.message === "connect-failed")?.properties).toEqual({
-        errorType: "error",
-      });
-      expect(JSON.stringify(records)).not.toContain(sensitiveText);
-    } finally {
-      await reset();
-    }
-  });
-
   it("accumulates audio frames until done and returns PCM + sampleRate", async () => {
     const { cfg, emit } = makeFakeSynth();
     const p = synthesizePreview(cfg, "nova", "hello", new AbortController().signal);

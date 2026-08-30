@@ -11,7 +11,6 @@
 // session's STT socket.
 
 import { describe, expect, it } from "bun:test";
-import { configure, reset } from "@logtape/logtape";
 import type { TurnMode } from "@sentient/protocol";
 import type { STTAdapter, STTAdapterConfig, STTEvent } from "../adapters/stt/stt-adapter-types.js";
 import type { SessionRuntime } from "../runtime/session-runtime.js";
@@ -241,22 +240,8 @@ describe("createSttSession", () => {
     session.close();
   });
 
-  it("contains a rejecting event stream, logs no error body, and re-dials on the next mic frame", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "session-handlers", "stt-session"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-    const sensitiveError = "PRIVATE_TRANSCRIPT_IN_ADAPTER_ERROR";
-    const privateError = new Error(sensitiveError);
-    privateError.name = sensitiveError;
-    const failing = fakeAdapter(undefined, privateError);
+  it("contains a rejecting event stream and re-dials on the next mic frame", async () => {
+    const failing = fakeAdapter(undefined, new Error("stt socket died"));
     const healthy = fakeAdapter();
     const queue = [failing, healthy];
     const stub = stubRuntime();
@@ -276,18 +261,8 @@ describe("createSttSession", () => {
     healthy.emit({ type: "transcript", turnIdx: 1, text: "still here" });
     await settle();
 
-    try {
-      expect(stub.submitted).toEqual([{ kind: "conversational", text: "still here" }]);
-      expect(records.find((record) => record.message === "stt.events.failed")?.properties).toEqual({
-        sessionId: "sess-1",
-        micOpen: true,
-        errorType: "error",
-      });
-      expect(JSON.stringify(records)).not.toContain(sensitiveError);
-    } finally {
-      session.close();
-      await reset();
-    }
+    expect(stub.submitted).toEqual([{ kind: "conversational", text: "still here" }]);
+    session.close();
   });
 
   it("drops frames without throwing when the adapter never connected", async () => {

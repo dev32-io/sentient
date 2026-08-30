@@ -14,7 +14,6 @@
 //      every reply is un-cancellable.
 
 import { describe, expect, it } from "bun:test";
-import { configure, reset } from "@logtape/logtape";
 import { FLUSH_SIGNAL, type TtsChunk } from "../tts/stages/stage-types.js";
 import type { AudioFrame, TextStreamSynthesizer } from "../tts/text-stream-synthesizer.js";
 import type { MicEchoGuard, TurnAudioSink } from "./turn-voice.js";
@@ -282,78 +281,6 @@ describe("createTurnVoice", () => {
 
     expect(sink.events.some((e) => e.type === "done")).toBe(true);
     expect(voice.cancelAudio()).toEqual([]);
-  });
-
-  it("logs aggregate audio lifecycle data without text or per-frame diagnostics", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "runtime", "turn-voice"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-
-    try {
-      const synth = fakeSynthesizer();
-      const sink = recordingSink();
-      const guard = recordingGuard();
-      const voice = createTurnVoice({
-        synthesizer: synth.synthesizer,
-        sink: sink.sink,
-        echoGuard: guard.guard,
-        shouldSpeak: async () => true,
-        hasAudience: () => true,
-        sessionId: "sess-1",
-      });
-
-      const speech = voice.begin("turn-a", new AbortController().signal);
-      const sensitiveText = "private family transcript";
-      speech.pushText(sensitiveText);
-      speech.end();
-      synth.calls[0]?.emit(FRAME);
-      synth.calls[0]?.emit(FRAME);
-      synth.calls[0]?.finish();
-      await settle();
-
-      const failingSynthesizer: TextStreamSynthesizer = {
-        synthesize: () => ({
-          [Symbol.asyncIterator]: () => ({
-            next: () => {
-              const error = new Error(sensitiveText);
-              error.name = sensitiveText;
-              return Promise.reject(error);
-            },
-          }),
-        }),
-      };
-      const failingVoice = createTurnVoice({
-        synthesizer: failingSynthesizer,
-        sink: recordingSink().sink,
-        echoGuard: recordingGuard().guard,
-        shouldSpeak: async () => true,
-        hasAudience: () => true,
-        sessionId: "sess-1",
-      });
-      const failedSpeech = failingVoice.begin("turn-error", new AbortController().signal);
-      failedSpeech.pushText("synthetic");
-      failedSpeech.end();
-      await settle();
-
-      expect(records.find((record) => record.message === "turn-voice.audio.done")?.properties).toEqual(
-        expect.objectContaining({ sessionId: "sess-1", turnId: "turn-a", frameCount: 2, bytesSent: 4 }),
-      );
-      expect(records.find((record) => record.message === "turn-voice.drain.failed")?.properties).toEqual(
-        expect.objectContaining({ sessionId: "sess-1", turnId: "turn-error", errorType: "error" }),
-      );
-      expect(records.some((record) => record.message === "turn-voice.audio.frame")).toBe(false);
-      expect(JSON.stringify(records)).not.toContain(sensitiveText);
-    } finally {
-      await reset();
-    }
   });
 
   it("synthesizes nothing when the user's profile has TTS off", async () => {

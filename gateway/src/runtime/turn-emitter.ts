@@ -30,6 +30,8 @@ import type { TitleProvenance } from "../store/session-metadata.js";
 
 const log = getLog(["sentient", "runtime", "turn-emitter"]);
 
+const TEXT_PREVIEW_LEN = 120;
+
 /** Wire payloads minus the `type` discriminator — the emitter owns the frame
  *  type; callers supply only the domain fields. Derived from the protocol
  *  schemas by construction so a wire change can never silently diverge from
@@ -112,46 +114,31 @@ export interface TurnEmitter {
 }
 
 /**
- * Logging-only impl for headless use (dev harness, `@live` walks). It records
- * lifecycle fields and aggregate sizes only. The store already holds the
- * durable record; this is a trace, not a transport or content mirror.
+ * Logging-only impl for headless use (dev harness, `@live` walks). Never
+ * dumps full text or argument values (logging rule: previews only, ≤120
+ * chars, no user content) — the store already holds the durable record; this
+ * is a lifecycle trace, not a transport.
  */
 export function createLoggingTurnEmitter(): TurnEmitter {
-  const audioByTurn = new Map<string, { frames: number; bytes: number }>();
-  const textByTurn = new Map<string, { chunks: number; chars: number }>();
   return {
     turnStarted(turnId, trigger) {
-      textByTurn.set(turnId, { chunks: 0, chars: 0 });
       log.info("turn-emitter.turn-started", { turnId, trigger });
     },
-    textDelta(turnId, text, _replyId) {
-      const current = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      current.chunks += 1;
-      current.chars += text.length;
-      textByTurn.set(turnId, current);
+    textDelta(turnId, text, replyId) {
+      log.debug("turn-emitter.text-delta", {
+        turnId,
+        replyId: replyId ?? null,
+        length: text.length,
+        preview: text.slice(0, TEXT_PREVIEW_LEN),
+      });
     },
     turnCompleted(turnId) {
-      const aggregate = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      textByTurn.delete(turnId);
-      log.info("turn-emitter.turn-completed", {
-        turnId,
-        textChunkCount: aggregate.chunks,
-        textChars: aggregate.chars,
-      });
+      log.info("turn-emitter.turn-completed", { turnId });
     },
     turnAborted(turnId, cutoff) {
-      const aggregate = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      textByTurn.delete(turnId);
-      audioByTurn.delete(turnId);
-      log.info("turn-emitter.turn-aborted", {
-        turnId,
-        cutoff,
-        textChunkCount: aggregate.chunks,
-        textChars: aggregate.chars,
-      });
+      log.info("turn-emitter.turn-aborted", { turnId, cutoff });
     },
     playbackStop(turnId, reason) {
-      audioByTurn.delete(turnId);
       log.info("turn-emitter.playback-stop", { turnId, reason });
     },
     conversationSnapshot(items) {
@@ -166,25 +153,21 @@ export function createLoggingTurnEmitter(): TurnEmitter {
       });
     },
     audioStart(turnId, encoding, sampleRate) {
-      audioByTurn.set(turnId, { frames: 0, bytes: 0 });
       log.info("turn-emitter.audio-start", { turnId, encoding, sampleRate });
     },
     audioFrame(turnId, bytes) {
-      const current = audioByTurn.get(turnId) ?? { frames: 0, bytes: 0 };
-      current.frames += 1;
-      current.bytes += bytes.byteLength;
-      audioByTurn.set(turnId, current);
+      log.debug("turn-emitter.audio-frame", { turnId, payloadBytes: bytes.byteLength });
     },
     audioDone(turnId) {
-      const aggregate = audioByTurn.get(turnId) ?? { frames: 0, bytes: 0 };
-      audioByTurn.delete(turnId);
-      log.info("turn-emitter.audio-done", { turnId, frameCount: aggregate.frames, audioBytes: aggregate.bytes });
+      log.info("turn-emitter.audio-done", { turnId });
     },
     permissionRequest(req) {
+      // Argument VALUES are never logged — only which keys were mediated.
       log.info("turn-emitter.permission-request", {
         requestId: req.requestId,
         toolCallId: req.toolCallId,
         toolName: req.toolName,
+        argKeys: Object.keys(req.args),
         expiresAtMs: req.expiresAtMs,
       });
     },

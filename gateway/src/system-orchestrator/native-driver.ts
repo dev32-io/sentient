@@ -38,21 +38,24 @@ export interface NativeProcess {
   readonly pid: number;
   readonly exited: Promise<number>;
   kill(signal?: string): void;
-  /** Bounded stderr retained only long enough to classify an exit. Raw child
-   *  output must never cross into logs or operator-facing error strings. */
+  /** The child's most recent stderr output, so an exit can say WHY. Empty when
+   *  the child printed nothing. The driver truncates before logging. */
   stderrTail(): string;
 }
 
-type NativeExitCategory = "address-in-use" | "permission-denied" | "dependency-missing" | "unknown";
-
-/** Why a service's last child stopped. The category is deliberately derived
- *  from stderr rather than retaining its text in a loggable result. */
+/** Why a service's last child stopped. Kept after the process handle is gone so
+ *  a later "no live child" verdict can name the cause instead of just the
+ *  absence — a supervisor that reports "not running" without the exit reason
+ *  sends the operator to a log that was never written. */
 interface LastExit {
   pid: number;
   code: number;
-  errorCategory: NativeExitCategory;
-  stderrBytes: number;
+  stderr: string;
 }
+
+/** Cap on the stderr excerpt carried into a log line or an error reason. The
+ *  house rule caps previews at 120 chars; a python traceback is far longer. */
+const STDERR_REASON_CHARS = 120;
 
 export interface NativeSpawnOptions {
   /** Always true — see the file header. Kept explicit so the seam is testable. */
@@ -88,8 +91,8 @@ export interface NativeDriverDeps {
    *  listens. This is the identity half of the health contract — see
    *  ServiceDriver.verifyIdentity. */
   listeningPidFor(port: number): Promise<number | null>;
-  /** A process-table description of `pid`. Consumers must reduce it to a safe
-   *  executable/module identity before logging; argv may contain secrets. */
+  /** A short argv description of `pid`, for naming a foreign holder in a log
+   *  line. Null when the process is gone or unreadable. */
   describePid(pid: number): Promise<string | null>;
   sleep(ms: number): Promise<void>;
 }
@@ -314,7 +317,7 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
     // foreign process and restart it again before it can become healthy.
     const ownedByThisService = holder === ourPid || (ourPid === null && (await isOurs(name, holder)));
     if (!ownedByThisService) {
-      const cmd = safeProcessDescription(await deps.describePid(holder));
+      const cmd = (await deps.describePid(holder)) ?? "unreadable";
       const ours = ourPid === null ? `this gateway started no child for it${died}` : `not our child pid ${ourPid}`;
       return identityFailed(name, `foreign listener on port ${port}: pid ${holder} (${cmd}), ${ours}`);
     }
@@ -399,38 +402,19 @@ export function createNativeDriver(deps: NativeDriverDeps, options: NativeDriver
  *  no child of ours has exited, so a first boot does not carry a stale cause. */
 function describeLastExit(exit: LastExit | undefined): string {
   if (exit === undefined) return "";
-  return ` — our last child (pid ${exit.pid}) exited code=${exit.code} category=${exit.errorCategory}`;
+  const why = exit.stderr.length > 0 ? `: ${exit.stderr}` : "";
+  return ` — our last child (pid ${exit.pid}) exited code=${exit.code}${why}`;
 }
 
-function classifyExit(tail: string): NativeExitCategory {
-  const normalized = tail.toLowerCase();
-  if (
-    normalized.includes("address already in use") ||
-    normalized.includes("errno 48") ||
-    normalized.includes("eaddrinuse")
-  ) {
-    return "address-in-use";
-  }
-  if (normalized.includes("permission denied") || normalized.includes("eacces") || normalized.includes("eperm")) {
-    return "permission-denied";
-  }
-  if (normalized.includes("no module named") || normalized.includes("module not found")) {
-    return "dependency-missing";
-  }
-  return "unknown";
-}
-
-function safeProcessDescription(description: string | null): string {
-  if (description === null) return "unreadable";
-  const tokens = description.trim().split(/\s+/);
-  const executable = (tokens[0] ?? "unknown").split(/[\\/]/).pop() ?? "unknown";
-  const safeExecutable = /^[A-Za-z0-9._+-]+$/.test(executable) ? executable : "unknown";
-  const moduleIndex = tokens.indexOf("-m");
-  const moduleName = moduleIndex >= 0 ? tokens[moduleIndex + 1] : undefined;
-  if (moduleName !== undefined && /^[A-Za-z0-9._-]+$/.test(moduleName)) {
-    return `${safeExecutable} -m ${moduleName}`;
-  }
-  return safeExecutable;
+/** The last non-empty stderr line, truncated. A python traceback's LAST line is
+ *  the exception; its first is boilerplate, so a head-truncated preview would
+ *  reliably cut off the one sentence that says what went wrong. */
+function lastStderrLine(tail: string): string {
+  const lines = tail
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return (lines[lines.length - 1] ?? "").slice(0, STDERR_REASON_CHARS);
 }
 
 function identityFailed(name: ServiceName, reason: string): Result<undefined, DriverError> {
@@ -448,7 +432,7 @@ async function portHeld(
   holder: number,
   qualifier = "it is not a child of this gateway, so it was NOT signalled",
 ): Promise<Result<undefined, DriverError>> {
-  const cmd = safeProcessDescription(await deps.describePid(holder));
+  const cmd = (await deps.describePid(holder)) ?? "unreadable";
   const reason = `port ${port} is held by pid ${holder} (${cmd}) — ${qualifier}`;
   log.error("native.port-held", { service: name, port, holder, reason });
   return { ok: false, error: { kind: "port-held", reason } };
@@ -573,16 +557,16 @@ function watchExit(
     .then((code) => {
       if (running.get(name) === proc) running.delete(name);
       releaseOwnership(name, proc.pid);
-      const stderr = proc.stderrTail();
-      const errorCategory = classifyExit(stderr);
-      const stderrBytes = Buffer.byteLength(stderr);
-      lastExit.set(name, { pid: proc.pid, code, errorCategory, stderrBytes });
+      // The child's OWN last words. Without this the line read "child process
+      // ended", the real cause (an EADDRINUSE traceback) went to DEBUG that
+      // production never enables, and the defect survived a whole branch.
+      const stderr = lastStderrLine(proc.stderrTail());
+      lastExit.set(name, { pid: proc.pid, code, stderr });
       log.warn("native.exited", {
         service: name,
         pid: proc.pid,
         code,
-        errorCategory,
-        stderrBytes,
+        reason: stderr.length > 0 ? stderr : "child process ended with no stderr output",
       });
     })
     .catch((err: unknown) => {

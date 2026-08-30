@@ -13,12 +13,6 @@ const STT_DEFAULT_TURN_MODE: TurnMode = "semantic";
 
 const log = getLog(["sentient", "stt"]);
 
-const KNOWN_REJECTION_REASONS = new Set(["short_burst", "hallucination", "empty_transcript", "backchannel"]);
-
-function safeRejectionReason(reason: string | undefined): string {
-  return reason !== undefined && KNOWN_REJECTION_REASONS.has(reason) ? reason : "unknown";
-}
-
 const STT_TARGET_SAMPLE_RATE = 16000;
 
 /** Append `?language=<lang>` to the base STT URL. Preserves any
@@ -135,7 +129,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
         return;
       }
       case "turn_rejected":
-        log.info("turn-dropped", { turnIdx: msg.turnIdx, reason: safeRejectionReason(msg.reason) });
+        log.info("turn-dropped", { turnIdx: msg.turnIdx, reason: msg.reason ?? "unknown" });
         queue.enqueue({ type: "turn_dropped", turnIdx: msg.turnIdx });
         return;
     }
@@ -147,6 +141,7 @@ export function createLocalSttAdapter(config: STTAdapterConfig): STTAdapter {
         const urlWithLanguage = appendLanguageQuery(config.url, config.language);
         const connectUrl = appendAudioFormatQuery(urlWithLanguage, config.audioFormat);
         log.debug("ws-connect", {
+          url: connectUrl,
           decodeLanguage: config.language,
           pauseRenderLanguage: config.pauseRenderLanguage,
           audioFormat: config.audioFormat,

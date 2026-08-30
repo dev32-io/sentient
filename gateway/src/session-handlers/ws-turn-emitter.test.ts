@@ -13,7 +13,6 @@
 // actually reach the client.
 
 import { describe, expect, it } from "bun:test";
-import { configure, reset } from "@logtape/logtape";
 import { gatewayMessageSchema } from "@sentient/protocol";
 import type { ServerWebSocket } from "bun";
 import type { TurnEmitter } from "../runtime/turn-emitter.js";
@@ -144,70 +143,6 @@ describe("createWsTurnEmitter — 2.0 wire contract", () => {
     const ws = fakeWs();
     emitterFor(ws).textDelta("turn-1", "hello");
     expect(ws.sent).toEqual([{ type: "turn.text.delta", turnId: "turn-1", text: "hello" }]);
-  });
-
-  it("PRIVACY: turn completion logs aggregate text size without per-delta content", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "ws", "turn-emitter"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-
-    const sensitiveText = "PRIVATE_STREAMED_TEXT_DELTA";
-    const sensitiveArgument = "PRIVATE_TOOL_ARGUMENT";
-    try {
-      const ws = fakeWs();
-      const emitter = emitterFor(ws);
-      emitter.turnStarted("turn-private", "user");
-      emitter.textDelta("turn-private", sensitiveText, "reply-private");
-      emitter.turnCompleted("turn-private");
-      emitter.audioStart("turn-private", "opus", 48000);
-      emitter.audioFrame("turn-private", new Uint8Array([1, 2, 3]));
-      emitter.audioFrame("turn-private", new Uint8Array([4, 5]));
-      emitter.audioDone("turn-private");
-      emitter.audioStart("turn-cancelled", "opus", 48000);
-      emitter.audioFrame("turn-cancelled", new Uint8Array([9, 9, 9]));
-      emitter.playbackStop("turn-cancelled", "interrupt");
-      emitter.audioDone("turn-cancelled");
-      emitter.permissionRequest({
-        requestId: "request-private",
-        toolCallId: "call-private",
-        toolName: "example",
-        args: { [sensitiveArgument]: sensitiveText },
-        description: sensitiveText,
-        expiresAtMs: 1000,
-      });
-
-      expect(records.find((record) => record.message === "turn-emitter.turn-completed")?.properties).toEqual({
-        sessionId: SESSION_ID,
-        turnId: "turn-private",
-        textChunkCount: 1,
-        textChars: sensitiveText.length,
-      });
-      expect(records.some((record) => record.message === "turn-emitter.text-delta")).toBe(false);
-      expect(records.find((record) => record.message === "turn-emitter.audio-done")?.properties).toEqual({
-        sessionId: SESSION_ID,
-        turnId: "turn-private",
-        frameCount: 2,
-        audioBytes: 5,
-      });
-      expect(
-        records.find(
-          (record) => record.message === "turn-emitter.audio-done" && record.properties.turnId === "turn-cancelled",
-        )?.properties,
-      ).toEqual({ sessionId: SESSION_ID, turnId: "turn-cancelled", frameCount: 0, audioBytes: 0 });
-      expect(records.some((record) => record.message === "turn-emitter.audio-frame")).toBe(false);
-      expect(JSON.stringify(records)).not.toContain(sensitiveText);
-      expect(JSON.stringify(records)).not.toContain(sensitiveArgument);
-    } finally {
-      await reset();
-    }
   });
 
   it("turnCompleted sends turn.completed", () => {

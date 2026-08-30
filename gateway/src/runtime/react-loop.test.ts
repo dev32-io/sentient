@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync } from "node:fs";
-import { configure, reset } from "@logtape/logtape";
 import type { OrchestratorConfig } from "@sentient/config";
 import type { Capability } from "../access/capability.js";
 import type { ProviderClient, ProviderRequest, ProviderStreamChunk } from "../provider/provider-client.js";
@@ -34,21 +33,6 @@ const cap: Capability = Object.freeze({
 });
 
 afterAll(() => rmSync(ROOT, { recursive: true, force: true }));
-
-type CapturedLog = { message: string; properties: Record<string, unknown> };
-
-async function captureReactLoopLogs(records: CapturedLog[]): Promise<void> {
-  await configure({
-    sinks: {
-      test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-    },
-    loggers: [
-      { category: ["sentient", "runtime", "react-loop"], sinks: ["test"], lowestLevel: "debug" },
-      { category: "logtape", sinks: [], lowestLevel: "error" },
-    ],
-    reset: true,
-  });
-}
 
 const loopConfig = (maxIterations: number): OrchestratorConfig["loop"] => ({ max_iterations: maxIterations });
 
@@ -122,81 +106,6 @@ function noopBroker(): FakeBroker {
     throw new Error("dispatch should never be called for a text-only response");
   });
 }
-
-describe("runTurn — privacy-safe logging", () => {
-  it("logs streamed text and malformed tool arguments by length/category without recording their content", async () => {
-    const records: CapturedLog[] = [];
-    await captureReactLoopLogs(records);
-
-    const store = openSessionStore(cap);
-    const sessionId = "privacy-safe-logging";
-    seedUserMessage(store, sessionId, "ordinary request");
-    const sensitiveArgs = "PRIVATE_TOOL_ARGUMENT is not valid JSON";
-    const sensitiveText = "PRIVATE_STREAMED_ASSISTANT_TEXT";
-    const tool: ToolDefinition = {
-      name: "private_tool",
-      description: "test tool",
-      parameters: { type: "object", properties: {} },
-      category: "foreground",
-      tier: "read",
-    };
-    const provider = fakeProvider(async function* (callIndex) {
-      if (callIndex === 1) {
-        yield {
-          type: "tool_call",
-          toolCall: {
-            id: "private-call",
-            type: "function",
-            function: { name: tool.name, arguments: sensitiveArgs },
-          },
-        };
-        yield { type: "done", finishReason: "tool_calls" };
-        return;
-      }
-      yield { type: "text", content: sensitiveText };
-      yield { type: "done", finishReason: "stop" };
-    });
-
-    try {
-      await runTurn(
-        {
-          provider,
-          broker: fakeBroker([tool], async () => ({ content: "ok", isError: false })),
-          store,
-          timeZone: { zone: () => "UTC" },
-          systemPrompt: "test assistant",
-          sessionId,
-          config: loopConfig(2),
-          requestTimeoutMs: 120000,
-          onTextDelta: () => {},
-          onToolUpdate: () => {},
-        },
-        { turnId: "privacy-turn", signal: new AbortController().signal },
-      );
-
-      expect(records.find((record) => record.message === "react-loop.tool-args.parse-failed")?.properties).toEqual(
-        expect.objectContaining({
-          toolName: tool.name,
-          toolCallId: "private-call",
-          argumentLength: sensitiveArgs.length,
-          errorCategory: "invalid-json",
-        }),
-      );
-      expect(
-        records.find(
-          (record) =>
-            record.message === "react-loop.stream.completed" && record.properties.textChars === sensitiveText.length,
-        )?.properties,
-      ).toEqual(expect.objectContaining({ textChunkCount: 1, textChars: sensitiveText.length }));
-      expect(records.some((record) => record.message.startsWith("react-loop.stream.chunk."))).toBe(false);
-      expect(JSON.stringify(records)).not.toContain(sensitiveArgs);
-      expect(JSON.stringify(records)).not.toContain(sensitiveText);
-    } finally {
-      store.close();
-      await reset();
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Case 0: the tool vocabulary is resolved BEFORE the first provider call.

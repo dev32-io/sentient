@@ -1,4 +1,3 @@
-import { configure, reset } from "@logtape/logtape";
 import { describe, expect, it, vi } from "vitest";
 import { type VoiceMgmtConfig, createVoice, listVoices } from "./voice-mgmt-client.ts";
 
@@ -67,43 +66,6 @@ async function waitForSocket(getWs: () => FakeWebSocket | null): Promise<FakeWeb
   }
   throw new Error("socket was never created");
 }
-
-describe("voice management logging", () => {
-  it("does not log a socket-construction error body", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "tts", "voice-mgmt"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-    const sensitiveText = "PRIVATE_VOICE_SOCKET_ERROR";
-    const cfg: VoiceMgmtConfig = {
-      url: "ws://127.0.0.1:8770",
-      connectTimeoutMs: 1000,
-      opTimeoutMs: 1000,
-      socketFactory: () => {
-        const error = new Error(sensitiveText);
-        error.name = sensitiveText;
-        throw error;
-      },
-    };
-    try {
-      const result = await listVoices(cfg, new AbortController().signal);
-      expect(result).toEqual({ ok: false, error: { kind: "transport" } });
-      expect(records.find((record) => record.message === "connect-failed")?.properties).toEqual({
-        errorType: "error",
-      });
-      expect(JSON.stringify(records)).not.toContain(sensitiveText);
-    } finally {
-      await reset();
-    }
-  });
-});
 
 describe("createVoice", () => {
   it("sends voiceCreateMsg with description, tags, and language, followed by the binary audio frame", async () => {

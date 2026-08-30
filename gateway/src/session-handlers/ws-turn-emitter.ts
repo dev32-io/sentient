@@ -58,6 +58,8 @@ import type { TitleProvenance } from "../store/session-metadata.js";
 
 const log = getLog(["sentient", "ws", "turn-emitter"]);
 
+const TEXT_PREVIEW_LEN = 120;
+
 /**
  * Where a built frame goes. Declared HERE, by the consumer, so this module owns
  * no edge to the fan-out that implements it — construction and delivery are two
@@ -90,8 +92,7 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
   // frame from the session journal inside the sink (fan-out-emitter.ts), so
   // JSON and binary share one monotonic space per SESSION and every cursor
   // reads the same bytes.
-  const audioByTurn = new Map<string, { frames: number; bytes: number }>();
-  const textByTurn = new Map<string, { chunks: number; chars: number }>();
+  let audioFramesSent = 0;
 
   /** @returns how many windows the frame actually reached. */
   function emit(frame: GatewayMessage): number {
@@ -100,16 +101,18 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
 
   return {
     turnStarted(turnId: string, trigger: TurnTrigger) {
-      textByTurn.set(turnId, { chunks: 0, chars: 0 });
       log.info("turn-emitter.turn-started", { sessionId, turnId, trigger });
       emit({ type: "turn.started", turnId, trigger });
     },
 
     textDelta(turnId: string, text: string, replyId?: string) {
-      const current = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      current.chunks += 1;
-      current.chars += text.length;
-      textByTurn.set(turnId, current);
+      log.debug("turn-emitter.text-delta", {
+        sessionId,
+        turnId,
+        replyId: replyId ?? null,
+        length: text.length,
+        preview: text.slice(0, TEXT_PREVIEW_LEN),
+      });
       emit({ type: "turn.text.delta", turnId, text, ...(replyId === undefined ? {} : { replyId }) });
     },
 
@@ -123,33 +126,16 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
     },
 
     turnCompleted(turnId: string) {
-      const aggregate = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      textByTurn.delete(turnId);
-      log.info("turn-emitter.turn-completed", {
-        sessionId,
-        turnId,
-        textChunkCount: aggregate.chunks,
-        textChars: aggregate.chars,
-      });
+      log.info("turn-emitter.turn-completed", { sessionId, turnId });
       emit({ type: "turn.completed", turnId });
     },
 
     turnAborted(turnId: string, cutoff: CutoffKind) {
-      const aggregate = textByTurn.get(turnId) ?? { chunks: 0, chars: 0 };
-      textByTurn.delete(turnId);
-      audioByTurn.delete(turnId);
-      log.info("turn-emitter.turn-aborted", {
-        sessionId,
-        turnId,
-        cutoff,
-        textChunkCount: aggregate.chunks,
-        textChars: aggregate.chars,
-      });
+      log.info("turn-emitter.turn-aborted", { sessionId, turnId, cutoff });
       emit({ type: "turn.aborted", turnId, cutoff });
     },
 
     playbackStop(turnId: string, reason: CutoffKind) {
-      audioByTurn.delete(turnId);
       log.info("turn-emitter.playback-stop", { sessionId, turnId, reason });
       emit({ type: "playback.stop", turnId, reason });
     },
@@ -190,37 +176,35 @@ export function createWsTurnEmitter(sink: SessionFrameSink, sessionId: string): 
     },
 
     audioStart(turnId: string, encoding: TurnAudioEncoding, sampleRate: number) {
-      audioByTurn.set(turnId, { frames: 0, bytes: 0 });
       log.info("turn-emitter.audio-start", { sessionId, turnId, encoding, sampleRate });
       emit({ type: "turn.audio.start", turnId, encoding, sampleRate });
     },
 
     audioFrame(turnId: string, bytes: Uint8Array) {
       sink.broadcastAudio(bytes);
-      const current = audioByTurn.get(turnId) ?? { frames: 0, bytes: 0 };
-      current.frames += 1;
-      current.bytes += bytes.byteLength;
-      audioByTurn.set(turnId, current);
+      audioFramesSent += 1;
+      log.debug("turn-emitter.audio-frame", {
+        sessionId,
+        turnId,
+        windows: sink.size,
+        payloadBytes: bytes.byteLength,
+      });
     },
 
     audioDone(turnId: string) {
-      const aggregate = audioByTurn.get(turnId) ?? { frames: 0, bytes: 0 };
-      audioByTurn.delete(turnId);
-      log.info("turn-emitter.audio-done", {
-        sessionId,
-        turnId,
-        frameCount: aggregate.frames,
-        audioBytes: aggregate.bytes,
-      });
+      log.info("turn-emitter.audio-done", { sessionId, turnId, framesSent: audioFramesSent });
       emit({ type: "turn.audio.done", turnId });
     },
 
     permissionRequest(req: PermissionRequest) {
+      // Argument VALUES go on the wire (the user must approve what will really
+      // happen) but never into the log — only which keys were mediated.
       log.info("turn-emitter.permission-request", {
         sessionId,
         requestId: req.requestId,
         toolCallId: req.toolCallId,
         toolName: req.toolName,
+        argKeys: Object.keys(req.args),
         expiresAtMs: req.expiresAtMs,
       });
       emit({ type: "permission.request", ...req });

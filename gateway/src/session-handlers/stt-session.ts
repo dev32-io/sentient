@@ -104,8 +104,6 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
   let micOpen = false;
   let desiredTurnMode: TurnMode = INITIAL_TURN_MODE;
   let bufferedBytes = 0;
-  let droppedFrames = 0;
-  let droppedBytes = 0;
   // Bumped by `discard()`. A connect started before the discard must not
   // install its adapter afterwards — that would resurrect the very socket the
   // discard abandoned, complete with the open turn it was abandoning.
@@ -122,7 +120,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       log.warn("stt.detached-failed", {
         sessionId,
         op,
-        errorType: err instanceof Error ? "error" : "non-error",
+        reason: err instanceof Error ? err.message : String(err),
       });
     };
     try {
@@ -232,7 +230,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
           log.warn("stt.event.dispatch-failed", {
             sessionId,
             eventType: event.type,
-            errorType: err instanceof Error ? "error" : "non-error",
+            reason: err instanceof Error ? err.message : String(err),
           });
         }
       }
@@ -243,7 +241,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       log.warn("stt.events.failed", {
         sessionId,
         micOpen,
-        errorType: err instanceof Error ? "error" : "non-error",
+        reason: err instanceof Error ? err.message : String(err),
       });
     } finally {
       if (adapter === active) {
@@ -277,9 +275,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         }
         adapter = candidate;
         candidate.setTurnMode(desiredTurnMode);
-        log.info("stt.connected", { sessionId, turnMode: desiredTurnMode, droppedFrames, droppedBytes });
-        droppedFrames = 0;
-        droppedBytes = 0;
+        log.info("stt.connected", { sessionId, turnMode: desiredTurnMode });
         detach("consume-events", () => consumeEvents(candidate));
       })
       .catch((err: unknown) => {
@@ -287,7 +283,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
         log.warn("stt.connect-failed", {
           sessionId,
           url: config.url,
-          errorType: err instanceof Error ? "error" : "non-error",
+          reason: err instanceof Error ? err.message : String(err),
         });
       });
   }
@@ -298,8 +294,6 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       micOpen = true;
       desiredTurnMode = turnMode;
       bufferedBytes = 0;
-      droppedFrames = 0;
-      droppedBytes = 0;
       log.info("stt.audio-start", { sessionId, turnMode, connected: adapter !== null });
       if (adapter) {
         adapter.setTurnMode(turnMode);
@@ -310,10 +304,8 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
 
     end() {
       micOpen = false;
-      log.info("stt.audio-end", { sessionId, connected: adapter !== null, bufferedBytes, droppedFrames, droppedBytes });
+      log.info("stt.audio-end", { sessionId, connected: adapter !== null, bufferedBytes });
       bufferedBytes = 0;
-      droppedFrames = 0;
-      droppedBytes = 0;
       adapter?.endUtterance();
     },
 
@@ -321,8 +313,7 @@ export function createSttSession(deps: SttSessionDeps): SttSession {
       if (!adapter) {
         // Frame-driven reconnect: the mic is live but the socket is not.
         if (micOpen) connect();
-        droppedFrames += 1;
-        droppedBytes += bytes.byteLength;
+        log.debug("stt.frame-dropped", { sessionId, byteSize: bytes.byteLength, reason: "no live STT socket" });
         return;
       }
       bufferedBytes += bytes.byteLength;

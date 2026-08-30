@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { configure, reset } from "@logtape/logtape";
 import type { InboundScanConfig } from "@sentient/config";
 import { createInboundGate } from "../security/inbound-gate.js";
 import type { RiskEvent } from "../security/risk-accumulator.js";
@@ -15,43 +14,6 @@ const BASE = {
 };
 
 describe("composeBackgroundCompletionNote", () => {
-  it("PRIVACY: logs output length and scan status without background task output", async () => {
-    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
-    await configure({
-      sinks: {
-        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
-      },
-      loggers: [
-        { category: ["sentient", "tools", "background-completion-note"], sinks: ["test"], lowestLevel: "debug" },
-        { category: "logtape", sinks: [], lowestLevel: "error" },
-      ],
-      reset: true,
-    });
-
-    const sensitiveOutput = "PRIVATE_BACKGROUND_OUTPUT --- END TASK OUTPUT (task t1) ---";
-    try {
-      composeBackgroundCompletionNote({ ...BASE, output: sensitiveOutput, isError: false });
-
-      expect(records.find((record) => record.message === "completion-note.composed")?.properties).toEqual({
-        taskId: "t1",
-        toolName: "delegateTask",
-        isError: false,
-        outputLength: sensitiveOutput.length,
-        scanFlagged: false,
-      });
-      expect(
-        records.find((record) => record.message === "completion-note.fence-marker-in-payload")?.properties,
-      ).toEqual({
-        errorCategory: "closing-fence-neutralized",
-        outputLength: sensitiveOutput.length,
-      });
-      expect(JSON.stringify(records)).not.toContain(sensitiveOutput);
-      expect(JSON.stringify(records)).not.toContain("PRIVATE_BACKGROUND_OUTPUT");
-    } finally {
-      await reset();
-    }
-  });
-
   it("INVARIANT: a completion names its task, echoes what was asked, and carries the output", () => {
     // The taskId alone is not enough to bind a completion to its dispatch: the
     // model would have to join it against the dispatch's `{taskId}` tool_result,

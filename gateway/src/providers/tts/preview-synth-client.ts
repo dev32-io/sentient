@@ -77,7 +77,7 @@ function openSocket(cfg: PreviewSynthConfig, voiceId: string): WebSocket | null 
     socket.binaryType = "arraybuffer";
     return socket;
   } catch (err) {
-    log.warn("connect-failed", { errorType: err instanceof Error ? "error" : "non-error" });
+    log.warn("connect-failed", { reason: err instanceof Error ? err.message : String(err) });
     return null;
   }
 }
@@ -135,6 +135,7 @@ function onMessage(
   if (frame.kind === "ready") return;
   if (frame.kind === "audio") {
     chunks.push(frame.data);
+    log.debug("preview.audio-chunk", { byteLength: frame.data.length, chunkCount: chunks.length });
     return;
   }
   if (frame.kind === "error") {
@@ -143,7 +144,6 @@ function onMessage(
   }
   if (frame.kind === "done") {
     const pcm = concat(chunks);
-    log.debug("preview.audio-done", { chunkCount: chunks.length, pcmBytes: pcm.byteLength });
     settle({ ok: true, value: { pcm, sampleRate: PREVIEW_SAMPLE_RATE } });
   }
 }

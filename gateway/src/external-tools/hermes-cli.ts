@@ -13,6 +13,15 @@ const log = getLog(["sentient", "external-tools", "hermes-cli"]);
 
 export const HERMES_BIN = "hermes";
 
+/**
+ * Truncate captured CLI output before it reaches a log line or an error. 120 is
+ * the project-wide preview cap (`.claude/rules/logging.md`).
+ *
+ * Truncation is NOT the control that protects a credential and must not be
+ * mistaken for one: it bounds VOLUME, and a key at char 10 survives any cap.
+ * The content control is `logging/log-sanitizer.ts`. Both apply: the sanitizer
+ * removes the secret, the cap keeps a multi-KB config dump out of the log file.
+ */
 const OUTPUT_PREVIEW_MAX = 120;
 
 /** The subset of a spawned process this module touches — narrowed so unit
@@ -57,8 +66,6 @@ export interface RunCliInput {
   readonly userId: string;
 }
 
-/** Retained for callers that bound non-log presentation. Never use this to
- * make untrusted subprocess output safe for logging. */
 export function truncate(text: string): string {
   return text.length > OUTPUT_PREVIEW_MAX ? `${text.slice(0, OUTPUT_PREVIEW_MAX)}…` : text;
 }
@@ -83,8 +90,7 @@ export async function runHermesCli(input: RunCliInput): Promise<Result<CliOutput
     log.warn("hermes-cli.spawn-failed", {
       step,
       userId,
-      elapsedMs: Date.now() - startedAt,
-      errorClass: safeErrorClass(err),
+      reason: err instanceof Error ? err.message : String(err),
     });
     return { ok: false, error: "spawn-failed" };
   }
@@ -105,14 +111,9 @@ export async function runHermesCli(input: RunCliInput): Promise<Result<CliOutput
     const elapsedMs = Date.now() - startedAt;
     if (timedOut) return { ok: false, error: "timeout" };
     if (code !== 0) {
-      log.warn("hermes-cli.non-zero-exit", {
-        step,
-        userId,
-        code,
-        elapsedMs,
-        stdoutBytes: Buffer.byteLength(stdout),
-        stderrBytes: Buffer.byteLength(stderr),
-      });
+      // Preview only, never the whole output: hermes prints a profile's
+      // resolved config, which is exactly where a credential would show up.
+      log.warn("hermes-cli.non-zero-exit", { step, userId, code, elapsedMs, preview: truncate(stderr || stdout) });
       return { ok: false, error: "non-zero-exit" };
     }
     log.debug("hermes-cli.ok", { step, userId, elapsedMs });
@@ -120,8 +121,4 @@ export async function runHermesCli(input: RunCliInput): Promise<Result<CliOutput
   } finally {
     clearTimeout(timer);
   }
-}
-
-function safeErrorClass(err: unknown): "error" | "non-error" {
-  return err instanceof Error ? "error" : "non-error";
 }
