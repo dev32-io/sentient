@@ -155,6 +155,7 @@ final class VisualDiffCaptureTests: XCTestCase {
                 || caseID.hasPrefix("text-area--")
                 || caseID.hasPrefix("search-field--")
                 || caseID.hasPrefix("filter-bar--")
+                || caseID.hasPrefix("settings-editor--")
                 || caseID.hasPrefix("validated-field--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
@@ -626,6 +627,29 @@ final class VisualDiffCaptureTests: XCTestCase {
                 for: "text-field--filled--hover"
             )
         )
+    }
+
+    func testSettingsEditorRegistryPreservesCallerOwnedSavedAndUnsavedStates() {
+        let expected: [(String, DesignSettingsEditorState)] = [
+            ("settings-editor--vertical--saved", .saved),
+            ("settings-editor--vertical--unsaved", .unsaved),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "settings-editor")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.map(\.0)))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, state) in expected {
+            XCTAssertEqual(
+                VisualDiffFixtureRegistry.settingsEditorRenderConfiguration(for: caseID)?.state,
+                state,
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved settings-editor case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
     }
 
     func testValidatedFieldRegistryPreservesApprovedCasesAndMappings() {

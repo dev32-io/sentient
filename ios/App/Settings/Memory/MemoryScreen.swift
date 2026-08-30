@@ -90,14 +90,22 @@ struct MemoryScreen: View {
     @ViewBuilder
     private var slotCard: some View {
         let state = vm.state(for: slot)
-        DesignCard(title: slot.label, detail: slotExplain[slot]) {
-            if !state.loaded {
+        if !state.loaded {
+            DesignCard(title: slot.label, detail: slotExplain[slot]) {
                 SoulLoadingRow()
-            } else if let loadError = state.loadError {
+            }
+        } else if let loadError = state.loadError {
+            DesignCard(title: slot.label, detail: slotExplain[slot]) {
                 AsyncNotice(kind: .error, title: "Couldn't load this memory", detail: loadError) {
                     Task { await vm.retry(slot) }
                 }
-            } else {
+            }
+        } else {
+            DesignSettingsEditor(
+                title: slot.label,
+                detail: slotExplain[slot] ?? "",
+                state: state.isDirty ? .unsaved : .saved
+            ) {
                 editor(state)
             }
         }
@@ -131,7 +139,6 @@ struct MemoryScreen: View {
                     .accessibilityIdentifier("settings-memory-preview")
             }
         }
-        .padding(.vertical, Space.sm)
     }
 
     private func selectSlot(_ id: String) {
@@ -153,13 +160,16 @@ struct MemoryScreen: View {
                 selection: .constant("memory"),
                 accessibilityId: "settings-memory-slot"
             )
-            DesignCard(title: "Shared notes", detail: slotExplain[.memory]) {
+            DesignSettingsEditor(
+                title: "Shared notes",
+                detail: slotExplain[.memory] ?? "",
+                state: .saved
+            ) {
                 DesignMultilineEditor(
                     text: .constant("The kitchen light is on circuit 3."),
                     maxLength: 4000,
                     accessibilityId: "settings-memory-editor"
                 )
-                .padding(.vertical, Space.sm)
             }
         }
     }

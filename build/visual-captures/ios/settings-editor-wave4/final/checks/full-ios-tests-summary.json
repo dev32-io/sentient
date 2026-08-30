@@ -1,0 +1,46 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "9FF4D060-0C5C-483B-ABEC-B74B7D6D492C",
+        "deviceName" : "iPhone 16",
+        "modelName" : "iPhone 16",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 195,
+      "skippedTests" : 1,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "SentientApp · Built with macOS 26.5.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1788052603.291,
+  "passedTests" : 195,
+  "result" : "Passed",
+  "skippedTests" : 1,
+  "startTime" : 1788052595.575,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - SentientApp",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "54% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 0.22s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 196
+}

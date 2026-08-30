@@ -119,13 +119,15 @@ struct AdvancedScreen: View {
     }
 
     private var promptCard: some View {
-        DesignCard(title: "Additional instructions", detail: "Included with each request. Use sparingly because this reduces available context.") {
+        DesignSettingsEditor(
+            title: "Additional instructions",
+            detail: "Included with each request. Use sparingly because this reduces available context."
+        ) {
             DesignMultilineEditor(
                 text: Binding(get: { vm.extraSystemPrompt }, set: { vm.extraSystemPrompt = $0 }),
                 placeholder: "Optional extra instructions…",
                 accessibilityId: "settings-advanced-extra-prompt"
             )
-            .padding(.vertical, Space.sm)
         }
     }
 

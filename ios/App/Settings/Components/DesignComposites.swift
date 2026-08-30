@@ -148,6 +148,166 @@ struct DesignCard<Content: View>: View {
     }
 }
 
+enum DesignSettingsEditorState: Equatable {
+    case saved
+    case unsaved
+
+    var title: String {
+        switch self {
+        case .saved: "Saved"
+        case .unsaved: "Unsaved"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .saved: DuskColors.sage
+        case .unsaved: DuskColors.accent
+        }
+    }
+}
+
+private enum DesignSettingsEditorMetrics {
+    static let headerMinimumHeight: CGFloat = 70
+    static let bodyGap: CGFloat = 14
+    static let statusHorizontalPadding: CGFloat = 10
+    static let statusVerticalPadding: CGFloat = 6
+}
+
+/// Full-measure settings editor shell. Draft, validation, focus, reset, and
+/// persistence remain caller-owned; this view only composes their native views.
+struct DesignSettingsEditor<Content: View, Actions: View>: View {
+    let title: String
+    let detail: String
+    let state: DesignSettingsEditorState?
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let actions: () -> Actions
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String,
+        detail: String,
+        state: DesignSettingsEditorState? = nil,
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.title = title
+        self.detail = detail
+        self.state = state
+        self.content = content
+        self.actions = actions
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            VStack(alignment: .leading, spacing: DesignSettingsEditorMetrics.bodyGap) {
+                content()
+            }
+            .padding(Space.lg)
+            if Actions.self != EmptyView.self { footer }
+        }
+        .designPlate()
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        let copy = VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+            Text(detail)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    copy
+                    status
+                }
+            } else {
+                HStack(alignment: .center, spacing: Space.md) {
+                    copy
+                    status
+                }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, minHeight: DesignSettingsEditorMetrics.headerMinimumHeight)
+        .overlay(alignment: .bottom) { DesignDivider() }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if let state {
+            Text(state.title)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(state.tint)
+                .padding(.horizontal, DesignSettingsEditorMetrics.statusHorizontalPadding)
+                .padding(.vertical, DesignSettingsEditorMetrics.statusVerticalPadding)
+                .background {
+                    let shape = Capsule()
+                    ZStack {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: state.tint.opacity(state == .saved ? 0.32 : 0.22),
+                            geometry: DesignDropShadowGeometry(radius: 7, y: 0, sourceInset: 8)
+                        )
+                        shape.fill(
+                            state == .saved
+                                ? DuskColors.sageSoft.overlaying(DuskColors.paper, opacity: 0.22)
+                                : DuskColors.paper
+                        )
+                    }
+                }
+                .overlay {
+                    Capsule().stroke(
+                        contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
+                        lineWidth: DesignMetrics.hairline
+                    )
+                }
+                .fixedSize()
+                .accessibilityLabel(state.title)
+        }
+    }
+
+    private var footer: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Space.sm) { actions() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: Space.sm) {
+                    Spacer(minLength: 0)
+                    actions()
+                }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .background(DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.25))
+        .overlay(alignment: .top) { DesignDivider() }
+    }
+}
+
+extension DesignSettingsEditor where Actions == EmptyView {
+    init(
+        title: String,
+        detail: String,
+        state: DesignSettingsEditorState? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(title: title, detail: detail, state: state, content: content) {
+            EmptyView()
+        }
+    }
+}
+
 /// Semantic pane retained for callers that need the quieter pane header. Its
 /// surface and spacing are owned by `DesignCard`.
 struct DesignPane<Content: View>: View {

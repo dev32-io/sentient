@@ -133,6 +133,10 @@ struct VisualDiffTextAreaRenderConfiguration {
     let shouldFocus: Bool
 }
 
+struct VisualDiffSettingsEditorRenderConfiguration: Equatable {
+    let state: DesignSettingsEditorState
+}
+
 struct VisualDiffValidatedFieldRenderConfiguration {
     let title: String
     let value: String
@@ -349,6 +353,7 @@ enum VisualDiffFixtureRegistry {
         MediaActionCardFixtureCatalog.registration.componentID: MediaActionCardFixtureCatalog.registration,
         TextFieldFixtureCatalog.registration.componentID: TextFieldFixtureCatalog.registration,
         TextAreaFixtureCatalog.registration.componentID: TextAreaFixtureCatalog.registration,
+        SettingsEditorFixtureCatalog.registration.componentID: SettingsEditorFixtureCatalog.registration,
         ValidatedFieldFixtureCatalog.registration.componentID: ValidatedFieldFixtureCatalog.registration,
         ChipFixtureCatalog.registration.componentID: ChipFixtureCatalog.registration,
         RangeFixtureCatalog.registration.componentID: RangeFixtureCatalog.registration,
@@ -456,6 +461,12 @@ enum VisualDiffFixtureRegistry {
         TextAreaFixtureCatalog.renderConfigurations[caseID]
     }
 
+    static func settingsEditorRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffSettingsEditorRenderConfiguration? {
+        SettingsEditorFixtureCatalog.renderConfigurations[caseID]
+    }
+
     static func validatedFieldRenderConfiguration(
         for caseID: String
     ) -> VisualDiffValidatedFieldRenderConfiguration? {
@@ -557,6 +568,85 @@ enum VisualDiffFixtureRegistry {
         }
         return VisualDiffSentientIdentityCapture(configuration: configuration)
     }
+}
+
+private enum SettingsEditorFixtureMetrics {
+    static let canvasInset: CGFloat = 52
+    static let contentWidth: CGFloat = 440
+}
+
+private struct SettingsEditorFixture: View {
+    let configuration: VisualDiffSettingsEditorRenderConfiguration
+    @State private var householdLabel = "Home"
+    @State private var description = "A short explanation that helps people understand the effect of this setting."
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            DesignSettingsEditor(
+                title: "Vertical editor row",
+                detail: "Use when the field needs the full measure.",
+                state: configuration.state
+            ) {
+                DesignField(
+                    title: "Household label",
+                    text: $householdLabel,
+                    accessibilityId: "visual-diff-settings-editor-label"
+                )
+                DesignMultilineEditor(
+                    title: "Description",
+                    text: $description,
+                    accessibilityId: "visual-diff-settings-editor-description"
+                )
+            } actions: {
+                DesignActionButton(title: "Reset", role: .quiet, fillsWidth: false, action: {})
+                DesignActionButton(title: "Save", fillsWidth: false, action: {})
+            }
+            .frame(width: SettingsEditorFixtureMetrics.contentWidth)
+            .padding(SettingsEditorFixtureMetrics.canvasInset)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+private struct SettingsEditorFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffSettingsEditorRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(SettingsEditorFixture(configuration: configuration))
+    }
+}
+
+private enum SettingsEditorFixtureCatalog {
+    private static let states: [(String, DesignSettingsEditorState)] = [
+        ("saved", .saved),
+        ("unsaved", .unsaved),
+    ]
+
+    static let renderConfigurations = Dictionary(uniqueKeysWithValues: states.map { stateID, state in
+        ("settings-editor--vertical--\(stateID)", VisualDiffSettingsEditorRenderConfiguration(state: state))
+    })
+
+    private static let definitions = states.map { stateID, _ in
+        VisualDiffFixtureRegistration(
+            fixture: VisualDiffFixtureCase(
+                caseID: "settings-editor--vertical--\(stateID)",
+                componentID: "settings-editor",
+                variantID: "vertical",
+                stateID: stateID
+            ),
+            applicability: .supported
+        )
+    }
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "settings-editor",
+        registrations: definitions,
+        adapter: SettingsEditorFixtureAdapter(configurations: renderConfigurations)
+    )
 }
 
 private enum NoticeFixtureMetrics {
