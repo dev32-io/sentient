@@ -87,9 +87,8 @@ final class AccessAccountAdminSurfaceTests: XCTestCase {
     }
 
     func testSecretEvidenceIsPresenceOnlyAndLargeTextUsesSharedMinimumTarget() {
-        let rawSecret = "never-return-this-value"
-        XCTAssertEqual(secretPresenceMask, "••••••••••••")
-        XCTAssertFalse(secretPresenceMask.contains(rawSecret))
+        XCTAssertEqual(secretPresenceText(isConfigured: true), "Configured")
+        XCTAssertEqual(secretPresenceText(isConfigured: false), "Not configured")
         XCTAssertGreaterThanOrEqual(DesignMetrics.minimumTarget, 44)
         XCTAssertEqual(DesignTextRole.body.baseSize, DesignV2.Typography.body)
     }

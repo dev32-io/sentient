@@ -47,6 +47,64 @@ const CURRENT_ICON_BUTTON_CASES = [
 ] as const;
 
 const CURRENT_PLATE_CASES = ["plate--default--compact-rest", "plate--default--rest"] as const;
+const CURRENT_NO_RESULTS_CASES = ["no-results--default--empty"] as const;
+
+const CURRENT_LOADING_STATE_CASES = [
+  "loading-state--settings--active",
+  "loading-state--settings--reduced-motion",
+] as const;
+const CURRENT_EMPTY_STATE_CASES = ["empty-state--settings--rest"] as const;
+
+const CURRENT_NOTICE_CASES = [
+  "notice--info--rest",
+  "notice--warning--compact",
+  "notice--warning--rest",
+  "notice--error--compact",
+  "notice--error--rest",
+] as const;
+
+const CURRENT_STALE_BANNER_CASES = [
+  "stale-banner--saved-results--checking",
+  "stale-banner--saved-results--rest",
+] as const;
+
+const CURRENT_APPLY_BAR_CASES = [
+  "apply-bar--dirty--rest",
+  "apply-bar--applying--active",
+  "apply-bar--done--success",
+  "apply-bar--dirty-to-done--frame-000--0000ms",
+  "apply-bar--dirty-to-done--frame-001--0300ms",
+  "apply-bar--dirty-to-done--frame-002--0900ms",
+] as const;
+
+const CURRENT_SETTING_ROW_CASES = [
+  "setting-row--toggle--off",
+  "setting-row--toggle--on",
+  "setting-row--segmented--default-selected",
+  "setting-row--segmented--expert-selected",
+  "setting-row--select--english-closed",
+  "setting-row--select--spanish-selected",
+  "setting-row--range--62",
+] as const;
+
+const CURRENT_PANE_HEADER_CASES = ["pane-header--preferences--rest"] as const;
+
+const CURRENT_PIN_ENTRY_CASES = [
+  "pin-entry--4-digit--checking",
+  "pin-entry--4-digit--checking-reduced-motion",
+  "pin-entry--4-digit--empty",
+  "pin-entry--4-digit--one-digit",
+  "pin-entry--4-digit--partial",
+  "pin-entry--4-digit--success",
+] as const;
+
+const PIN_ENTRY_TRANSITION_CASES = [
+  "pin-entry--complete-to-success--frame-000--0000ms",
+  "pin-entry--complete-to-success--frame-001--0180ms",
+  "pin-entry--complete-to-success--frame-002--0360ms",
+  "pin-entry--complete-to-success--frame-003--0700ms",
+  "pin-entry--complete-to-success--frame-004--1060ms",
+] as const;
 
 const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--terra-28--rest",
@@ -58,6 +116,15 @@ const CURRENT_USER_AVATAR_CASES = [
   "user-avatar--fallback-44--rest",
   "user-avatar--terra-44--selected",
   "user-avatar--terra-44--disabled",
+] as const;
+
+const CURRENT_MEDIA_ACTION_CARD_CASES = [
+  "media-action-card--user-sage--rest",
+  "media-action-card--user-sage--hover",
+  "media-action-card--user-sage--focus",
+  "media-action-card--user-terra--rest",
+  "media-action-card--user-terra--hover",
+  "media-action-card--user-terra--focus",
 ] as const;
 
 const CURRENT_SENTIENT_IDENTITY_CASES = [
@@ -105,10 +172,25 @@ const CURRENT_SEARCH_FIELD_CASES = [
   "search-field--placeholder--rest",
 ] as const;
 
+const CURRENT_FILTER_BAR_CASES = [
+  "filter-bar--default--compact",
+  "filter-bar--default--rest",
+  "filter-bar--ready--selected",
+  "filter-bar--shared--selected",
+  "filter-bar--offline--selected",
+  "filter-bar--sort--open",
+] as const;
+
 const CURRENT_TEXT_AREA_CASES = [
   "text-area--filled--focus",
   "text-area--filled--hover",
   "text-area--filled--rest",
+] as const;
+
+const CURRENT_VALIDATED_FIELD_CASES = [
+  "validated-field--confirmation--error",
+  "validated-field--recovery-phrase--valid",
+  "validated-field--supporting-note--counter",
 ] as const;
 
 const CURRENT_RANGE_CASES = ["range--62--disabled", "range--62--focus", "range--62--hover", "range--62--rest"] as const;
@@ -182,6 +264,21 @@ const CURRENT_SEGMENTED_CONTROL_CASES = [
   "segmented-control--density--compact-selected",
 ] as const;
 
+const CURRENT_DISCLOSURE_CASES = [
+  "disclosure--advanced-options--closed",
+  "disclosure--advanced-options--open",
+  "disclosure--data-storage--closed",
+  "disclosure--data-storage--open",
+] as const;
+
+const DISCLOSURE_TRANSITION_CASES = [
+  "disclosure--closed-to-open--frame-000--0000ms",
+  "disclosure--closed-to-open--frame-001--0062ms",
+  "disclosure--closed-to-open--frame-002--0125ms",
+  "disclosure--closed-to-open--frame-003--0188ms",
+  "disclosure--closed-to-open--frame-004--0250ms",
+] as const;
+
 const SEGMENTED_TRANSITION_CASES = [
   "segmented-control--comfortable-to-compact--frame-000--0000ms",
   "segmented-control--comfortable-to-compact--frame-001--0055ms",
@@ -191,6 +288,62 @@ const SEGMENTED_TRANSITION_CASES = [
 ] as const;
 
 describe("visual diff component cases", () => {
+  it("registers the exact results-list matrix and production provenance", () => {
+    const resultsList = visualDiffComponentRegistry["results-list"];
+    expect(resultsList.stateApplicability).toEqual({
+      default: ["page-1", "compact-page-1", "loading-more", "appended"],
+    });
+    expect(resultsList.fixtureAdapterId).toBe("results-list");
+    expect(resultsList.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#ResultsList");
+    expect(resultsList.authority).toBe("design/prototype/common-composites/handoff.md");
+
+    for (const stateId of resultsList.stateApplicability.default) {
+      const resolution = resolveVisualDiffCase(`results-list--default--${stateId}`);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("results-list");
+    }
+  });
+
+  it("registers the exact pin-entry matrix and canonical PinKeypad provenance", () => {
+    const pinEntry = visualDiffComponentRegistry["pin-entry"];
+    expect(pinEntry.stateApplicability).toEqual({
+      "4-digit": ["checking", "checking-reduced-motion", "empty", "one-digit", "partial", "success"],
+      "complete-to-success": [
+        "frame-000--0000ms",
+        "frame-001--0180ms",
+        "frame-002--0360ms",
+        "frame-003--0700ms",
+        "frame-004--1060ms",
+      ],
+    });
+    expect(pinEntry.fixtureAdapterId).toBe("pin-entry");
+    expect(pinEntry.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#PinKeypad");
+    expect(pinEntry.authority).toBe("design/prototype/common-composites/handoff.md");
+    expect(pinEntry.variants["4-digit"].props).toEqual({ length: 4 });
+
+    for (const caseId of [...CURRENT_PIN_ENTRY_CASES, ...PIN_ENTRY_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("pin-entry");
+        expect(resolution.case.fixtureAdapterId).toBe("pin-entry");
+        expect(resolution.case.props).toEqual(pinEntry.variants["4-digit"].props);
+      }
+    }
+  });
+
+  it("resolves unapproved pin-entry states to missing authority", () => {
+    for (const stateId of ["error", "disabled", "hover", "focus", "pressed", "loading"]) {
+      expect(resolveVisualDiffCase(`pin-entry--4-digit--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `pin-entry--4-digit--${stateId}`,
+        componentId: "pin-entry",
+        variantId: "4-digit",
+        stateId,
+      });
+    }
+  });
+
   it("maps both disabled handoff forms to the approved unavailable specimen", () => {
     expect(actionButtonCase("action-button--secondary--disabled")).toEqual({
       variant: "default",
@@ -348,6 +501,57 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the production-backed media action card variants and states", () => {
+    const mediaCard = visualDiffComponentRegistry["media-action-card"];
+    expect(mediaCard.stateApplicability).toEqual({
+      "user-sage": ["focus", "hover", "rest"],
+      "user-terra": ["focus", "hover", "rest"],
+    });
+    expect(mediaCard.fixtureAdapterId).toBe("media-action-card");
+    expect(mediaCard.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#DominantVisualCard");
+    expect(mediaCard.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(mediaCard.variants["user-sage"].props).toEqual({
+      initial: "A",
+      name: "Alex",
+      tint: "sage",
+      description: "Household member",
+    });
+
+    for (const caseId of CURRENT_MEDIA_ACTION_CARD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("media-action-card");
+        expect(resolution.case.fixtureAdapterId).toBe("media-action-card");
+      }
+    }
+  });
+
+  it("holds unowned media variants and undefined card states", () => {
+    for (const variantId of ["icon", "image"]) {
+      for (const stateId of ["rest", "hover", "focus"]) {
+        expect(resolveVisualDiffCase(`media-action-card--${variantId}--${stateId}`)).toEqual({
+          status: "unsupported",
+          caseId: `media-action-card--${variantId}--${stateId}`,
+          componentId: "media-action-card",
+          variantId,
+          stateId,
+          reason: "variant",
+        });
+      }
+    }
+
+    for (const stateId of ["pressed", "selected", "disabled", "loading", "error", "image-loading", "crop", "failure"]) {
+      expect(resolveVisualDiffCase(`media-action-card--user-terra--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `media-action-card--user-terra--${stateId}`,
+        componentId: "media-action-card",
+        variantId: "user-terra",
+        stateId,
+      });
+    }
+  });
+
   it("registers the complete Sentient identity matrix and canonical production provenance", () => {
     const identity = visualDiffComponentRegistry["sentient-identity"];
     expect(identity.stateApplicability).toEqual({
@@ -473,6 +677,23 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers every approved filter-bar state against the production search/filter shell", () => {
+    const filterBar = visualDiffComponentRegistry["filter-bar"];
+    expect(filterBar.stateApplicability).toEqual({
+      default: ["compact", "rest"],
+      ready: ["selected"],
+      shared: ["selected"],
+      offline: ["selected"],
+      sort: ["open"],
+    });
+    expect(filterBar.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SearchFilterBar");
+    for (const caseId of CURRENT_FILTER_BAR_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("filter-bar");
+    }
+  });
+
   it("resolves unapproved search-field states to missing authority", () => {
     for (const stateId of [
       "filled",
@@ -532,6 +753,62 @@ describe("visual diff component cases", () => {
         caseId: `text-area--filled--${stateId}`,
         componentId: "text-area",
         variantId: "filled",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the approved ValidatedField states and production provenance", () => {
+    const validatedField = visualDiffComponentRegistry["validated-field"];
+    expect(validatedField.stateApplicability).toEqual({
+      confirmation: ["error"],
+      "recovery-phrase": ["valid"],
+      "supporting-note": ["counter"],
+    });
+    expect(validatedField.fixtureAdapterId).toBe("validated-field");
+    expect(validatedField.productionComponent).toBe(
+      "gateway/webui/src/components/common/composites.tsx#ValidatedField",
+    );
+    expect(validatedField.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(validatedField.variants.confirmation.props).toEqual({
+      label: "Confirmation",
+      value: "warm emb",
+      status: { tone: "error", message: "The values do not match." },
+    });
+    expect(validatedField.variants["recovery-phrase"].props).toEqual({
+      label: "Recovery phrase",
+      value: "warm ember",
+      status: { tone: "valid", message: "Available" },
+    });
+    expect(validatedField.variants["supporting-note"].props).toEqual({
+      label: "Supporting note",
+      value: "A concise note that helps others understand this choice.",
+      multiline: true,
+      maxLength: 160,
+      counter: { current: 58, max: 160 },
+    });
+
+    for (const caseId of CURRENT_VALIDATED_FIELD_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("validated-field");
+        expect(resolution.case.fixtureAdapterId).toBe("validated-field");
+      }
+    }
+  });
+
+  it("resolves unapproved ValidatedField states to missing authority", () => {
+    for (const [variantId, stateId] of [
+      ["confirmation", "rest"],
+      ["recovery-phrase", "error"],
+      ["supporting-note", "valid"],
+    ] as const) {
+      expect(resolveVisualDiffCase(`validated-field--${variantId}--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `validated-field--${variantId}--${stateId}`,
+        componentId: "validated-field",
+        variantId,
         stateId,
       });
     }
@@ -664,6 +941,53 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the exact settings-group reference against the production group", () => {
+    const settingsGroup = visualDiffComponentRegistry["settings-group"];
+    expect(settingsGroup.fixtureAdapterId).toBe("settings-group");
+    expect(settingsGroup.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsGroup");
+    expect(settingsGroup.authority).toBe(
+      "design/prototype/common-composites/handoff/static/settings-group--general--rest.png",
+    );
+    expect(settingsGroup.stateApplicability).toEqual({ general: ["rest"] });
+
+    const resolution = resolveVisualDiffCase("settings-group--general--rest");
+    expect(resolution.status).toBe("ready");
+    if (resolution.status === "ready") {
+      expect(resolution.case.componentId).toBe("settings-group");
+      expect(resolution.case.props).toEqual({ label: "General" });
+    }
+  });
+
+  it("registers the setting-row control matrix and preserves native open-select adaptation", () => {
+    const settingRow = visualDiffComponentRegistry["setting-row"];
+    expect(settingRow.fixtureAdapterId).toBe("setting-row");
+    expect(settingRow.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsRow");
+    expect(settingRow.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(settingRow.stateApplicability).toEqual({
+      toggle: ["off", "on"],
+      segmented: ["default-selected", "expert-selected"],
+      select: ["english-closed", "spanish-selected"],
+      range: ["62"],
+    });
+
+    for (const caseId of CURRENT_SETTING_ROW_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("setting-row");
+        expect(resolution.case.fixtureAdapterId).toBe("setting-row");
+      }
+    }
+
+    expect(resolveVisualDiffCase("setting-row--select--english-open")).toEqual({
+      status: "missing-authority",
+      caseId: "setting-row--select--english-open",
+      componentId: "setting-row",
+      variantId: "select",
+      stateId: "english-open",
+    });
+  });
+
   it("registers the exact segmented-control matrix and controlled native production provenance", () => {
     const segmentedControl = visualDiffComponentRegistry["segmented-control"];
     expect(segmentedControl.stateApplicability).toEqual({
@@ -732,6 +1056,63 @@ describe("visual diff component cases", () => {
         stateId,
       });
     }
+  });
+
+  it("registers the exact disclosure matrix and native production provenance", () => {
+    const disclosure = visualDiffComponentRegistry.disclosure;
+    expect(disclosure.stateApplicability).toEqual({
+      "advanced-options": ["closed", "open"],
+      "data-storage": ["closed", "open"],
+      "closed-to-open": [
+        "frame-000--0000ms",
+        "frame-001--0062ms",
+        "frame-002--0125ms",
+        "frame-003--0188ms",
+        "frame-004--0250ms",
+      ],
+    });
+    expect(disclosure.fixtureAdapterId).toBe("disclosure");
+    expect(disclosure.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#Disclosure");
+    expect(disclosure.authority).toBe("design/prototype/common-composites/handoff");
+    expect(disclosure.variants["advanced-options"].props).toEqual({
+      title: "Advanced options",
+      description: "Additional controls for experienced users",
+      body: "toggle",
+    });
+    expect(disclosure.variants["data-storage"].props).toEqual({
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    });
+
+    for (const caseId of [...CURRENT_DISCLOSURE_CASES, ...DISCLOSURE_TRANSITION_CASES]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("disclosure");
+        expect(resolution.case.fixtureAdapterId).toBe("disclosure");
+      }
+    }
+  });
+
+  it("resolves unapproved disclosure states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "selected", "loading"]) {
+      expect(resolveVisualDiffCase(`disclosure--advanced-options--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `disclosure--advanced-options--${stateId}`,
+        componentId: "disclosure",
+        variantId: "advanced-options",
+        stateId,
+      });
+    }
+    expect(resolveVisualDiffCase("disclosure--unknown--closed")).toEqual({
+      status: "unsupported",
+      caseId: "disclosure--unknown--closed",
+      componentId: "disclosure",
+      variantId: "unknown",
+      stateId: "closed",
+      reason: "variant",
+    });
   });
 
   it("registers the exact checkbox matrix and native production provenance", () => {
@@ -804,6 +1185,43 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the approved pane-header rest case and production provenance", () => {
+    const paneHeader = visualDiffComponentRegistry["pane-header"];
+    expect(paneHeader.fixtureAdapterId).toBe("pane-header");
+    expect(paneHeader.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#PaneChrome");
+    expect(paneHeader.authority).toBe(
+      "design/prototype/common-composites/handoff/static/pane-header--preferences--rest.png",
+    );
+    expect(paneHeader.stateApplicability).toEqual({ preferences: ["rest"] });
+    expect(paneHeader.variants.preferences.props).toEqual({
+      eyebrow: "Household",
+      title: "Preferences",
+      subtitle: "Control shared defaults and personal behavior.",
+      actionLabel: "Save changes",
+    });
+
+    for (const caseId of CURRENT_PANE_HEADER_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("pane-header");
+        expect(resolution.case.fixtureAdapterId).toBe("pane-header");
+      }
+    }
+  });
+
+  it("resolves unapproved pane-header states to missing authority", () => {
+    for (const stateId of ["compact-rest", "hover", "focus", "pressed", "disabled", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`pane-header--preferences--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `pane-header--preferences--${stateId}`,
+        componentId: "pane-header",
+        variantId: "preferences",
+        stateId,
+      });
+    }
+  });
+
   it("registers only the approved plate rest cases and production provenance", () => {
     const plate = visualDiffComponentRegistry.plate;
     expect(plate.fixtureAdapterId).toBe("plate");
@@ -819,6 +1237,46 @@ describe("visual diff component cases", () => {
         expect(resolution.case.fixtureAdapterId).toBe("plate");
         expect(resolution.case.props).toEqual({ variant: "default" });
       }
+    }
+  });
+
+  it("registers the approved notice tones and production provenance", () => {
+    const notice = visualDiffComponentRegistry.notice;
+    expect(notice.fixtureAdapterId).toBe("notice");
+    expect(notice.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#Notice");
+    expect(notice.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(notice.stateApplicability).toEqual({
+      info: ["rest"],
+      warning: ["compact", "rest"],
+      error: ["compact", "rest"],
+    });
+    expect(notice.variants.info.props).toEqual({
+      tone: "info",
+      title: "Changes apply to this device",
+      message: "Other household devices keep their current preference.",
+    });
+    expect(notice.variants.warning.props.actionLabel).toBe("Review");
+    expect(notice.variants.error.props.actionLabel).toBe("Retry");
+
+    for (const caseId of CURRENT_NOTICE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("notice");
+        expect(resolution.case.fixtureAdapterId).toBe("notice");
+      }
+    }
+  });
+
+  it("resolves unapproved notice states to missing authority", () => {
+    for (const stateId of ["compact-rest", "hover", "focus", "pressed", "disabled", "loading", "success"]) {
+      expect(resolveVisualDiffCase(`notice--info--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `notice--info--${stateId}`,
+        componentId: "notice",
+        variantId: "info",
+        stateId,
+      });
     }
   });
 
@@ -842,6 +1300,331 @@ describe("visual diff component cases", () => {
         stateId,
       });
     }
+  });
+
+  it("registers the approved loading-state matrix and AsyncState provenance", () => {
+    const loadingState = visualDiffComponentRegistry["loading-state"];
+    expect(loadingState.fixtureAdapterId).toBe("loading-state");
+    expect(loadingState.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#AsyncState");
+    expect(loadingState.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(loadingState.stateApplicability).toEqual({ settings: ["active", "reduced-motion"] });
+    expect(loadingState.variants.settings.props).toEqual({
+      title: "Loading",
+      message: "Fetching current settings…",
+    });
+
+    for (const caseId of CURRENT_LOADING_STATE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("loading-state");
+        expect(resolution.case.fixtureAdapterId).toBe("loading-state");
+        expect(resolution.case.props).toEqual(loadingState.variants.settings.props);
+      }
+    }
+  });
+
+  it("registers only the approved empty-state rest fixture and AsyncState provenance", () => {
+    const emptyState = visualDiffComponentRegistry["empty-state"];
+    expect(emptyState.fixtureAdapterId).toBe("empty-state");
+    expect(emptyState.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#AsyncState");
+    expect(emptyState.authority).toBe(
+      "design/prototype/common-composites/handoff/static/empty-state--settings--rest.png",
+    );
+    expect(emptyState.stateApplicability).toEqual({ settings: ["rest"] });
+    expect(emptyState.variants.settings.props).toEqual({
+      title: "Nothing here yet",
+      message: "Add an item when you’re ready.",
+      actionLabel: "Add item",
+    });
+
+    for (const caseId of CURRENT_EMPTY_STATE_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("empty-state");
+        expect(resolution.case.fixtureAdapterId).toBe("empty-state");
+        expect(resolution.case.props).toEqual(emptyState.variants.settings.props);
+      }
+    }
+  });
+
+  it("registers the approved no-results recovery and production provenance", () => {
+    const noResults = visualDiffComponentRegistry["no-results"];
+    expect(noResults.fixtureAdapterId).toBe("no-results");
+    expect(noResults.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#NoResultsState");
+    expect(noResults.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(noResults.stateApplicability).toEqual({ default: ["empty"] });
+    expect(noResults.variants.default.props).toEqual({
+      title: "No matching results",
+      message: "Try a broader term or clear one of the filters.",
+      actionLabel: "Clear filters",
+    });
+
+    for (const caseId of CURRENT_NO_RESULTS_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("no-results");
+        expect(resolution.case.fixtureAdapterId).toBe("no-results");
+      }
+    }
+  });
+
+  it("registers the approved stale-banner states and production provenance", () => {
+    const staleBanner = visualDiffComponentRegistry["stale-banner"];
+    expect(staleBanner.fixtureAdapterId).toBe("stale-banner");
+    expect(staleBanner.productionComponent).toBe("gateway/webui/src/components/sessions/stale-banner.tsx#StaleBanner");
+    expect(staleBanner.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(staleBanner.stateApplicability).toEqual({ "saved-results": ["checking", "rest"] });
+    expect(staleBanner.variants["saved-results"].props).toEqual({
+      title: "Showing saved results",
+      detail: "Couldn’t refresh just now.",
+      actionLabel: "Retry",
+    });
+
+    for (const caseId of CURRENT_STALE_BANNER_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("stale-banner");
+        expect(resolution.case.fixtureAdapterId).toBe("stale-banner");
+      }
+    }
+  });
+
+  it("registers the approved apply-bar states, motion, and production provenance", () => {
+    const applyBar = visualDiffComponentRegistry["apply-bar"];
+    expect(applyBar.fixtureAdapterId).toBe("apply-bar");
+    expect(applyBar.productionComponent).toBe("gateway/webui/src/components/settings/apply-bar/apply-bar.tsx#ApplyBar");
+    expect(applyBar.authority).toBe("design/prototype/common-composites/handoff.md");
+    expect(applyBar.stateApplicability).toEqual({
+      dirty: ["rest"],
+      applying: ["active"],
+      done: ["success"],
+      "dirty-to-done": ["frame-000--0000ms", "frame-001--0300ms", "frame-002--0900ms"],
+    });
+
+    for (const caseId of CURRENT_APPLY_BAR_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("apply-bar");
+        expect(resolution.case.fixtureAdapterId).toBe("apply-bar");
+        expect(resolution.case.props).toEqual({ pendingCount: 3 });
+      }
+    }
+  });
+
+  it("holds unapproved apply-bar error and interaction states", () => {
+    for (const stateId of ["error", "focus", "hover", "pressed", "disabled"]) {
+      expect(resolveVisualDiffCase(`apply-bar--dirty--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `apply-bar--dirty--${stateId}`,
+        componentId: "apply-bar",
+        variantId: "dirty",
+        stateId,
+      });
+    }
+  });
+
+  it("resolves unapproved loading-state variants and states", () => {
+    expect(resolveVisualDiffCase("loading-state--unknown--active")).toEqual({
+      status: "unsupported",
+      caseId: "loading-state--unknown--active",
+      componentId: "loading-state",
+      variantId: "unknown",
+      stateId: "active",
+      reason: "variant",
+    });
+    for (const stateId of ["rest", "error", "empty", "hover", "focus"]) {
+      expect(resolveVisualDiffCase(`loading-state--settings--${stateId}`)).toEqual({
+        status: "unsupported",
+        caseId: `loading-state--settings--${stateId}`,
+        componentId: "loading-state",
+        variantId: "settings",
+        stateId,
+        reason: "state",
+      });
+    }
+  });
+
+  it("resolves unapproved empty-state states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "loading", "error", "reduced-motion"]) {
+      expect(resolveVisualDiffCase(`empty-state--settings--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `empty-state--settings--${stateId}`,
+        componentId: "empty-state",
+        variantId: "settings",
+        stateId,
+      });
+    }
+  });
+
+  it("resolves unapproved no-results states to missing authority", () => {
+    for (const stateId of ["hover", "focus", "pressed", "disabled", "loading", "error"]) {
+      expect(resolveVisualDiffCase(`no-results--default--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `no-results--default--${stateId}`,
+        componentId: "no-results",
+        variantId: "default",
+        stateId,
+      });
+    }
+  });
+
+  it("resolves unapproved stale-banner states to missing authority", () => {
+    expect(resolveVisualDiffCase("stale-banner--saved-results--hover")).toEqual({
+      status: "missing-authority",
+      caseId: "stale-banner--saved-results--hover",
+      componentId: "stale-banner",
+      variantId: "saved-results",
+      stateId: "hover",
+    });
+  });
+
+  it("registers the approved settings-editor states and production provenance", () => {
+    const editor = visualDiffComponentRegistry["settings-editor"];
+    expect(editor.fixtureAdapterId).toBe("settings-editor");
+    expect(editor.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsEditor");
+    expect(editor.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(editor.stateApplicability).toEqual({ vertical: ["saved", "unsaved"] });
+
+    for (const stateId of ["saved", "unsaved"]) {
+      expect(resolveVisualDiffCase(`settings-editor--vertical--${stateId}`).status).toBe("ready");
+    }
+    expect(resolveVisualDiffCase("settings-editor--vertical--loading")).toEqual({
+      status: "missing-authority",
+      caseId: "settings-editor--vertical--loading",
+      componentId: "settings-editor",
+      variantId: "vertical",
+      stateId: "loading",
+    });
+  });
+
+  it("registers only production-safe inline secret editor states", () => {
+    const editor = visualDiffComponentRegistry["inline-secret-editor"];
+    expect(editor.productionComponent).toBe("gateway/webui/src/components/settings/panes/secret-row.tsx#SecretRow");
+    expect(editor.stateApplicability).toEqual({ "access-key": ["editing", "read"] });
+    expect(editor.variants["access-key"].props).toEqual({ label: "Access key", hasKey: true });
+
+    for (const stateId of ["editing", "read"]) {
+      expect(resolveVisualDiffCase(`inline-secret-editor--access-key--${stateId}`).status).toBe("ready");
+    }
+    for (const stateId of ["saving", "disabled"]) {
+      expect(resolveVisualDiffCase(`inline-secret-editor--access-key--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `inline-secret-editor--access-key--${stateId}`,
+        componentId: "inline-secret-editor",
+        variantId: "access-key",
+        stateId,
+      });
+    }
+  });
+
+  it("registers the approved toast static and opening states on the production owner", () => {
+    const toast = visualDiffComponentRegistry.toast;
+    expect(toast.fixtureAdapterId).toBe("toast");
+    expect(toast.productionComponent).toBe("gateway/webui/src/components/common/toast.tsx#ToastHost");
+    expect(toast.authority).toBe("design/prototype/common-composites/handoff");
+    expect(toast.stateApplicability).toEqual({
+      saved: ["compact-visible", "desktop-visible"],
+      open: ["frame-000--0000ms", "frame-001--0062ms", "frame-002--0125ms", "frame-003--0188ms", "frame-004--0250ms"],
+    });
+    expect(toast.variants.saved.props).toEqual({
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    });
+
+    for (const caseId of [
+      "toast--saved--compact-visible",
+      "toast--saved--desktop-visible",
+      "toast--open--frame-000--0000ms",
+      "toast--open--frame-001--0062ms",
+      "toast--open--frame-002--0125ms",
+      "toast--open--frame-003--0188ms",
+      "toast--open--frame-004--0250ms",
+    ]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("toast");
+    }
+  });
+
+  it("keeps unapproved toast tones and states unresolved", () => {
+    expect(resolveVisualDiffCase("toast--error--visible")).toEqual({
+      status: "unsupported",
+      caseId: "toast--error--visible",
+      componentId: "toast",
+      variantId: "error",
+      stateId: "visible",
+      reason: "variant",
+    });
+    expect(resolveVisualDiffCase("toast--saved--dismissed")).toEqual({
+      status: "missing-authority",
+      caseId: "toast--saved--dismissed",
+      componentId: "toast",
+      variantId: "saved",
+      stateId: "dismissed",
+    });
+  });
+
+  it("registers the complete local-navigation state and transition matrix", () => {
+    const localNavigation = visualDiffComponentRegistry["local-navigation"];
+    expect(localNavigation.fixtureAdapterId).toBe("local-navigation");
+    expect(localNavigation.productionComponent).toBe(
+      "gateway/webui/src/components/settings/sidebar/sidebar-nav.tsx#LocalNavigation",
+    );
+    expect(localNavigation.authority).toBe("design/prototype/common-composites/handoff");
+    expect(localNavigation.stateApplicability).toEqual({
+      settings: ["account-current", "general-current", "privacy-current", "privacy-focus", "privacy-hover"],
+      "general-to-privacy": [
+        "frame-000--0000ms",
+        "frame-001--0062ms",
+        "frame-002--0125ms",
+        "frame-003--0188ms",
+        "frame-004--0250ms",
+      ],
+    });
+
+    for (const caseId of [
+      "local-navigation--settings--account-current",
+      "local-navigation--settings--general-current",
+      "local-navigation--settings--privacy-current",
+      "local-navigation--settings--privacy-focus",
+      "local-navigation--settings--privacy-hover",
+      "local-navigation--general-to-privacy--frame-000--0000ms",
+      "local-navigation--general-to-privacy--frame-001--0062ms",
+      "local-navigation--general-to-privacy--frame-002--0125ms",
+      "local-navigation--general-to-privacy--frame-003--0188ms",
+      "local-navigation--general-to-privacy--frame-004--0250ms",
+    ]) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") expect(resolution.case.fixtureAdapterId).toBe("local-navigation");
+    }
+  });
+
+  it("keeps undefined local-navigation states outside the fixture contract", () => {
+    for (const stateId of ["pressed", "disabled", "loading", "error", "compact"]) {
+      expect(resolveVisualDiffCase(`local-navigation--settings--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `local-navigation--settings--${stateId}`,
+        componentId: "local-navigation",
+        variantId: "settings",
+        stateId,
+      });
+    }
+  });
+
+  it("keeps every registered fixture case globally unique", () => {
+    const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
+      Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>
+        stateIds.map((stateId: string) => `${component.id}--${variantId}--${stateId}`),
+      ),
+    );
+    expect(new Set(caseIds).size).toBe(caseIds.length);
   });
 
   it("does not resolve inherited registry keys", () => {

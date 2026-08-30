@@ -12,9 +12,13 @@ const toolRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolRoot, "../..");
 const HANDOFF_SCALE = 2;
 const MOBILE_BREAKPOINT = 620;
+// The active loading handoff is a static frame from the source's 900ms
+// rotation. Freeze its measured handoff phase so the approved frame is
+// reproducible without changing the production animation.
+const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "range", "search-field", "sentient-identity", "text-area", "text-field", "toggle", "user-avatar"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "empty-state", "filter-bar", "inline-secret-editor", "loading-state", "local-navigation", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-editor", "settings-group", "text-area", "text-field", "toast", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",
@@ -29,6 +33,7 @@ const SENTIENT_IDENTITY_VARIANTS = new Set([
 
 function targetSelector(caseId) {
   if (caseId.startsWith("chip--")) return ".snt-chip";
+  if (caseId.startsWith("local-navigation--settings--privacy-")) return '.s-nav-i[title="Privacy"]';
   if (caseId.startsWith("range--")) return ".snt-range";
   if (caseId.startsWith("toggle--")) return ".snt-toggle";
   if (caseId.startsWith("segmented-control--")) return ".snt-segmented .snt-segment:nth-child(2)";
@@ -141,8 +146,17 @@ async function localFontCss() {
 
 function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
+  if (frameCaseId === "no-results--empty") return "no-results--default--empty";
+  if (frameCaseId === "filter-bar--default") return "filter-bar--default--rest";
+  const filterSelection = /^filter-bar--(ready|shared|offline)-selected$/.exec(frameCaseId);
+  if (filterSelection) return `filter-bar--${filterSelection[1]}--selected`;
+  if (frameCaseId === "filter-bar--sort-open") return "filter-bar--sort--open";
+  if (frameCaseId === "results-list--page-1") return "results-list--default--page-1";
+  if (frameCaseId === "results-list--page-1--compact") return "results-list--default--compact-page-1";
+  if (frameCaseId === "results-list--loading-more") return "results-list--default--loading-more";
+  if (frameCaseId === "results-list--appended") return "results-list--default--appended";
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|local-navigation--general-to-privacy|pin-entry--complete-to-success|apply-bar--dirty-to-done|toast--open)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
@@ -154,6 +168,10 @@ function captureCaseId(referencePath) {
 
 function isSentientIdentityCase(caseId) {
   return caseId.startsWith("sentient-identity--");
+}
+
+function isLoadingStateActiveCase(caseId) {
+  return caseId === "loading-state--settings--active";
 }
 
 function sentientIdentityVariant(caseId) {
@@ -176,6 +194,14 @@ function isSentientIdentityTransition(caseId) {
   return /^sentient-identity--(?:idle-to-thinking|thinking-to-responding|responding-to-idle)--/.test(caseId);
 }
 
+function isPinEntryTransition(caseId) {
+  return /^pin-entry--complete-to-success--frame-\d+--\d+ms$/.test(caseId);
+}
+
+function isApplyBarTransition(caseId) {
+  return /^apply-bar--dirty-to-done--frame-\d+--\d+ms$/.test(caseId);
+}
+
 function visualDiffTransitionTimeMs(caseId) {
   const checkboxMatch = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
   if (checkboxMatch) return Number(checkboxMatch[1]);
@@ -184,13 +210,27 @@ function visualDiffTransitionTimeMs(caseId) {
   const toggleMatch = /^toggle--off-to-on--frame-\d+--(\d+)ms$/.exec(caseId);
   if (toggleMatch) return Number(toggleMatch[1]);
   const segmentedMatch = /^segmented-control--comfortable-to-compact--frame-\d+--(\d+)ms$/.exec(caseId);
-  return segmentedMatch ? Number(segmentedMatch[1]) : undefined;
+  if (segmentedMatch) return Number(segmentedMatch[1]);
+  const disclosureMatch = /^disclosure--closed-to-open--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (disclosureMatch) return Number(disclosureMatch[1]);
+  const localNavigationMatch = /^local-navigation--general-to-privacy--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (localNavigationMatch) return Number(localNavigationMatch[1]);
+  const pinEntryMatch = /^pin-entry--complete-to-success--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (pinEntryMatch) return Number(pinEntryMatch[1]);
+  const applyBarMatch = /^apply-bar--dirty-to-done--frame-\d+--(\d+)ms$/.exec(caseId);
+  if (applyBarMatch) return Number(applyBarMatch[1]);
+  const toastMatch = /^toast--open--frame-\d+--(\d+)ms$/.exec(caseId);
+  return toastMatch ? Number(toastMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
   const separator = caseId.lastIndexOf("--");
   if (separator < 0) return undefined;
   const stateId = caseId.slice(separator + 2);
+  if (caseId.startsWith("local-navigation--settings--privacy-")) {
+    if (stateId.endsWith("-focus")) return "focus";
+    if (stateId.endsWith("-hover")) return "hover";
+  }
   return stateId.startsWith("compact-") ? stateId.slice("compact-".length) : stateId;
 }
 
@@ -198,9 +238,16 @@ async function applyState(page, caseId) {
   const target = page.locator(targetSelector(caseId));
   const state = visualDiffState(caseId);
   if (state === "hover") await target.hover();
+  if (state === "open" && caseId.startsWith("filter-bar--")) {
+    await page.locator(".snt-filter-bar__sort > .snt-menu-trigger").click();
+    await page.getByRole("listbox").waitFor();
+  }
   if (state === "focus") {
     if (caseId.startsWith("segmented-control--")) {
       await page.locator(".snt-segment").first().focus();
+      await page.keyboard.press("Tab");
+    } else if (caseId.startsWith("local-navigation--")) {
+      await page.keyboard.press("Tab");
       await page.keyboard.press("Tab");
     } else if (caseId.startsWith("checkbox--") || caseId.startsWith("chip--") || caseId.startsWith("range--") || caseId.startsWith("toggle--")) await page.keyboard.press("Tab");
     else await target.focus();
@@ -220,7 +267,7 @@ function captureFrame(caseId, referenceSize) {
   };
   const compact = caseId.startsWith("segmented-control--")
     ? caseId.endsWith("--compact-layout")
-    : caseId.includes("--compact-");
+    : caseId.includes("--compact-") || caseId.endsWith("--compact");
   const componentId = caseId.split("--", 1)[0];
   const fixedCanvas = FIXED_CANVAS_COMPONENTS.has(componentId);
   const state = visualDiffState(caseId);
@@ -373,6 +420,20 @@ async function resetSegmentedIndicator(page) {
   });
 }
 
+async function freezeLoadingState(page) {
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-async-state__spinner");
+    return target && target.getAnimations().length > 0;
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-async-state__spinner");
+    const animation = target?.getAnimations()[0];
+    if (!animation) throw new Error("Visual diff loading-state animation is not running");
+    animation.pause();
+    animation.currentTime = timeMs;
+  }, LOADING_ACTIVE_REFERENCE_PHASE_MS);
+}
+
 async function freezeSegmentedTransition(page, transitionTimeMs) {
   await resetSegmentedIndicator(page);
   if (transitionTimeMs === 0) return;
@@ -391,6 +452,64 @@ async function freezeSegmentedTransition(page, transitionTimeMs) {
     if (!target) throw new Error("Visual diff segmented-control target is not ready");
     const animations = target.getAnimations({ subtree: true });
     if (!animations.some((animation) => animation.effect?.pseudoElement === "::before")) throw new Error("Visual diff segmented-control transition is not running");
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
+async function freezeToastTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff toast transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  await page.waitForFunction(() => document.querySelector(".toast")?.getAnimations().length > 0);
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".toast");
+    const animation = target?.getAnimations()[0];
+    if (!animation) throw new Error("Visual diff toast transition is not running");
+    animation.pause();
+    animation.currentTime = timeMs;
+  }, transitionTimeMs);
+}
+
+async function freezeDisclosureTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff disclosure transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  if (transitionTimeMs === 0) return;
+  await page.waitForFunction(() => {
+    const target = document.querySelector(".snt-disclosure");
+    return target && target.getAnimations({ subtree: true }).length > 0;
+  });
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".snt-disclosure");
+    if (!target) throw new Error("Visual diff disclosure target is not ready");
+    const animations = target.getAnimations({ subtree: true });
+    if (!animations.length) throw new Error("Visual diff disclosure transition is not running");
+    for (const animation of animations) {
+      animation.pause();
+      animation.currentTime = timeMs;
+    }
+  }, transitionTimeMs);
+}
+
+async function freezeLocalNavigationTransition(page, transitionTimeMs) {
+  await page.evaluate(() => {
+    const transitionWindow = window;
+    if (!transitionWindow.__startVisualDiffTransition) throw new Error("Visual diff local-navigation transition is not ready");
+    transitionWindow.__startVisualDiffTransition();
+  });
+  await page.waitForFunction(() => document.querySelector('.s-nav-i[title="Privacy"]')?.getAttribute("aria-current") === "page");
+  await page.waitForFunction(() => document.querySelector(".s-nav-current")?.getAnimations().length > 0);
+  await page.evaluate((timeMs) => {
+    const target = document.querySelector(".s-nav-current");
+    const animations = target?.getAnimations() ?? [];
+    if (!animations.length) throw new Error("Visual diff local-navigation transition is not running");
     for (const animation of animations) {
       animation.pause();
       animation.currentTime = timeMs;
@@ -435,7 +554,8 @@ async function capture() {
       locale: "en-US",
       reducedMotion: identityCase
         ? caseId.endsWith("--reduced-motion") ? "reduce" : "no-preference"
-        : transitionTimeMs === undefined ? "reduce" : "no-preference",
+        : isLoadingStateActiveCase(caseId) ? "no-preference"
+          : transitionTimeMs === undefined ? "reduce" : "no-preference",
     });
     const page = await context.newPage();
     page.setDefaultTimeout(15_000);
@@ -464,8 +584,18 @@ async function capture() {
       }
       await captureSentientIdentityKeyframe(page, caseId, identityKeyframeTimeMs);
     } else if (transitionTimeMs === undefined) {
-      await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
-      await applyState(page, caseId);
+      if (isLoadingStateActiveCase(caseId)) {
+        await freezeLoadingState(page);
+      } else {
+        await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important}" });
+        await applyState(page, caseId);
+      }
+    } else if (isPinEntryTransition(caseId)) {
+      // The capture adapter drives each recording frame through the public
+      // keypad buttons during mount; its frame-specific state is already ready.
+    } else if (isApplyBarTransition(caseId)) {
+      // The capture adapter drives each approved frame through ApplyBar's
+      // public pending/dependency contract; its frame-specific state is ready.
     } else {
       await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
       if (caseId.startsWith("chip--unselected-to-selected--")) {
@@ -474,6 +604,12 @@ async function capture() {
         await freezeToggleTransition(page, transitionTimeMs);
       } else if (caseId.startsWith("segmented-control--comfortable-to-compact--")) {
         await freezeSegmentedTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("disclosure--closed-to-open--")) {
+        await freezeDisclosureTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("toast--open--")) {
+        await freezeToastTransition(page, transitionTimeMs);
+      } else if (caseId.startsWith("local-navigation--general-to-privacy--")) {
+        await freezeLocalNavigationTransition(page, transitionTimeMs);
       } else {
         await page.evaluate(() => {
           const transitionWindow = window;
@@ -487,7 +623,7 @@ async function capture() {
     const clip = await chipTransitionClip(page, frame);
     await page.screenshot({
       path: input.outputPath,
-      animations: transitionTimeMs === undefined ? "disabled" : "allow",
+      animations: transitionTimeMs === undefined && !isLoadingStateActiveCase(caseId) ? "disabled" : "allow",
       caret: "hide",
       omitBackground: true,
       scale: "device",

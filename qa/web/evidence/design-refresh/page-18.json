@@ -35,8 +35,8 @@
       {
         "inventoryId": "web.history.no-results",
         "overflowPx": 0,
-        "minimumTargetPx": null,
-        "focusableCount": 0
+        "minimumTargetPx": 40,
+        "focusableCount": 1
       }
     ],
     "web-narrow-390x844": [
@@ -49,8 +49,8 @@
       {
         "inventoryId": "web.history.no-results",
         "overflowPx": 0,
-        "minimumTargetPx": null,
-        "focusableCount": 0
+        "minimumTargetPx": 44,
+        "focusableCount": 1
       }
     ],
     "web-zoom-200": [
@@ -63,8 +63,8 @@
       {
         "inventoryId": "web.history.no-results",
         "overflowPx": 0,
-        "minimumTargetPx": null,
-        "focusableCount": 0
+        "minimumTargetPx": 40,
+        "focusableCount": 1
       }
     ],
     "web-reduced-motion": [
@@ -77,8 +77,8 @@
       {
         "inventoryId": "web.history.no-results",
         "overflowPx": 0,
-        "minimumTargetPx": null,
-        "focusableCount": 0
+        "minimumTargetPx": 40,
+        "focusableCount": 1
       }
     ]
   },
@@ -94,8 +94,8 @@
       "inventoryId": "web.history.no-results",
       "configuration": "web-desktop-1280x900",
       "overflow": 0,
-      "minimumTarget": null,
-      "focusableCount": 0
+      "minimumTarget": 40,
+      "focusableCount": 1
     },
     {
       "inventoryId": "web.history.empty",
@@ -108,8 +108,8 @@
       "inventoryId": "web.history.no-results",
       "configuration": "web-narrow-390x844",
       "overflow": 0,
-      "minimumTarget": null,
-      "focusableCount": 0
+      "minimumTarget": 44,
+      "focusableCount": 1
     },
     {
       "inventoryId": "web.history.empty",
@@ -122,8 +122,8 @@
       "inventoryId": "web.history.no-results",
       "configuration": "web-zoom-200",
       "overflow": 0,
-      "minimumTarget": null,
-      "focusableCount": 0
+      "minimumTarget": 40,
+      "focusableCount": 1
     },
     {
       "inventoryId": "web.history.empty",
@@ -136,8 +136,8 @@
       "inventoryId": "web.history.no-results",
       "configuration": "web-reduced-motion",
       "overflow": 0,
-      "minimumTarget": null,
-      "focusableCount": 0
+      "minimumTarget": 40,
+      "focusableCount": 1
     }
   ]
 }

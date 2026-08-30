@@ -521,16 +521,17 @@ struct QAFoundationCatalog: View {
 
             QACatalogSpecimen("Disclosure, menu, and selectable card", contract: "native interaction surfaces") {
                 VStack(spacing: Space.md) {
-                    DesignDisclosureButton(
-                        isExpanded: disclosureExpanded,
-                        accessibilityLabel: "Advanced options",
-                        accessibilityId: "qa-disclosure",
-                        action: { disclosureExpanded.toggle() }
-                    ) {
-                        Text("Advanced options")
-                            .font(Typo.ui(TypeScale.base, .medium))
-                    }
-                    if disclosureExpanded {
+                    DesignDisclosureGroup(isExpanded: disclosureExpanded) {
+                        DesignDisclosureButton(
+                            isExpanded: disclosureExpanded,
+                            accessibilityLabel: "Advanced options",
+                            accessibilityId: "qa-disclosure",
+                            action: { disclosureExpanded.toggle() }
+                        ) {
+                            Text("Advanced options")
+                                .font(Typo.ui(TypeScale.base, .medium))
+                        }
+                    } content: {
                         Text("Expanded content stays in the same native layout.")
                             .font(Typo.ui(TypeScale.sm))
                             .foregroundStyle(DuskColors.ink2)

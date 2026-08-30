@@ -4,8 +4,8 @@
 // canonical template into the draft, not saved until Save), and a SLOW save
 // (PUT soul → apply-with-restart) surfaced by the applying banner.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -40,23 +40,25 @@ struct SystemPromptScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                saveBanner
                 soulCard
             }
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-system-prompt-discard",
+            applyAccessibilityId: "settings-system-prompt-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
+        // hide it + show the custom back that shares the apply bar's discard confirm
         // (gesture is intentionally disabled only while a draft is unsaved).
         .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
             if vm.isDirty {
                 ToolbarItem(placement: .navigation) {
                     SoulBackButton(accessibilityId: "settings-system-prompt-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-system-prompt-save") {
-                        Task { await vm.save() }
-                    }
                 }
             }
         }
@@ -73,10 +75,6 @@ struct SystemPromptScreen: View {
         }
     }
 
-    private var saveBanner: some View {
-        DesignApplyFeedback(state: applyState)
-    }
-
     private var applyState: DesignApplyState {
         switch vm.save {
         case .idle: .idle
@@ -89,7 +87,11 @@ struct SystemPromptScreen: View {
     }
 
     private var soulCard: some View {
-        DesignCard(title: "System instructions", detail: "Markdown supported. The assistant restarts after saving.") {
+        DesignSettingsEditor(
+            title: "System instructions",
+            detail: "Markdown supported. The assistant restarts after saving.",
+            state: vm.isDirty ? .unsaved : .saved
+        ) {
             VStack(alignment: .leading, spacing: Space.md) {
                 VStack(alignment: .leading, spacing: Space.sm) {
                     DesignSegmentedPicker(
@@ -121,7 +123,6 @@ struct SystemPromptScreen: View {
                         .accessibilityIdentifier("settings-system-prompt-preview")
                 }
             }
-            .padding(.vertical, Space.sm)
         }
     }
 
@@ -133,12 +134,15 @@ struct SystemPromptScreen: View {
 #Preview("edit") {
     NavigationStack {
         SettingsPageScaffold(title: "System Prompt", screenId: "settings-system-prompt-screen") {
-            DesignCard(title: "System instructions", detail: "Markdown supported. The assistant restarts after saving.") {
+            DesignSettingsEditor(
+                title: "System instructions",
+                detail: "Markdown supported. The assistant restarts after saving.",
+                state: .saved
+            ) {
                 DesignMultilineEditor(
                     text: .constant("You are Sentient, a warm and capable family assistant…"),
                     accessibilityId: "settings-system-prompt-editor"
                 )
-                .padding(.vertical, Space.sm)
             }
         }
     }

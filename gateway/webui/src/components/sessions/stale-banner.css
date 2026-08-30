@@ -1,0 +1,43 @@
+/* Stale content preserves the cached result while its refresh recovers. */
+.snt-stale-banner {
+  width: 100%;
+}
+
+.snt-stale-banner__content {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid color-mix(in oklab, var(--color-amber) 40%, var(--color-line-soft));
+  background: color-mix(in oklab, var(--color-amber) 8%, var(--color-bg-elev));
+  transition: background-color var(--motion-state), border-color var(--motion-state);
+}
+
+.snt-stale-banner[data-state="checking"] .snt-stale-banner__content {
+  border-top-color: color-mix(in oklab, var(--color-accent) 45%, var(--color-line-soft));
+  background: color-mix(in oklab, var(--color-accent-50) 24%, var(--color-bg-elev));
+}
+
+.snt-stale-banner__content > span {
+  min-width: 0;
+}
+
+.snt-stale-banner strong {
+  display: block;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.snt-stale-banner small {
+  display: block;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.snt-stale-banner__retry {
+  flex: 0 0 auto;
+}

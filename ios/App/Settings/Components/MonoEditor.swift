@@ -14,7 +14,8 @@ struct MonoEditor: View {
             text: binding,
             placeholder: placeholder,
             maxLength: maxLength,
-            accessibilityId: accessibilityId
+            accessibilityId: accessibilityId,
+            usesMonospacedText: true
         )
     }
 

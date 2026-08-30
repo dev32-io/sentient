@@ -19,11 +19,18 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
 
   if (pending.length === 0 && state.phase === "idle") return null;
 
-  // Always "Apply" — there is no restart to distinguish; a `slow` op's
-  // extra profile rewrite is a background disk write (measured 8-12ms),
+  // Always "Apply changes" — there is no restart to distinguish; a `slow`
+  // op's extra profile rewrite is a background disk write (measured 8-12ms),
   // invisible to the user.
-  const label = "Apply";
+  const label = "Apply changes";
   const isBusy = state.phase === "saving" || state.phase === "restarting";
+  const visualState = state.phase === "ready"
+    ? "done"
+    : isBusy
+      ? "applying"
+      : state.phase === "failed" || state.phase === "already-applying"
+        ? "error"
+        : "dirty";
 
   const handleApply = async () => {
     log.info("apply.start", { count: pending.length, hasSlow: pending.some((p) => p.kind === "slow") });
@@ -39,24 +46,31 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
   };
 
   return (
-    <div class="apply-bar" role="status" aria-live="polite">
-      <div class="ab-text">
-        <span class="ab-count">
-          {pending.length} pending {pending.length === 1 ? "change" : "changes"}
-        </span>
-        <span class="ab-sub">{subtextFor(state)}</span>
+    <div class="apply-bar" data-state={visualState} role="status" aria-live="polite">
+      <div class="ab-copy">
+        <i class="ab-marker" aria-hidden="true" />
+        <div class="ab-text">
+          <span class="ab-count">
+            {state.phase === "ready"
+              ? "Changes applied"
+              : `${pending.length} unsaved ${pending.length === 1 ? "change" : "changes"}`}
+          </span>
+          <span class="ab-sub">{subtextFor(state)}</span>
+        </div>
       </div>
-      <ActionButton variant="quiet" onClick={onDiscard} disabled={isBusy}>
-        Discard
-      </ActionButton>
-      <ActionButton variant="primary" onClick={() => void handleApply()} disabled={isBusy} loading={isBusy}>
-        {state.phase === "saving" && <>Saving…</>}
-        {state.phase === "restarting" && <>Applying…</>}
-        {state.phase === "ready" && <>Done</>}
-        {state.phase === "already-applying" && <>Retry</>}
-        {state.phase === "failed" && <>Retry</>}
-        {state.phase === "idle" && label}
-      </ActionButton>
+      <div class="ab-actions">
+        <ActionButton variant="quiet" onClick={onDiscard} disabled={isBusy}>
+          Discard
+        </ActionButton>
+        <ActionButton variant="primary" onClick={() => void handleApply()} disabled={isBusy} loading={isBusy}>
+          {state.phase === "saving" && <>Saving…</>}
+          {state.phase === "restarting" && <>Applying…</>}
+          {state.phase === "ready" && <>Applied</>}
+          {state.phase === "already-applying" && <>Retry</>}
+          {state.phase === "failed" && <>Retry</>}
+          {state.phase === "idle" && label}
+        </ActionButton>
+      </div>
     </div>
   );
 }
@@ -68,6 +82,6 @@ export function ApplyBar({ pending, deps, onApplied, onDiscard }: ApplyBarProps)
 function subtextFor(state: ApplyBarState): string {
   if (state.phase === "already-applying") return "Another apply is already in progress";
   if (state.phase === "failed") return state.errorMessage;
-  if (state.phase === "ready") return "Changes applied";
-  return "Changes will apply instantly";
+  if (state.phase === "ready") return "The household preference is up to date.";
+  return "Review before applying to the household.";
 }

@@ -1,0 +1,40 @@
+/* Validated field feedback stays local to the composite; the native field face is shared. */
+.snt-validated-field__status,
+.snt-validated-field__counter {
+  min-height: 18px;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm) !important;
+}
+.snt-validated-field__status-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.snt-validated-field__status--valid { color: var(--color-sage); }
+.snt-validated-field__status--error { color: color-mix(in oklab, var(--color-stop) 70%, var(--color-ink)); }
+.snt-validated-field[data-validation="error"] .snt-input,
+.snt-validated-field[data-validation="error"] .snt-textarea {
+  border-color: color-mix(in oklab, var(--color-stop) 70%, var(--color-line));
+  box-shadow: var(--well-shadow), 0 0 0 3px color-mix(in oklab, var(--color-stop) 14%, transparent);
+}
+.snt-validated-field__counter { justify-content: flex-end; }
+
+@media (prefers-reduced-motion: reduce) {
+  .snt-validated-field .snt-input,
+  .snt-validated-field .snt-textarea,
+  .snt-validated-field__status,
+  .snt-validated-field__counter { transition: none; }
+}
+
+@media (prefers-contrast: more) {
+  .snt-validated-field[data-validation="error"] .snt-input,
+  .snt-validated-field[data-validation="error"] .snt-textarea { border-color: var(--color-ink-3); }
+}

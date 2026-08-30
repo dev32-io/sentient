@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { useServiceVersions, type ServiceVersions } from "../../../hooks/use-service-versions.ts";
 import { useSystemReadiness } from "../../../hooks/use-system-readiness.ts";
-import { ActionButton, AsyncState, Notice, PaneChrome, SettingsCard, SettingsRow } from "../../common/index.ts";
+import { ActionButton, AsyncState, Notice, PaneChrome, SettingsCard, SettingsGroup, SettingsRow } from "../../common/index.ts";
 
 export interface DiagnosticsPaneProps {
   token: string | null;
@@ -41,12 +41,14 @@ export function DiagnosticsPane({ token }: DiagnosticsPaneProps): JSX.Element {
         )}
       </SettingsCard>
 
-      <SettingsCard title="Component versions" subtitle="Sanitized build information returned by the gateway.">
-        {COMPONENTS.map((component) => (
-          <SettingsRow key={component.key} label={component.label}>
-            <code data-testid={`diagnostics-version-${component.key}`}>{versionLabel(versions?.[component.key])}</code>
-          </SettingsRow>
-        ))}
+      <SettingsCard title="Component versions" subtitle="Sanitized build information returned by the gateway." padded={false}>
+        <SettingsGroup>
+          {COMPONENTS.map((component) => (
+            <SettingsRow key={component.key} label={component.label}>
+              <code data-testid={`diagnostics-version-${component.key}`}>{versionLabel(versions?.[component.key])}</code>
+            </SettingsRow>
+          ))}
+        </SettingsGroup>
       </SettingsCard>
 
       {readiness === false && (

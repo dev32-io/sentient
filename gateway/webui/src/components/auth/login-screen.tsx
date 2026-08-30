@@ -105,7 +105,7 @@ export function LoginScreen({ api, auth, notice }: LoginScreenProps): JSX.Elemen
         beforeCommit: async () => {
           await waitForMinimum(checkingStartedAt, PIN_CHECKING_MIN_MS);
           if (pinAttemptRef.current !== attempt) return;
-          setPinSuccess("PIN accepted.");
+          setPinSuccess("Pin accepted.");
           await waitForMinimum(Date.now(), PIN_SUCCESS_TRANSITION_MS);
         },
       },

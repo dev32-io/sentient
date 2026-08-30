@@ -37,6 +37,8 @@ final class IdentityStartupTests: XCTestCase {
         XCTAssertEqual(SentientIdentityState.allCases, [.idle, .thinking, .responding])
         XCTAssertEqual(SentientIdentityState.allCases.map(\.triggerName),
                        ["toIdle", "toThinking", "toResponding"])
+        XCTAssertEqual(SentientIdentityState.allCases.map(\.statusLabel),
+                       ["Sentient is idle", "Sentient is thinking", "Sentient is responding"])
 
         let driver = RecordingIdentityDriver()
         let controller = SentientIdentityStateController(state: .idle, driver: driver)
@@ -45,8 +47,22 @@ final class IdentityStartupTests: XCTestCase {
         controller.setReducedMotion(true)
 
         XCTAssertEqual(controller.state, .responding)
-        XCTAssertEqual(driver.transitions, [.idle, .thinking, .responding])
+        XCTAssertEqual(driver.transitions, [.idle, .thinking, .responding, .responding])
         XCTAssertEqual(driver.reducedMotion, [false, true])
+    }
+
+    func testReducedMotionStartsWithTheRequestedStaticVariant() {
+        let driver = RecordingIdentityDriver()
+        let controller = SentientIdentityStateController(
+            state: .thinking,
+            reducedMotion: true,
+            driver: driver
+        )
+
+        XCTAssertEqual(controller.state, .thinking)
+        XCTAssertTrue(controller.reducedMotion)
+        XCTAssertEqual(driver.reducedMotion, [true])
+        XCTAssertEqual(driver.transitions, [.thinking])
     }
 
     func testCaptureDoesNotDriveIdentityAndAssistantActivityDoes() {

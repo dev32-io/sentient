@@ -39,6 +39,7 @@ describe("Soul settings panes", () => {
     await waitFor(() => expect(setDraft).toHaveBeenCalledWith("memory", "saved"));
     rerender(<MemoryPane api={api({})} token="token" drafts={{ memory: "changed", user: null }} originals={{ memory: doc, user: null }} setOriginal={vi.fn()} setDraft={setDraft} memoryToggles={profile().memory} onDraftMemoryToggles={onDraftMemoryToggles} />);
     expect(screen.getByLabelText("Edit MEMORY.md").getAttribute("data-dirty")).toBe("true");
+    expect(screen.getByRole("status", { name: "Unsaved" })).not.toBeNull();
     fireEvent.click(screen.getByRole("switch", { name: "Memory sparking" }));
     expect(onDraftMemoryToggles).toHaveBeenCalledWith(expect.objectContaining({ spark: false }));
   });
@@ -82,6 +83,7 @@ describe("Soul settings panes", () => {
     await waitFor(() => expect(setDraft).toHaveBeenCalledWith("# Saved"));
     rerender(<SystemPromptPane api={api({ getSoulDefault })} token="token" onRestoreDefault={vi.fn()} draft="# Changed" original={soul} setOriginal={vi.fn()} setDraft={setDraft} />);
     expect(screen.getByLabelText("System prompt").getAttribute("data-dirty")).toBe("true");
+    expect(screen.getByRole("status", { name: "Unsaved" })).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(screen.getByLabelText("System prompt preview")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Restore default" }));

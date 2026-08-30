@@ -56,22 +56,6 @@ struct SoulBackButton: View {
     }
 }
 
-/// Legacy toolbar save button; the toolbar primitive owns its enabled state.
-struct SoulSaveButton: View {
-    let disabled: Bool
-    let accessibilityId: String
-    let action: () -> Void
-
-    var body: some View {
-        DesignToolbarButton(
-            title: "Save",
-            isEnabled: !disabled,
-            accessibilityId: accessibilityId,
-            action: action
-        )
-    }
-}
-
 #Preview {
     VStack(spacing: Space.lg) {
         SoulLoadingRow()

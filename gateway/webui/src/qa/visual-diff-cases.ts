@@ -91,12 +91,35 @@ export interface SearchFieldVariantProps {
 
 type SearchFieldVariantDefinition = VisualDiffVariantDefinition<SearchFieldVariantProps>;
 
+export interface FilterBarVariantProps {
+  readonly selected: "all" | "ready" | "shared" | "offline";
+}
+
+type FilterBarVariantDefinition = VisualDiffVariantDefinition<FilterBarVariantProps>;
+
 export interface TextAreaVariantProps {
   readonly label: string;
   readonly value: string;
 }
 
 type TextAreaVariantDefinition = VisualDiffVariantDefinition<TextAreaVariantProps>;
+
+export interface ValidatedFieldVariantProps {
+  readonly label: string;
+  readonly value: string;
+  readonly status?: {
+    readonly tone: "valid" | "error";
+    readonly message: string;
+  };
+  readonly multiline?: boolean;
+  readonly maxLength?: number;
+  readonly counter?: {
+    readonly current: number;
+    readonly max: number;
+  };
+}
+
+type ValidatedFieldVariantDefinition = VisualDiffVariantDefinition<ValidatedFieldVariantProps>;
 
 export interface RangeVariantProps {
   readonly label: string;
@@ -131,6 +154,31 @@ export interface ToggleVariantProps {
 
 type ToggleVariantDefinition = VisualDiffVariantDefinition<ToggleVariantProps>;
 
+export interface SettingRowVariantProps {
+  readonly control: "toggle" | "segmented" | "select" | "range";
+  readonly label: string;
+  readonly hint: string;
+}
+
+type SettingRowVariantDefinition = VisualDiffVariantDefinition<SettingRowVariantProps>;
+
+export interface SettingsGroupVariantProps {
+  readonly label: "General";
+}
+
+type SettingsGroupVariantDefinition = VisualDiffVariantDefinition<SettingsGroupVariantProps>;
+
+export interface SettingsEditorVariantProps {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly fieldLabel: string;
+  readonly fieldValue: string;
+  readonly textAreaLabel: string;
+  readonly textAreaValue: string;
+}
+
+type SettingsEditorVariantDefinition = VisualDiffVariantDefinition<SettingsEditorVariantProps>;
+
 export interface SegmentedControlOption {
   readonly value: string;
   readonly label: string;
@@ -153,12 +201,81 @@ export interface UserAvatarVariantProps {
 
 type UserAvatarVariantDefinition = VisualDiffVariantDefinition<UserAvatarVariantProps>;
 
+export interface NoticeVariantProps {
+  readonly tone: "info" | "warning" | "error";
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel?: string;
+}
+
+type NoticeVariantDefinition = VisualDiffVariantDefinition<NoticeVariantProps>;
+
+export interface ToastVariantProps {
+  readonly message: string;
+  readonly detail: string;
+  readonly tone: "success";
+}
+
+type ToastVariantDefinition = VisualDiffVariantDefinition<ToastVariantProps>;
+
+export interface DisclosureVariantProps {
+  readonly title: string;
+  readonly description: string;
+  readonly body: "toggle" | "paragraph";
+}
+
+type DisclosureVariantDefinition = VisualDiffVariantDefinition<DisclosureVariantProps>;
+
 export interface SentientIdentityVariantProps {
   readonly state: SentientIdentityState;
   readonly transitionTo?: SentientIdentityState;
 }
 
 type SentientIdentityVariantDefinition = VisualDiffVariantDefinition<SentientIdentityVariantProps>;
+
+export interface ResultsListVariantProps {
+  readonly countLabel: string;
+  readonly summary: string;
+  readonly clearLabel: string;
+  readonly pageLabel: string;
+  readonly previousLabel: string;
+  readonly loadMoreLabel: string;
+  readonly loadingLabel: string;
+  readonly items: readonly {
+    readonly id: string;
+    readonly leading: string;
+    readonly title: string;
+    readonly detail: string;
+    readonly tone?: "terra" | "sage";
+  }[];
+}
+
+type ResultsListVariantDefinition = VisualDiffVariantDefinition<ResultsListVariantProps>;
+
+export interface NoResultsStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel: string;
+}
+
+type NoResultsStateVariantDefinition = VisualDiffVariantDefinition<NoResultsStateVariantProps>;
+
+export interface InlineSecretEditorVariantProps {
+  readonly label: string;
+  readonly hasKey: boolean;
+}
+
+type InlineSecretEditorVariantDefinition = VisualDiffVariantDefinition<InlineSecretEditorVariantProps>;
+
+const INLINE_SECRET_EDITOR_VARIANTS = {
+  "access-key": { props: { label: "Access key", hasKey: true } },
+} as const satisfies Readonly<Record<string, InlineSecretEditorVariantDefinition>>;
+
+export interface LocalNavigationVariantProps {
+  readonly initialActive: "general" | "privacy" | "account";
+}
+
+type LocalNavigationVariantDefinition = VisualDiffVariantDefinition<LocalNavigationVariantProps>;
 
 const USER_AVATAR_VARIANTS = {
   "terra-28": { props: { initial: "M", name: "Maya Chen", size: "sm" } },
@@ -169,6 +286,73 @@ const USER_AVATAR_VARIANTS = {
   "clay-44": { props: { initial: "R", name: "Riley Chen", tint: "clay", size: "lg" } },
   "fallback-44": { props: { name: "Unknown user", size: "lg" } },
 } as const satisfies Readonly<Record<string, UserAvatarVariantDefinition>>;
+
+const TOAST_OPEN_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const TOAST_VARIANTS = {
+  saved: {
+    props: {
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    },
+  },
+  open: {
+    props: {
+      message: "Changes saved",
+      detail: "Your preference is up to date.",
+      tone: "success",
+    },
+  },
+} as const satisfies Readonly<Record<string, ToastVariantDefinition>>;
+
+const NOTICE_VARIANTS = {
+  info: {
+    props: {
+      tone: "info",
+      title: "Changes apply to this device",
+      message: "Other household devices keep their current preference.",
+    },
+  },
+  warning: {
+    props: {
+      tone: "warning",
+      title: "Permission required",
+      message: "Review the requested scope before continuing.",
+      actionLabel: "Review",
+    },
+  },
+  error: {
+    props: {
+      tone: "error",
+      title: "Couldn’t save changes",
+      message: "Your edits are still here. Try again when the connection returns.",
+      actionLabel: "Retry",
+    },
+  },
+} as const satisfies Readonly<Record<string, NoticeVariantDefinition>>;
+
+export interface MediaActionCardVariantProps {
+  readonly initial: string;
+  readonly name: string;
+  readonly tint: AvatarTint;
+  readonly description: string;
+}
+
+type MediaActionCardVariantDefinition = VisualDiffVariantDefinition<MediaActionCardVariantProps>;
+
+// Only user variants are registered: icon/image media loading, crop, and
+// failure behavior have no production Web owner or defined contract yet.
+const MEDIA_ACTION_CARD_VARIANTS = {
+  "user-sage": { props: { initial: "A", name: "Alex", tint: "sage", description: "Household member" } },
+  "user-terra": { props: { initial: "M", name: "Maya", tint: "terra", description: "Household owner" } },
+} as const satisfies Readonly<Record<string, MediaActionCardVariantDefinition>>;
 
 const TOGGLE_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -183,6 +367,86 @@ const TOGGLE_VARIANTS = {
   on: { props: { label: "Automatic updates", checked: true } },
   "off-to-on": { props: { label: "Automatic updates", checked: false } },
 } as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
+const SETTINGS_GROUP_VARIANTS = {
+  general: { props: { label: "General" } },
+} as const satisfies Readonly<Record<string, SettingsGroupVariantDefinition>>;
+
+const SETTINGS_EDITOR_VARIANTS = {
+  vertical: {
+    props: {
+      title: "Vertical editor row",
+      subtitle: "Use when the field needs the full measure.",
+      fieldLabel: "Household label",
+      fieldValue: "Home",
+      textAreaLabel: "Description",
+      textAreaValue: "A short explanation that helps people understand the effect of this setting.",
+    },
+  },
+} as const satisfies Readonly<Record<string, SettingsEditorVariantDefinition>>;
+
+const SETTING_ROW_VARIANTS = {
+  toggle: {
+    props: {
+      control: "toggle",
+      label: "Automatic updates",
+      hint: "Install trusted updates when the household is idle.",
+    },
+  },
+  segmented: {
+    props: {
+      control: "segmented",
+      label: "Detail level",
+      hint: "Choose how much supporting information appears.",
+    },
+  },
+  select: {
+    props: {
+      control: "select",
+      label: "Language",
+      hint: "Used for interface labels and spoken responses.",
+    },
+  },
+  range: {
+    props: {
+      control: "range",
+      label: "Interface scale",
+      hint: "Preview changes before applying them.",
+    },
+  },
+} as const satisfies Readonly<Record<string, SettingRowVariantDefinition>>;
+
+const DISCLOSURE_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const DISCLOSURE_VARIANTS = {
+  "advanced-options": {
+    props: {
+      title: "Advanced options",
+      description: "Additional controls for experienced users",
+      body: "toggle",
+    },
+  },
+  "data-storage": {
+    props: {
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    },
+  },
+  "closed-to-open": {
+    props: {
+      title: "Data and storage",
+      description: "Retention and local cache",
+      body: "paragraph",
+    },
+  },
+} as const satisfies Readonly<Record<string, DisclosureVariantDefinition>>;
 
 const SEGMENTED_TRANSITION_FRAMES = [
   "frame-000--0000ms",
@@ -283,6 +547,32 @@ const TEXT_AREA_VARIANTS = {
   filled: { props: { label: "Description", value: "Add supporting details." } },
 } as const satisfies Readonly<Record<string, TextAreaVariantDefinition>>;
 
+const VALIDATED_FIELD_VARIANTS = {
+  confirmation: {
+    props: {
+      label: "Confirmation",
+      value: "warm emb",
+      status: { tone: "error", message: "The values do not match." },
+    },
+  },
+  "recovery-phrase": {
+    props: {
+      label: "Recovery phrase",
+      value: "warm ember",
+      status: { tone: "valid", message: "Available" },
+    },
+  },
+  "supporting-note": {
+    props: {
+      label: "Supporting note",
+      value: "A concise note that helps others understand this choice.",
+      multiline: true,
+      maxLength: 160,
+      counter: { current: 58, max: 160 },
+    },
+  },
+} as const satisfies Readonly<Record<string, ValidatedFieldVariantDefinition>>;
+
 const RANGE_VARIANTS = {
   "62": { props: { label: "Interface scale", value: 62, min: 0, max: 100, step: 1 } },
 } as const satisfies Readonly<Record<string, RangeVariantDefinition>>;
@@ -323,6 +613,45 @@ const SENTIENT_IDENTITY_VARIANTS = {
   "responding-loop": { props: { state: "responding" } },
 } as const satisfies Readonly<Record<string, SentientIdentityVariantDefinition>>;
 
+export interface PaneHeaderVariantProps {
+  readonly eyebrow: string;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly actionLabel: string;
+}
+
+type PaneHeaderVariantDefinition = VisualDiffVariantDefinition<PaneHeaderVariantProps>;
+
+const PANE_HEADER_VARIANTS = {
+  preferences: {
+    props: {
+      eyebrow: "Household",
+      title: "Preferences",
+      subtitle: "Control shared defaults and personal behavior.",
+      actionLabel: "Save changes",
+    },
+  },
+} as const satisfies Readonly<Record<string, PaneHeaderVariantDefinition>>;
+
+export interface PinEntryVariantProps {
+  readonly length: 4;
+}
+
+type PinEntryVariantDefinition = VisualDiffVariantDefinition<PinEntryVariantProps>;
+
+const PIN_ENTRY_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0180ms",
+  "frame-002--0360ms",
+  "frame-003--0700ms",
+  "frame-004--1060ms",
+] as const;
+
+const PIN_ENTRY_VARIANTS = {
+  "4-digit": { props: { length: 4 } },
+  "complete-to-success": { props: { length: 4 } },
+} as const satisfies Readonly<Record<string, PinEntryVariantDefinition>>;
+
 export interface PlateVariantProps {
   readonly variant: "default";
 }
@@ -332,6 +661,118 @@ type PlateVariantDefinition = VisualDiffVariantDefinition<PlateVariantProps>;
 const PLATE_VARIANTS = {
   default: { props: { variant: "default" } },
 } as const satisfies Readonly<Record<string, PlateVariantDefinition>>;
+
+export interface LoadingStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+}
+
+type LoadingStateVariantDefinition = VisualDiffVariantDefinition<LoadingStateVariantProps>;
+
+const LOADING_STATE_VARIANTS = {
+  settings: { props: { title: "Loading", message: "Fetching current settings…" } },
+} as const satisfies Readonly<Record<string, LoadingStateVariantDefinition>>;
+
+const RESULTS_LIST_VARIANTS = {
+  default: {
+    props: {
+      countLabel: "24 results",
+      summary: "Filtered by ready and shared",
+      clearLabel: "Clear filters",
+      pageLabel: "Page 1 of 8",
+      previousLabel: "Previous",
+      loadMoreLabel: "Load more",
+      loadingLabel: "Loading…",
+      items: [
+        { id: "household", leading: "A", title: "Household profile", detail: "Ready · Used today" },
+        { id: "quiet", leading: "B", title: "Quiet profile", detail: "Shared · Used yesterday", tone: "sage" },
+        { id: "travel", leading: "C", title: "Travel profile", detail: "Offline · Updated last week" },
+      ],
+    },
+  },
+} as const satisfies Readonly<Record<string, ResultsListVariantDefinition>>;
+
+export interface EmptyStateVariantProps {
+  readonly title: string;
+  readonly message: string;
+  readonly actionLabel: string;
+}
+
+type EmptyStateVariantDefinition = VisualDiffVariantDefinition<EmptyStateVariantProps>;
+
+const EMPTY_STATE_VARIANTS = {
+  settings: {
+    props: {
+      title: "Nothing here yet",
+      message: "Add an item when you’re ready.",
+      actionLabel: "Add item",
+    },
+  },
+} as const satisfies Readonly<Record<string, EmptyStateVariantDefinition>>;
+
+const NO_RESULTS_VARIANTS = {
+  default: {
+    props: {
+      title: "No matching results",
+      message: "Try a broader term or clear one of the filters.",
+      actionLabel: "Clear filters",
+    },
+  },
+} as const satisfies Readonly<Record<string, NoResultsStateVariantDefinition>>;
+
+const LOCAL_NAVIGATION_TRANSITION_FRAMES = [
+  "frame-000--0000ms",
+  "frame-001--0062ms",
+  "frame-002--0125ms",
+  "frame-003--0188ms",
+  "frame-004--0250ms",
+] as const;
+
+const LOCAL_NAVIGATION_VARIANTS = {
+  settings: { props: { initialActive: "general" } },
+  "general-to-privacy": { props: { initialActive: "general" } },
+} as const satisfies Readonly<Record<string, LocalNavigationVariantDefinition>>;
+
+export interface StaleBannerVariantProps {
+  readonly title: string;
+  readonly detail: string;
+  readonly actionLabel: string;
+}
+
+type StaleBannerVariantDefinition = VisualDiffVariantDefinition<StaleBannerVariantProps>;
+
+export interface ApplyBarVariantProps {
+  readonly pendingCount: number;
+}
+
+type ApplyBarVariantDefinition = VisualDiffVariantDefinition<ApplyBarVariantProps>;
+
+const APPLY_BAR_TRANSITION_FRAMES = ["frame-000--0000ms", "frame-001--0300ms", "frame-002--0900ms"] as const;
+
+const APPLY_BAR_VARIANTS = {
+  dirty: { props: { pendingCount: 3 } },
+  applying: { props: { pendingCount: 3 } },
+  done: { props: { pendingCount: 3 } },
+  "dirty-to-done": { props: { pendingCount: 3 } },
+} as const satisfies Readonly<Record<string, ApplyBarVariantDefinition>>;
+
+const FILTER_BAR_VARIANTS = {
+  default: { props: { selected: "all" } },
+  ready: { props: { selected: "ready" } },
+  shared: { props: { selected: "shared" } },
+  offline: { props: { selected: "offline" } },
+  sort: { props: { selected: "all" } },
+} as const satisfies Readonly<Record<string, FilterBarVariantDefinition>>;
+
+const STALE_BANNER_VARIANTS = {
+  "saved-results": {
+    props: {
+      title: "Showing saved results",
+      detail: "Couldn’t refresh just now.",
+      actionLabel: "Retry",
+    },
+  },
+} as const satisfies Readonly<Record<string, StaleBannerVariantDefinition>>;
 
 export const visualDiffComponentRegistry = {
   "action-button": {
@@ -375,6 +816,40 @@ export const visualDiffComponentRegistry = {
       "fallback-44": ["rest"],
     },
   },
+  toast: {
+    id: "toast",
+    fixtureAdapterId: "toast",
+    productionComponent: "gateway/webui/src/components/common/toast.tsx#ToastHost",
+    authority: "design/prototype/common-composites/handoff",
+    variants: TOAST_VARIANTS,
+    stateApplicability: {
+      saved: ["compact-visible", "desktop-visible"],
+      open: TOAST_OPEN_FRAMES,
+    },
+  },
+  notice: {
+    id: "notice",
+    fixtureAdapterId: "notice",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#Notice",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: NOTICE_VARIANTS,
+    stateApplicability: {
+      info: ["rest"],
+      warning: ["compact", "rest"],
+      error: ["compact", "rest"],
+    },
+  },
+  "media-action-card": {
+    id: "media-action-card",
+    fixtureAdapterId: "media-action-card",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#DominantVisualCard",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: MEDIA_ACTION_CARD_VARIANTS,
+    stateApplicability: {
+      "user-sage": ["focus", "hover", "rest"],
+      "user-terra": ["focus", "hover", "rest"],
+    },
+  },
   "sentient-identity": {
     id: "sentient-identity",
     fixtureAdapterId: "sentient-identity",
@@ -412,6 +887,20 @@ export const visualDiffComponentRegistry = {
       placeholder: ["focus", "hover", "rest"],
     },
   },
+  "filter-bar": {
+    id: "filter-bar",
+    fixtureAdapterId: "filter-bar",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SearchFilterBar",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: FILTER_BAR_VARIANTS,
+    stateApplicability: {
+      default: ["compact", "rest"],
+      ready: ["selected"],
+      shared: ["selected"],
+      offline: ["selected"],
+      sort: ["open"],
+    },
+  },
   "text-area": {
     id: "text-area",
     fixtureAdapterId: "text-area",
@@ -420,6 +909,18 @@ export const visualDiffComponentRegistry = {
     variants: TEXT_AREA_VARIANTS,
     stateApplicability: {
       filled: ["focus", "hover", "rest"],
+    },
+  },
+  "validated-field": {
+    id: "validated-field",
+    fixtureAdapterId: "validated-field",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#ValidatedField",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: VALIDATED_FIELD_VARIANTS,
+    stateApplicability: {
+      confirmation: ["error"],
+      "recovery-phrase": ["valid"],
+      "supporting-note": ["counter"],
     },
   },
   range: {
@@ -456,6 +957,39 @@ export const visualDiffComponentRegistry = {
       "off-to-on": TOGGLE_TRANSITION_FRAMES,
     },
   },
+  "settings-group": {
+    id: "settings-group",
+    fixtureAdapterId: "settings-group",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsGroup",
+    authority: "design/prototype/common-composites/handoff/static/settings-group--general--rest.png",
+    variants: SETTINGS_GROUP_VARIANTS,
+    stateApplicability: {
+      general: ["rest"],
+    },
+  },
+  "settings-editor": {
+    id: "settings-editor",
+    fixtureAdapterId: "settings-editor",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsEditor",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: SETTINGS_EDITOR_VARIANTS,
+    stateApplicability: {
+      vertical: ["saved", "unsaved"],
+    },
+  },
+  "setting-row": {
+    id: "setting-row",
+    fixtureAdapterId: "setting-row",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsRow",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: SETTING_ROW_VARIANTS,
+    stateApplicability: {
+      toggle: ["off", "on"],
+      segmented: ["default-selected", "expert-selected"],
+      select: ["english-closed", "spanish-selected"],
+      range: ["62"],
+    },
+  },
   "segmented-control": {
     id: "segmented-control",
     fixtureAdapterId: "segmented-control",
@@ -475,6 +1009,18 @@ export const visualDiffComponentRegistry = {
       "comfortable-to-compact": SEGMENTED_TRANSITION_FRAMES,
     },
   },
+  disclosure: {
+    id: "disclosure",
+    fixtureAdapterId: "disclosure",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#Disclosure",
+    authority: "design/prototype/common-composites/handoff",
+    variants: DISCLOSURE_VARIANTS,
+    stateApplicability: {
+      "advanced-options": ["closed", "open"],
+      "data-storage": ["closed", "open"],
+      "closed-to-open": DISCLOSURE_TRANSITION_FRAMES,
+    },
+  },
   checkbox: {
     id: "checkbox",
     fixtureAdapterId: "checkbox",
@@ -490,6 +1036,38 @@ export const visualDiffComponentRegistry = {
       "unchecked-to-mixed": CHECKBOX_TRANSITION_FRAMES,
     },
   },
+  "pane-header": {
+    id: "pane-header",
+    fixtureAdapterId: "pane-header",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#PaneChrome",
+    authority: "design/prototype/common-composites/handoff/static/pane-header--preferences--rest.png",
+    variants: PANE_HEADER_VARIANTS,
+    stateApplicability: {
+      preferences: ["rest"],
+    },
+  },
+  "local-navigation": {
+    id: "local-navigation",
+    fixtureAdapterId: "local-navigation",
+    productionComponent: "gateway/webui/src/components/settings/sidebar/sidebar-nav.tsx#LocalNavigation",
+    authority: "design/prototype/common-composites/handoff",
+    variants: LOCAL_NAVIGATION_VARIANTS,
+    stateApplicability: {
+      settings: ["account-current", "general-current", "privacy-current", "privacy-focus", "privacy-hover"],
+      "general-to-privacy": LOCAL_NAVIGATION_TRANSITION_FRAMES,
+    },
+  },
+  "pin-entry": {
+    id: "pin-entry",
+    fixtureAdapterId: "pin-entry",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#PinKeypad",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: PIN_ENTRY_VARIANTS,
+    stateApplicability: {
+      "4-digit": ["checking", "checking-reduced-motion", "empty", "one-digit", "partial", "success"],
+      "complete-to-success": PIN_ENTRY_TRANSITION_FRAMES,
+    },
+  },
   plate: {
     id: "plate",
     fixtureAdapterId: "plate",
@@ -500,23 +1078,114 @@ export const visualDiffComponentRegistry = {
       default: ["compact-rest", "rest"],
     },
   },
+  "loading-state": {
+    id: "loading-state",
+    fixtureAdapterId: "loading-state",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#AsyncState",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: LOADING_STATE_VARIANTS,
+    stateApplicability: {
+      settings: ["active", "reduced-motion"],
+    },
+  },
+  "results-list": {
+    id: "results-list",
+    fixtureAdapterId: "results-list",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#ResultsList",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: RESULTS_LIST_VARIANTS,
+    stateApplicability: {
+      default: ["page-1", "compact-page-1", "loading-more", "appended"],
+    },
+  },
+  "empty-state": {
+    id: "empty-state",
+    fixtureAdapterId: "empty-state",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#AsyncState",
+    authority: "design/prototype/common-composites/handoff/static/empty-state--settings--rest.png",
+    variants: EMPTY_STATE_VARIANTS,
+    stateApplicability: {
+      settings: ["rest"],
+    },
+  },
+  "no-results": {
+    id: "no-results",
+    fixtureAdapterId: "no-results",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#NoResultsState",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: NO_RESULTS_VARIANTS,
+    stateApplicability: {
+      default: ["empty"],
+    },
+  },
+  "stale-banner": {
+    id: "stale-banner",
+    fixtureAdapterId: "stale-banner",
+    productionComponent: "gateway/webui/src/components/sessions/stale-banner.tsx#StaleBanner",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: STALE_BANNER_VARIANTS,
+    stateApplicability: {
+      "saved-results": ["checking", "rest"],
+    },
+  },
+  "apply-bar": {
+    id: "apply-bar",
+    fixtureAdapterId: "apply-bar",
+    productionComponent: "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx#ApplyBar",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: APPLY_BAR_VARIANTS,
+    stateApplicability: {
+      dirty: ["rest"],
+      applying: ["active"],
+      done: ["success"],
+      "dirty-to-done": APPLY_BAR_TRANSITION_FRAMES,
+    },
+  },
+  "inline-secret-editor": {
+    id: "inline-secret-editor",
+    fixtureAdapterId: "inline-secret-editor",
+    productionComponent: "gateway/webui/src/components/settings/panes/secret-row.tsx#SecretRow",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: INLINE_SECRET_EDITOR_VARIANTS,
+    stateApplicability: {
+      "access-key": ["editing", "read"],
+    },
+  },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
 
 // These components have no authority for states outside their approved handoff
 // matrix. Keep action-button's established unsupported-state result unchanged.
 const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "icon-button",
+  "empty-state",
   "plate",
   "text-field",
   "search-field",
+  "filter-bar",
   "text-area",
+  "validated-field",
   "range",
   "checkbox",
   "chip",
   "toggle",
   "segmented-control",
   "user-avatar",
+  "media-action-card",
   "sentient-identity",
+  "notice",
+  "results-list",
+  "toast",
+  "no-results",
+  "stale-banner",
+  "pane-header",
+  "local-navigation",
+  "disclosure",
+  "pin-entry",
+  "setting-row",
+  "apply-bar",
+  "settings-group",
+  "settings-editor",
+  "inline-secret-editor",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {
@@ -547,8 +1216,8 @@ function componentDefinition(id: string): VisualDiffComponentDefinition | undefi
 }
 
 function stateDetails(stateId: string): { state: string; compact: boolean } | undefined {
-  const compact = stateId.startsWith("compact-");
-  const state = compact ? stateId.slice("compact-".length) : stateId;
+  const compact = stateId === "compact" || stateId.startsWith("compact-");
+  const state = stateId === "compact" ? "rest" : compact ? stateId.slice("compact-".length) : stateId;
   if (!state) return undefined;
   return { state, compact };
 }

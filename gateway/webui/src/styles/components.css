@@ -37,6 +37,20 @@
 .connection-lost-banner__btn:hover {
   background: color-mix(in oklab, var(--color-ink) 85%, var(--color-accent));
 }
+.connection-lost-banner .snt-notice {
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.connection-lost-banner .snt-notice__icon { display: none; }
+.connection-lost-banner .snt-notice__content { min-width: 0; }
+.connection-lost-banner .snt-notice__title { font-size: inherit; font-weight: inherit; line-height: inherit; }
+.connection-lost-banner .snt-notice__message { display: none; }
 
 html, body {
   margin: 0;
@@ -589,32 +603,6 @@ html.is-paused *::after {
 }
 @keyframes spinner-overlay-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spinner-overlay-spin { to { transform: rotate(360deg); } }
-
-/* ─── Toast + ToastHost ─── */
-
-.toast-host {
-  position: fixed; bottom: var(--space-xl); right: var(--space-xl);
-  display: flex; flex-direction: column-reverse; gap: var(--space-sm);
-  z-index: 50; pointer-events: none;
-}
-.toast {
-  pointer-events: auto;
-  background: var(--color-paper);
-  border: 1px solid var(--color-line-soft);
-  border-left-width: 3px;
-  border-radius: var(--radius-md);
-  padding: var(--space-sm) var(--space-md);
-  color: var(--color-ink);
-  font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
-  box-shadow: var(--shadow-1);
-  animation: toast-slide-in var(--motion-fast);
-  cursor: pointer;
-  text-align: left;
-}
-.toast--success { border-left-color: var(--color-accent); }
-.toast--error   { border-left-color: var(--color-stop); }
-@keyframes toast-slide-in { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 /* ─── AudioPreview ─── */
 

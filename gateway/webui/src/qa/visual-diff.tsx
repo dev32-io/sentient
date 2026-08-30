@@ -4,25 +4,58 @@ import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
-import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import "../components/common/composites.css";
+import "../components/common/toast.css";
+import "../components/settings/apply-bar/apply-bar.css";
+import "../components/settings/settings-shell.css";
+import "../components/settings/sidebar/sidebar.css";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, ResultsList, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
+import { SelectMenu } from "../components/common/select-menu.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
 import { SentientIdentity, type RiveFactory } from "../components/common/sentient-identity.tsx";
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
+import { StaleBanner } from "../components/sessions/stale-banner.tsx";
+import { ToastHost } from "../components/common/toast.tsx";
+import { ToastProvider, useToast } from "../hooks/use-toast.tsx";
+import { ApplyBar } from "../components/settings/apply-bar/apply-bar.tsx";
+import type { ApplyDeps, PendingOpWithPayload } from "../components/settings/apply-bar/apply-bar-machine.ts";
+import { SecretRow } from "../components/settings/panes/secret-row.tsx";
+import { LocalNavigation } from "../components/settings/sidebar/sidebar-nav.tsx";
 import {
   type ActionButtonVariantProps,
+  type ApplyBarVariantProps,
   type CheckboxVariantProps,
   type ChipVariantProps,
+  type DisclosureVariantProps,
+  type EmptyStateVariantProps,
+  type FilterBarVariantProps,
   type IconButtonVariantProps,
+  type InlineSecretEditorVariantProps,
+  type LoadingStateVariantProps,
+  type LocalNavigationVariantProps,
+  type MediaActionCardVariantProps,
+  type NoResultsStateVariantProps,
+  type NoticeVariantProps,
+  type PaneHeaderVariantProps,
+  type PinEntryVariantProps,
   type PlateVariantProps,
   type RangeVariantProps,
+  type ResultsListVariantProps,
   type SearchFieldVariantProps,
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
+  type SettingRowVariantProps,
+  type SettingsEditorVariantProps,
+  type SettingsGroupVariantProps,
+  type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
+  type ToastVariantProps,
   type ToggleVariantProps,
   type UserAvatarVariantProps,
+  type ValidatedFieldVariantProps,
   resolveVisualDiffCase,
   type VisualDiffCaseResolution,
   type VisualDiffResolvedCase,
@@ -128,6 +161,206 @@ function SegmentedControlFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   return <SegmentedControl label={props.label} value={value} options={props.options} onChange={(nextValue) => setValue(nextValue)} />;
 }
 
+function FilterBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as FilterBarVariantProps;
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState("recent");
+  const [selected, setSelected] = useState(props.selected);
+
+  const filters = ["all", "ready", "shared", "offline"] as const;
+  return (
+    <div class={`visual-diff-filter-bar-frame${fixture.compact ? " visual-diff-filter-bar-frame--compact" : ""}`}>
+      <Plate className="visual-diff-target visual-diff-filter-bar">
+        <SearchFilterBar
+          value={query}
+          onChange={setQuery}
+          label="Search items"
+          placeholder="Search items"
+          filters={filters.map((filter) => (
+            <ChipControl key={filter} selected={selected === filter} onClick={() => setSelected(filter)}>
+              {filter[0]?.toUpperCase()}{filter.slice(1)}
+            </ChipControl>
+          ))}
+        >
+          <SelectMenu
+            className="snt-filter-bar__sort"
+            placeholder="Sort by"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "recent", label: "Recently used" },
+              { value: "name", label: "Name" },
+              { value: "status", label: "Status" },
+            ]}
+          />
+        </SearchFilterBar>
+      </Plate>
+    </div>
+  );
+}
+
+function SettingsGroupFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const group = fixture.props as SettingsGroupVariantProps;
+  if (group.label !== "General") throw new Error(`Unsupported settings group: ${group.label}`);
+
+  return (
+    <Plate className="visual-diff-target visual-diff-settings-group">
+      <SettingsGroup>
+        <SettingsRow label="Automatic updates" hint="Install trusted updates when the household is idle.">
+          <ToggleControl label="Automatic updates" checked onChange={() => {}} />
+        </SettingsRow>
+        <SettingsRow label="Language" hint="Used for interface labels and spoken responses.">
+          <SelectControl
+            label="Language"
+            value="English"
+            options={[{ value: "English", label: "English" }, { value: "Spanish", label: "Spanish" }, { value: "French", label: "French" }]}
+            onChange={() => {}}
+          />
+        </SettingsRow>
+        <SettingsRow label="Detail level" hint="Choose how much supporting information appears.">
+          <SegmentedControl
+            label="Detail level"
+            value="default"
+            options={[{ value: "default", label: "Default" }, { value: "expert", label: "Expert" }]}
+            onChange={() => {}}
+          />
+        </SettingsRow>
+        <SettingsRow label="Interface scale" hint="Preview changes before applying them.">
+          <SliderControl label="Interface scale" value={62} min={0} max={100} step={1} format={(value) => `${Math.round(value)}%`} onChange={() => {}} />
+        </SettingsRow>
+      </SettingsGroup>
+    </Plate>
+  );
+}
+
+function SettingRowFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const row = fixture.props as SettingRowVariantProps;
+  const control = row.control === "toggle"
+    ? <ToggleControl label={row.label} checked={fixture.state === "on"} onChange={() => {}} />
+    : row.control === "segmented"
+      ? (
+        <SegmentedControl
+          label={row.label}
+          value={fixture.state === "expert-selected" ? "expert" : "default"}
+          options={[{ value: "default", label: "Default" }, { value: "expert", label: "Expert" }]}
+          onChange={() => {}}
+        />
+      )
+      : row.control === "select"
+        ? (
+          <SelectControl
+            label={row.label}
+            value={fixture.state === "spanish-selected" ? "Spanish" : "English"}
+            options={[{ value: "English", label: "English" }, { value: "Spanish", label: "Spanish" }, { value: "French", label: "French" }]}
+            onChange={() => {}}
+          />
+        )
+        : (
+          <SliderControl
+            label={row.label}
+            value={62}
+            min={0}
+            max={100}
+            step={1}
+            format={(value) => `${Math.round(value)}%`}
+            onChange={() => {}}
+          />
+        );
+
+  return (
+    <div class="visual-diff-setting-row-frame">
+      <Plate className="visual-diff-target visual-diff-setting-row">
+        <div class="visual-diff-setting-row__list">
+          <SettingsRow label={row.label} hint={row.hint}>{control}</SettingsRow>
+        </div>
+      </Plate>
+    </div>
+  );
+}
+
+function DisclosureFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as DisclosureVariantProps;
+  const isTransition = fixture.variantId === "closed-to-open";
+  const [open, setOpen] = useState(fixture.state === "open");
+
+  useEffect(() => {
+    if (!isTransition) return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setOpen(true);
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [isTransition]);
+
+  const body = props.body === "toggle"
+    ? (
+      <div class="visual-diff-disclosure-setting">
+        <div><strong>Detailed diagnostics</strong><span>Show sanitized identifiers and state transitions.</span></div>
+        <ToggleControl label="Detailed diagnostics" checked={false} onChange={() => {}} />
+      </div>
+    )
+    : <p class="visual-diff-disclosure-paragraph">Storage controls belong here when defined.</p>;
+
+  return (
+    <Plate className="visual-diff-target visual-diff-disclosure">
+      <div class="snt-disclosures">
+        <Disclosure title={props.title} description={props.description} open={open} onOpenChange={setOpen}>
+          {body}
+        </Disclosure>
+      </div>
+    </Plate>
+  );
+}
+
+function pinEntryDigits(stateId: string): readonly string[] {
+  if (stateId === "one-digit") return ["1"];
+  if (stateId === "partial") return ["1", "2", "3"];
+  if (stateId === "frame-001--0180ms") return ["1", "2"];
+  if (stateId === "checking" || stateId === "checking-reduced-motion" || stateId === "success" || stateId === "frame-002--0360ms" || stateId === "frame-003--0700ms" || stateId === "frame-004--1060ms") return ["1", "2", "3", "4"];
+  return [];
+}
+
+function PinEntryFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const pin = fixture.props as PinEntryVariantProps;
+  const digits = pinEntryDigits(fixture.stateId).slice(0, pin.length);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const enter = (index: number): void => {
+      if (cancelled) return;
+      const digit = digits[index];
+      if (digit === undefined) return;
+      const button = document.querySelector<HTMLButtonElement>(`[aria-label="PIN digit ${digit}"]`);
+      if (!button) {
+        requestAnimationFrame(() => enter(index));
+        return;
+      }
+      button.click();
+      window.setTimeout(() => enter(index + 1), 0);
+    };
+    enter(0);
+    return () => {
+      cancelled = true;
+    };
+  }, [fixture.stateId]);
+
+  return (
+    <div class="visual-diff-pin-entry-frame">
+      <Plate className="visual-diff-target visual-diff-pin-entry">
+        <PinKeypad
+          onSubmit={() => {
+            if (fixture.stateId === "success" || fixture.stateId === "frame-004--1060ms") setSuccess(true);
+          }}
+          success={success ? "Pin accepted." : undefined}
+        />
+      </Plate>
+    </div>
+  );
+}
+
 const visualDiffRiveFactory: RiveFactory = (configuration) => {
   const rive = new Rive({
     ...configuration,
@@ -170,7 +403,152 @@ function SentientIdentityFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   return <SentientIdentity state={state} size={56} className="visual-diff-target" riveFactory={visualDiffRiveFactory} />;
 }
 
+function applyBarTargetState(fixture: VisualDiffResolvedCase): "dirty" | "applying" | "done" {
+  if (fixture.variantId === "applying" || fixture.stateId === "frame-001--0300ms") return "applying";
+  if (fixture.variantId === "done" || fixture.stateId === "frame-002--0900ms") return "done";
+  return "dirty";
+}
+
+function ApplyBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as ApplyBarVariantProps;
+  const targetState = applyBarTargetState(fixture);
+  const pending: PendingOpWithPayload[] = Array.from({ length: props.pendingCount }, (_, index) => ({
+    key: `personalities.fixture-${index}`,
+    kind: "slow" as const,
+    payload: { body: "Visual review fixture" },
+  }));
+  const waitForRestart = targetState === "applying"
+    ? () => new Promise<Awaited<ReturnType<ApplyDeps["waitForRestart"]>>>(() => {})
+    : async () => ({ state: "ready" as const, elapsedMs: 900 });
+  const deps: ApplyDeps = {
+    saveSoul: async () => ({ ok: true }),
+    saveMemoryDoc: async () => ({ ok: true }),
+    saveProfile: async () => ({ ok: true }),
+    savePersonalityActive: async () => ({ ok: true }),
+    savePersonalityBody: async () => ({ ok: true }),
+    savePersonalityCreate: async () => ({ ok: true }),
+    savePersonalityDelete: async () => ({ ok: true }),
+    waitForRestart,
+  };
+
+  useEffect(() => {
+    if (targetState === "dirty") return;
+    document.querySelector<HTMLButtonElement>(".visual-diff-apply-bar-frame .snt-button--primary")?.click();
+  }, [targetState]);
+
+  return (
+    <div class="visual-diff-apply-bar-frame settings-v2">
+      <ApplyBar pending={pending} deps={deps} onApplied={() => {}} onDiscard={() => {}} />
+    </div>
+  );
+}
+
+function ToastFixtureContent({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const { show } = useToast();
+  const props = fixture.props as ToastVariantProps;
+  const isTransition = fixture.variantId === "open";
+
+  useEffect(() => {
+    const showFixture = () => show(props.message, props.tone, props.detail);
+    if (!isTransition) {
+      showFixture();
+      return;
+    }
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = showFixture;
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [isTransition, props.detail, props.message, props.tone, show]);
+
+  return <ToastHost />;
+}
+
+function ToastFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  return (
+    <ToastProvider>
+      <ToastFixtureContent fixture={fixture} />
+    </ToastProvider>
+  );
+}
+
+function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const header = fixture.props as PaneHeaderVariantProps;
+  return (
+    <div class="visual-diff-pane-header-frame">
+      <Plate className="visual-diff-target visual-diff-pane-header">
+        <PaneChrome
+          eyebrow={header.eyebrow}
+          title={header.title}
+          subtitle={header.subtitle}
+          action={<ActionButton variant="primary">{header.actionLabel}</ActionButton>}
+        >
+          {null}
+        </PaneChrome>
+      </Plate>
+    </div>
+  );
+}
+
+function LocalNavigationFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as LocalNavigationVariantProps;
+  const staticActive = fixture.stateId === "privacy-current"
+    ? "privacy"
+    : fixture.stateId === "account-current"
+      ? "account"
+      : props.initialActive;
+  const [active, setActive] = useState<"general" | "privacy" | "account">(staticActive);
+
+  useEffect(() => {
+    if (fixture.variantId !== "general-to-privacy") return;
+    const transitionWindow = window as VisualDiffTransitionWindow;
+    transitionWindow.__startVisualDiffTransition = () => setActive("privacy");
+    document.documentElement.dataset.visualDiffTransitionReady = "true";
+    return () => {
+      delete transitionWindow.__startVisualDiffTransition;
+      delete document.documentElement.dataset.visualDiffTransitionReady;
+    };
+  }, [fixture.variantId]);
+
+  const sliders = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h7M15 7h5M4 17h4M12 17h8"/><circle cx="13" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+  );
+  const lock = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/></svg>
+  );
+  const user = (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.6-4.1 3-6.2 7-6.2s6.4 2.1 7 6.2"/></svg>
+  );
+
+  return (
+    <div class="visual-diff-local-navigation-frame">
+      <Plate className="visual-diff-target visual-diff-local-navigation">
+        <LocalNavigation
+          active={active}
+          ariaLabel="Settings"
+          groups={[{
+            key: "settings",
+            items: [
+              { key: "general", label: "General", description: "Defaults and behavior", icon: sliders, dirty: true },
+              { key: "privacy", label: "Privacy", description: "Scope and permissions", icon: lock, navigable: true },
+              { key: "account", label: "Account", description: "Identity and access", icon: user, navigable: true },
+            ],
+          }]}
+          onChange={setActive}
+        />
+      </Plate>
+    </div>
+  );
+}
+
 const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
+  toast: {
+    // This adapter mounts the production queue owner and host, then drives its
+    // public show API with the approved saved-notification content.
+    render: (fixture) => <ToastFixture fixture={fixture} />,
+  },
   "action-button": {
     // This adapter deliberately renders the production ActionButton, not a fixture substitute.
     render: (fixture) => {
@@ -217,6 +595,38 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "notice": {
+    // This adapter keeps the approved notice artboard while mounting the production Notice and ActionButton.
+    render: (fixture) => {
+      const notice = fixture.props as NoticeVariantProps;
+      const action = notice.actionLabel
+        ? <ActionButton variant={notice.tone === "warning" ? "quiet" : "default"}>{notice.actionLabel}</ActionButton>
+        : undefined;
+      return (
+        <Plate className={`visual-diff-target visual-diff-notice${fixture.compact ? " visual-diff-notice--compact" : ""}`}>
+          <Notice tone={notice.tone} title={notice.title} action={action}>{notice.message}</Notice>
+        </Plate>
+      );
+    },
+  },
+  "media-action-card": {
+    // This adapter mounts the production card and avatar primitives with the
+    // reference's fixed user data. Icon/image variants stay unresolved until
+    // production media ownership and failure behavior are defined.
+    render: (fixture) => {
+      const card = fixture.props as MediaActionCardVariantProps;
+      return (
+        <DominantVisualCard
+          className="visual-diff-target visual-diff-media-card"
+          label={card.name}
+          description={card.description}
+          visual={<Avatar kind="user" initial={card.initial} name={card.name} tint={card.tint} size="xl" />}
+          ariaLabel={`Continue as ${card.name}`}
+          onActivate={() => {}}
+        />
+      );
+    },
+  },
   "sentient-identity": {
     // This adapter mounts the production Rive-backed identity. The factory only
     // records the real runtime for deterministic capture control.
@@ -236,9 +646,14 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "filter-bar": {
+    // Mount the production controlled search/filter shell and shared controls;
+    // fixture state is driven through the same public callbacks and trigger action.
+    render: (fixture) => <FilterBarFixture fixture={fixture} />,
+  },
   "search-field": {
     // The handoff's labelled, icon-free search field is the reachable generic
-    // Field seam; the unused icon-led SearchField/SearchFilterBar wrapper is not mounted.
+    // Field seam; the icon-led SearchFilterBar is covered by its composite fixture.
     render: (fixture) => {
       const field = fixture.props as SearchFieldVariantProps;
       return (
@@ -265,6 +680,13 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
           inputClassName="visual-diff-target"
         />
       );
+    },
+  },
+  "validated-field": {
+    // This adapter deliberately renders the production ValidatedField and its native input/textarea.
+    render: (fixture) => {
+      const field = fixture.props as ValidatedFieldVariantProps;
+      return <ValidatedField {...field} className="visual-diff-validated-field" inputClassName="visual-diff-target" />;
     },
   },
   range: {
@@ -313,6 +735,54 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // and its native buttons for every approved static and motion case.
     render: (fixture) => <SegmentedControlFixture fixture={fixture} />,
   },
+  "settings-group": {
+    // This adapter composes the production SettingsGroup with its four native
+    // row/control owners on the reviewed Plate surface.
+    render: (fixture) => <SettingsGroupFixture fixture={fixture} />,
+  },
+  "settings-editor": {
+    // The fixture supplies inert local actions to prove the approved generic
+    // anatomy; production settings panes retain their global Apply owner.
+    render: (fixture) => {
+      const editor = fixture.props as SettingsEditorVariantProps;
+      return (
+        <SettingsEditor
+          className="visual-diff-target visual-diff-settings-editor"
+          title={editor.title}
+          subtitle={editor.subtitle}
+          dirty={fixture.state === "unsaved"}
+          footer={<><ActionButton variant="quiet">Reset</ActionButton><ActionButton variant="primary">Save</ActionButton></>}
+        >
+          <Field label={editor.fieldLabel} value={editor.fieldValue} />
+          <TextArea label={editor.textAreaLabel} value={editor.textAreaValue} />
+        </SettingsEditor>
+      );
+    },
+  },
+  "setting-row": {
+    // This adapter composes the production SettingsRow with its native control
+    // owner; the open native select popup remains intentionally unregistered.
+    render: (fixture) => <SettingRowFixture fixture={fixture} />,
+  },
+  "pane-header": {
+    // This adapter deliberately renders the production PaneChrome with a real Plate and ActionButton.
+    render: (fixture) => <PaneHeaderFixture fixture={fixture} />,
+  },
+  "local-navigation": {
+    // The fixture supplies the handoff's reviewed labels and icons to the same
+    // production LocalNavigation renderer that owns settings navigation.
+    render: (fixture) => <LocalNavigationFixture fixture={fixture} />,
+  },
+  disclosure: {
+    // This adapter deliberately renders the production Disclosure and its native
+    // details/summary semantics for every approved static and motion case.
+    render: (fixture) => <DisclosureFixture fixture={fixture} />,
+  },
+  "pin-entry": {
+    // Drive the production keypad through its public digit-button semantics so
+    // each approved state exercises the same entry path as a user.
+    render: (fixture) => <PinEntryFixture fixture={fixture} />,
+  },
   "plate": {
     // This adapter deliberately renders the production Plate and its public anatomy.
     render: (fixture) => {
@@ -330,6 +800,110 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
             <p class="visual-diff-plate__copy">Grouped content rests on a quiet slate.</p>
           </div>
         </Plate>
+      );
+    },
+  },
+  "loading-state": {
+    // The handoff retains the plate host around the loading composite. The
+    // state itself remains the production AsyncState used by settings, gates,
+    // sessions, and voice surfaces.
+    render: (fixture) => {
+      const loading = fixture.props as LoadingStateVariantProps;
+      return (
+        <Plate className="visual-diff-target visual-diff-loading-state">
+          <AsyncState state="loading" title={loading.title} message={loading.message} />
+        </Plate>
+      );
+    },
+  },
+  "results-list": {
+    // This adapter mounts the production list and drives each approved state through its public props.
+    render: (fixture) => {
+      const results = fixture.props as ResultsListVariantProps;
+      const appended = fixture.stateId === "appended";
+      const items = appended
+        ? [...results.items, { id: "guest", leading: "D", title: "Guest profile", detail: "Shared · Added just now", tone: "sage" as const }]
+        : results.items;
+      return (
+        <ResultsList
+          {...results}
+          className="visual-diff-target visual-diff-results-list"
+          items={items.map((item) => ({ ...item, onActivate: () => {} }))}
+          previousDisabled
+          loadingMore={fixture.stateId === "loading-more"}
+          appendedItemId={appended ? "guest" : undefined}
+          onClear={() => {}}
+          onPrevious={() => {}}
+          onLoadMore={() => {}}
+        />
+      );
+    },
+  },
+  "empty-state": {
+    // The reference action is fixture copy only; production callers continue
+    // to own whether an action exists, its label, and its activation behavior.
+    render: (fixture) => {
+      const empty = fixture.props as EmptyStateVariantProps;
+      return (
+        <Plate className="visual-diff-target visual-diff-empty-state">
+          <AsyncState
+            state="empty"
+            title={empty.title}
+            message={empty.message}
+            action={<ActionButton variant="quiet">{empty.actionLabel}</ActionButton>}
+          />
+        </Plate>
+      );
+    },
+  },
+  "no-results": {
+    // This adapter deliberately renders the production no-match recovery.
+    render: (fixture) => {
+      const noResults = fixture.props as NoResultsStateVariantProps;
+      return (
+        <div class="visual-diff-no-results">
+          <NoResultsState {...noResults} onClear={() => {}} />
+        </div>
+      );
+    },
+  },
+  "stale-banner": {
+    // This adapter deliberately renders the production stale-banner composite.
+    render: (fixture) => {
+      const banner = fixture.props as StaleBannerVariantProps;
+      if (banner.title !== "Showing saved results" || banner.detail !== "Couldn’t refresh just now." || banner.actionLabel !== "Retry") {
+        throw new Error("Unsupported stale-banner fixture copy");
+      }
+      return (
+        <StaleBanner
+          checking={fixture.state === "checking"}
+          className="visual-diff-stale-banner visual-diff-target"
+          onRetry={() => {}}
+        />
+      );
+    },
+  },
+  "apply-bar": {
+    // The fixture drives the production owner through its public pending/deps
+    // contract; it does not replace the async state machine with specimen DOM.
+    render: (fixture) => <ApplyBarFixture fixture={fixture} />,
+  },
+  "inline-secret-editor": {
+    // The fixture mounts the production write-only editor. Presence copy is the
+    // only safe adaptation because the production API never returns a suffix.
+    render: (fixture) => {
+      const editor = fixture.props as InlineSecretEditorVariantProps;
+      return (
+        <div class="visual-diff-inline-secret-editor visual-diff-target">
+          <SecretRow
+            label={editor.label}
+            status={{ has_key: editor.hasKey }}
+            editing={fixture.state === "editing"}
+            onStartEdit={() => {}}
+            onCancel={() => {}}
+            onSave={() => Promise.resolve()}
+          />
+        </div>
       );
     },
   },
@@ -368,16 +942,45 @@ function requireFixtureAdapter(fixtureCase: VisualDiffResolvedCase): VisualDiffF
 
 const fixtureAdapter = requireFixtureAdapter(fixture);
 
+function applyBarFixtureReady(fixtureCase: VisualDiffResolvedCase): boolean {
+  const applyBar = document.querySelector<HTMLElement>(".visual-diff-apply-bar-frame .apply-bar");
+  return applyBar?.dataset.state === applyBarTargetState(fixtureCase);
+}
+
+function pinEntryFixtureReady(stateId: string): boolean {
+  const expected = stateId === "empty" || stateId === "frame-000--0000ms"
+    ? { state: "idle", filled: 0 }
+    : stateId === "one-digit"
+      ? { state: "active", filled: 1 }
+      : stateId === "partial" || stateId === "frame-001--0180ms"
+        ? { state: "active", filled: stateId === "partial" ? 3 : 2 }
+        : stateId === "success" || stateId === "frame-004--1060ms"
+          ? { state: "success", filled: 4 }
+          : { state: "checking", filled: 4 };
+  const keypad = document.querySelector<HTMLElement>(".snt-pin-keypad");
+  return keypad?.dataset.state === expected.state
+    && keypad.querySelectorAll('[data-filled="true"]').length === expected.filled;
+}
+
 function VisualDiffFixture() {
   useEffect(() => {
     document.documentElement.dataset.visualDiffFixture = "sentient-v1";
-    requestAnimationFrame(() => {
+    const markReady = () => {
+      if (
+        (fixture.componentId === "pin-entry" && !pinEntryFixtureReady(fixture.stateId))
+        || (fixture.componentId === "apply-bar" && !applyBarFixtureReady(fixture))
+        || (fixture.componentId === "local-navigation" && document.querySelector(".s-nav")?.getAttribute("data-snt-ready") !== "true")
+      ) {
+        requestAnimationFrame(markReady);
+        return;
+      }
       document.documentElement.dataset.visualDiffReady = "true";
-    });
+    };
+    requestAnimationFrame(markReady);
   }, []);
 
   return (
-    <main class="visual-diff-canvas snt-surface" data-case-id={caseId}>
+    <main class={`visual-diff-canvas visual-diff-canvas--${fixture.componentId}${fixture.componentId === "disclosure" ? " visual-diff-canvas--disclosure" : ""} snt-surface`} data-case-id={caseId} data-component-id={fixture.componentId}>
       {fixtureAdapter.render(fixture)}
     </main>
   );
@@ -386,13 +989,135 @@ function VisualDiffFixture() {
 const style = document.createElement("style");
 style.textContent = `
   :root, body, #app { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
-  .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; }
+  .visual-diff-canvas { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; box-sizing: border-box; }
+  .visual-diff-canvas[data-component-id="toast"] {
+    position: relative;
+    display: block;
+    padding: 52px 76px 76px 52px;
+  }
+  .visual-diff-canvas[data-component-id="toast"] .toast-host {
+    position: static;
+    width: 100%;
+  }
+  .visual-diff-canvas[data-component-id="toast"] .toast { width: 100%; min-width: 0; }
+  /* Common-composite handoff canvases retain their source specimen gutter. */
+  .visual-diff-canvas--stale-banner { padding: 0 24px 24px 0; }
+  .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
+  .visual-diff-canvas[data-component-id="results-list"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 0 52px;
+  }
+  .visual-diff-results-list { width: min(600px, 100%); }
+  .visual-diff-stale-banner { width: min(480px, 100%); }
+  .visual-diff-canvas--apply-bar { align-items: flex-start; justify-content: flex-start; padding: 52px; }
+  .visual-diff-apply-bar-frame { width: 680px; min-height: 74px; display: block; }
+  .visual-diff-apply-bar-frame.settings-v2 .apply-bar {
+    position: static;
+    width: 100%;
+    transform: none;
+  }
+  .visual-diff-canvas--inline-secret-editor {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 64px;
+  }
+  .visual-diff-inline-secret-editor { width: 500px; }
+  .visual-diff-pin-entry-frame { width: min(384px, 100%); height: 496px; display: flex; align-items: flex-start; justify-content: flex-start; }
+  .visual-diff-pin-entry { width: 360px; }
+  /* Preserve the handoff artboard's lower breathing room around the source margin. */
+  .visual-diff-no-results { width: min(468px, 100%); margin-bottom: 10px; }
   .visual-diff-text-field { width: min(320px, 100%); }
   .visual-diff-search-field { width: min(320px, 100%); }
+  .visual-diff-filter-bar-frame { width: 100%; height: 100%; padding: 52px; }
+  .visual-diff-filter-bar { width: 680px; overflow: visible; }
+  .visual-diff-filter-bar-frame--compact { padding: 52px 76px 0 52px; }
+  .visual-diff-filter-bar-frame--compact .visual-diff-filter-bar { width: 390px; }
   .visual-diff-text-area { width: min(320px, 100%); }
+  .visual-diff-validated-field { width: min(320px, 100%); }
   .visual-diff-range { width: min(360px, 100%); }
+  .visual-diff-notice { width: 100%; }
+  .visual-diff-canvas[data-case-id^="notice--"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 75px 52px;
+  }
+  .visual-diff-pane-header-frame {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px 24px 0;
+  }
+  .visual-diff-pane-header { width: min(620px, 100%); }
+  .visual-diff-local-navigation-frame {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 24px 24px 0;
+  }
+  .visual-diff-local-navigation { width: 400px; }
+  .visual-diff-local-navigation .s-nav-icon > svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .visual-diff-canvas[data-component-id="settings-group"],
+  .visual-diff-canvas[data-component-id="setting-row"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px 76px 0 52px;
+  }
+  .visual-diff-settings-group { width: min(650px, 100%); }
+  .visual-diff-setting-row { width: 600px; }
+  .visual-diff-setting-row__list { padding: 0 16px; }
+  .visual-diff-canvas[data-component-id="settings-editor"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px;
+  }
+  .visual-diff-settings-editor { width: 440px; }
+  .visual-diff-media-card { width: 260px; }
+  /* Composite references retain a 52px logical frame around the card. */
+  .visual-diff-canvas[data-case-id^="media-action-card--"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    box-sizing: border-box;
+    padding: 52px;
+  }
   .visual-diff-plate__copy { margin: 0; color: var(--color-ink-2); font-size: var(--font-size-base); line-height: var(--line-height-normal); }
+  .visual-diff-canvas[data-component-id="loading-state"],
+  .visual-diff-canvas[data-component-id="empty-state"] { display: block; }
+  .visual-diff-loading-state { width: min(260px, 100%); margin: 52px; }
+  .visual-diff-empty-state { width: 280px; margin: 52px; }
+  .visual-diff-disclosure { width: min(540px, 100%); }
+  .visual-diff-disclosure-setting,
+  .visual-diff-disclosure-paragraph {
+    border: 1px solid var(--color-line-soft);
+    border-radius: var(--radius-sm);
+    background: var(--slate-face);
+    box-shadow: var(--plate-shadow);
+  }
+  .visual-diff-disclosure-setting {
+    min-height: 68px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    padding: 12px 14px;
+  }
+  .visual-diff-disclosure-setting > div { min-width: 0; }
+  .visual-diff-disclosure-setting strong { display: block; color: var(--color-ink); font-size: 14px; font-weight: 500; }
+  .visual-diff-disclosure-setting span { display: block; margin-top: 3px; color: var(--color-ink-2); font-size: var(--font-size-sm); line-height: 1.5; }
+  .visual-diff-disclosure-paragraph { margin: 0; padding: 14px; color: var(--color-ink-2); font-size: var(--font-size-sm); line-height: 1.5; }
 `;
 document.head.append(style);
 

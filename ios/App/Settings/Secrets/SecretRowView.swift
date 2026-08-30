@@ -1,6 +1,8 @@
 import SwiftUI
 
-let secretPresenceMask = "••••••••••••"
+func secretPresenceText(isConfigured: Bool) -> String {
+    isConfigured ? "Configured" : "Not configured"
+}
 
 struct SecretKeyRow: View {
     let label: String
@@ -15,71 +17,144 @@ struct SecretKeyRow: View {
     let onSave: (String) -> Void
 
     @State private var draft = ""
+    @FocusState private var editButtonFocused: Bool
+    @AccessibilityFocusState private var editButtonAccessibilityFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            HStack(spacing: Space.sm) {
-                Image(systemName: hasKey ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(hasKey ? DuskColors.ok : DuskColors.ink4)
-                    .accessibilityHidden(true)
-                Text(label).designText(.body).foregroundStyle(DuskColors.ink)
-                Spacer(minLength: Space.sm)
-                if isActive {
-                    Label("Active", systemImage: "checkmark")
-                        .designText(.supporting)
-                        .foregroundStyle(DuskColors.accent)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            readContext
+            if isEditing {
+                DesignDivider()
+                editor
+                    .transition(editorTransition)
             }
-            if isEditing { editor } else { presence }
         }
-        .padding(.vertical, Space.sm)
-        .onChange(of: isEditing) { _, editing in if !editing { draft = "" } }
+        .background(DuskColors.bgElev)
+        .clipShape(RoundedRectangle(cornerRadius: Radii.md, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Radii.md, style: .continuous)
+                .stroke(DuskColors.lineSoft, lineWidth: DesignMetrics.hairline)
+        }
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: isEditing
+        )
+        .onChange(of: isEditing) { _, editing in
+            guard !editing else { return }
+            draft = ""
+            Task { @MainActor in
+                editButtonFocused = true
+                editButtonAccessibilityFocused = true
+            }
+        }
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("settings-secret-\(idKey)")
+    }
+
+    private var readContext: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: Space.md) {
+                contextLabel
+                Spacer(minLength: Space.sm)
+                readActions
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                contextLabel
+                readActions
+            }
+        }
+        .padding(Space.md)
+        .frame(minHeight: DesignMetrics.inlineEditorReadMinimumHeight)
+    }
+
+    private var contextLabel: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(label)
+                .designText(.body)
+                .fontWeight(.semibold)
+                .foregroundStyle(DuskColors.ink)
+                .accessibilityIdentifier("settings-secret-\(idKey)")
+            Text(secretPresenceText(isConfigured: hasKey))
+                .designText(.supporting)
+                .foregroundStyle(hasKey ? DuskColors.ink2 : DuskColors.ink4)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityValue(hasKey ? "Key configured" : "Key not configured")
+    }
+
+    private var readActions: some View {
+        HStack(spacing: Space.sm) {
+            if isActive {
+                Label("Active", systemImage: "checkmark")
+                    .designText(.supporting)
+                    .foregroundStyle(DuskColors.accent)
+                    .accessibilityLabel("Active provider")
+            } else if let onSetActive {
+                DesignTextButton(
+                    title: "Set active",
+                    accessibilityId: "settings-secret-\(idKey)-active",
+                    action: onSetActive
+                )
+            }
+            if !isEditing {
+                DesignActionButton(
+                    title: hasKey ? "Edit" : "Set key",
+                    role: .secondary,
+                    accessibilityId: "settings-secret-\(idKey)-update",
+                    fillsWidth: false,
+                    action: onStartEdit
+                )
+                .focused($editButtonFocused)
+                .accessibilityFocused($editButtonAccessibilityFocused)
+            }
+        }
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
+        VStack(alignment: .leading, spacing: Space.md) {
             DesignMaskedField(
-                title: "New key",
+                title: "New access key",
                 prompt: "Paste new key",
                 text: $draft,
                 accessibilityId: "settings-secret-\(idKey)-input",
                 autoFocus: true
             )
+            Text("Secret values are never written to logs or decorative diagnostics.")
+                .designText(.supporting)
+                .foregroundStyle(DuskColors.ink2)
             HStack(spacing: Space.sm) {
+                Spacer(minLength: 0)
                 DesignActionButton(
-                    title: "Save",
+                    title: "Cancel",
+                    role: .quiet,
+                    accessibilityId: "settings-secret-\(idKey)-cancel",
+                    fillsWidth: false,
+                    action: onCancel
+                )
+                DesignActionButton(
+                    title: "Save key",
+                    loadingTitle: "Saving…",
                     state: canSave ? .normal : isSaving ? .loading : .disabled,
                     accessibilityId: "settings-secret-\(idKey)-save",
+                    fillsWidth: false,
                     action: { onSave(draft.trimmingCharacters(in: .whitespacesAndNewlines)) }
                 )
-                DesignTextButton(title: "Cancel", action: onCancel)
             }
         }
+        .padding(DesignMetrics.inlineEditorFormPadding)
+        .background {
+            DesignWellFace(
+                shape: Rectangle(),
+                focused: false,
+                showsInsetHighlights: true
+            )
+        }
+        .privacySensitive()
     }
 
-    private var presence: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            Text(hasKey ? secretPresenceMask : "Not configured")
-                .designText(.telemetry)
-                .foregroundStyle(hasKey ? DuskColors.ink2 : DuskColors.ink4)
-                .accessibilityLabel(hasKey ? "Key configured" : "Key not configured")
-            HStack(spacing: Space.sm) {
-                if let onSetActive, !isActive {
-                    DesignTextButton(
-                        title: "Set active",
-                        accessibilityId: "settings-secret-\(idKey)-active",
-                        action: onSetActive
-                    )
-                }
-                DesignTextButton(
-                    title: "Update key",
-                    accessibilityId: "settings-secret-\(idKey)-update",
-                    action: onStartEdit
-                )
-            }
-        }
+    private var editorTransition: AnyTransition {
+        reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top))
     }
 
     private var canSave: Bool {
@@ -132,8 +207,8 @@ struct SecretUrlRow: View {
 
     private var presence: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            Text(hasValue ? secretPresenceMask : "Not set")
-                .designText(.telemetry)
+            Text(secretPresenceText(isConfigured: hasValue))
+                .designText(.supporting)
                 .foregroundStyle(hasValue ? DuskColors.ink2 : DuskColors.ink4)
                 .accessibilityLabel(hasValue ? "Base URL configured" : "Base URL not configured")
             DesignTextButton(

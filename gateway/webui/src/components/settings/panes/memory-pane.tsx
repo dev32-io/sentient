@@ -10,6 +10,8 @@ import {
   PaneChrome,
   SegmentedControl,
   SettingsCard,
+  SettingsEditor,
+  SettingsGroup,
   SettingsRow,
   TextArea,
   ToggleControl,
@@ -66,13 +68,15 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
 
   return (
     <PaneChrome title="Memory" subtitle="Persistent context the assistant carries between conversations. Apply saves changes for the next conversation; a service restart may be needed before every active session sees them.">
-      <SettingsCard title="Memory features" subtitle="Changes take effect after Apply.">
-        <SettingsRow label="Memory sparking" hint="Bring up relevant past memories in conversation.">
-          <ToggleControl label="Memory sparking" checked={memoryToggles.spark} onChange={(spark) => onDraftMemoryToggles({ ...memoryToggles, spark })} />
-        </SettingsRow>
-        <SettingsRow label="Nightly reflection" hint="Let Sentient reflect on the day and update its notes.">
-          <ToggleControl label="Nightly reflection" checked={memoryToggles.dreaming} onChange={(dreaming) => onDraftMemoryToggles({ ...memoryToggles, dreaming })} />
-        </SettingsRow>
+      <SettingsCard title="Memory features" subtitle="Changes take effect after Apply." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Memory sparking" hint="Bring up relevant past memories in conversation.">
+            <ToggleControl label="Memory sparking" checked={memoryToggles.spark} onChange={(spark) => onDraftMemoryToggles({ ...memoryToggles, spark })} />
+          </SettingsRow>
+          <SettingsRow label="Nightly reflection" hint="Let Sentient reflect on the day and update its notes.">
+            <ToggleControl label="Nightly reflection" checked={memoryToggles.dreaming} onChange={(dreaming) => onDraftMemoryToggles({ ...memoryToggles, dreaming })} />
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsCard>
 
       <SegmentedControl
@@ -82,10 +86,11 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
         options={[{ value: "memory", label: "General memory" }, { value: "user", label: "About you" }]}
       />
 
-      <SettingsCard
+      <SettingsEditor
         title={SLOT_LABEL[slot]}
         subtitle={`${SLOT_EXPLAIN[slot]} Limited to ${cap} characters.`}
-        action={<span class="memory-count" aria-live="polite">{charsUsed} / {cap}</span>}
+        dirty={original !== null && draft !== null && draft !== original.content}
+        headerAction={<span class="memory-count" aria-live="polite">{charsUsed} / {cap}</span>}
       >
         {loadError ? (
           <AsyncState state="error" title={loadError} message="Your unsaved settings were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
@@ -110,7 +115,7 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
             )}
           </>
         )}
-      </SettingsCard>
+      </SettingsEditor>
     </PaneChrome>
   );
 }

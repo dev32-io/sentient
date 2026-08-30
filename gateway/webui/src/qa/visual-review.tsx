@@ -6,7 +6,7 @@ import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/chat/chat-messages.css";
 import "./visual-review.css";
-import { AsyncState, Notice } from "../components/common/composites.tsx";
+import { AsyncState, NoResultsState, Notice } from "../components/common/composites.tsx";
 import { ActionButton, Field, MenuTrigger, Plate, ToggleControl } from "../components/common/foundation.tsx";
 import { MessageBubble } from "../components/chat/message-bubble.tsx";
 import { VoiceCaptureControl } from "../components/dock/voice-capture-control.tsx";
@@ -27,6 +27,7 @@ function stateKind(state: string): "loading" | "empty" | "error" | "ready" {
 }
 
 function StateSpecimen({ id, state }: { id: string; state: string }) {
+  if (id === "web.history.no-results") return <NoResultsState onClear={() => {}} />;
   const kind = stateKind(state);
   if (id.includes("chat.") && /(message|thinking|responding|complete|stream|interrupt)/.test(id)) {
     const assistant = !id.includes("user-message");

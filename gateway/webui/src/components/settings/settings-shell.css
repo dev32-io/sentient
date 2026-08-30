@@ -31,6 +31,51 @@
   display: grid;
   gap: var(--space-md);
 }
+.owned-secret-editor {
+  overflow: hidden;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elev);
+  transition: border-color var(--motion-state), background-color var(--motion-state), box-shadow var(--motion-state);
+}
+.owned-secret-editor + .owned-secret-editor,
+.owned-secret-editor + .snt-settings-row,
+.snt-settings-row + .owned-secret-editor { margin-top: var(--space-md); }
+.owned-secret-editor__read {
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+}
+.owned-secret-editor__copy { min-width: 0; display: grid; }
+.owned-secret-editor__copy strong { color: var(--color-ink); font-size: 14px; font-weight: 600; }
+.owned-secret-editor__copy small { color: var(--color-ink-2); font-size: var(--font-size-sm); }
+.owned-secret-editor__presence {
+  color: var(--color-ink-2);
+  font: var(--font-size-sm) var(--font-mono);
+  white-space: nowrap;
+}
+.owned-secret-editor__form {
+  display: grid;
+  gap: var(--space-md);
+  padding: 14px;
+  border-top: 1px solid var(--color-line-soft);
+  background: var(--well-face);
+  box-shadow: var(--well-shadow);
+  animation: owned-secret-editor-in var(--motion-state) both;
+}
+.owned-secret-editor__form p {
+  margin: 0;
+  color: var(--color-ink-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+@keyframes owned-secret-editor-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .settings-v2 .owned-actions {
   display: flex;
   align-items: center;
@@ -73,6 +118,11 @@
   border-radius: var(--radius-sm);
 }
 .settings-v2 .owned-download-code figcaption { max-width: 100%; overflow-wrap: anywhere; }
+
+@media (max-width: 620px) {
+  .owned-secret-editor__read { grid-template-columns: minmax(0, 1fr) auto; }
+  .owned-secret-editor__presence { grid-column: 1 / -1; grid-row: 2; }
+}
 
 @media (max-width: 55rem) {
   .settings-v2 { display: block; }

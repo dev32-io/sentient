@@ -5,6 +5,7 @@ import {
   ActionButton,
   CheckboxControl,
   ChipControl,
+  Disclosure,
   SearchFilterBar,
 } from "../common/index.ts";
 import { Icon } from "../common/icon.tsx";
@@ -209,19 +210,25 @@ export function CalendarFilterPanel({
         </div>
       </FilterSection>
 
-      <div class="calendar-filter-disclosures">
-        <details class="calendar-filter-disclosure">
-          <summary><span><strong>Groups</strong><small>{selectedGroups.size ? `${selectedGroups.size} selected` : "None selected"}</small></span><Icon name="chevron" size={17} /></summary>
+      <div class="calendar-filter-disclosures snt-disclosures">
+        <Disclosure
+          className="calendar-filter-disclosure"
+          title="Groups"
+          description={selectedGroups.size ? `${selectedGroups.size} selected` : "None selected"}
+        >
           <div class="calendar-chip-cloud">
             {groups.length > 0 ? groups.map((option) => <FilterChip key={option.value} label={calendarFilterOptionLabel(option.value)} selected={selectedGroups.has(option.value)} {...(option.count === undefined ? {} : { count: option.count })} onClick={() => setGroup(option.value)} />) : <p class="calendar-filter-empty">No groups available</p>}
           </div>
-        </details>
-        <details class="calendar-filter-disclosure">
-          <summary><span><strong>Tags</strong><small>{selectedTags.size ? `${selectedTags.size} selected` : "None selected"}</small></span><Icon name="chevron" size={17} /></summary>
+        </Disclosure>
+        <Disclosure
+          className="calendar-filter-disclosure"
+          title="Tags"
+          description={selectedTags.size ? `${selectedTags.size} selected` : "None selected"}
+        >
           <div class="calendar-chip-cloud">
             {tags.length > 0 ? tags.map((option) => <FilterChip key={option.value} label={calendarFilterOptionLabel(option.value)} selected={selectedTags.has(option.value)} {...(option.count === undefined ? {} : { count: option.count })} onClick={() => setTag(option.value)} />) : <p class="calendar-filter-empty">No tags available</p>}
           </div>
-        </details>
+        </Disclosure>
       </div>
 
       <CalendarSearchControl

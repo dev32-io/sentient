@@ -202,6 +202,7 @@ struct DesignButtonStyle: ButtonStyle {
 
 struct DesignActionButton: View {
     let title: String
+    var loadingTitle = "Loading"
     var role: DesignButtonRole = .action
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
@@ -215,7 +216,7 @@ struct DesignActionButton: View {
         Button(role: role == .destructive ? .destructive : nil, action: action) {
             HStack(spacing: Space.sm) {
                 if state == .loading { ProgressView().controlSize(.small) }
-                Text(state == .loading ? "Loading" : title)
+                Text(state == .loading ? loadingTitle : title)
                     // SwiftUI's custom-font line fragment places this run below
                     // the CSS 1.55 line box; lift only the text, not the target.
                     .baselineOffset(DesignMetrics.actionButtonTextBaselineOffset)
@@ -252,6 +253,9 @@ struct DesignIconButton: View {
     var state: DesignControlState = .normal
     var accessibilityId: String? = nil
     var minimumSize: CGFloat = DesignMetrics.minimumTarget
+    // Standard icon buttons use the 40pt source face inside the native 44pt
+    // target. Compact references use a 44pt face while retaining that target.
+    var visualSizeOverride: CGFloat? = nil
     let action: () -> Void
     @State private var hovered = false
 
@@ -259,9 +263,10 @@ struct DesignIconButton: View {
     // surrounding view remains the native 44pt semantic target. Larger product
     // keys, such as the PIN keypad, retain their caller-owned face size.
     private var visualSize: CGFloat {
-        minimumSize == DesignMetrics.minimumTarget
-            ? DesignMetrics.actionButtonVisualHeight
-            : minimumSize
+        visualSizeOverride
+            ?? (minimumSize == DesignMetrics.minimumTarget
+                ? DesignMetrics.actionButtonVisualHeight
+                : minimumSize)
     }
 
     var body: some View {
@@ -364,7 +369,31 @@ struct DesignCompactIconButton: View {
     var pressedScale: CGFloat = 0.985
     let action: () -> Void
 
+    private var effectiveState: DesignControlState {
+        isEnabled ? state : .disabled
+    }
+
+    @ViewBuilder
     var body: some View {
+        if effectiveState.isSelected {
+            selectedButton
+        } else {
+            // The unselected compact face follows the same native button
+            // kernel as DesignIconButton, with the source's 44pt compact face.
+            DesignIconButton(
+                systemName: systemName,
+                label: label,
+                role: role,
+                state: effectiveState,
+                accessibilityId: accessibilityId,
+                minimumSize: DesignMetrics.minimumTarget,
+                visualSizeOverride: DesignMetrics.minimumTarget,
+                action: action
+            )
+        }
+    }
+
+    private var selectedButton: some View {
         DesignCompactButton(
             accessibilityLabel: label,
             role: role,
