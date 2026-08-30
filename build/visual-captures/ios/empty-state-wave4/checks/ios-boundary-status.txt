@@ -1,2 +1,0 @@
-current_exit=1 base_exit=1
-output_diff_exit=0

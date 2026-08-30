@@ -1,1 +1,0 @@
-build/ios-filter-bar-final-signed-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/SentientApp: Mach-O 64-bit executable arm64

@@ -1,9 +1,0 @@
-case=disclosure--advanced-options--closed exit=0 output=yes
-case=disclosure--advanced-options--open exit=0 output=yes
-case=disclosure--data-storage--closed exit=0 output=yes
-case=disclosure--data-storage--open exit=0 output=yes
-case=frame-000--0000ms exit=0 output=yes
-case=frame-001--0062ms exit=0 output=yes
-case=frame-002--0125ms exit=0 output=yes
-case=frame-003--0188ms exit=0 output=yes
-case=frame-004--0250ms exit=0 output=yes

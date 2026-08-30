@@ -1,9 +1,0 @@
-{
-  "caseId": "setting-row--select--english-open",
-  "platform": "ios",
-  "applicability": "native-platform-adaptation",
-  "captured": false,
-  "reason": "Reachable iOS uses the native SwiftUI Menu; its system-owned popup cannot be held in the static component capture without replacing the control with the prototype listbox.",
-  "authorityPreserved": true,
-  "nativeControlPreserved": true
-}

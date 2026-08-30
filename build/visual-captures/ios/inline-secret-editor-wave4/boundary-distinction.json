@@ -1,7 +1,0 @@
-{
-  "base": "41345d89",
-  "baseViolationCount": 71,
-  "currentViolationCount": 71,
-  "newInlineEditorOrTokenViolations": 0,
-  "result": "No boundary regression; the repository baseline remains failing."
-}

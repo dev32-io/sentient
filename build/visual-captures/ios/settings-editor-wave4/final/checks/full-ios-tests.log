@@ -1,6 +1,0 @@
-2026-08-29 18:16:34.607 xcodebuild[82741:248169322]  DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
-2026-08-29 18:16:34.671 xcodebuild[82741:248169228] [MT] DVTDeviceOperation: Encountered a build number "" that is incompatible with DVTBuildVersion.
-2026-08-29 18:16:43.271 xcodebuild[82741:248169228] [MT] IDETestOperationsObserverDebug: 5.467 elapsed -- Testing started completed.
-2026-08-29 18:16:43.271 xcodebuild[82741:248169228] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
-2026-08-29 18:16:43.271 xcodebuild[82741:248169228] [MT] IDETestOperationsObserverDebug: 5.467 sec, +5.467 sec -- end
-Testing started
