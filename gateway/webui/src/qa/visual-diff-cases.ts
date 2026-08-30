@@ -582,6 +582,21 @@ export interface StaleBannerVariantProps {
 
 type StaleBannerVariantDefinition = VisualDiffVariantDefinition<StaleBannerVariantProps>;
 
+export interface ApplyBarVariantProps {
+  readonly pendingCount: number;
+}
+
+type ApplyBarVariantDefinition = VisualDiffVariantDefinition<ApplyBarVariantProps>;
+
+const APPLY_BAR_TRANSITION_FRAMES = ["frame-000--0000ms", "frame-001--0300ms", "frame-002--0900ms"] as const;
+
+const APPLY_BAR_VARIANTS = {
+  dirty: { props: { pendingCount: 3 } },
+  applying: { props: { pendingCount: 3 } },
+  done: { props: { pendingCount: 3 } },
+  "dirty-to-done": { props: { pendingCount: 3 } },
+} as const satisfies Readonly<Record<string, ApplyBarVariantDefinition>>;
+
 const STALE_BANNER_VARIANTS = {
   "saved-results": {
     props: {
@@ -870,6 +885,19 @@ export const visualDiffComponentRegistry = {
       "saved-results": ["checking", "rest"],
     },
   },
+  "apply-bar": {
+    id: "apply-bar",
+    fixtureAdapterId: "apply-bar",
+    productionComponent: "gateway/webui/src/components/settings/apply-bar/apply-bar.tsx#ApplyBar",
+    authority: "design/prototype/common-composites/handoff.md",
+    variants: APPLY_BAR_VARIANTS,
+    stateApplicability: {
+      dirty: ["rest"],
+      applying: ["active"],
+      done: ["success"],
+      "dirty-to-done": APPLY_BAR_TRANSITION_FRAMES,
+    },
+  },
 } as const satisfies Readonly<Record<string, VisualDiffComponentDefinition>>;
 
 // These components have no authority for states outside their approved handoff
@@ -896,6 +924,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "disclosure",
   "pin-entry",
   "setting-row",
+  "apply-bar",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

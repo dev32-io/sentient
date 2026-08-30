@@ -67,6 +67,15 @@ const CURRENT_STALE_BANNER_CASES = [
   "stale-banner--saved-results--rest",
 ] as const;
 
+const CURRENT_APPLY_BAR_CASES = [
+  "apply-bar--dirty--rest",
+  "apply-bar--applying--active",
+  "apply-bar--done--success",
+  "apply-bar--dirty-to-done--frame-000--0000ms",
+  "apply-bar--dirty-to-done--frame-001--0300ms",
+  "apply-bar--dirty-to-done--frame-002--0900ms",
+] as const;
+
 const CURRENT_SETTING_ROW_CASES = [
   "setting-row--toggle--off",
   "setting-row--toggle--on",
@@ -1296,6 +1305,41 @@ describe("visual diff component cases", () => {
         expect(resolution.case.componentId).toBe("stale-banner");
         expect(resolution.case.fixtureAdapterId).toBe("stale-banner");
       }
+    }
+  });
+
+  it("registers the approved apply-bar states, motion, and production provenance", () => {
+    const applyBar = visualDiffComponentRegistry["apply-bar"];
+    expect(applyBar.fixtureAdapterId).toBe("apply-bar");
+    expect(applyBar.productionComponent).toBe("gateway/webui/src/components/settings/apply-bar/apply-bar.tsx#ApplyBar");
+    expect(applyBar.authority).toBe("design/prototype/common-composites/handoff.md");
+    expect(applyBar.stateApplicability).toEqual({
+      dirty: ["rest"],
+      applying: ["active"],
+      done: ["success"],
+      "dirty-to-done": ["frame-000--0000ms", "frame-001--0300ms", "frame-002--0900ms"],
+    });
+
+    for (const caseId of CURRENT_APPLY_BAR_CASES) {
+      const resolution = resolveVisualDiffCase(caseId);
+      expect(resolution.status).toBe("ready");
+      if (resolution.status === "ready") {
+        expect(resolution.case.componentId).toBe("apply-bar");
+        expect(resolution.case.fixtureAdapterId).toBe("apply-bar");
+        expect(resolution.case.props).toEqual({ pendingCount: 3 });
+      }
+    }
+  });
+
+  it("holds unapproved apply-bar error and interaction states", () => {
+    for (const stateId of ["error", "focus", "hover", "pressed", "disabled"]) {
+      expect(resolveVisualDiffCase(`apply-bar--dirty--${stateId}`)).toEqual({
+        status: "missing-authority",
+        caseId: `apply-bar--dirty--${stateId}`,
+        componentId: "apply-bar",
+        variantId: "dirty",
+        stateId,
+      });
     }
   });
 

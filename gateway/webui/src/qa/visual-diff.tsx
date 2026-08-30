@@ -5,6 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
+import "../components/settings/apply-bar/apply-bar.css";
 import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
@@ -12,8 +13,11 @@ import { SentientIdentity, type RiveFactory } from "../components/common/sentien
 import { TextArea } from "../components/common/foundation/fields.tsx";
 import { Icon } from "../components/common/icon.tsx";
 import { StaleBanner } from "../components/sessions/stale-banner.tsx";
+import { ApplyBar } from "../components/settings/apply-bar/apply-bar.tsx";
+import type { ApplyDeps, PendingOpWithPayload } from "../components/settings/apply-bar/apply-bar-machine.ts";
 import {
   type ActionButtonVariantProps,
+  type ApplyBarVariantProps,
   type CheckboxVariantProps,
   type ChipVariantProps,
   type DisclosureVariantProps,
@@ -311,6 +315,46 @@ function SentientIdentityFixture({ fixture }: { fixture: VisualDiffResolvedCase 
   return <SentientIdentity state={state} size={56} className="visual-diff-target" riveFactory={visualDiffRiveFactory} />;
 }
 
+function applyBarTargetState(fixture: VisualDiffResolvedCase): "dirty" | "applying" | "done" {
+  if (fixture.variantId === "applying" || fixture.stateId === "frame-001--0300ms") return "applying";
+  if (fixture.variantId === "done" || fixture.stateId === "frame-002--0900ms") return "done";
+  return "dirty";
+}
+
+function ApplyBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const props = fixture.props as ApplyBarVariantProps;
+  const targetState = applyBarTargetState(fixture);
+  const pending: PendingOpWithPayload[] = Array.from({ length: props.pendingCount }, (_, index) => ({
+    key: `personalities.fixture-${index}`,
+    kind: "slow" as const,
+    payload: { body: "Visual review fixture" },
+  }));
+  const waitForRestart = targetState === "applying"
+    ? () => new Promise<Awaited<ReturnType<ApplyDeps["waitForRestart"]>>>(() => {})
+    : async () => ({ state: "ready" as const, elapsedMs: 900 });
+  const deps: ApplyDeps = {
+    saveSoul: async () => ({ ok: true }),
+    saveMemoryDoc: async () => ({ ok: true }),
+    saveProfile: async () => ({ ok: true }),
+    savePersonalityActive: async () => ({ ok: true }),
+    savePersonalityBody: async () => ({ ok: true }),
+    savePersonalityCreate: async () => ({ ok: true }),
+    savePersonalityDelete: async () => ({ ok: true }),
+    waitForRestart,
+  };
+
+  useEffect(() => {
+    if (targetState === "dirty") return;
+    document.querySelector<HTMLButtonElement>(".visual-diff-apply-bar-frame .snt-button--primary")?.click();
+  }, [targetState]);
+
+  return (
+    <div class="visual-diff-apply-bar-frame settings-v2">
+      <ApplyBar pending={pending} deps={deps} onApplied={() => {}} onDiscard={() => {}} />
+    </div>
+  );
+}
+
 function PaneHeaderFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
   const header = fixture.props as PaneHeaderVariantProps;
   return (
@@ -590,6 +634,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
       );
     },
   },
+  "apply-bar": {
+    // The fixture drives the production owner through its public pending/deps
+    // contract; it does not replace the async state machine with specimen DOM.
+    render: (fixture) => <ApplyBarFixture fixture={fixture} />,
+  },
 };
 
 function failFixture(resolution: InvalidVisualDiffCase): never {
@@ -625,6 +674,11 @@ function requireFixtureAdapter(fixtureCase: VisualDiffResolvedCase): VisualDiffF
 
 const fixtureAdapter = requireFixtureAdapter(fixture);
 
+function applyBarFixtureReady(fixtureCase: VisualDiffResolvedCase): boolean {
+  const applyBar = document.querySelector<HTMLElement>(".visual-diff-apply-bar-frame .apply-bar");
+  return applyBar?.dataset.state === applyBarTargetState(fixtureCase);
+}
+
 function pinEntryFixtureReady(stateId: string): boolean {
   const expected = stateId === "empty" || stateId === "frame-000--0000ms"
     ? { state: "idle", filled: 0 }
@@ -644,7 +698,10 @@ function VisualDiffFixture() {
   useEffect(() => {
     document.documentElement.dataset.visualDiffFixture = "sentient-v1";
     const markReady = () => {
-      if (fixture.componentId === "pin-entry" && !pinEntryFixtureReady(fixture.stateId)) {
+      if (
+        (fixture.componentId === "pin-entry" && !pinEntryFixtureReady(fixture.stateId))
+        || (fixture.componentId === "apply-bar" && !applyBarFixtureReady(fixture))
+      ) {
         requestAnimationFrame(markReady);
         return;
       }
@@ -669,6 +726,13 @@ style.textContent = `
   .visual-diff-canvas--disclosure { display: block; padding: 52px 52px 0; }
   .visual-diff-plate { width: min(360px, 100%); }
   .visual-diff-stale-banner { width: min(480px, 100%); }
+  .visual-diff-canvas--apply-bar { align-items: flex-start; justify-content: flex-start; padding: 52px; }
+  .visual-diff-apply-bar-frame { width: 680px; min-height: 74px; display: block; }
+  .visual-diff-apply-bar-frame.settings-v2 .apply-bar {
+    position: static;
+    width: 100%;
+    transform: none;
+  }
   .visual-diff-pin-entry-frame { width: min(384px, 100%); height: 496px; display: flex; align-items: flex-start; justify-content: flex-start; }
   .visual-diff-pin-entry { width: 360px; }
   /* Preserve the handoff artboard's lower breathing room around the source margin. */

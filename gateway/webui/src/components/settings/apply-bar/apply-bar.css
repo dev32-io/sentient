@@ -3,41 +3,105 @@
   left: 50%;
   bottom: var(--space-xl);
   z-index: 50;
+  width: min(42.5rem, calc(100vw - var(--space-xl)));
+  /* The approved 72px composition sits inside a 1px plate edge. This fixed
+     production float owns both layers, so its outer minimum includes that edge. */
+  min-height: 4.625rem;
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  max-width: calc(100vw - var(--space-xl));
-  padding: var(--space-md);
+  justify-content: space-between;
+  gap: 1rem;
+  padding: var(--space-md) 0.875rem;
   transform: translateX(-50%);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-paper);
   box-shadow: var(--float-shadow);
+  transition: background-color var(--motion-state), box-shadow var(--motion-state);
+}
+.settings-v2 .apply-bar[data-state="applying"] {
+  background: color-mix(in oklab, var(--color-accent-50) 24%, var(--color-paper));
+}
+.settings-v2 .apply-bar[data-state="done"] {
+  background: color-mix(in oklab, var(--color-ok) 7%, var(--color-paper));
+}
+.settings-v2 .apply-bar[data-state="error"] {
+  background: color-mix(in oklab, var(--color-stop) 7%, var(--color-paper));
+}
+.settings-v2 .apply-bar .ab-copy {
+  position: relative;
+  min-width: 0;
+  padding-left: 1.0625rem;
+}
+.settings-v2 .apply-bar .ab-marker {
+  position: absolute;
+  top: 0.5rem;
+  left: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0.5rem var(--color-accent);
+  transition: background-color var(--motion-state), box-shadow var(--motion-state), transform var(--motion-state);
+}
+.settings-v2 .apply-bar[data-state="applying"] .ab-marker {
+  animation: apply-bar-live 900ms ease-in-out infinite;
+}
+.settings-v2 .apply-bar[data-state="done"] .ab-marker {
+  background: var(--color-ok);
+  box-shadow: none;
+  transform: scale(1.08);
+}
+.settings-v2 .apply-bar[data-state="error"] .ab-marker {
+  background: var(--color-stop);
+  box-shadow: none;
 }
 .settings-v2 .apply-bar .ab-text {
   display: grid;
   min-width: 0;
-  gap: var(--space-xs);
-  padding-right: var(--space-md);
-  border-right: 1px solid var(--color-line-soft);
 }
 .settings-v2 .apply-bar .ab-count {
   color: var(--color-ink);
-  font-size: var(--font-size-sm);
+  font-size: 0.875rem;
   font-weight: 600;
 }
 .settings-v2 .apply-bar .ab-sub {
   overflow-wrap: anywhere;
   color: var(--color-ink-2);
-  font: var(--font-size-xs) / var(--line-height-normal) var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
 }
-@media (max-width: 35rem) {
+.settings-v2 .apply-bar .ab-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--space-sm);
+}
+
+@keyframes apply-bar-live {
+  50% { transform: scale(0.72); opacity: 0.65; }
+}
+
+@media (max-width: 38.75rem) {
   .settings-v2 .apply-bar {
     right: var(--space-sm);
     bottom: var(--space-sm);
     left: var(--space-sm);
-    flex-wrap: wrap;
+    width: auto;
+    max-width: none;
+    align-items: stretch;
+    flex-direction: column;
     transform: none;
   }
-  .settings-v2 .apply-bar .ab-text { width: 100%; border-right: 0; }
+  .settings-v2 .apply-bar .ab-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-v2 .apply-bar[data-state="applying"] .ab-marker { animation: none; }
+}
+
+@media (prefers-contrast: more) {
+  .settings-v2 .apply-bar { border-color: var(--color-ink-3); }
 }

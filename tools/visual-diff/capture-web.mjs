@@ -147,7 +147,7 @@ function captureCaseId(referencePath) {
   const frameCaseId = caseIdFromReference(referencePath);
   if (frameCaseId === "no-results--empty") return "no-results--default--empty";
   const recordingId = basename(dirname(referencePath));
-  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success)$/.test(recordingId)) {
+  if (/^(?:checkbox--unchecked-to-(?:checked|mixed)|chip--unselected-to-selected|toggle--off-to-on|segmented-control--comfortable-to-compact|disclosure--closed-to-open|pin-entry--complete-to-success|apply-bar--dirty-to-done)$/.test(recordingId)) {
     return `${recordingId}--${frameCaseId}`;
   }
   const sentientRecording = /^sentient-avatar--(.+)$/.exec(recordingId);
@@ -189,6 +189,10 @@ function isPinEntryTransition(caseId) {
   return /^pin-entry--complete-to-success--frame-\d+--\d+ms$/.test(caseId);
 }
 
+function isApplyBarTransition(caseId) {
+  return /^apply-bar--dirty-to-done--frame-\d+--\d+ms$/.test(caseId);
+}
+
 function visualDiffTransitionTimeMs(caseId) {
   const checkboxMatch = /^checkbox--unchecked-to-(?:checked|mixed)--frame-\d+--(\d+)ms$/.exec(caseId);
   if (checkboxMatch) return Number(checkboxMatch[1]);
@@ -201,7 +205,9 @@ function visualDiffTransitionTimeMs(caseId) {
   const disclosureMatch = /^disclosure--closed-to-open--frame-\d+--(\d+)ms$/.exec(caseId);
   if (disclosureMatch) return Number(disclosureMatch[1]);
   const pinEntryMatch = /^pin-entry--complete-to-success--frame-\d+--(\d+)ms$/.exec(caseId);
-  return pinEntryMatch ? Number(pinEntryMatch[1]) : undefined;
+  if (pinEntryMatch) return Number(pinEntryMatch[1]);
+  const applyBarMatch = /^apply-bar--dirty-to-done--frame-\d+--(\d+)ms$/.exec(caseId);
+  return applyBarMatch ? Number(applyBarMatch[1]) : undefined;
 }
 
 function visualDiffState(caseId) {
@@ -528,6 +534,9 @@ async function capture() {
     } else if (isPinEntryTransition(caseId)) {
       // The capture adapter drives each recording frame through the public
       // keypad buttons during mount; its frame-specific state is already ready.
+    } else if (isApplyBarTransition(caseId)) {
+      // The capture adapter drives each approved frame through ApplyBar's
+      // public pending/dependency contract; its frame-specific state is ready.
     } else {
       await page.waitForFunction(() => document.documentElement.dataset.visualDiffTransitionReady === "true");
       if (caseId.startsWith("chip--unselected-to-selected--")) {

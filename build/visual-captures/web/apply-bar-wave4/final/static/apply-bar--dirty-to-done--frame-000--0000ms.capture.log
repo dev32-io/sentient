@@ -1,0 +1,2 @@
+$ node tools/visual-diff/capture-web.mjs --reference "design/prototype/common-composites/handoff/recordings/apply-bar--dirty-to-done/frame-000--0000ms.png" --output "build/visual-captures/web/apply-bar-wave4/final/static/apply-bar--dirty-to-done--frame-000--0000ms.png"
+{"platform":"web","caseId":"apply-bar--dirty-to-done--frame-000--0000ms","referenceSize":{"width":1616,"height":404},"actualPath":"/Users/kevinye/Development/sentient/.worktree/wave4/web-apply-bar/build/visual-captures/web/apply-bar-wave4/final/static/apply-bar--dirty-to-done--frame-000--0000ms.png"}
