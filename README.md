@@ -45,6 +45,50 @@ shortened; the model responses, tool calls, and memory recall are not scripted.
 - A browser setup wizard for model providers, household accounts, and optional
   integrations.
 
+## Deep Memory and Spark
+
+Most assistant memory is either always stuffed into the prompt or fetched only
+when the model decides to call a tool. Sentient uses both durable notes and a
+custom associative recall path called **Spark**.
+
+The canonical memory is plain Markdown that can be inspected, edited, and backed
+up. A derived local index combines SQLite FTS5 search with MLX multilingual
+embeddings. At the start of each conversational turn, Spark searches with the
+utterance that opened the turn, across private memory and any permitted
+household memory. This happens before the first model call and uses no LLM call
+of its own.
+
+```mermaid
+flowchart LR
+    Sessions[(Session history)] -->|nightly distillation| Dreamer[Dreamer]
+    Dreamer --> Notes[Markdown notes<br/>and episode summaries]
+    Notes -->|idempotent index sync| Index[(Deep Memory index<br/>FTS5 · sqlite-vec · MLX)]
+
+    Utterance[Turn starts<br/>with a user utterance] --> Spark[Spark recall]
+    Spark -->|search granted scopes| Index
+    Index --> Filter[Relevance gate<br/>audience filter · security scan · caps]
+    Filter -->|small memory block| Situation[Per-turn situation]
+    Situation --> Agent[Gateway ReAct loop]
+
+    Recall[memory_recall tool] <-->|deliberate search| Index
+```
+
+Spark is deliberately conservative. Relevance decides whether a memory may
+surface; recency only orders the memories that passed, so an old but strongly
+related experience can still return. At most three short snippets enter the
+turn under the default rough 250-token estimate. Superseded memories are excluded,
+child sessions filter adult-only family entries, and recalled text crosses the
+same inbound security gate as other untrusted context. If nothing is relevant,
+the index is unavailable, or the 500 ms deadline expires, the turn continues
+without a memory block.
+
+The model can still use `memory_recall` when it needs to search deliberately and
+open the relevant part of an earlier conversation. The nightly Dreamer creates
+episode summaries and reconciles durable facts. The index is derived rather than
+canonical; the durable sources are the Markdown memory and session history. See the
+[Memory System design](docs/superpowers/specs/2026-08-08-memory-system-design.md)
+for the storage, scoring, safety, and household-scope contracts.
+
 ## Architecture
 
 ```mermaid
@@ -242,6 +286,7 @@ to `launchd` and `deploy/mac-prod/setup-prod.py`.
 - [Native agent runtime design](docs/superpowers/specs/2026-07-23-sentient-2.0-native-orchestrator-design.md)
 - [Native host and addon migration](docs/superpowers/specs/2026-07-29-native-stack-migration-design.md)
 - [Session and multi-surface model](docs/superpowers/specs/2026-08-02-session-model-and-multi-surface-design.md)
+- [Memory System design](docs/superpowers/specs/2026-08-08-memory-system-design.md)
 - [Wire protocol](shared/protocol/WIRE.md)
 - [Contributing](CONTRIBUTING.md)
 
