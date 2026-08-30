@@ -6,7 +6,7 @@ import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/settings/apply-bar/apply-bar.css";
-import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { SelectMenu } from "../components/common/select-menu.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
@@ -36,6 +36,7 @@ import {
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
   type SettingRowVariantProps,
+  type SettingsGroupVariantProps,
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
   type TextFieldVariantProps,
@@ -182,6 +183,40 @@ function FilterBarFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX
         </SearchFilterBar>
       </Plate>
     </div>
+  );
+}
+
+function SettingsGroupFixture({ fixture }: { fixture: VisualDiffResolvedCase }): JSX.Element {
+  const group = fixture.props as SettingsGroupVariantProps;
+  if (group.label !== "General") throw new Error(`Unsupported settings group: ${group.label}`);
+
+  return (
+    <Plate className="visual-diff-target visual-diff-settings-group">
+      <SettingsGroup>
+        <SettingsRow label="Automatic updates" hint="Install trusted updates when the household is idle.">
+          <ToggleControl label="Automatic updates" checked onChange={() => {}} />
+        </SettingsRow>
+        <SettingsRow label="Language" hint="Used for interface labels and spoken responses.">
+          <SelectControl
+            label="Language"
+            value="English"
+            options={[{ value: "English", label: "English" }, { value: "Spanish", label: "Spanish" }, { value: "French", label: "French" }]}
+            onChange={() => {}}
+          />
+        </SettingsRow>
+        <SettingsRow label="Detail level" hint="Choose how much supporting information appears.">
+          <SegmentedControl
+            label="Detail level"
+            value="default"
+            options={[{ value: "default", label: "Default" }, { value: "expert", label: "Expert" }]}
+            onChange={() => {}}
+          />
+        </SettingsRow>
+        <SettingsRow label="Interface scale" hint="Preview changes before applying them.">
+          <SliderControl label="Interface scale" value={62} min={0} max={100} step={1} format={(value) => `${Math.round(value)}%`} onChange={() => {}} />
+        </SettingsRow>
+      </SettingsGroup>
+    </Plate>
   );
 }
 
@@ -600,6 +635,11 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // and its native buttons for every approved static and motion case.
     render: (fixture) => <SegmentedControlFixture fixture={fixture} />,
   },
+  "settings-group": {
+    // This adapter composes the production SettingsGroup with its four native
+    // row/control owners on the reviewed Plate surface.
+    render: (fixture) => <SettingsGroupFixture fixture={fixture} />,
+  },
   "setting-row": {
     // This adapter composes the production SettingsRow with its native control
     // owner; the open native select popup remains intentionally unregistered.
@@ -806,11 +846,13 @@ style.textContent = `
     padding: 0 24px 24px 0;
   }
   .visual-diff-pane-header { width: min(620px, 100%); }
+  .visual-diff-canvas[data-component-id="settings-group"],
   .visual-diff-canvas[data-component-id="setting-row"] {
     align-items: flex-start;
     justify-content: flex-start;
     padding: 52px 76px 0 52px;
   }
+  .visual-diff-settings-group { width: min(650px, 100%); }
   .visual-diff-setting-row { width: 600px; }
   .visual-diff-setting-row__list { padding: 0 16px; }
   .visual-diff-media-card { width: 260px; }

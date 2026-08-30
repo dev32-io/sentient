@@ -10,6 +10,7 @@ import {
   PaneChrome,
   SegmentedControl,
   SettingsCard,
+  SettingsGroup,
   SettingsRow,
   TextArea,
   ToggleControl,
@@ -66,13 +67,15 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
 
   return (
     <PaneChrome title="Memory" subtitle="Persistent context the assistant carries between conversations. Apply saves changes for the next conversation; a service restart may be needed before every active session sees them.">
-      <SettingsCard title="Memory features" subtitle="Changes take effect after Apply.">
-        <SettingsRow label="Memory sparking" hint="Bring up relevant past memories in conversation.">
-          <ToggleControl label="Memory sparking" checked={memoryToggles.spark} onChange={(spark) => onDraftMemoryToggles({ ...memoryToggles, spark })} />
-        </SettingsRow>
-        <SettingsRow label="Nightly reflection" hint="Let Sentient reflect on the day and update its notes.">
-          <ToggleControl label="Nightly reflection" checked={memoryToggles.dreaming} onChange={(dreaming) => onDraftMemoryToggles({ ...memoryToggles, dreaming })} />
-        </SettingsRow>
+      <SettingsCard title="Memory features" subtitle="Changes take effect after Apply." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Memory sparking" hint="Bring up relevant past memories in conversation.">
+            <ToggleControl label="Memory sparking" checked={memoryToggles.spark} onChange={(spark) => onDraftMemoryToggles({ ...memoryToggles, spark })} />
+          </SettingsRow>
+          <SettingsRow label="Nightly reflection" hint="Let Sentient reflect on the day and update its notes.">
+            <ToggleControl label="Nightly reflection" checked={memoryToggles.dreaming} onChange={(dreaming) => onDraftMemoryToggles({ ...memoryToggles, dreaming })} />
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsCard>
 
       <SegmentedControl

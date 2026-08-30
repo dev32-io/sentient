@@ -76,6 +76,16 @@ export interface SettingsCardProps {
   padded?: boolean | undefined;
 }
 
+export interface SettingsGroupProps {
+  children: ComponentChildren;
+  className?: string | undefined;
+}
+
+/** A bounded list of setting rows; the owning card retains its heading and description. */
+export function SettingsGroup({ children, className }: SettingsGroupProps): JSX.Element {
+  return <div class={classes("snt-settings-group", className)}>{children}</div>;
+}
+
 export function SettingsCard({ title, subtitle, action, children, padded = true }: SettingsCardProps): JSX.Element {
   return (
     <Plate>

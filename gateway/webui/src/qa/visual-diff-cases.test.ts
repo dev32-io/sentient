@@ -924,6 +924,23 @@ describe("visual diff component cases", () => {
     }
   });
 
+  it("registers the exact settings-group reference against the production group", () => {
+    const settingsGroup = visualDiffComponentRegistry["settings-group"];
+    expect(settingsGroup.fixtureAdapterId).toBe("settings-group");
+    expect(settingsGroup.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsGroup");
+    expect(settingsGroup.authority).toBe(
+      "design/prototype/common-composites/handoff/static/settings-group--general--rest.png",
+    );
+    expect(settingsGroup.stateApplicability).toEqual({ general: ["rest"] });
+
+    const resolution = resolveVisualDiffCase("settings-group--general--rest");
+    expect(resolution.status).toBe("ready");
+    if (resolution.status === "ready") {
+      expect(resolution.case.componentId).toBe("settings-group");
+      expect(resolution.case.props).toEqual({ label: "General" });
+    }
+  });
+
   it("registers the setting-row control matrix and preserves native open-select adaptation", () => {
     const settingRow = visualDiffComponentRegistry["setting-row"];
     expect(settingRow.fixtureAdapterId).toBe("setting-row");

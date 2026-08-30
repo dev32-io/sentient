@@ -1,11 +1,30 @@
 import { fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ActionButton } from "./foundation.tsx";
-import { AsyncState, Notice, PaneChrome, ValidatedField } from "./composites.tsx";
+import { ActionButton, ToggleControl } from "./foundation.tsx";
+import { AsyncState, Notice, PaneChrome, SettingsCard, SettingsGroup, SettingsRow, ValidatedField } from "./composites.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
   document.body.innerHTML = "";
+});
+
+describe("SettingsGroup", () => {
+  it("keeps card heading and description semantics around labelled native controls", () => {
+    render(
+      <SettingsCard title="Reply output" subtitle="Choose how replies are delivered." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Speak responses" hint="Replies can include audio.">
+            <ToggleControl label="Speak responses" checked onChange={vi.fn()} />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsCard>,
+    );
+
+    expect(screen.getByRole("heading", { level: 3, name: "Reply output" })).toBeTruthy();
+    expect(screen.getByText("Choose how replies are delivered.")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Speak responses" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Speak responses" }).getAttribute("aria-checked")).toBe("true");
+  });
 });
 
 describe("AsyncState loading", () => {

@@ -4,7 +4,7 @@ import { createLogger } from "@sentient/web-sdk";
 import { useAuth } from "../../../hooks/use-auth.tsx";
 import { createAdminApi, type LlmProvider, type SecretsStatus } from "../../../services/admin-api.ts";
 import type { PendingOpWithPayload } from "../apply-bar/apply-bar-machine.ts";
-import { ActionButton, AsyncState, PaneChrome, SettingsCard } from "../../common/index.ts";
+import { ActionButton, AsyncState, PaneChrome, SettingsCard, SettingsGroup } from "../../common/index.ts";
 import { CustomRow, SecretRow, type EditingKey } from "./secret-row.tsx";
 
 const log = createLogger(["sentient", "webui", "settings", "secrets"]);
@@ -75,10 +75,12 @@ export function SecretsPane({ onMark }: SecretsPaneProps): JSX.Element {
       {loadState === "forbidden" && <AsyncState state="error" title="Admin access required" message="Your account no longer has permission to manage provider keys." action={<ActionButton onClick={() => void refresh()}>Try again</ActionButton>} />}
       {loadState === "error" && <AsyncState state="error" title="Key status unavailable" message="Stored key presence could not be loaded." action={<ActionButton onClick={() => void refresh()}>Try again</ActionButton>} />}
       {loadState === "ready" && data && (
-        <SettingsCard title="Provider keys" subtitle="Updating a field replaces its stored value.">
-          <SecretRow label="OpenRouter" status={data.llm.openrouter} isActive={data.llm.active === "openrouter"} onSetActive={() => void setActive("openrouter")} editing={editing === "openrouter"} onStartEdit={() => setEditing("openrouter")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("openrouter", key)} />
-          <SecretRow label="Ollama Cloud" status={data.llm.ollama_cloud} isActive={data.llm.active === "ollama-cloud"} onSetActive={() => void setActive("ollama-cloud")} editing={editing === "ollama-cloud"} onStartEdit={() => setEditing("ollama-cloud")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("ollama-cloud", key)} />
-          <CustomRow status={data.llm.custom} isActive={data.llm.active === "custom"} onSetActive={() => void setActive("custom")} editingKey={editing} onStartEditKey={() => setEditing("custom")} onStartEditUrl={() => setEditing("custom-baseurl")} onCancel={() => setEditing(null)} onSaveKey={(key) => saveLlmKey("custom", key)} onSaveUrl={(url) => saveLlmBaseUrl("custom", url)} />
+        <SettingsCard title="Provider keys" subtitle="Updating a field replaces its stored value." padded={false}>
+          <SettingsGroup>
+            <SecretRow label="OpenRouter" status={data.llm.openrouter} isActive={data.llm.active === "openrouter"} onSetActive={() => void setActive("openrouter")} editing={editing === "openrouter"} onStartEdit={() => setEditing("openrouter")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("openrouter", key)} />
+            <SecretRow label="Ollama Cloud" status={data.llm.ollama_cloud} isActive={data.llm.active === "ollama-cloud"} onSetActive={() => void setActive("ollama-cloud")} editing={editing === "ollama-cloud"} onStartEdit={() => setEditing("ollama-cloud")} onCancel={() => setEditing(null)} onSave={(key) => saveLlmKey("ollama-cloud", key)} />
+            <CustomRow status={data.llm.custom} isActive={data.llm.active === "custom"} onSetActive={() => void setActive("custom")} editingKey={editing} onStartEditKey={() => setEditing("custom")} onStartEditUrl={() => setEditing("custom-baseurl")} onCancel={() => setEditing(null)} onSaveKey={(key) => saveLlmKey("custom", key)} onSaveUrl={(url) => saveLlmBaseUrl("custom", url)} />
+          </SettingsGroup>
         </SettingsCard>
       )}
     </PaneChrome>

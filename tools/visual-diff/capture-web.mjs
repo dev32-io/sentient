@@ -18,7 +18,7 @@ const MOBILE_BREAKPOINT = 620;
 const LOADING_ACTIVE_REFERENCE_PHASE_MS = 366;
 // Non-transforming component boundaries must stay on the exact handoff canvas;
 // the wider frame below is only needed for controls whose hover/press face translates.
-const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "filter-bar", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "text-area", "text-field", "toggle", "user-avatar", "validated-field"]);
+const FIXED_CANVAS_COMPONENTS = new Set(["checkbox", "filter-bar", "loading-state", "media-action-card", "range", "search-field", "sentient-identity", "setting-row", "settings-group", "text-area", "text-field", "toggle", "user-avatar", "validated-field"]);
 const VISUAL_DIFF_TARGET_SELECTOR = ".visual-diff-target";
 const SENTIENT_IDENTITY_VARIANTS = new Set([
   "idle",

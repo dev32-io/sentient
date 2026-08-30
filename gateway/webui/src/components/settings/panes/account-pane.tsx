@@ -12,6 +12,7 @@ import {
   PaneChrome,
   PinEntry,
   SettingsCard,
+  SettingsGroup,
   SettingsRow,
 } from "../../common/index.ts";
 
@@ -76,28 +77,34 @@ export function AccountPane(): JSX.Element {
 
   return (
     <PaneChrome title="Account" subtitle="Your profile inside this household." className="owned-pane">
-      <SettingsCard title="Identity" subtitle="How Sentient knows it's you.">
-        <SettingsRow label="Display name">
-          <div class="owned-inline-field">
-            <Field ariaLabel="Display name" value={name} onInput={(event) => setName(event.currentTarget.value)} />
-            <ActionButton loading={savingName} disabled={nameUnchanged || !trimmedName} onClick={() => void handleSaveName()}>Save</ActionButton>
-          </div>
-        </SettingsRow>
-        <SettingsRow label="Voice print" hint="Used to recognize you when you speak.">
-          <span class="snt-kicker" aria-disabled="true">Coming soon</span>
-        </SettingsRow>
+      <SettingsCard title="Identity" subtitle="How Sentient knows it's you." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Display name">
+            <div class="owned-inline-field">
+              <Field ariaLabel="Display name" value={name} onInput={(event) => setName(event.currentTarget.value)} />
+              <ActionButton loading={savingName} disabled={nameUnchanged || !trimmedName} onClick={() => void handleSaveName()}>Save</ActionButton>
+            </div>
+          </SettingsRow>
+          <SettingsRow label="Voice print" hint="Used to recognize you when you speak.">
+            <span class="snt-kicker" aria-disabled="true">Coming soon</span>
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsCard>
 
-      <SettingsCard title="Security" subtitle="Used for sensitive household actions.">
-        <SettingsRow label="PIN" hint="Four digits, required for sensitive actions.">
-          <ActionButton onClick={() => setPinOpen(true)}>Change PIN</ActionButton>
-        </SettingsRow>
+      <SettingsCard title="Security" subtitle="Used for sensitive household actions." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="PIN" hint="Four digits, required for sensitive actions.">
+            <ActionButton onClick={() => setPinOpen(true)}>Change PIN</ActionButton>
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsCard>
 
-      <SettingsCard title="Session" subtitle="This device only.">
-        <SettingsRow label="Sign out" hint="Returns you to the login screen on this device.">
-          <ActionButton variant="destructive" onClick={() => void auth.logout()}>Sign out</ActionButton>
-        </SettingsRow>
+      <SettingsCard title="Session" subtitle="This device only." padded={false}>
+        <SettingsGroup>
+          <SettingsRow label="Sign out" hint="Returns you to the login screen on this device.">
+            <ActionButton variant="destructive" onClick={() => void auth.logout()}>Sign out</ActionButton>
+          </SettingsRow>
+        </SettingsGroup>
       </SettingsCard>
 
       {pinOpen && (

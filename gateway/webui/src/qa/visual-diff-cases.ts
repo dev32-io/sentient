@@ -162,6 +162,12 @@ export interface SettingRowVariantProps {
 
 type SettingRowVariantDefinition = VisualDiffVariantDefinition<SettingRowVariantProps>;
 
+export interface SettingsGroupVariantProps {
+  readonly label: "General";
+}
+
+type SettingsGroupVariantDefinition = VisualDiffVariantDefinition<SettingsGroupVariantProps>;
+
 export interface SegmentedControlOption {
   readonly value: string;
   readonly label: string;
@@ -281,6 +287,10 @@ const TOGGLE_VARIANTS = {
   on: { props: { label: "Automatic updates", checked: true } },
   "off-to-on": { props: { label: "Automatic updates", checked: false } },
 } as const satisfies Readonly<Record<string, ToggleVariantDefinition>>;
+
+const SETTINGS_GROUP_VARIANTS = {
+  general: { props: { label: "General" } },
+} as const satisfies Readonly<Record<string, SettingsGroupVariantDefinition>>;
 
 const SETTING_ROW_VARIANTS = {
   toggle: {
@@ -793,6 +803,16 @@ export const visualDiffComponentRegistry = {
       "off-to-on": TOGGLE_TRANSITION_FRAMES,
     },
   },
+  "settings-group": {
+    id: "settings-group",
+    fixtureAdapterId: "settings-group",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsGroup",
+    authority: "design/prototype/common-composites/handoff/static/settings-group--general--rest.png",
+    variants: SETTINGS_GROUP_VARIANTS,
+    stateApplicability: {
+      general: ["rest"],
+    },
+  },
   "setting-row": {
     id: "setting-row",
     fixtureAdapterId: "setting-row",
@@ -954,6 +974,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "pin-entry",
   "setting-row",
   "apply-bar",
+  "settings-group",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

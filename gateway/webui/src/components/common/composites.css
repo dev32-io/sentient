@@ -1,5 +1,13 @@
 /* Shared WebUI composites. Product surfaces compose these classes rather than restyling them locally. */
 
+/* Settings group */
+.snt-settings-group { padding: 0 16px; }
+/* Keep dividers out of row measurement so every control variant shares one rhythm. */
+.snt-settings-group > .snt-settings-row + .snt-settings-row {
+  border-top: 0;
+  box-shadow: inset 0 1px var(--color-line-soft);
+}
+
 /* Pane header */
 .snt-pane-head {
   display: flex;

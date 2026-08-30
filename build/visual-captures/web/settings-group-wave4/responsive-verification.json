@@ -1,0 +1,164 @@
+[
+  {
+    "profile": "compact-rest",
+    "background": "#2B2621",
+    "viewportWidth": 390,
+    "scrollWidth": 390,
+    "target": {
+      "width": 262,
+      "height": 548.75
+    },
+    "controls": [
+      {
+        "name": "Automatic updates",
+        "width": 44,
+        "left": 253,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 228,
+        "left": 69,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 77.3125,
+        "left": 74,
+        "right": 151.3125,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 72.4375,
+        "left": 154.3125,
+        "right": 226.75,
+        "withinTarget": true
+      },
+      {
+        "name": "Interface scale",
+        "width": 172,
+        "left": 69,
+        "right": 241,
+        "withinTarget": true
+      }
+    ],
+    "groups": 5,
+    "labels": [
+      "Automatic updates",
+      "Language",
+      "Detail level",
+      "Interface scale"
+    ]
+  },
+  {
+    "profile": "compact-reduced-motion",
+    "background": "#2B2621",
+    "viewportWidth": 390,
+    "scrollWidth": 390,
+    "target": {
+      "width": 262,
+      "height": 548.75
+    },
+    "controls": [
+      {
+        "name": "Automatic updates",
+        "width": 44,
+        "left": 253,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 228,
+        "left": 69,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 77.3125,
+        "left": 74,
+        "right": 151.3125,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 72.4375,
+        "left": 154.3125,
+        "right": 226.75,
+        "withinTarget": true
+      },
+      {
+        "name": "Interface scale",
+        "width": 172,
+        "left": 69,
+        "right": 241,
+        "withinTarget": true
+      }
+    ],
+    "groups": 5,
+    "labels": [
+      "Automatic updates",
+      "Language",
+      "Detail level",
+      "Interface scale"
+    ]
+  },
+  {
+    "profile": "compact-more-contrast",
+    "background": "#2B2621",
+    "viewportWidth": 390,
+    "scrollWidth": 390,
+    "target": {
+      "width": 262,
+      "height": 548.75
+    },
+    "controls": [
+      {
+        "name": "Automatic updates",
+        "width": 44,
+        "left": 253,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 228,
+        "left": 69,
+        "right": 297,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 77.3125,
+        "left": 74,
+        "right": 151.3125,
+        "withinTarget": true
+      },
+      {
+        "name": null,
+        "width": 72.4375,
+        "left": 154.3125,
+        "right": 226.75,
+        "withinTarget": true
+      },
+      {
+        "name": "Interface scale",
+        "width": 172,
+        "left": 69,
+        "right": 241,
+        "withinTarget": true
+      }
+    ],
+    "groups": 5,
+    "labels": [
+      "Automatic updates",
+      "Language",
+      "Detail level",
+      "Interface scale"
+    ]
+  }
+]
