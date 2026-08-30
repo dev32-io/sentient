@@ -1,0 +1,25 @@
+{
+  "caseId": "settings-group--general--rest",
+  "authoritySha256": "578283adc5c639d167e0de299d5022ef29a14e3d6bd36a766d8e01027f3176b8",
+  "actualSha256": "85b11eb9d5582583ec903f56fcd8a5db9c492efde40b3ac1f555bc7835d79fff",
+  "canvasPixels": [
+    1556,
+    820
+  ],
+  "profile": {
+    "threshold": 0.035,
+    "maxVisibleAlphaUnionPercentage": 5.25,
+    "background": "#2B2621",
+    "antialiasingIgnored": true
+  },
+  "result": {
+    "diffCount": 45554,
+    "diffPercentage": 5.15,
+    "withinLimit": true
+  },
+  "adaptations": [
+    "Native SwiftUI Menu remains the selection owner.",
+    "Native SwiftUI Slider remains the range interaction and accessibility owner.",
+    "Accessibility Dynamic Type sizes stack row copy above trailing controls."
+  ]
+}

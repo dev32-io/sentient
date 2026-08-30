@@ -1,0 +1,27 @@
+{
+  "fixture": "production DesignSettingsEditor with production DesignField, DesignMultilineEditor, and DesignActionButton children",
+  "productionOwners": {
+    "memory": "MemoryViewModel.SlotState.isDirty and MemoryViewModel.save",
+    "systemPrompt": "SystemPromptViewModel.isDirty and SystemPromptViewModel.save",
+    "advanced": "AdvancedViewModel remains the draft/save owner; no editor-specific status is claimed",
+    "fixtureActions": "no-op closures used only to render the approved action slots; no persistence or reset behavior is synthesized"
+  },
+  "platformAdaptations": {
+    "save": "Production Memory and System Prompt save actions remain native navigation toolbar actions; the composite does not move or duplicate ownership",
+    "focusAndKeyboard": "DesignField and DesignMultilineEditor retain native TextField/TextEditor focus, keyboard, scrolling, bindings, limits, counters, and errors",
+    "dynamicType": "Header and optional actions recompose vertically at accessibility sizes; text uses relative project typography",
+    "rtl": "Logical SwiftUI leading/trailing stacks and spacers mirror without offsets",
+    "reducedMotion": "The shell adds no animation; existing native controls retain their reduced-motion handling",
+    "increasedContrast": "The status boundary promotes from lineSoft to ink3 while the field and button primitives keep their existing contrast behavior",
+    "targets": "Optional actions use DesignActionButton and its 44pt semantic minimum target",
+    "stateSignal": "Saved and Unsaved remain explicit text, not color-only signals"
+  },
+  "capture": {
+    "simulator": "iPhone 16, iOS 26.5, arm64, 2x",
+    "locale": "en_US_POSIX",
+    "dynamicType": "large",
+    "layoutDirection": "leftToRight",
+    "colorScheme": "dark",
+    "serialized": true
+  }
+}

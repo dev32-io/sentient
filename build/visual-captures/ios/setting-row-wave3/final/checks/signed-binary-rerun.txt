@@ -1,0 +1,1 @@
+build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/SentientApp: Mach-O 64-bit executable arm64

@@ -1,0 +1,23 @@
+$ npm --prefix tools/visual-diff test
+
+> test
+> node --test *.test.mjs
+
+✔ parses reviewed opaque background colors (0.857417ms)
+✔ composites transparent PNG pixels on the selected background (8.338083ms)
+✔ measures the union of visible pixels without transparent canvas padding (2.646708ms)
+✔ reads PNG dimensions without a rendering dependency (5.242542ms)
+✔ rejects outputs outside the disposable platform directory (2.334292ms)
+✔ derives stable case and implementation output names (0.477333ms)
+✔ rejects malformed invocation (1.255333ms)
+✔ rejects diff outputs that could overwrite an input (0.259291ms)
+✔ keeps pixel differences report-only without a reviewed gate (7.479709ms)
+✔ fails only when the visible-pixel percentage exceeds a configured gate (2.287ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 95.477042

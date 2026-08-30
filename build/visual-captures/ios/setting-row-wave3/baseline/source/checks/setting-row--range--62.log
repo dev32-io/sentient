@@ -1,0 +1,41 @@
+Log summary: full command output was intentionally reduced after preserving the terminal result.
+    export _DISCOVER_COMMAND_LINE_LINKER_INPUTS\=YES
+    export _DISCOVER_COMMAND_LINE_LINKER_INPUTS_INCLUDE_WL\=YES
+    export _LD_MULTIARCH\=YES
+    export _WRAPPER_CONTENTS_DIR_SHALLOW_BUNDLE_NO\=/Contents
+    export _WRAPPER_PARENT_PATH_SHALLOW_BUNDLE_NO\=/..
+    export _WRAPPER_RESOURCES_DIR_SHALLOW_BUNDLE_NO\=/Resources
+    export __DIAGNOSE_DEPRECATED_ARCHS\=YES
+    export __IS_NOT_MACOS\=YES
+    export __IS_NOT_MACOS_macosx\=NO
+    export __IS_NOT_SIMULATOR\=NO
+    export __IS_NOT_SIMULATOR_simulator\=NO
+    export __ORIGINAL_SDK_DEFINED_LLVM_TARGET_TRIPLE_SYS\=ios
+    export arch\=undefined_arch
+    export variant\=normal
+    /bin/sh -c /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/visual-ios-derived/Build/Intermediates.noindex/SentientApp.build/Debug-iphonesimulator/SentientApp.build/Script-36D096993776F1E351F0042E.sh
+
+Test Suite 'Selected tests' started at 2026-08-29 15:18:14.232.
+Test Suite 'SentientAppTests.xctest' started at 2026-08-29 15:18:14.233.
+Test Suite 'VisualDiffCaptureTests' started at 2026-08-29 15:18:14.233.
+Test Case '-[SentientAppTests.VisualDiffCaptureTests testCaptureRequestedReference]' started.
+Test Case '-[SentientAppTests.VisualDiffCaptureTests testCaptureRequestedReference]' passed (0.462 seconds).
+Test Suite 'VisualDiffCaptureTests' passed at 2026-08-29 15:18:14.695.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.462 (0.462) seconds
+Test Suite 'SentientAppTests.xctest' passed at 2026-08-29 15:18:14.695.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.462 (0.463) seconds
+Test Suite 'Selected tests' passed at 2026-08-29 15:18:14.696.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.462 (0.463) seconds
+IOSurfaceClientSetSurfaceNotify failed e00002c7
+2026-08-29 15:18:14.702911-0700 SentientApp[82375:246773650] Unbalanced calls to begin/end appearance transitions for <UIViewController: 0x107ac4800>.
+2026-08-29 15:18:15.033 xcodebuild[82075:246772352] [MT] IDETestOperationsObserverDebug: 5.514 elapsed -- Testing started completed.
+2026-08-29 15:18:15.033 xcodebuild[82075:246772352] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-29 15:18:15.033 xcodebuild[82075:246772352] [MT] IDETestOperationsObserverDebug: 5.514 sec, +5.514 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/visual-ios-derived/Logs/Test/Test-SentientApp-2026.08.29_15-18-07--0700.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+{"platform":"ios","caseId":"setting-row--range--62","actualPath":"/Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/visual-captures/ios/setting-row-wave3/baseline/source/setting-row--range--62.png"}

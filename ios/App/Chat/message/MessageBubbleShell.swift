@@ -154,7 +154,6 @@ struct MessageBubbleShell<Content: View, Footer: View>: View {
                 .accessibilityHidden(true)
         } else {
             SentientMark(size: BubbleLayout.avatarSize, mode: avatarMode)
-                .overlay(AvatarRipple(active: avatarMode != .idle))
                 .padding(.trailing, Space.md)
                 .accessibilityHidden(true)
         }

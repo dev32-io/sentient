@@ -9,15 +9,21 @@ import SwiftUI
 struct UserAvatar: View {
     let name: String
     var size: CGFloat = UserAvatarLayout.defaultSize
+    var tint: DesignUserAvatarTint = .fallback
     var selected = false
     var disabled = false
+    var fallback = false
+    var initial: String? = nil
 
     var body: some View {
         ElevatedUserAvatar(
             name: name,
             size: size,
+            tint: tint,
             selected: selected,
-            disabled: disabled
+            disabled: disabled,
+            fallback: fallback,
+            initial: initial
         )
     }
 }

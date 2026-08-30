@@ -18,30 +18,36 @@ struct VoiceFilterBarView: View {
     let onLanguage: (String) -> Void
 
     var body: some View {
-        SearchFilterRow(prompt: "Search voices", query: $query) {
-            VStack(alignment: .leading, spacing: Space.md) {
-                DesignSelect(
+        SearchFilterRow(
+            prompt: "Search voices",
+            query: $query,
+            primaryFilter: {
+                DesignFilterMenu(
                     title: "Language",
                     options: languageOptions.map { (value: $0.code, label: $0.label) },
-                    selection: Binding(get: { language }, set: onLanguage)
+                    selection: Binding(get: { language }, set: onLanguage),
+                    accessibilityId: "settings-voice-language"
                 )
-                .accessibilityIdentifier("settings-voice-language")
+            },
+            filters: {
                 DesignSegmentedPicker(
                     title: "Source",
                     options: sourceOptions,
-                    selection: Binding(get: { source }, set: onSource)
+                    selection: Binding(get: { source }, set: onSource),
+                    accessibilityId: "settings-voice-source"
                 )
-                .accessibilityIdentifier("settings-voice-source")
-                if !tagOptions.isEmpty {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: DesignMetrics.minimumTarget))], alignment: .leading, spacing: Space.xs) {
-                        ForEach(tagOptions, id: \.self) { tag in
-                            DesignChip(title: tag, selected: selectedTags.contains(tag)) { onToggleTag(tag) }
-                                .accessibilityIdentifier("settings-voice-tag-\(tag)")
-                        }
+                .fixedSize(horizontal: true, vertical: false)
+                ForEach(tagOptions, id: \.self) { tag in
+                    DesignChip(
+                        title: tag,
+                        selected: selectedTags.contains(tag),
+                        accessibilityId: "settings-voice-tag-\(tag)"
+                    ) {
+                        onToggleTag(tag)
                     }
                 }
             }
-        }
+        )
         .accessibilityIdentifier("settings-voice-search")
     }
 }

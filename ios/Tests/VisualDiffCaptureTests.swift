@@ -1,13 +1,31 @@
 import ImageIO
+import MetalKit
 import SnapshotTesting
 import SwiftUI
 import UIKit
 import XCTest
 @testable import SentientApp
 
+private final class VisualDiffFocusWindow: UIWindow {
+    override var safeAreaInsets: UIEdgeInsets { .zero }
+}
+
+private final class VisualDiffCanvasView: UIView {
+    override var safeAreaInsets: UIEdgeInsets { .zero }
+}
+
+private final class VisualDiffCanvasViewController: UIViewController {
+    override func loadView() {
+        view = VisualDiffCanvasView()
+    }
+}
+
+private let loadingStateActiveCaptureDuration: TimeInterval = 0.366
+
 /// Exports one deterministic implementation PNG for the repository-local ODiff
 /// feedback loop. Ordinary unit-test runs skip this test unless the capture
 /// script owns a fresh, serialized request file.
+@MainActor
 final class VisualDiffCaptureTests: XCTestCase {
     func testCaptureRequestedReference() throws {
         let requestURL = URL(fileURLWithPath: "/tmp/sentient-visual-diff-request")
@@ -53,8 +71,21 @@ final class VisualDiffCaptureTests: XCTestCase {
         }
 
         let logicalSize = CGSize(width: pixelSize.width / 2, height: pixelSize.height / 2)
-        let caseID = referenceURL.deletingPathExtension().lastPathComponent
-        let fixture = try fixture(for: caseID)
+        let caseID = visualDiffCaseID(for: referenceURL)
+        let identityCapture = VisualDiffFixtureRegistry.sentientIdentityCapture(for: caseID)
+        let segmentedCaptureTime = VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID)
+        let disclosureCaptureTime = VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID)
+        let timelineCaptureTime = segmentedCaptureTime ?? disclosureCaptureTime
+        let isTimelineFixture = timelineCaptureTime != nil
+        let loadingStateConfiguration = VisualDiffFixtureRegistry.loadingStateRenderConfiguration(for: caseID)
+        let isLoadingStateActiveFixture = loadingStateConfiguration?.reducedMotion == false
+        let fixtureView: AnyView
+        if let identityCapture {
+            fixtureView = identityCapture.makeFixture(size: SentientIdentityFixtureMetrics.size)
+        } else {
+            fixtureView = try fixture(for: caseID)
+        }
+        let fixture = fixtureView
             .frame(width: logicalSize.width, height: logicalSize.height)
             .environment(\.locale, Locale(identifier: "en_US_POSIX"))
             .environment(\.calendar, Calendar(identifier: .gregorian))
@@ -63,33 +94,195 @@ final class VisualDiffCaptureTests: XCTestCase {
             .environment(\.dynamicTypeSize, .large)
             .preferredColorScheme(.dark)
             .tint(DuskColors.accent)
-            .transaction { transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
+        let configuredFixture: AnyView = isTimelineFixture || isLoadingStateActiveFixture
+            ? AnyView(fixture)
+            : AnyView(
+                fixture.transaction { transaction in
+                    transaction.animation = nil
+                    transaction.disablesAnimations = true
+                }
+            )
 
         let traits = UITraitCollection { mutableTraits in
             mutableTraits.userInterfaceStyle = .dark
             mutableTraits.preferredContentSizeCategory = .large
             mutableTraits.displayScale = 2
         }
-        let controller = UIHostingController(rootView: AnyView(fixture))
+        let controller = UIHostingController(rootView: configuredFixture)
         controller.view.backgroundColor = .clear
+        if identityCapture != nil {
+            controller.safeAreaRegions = []
+        }
         let strategy = Snapshotting<UIViewController, UIImage>.image(
             size: logicalSize,
             traits: traits
         )
+        var timelineCaptureWindow: UIWindow?
+        if let timelineCaptureTime {
+            // Timeline fixtures use a real mounted SwiftUI view so the capture
+            // observes the production component's on-appear state transition.
+            let window = UIWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            window.backgroundColor = .clear
+            window.rootViewController = controller
+            window.isHidden = false
+            window.makeKeyAndVisible()
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(
+                until: Date(timeIntervalSinceNow: timelineCaptureTime)
+            )
+            timelineCaptureWindow = window
+        }
+        var loadingCaptureWindow: UIWindow?
+        if isLoadingStateActiveFixture {
+            // The active handoff is a static 366ms frame of the source's 900ms
+            // rotation. Let the real SwiftUI animation advance on one mounted
+            // simulator window; the production view is not given a capture API.
+            let window = UIWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            window.backgroundColor = .clear
+            window.rootViewController = controller
+            window.isHidden = false
+            window.makeKeyAndVisible()
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: loadingStateActiveCaptureDuration))
+            loadingCaptureWindow = window
+        }
+        let usesNativeTextInputCapture =
+            caseID.hasPrefix("text-field--")
+                || caseID.hasPrefix("text-area--")
+                || caseID.hasPrefix("search-field--")
+                || caseID.hasPrefix("filter-bar--")
+                || caseID.hasPrefix("settings-editor--")
+                || caseID.hasPrefix("validated-field--")
+                || caseID.hasPrefix("inline-secret-editor--")
+        var focusHostWindow: VisualDiffFocusWindow?
+        var focusContainer: VisualDiffCanvasViewController?
+        if usesNativeTextInputCapture {
+            controller.safeAreaRegions = []
+            let hostWindow = VisualDiffFocusWindow(frame: CGRect(origin: .zero, size: logicalSize))
+            let container = VisualDiffCanvasViewController()
+            container.view.backgroundColor = .clear
+            container.view.frame = hostWindow.bounds
+            container.addChild(controller)
+            container.view.addSubview(controller.view)
+            controller.view.frame = container.view.bounds
+            controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            controller.didMove(toParent: container)
+            hostWindow.rootViewController = container
+            hostWindow.isHidden = false
+            container.beginAppearanceTransition(true, animated: false)
+            container.endAppearanceTransition()
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            focusHostWindow = hostWindow
+            focusContainer = container
+        }
+        defer {
+            if let focusContainer, let focusHostWindow {
+                focusContainer.beginAppearanceTransition(false, animated: false)
+                controller.willMove(toParent: nil)
+                controller.view.removeFromSuperview()
+                controller.removeFromParent()
+                controller.didMove(toParent: nil)
+                focusContainer.endAppearanceTransition()
+                focusHostWindow.isHidden = true
+                focusHostWindow.rootViewController = nil
+            }
+            timelineCaptureWindow?.isHidden = true
+            timelineCaptureWindow?.rootViewController = nil
+            timelineCaptureWindow?.resignKey()
+            loadingCaptureWindow?.isHidden = true
+            loadingCaptureWindow?.rootViewController = nil
+            loadingCaptureWindow?.resignKey()
+        }
+        if caseID == "text-field--filled--focus" || caseID == "search-field--placeholder--focus" {
+            guard let textField = textField(in: controller.view) else {
+                XCTFail("The focused text-field fixture must mount a native UITextField")
+                return
+            }
+            if caseID == "text-field--filled--focus" {
+                // Keep the native responder active without letting the simulator
+                // keyboard resize the fixed visual review canvas.
+                textField.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                // Keep the genuine native focus while applying the same
+                // non-content capture treatment as the text-field report.
+                textField.tintColor = .clear
+            }
+            XCTAssertTrue(textField.becomeFirstResponder(), "The focused fixture must accept native focus")
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate { [weak controller] _, _ in
+                    guard let controller else { return false }
+                    return self.firstResponder(in: controller.view) != nil
+                },
+                object: nil
+            )
+            wait(for: [focused], timeout: 2)
+            XCTAssertTrue(textField.isFirstResponder, "The focused text-field fixture must hold native focus")
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+        } else if caseID == "text-area--filled--focus" {
+            guard let textView = textView(in: controller.view) else {
+                XCTFail("The focused text-area fixture must mount a native UITextView")
+                return
+            }
+            // Keep the native responder active without presenting a keyboard or
+            // caret in the fixed visual review canvas.
+            textView.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            textView.tintColor = .clear
+            XCTAssertTrue(textView.becomeFirstResponder(), "The focused fixture must accept native focus")
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate { [weak controller] _, _ in
+                    guard let controller else { return false }
+                    return self.firstResponder(in: controller.view) != nil
+                },
+                object: nil
+            )
+            wait(for: [focused], timeout: 2)
+            XCTAssertTrue(textView.isFirstResponder, "The focused text-area fixture must hold native focus")
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+        }
 
         let rendered = expectation(description: "Render \(caseID)")
         var image: UIImage?
-        strategy.snapshot(controller).run { snapshot in
-            image = snapshot
+        if let identityCapture {
+            controller.view.frame = CGRect(origin: .zero, size: logicalSize)
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            image = try captureRiveIdentity(
+                identityCapture,
+                controller: controller,
+                size: logicalSize
+            )
+            XCTAssertTrue(
+                identityCapture.didPrepare,
+                identityCapture.preparationError.map(String.init(describing:)) ?? "Rive identity capture did not prepare"
+            )
+            XCTAssertNil(identityCapture.preparationError)
             rendered.fulfill()
+        } else if usesNativeTextInputCapture {
+            // The handoff PNGs are standard-sRGB references. Keep the native
+            // view unchanged, but prevent the simulator's automatic Display-P3
+            // renderer from changing the encoded comparison colors.
+            let format = UIGraphicsImageRendererFormat(for: traits)
+            format.preferredRange = .standard
+            image = UIGraphicsImageRenderer(bounds: controller.view.bounds, format: format).image { context in
+                controller.view.layer.render(in: context.cgContext)
+            }
+            rendered.fulfill()
+        } else {
+            strategy.snapshot(controller).run { snapshot in
+                image = snapshot
+                rendered.fulfill()
+            }
         }
         wait(for: [rendered], timeout: 10)
 
         guard let data = image?.pngData() else {
-            XCTFail("SnapshotTesting did not produce a PNG for \(caseID)")
+            XCTFail("Visual diff capture did not produce a PNG for \(caseID)")
             return
         }
         try FileManager.default.createDirectory(
@@ -101,6 +294,144 @@ final class VisualDiffCaptureTests: XCTestCase {
         guard let captured = image else { return }
         XCTAssertEqual(captured.size, logicalSize)
         XCTAssertEqual(captured.scale, 2)
+    }
+
+    func testApplyBarRegistryPreservesExistingDraftAndApplyStates() {
+        let expected: [(String, Bool, DesignApplyState)] = [
+            ("apply-bar--dirty--rest", true, .idle),
+            ("apply-bar--applying--active", true, .saving),
+            ("apply-bar--done--success", false, .applied),
+            ("apply-bar--dirty-to-done--frame-000--0000ms", true, .idle),
+            ("apply-bar--dirty-to-done--frame-001--0300ms", true, .saving),
+            ("apply-bar--dirty-to-done--frame-002--0900ms", false, .applied),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "apply-bar")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.map(\.0)))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, isDirty, state) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.applyBarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing apply-bar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.isDirty, isDirty, caseID)
+            XCTAssertEqual(configuration.state, state, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved apply-bar case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testInlineSecretEditorRegistryKeepsFixturesPresenceOnly() throws {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "inline-secret-editor")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set([
+                "inline-secret-editor--access-key--read",
+                "inline-secret-editor--access-key--editing",
+                "inline-secret-editor--access-key--saving",
+                "inline-secret-editor--managed-value--disabled",
+            ])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            Set([
+                "inline-secret-editor--access-key--read",
+                "inline-secret-editor--access-key--editing",
+            ])
+        )
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--read"
+            ),
+            VisualDiffInlineSecretEditorRenderConfiguration(isEditing: false)
+        )
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--editing"
+            ),
+            VisualDiffInlineSecretEditorRenderConfiguration(isEditing: true)
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--access-key--saving"
+            )
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.inlineSecretEditorRenderConfiguration(
+                for: "inline-secret-editor--managed-value--disabled"
+            )
+        )
+
+        for caseID in [
+            "inline-secret-editor--access-key--read",
+            "inline-secret-editor--access-key--editing",
+        ] {
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Safe inline-secret-editor case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testLoadingStateRegistryPreservesApprovedMotionStates() {
+        let expectedCaseIDs = Set([
+            "loading-state--settings--active",
+            "loading-state--settings--reduced-motion",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "loading-state")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), expectedCaseIDs)
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for caseID in expectedCaseIDs {
+            guard let configuration = VisualDiffFixtureRegistry.loadingStateRenderConfiguration(for: caseID) else {
+                XCTFail("Missing loading-state render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, "Loading", caseID)
+            XCTAssertEqual(configuration.detail, "Fetching current settings…", caseID)
+            XCTAssertEqual(
+                configuration.reducedMotion,
+                caseID.hasSuffix("--reduced-motion"),
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved loading-state case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testEmptyStateRegistryPreservesCallerOwnedContentAndStateBoundary() {
+        let caseID = "empty-state--settings--rest"
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "empty-state")
+        XCTAssertEqual(registrations.map { $0.fixture.caseID }, [caseID])
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        XCTAssertEqual(
+            VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: caseID),
+            VisualDiffEmptyStateRenderConfiguration(
+                title: "Nothing here yet",
+                detail: "Add an item when you’re ready.",
+                actionTitle: "Add item"
+            )
+        )
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "no-results--empty"))
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "loading-state--settings--active"))
+        XCTAssertNil(VisualDiffFixtureRegistry.emptyStateRenderConfiguration(for: "notice--error--rest"))
+
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+            XCTFail("Approved empty-state case must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "empty-state")
+        XCTAssertEqual(fixture.variantID, "settings")
+        XCTAssertEqual(fixture.stateID, "rest")
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
     }
 
     func testActionButtonRegistryPreservesCurrentCaseApplicability() {
@@ -258,6 +589,942 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testCheckboxRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "checkbox--checked--rest",
+            "checkbox--disabled--rest",
+            "checkbox--unchecked--rest",
+        ])
+        let expectedInteractionStates = Set([
+            "checkbox--checked--focus",
+            "checkbox--checked--pressed",
+            "checkbox--unchecked--focus",
+            "checkbox--unchecked--pressed",
+        ])
+        let expectedUnavailableStates = Set([
+            "checkbox--checked--hover",
+            "checkbox--mixed--focus",
+            "checkbox--mixed--hover",
+            "checkbox--mixed--pressed",
+            "checkbox--mixed--rest",
+            "checkbox--unchecked--hover",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "checkbox")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(
+            actualCaseIDs,
+            expectedSupported.union(expectedInteractionStates).union(expectedUnavailableStates)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedUnavailableStates
+        )
+    }
+
+    func testCheckboxRegistryPreservesNativeStateMappings() {
+        let expected: [(String, String, Bool, Bool)] = [
+            ("checkbox--unchecked--rest", "Not selected", false, true),
+            ("checkbox--checked--rest", "Selected", true, true),
+            ("checkbox--disabled--rest", "Unavailable", false, false),
+        ]
+
+        for (caseID, title, isOn, isEnabled) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.checkboxRenderConfiguration(for: caseID) else {
+                XCTFail("Missing checkbox render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.isOn, isOn, caseID)
+            XCTAssertEqual(configuration.isEnabled, isEnabled, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.checkboxRenderConfiguration(
+                for: "checkbox--mixed--rest"
+            )
+        )
+    }
+
+    func testTextFieldRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "text-field--filled--focus",
+            "text-field--filled--rest",
+        ])
+        let expectedMissingAuthority = Set([
+            "text-field--filled--disabled",
+            "text-field--filled--empty",
+            "text-field--filled--error",
+            "text-field--filled--hover",
+            "text-field--filled--loading",
+            "text-field--filled--pressed",
+            "text-field--filled--selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "text-field")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedMissingAuthority))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedMissingAuthority
+        )
+        XCTAssertEqual(
+            registrations.first { $0.fixture.stateID == "hover" }?.applicability,
+            .missingAuthority(.stateNotApplicable)
+        )
+    }
+
+    func testTextFieldRegistryPreservesNativeConfigurationAndFocusMapping() {
+        let expected: [(String, String, String, Bool)] = [
+            ("text-field--filled--rest", "Display name", "Maya Chen", false),
+            ("text-field--filled--focus", "Display name", "Maya Chen", true),
+        ]
+
+        for (caseID, title, value, shouldFocus) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.textFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing text-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.shouldFocus, shouldFocus, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.textFieldRenderConfiguration(
+                for: "text-field--filled--hover"
+            )
+        )
+    }
+
+    func testSettingsEditorRegistryPreservesCallerOwnedSavedAndUnsavedStates() {
+        let expected: [(String, DesignSettingsEditorState)] = [
+            ("settings-editor--vertical--saved", .saved),
+            ("settings-editor--vertical--unsaved", .unsaved),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "settings-editor")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.map(\.0)))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, state) in expected {
+            XCTAssertEqual(
+                VisualDiffFixtureRegistry.settingsEditorRenderConfiguration(for: caseID)?.state,
+                state,
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved settings-editor case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testValidatedFieldRegistryPreservesApprovedCasesAndMappings() {
+        let expected: [(String, String, String, ValidatedFieldStatus?, ValidatedFieldCounter?, Bool, Int?)] = [
+            (
+                "validated-field--confirmation--error",
+                "Confirmation",
+                "warm emb",
+                .error("The values do not match."),
+                nil,
+                false,
+                nil
+            ),
+            (
+                "validated-field--recovery-phrase--valid",
+                "Recovery phrase",
+                "warm ember",
+                .valid("Available"),
+                nil,
+                false,
+                nil
+            ),
+            (
+                "validated-field--supporting-note--counter",
+                "Supporting note",
+                "A concise note that helps others understand this choice.",
+                nil,
+                ValidatedFieldCounter(current: 58, max: 160),
+                true,
+                160
+            ),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "validated-field")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, title, value, status, counter, multiline, maxLength) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.validatedFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing validated-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.status, status, caseID)
+            XCTAssertEqual(configuration.counter, counter, caseID)
+            XCTAssertEqual(configuration.multiline, multiline, caseID)
+            XCTAssertEqual(configuration.maxLength, maxLength, caseID)
+            XCTAssertFalse(configuration.shouldFocus, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved validated-field case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testValidatedFieldStatusAndCounterContractsRemainCallerOwned() {
+        XCTAssertEqual(ValidatedFieldStatus.valid("Available").message, "Available")
+        XCTAssertFalse(ValidatedFieldStatus.valid("Available").isError)
+        XCTAssertEqual(ValidatedFieldStatus.error("The values do not match.").message, "The values do not match.")
+        XCTAssertTrue(ValidatedFieldStatus.error("The values do not match.").isError)
+        XCTAssertEqual(
+            ValidatedFieldCounter(current: 58, max: 160).displayText,
+            "58 of 160 characters"
+        )
+        XCTAssertEqual(
+            ValidatedFieldCounter(current: 58, max: 160, unit: "sílabas").displayText,
+            "58 of 160 sílabas"
+        )
+    }
+
+    func testValidatedFieldUnapprovedStatesDoNotResolveToSupported() {
+        guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
+            caseID: "validated-field--confirmation--rest"
+        ) else {
+            XCTFail("Unapproved validated-field state must remain unavailable")
+            return
+        }
+        XCTAssertEqual(unknown.reason, .unknownCase)
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.validatedFieldRenderConfiguration(
+                for: "validated-field--supporting-note--valid"
+            )
+        )
+    }
+
+    func testSearchFieldRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "search-field--placeholder--focus",
+            "search-field--placeholder--rest",
+        ])
+        let expectedMissingAuthority = Set([
+            "search-field--placeholder--clear",
+            "search-field--placeholder--disabled",
+            "search-field--placeholder--error",
+            "search-field--placeholder--filled",
+            "search-field--placeholder--hover",
+            "search-field--placeholder--loading",
+            "search-field--placeholder--pressed",
+            "search-field--placeholder--reduced-motion",
+            "search-field--placeholder--selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "search-field")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedMissingAuthority))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedMissingAuthority
+        )
+    }
+
+    func testSearchFieldRegistryPreservesNativeConfigurationAndFocusMapping() {
+        let expected: [(String, String, String, String, Bool)] = [
+            ("search-field--placeholder--rest", "Search", "Search conversations", "", false),
+            ("search-field--placeholder--focus", "Search", "Search conversations", "", true),
+        ]
+
+        for (caseID, title, prompt, value, shouldFocus) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.searchFieldRenderConfiguration(for: caseID) else {
+                XCTFail("Missing search-field render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.prompt, prompt, caseID)
+            XCTAssertEqual(configuration.value, value, caseID)
+            XCTAssertEqual(configuration.shouldFocus, shouldFocus, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.searchFieldRenderConfiguration(
+                for: "search-field--placeholder--hover"
+            )
+        )
+    }
+
+    func testFilterBarRegistryPreservesApprovedCasesAndNativeMenuAdaptation() {
+        let expectedSupported = Set([
+            "filter-bar--default--compact",
+            "filter-bar--default",
+            "filter-bar--offline-selected",
+            "filter-bar--ready-selected",
+            "filter-bar--shared-selected",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "filter-bar")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedSupported.union(["filter-bar--sort-open"])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            registrations.first { $0.fixture.caseID == "filter-bar--sort-open" }?.applicability,
+            .missingAuthority(.stateNotApplicable)
+        )
+    }
+
+    func testFilterBarRegistryPreservesResponsiveAndSelectionMappings() {
+        let expected: [(String, Bool, String)] = [
+            ("filter-bar--default--compact", true, "All"),
+            ("filter-bar--default", false, "All"),
+            ("filter-bar--offline-selected", false, "Offline"),
+            ("filter-bar--ready-selected", false, "Ready"),
+            ("filter-bar--shared-selected", false, "Shared"),
+        ]
+
+        for (caseID, compact, selectedFilter) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.filterBarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing filter-bar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.compact, compact, caseID)
+            XCTAssertEqual(configuration.selectedFilter, selectedFilter, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved filter-bar case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+        XCTAssertNil(VisualDiffFixtureRegistry.filterBarRenderConfiguration(for: "filter-bar--sort-open"))
+    }
+
+    func testStaleBannerRegistryPreservesApprovedStatesAndMappings() {
+        let expected: [(String, Bool)] = [
+            ("stale-banner--saved-results--rest", false),
+            ("stale-banner--saved-results--checking", true),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "stale-banner")
+
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map(\.0))
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, checking) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.staleBannerRenderConfiguration(for: caseID) else {
+                XCTFail("Missing stale-banner render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.checking, checking, caseID)
+        }
+    }
+
+    func testChipRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "chip--selected--compact-rest",
+            "chip--selected--rest",
+            "chip--unselected--compact-rest",
+            "chip--unselected--rest",
+        ])
+        let expectedHover = Set([
+            "chip--selected--hover",
+            "chip--unselected--hover",
+        ])
+        let expectedInteractionStates = Set([
+            "chip--selected--focus",
+            "chip--selected--pressed",
+            "chip--unselected--focus",
+            "chip--unselected--pressed",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "chip")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedHover).union(expectedInteractionStates))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedHover
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+    }
+
+    func testChipRegistryPreservesNativeSelectionAndCompactAdaptation() {
+        let expected: [(String, String, Bool, Bool)] = [
+            ("chip--selected--rest", "Family", true, false),
+            ("chip--selected--compact-rest", "Family", true, true),
+            ("chip--unselected--rest", "School", false, false),
+            ("chip--unselected--compact-rest", "School", false, true),
+        ]
+
+        for (caseID, title, selected, compact) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.chipRenderConfiguration(for: caseID) else {
+                XCTFail("Missing chip render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.selected, selected, caseID)
+            XCTAssertEqual(configuration.compact, compact, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.chipRenderConfiguration(
+                for: "chip--selected--hover"
+            )
+        )
+    }
+
+    func testRangeRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "range--62--disabled",
+            "range--62--rest",
+        ])
+        let expectedNotApplicable = Set([
+            "range--62--hover",
+        ])
+        let expectedInteractionStates = Set([
+            "range--62--focus",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "range")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(
+            actualCaseIDs,
+            expectedSupported.union(expectedNotApplicable).union(expectedInteractionStates)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedNotApplicable
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedInteractionStates
+        )
+    }
+
+    func testRangeRegistryPreservesNativeValueAndDisabledMapping() {
+        let expected: [(String, Bool)] = [
+            ("range--62--rest", true),
+            ("range--62--disabled", false),
+        ]
+
+        for (caseID, isEnabled) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.sliderRenderConfiguration(for: caseID) else {
+                XCTFail("Missing range render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, "Interface scale", caseID)
+            XCTAssertEqual(configuration.value, 62, caseID)
+            XCTAssertEqual(configuration.range, 0...100, caseID)
+            XCTAssertEqual(configuration.step, 1, caseID)
+            XCTAssertEqual(configuration.format(configuration.value), "62%", caseID)
+            XCTAssertEqual(configuration.isEnabled, isEnabled, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.sliderRenderConfiguration(
+                for: "range--62--hover"
+            )
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.sliderRenderConfiguration(
+                for: "range--62--focus"
+            )
+        )
+    }
+
+    func testSegmentedControlRegistryPreservesApprovedCasesAndApplicability() {
+        let expectedSupported = Set([
+            "segmented-control--avatar-state--compact-layout",
+            "segmented-control--avatar-state--idle-selected",
+            "segmented-control--avatar-state--responding-selected",
+            "segmented-control--avatar-state--thinking-selected",
+            "segmented-control--density--comfortable-selected",
+            "segmented-control--density--compact-layout",
+            "segmented-control--density--compact-selected",
+        ])
+        let expectedFocusAndPress = Set([
+            "segmented-control--density--compact-focus",
+            "segmented-control--density--compact-pressed",
+        ])
+        let expectedHover = Set([
+            "segmented-control--density--compact-hover",
+        ])
+        let expectedMotion = Set([
+            "frame-000--0000ms",
+            "frame-001--0055ms",
+            "frame-002--0110ms",
+            "frame-003--0165ms",
+            "frame-004--0220ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "segmented-control")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedFocusAndPress).union(expectedHover).union(expectedMotion))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported.union(expectedMotion)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            expectedFocusAndPress
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedHover
+        )
+    }
+
+    func testSegmentedControlRegistryPreservesControlledFixtureMappings() {
+        let expected: [(String, String, String, String, CGFloat)] = [
+            ("segmented-control--avatar-state--idle-selected", "Avatar state", "idle", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--avatar-state--thinking-selected", "Avatar state", "thinking", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--avatar-state--responding-selected", "Avatar state", "responding", "Idle,Thinking,Responding", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--density--comfortable-selected", "View density", "comfortable", "Comfortable,Compact", DesignMetrics.actionButtonVisualHeight),
+            ("segmented-control--density--compact-layout", "View density", "comfortable", "Comfortable,Compact", DesignMetrics.minimumTarget),
+            ("segmented-control--density--compact-selected", "View density", "compact", "Comfortable,Compact", DesignMetrics.actionButtonVisualHeight),
+        ]
+
+        for (caseID, title, selection, labels, visualHeight) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.segmentedControlRenderConfiguration(for: caseID) else {
+                XCTFail("Missing segmented-control render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.selection, selection, caseID)
+            XCTAssertEqual(configuration.options.map(\.label).joined(separator: ","), labels, caseID)
+            XCTAssertEqual(configuration.visualHeight, visualHeight, caseID)
+        }
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.segmentedControlRenderConfiguration(
+                for: "segmented-control--density--compact-focus"
+            )
+        )
+    }
+
+    func testSegmentedControlMotionFixturesPreserveSourceTimeline() {
+        let expected: [(String, TimeInterval)] = [
+            ("frame-000--0000ms", 0),
+            ("frame-001--0055ms", 0.055),
+            ("frame-002--0110ms", 0.11),
+            ("frame-003--0165ms", 0.165),
+            ("frame-004--0220ms", 0.22),
+        ]
+
+        for (caseID, frameTime) in expected {
+            XCTAssertEqual(VisualDiffFixtureRegistry.segmentedControlCaptureTime(for: caseID), frameTime, caseID)
+            guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Missing supported motion fixture for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "segmented-control", caseID)
+            XCTAssertEqual(fixture.variantID, "comfortable-to-compact", caseID)
+        }
+    }
+
+    func testDisclosureMotionHonorsReducedMotionFallback() {
+        XCTAssertNil(DesignDisclosureMotion.animation(isExpanded: true, reduceMotion: true))
+        XCTAssertNil(DesignDisclosureMotion.animation(isExpanded: false, reduceMotion: true))
+        XCTAssertNotNil(DesignDisclosureMotion.animation(isExpanded: true, reduceMotion: false))
+        XCTAssertNotNil(DesignDisclosureMotion.animation(isExpanded: false, reduceMotion: false))
+    }
+
+    func testDisclosureRegistryPreservesApprovedStaticAndMotionAuthority() {
+        let expectedStatic = Set([
+            "disclosure--advanced-options--closed",
+            "disclosure--advanced-options--open",
+            "disclosure--data-storage--closed",
+            "disclosure--data-storage--open",
+        ])
+        let expectedMotion = Set([
+            "disclosure--closed-to-open--frame-000--0000ms",
+            "disclosure--closed-to-open--frame-001--0062ms",
+            "disclosure--closed-to-open--frame-002--0125ms",
+            "disclosure--closed-to-open--frame-003--0188ms",
+            "disclosure--closed-to-open--frame-004--0250ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "disclosure")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedMotion)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+    }
+
+    func testDisclosureRegistryPreservesNativeMappingsAndTimeline() {
+        let expected: [(String, String, String, VisualDiffDisclosureBody, Bool)] = [
+            ("disclosure--advanced-options--closed", "Advanced options", "Additional controls for experienced users", .toggle, false),
+            ("disclosure--advanced-options--open", "Advanced options", "Additional controls for experienced users", .toggle, true),
+            ("disclosure--data-storage--closed", "Data and storage", "Retention and local cache", .paragraph, false),
+            ("disclosure--data-storage--open", "Data and storage", "Retention and local cache", .paragraph, true),
+        ]
+
+        for (caseID, title, description, body, initiallyExpanded) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.disclosureRenderConfiguration(for: caseID) else {
+                XCTFail("Missing disclosure render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.description, description, caseID)
+            XCTAssertEqual(configuration.body, body, caseID)
+            XCTAssertEqual(configuration.initiallyExpanded, initiallyExpanded, caseID)
+        }
+
+        let frames: [(String, TimeInterval)] = [
+            ("disclosure--closed-to-open--frame-000--0000ms", 0),
+            ("disclosure--closed-to-open--frame-001--0062ms", 0.062),
+            ("disclosure--closed-to-open--frame-002--0125ms", 0.125),
+            ("disclosure--closed-to-open--frame-003--0188ms", 0.188),
+            ("disclosure--closed-to-open--frame-004--0250ms", 0.25),
+        ]
+        for (caseID, frameTime) in frames {
+            XCTAssertEqual(VisualDiffFixtureRegistry.disclosureCaptureTime(for: caseID), frameTime, caseID)
+            guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Missing supported disclosure motion fixture for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "disclosure", caseID)
+            XCTAssertEqual(fixture.variantID, "closed-to-open", caseID)
+            XCTAssertEqual(fixture.stateID, caseID.replacingOccurrences(of: "disclosure--closed-to-open--", with: ""), caseID)
+        }
+    }
+
+    func testPinEntryRegistryPreservesApprovedStaticAndMotionAuthority() {
+        let expectedStatic = Set([
+            "pin-entry--4-digit--checking-reduced-motion",
+            "pin-entry--4-digit--checking",
+            "pin-entry--4-digit--empty",
+            "pin-entry--4-digit--one-digit",
+            "pin-entry--4-digit--partial",
+            "pin-entry--4-digit--success",
+        ])
+        let expectedMotion = Set([
+            "pin-entry--complete-to-success--frame-000--0000ms",
+            "pin-entry--complete-to-success--frame-001--0180ms",
+            "pin-entry--complete-to-success--frame-002--0360ms",
+            "pin-entry--complete-to-success--frame-003--0700ms",
+            "pin-entry--complete-to-success--frame-004--1060ms",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "pin-entry")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedMotion)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        let expectedConfigurations: [(String, Int, Bool, String?, Bool)] = [
+            ("pin-entry--4-digit--empty", 0, false, nil, false),
+            ("pin-entry--4-digit--one-digit", 1, false, nil, false),
+            ("pin-entry--4-digit--partial", 3, false, nil, false),
+            ("pin-entry--4-digit--checking", 4, true, nil, false),
+            ("pin-entry--4-digit--checking-reduced-motion", 4, true, nil, true),
+            ("pin-entry--4-digit--success", 4, true, "Pin accepted.", false),
+        ]
+        for (caseID, entered, submitting, success, reducedMotion) in expectedConfigurations {
+            guard let configuration = VisualDiffFixtureRegistry.pinRenderConfiguration(for: caseID) else {
+                XCTFail("Missing PIN render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.entered, entered, caseID)
+            XCTAssertEqual(configuration.isSubmitting, submitting, caseID)
+            XCTAssertEqual(configuration.success, success, caseID)
+            XCTAssertEqual(configuration.reducedMotion, reducedMotion, caseID)
+        }
+
+        guard case .missingAuthority(let error) = VisualDiffFixtureRegistry.resolve(
+            caseID: "pin-entry--4-digit--error"
+        ) else {
+            XCTFail("The handoff does not authorize a PIN error fixture")
+            return
+        }
+        XCTAssertEqual(error.reason, .unknownCase)
+
+        guard case .missingAuthority(let verification) = VisualDiffFixtureRegistry.resolve(
+            caseID: "verification-code--empty--rest"
+        ) else {
+            XCTFail("iOS must not manufacture a verification-code owner")
+            return
+        }
+        XCTAssertEqual(verification.reason, .unknownComponent)
+    }
+
+    func testPinEntryMotionFrameResolvesFromNestedRecordingName() {
+        guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "pin-entry--complete-to-success--frame-004--1060ms"
+        ) else {
+            XCTFail("The approved PIN motion frame must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "pin-entry")
+        XCTAssertEqual(fixture.variantID, "complete-to-success")
+        XCTAssertEqual(fixture.stateID, "frame-004--1060ms")
+    }
+
+    func testNoticeRegistryPreservesApprovedCasesAndMappings() throws {
+        let expected: [(String, DesignNoticeKind, String, String, String?, Bool)] = [
+            ("notice--info--rest", .info, "Changes apply to this device", "Other household devices keep their current preference.", nil, false),
+            ("notice--warning--compact", .warning, "Permission required", "Review the requested scope before continuing.", "Review", true),
+            ("notice--warning--rest", .warning, "Permission required", "Review the requested scope before continuing.", "Review", false),
+            ("notice--error--compact", .error, "Couldn’t save changes", "Your edits are still here. Try again when the connection returns.", "Retry", true),
+            ("notice--error--rest", .error, "Couldn’t save changes", "Your edits are still here. Try again when the connection returns.", "Retry", false),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "notice")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, kind, title, detail, actionTitle, compact) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.noticeRenderConfiguration(for: caseID) else {
+                XCTFail("Missing notice render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.kind, kind, caseID)
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+            XCTAssertEqual(configuration.actionTitle, actionTitle, caseID)
+            XCTAssertEqual(configuration.compact, compact, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved notice case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testSentientIdentityRegistryPreservesStaticAndMotionAuthority() {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "sentient-identity")
+        let expectedStatic = Set([
+            "sentient-identity--idle--rest",
+            "sentient-identity--idle--reduced-motion",
+            "sentient-identity--thinking--rest",
+            "sentient-identity--thinking--reduced-motion",
+            "sentient-identity--responding--rest",
+            "sentient-identity--responding--reduced-motion",
+        ])
+        let transitionNames = ["idle-to-thinking", "thinking-to-responding", "responding-to-idle"]
+        let frameNames = [
+            "frame-000--0000ms",
+            "frame-001--0120ms",
+            "frame-002--0138ms",
+            "frame-003--0250ms",
+        ]
+        let expectedTransitions = Set(
+            transitionNames.flatMap { transition in
+                frameNames.map { "sentient-identity--\(transition)--\($0)" }
+            }
+        )
+        let expectedLoops = Set([
+            "sentient-identity--thinking-loop--frame-000--0000ms",
+            "sentient-identity--thinking-loop--frame-001--0270ms",
+            "sentient-identity--thinking-loop--frame-002--0540ms",
+            "sentient-identity--thinking-loop--frame-003--0810ms",
+            "sentient-identity--thinking-loop--frame-004--1080ms",
+            "sentient-identity--thinking-loop--frame-005--1350ms",
+            "sentient-identity--responding-loop--frame-000--0000ms",
+            "sentient-identity--responding-loop--frame-001--0310ms",
+            "sentient-identity--responding-loop--frame-002--0620ms",
+            "sentient-identity--responding-loop--frame-003--0930ms",
+            "sentient-identity--responding-loop--frame-004--1240ms",
+            "sentient-identity--responding-loop--frame-005--1550ms",
+        ])
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedStatic.union(expectedTransitions).union(expectedLoops)
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        let transition = "sentient-identity--idle-to-thinking--frame-002--0138ms"
+        guard let configuration = VisualDiffFixtureRegistry.sentientIdentityRenderConfiguration(for: transition) else {
+            XCTFail("Missing identity transition configuration")
+            return
+        }
+        XCTAssertEqual(configuration.initialState, .idle)
+        XCTAssertEqual(configuration.targetState, .thinking)
+        XCTAssertFalse(configuration.reducedMotion)
+        XCTAssertEqual(configuration.timeMs, 138)
+
+        let reduced = "sentient-identity--responding--reduced-motion"
+        guard let reducedConfiguration = VisualDiffFixtureRegistry.sentientIdentityRenderConfiguration(for: reduced) else {
+            XCTFail("Missing identity reduced-motion configuration")
+            return
+        }
+        XCTAssertEqual(reducedConfiguration.initialState, .responding)
+        XCTAssertNil(reducedConfiguration.targetState)
+        XCTAssertTrue(reducedConfiguration.reducedMotion)
+        XCTAssertEqual(reducedConfiguration.timeMs, 0)
+    }
+
+    func testSentientIdentityFrameCaseResolvesFromTheNestedRecordingName() {
+        guard case .supported(_, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "sentient-identity--responding-loop--frame-005--1550ms"
+        ) else {
+            XCTFail("The approved responding-loop frame must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.variantID, "responding-loop")
+        XCTAssertEqual(fixture.stateID, "frame-005--1550ms")
+    }
+
+    func testSettingRowRegistryPreservesApprovedCasesAndNativeAdaptation() {
+        let expectedSupported = Set([
+            "setting-row--range--62",
+            "setting-row--segmented--default-selected",
+            "setting-row--segmented--expert-selected",
+            "setting-row--select--english-closed",
+            "setting-row--select--spanish-selected",
+            "setting-row--toggle--off",
+            "setting-row--toggle--on",
+        ])
+        let expectedNativeMenuAdaptation = Set([
+            "setting-row--select--english-open",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "setting-row")
+        let actualCaseIDs = Set(registrations.map { $0.fixture.caseID })
+        XCTAssertEqual(actualCaseIDs, expectedSupported.union(expectedNativeMenuAdaptation))
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            expectedNativeMenuAdaptation
+        )
+        XCTAssertNil(
+            VisualDiffFixtureRegistry.settingRowRenderConfiguration(
+                for: "setting-row--select--english-open"
+            )
+        )
+    }
+
+    func testSettingRowRegistryPreservesSourceContentAndControlMappings() {
+        let expected: [(String, String, String)] = [
+            ("setting-row--toggle--off", "Automatic updates", "Install trusted updates when the household is idle."),
+            ("setting-row--toggle--on", "Automatic updates", "Install trusted updates when the household is idle."),
+            ("setting-row--segmented--default-selected", "Detail level", "Choose how much supporting information appears."),
+            ("setting-row--segmented--expert-selected", "Detail level", "Choose how much supporting information appears."),
+            ("setting-row--select--english-closed", "Language", "Used for interface labels and spoken responses."),
+            ("setting-row--select--spanish-selected", "Language", "Used for interface labels and spoken responses."),
+            ("setting-row--range--62", "Interface scale", "Preview changes before applying them."),
+        ]
+
+        for (caseID, title, detail) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: caseID) else {
+                XCTFail("Missing setting-row render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.title, title, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+        }
+
+        guard let off = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--toggle--off"),
+              let on = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--toggle--on"),
+              let defaultSelected = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--segmented--default-selected"),
+              let expertSelected = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--segmented--expert-selected"),
+              let english = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--select--english-closed"),
+              let spanish = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--select--spanish-selected"),
+              let range = VisualDiffFixtureRegistry.settingRowRenderConfiguration(for: "setting-row--range--62")
+        else {
+            XCTFail("The supported setting-row fixtures must all have configurations")
+            return
+        }
+        if case .toggle(let isOn) = off.control { XCTAssertFalse(isOn) } else { XCTFail("Toggle off mapping changed") }
+        if case .toggle(let isOn) = on.control { XCTAssertTrue(isOn) } else { XCTFail("Toggle on mapping changed") }
+        if case .segmented(let options, let selection) = defaultSelected.control {
+            XCTAssertEqual(options.map(\.label), ["Default", "Expert"])
+            XCTAssertEqual(selection, "default")
+        } else { XCTFail("Default segmented mapping changed") }
+        if case .segmented(let options, let selection) = expertSelected.control {
+            XCTAssertEqual(options.map(\.label), ["Default", "Expert"])
+            XCTAssertEqual(selection, "expert")
+        } else { XCTFail("Expert segmented mapping changed") }
+        if case .select(let options, let selection) = english.control {
+            XCTAssertEqual(options.map(\.label), ["English", "Spanish", "French"])
+            XCTAssertEqual(selection, "english")
+        } else { XCTFail("English select mapping changed") }
+        if case .select(let options, let selection) = spanish.control {
+            XCTAssertEqual(options.map(\.label), ["English", "Spanish", "French"])
+            XCTAssertEqual(selection, "spanish")
+        } else { XCTFail("Spanish select mapping changed") }
+        if case .range(let value) = range.control { XCTAssertEqual(value, 62) } else { XCTFail("Range mapping changed") }
+    }
+
+    func testSettingsGroupRegistryPreservesApprovedProductionComposition() throws {
+        let caseID = "settings-group--general--rest"
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "settings-group")
+        XCTAssertEqual(registrations.map { $0.fixture.caseID }, [caseID])
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        let configuration = try XCTUnwrap(
+            VisualDiffFixtureRegistry.settingsGroupRenderConfiguration(for: caseID)
+        )
+        XCTAssertEqual(
+            configuration.rows.map(\.title),
+            ["Automatic updates", "Language", "Detail level", "Interface scale"]
+        )
+        XCTAssertEqual(
+            configuration.rows.map(\.detail),
+            [
+                "Install trusted updates when the household is idle.",
+                "Used for interface labels and spoken responses.",
+                "Choose how much supporting information appears.",
+                "Preview changes before applying them.",
+            ]
+        )
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+            XCTFail("Approved settings group must resolve to its native production composition")
+            return
+        }
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
+    }
+
     func testPlateRegistryPreservesApprovedCasesAndApplicability() {
         let expectedSupported = Set([
             "plate--default--compact-rest",
@@ -308,6 +1575,238 @@ final class VisualDiffCaptureTests: XCTestCase {
         )
     }
 
+    func testUserAvatarRegistryPreservesApprovedCasesAndMappings() throws {
+        let expected: [(String, String, String, CGFloat, DesignUserAvatarTint, Bool, Bool, Bool)] = [
+            ("user-avatar--amber-44--rest", "Jordan Chen", "J", 44, .amber, false, false, false),
+            ("user-avatar--clay-44--rest", "Riley Chen", "R", 44, .clay, false, false, false),
+            ("user-avatar--fallback-44--rest", "Unknown user", "?", 44, .fallback, false, false, true),
+            ("user-avatar--sage-44--rest", "Alex Chen", "A", 44, .sage, false, false, false),
+            ("user-avatar--terra-28--rest", "Maya Chen", "M", 28, .terra, false, false, false),
+            ("user-avatar--terra-44--disabled", "Maya Chen", "M", 44, .terra, false, true, false),
+            ("user-avatar--terra-44--rest", "Maya Chen", "M", 44, .terra, false, false, false),
+            ("user-avatar--terra-44--selected", "Maya Chen", "M", 44, .terra, true, false, false),
+            ("user-avatar--terra-56--rest", "Maya Chen", "M", 56, .terra, false, false, false),
+        ]
+
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "user-avatar")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            Set(expected.map { $0.0 })
+        )
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, name, initial, size, tint, selected, disabled, fallback) in expected {
+            guard let configuration = VisualDiffFixtureRegistry.userAvatarRenderConfiguration(for: caseID) else {
+                XCTFail("Missing user-avatar render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.name, name, caseID)
+            XCTAssertEqual(configuration.initial, initial, caseID)
+            XCTAssertEqual(configuration.size, size, caseID)
+            XCTAssertEqual(configuration.tint, tint, caseID)
+            XCTAssertEqual(configuration.selected, selected, caseID)
+            XCTAssertEqual(configuration.disabled, disabled, caseID)
+            XCTAssertEqual(configuration.fallback, fallback, caseID)
+
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved user-avatar case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+
+        guard case .missingAuthority(let unavailable) = VisualDiffFixtureRegistry.resolve(
+            caseID: "user-avatar--terra-44--hover"
+        ) else {
+            XCTFail("Unapproved user-avatar interaction state must remain missing authority")
+            return
+        }
+        XCTAssertEqual(unavailable.reason, .unknownCase)
+    }
+
+    func testMediaActionCardRegistryPreservesReachableUserCases() throws {
+        let expectedSupported = Set([
+            "media-action-card--user-sage--rest",
+            "media-action-card--user-terra--rest",
+        ])
+        let expectedUnavailable = Set([
+            "media-action-card--user-sage--focus",
+            "media-action-card--user-sage--hover",
+            "media-action-card--user-terra--focus",
+            "media-action-card--user-terra--hover",
+        ])
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "media-action-card")
+        XCTAssertEqual(
+            Set(registrations.map { $0.fixture.caseID }),
+            expectedSupported.union(expectedUnavailable)
+        )
+        XCTAssertEqual(
+            Set(registrations.filter { $0.applicability == .supported }.map { $0.fixture.caseID }),
+            expectedSupported
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateNotApplicable)
+            }.map { $0.fixture.caseID }),
+            Set([
+                "media-action-card--user-sage--hover",
+                "media-action-card--user-terra--hover",
+            ])
+        )
+        XCTAssertEqual(
+            Set(registrations.filter {
+                $0.applicability == .missingAuthority(.stateRequiresInteraction)
+            }.map { $0.fixture.caseID }),
+            Set([
+                "media-action-card--user-sage--focus",
+                "media-action-card--user-terra--focus",
+            ])
+        )
+
+        let expectedMappings: [(String, String, String, DesignUserAvatarTint, String)] = [
+            ("media-action-card--user-sage--rest", "Alex", "A", .sage, "Household member"),
+            ("media-action-card--user-terra--rest", "Maya", "M", .terra, "Household owner"),
+        ]
+        for (caseID, name, initial, tint, detail) in expectedMappings {
+            guard let configuration = VisualDiffFixtureRegistry.mediaActionCardRenderConfiguration(for: caseID) else {
+                XCTFail("Missing media-action-card render configuration for \(caseID)")
+                continue
+            }
+            XCTAssertEqual(configuration.name, name, caseID)
+            XCTAssertEqual(configuration.initial, initial, caseID)
+            XCTAssertEqual(configuration.tint, tint, caseID)
+            XCTAssertEqual(configuration.detail, detail, caseID)
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Reachable media-action-card case must resolve to a supported fixture: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+
+        guard case .missingAuthority(let iconCase) = VisualDiffFixtureRegistry.resolve(
+            caseID: "media-action-card--icon--rest"
+        ) else {
+            XCTFail("Icon media cards must remain outside the iOS fixture until a production owner exists")
+            return
+        }
+        XCTAssertEqual(iconCase.reason, .unknownCase)
+        guard case .missingAuthority(let imageCase) = VisualDiffFixtureRegistry.resolve(
+            caseID: "media-action-card--image--rest"
+        ) else {
+            XCTFail("Image media cards must remain outside the iOS fixture until media behavior is defined")
+            return
+        }
+        XCTAssertEqual(imageCase.reason, .unknownCase)
+    }
+
+    func testIntegratedRegistryHasUniqueCaseIDsAndRoutesEverySupportedFixture() {
+        let integratedComponentIDs = [
+            "action-button",
+            "plate",
+            "user-avatar",
+            "media-action-card",
+            "checkbox",
+            "icon-button",
+            "text-field",
+            "text-area",
+            "chip",
+            "range",
+            "search-field",
+            "validated-field",
+            "segmented-control",
+            "disclosure",
+            "sentient-identity",
+            "pin-entry",
+            "loading-state",
+            "empty-state",
+            "apply-bar",
+            "filter-bar",
+            "settings-editor",
+            "notice",
+            "no-results",
+            "results-list",
+            "stale-banner",
+            "setting-row",
+            "settings-group",
+            "inline-secret-editor",
+        ]
+        let registrations = integratedComponentIDs.flatMap {
+            VisualDiffFixtureRegistry.registrations(for: $0)
+        }
+        let caseIDs = registrations.map { $0.fixture.caseID }
+        XCTAssertEqual(Set(caseIDs).count, caseIDs.count, "Integrated iOS fixture case IDs must be globally unique")
+
+        for registration in registrations {
+            switch registration.applicability {
+            case .supported:
+                guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(
+                    caseID: registration.fixture.caseID
+                ) else {
+                    XCTFail("Supported fixture did not resolve: \(registration.fixture.caseID)")
+                    continue
+                }
+                do {
+                    _ = try adapter.makeFixture(for: fixture)
+                } catch {
+                    XCTFail("Supported fixture failed to build: \(registration.fixture.caseID): \(error)")
+                }
+            case .missingAuthority:
+                guard case .missingAuthority = VisualDiffFixtureRegistry.resolve(
+                    caseID: registration.fixture.caseID
+                ) else {
+                    XCTFail("Unavailable fixture resolved as supported: \(registration.fixture.caseID)")
+                    continue
+                }
+            }
+        }
+    }
+
+    func testResultsListRegistryPreservesPlainActionAndPaginationStates() {
+        let expected: [String: VisualDiffResultsListRenderConfiguration] = [
+            "results-list--page-1": .init(compact: false, loadingMore: false, includesAppendedItem: false),
+            "results-list--page-1--compact": .init(compact: true, loadingMore: false, includesAppendedItem: false),
+            "results-list--loading-more": .init(compact: false, loadingMore: true, includesAppendedItem: false),
+            "results-list--appended": .init(compact: false, loadingMore: false, includesAppendedItem: true),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "results-list")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.keys))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, configuration) in expected {
+            XCTAssertEqual(
+                VisualDiffFixtureRegistry.resultsListRenderConfiguration(for: caseID),
+                configuration,
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved results-list case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "results-list")
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
+    }
+
+    func testNoResultsFixtureUsesTheReachableHistoryNoMatchOwner() {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "no-results")
+        XCTAssertEqual(
+            registrations.map { $0.fixture.caseID },
+            ["no-results--empty"]
+        )
+        XCTAssertEqual(registrations.first?.applicability, .supported)
+
+        guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(
+            caseID: "no-results--empty"
+        ) else {
+            XCTFail("The reachable History no-match fixture must resolve")
+            return
+        }
+        XCTAssertEqual(fixture.componentID, "no-results")
+        XCTAssertEqual(fixture.variantID, "default")
+        XCTAssertEqual(fixture.stateID, "empty")
+        XCTAssertNoThrow(try adapter.makeFixture(for: fixture))
+    }
+
     func testUnavailableVisualDiffCasesResolveToTypedMissingAuthority() {
         guard case .missingAuthority(let skip) = VisualDiffFixtureRegistry.resolve(
             caseID: "action-button--primary--hover"
@@ -330,6 +1829,18 @@ final class VisualDiffCaptureTests: XCTestCase {
             "iPhone static capture cannot hold native interaction state for icon-button--default--pressed"
         )
 
+        guard case .missingAuthority(let mixed) = VisualDiffFixtureRegistry.resolve(
+            caseID: "checkbox--mixed--rest"
+        ) else {
+            XCTFail("A mixed checkbox capture must remain behind an authoritative state owner")
+            return
+        }
+        XCTAssertEqual(mixed.reason, .stateNotApplicable)
+        XCTAssertEqual(
+            mixed.description,
+            "iPhone state is blocked or not applicable for checkbox--mixed--rest"
+        )
+
         guard case .missingAuthority(let unknown) = VisualDiffFixtureRegistry.resolve(
             caseID: "future-component--default--rest"
         ) else {
@@ -340,6 +1851,137 @@ final class VisualDiffCaptureTests: XCTestCase {
         XCTAssertEqual(unknown.description, "No iOS visual capture fixture exists yet for future-component--default--rest")
     }
 
+    private func captureRiveIdentity(
+        _ capture: VisualDiffSentientIdentityCapture,
+        controller: UIViewController,
+        size: CGSize
+    ) throws -> UIImage {
+        let rootViewController = VisualDiffCanvasViewController()
+        rootViewController.view.backgroundColor = .clear
+        rootViewController.view.frame = CGRect(origin: .zero, size: size)
+        rootViewController.addChild(controller)
+        rootViewController.view.addSubview(controller.view)
+        controller.view.frame = rootViewController.view.bounds
+        controller.didMove(toParent: rootViewController)
+
+        let window = VisualDiffFocusWindow(frame: CGRect(origin: .zero, size: size))
+        window.backgroundColor = .clear
+        window.rootViewController = rootViewController
+        window.makeKeyAndVisible()
+        rootViewController.beginAppearanceTransition(true, animated: false)
+        rootViewController.endAppearanceTransition()
+        defer {
+            rootViewController.beginAppearanceTransition(false, animated: false)
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            controller.didMove(toParent: nil)
+            rootViewController.endAppearanceTransition()
+            window.rootViewController = nil
+            window.isHidden = true
+        }
+
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        guard let riveView = capture.model.riveViewModel?.riveView else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: capture.configuration.initialState.triggerName)
+        }
+        riveView.framebufferOnly = false
+        riveView.contentScaleFactor = 2
+        riveView.drawableSize = CGSize(
+            width: riveView.bounds.width * riveView.contentScaleFactor,
+            height: riveView.bounds.height * riveView.contentScaleFactor
+        )
+
+        let deadline = Date().addingTimeInterval(5)
+        while (!capture.didPrepare || riveView.currentDrawable == nil), Date() < deadline {
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard capture.didPrepare, capture.preparationError == nil else {
+            throw capture.preparationError ?? VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        guard let drawable = riveView.currentDrawable else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+
+        // Retain the drawable's texture before rendering. MetalKit may hand
+        // out a fresh currentDrawable after presentation; reading that next
+        // drawable would incorrectly produce an all-transparent capture.
+        let texture = drawable.texture
+        let gpuComplete = DispatchSemaphore(value: 0)
+        riveView.draw(in: riveView.bounds) { _ in gpuComplete.signal() }
+        guard gpuComplete.wait(timeout: .now() + 5) == .success else {
+            throw VisualDiffFixtureAdapterError.riveViewUnavailable(caseID: "sentient-identity")
+        }
+        let width = texture.width
+        let height = texture.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            texture.getBytes(
+                baseAddress,
+                bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height),
+                mipmapLevel: 0
+            )
+        }
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let image = CGImage(
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bitsPerPixel: 32,
+                  bytesPerRow: width * 4,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo(
+                      rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue
+                          | CGBitmapInfo.byteOrder32Little.rawValue
+                  ),
+                  provider: provider,
+                  decode: nil,
+                  shouldInterpolate: false,
+                  intent: .defaultIntent
+              )
+        else {
+            throw NSError(
+                domain: "VisualDiffCaptureTests",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Unable to read the Rive Metal drawable"]
+            )
+        }
+
+        // The Rive view is the only rendered child. Place its GPU readback at
+        // the measured native frame inside the fixed transparent handoff
+        // canvas; no reference pixels or visual transforms are introduced.
+        let componentFrame = riveView.convert(riveView.bounds, to: controller.view)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+            context.cgContext.draw(image, in: componentFrame)
+        }
+    }
+
+    private func visualDiffCaseID(for referenceURL: URL) -> String {
+        let frameID = referenceURL.deletingPathExtension().lastPathComponent
+        let recordingID = referenceURL.deletingLastPathComponent().lastPathComponent
+        if recordingID == "disclosure--closed-to-open" {
+            return "disclosure--closed-to-open--\(frameID)"
+        }
+        if recordingID == "pin-entry--complete-to-success" {
+            return "pin-entry--complete-to-success--\(frameID)"
+        }
+        if recordingID == "apply-bar--dirty-to-done" {
+            return "apply-bar--dirty-to-done--\(frameID)"
+        }
+        guard recordingID.hasPrefix("sentient-avatar--") else { return frameID }
+        let variantID = String(recordingID.dropFirst("sentient-avatar--".count))
+        return "sentient-identity--\(variantID)--\(frameID)"
+    }
+
     private func fixture(for caseID: String) throws -> AnyView {
         switch VisualDiffFixtureRegistry.resolve(caseID: caseID) {
         case .supported(let adapter, let fixture):
@@ -347,6 +1989,30 @@ final class VisualDiffCaptureTests: XCTestCase {
         case .missingAuthority(let skip):
             throw XCTSkip(skip.description)
         }
+    }
+
+    private func textField(in view: UIView) -> UITextField? {
+        if let textField = view as? UITextField { return textField }
+        for subview in view.subviews {
+            if let textField = textField(in: subview) { return textField }
+        }
+        return nil
+    }
+
+    private func textView(in view: UIView) -> UITextView? {
+        if let textView = view as? UITextView { return textView }
+        for subview in view.subviews {
+            if let textView = textView(in: subview) { return textView }
+        }
+        return nil
+    }
+
+    private func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for subview in view.subviews {
+            if let responder = firstResponder(in: subview) { return responder }
+        }
+        return nil
     }
 
     private func pngPixelSize(at url: URL) throws -> CGSize {

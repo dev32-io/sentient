@@ -205,7 +205,7 @@ final class AuthViewModel: ObservableObject {
 
                 // Keep the accepted state visible before the backend-authoritative
                 // identity/token commit changes the root view.
-                pinSuccess = "PIN accepted."
+                pinSuccess = "Pin accepted."
                 do {
                     try await sleep(LoginFeedbackTiming.successTransition)
                 } catch is CancellationError {

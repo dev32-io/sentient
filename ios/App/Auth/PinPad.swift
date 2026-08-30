@@ -9,6 +9,9 @@ struct PinPad: View {
     var error: String? = nil
     var success: String? = nil
     var errorRevision = 0
+    /// Previews and deterministic capture may override the system setting;
+    /// normal callers leave this nil and follow Accessibility settings.
+    var reducedMotionOverride: Bool? = nil
     let onDigit: (Character) -> Void
     let onDelete: () -> Void
 
@@ -19,6 +22,7 @@ struct PinPad: View {
             error: error,
             success: success,
             errorRevision: errorRevision,
+            reducedMotionOverride: reducedMotionOverride,
             statusAccessibilityId: "pin-status",
             onDigit: onDigit,
             onDelete: onDelete

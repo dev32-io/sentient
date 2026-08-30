@@ -1,0 +1,4 @@
+xcodebuild test: passed
+XCTest: 72 passed, 0 failed
+Swift Testing: 123 passed across 16 suites, 0 failed
+Request-driven visual capture test: explicitly excluded; six final captures ran serially through the repository capture boundary.

@@ -30,8 +30,11 @@ struct ToolsServerCard: View {
 
     var body: some View {
         DesignCard {
-            header
-            if isOpen { expandedBody }
+            DesignDisclosureGroup(isExpanded: isOpen) {
+                header
+            } content: {
+                expandedBody
+            }
         }
     }
 
@@ -49,10 +52,12 @@ struct ToolsServerCard: View {
                         .foregroundStyle(DuskColors.ink)
                 }
                 DesignToggleSwitch(
-                    label: "Enable \(capabilityName(id))",
+                    label: "",
                     isOn: Binding(get: { masterOn }, set: onToggleServer),
                     accessibilityId: "settings-tools-server-\(id)"
                 )
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityLabel("Enable \(capabilityName(id))")
             }
             if let serverDescription, !serverDescription.isEmpty {
                 Text(serverDescription)

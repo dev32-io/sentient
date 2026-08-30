@@ -1,0 +1,14 @@
+b30178d5dcd488c2799dc09537be5482bc3edfe6549309a646e313bb37576c0c  build/visual-captures/ios/empty-state-wave4/actual.png
+3f673fe404a3238af95c5588cafc5e48764086ba18e609dea26c53fb3db671f6  build/visual-captures/ios/empty-state-wave4/checks/final-codesign.log
+69ffbff4ac0c4c759ee55facdde2d0a94b68b8b2181893c20373e4725803b1d4  build/visual-captures/ios/empty-state-wave4/checks/ios-boundary-base.log
+69ffbff4ac0c4c759ee55facdde2d0a94b68b8b2181893c20373e4725803b1d4  build/visual-captures/ios/empty-state-wave4/checks/ios-boundary-current.log
+5afb03775251a257aa3551a6c844b9b1befaaaf370facdeeb12e40cf177365d5  build/visual-captures/ios/empty-state-wave4/checks/ios-boundary-status.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  build/visual-captures/ios/empty-state-wave4/checks/ios-boundary.diff
+3a9c780ee5ffff19e18cee28258b2526a157b8b3d8e1e0a82ed531f373c63735  build/visual-captures/ios/empty-state-wave4/checks/ios-final-focused-test.log
+cdeb06e243e06420ae0fc9d807c08ba74586c38d13375067e3678fba0819747c  build/visual-captures/ios/empty-state-wave4/checks/ios-final-signed-build.log
+26867ddabd113b3e69b3d980d85a6b1dd5f81c7b3557e0e9581e9e13e06c94eb  build/visual-captures/ios/empty-state-wave4/checks/ios-full-tests.log
+fa0607caafd0749c7bb8571d04fed959c3dd9cf8b4763c01b69fab931239876c  build/visual-captures/ios/empty-state-wave4/checks/test-results-summary.jsonl
+4de3a695e43fe7365cc3ce7046230fe9cd123972343b890f28a9b60c2be44043  build/visual-captures/ios/empty-state-wave4/checks/visual-dependents.log
+30f4f4f573132f49dfd911de88a1fcbb0026be92e155d9db41ecf22232c19c2b  build/visual-captures/ios/empty-state-wave4/checks/visual-tools.log
+f7208768a8a50f4d912cd3a6838393400819d34ad2590932d9f1c9f07871c088  build/visual-captures/ios/empty-state-wave4/diff.png
+c08a1c02fdb02fae2af07b73c478410bff8c2000a9d0dbbb76dccb4b80fdb291  build/visual-captures/ios/empty-state-wave4/visual-diff.json

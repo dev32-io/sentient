@@ -1,0 +1,41 @@
+Log summary: full command output was intentionally reduced after preserving the terminal result.
+    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsnltrainingprocessor --infoplist-path /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/Info.plist --temp-dir-path /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Intermediates.noindex/SentientApp.build/Debug-iphonesimulator/SentientApp.build/ssu --bundle-id io.dev32.sentient.debug --product-path /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app --extracted-metadata-path /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/Metadata.appintents --metadata-file-list /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Intermediates.noindex/SentientApp.build/Debug-iphonesimulator/SentientApp.build/SentientApp.DependencyMetadataFileList --source-file /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/Info.plist --archive-ssu-assets
+2026-08-29 15:39:47.584 appintentsnltrainingprocessor[35972:246970239] Parsing options for appintentsnltrainingprocessor
+2026-08-29 15:39:47.584 appintentsnltrainingprocessor[35972:246970239] Starting AppIntents SSU YAML Generation
+2026-08-29 15:39:47.584 appintentsnltrainingprocessor[35972:246970239] No AppShortcuts found - Skipping.
+
+CodeSign /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/SentientApp.debug.dylib (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+
+    Signing Identity:     "Sign to Run Locally"
+
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/SentientApp.debug.dylib
+
+CodeSign /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/__preview.dylib (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+
+    Signing Identity:     "Sign to Run Locally"
+
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app/__preview.dylib
+
+CodeSign /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+
+    Signing Identity:     "Sign to Run Locally"
+
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app
+
+RegisterExecutionPolicyException /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+    builtin-RegisterExecutionPolicyException /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app
+
+Validate /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+    builtin-validationUtility /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app -shallow-bundle -infoplist-subpath Info.plist
+
+Touch /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app (in target 'SentientApp' from project 'SentientApp')
+    cd /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/ios
+    /usr/bin/touch -c /Users/kevinye/Development/sentient/.worktree/wave3/ios-setting-row/build/setting-row-wave3-final-signed-rerun-derived/Build/Products/Debug-iphonesimulator/SentientApp.app
+
+note: Run script build phase 'Verify Sentient identity checksum' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'SentientApp' from project 'SentientApp')
+** BUILD SUCCEEDED **

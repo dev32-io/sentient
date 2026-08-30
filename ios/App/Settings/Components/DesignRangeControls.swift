@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private struct DesignStateAccessibilityModifier: ViewModifier {
     let state: DesignControlState
@@ -175,63 +176,133 @@ struct DesignStepper: View {
     }
 }
 
+private enum DesignSliderMetrics {
+    // These values mirror the range input's source-authored CSS states and
+    // geometry. They stay local because they do not change another control's
+    // material recipe.
+    static let labelRowGap: CGFloat = 7
+    static let disabledOpacity = 0.58
+    static let disabledSaturation = 0.3
+    static let focusTrackRingWidth: CGFloat = 3
+    // The CSS track uses a 3px/6px/-2px inner shadow. A direct SwiftUI inner
+    // shadow over-darkens an 8pt capsule, so retain its directional falloff as
+    // a shape-clipped native gradient instead of changing the track geometry.
+    static let trackTopShadowOpacity = 0.44
+    static let trackTopShadowMiddleOpacity = 0.03
+    static let trackTopShadowMiddleStop: CGFloat = 0.45
+    static let trackTopShadowLowerOpacity = 0.04
+    static let trackTopShadowLowerStop: CGFloat = 0.55
+    static let trackTopShadowBottomOpacity = 0.03
+    static let trackBottomHighlight = 0.07
+    static let thumbRadialFadeStop: CGFloat = 0.72
+}
+
+private func designSliderColor(_ color: Color, isEnabled: Bool) -> Color {
+    guard !isEnabled else { return color }
+
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    var alpha: CGFloat = 0
+    guard UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+        return color
+    }
+
+    // CSS `saturate()` uses this luminance matrix. Applying it to the local
+    // recipe colors keeps the disabled result independent of the destination
+    // behind SwiftUI's transparent compositing group.
+    let saturation = DesignSliderMetrics.disabledSaturation
+    let luminance = red * 0.213 + green * 0.715 + blue * 0.072
+    return Color(
+        .sRGB,
+        red: luminance + (red - luminance) * saturation,
+        green: luminance + (green - luminance) * saturation,
+        blue: luminance + (blue - luminance) * saturation,
+        opacity: alpha
+    )
+}
+
 private struct DesignSliderThumb: View {
     let focused: Bool
-    let enabled: Bool
+    let isEnabled: Bool
+
+    private var radialEndRadius: CGFloat {
+        // CSS radial gradients default to the farthest corner when no size is
+        // supplied. The center is 50% / 55% of the 26pt thumb box.
+        let size = DesignMetrics.sliderThumbSize
+        let centerX = size * 0.5
+        let centerY = size * 0.55
+        return (centerX * centerX + centerY * centerY).squareRoot()
+    }
 
     var body: some View {
         Circle()
             .fill(
-                RadialGradient(
-                    stops: [
-                        .init(color: DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.22), location: 0),
-                        .init(color: .clear, location: 0.72),
+                LinearGradient(
+                    colors: [
+                        designSliderColor(
+                            DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.05),
+                            isEnabled: isEnabled
+                        ),
+                        designSliderColor(DuskColors.paper, isEnabled: isEnabled),
                     ],
-                    center: UnitPoint(x: 0.5, y: 0.55),
-                    startRadius: 0,
-                    endRadius: DesignMetrics.sliderThumbSize
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
             )
             .overlay {
                 Circle()
                     .fill(
-                        LinearGradient(
-                            colors: [DuskColors.paper.overlaying(DuskColors.ink2, opacity: 0.05), DuskColors.paper],
-                            startPoint: .top,
-                            endPoint: .bottom
+                        RadialGradient(
+                            stops: [
+                                .init(
+                                    color: designSliderColor(
+                                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.22),
+                                        isEnabled: isEnabled
+                                    ),
+                                    location: 0
+                                ),
+                                .init(color: .clear, location: DesignSliderMetrics.thumbRadialFadeStop),
+                            ],
+                            center: UnitPoint(x: 0.5, y: 0.55),
+                            startRadius: 0,
+                            endRadius: radialEndRadius
                         )
                     )
-                    .opacity(0.62)
             }
+            .clipShape(Circle())
             .overlay {
-                Circle().stroke(DuskColors.line, lineWidth: DesignMetrics.hairline)
+                Circle().stroke(
+                    designSliderColor(DuskColors.line, isEnabled: isEnabled),
+                    lineWidth: DesignMetrics.hairline
+                )
             }
             .overlay {
                 if focused {
-                    Circle().stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder).padding(DesignMetrics.focusBorderInset)
+                    Circle()
+                        .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+                        .padding(DesignMetrics.focusBorderInset)
                 }
             }
-            .clipShape(Circle())
             .background {
                 ZStack {
                     DesignSpreadShadow(
                         shape: Circle(),
-                        color: .black.opacity(enabled ? 0.94 : DesignMaterialAdapter.slateDisabledBlack),
-                        geometry: enabled
-                            ? DesignMaterialShadowGeometry.slateRest
-                            : DesignMaterialShadowGeometry.slateDisabled
+                        color: designSliderColor(
+                            DuskColors.bgSunk.overlaying(DuskColors.line, opacity: 0.12),
+                            isEnabled: isEnabled
+                        ),
+                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
                     )
-                    if enabled {
-                        DesignSpreadShadow(
-                            shape: Circle(),
-                            color: DuskColors.accent.opacity(0.20),
-                            geometry: DesignDropShadowGeometry(radius: 16, y: 10, sourceInset: 13)
-                        )
-                    }
                     DesignSpreadShadow(
                         shape: Circle(),
-                        color: DuskColors.bgSunk.opacity(0.88),
-                        geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                        color: .black.opacity(DesignMaterialAdapter.slateRestBlack),
+                        geometry: DesignMaterialShadowGeometry.slateRest
+                    )
+                    DesignSpreadShadow(
+                        shape: Circle(),
+                        color: designSliderColor(DuskColors.accent, isEnabled: isEnabled).opacity(0.44),
+                        geometry: DesignDropShadowGeometry(radius: 16, y: 10, sourceInset: 13)
                     )
                 }
             }
@@ -248,6 +319,7 @@ struct DesignSlider: View {
     var accessibilityId: String? = nil
     var isEnabled = true
     @FocusState private var focused: Bool
+    @Environment(\.layoutDirection) private var layoutDirection
 
     init(
         title: String,
@@ -268,44 +340,74 @@ struct DesignSlider: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: DesignSliderMetrics.labelRowGap) {
             Text(title)
-                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                // The handoff uses the 14px control size at the default
+                // Dynamic Type scale; `.body` keeps that native size while
+                // still scaling with the user's accessibility setting.
+                .font(
+                    .custom(
+                        "DMSans-Medium",
+                        size: DesignMetrics.controlLabelSize,
+                        relativeTo: .body
+                    )
+                )
+                // Align the native baseline with the CSS line box without
+                // changing the slider row's measured height.
+                .baselineOffset(1)
                 .foregroundStyle(DuskColors.ink)
+                .frame(
+                    minHeight: DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal),
+                    alignment: .leading
+                )
             HStack(spacing: Space.md) {
                 ZStack {
                     GeometryReader { proxy in
                         let width = proxy.size.width
-                        let thumbX = min(max(normalizedValue * width, DesignMetrics.sliderThumbSize / 2), width - DesignMetrics.sliderThumbSize / 2)
+                        let thumbTravel = max(width - DesignMetrics.sliderThumbSize, 0)
+                        let thumbLeading = min(max(thumbProgress * thumbTravel, 0), thumbTravel)
                         ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(DuskColors.bgSunk)
+                            sliderTrack
                                 .frame(maxWidth: .infinity)
                                 .frame(height: DesignMetrics.sliderTrackHeight)
-                                .shadow(color: DuskColors.line.opacity(DesignMaterialAdapter.wellLineOpacity), radius: 0, y: 1)
-                                .offset(y: 18)
-                            Capsule()
-                                .fill(
-                                    DuskColors.accentSoft.overlaying(DuskColors.accent, opacity: 0.58)
-                                )
-                                .frame(width: max(0, width * normalizedValue), height: DesignMetrics.sliderTrackHeight)
-                                .offset(y: 18)
-                            DesignSliderThumb(focused: focused, enabled: isEnabled)
-                                .position(x: thumbX, y: 22)
+                            HStack(spacing: 0) {
+                                Color.clear
+                                    .frame(width: thumbLeading)
+                                DesignSliderThumb(focused: focused, isEnabled: isEnabled)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
+                        // The decorative geometry is laid out in a physical
+                        // left-to-right space; the semantic Slider remains in
+                        // the caller's layout direction below.
+                        .environment(\.layoutDirection, .leftToRight)
                     }
+                    .frame(height: DesignMetrics.minimumTarget)
                     .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    // Match CSS opacity compositing for the complete range so
+                    // its track cannot show through the disabled thumb.
+                    .compositingGroup()
+                    .opacity(isEnabled ? 1 : DesignSliderMetrics.disabledOpacity)
+                    // Keep the native Slider as the sole interaction and
+                    // accessibility owner; only its platform chrome is hidden
+                    // so the source-authored track and thumb can be rendered.
                     Slider(value: $value, in: range, step: step) { Text(title) }
                         .labelsHidden()
                         .tint(.clear)
-                        .opacity(0.01)
+                        .opacity(0)
                         .focused($focused)
                         .disabled(!isEnabled)
+                        .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
                         .accessibilityLabel(title)
-                        .accessibilityValue(isEnabled ? (format?(value) ?? String(value)) : "Disabled")
+                        // Native disabled semantics announce availability;
+                        // retain the explicit current value in every state.
+                        .accessibilityValue(format?(value) ?? String(value))
                         .accessibilityIdentifier(accessibilityId ?? "")
                 }
-                .frame(minWidth: DesignMetrics.sliderMinimumTrackWidth, minHeight: DesignMetrics.minimumTarget)
+                .frame(minWidth: DesignMetrics.sliderMinimumTrackWidth, maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget)
                 if let format {
                     Text(format(value))
                         .font(Typo.mono(TypeScale.sm))
@@ -313,16 +415,87 @@ struct DesignSlider: View {
                         .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
                 }
             }
-            .opacity(isEnabled ? 1 : DesignMaterialAdapter.selectDisabledOpacity)
-            .saturation(isEnabled ? 1 : 0.35)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: DesignMetrics.minimumTarget)
-        .padding(.vertical, Space.sm)
+        .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget, alignment: .leading)
+    }
+
+    private var sliderTrack: some View {
+        let progressColor = designSliderColor(
+            DuskColors.accentSoft.overlaying(DuskColors.accent, opacity: 0.58),
+            isEnabled: isEnabled
+        )
+        let trackColor = designSliderColor(DuskColors.bgSunk, isEnabled: isEnabled)
+        let isRightToLeft = layoutDirection == .rightToLeft
+        let gradient = LinearGradient(
+            stops: [
+                .init(color: progressColor, location: 0),
+                .init(color: progressColor, location: normalizedValue),
+                .init(color: trackColor, location: normalizedValue),
+                .init(color: trackColor, location: 1),
+            ],
+            startPoint: isRightToLeft ? .trailing : .leading,
+            endPoint: isRightToLeft ? .leading : .trailing
+        )
+
+        return Capsule()
+            .fill(gradient)
+            .background {
+                if focused {
+                    Capsule()
+                        .stroke(
+                            DuskColors.accent.opacity(0.18),
+                            lineWidth: DesignSliderMetrics.focusTrackRingWidth * 2
+                        )
+                }
+            }
+            .overlay {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black.opacity(DesignSliderMetrics.trackTopShadowOpacity), location: 0),
+                                .init(
+                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowMiddleOpacity),
+                                    location: DesignSliderMetrics.trackTopShadowMiddleStop
+                                ),
+                                .init(
+                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowLowerOpacity),
+                                    location: DesignSliderMetrics.trackTopShadowLowerStop
+                                ),
+                                .init(
+                                    color: .black.opacity(DesignSliderMetrics.trackTopShadowBottomOpacity),
+                                    location: 1
+                                ),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+            .overlay(alignment: .bottom) {
+                Capsule()
+                    .fill(
+                        designSliderColor(DuskColors.ink, isEnabled: isEnabled)
+                            .opacity(DesignSliderMetrics.trackBottomHighlight)
+                    )
+                    .frame(height: DesignMetrics.hairline)
+            }
+            .shadow(
+                color: designSliderColor(DuskColors.line, isEnabled: isEnabled)
+                    .opacity(DesignMaterialAdapter.wellLineOpacity),
+                radius: 0,
+                y: DesignMaterialAdapter.wellLineY
+            )
     }
 
     private var normalizedValue: CGFloat {
         guard range.upperBound > range.lowerBound else { return 0 }
         return CGFloat(min(max((value - range.lowerBound) / (range.upperBound - range.lowerBound), 0), 1))
+    }
+
+    private var thumbProgress: CGFloat {
+        layoutDirection == .rightToLeft ? 1 - normalizedValue : normalizedValue
     }
 }
 

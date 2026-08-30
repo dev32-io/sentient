@@ -100,20 +100,23 @@ struct PersonalitiesScreen: View {
         let isActive = personality.name == vm.activeName
         let isOpen = expanded.contains(personality.name)
         return DesignCard {
-            DesignDisclosureButton(
-                isExpanded: isOpen,
-                accessibilityLabel: "\(isOpen ? "Collapse" : "Expand") \(personality.name)",
-                accessibilityId: "settings-personalities-card-\(personality.name)",
-                action: { toggle(personality.name) }
-            ) {
-                HStack(spacing: Space.sm) {
-                    Text(personality.name)
-                        .font(Typo.ui(TypeScale.sm, .semibold))
-                        .foregroundStyle(DuskColors.ink)
-                    if isActive { activeBadge }
+            DesignDisclosureGroup(isExpanded: isOpen) {
+                DesignDisclosureButton(
+                    isExpanded: isOpen,
+                    accessibilityLabel: "\(isOpen ? "Collapse" : "Expand") \(personality.name)",
+                    accessibilityId: "settings-personalities-card-\(personality.name)",
+                    action: { toggle(personality.name) }
+                ) {
+                    HStack(spacing: Space.sm) {
+                        Text(personality.name)
+                            .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                            .foregroundStyle(DuskColors.ink)
+                        if isActive { activeBadge }
+                    }
                 }
+            } content: {
+                cardBody(personality, isActive: isActive)
             }
-            if isOpen { cardBody(personality, isActive: isActive) }
         }
     }
 

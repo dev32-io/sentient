@@ -1,0 +1,22 @@
+
+> test
+> node --test *.test.mjs
+
+✔ parses reviewed opaque background colors (1.911541ms)
+✔ composites transparent PNG pixels on the selected background (9.612ms)
+✔ measures the union of visible pixels without transparent canvas padding (2.898875ms)
+✔ reads PNG dimensions without a rendering dependency (4.805833ms)
+✔ rejects outputs outside the disposable platform directory (2.773166ms)
+✔ derives stable case and implementation output names (0.450333ms)
+✔ rejects malformed invocation (1.245709ms)
+✔ rejects diff outputs that could overwrite an input (0.266209ms)
+✔ keeps pixel differences report-only without a reviewed gate (5.372834ms)
+✔ fails only when the visible-pixel percentage exceeds a configured gate (1.265834ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 90.743709

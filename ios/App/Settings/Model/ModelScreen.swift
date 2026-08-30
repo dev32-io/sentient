@@ -8,8 +8,8 @@
 // this pass — the JsonPrimitive `.content` SKIE bridge is unverified and price is
 // not on the parity E2E path; id + context + caps carry the single-select intent.
 //
-// Save chrome + discard-on-dirty-back are shared SoulPageChrome pieces; nav
-// wiring lives in UserSessionHost. This file fills the body + owns its VM only.
+// The shared apply bar receives this screen's dirty/save actions; discard and
+// dirty-back still use the existing native confirmation and navigation seam.
 // ---------------------------------------------------------------------------
 import SwiftUI
 import MobileData
@@ -49,24 +49,26 @@ struct ModelScreen: View {
                     Task { await vm.load() }
                 }
             case .ready:
-                saveBanner
                 browseControls
                 modelList
             }
         }
+        .designApplyBarDock(
+            isDirty: vm.isDirty,
+            state: applyState,
+            discardAccessibilityId: "settings-model-discard",
+            applyAccessibilityId: "settings-model-save",
+            onDiscard: attemptBack,
+            onApply: { Task { await vm.save() } }
+        )
         // Clean → system back button (native interactive edge-swipe pop). Dirty →
-        // hide it + show the custom back that routes through the discard confirm
+        // hide it + show the custom back that shares the apply bar's discard confirm
         // (gesture is intentionally disabled only while a draft is unsaved).
         .navigationBarBackButtonHidden(vm.isDirty)
         .toolbar {
             if vm.isDirty {
                 ToolbarItem(placement: .navigation) {
                     SoulBackButton(accessibilityId: "settings-model-back", action: attemptBack)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    SoulSaveButton(disabled: vm.isApplying, accessibilityId: "settings-model-save") {
-                        Task { await vm.save() }
-                    }
                 }
             }
         }
@@ -75,10 +77,6 @@ struct ModelScreen: View {
             Button("Discard", role: .destructive) { onBack() }
             Button("Keep editing", role: .cancel) {}
         }
-    }
-
-    private var saveBanner: some View {
-        DesignApplyFeedback(state: applyState)
     }
 
     private var applyState: DesignApplyState {

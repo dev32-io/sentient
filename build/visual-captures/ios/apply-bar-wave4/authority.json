@@ -1,0 +1,83 @@
+{
+  "immutable": true,
+  "references": [
+    {
+      "path": "design/prototype/common-composites/handoff/static/apply-bar--dirty--rest.png",
+      "sha256": "bd9dbab10c20ce241f45bba349133de92fdbe57d84fc1f2b5970c9dd4efe228a",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    },
+    {
+      "path": "design/prototype/common-composites/handoff/static/apply-bar--applying--active.png",
+      "sha256": "2ad5b6aa7873f2d6fbfe5c015ce2a25909fd850b2372457d9d6b08c56ee66a79",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    },
+    {
+      "path": "design/prototype/common-composites/handoff/static/apply-bar--done--success.png",
+      "sha256": "077565fe0b74ef5ada8271e08bd5adc58514cf2fb670f7732b1931b47f106807",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    },
+    {
+      "path": "design/prototype/common-composites/handoff/recordings/apply-bar--dirty-to-done/frame-000--0000ms.png",
+      "sha256": "bd9dbab10c20ce241f45bba349133de92fdbe57d84fc1f2b5970c9dd4efe228a",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    },
+    {
+      "path": "design/prototype/common-composites/handoff/recordings/apply-bar--dirty-to-done/frame-001--0300ms.png",
+      "sha256": "6613f66d9970e9eb73f305fee2f9204a0854a9354f809ed646067b279ff5126a",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    },
+    {
+      "path": "design/prototype/common-composites/handoff/recordings/apply-bar--dirty-to-done/frame-002--0900ms.png",
+      "sha256": "1b077086e4d1996918d0a85fb44572c34f0c583a842612e059f5eb2315e7a4cd",
+      "width": 1616,
+      "height": 404,
+      "mode": "RGBA",
+      "alphaBounds": [
+        62,
+        98,
+        1506,
+        330
+      ]
+    }
+  ]
+}

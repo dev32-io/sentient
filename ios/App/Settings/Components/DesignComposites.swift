@@ -39,7 +39,14 @@ struct DesignPageChrome<Content: View>: View {
 }
 
 enum DesignCardHeaderStyle { case elevated, quiet }
-enum DesignCardBodyStyle { case rows, padded }
+enum DesignCardBodyStyle { case rows, settingsGroup, padded }
+
+private enum DesignSettingsGroupMetrics {
+    // Source `.cmp-setting-row` minimum, including its responsive content air.
+    static let rowHeight: CGFloat = 70
+    static let selectWidth: CGFloat = 180
+    static let rangeWidth: CGFloat = 210
+}
 
 /// The one card surface used by settings. Header and body styles preserve the
 /// old pane/card spacing without maintaining two separate visual renderers.
@@ -101,6 +108,7 @@ struct DesignCard<Content: View>: View {
             Text(title ?? "")
                 .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
                 .foregroundStyle(DuskColors.ink)
+                .accessibilityAddTraits(.isHeader)
             if let detail {
                 Text(detail)
                     .font(Typo.ui(TypeScale.sm))
@@ -116,9 +124,186 @@ struct DesignCard<Content: View>: View {
             VStack(alignment: .leading, spacing: 0, content: content)
                 .padding(.horizontal, Space.lg)
                 .padding(.vertical, Space.sm)
+        case .settingsGroup:
+            Group(subviews: content()) { subviews in
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(subviews) { subview in
+                        subview
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: DesignSettingsGroupMetrics.rowHeight,
+                                alignment: .leading
+                            )
+                        if subview.id != subviews.last?.id {
+                            DesignDivider()
+                        }
+                    }
+                }
+                .padding(.horizontal, Space.lg)
+            }
         case .padded:
             VStack(alignment: .leading, spacing: Space.md, content: content)
                 .padding(Space.lg)
+        }
+    }
+}
+
+enum DesignSettingsEditorState: Equatable {
+    case saved
+    case unsaved
+
+    var title: String {
+        switch self {
+        case .saved: "Saved"
+        case .unsaved: "Unsaved"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .saved: DuskColors.sage
+        case .unsaved: DuskColors.accent
+        }
+    }
+}
+
+private enum DesignSettingsEditorMetrics {
+    static let headerMinimumHeight: CGFloat = 70
+    static let bodyGap: CGFloat = 14
+    static let statusHorizontalPadding: CGFloat = 10
+    static let statusVerticalPadding: CGFloat = 6
+}
+
+/// Full-measure settings editor shell. Draft, validation, focus, reset, and
+/// persistence remain caller-owned; this view only composes their native views.
+struct DesignSettingsEditor<Content: View, Actions: View>: View {
+    let title: String
+    let detail: String
+    let state: DesignSettingsEditorState?
+    @ViewBuilder let content: () -> Content
+    @ViewBuilder let actions: () -> Actions
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        title: String,
+        detail: String,
+        state: DesignSettingsEditorState? = nil,
+        @ViewBuilder content: @escaping () -> Content,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.title = title
+        self.detail = detail
+        self.state = state
+        self.content = content
+        self.actions = actions
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            VStack(alignment: .leading, spacing: DesignSettingsEditorMetrics.bodyGap) {
+                content()
+            }
+            .padding(Space.lg)
+            if Actions.self != EmptyView.self { footer }
+        }
+        .designPlate()
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        let copy = VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+            Text(detail)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Space.sm) {
+                    copy
+                    status
+                }
+            } else {
+                HStack(alignment: .center, spacing: Space.md) {
+                    copy
+                    status
+                }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, minHeight: DesignSettingsEditorMetrics.headerMinimumHeight)
+        .overlay(alignment: .bottom) { DesignDivider() }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if let state {
+            Text(state.title)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(state.tint)
+                .padding(.horizontal, DesignSettingsEditorMetrics.statusHorizontalPadding)
+                .padding(.vertical, DesignSettingsEditorMetrics.statusVerticalPadding)
+                .background {
+                    let shape = Capsule()
+                    ZStack {
+                        DesignSpreadShadow(
+                            shape: shape,
+                            color: state.tint.opacity(state == .saved ? 0.32 : 0.22),
+                            geometry: DesignDropShadowGeometry(radius: 7, y: 0, sourceInset: 8)
+                        )
+                        shape.fill(
+                            state == .saved
+                                ? DuskColors.sageSoft.overlaying(DuskColors.paper, opacity: 0.22)
+                                : DuskColors.paper
+                        )
+                    }
+                }
+                .overlay {
+                    Capsule().stroke(
+                        contrast == .increased ? DuskColors.ink3 : DuskColors.lineSoft,
+                        lineWidth: DesignMetrics.hairline
+                    )
+                }
+                .fixedSize()
+                .accessibilityLabel(state.title)
+        }
+    }
+
+    private var footer: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: Space.sm) { actions() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: Space.sm) {
+                    Spacer(minLength: 0)
+                    actions()
+                }
+            }
+        }
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .background(DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.25))
+        .overlay(alignment: .top) { DesignDivider() }
+    }
+}
+
+extension DesignSettingsEditor where Actions == EmptyView {
+    init(
+        title: String,
+        detail: String,
+        state: DesignSettingsEditorState? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(title: title, detail: detail, state: state, content: content) {
+            EmptyView()
         }
     }
 }
@@ -137,8 +322,226 @@ struct DesignPane<Content: View>: View {
     }
 }
 
+enum DesignResultsListItemTone {
+    case terra, sage
+}
+
+struct DesignResultsListItem: Identifiable {
+    let id: String
+    let leading: String
+    let title: String
+    let detail: String
+    var tone: DesignResultsListItemTone = .terra
+    let action: () -> Void
+}
+
+/// A bounded summary and incremental result collection whose rows are plain
+/// native actions. Selectable rows and rows with nested actions use their own
+/// product components rather than adding selection state to this contract.
+struct DesignResultsList: View {
+    let countLabel: String
+    let summary: String
+    let clearLabel: String
+    let items: [DesignResultsListItem]
+    let pageLabel: String
+    let previousLabel: String
+    let loadMoreLabel: String
+    let loadingLabel: String
+    var previousDisabled = false
+    var loadingMore = false
+    let onClear: () -> Void
+    let onPrevious: () -> Void
+    let onLoadMore: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool { horizontalSizeClass == .compact }
+    private var actionVisualHeight: CGFloat {
+        compact ? DesignMetrics.minimumTarget : DesignMetrics.actionButtonVisualHeight
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            DesignDivider()
+            rows
+            DesignDivider()
+            pagination
+        }
+        .designPlate()
+    }
+
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.md) {
+                summaryView
+                Spacer(minLength: 0)
+                clearButton
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                summaryView
+                clearButton
+            }
+        }
+        .padding(.horizontal, 14)
+        // The compact source key grows from 40pt to 44pt inside a bordered
+        // 69pt header; the half-point keeps that native 2x border box integral.
+        .padding(.vertical, compact ? 12.5 : 11)
+        .frame(minHeight: 66, alignment: .leading)
+    }
+
+    private var summaryView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(countLabel)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .bold))
+                .foregroundStyle(DuskColors.ink)
+            Text(summary)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var clearButton: some View {
+        DesignActionButton(
+            title: clearLabel,
+            role: .quiet,
+            fillsWidth: false,
+            action: onClear,
+            visualHeight: actionVisualHeight
+        )
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                resultRow(item)
+                    .overlay(alignment: .bottom) {
+                        if index < items.count - 1 { DesignDivider() }
+                    }
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .offset(y: Space.sm).combined(with: .opacity)
+                    )
+            }
+        }
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, Space.sm)
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: items.map(\.id)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private func resultRow(_ item: DesignResultsListItem) -> some View {
+        Button(action: item.action) {
+            HStack(spacing: 11) {
+                resultIcon(item)
+                    .frame(width: 42)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.title)
+                        .font(Typo.ui(DesignMetrics.controlLabelSize, .bold))
+                        .foregroundStyle(DuskColors.ink)
+                    Text(item.detail)
+                        .font(Typo.ui(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                }
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.forward")
+                    .font(Typo.ui(TypeScale.base, .medium))
+                    .foregroundStyle(DuskColors.ink3)
+                    .accessibilityHidden(true)
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(item.detail)
+    }
+
+    private func resultIcon(_ item: DesignResultsListItem) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        return Text(item.leading)
+            .font(Typo.display(TypeScale.lg))
+            .foregroundStyle(item.tone == .sage ? DuskColors.sage : DuskColors.accent)
+            .frame(width: 38, height: 38)
+            .background {
+                designSlateFace(role: .quiet, muted: true, hovered: false)
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.strokeBorder(DuskColors.line, lineWidth: DesignMetrics.hairline)
+            }
+            .accessibilityHidden(true)
+    }
+
+    private var pagination: some View {
+        ViewThatFits(in: .horizontal) {
+            paginationRow
+            VStack(spacing: Space.sm) {
+                Text(pageLabel)
+                    .font(Typo.mono(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                HStack(spacing: Space.sm) {
+                    previousButton
+                    loadMoreButton
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .trailing)
+    }
+
+    private var paginationRow: some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
+            previousButton
+            Text(pageLabel)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+                .fixedSize()
+            loadMoreButton
+        }
+    }
+
+    private var previousButton: some View {
+        DesignActionButton(
+            title: previousLabel,
+            role: .quiet,
+            state: previousDisabled ? .disabled : .normal,
+            fillsWidth: false,
+            action: onPrevious,
+            visualHeight: actionVisualHeight
+        )
+    }
+
+    private var loadMoreButton: some View {
+        DesignActionButton(
+            title: loadingMore ? loadingLabel : loadMoreLabel,
+            role: .secondary,
+            state: loadingMore ? .disabled : .normal,
+            fillsWidth: false,
+            action: onLoadMore,
+            visualHeight: actionVisualHeight
+        )
+    }
+}
+
 private struct DominantVisualCardButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var focused
     let hovered: Bool
@@ -157,6 +560,9 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                 DuskColors.bgElev,
                 opacity: DesignMaterialAdapter.mediaCardElevatedMix
             )
+        let contactMix = pressed || raised
+            ? DesignMaterialAdapter.mediaCardHoverContactMix
+            : DesignMaterialAdapter.plateRestContactMix
         configuration.label
             .background {
                 shape.fill(
@@ -171,10 +577,12 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
             }
             .clipShape(shape)
             .overlay {
-                shape.stroke(
+                shape.strokeBorder(
                     focused
                         ? DuskColors.accent
-                        : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
+                        : contrast == .increased
+                            ? DuskColors.ink3
+                            : hovered && !quietHoverBorder ? DuskColors.line : DuskColors.lineSoft,
                     lineWidth: DesignMetrics.hairline
                 )
             }
@@ -183,15 +591,24 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     DesignSpreadShadow(
                         shape: shape,
                         color: .black.opacity(
-                            pressed ? 0.88 : DesignMaterialAdapter.mediaCardRestBlack
+                            pressed
+                                ? 0.88
+                                : raised
+                                    ? DesignMaterialAdapter.mediaCardHoverBlack
+                                    : DesignMaterialAdapter.mediaCardRestBlack
                         ),
                         geometry: pressed
                             ? DesignMaterialShadowGeometry.slatePressed
-                            : DesignMaterialShadowGeometry.plate
+                            : raised
+                                ? DesignMaterialShadowGeometry.mediaCardHover
+                                : DesignMaterialShadowGeometry.plate
                     )
                     DesignSpreadShadow(
                         shape: shape,
-                        color: DuskColors.line.opacity(DesignMaterialAdapter.mediaCardContactOpacity),
+                        color: DuskColors.bgSunk.overlaying(
+                            DuskColors.line,
+                            opacity: contactMix
+                        ),
                         geometry: DesignDropShadowGeometry(
                             radius: 0,
                             y: pressed ? 1 : 2,
@@ -200,7 +617,7 @@ private struct DominantVisualCardButtonStyle: ButtonStyle {
                     )
                 }
             }
-            .offset(y: pressed ? DesignMetrics.pressedDepth : raised ? -1 : 0)
+            .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
             .opacity(isEnabled ? 1 : 0.58)
             // Touch-down is immediate; only pointer hover gets a transition.
             .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: raised)
@@ -297,6 +714,8 @@ private struct PinShakeEffect: GeometryEffect {
 private enum DesignPinKeypadState {
     static let length = 4
     static let checkingCycle: TimeInterval = 0.9
+    // Source `.cmp-pin` spacing; the surrounding card owns its 18pt padding.
+    static let sectionGap: CGFloat = 14
     static let errorFeedbackDuration = Duration.milliseconds(Int((DesignV2.Motion.state * 1_000).rounded()))
 }
 
@@ -308,6 +727,8 @@ struct DesignPinKeypad: View {
     var error: String? = nil
     var success: String? = nil
     var errorRevision = 0
+    /// Explicit only for previews/capture; production follows the system value.
+    var reducedMotionOverride: Bool? = nil
     var statusAccessibilityId = "pin-status"
     let onDigit: (Character) -> Void
     let onDelete: () -> Void
@@ -318,16 +739,17 @@ struct DesignPinKeypad: View {
 
     private var isChecking: Bool { isSubmitting && success == nil && error == nil }
     private var keyDisabled: Bool { isSubmitting || success != nil || (error != nil && !errorReady) }
+    private var shouldReduceMotion: Bool { reducedMotionOverride ?? reduceMotion }
     private var status: String {
         if let success { return success }
         if let error { return error }
-        if isSubmitting { return "Checking PIN…" }
+        if isSubmitting { return "Checking Pin..." }
         if entered > 0 { return "\(entered) of \(DesignPinKeypadState.length) digits entered." }
-        return "Enter your four-digit PIN."
+        return "Enter your \(DesignPinKeypadState.length)-digit Pin."
     }
 
     var body: some View {
-        VStack(spacing: Space.md) {
+        VStack(spacing: DesignPinKeypadState.sectionGap) {
             progress
             Text(status)
                 .font(Typo.ui(TypeScale.sm))
@@ -383,24 +805,17 @@ struct DesignPinKeypad: View {
 
     @ViewBuilder
     private var progress: some View {
-        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || reduceMotion)) { context in
+        TimelineView(.animation(minimumInterval: 0.05, paused: !isChecking || shouldReduceMotion)) { context in
             let cycle = context.date.timeIntervalSinceReferenceDate
                 .truncatingRemainder(dividingBy: DesignPinKeypadState.checkingCycle)
             let phase = (sin(cycle / DesignPinKeypadState.checkingCycle * 2 * .pi) + 1) / 2
             HStack(spacing: Space.md) {
                 ForEach(0..<DesignPinKeypadState.length, id: \.self) { index in
-                    Circle()
-                        .fill(dotColor(index: index))
-                        .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
-                        .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
-                        .shadow(color: dotGlow(index: index), radius: 5)
-                        .scaleEffect(isChecking ? 0.94 + (0.12 * phase) : entered > index ? 1.06 : 1)
-                        .opacity(isChecking ? 0.72 + (0.28 * phase) : 1)
-                        .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: entered)
+                    dot(index: index, phase: phase)
                 }
             }
-            .modifier(PinShakeEffect(animatableData: reduceMotion ? 0 : CGFloat(errorRevision)))
-            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion), value: errorRevision)
+            .modifier(PinShakeEffect(animatableData: shouldReduceMotion ? 0 : CGFloat(errorRevision)))
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: errorRevision)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("PIN entry")
             .accessibilityValue(success != nil ? "PIN accepted" : "\(entered) of \(DesignPinKeypadState.length) digits entered")
@@ -417,7 +832,7 @@ struct DesignPinKeypad: View {
             DesignIconButton(
                 systemName: "delete.left",
                 label: "Delete last digit",
-                role: .destructive,
+                role: .quiet,
                 state: keyDisabled ? .disabled : .normal,
                 accessibilityId: "pin-delete",
                 minimumSize: DesignMetrics.pinKeySize,
@@ -428,7 +843,7 @@ struct DesignPinKeypad: View {
         } else {
             DesignActionButton(
                 title: key,
-                role: .secondary,
+                role: .quiet,
                 state: keyDisabled ? .disabled : .normal,
                 accessibilityId: "pin-key-\(key)",
                 fillsWidth: true,
@@ -441,15 +856,36 @@ struct DesignPinKeypad: View {
     }
 
     private var statusColor: Color {
-        if success != nil { return DuskColors.ok }
         if error != nil { return DuskColors.stop }
         return DuskColors.ink2
     }
 
-    private func dotColor(index: Int) -> Color {
-        if success != nil { return DuskColors.ok }
-        if error != nil { return DuskColors.stop }
-        return entered > index ? DuskColors.accent : DuskColors.bgElev
+    @ViewBuilder
+    private func dot(index: Int, phase: Double) -> some View {
+        let scale = isChecking && !shouldReduceMotion
+            ? 0.94 + (0.12 * phase)
+            : entered > index ? 1.06 : 1
+        let opacity = isChecking && !shouldReduceMotion ? 0.72 + (0.28 * phase) : 1
+        dotFace(index: index)
+            .frame(width: DesignMetrics.pinDotSize, height: DesignMetrics.pinDotSize)
+            .overlay(Circle().stroke(dotBorder(index: index), lineWidth: DesignMetrics.hairline))
+            .shadow(color: dotGlow(index: index), radius: 5)
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .animation(DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: shouldReduceMotion), value: entered)
+    }
+
+    @ViewBuilder
+    private func dotFace(index: Int) -> some View {
+        if success != nil {
+            Circle().fill(DuskColors.ok)
+        } else if error != nil {
+            Circle().fill(DuskColors.stop)
+        } else if entered > index {
+            Circle().fill(DuskColors.accent)
+        } else {
+            DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+        }
     }
 
     private func dotBorder(index: Int) -> Color {
@@ -465,6 +901,13 @@ struct DesignPinKeypad: View {
     }
 }
 
+private enum DesignSettingsRowMetrics {
+    // DesignCard's rows body contributes 8pt above and below the row. Keep
+    // the native content measure at 56pt so the card-hosted composite retains
+    // the handoff's 70pt row rhythm without shrinking its 44pt controls.
+    static let minimumHeight = DesignMetrics.minimumTarget + Space.md
+}
+
 /// Compatibility card API. New callers should use `DesignCard` directly.
 struct DesignSettingsRow<Accessory: View>: View {
     let title: String
@@ -474,19 +917,133 @@ struct DesignSettingsRow<Accessory: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.sm))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: Space.lg))
-        layout {
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(Typo.ui(TypeScale.base, .medium))
-                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink3) }
+        rowContent
+            .frame(maxWidth: .infinity, minHeight: DesignSettingsRowMetrics.minimumHeight, alignment: .leading)
+            // Keep the label and its native control in one accessibility
+            // container without collapsing the accessory's semantics.
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    @ViewBuilder
+    private var rowContent: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: Space.sm) {
+                labelContent
+                HStack {
+                    Spacer(minLength: 0)
+                    accessory()
+                }
             }
-            Spacer(minLength: Space.sm)
-            accessory()
+        } else {
+            HStack(alignment: .center, spacing: Space.lg) {
+                labelContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Match the source grid's flexible label column while the
+                    // trailing accessory keeps its intrinsic control width.
+                    .layoutPriority(1)
+                accessory()
+            }
         }
+    }
+
+    @ViewBuilder
+    private var labelContent: some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                .foregroundStyle(DuskColors.ink)
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .lineSpacing(TypeScale.sm * CGFloat(DesignV2.Typography.lineNormal - 1))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+        }
+    }
+}
+
+struct DesignSettingsSelectRow<Value: Hashable>: View {
+    let title: String
+    var detail: String? = nil
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        DesignSettingsRow(title: title, detail: detail) {
+            Menu {
+                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                    Button {
+                        selection = option.value
+                    } label: {
+                        if option.value == selection {
+                            Label(option.label, systemImage: "checkmark")
+                        } else {
+                            Text(option.label)
+                        }
+                    }
+                }
+            } label: {
+                menuLabel
+            }
+            .accessibilityLabel(title)
+            .accessibilityValue(currentLabel)
+            .accessibilityHint(detail ?? "")
+            .accessibilityIdentifier(accessibilityId ?? "")
+        }
+    }
+
+    private var menuLabel: some View {
+        HStack(spacing: Space.sm) {
+            Text(currentLabel)
+                .font(Typo.ui(DesignMetrics.controlLabelSize))
+                .foregroundStyle(DuskColors.ink)
+                .lineLimit(1)
+            Spacer(minLength: Space.sm)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(Typo.ui(TypeScale.sm, .medium))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .padding(.horizontal, Space.md)
+        .frame(width: DesignSettingsGroupMetrics.selectWidth)
         .frame(minHeight: DesignMetrics.minimumTarget)
-        .accessibilityIdentifier(accessibilityId ?? "")
+        .designWell()
+    }
+
+    private var currentLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? "Select…"
+    }
+}
+
+struct DesignSettingsSliderRow: View {
+    let title: String
+    var detail: String? = nil
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var step: Double = 1
+    let format: (Double) -> String
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        DesignSettingsRow(title: title, detail: detail) {
+            HStack(spacing: Space.md) {
+                Slider(value: $value, in: range, step: step)
+                    .tint(DuskColors.accent)
+                    .frame(minHeight: DesignMetrics.minimumTarget)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(format(value))
+                    .accessibilityHint(detail ?? "")
+                    .accessibilityIdentifier(accessibilityId ?? "")
+                Text(format(value))
+                    .font(Typo.mono(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minWidth: DesignMetrics.sliderOutputWidth, alignment: .trailing)
+                    .accessibilityHidden(true)
+            }
+            .frame(width: DesignSettingsGroupMetrics.rangeWidth)
+            .frame(minHeight: DesignMetrics.minimumTarget)
+        }
     }
 }
 
@@ -553,29 +1110,182 @@ struct DesignStatusBadge: View {
     }
 }
 
+private enum DesignDisclosureMetrics {
+    // The reviewed summary row is taller than the platform minimum target;
+    // its content remains flexible when Dynamic Type needs more room.
+    static let rowHeight: CGFloat = 68
+    static let chevronSize: CGFloat = 17
+    static let chevronFontSize: CGFloat = 14
+    static let chevronGlowRadius: CGFloat = 5
+    static let insertionOffset: CGFloat = -5
+    static let removalOffset: CGFloat = -4
+    static let expandedDetailBottomPadding = Space.sm
+    static let expandedBottomMargin = Space.sm
+}
+
+private struct DesignDisclosureButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.isFocused) private var focused
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed && isEnabled && !reduceMotion
+        configuration.label
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                    .stroke(
+                        focused ? DuskColors.accent : .clear,
+                        lineWidth: contrast == .increased ? DesignMetrics.focusRing : DesignMetrics.focusBorder
+                    )
+                    .padding(DesignMetrics.focusBorderInset)
+            }
+            // Disclosure headers are native buttons. Pressing closes the air
+            // gap immediately; the expansion itself remains state-driven.
+            .offset(y: pressed ? DesignMetrics.pressedDepth : 0)
+    }
+}
+
+private struct DesignDisclosureBodyTransition: ViewModifier {
+    let y: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .offset(y: y)
+    }
+}
+
+enum DesignDisclosureMotion {
+    static func animation(isExpanded: Bool, reduceMotion: Bool) -> Animation? {
+        DesignV2.Motion.animation(
+            duration: isExpanded ? DesignV2.Motion.state : DesignV2.Motion.feedback,
+            reduceMotion: reduceMotion
+        )
+    }
+}
+
 struct DesignDisclosureButton<Label: View>: View {
     let isExpanded: Bool
     let accessibilityLabel: String
     let accessibilityId: String
     let action: () -> Void
     @ViewBuilder let label: () -> Label
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.layoutDirection) private var layoutDirection
+    @State private var hovered = false
+
+    private var chevronRotation: Angle {
+        guard isExpanded else { return .zero }
+        return .degrees(layoutDirection == .leftToRight ? 90 : -90)
+    }
+
+    private var chevronHighlighted: Bool { isExpanded || hovered }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Space.sm) {
                 label()
                 Spacer(minLength: Space.sm)
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .foregroundStyle(DuskColors.ink3)
+                Image(systemName: "chevron.forward")
+                    .font(.system(size: DesignDisclosureMetrics.chevronFontSize, weight: .medium))
+                    .frame(width: DesignDisclosureMetrics.chevronSize, height: DesignDisclosureMetrics.chevronSize)
+                    .foregroundStyle(chevronHighlighted ? DuskColors.accent : DuskColors.ink3)
+                    .rotationEffect(chevronRotation)
+                    .shadow(
+                        color: chevronHighlighted
+                            ? DuskColors.accent.opacity(isExpanded ? 0.55 : 0.48)
+                            : .clear,
+                        radius: DesignDisclosureMetrics.chevronGlowRadius
+                    )
                     .accessibilityHidden(true)
             }
-            .frame(minHeight: DesignMetrics.minimumTarget)
+            .frame(maxWidth: .infinity, minHeight: DesignDisclosureMetrics.rowHeight, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DesignDisclosureButtonStyle())
+        .onHover { hovered = $0 }
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.feedback, reduceMotion: reduceMotion),
+            value: hovered
+        )
+        .animation(
+            DesignDisclosureMotion.animation(isExpanded: isExpanded, reduceMotion: reduceMotion),
+            value: isExpanded
+        )
         .accessibilityLabel(accessibilityLabel)
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityIdentifier(accessibilityId)
+    }
+}
+
+/// Stateful disclosure layout with a caller-owned Bool/action pair. The
+/// trigger remains a native Button so existing Set-backed screen state and
+/// independent sibling controls continue to own their mutations.
+struct DesignDisclosureGroup<Header: View, Content: View>: View {
+    let isExpanded: Bool
+    @ViewBuilder let header: () -> Header
+    @ViewBuilder let content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        isExpanded: Bool,
+        @ViewBuilder header: @escaping () -> Header,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.isExpanded = isExpanded
+        self.header = header
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header()
+            if isExpanded {
+                content()
+                    .transition(
+                        .asymmetric(
+                            insertion: .modifier(
+                                active: DesignDisclosureBodyTransition(
+                                    y: DesignDisclosureMetrics.insertionOffset,
+                                    opacity: 0
+                                ),
+                                identity: DesignDisclosureBodyTransition(y: 0, opacity: 1)
+                            ),
+                            removal: .modifier(
+                                active: DesignDisclosureBodyTransition(
+                                    y: DesignDisclosureMetrics.removalOffset,
+                                    opacity: 0
+                                ),
+                                identity: DesignDisclosureBodyTransition(y: 0, opacity: 1)
+                            )
+                        )
+                    )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, isExpanded ? Space.sm : 0)
+        .padding(.bottom, isExpanded ? DesignDisclosureMetrics.expandedDetailBottomPadding : 0)
+        // The open details well is a background surface, not an interactive
+        // layer, so the native header keeps the only disclosure target.
+        .background {
+            Color.clear
+                .designWell(cornerRadius: Radii.md, showsBorder: false)
+                .opacity(isExpanded ? 1 : 0)
+        }
+        .padding(.top, isExpanded ? Space.xs : 0)
+        .padding(.bottom, isExpanded ? DesignDisclosureMetrics.expandedBottomMargin : 0)
+        .animation(
+            DesignDisclosureMotion.animation(isExpanded: isExpanded, reduceMotion: reduceMotion),
+            value: isExpanded
+        )
+        .transaction { transaction in
+            if reduceMotion {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
     }
 }
 
@@ -647,14 +1357,376 @@ struct DesignSelectableCard<Content: View>: View {
     }
 }
 
+enum ValidatedFieldStatus: Equatable {
+    case valid(String)
+    case error(String)
+
+    var message: String {
+        switch self {
+        case .valid(let message), .error(let message): message
+        }
+    }
+
+    var isError: Bool {
+        switch self {
+        case .valid: false
+        case .error: true
+        }
+    }
+}
+
+struct ValidatedFieldCounter: Equatable {
+    let current: Int
+    let max: Int
+    var unit: String = "characters"
+
+    var displayText: String { "\(current) of \(max) \(unit)" }
+}
+
+private enum ValidatedFieldMetrics {
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal) + 18 + DesignMetrics.hairline
+    static let focusCastRadius: CGFloat = 18
+    static let focusCastSourceInset: CGFloat = 14
+    static let editorVerticalInset: CGFloat = 3
+}
+
+/// A caller-owned validation composite over native text inputs. Validation is
+/// deliberately supplied as state or the compatibility `validate` closure;
+/// this view does not choose when validation runs.
 struct ValidatedField: View {
     let title: String
     var prompt: String = ""
     @Binding var text: String
-    let validate: (String) -> String?
+    var placeholder: String? = nil
+    var validate: ((String) -> String?)? = nil
+    var error: String? = nil
+    var status: ValidatedFieldStatus? = nil
+    var counter: ValidatedFieldCounter? = nil
+    var multiline = false
+    var maxLength: Int? = nil
+    var accessibilityId: String? = nil
+    var isEnabled = true
+    var focused: FocusState<Bool>.Binding? = nil
+    var autocapitalization: TextInputAutocapitalization? = nil
+    var autocorrectionDisabled = false
+    var submitLabel: SubmitLabel? = nil
+    var onSubmit: (() -> Void)? = nil
+    var onChange: ((String) -> Void)? = nil
+    @Environment(\.colorSchemeContrast) private var contrast
+    @FocusState private var internalFocused: Bool
+
+    init(
+        title: String,
+        prompt: String = "",
+        text: Binding<String>,
+        placeholder: String? = nil,
+        validate: ((String) -> String?)? = nil,
+        error: String? = nil,
+        status: ValidatedFieldStatus? = nil,
+        counter: ValidatedFieldCounter? = nil,
+        multiline: Bool = false,
+        maxLength: Int? = nil,
+        accessibilityId: String? = nil,
+        isEnabled: Bool = true,
+        focused: FocusState<Bool>.Binding? = nil,
+        autocapitalization: TextInputAutocapitalization? = nil,
+        autocorrectionDisabled: Bool = false,
+        submitLabel: SubmitLabel? = nil,
+        onSubmit: (() -> Void)? = nil,
+        onChange: ((String) -> Void)? = nil
+    ) {
+        self.title = title
+        self.prompt = prompt
+        self.placeholder = placeholder
+        _text = text
+        self.validate = validate
+        self.error = error
+        self.status = status
+        self.counter = counter
+        self.multiline = multiline
+        self.maxLength = maxLength
+        self.accessibilityId = accessibilityId
+        self.isEnabled = isEnabled
+        self.focused = focused
+        self.autocapitalization = autocapitalization
+        self.autocorrectionDisabled = autocorrectionDisabled
+        self.submitLabel = submitLabel
+        self.onSubmit = onSubmit
+        self.onChange = onChange
+    }
+
+    private var resolvedError: String? {
+        if let error { return error }
+        if let validationError = validate?(text) { return validationError }
+        if case .error(let message) = status { return message }
+        return nil
+    }
+
+    private var resolvedStatus: ValidatedFieldStatus? {
+        if let resolvedError { return .error(resolvedError) }
+        if case .valid = status { return status }
+        return nil
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
+    }
+
+    private var fieldAccessibilityValue: String {
+        if !isEnabled { return "Disabled" }
+        if let resolvedError { return "Error: \(resolvedError)" }
+        return text.isEmpty ? "Empty" : text
+    }
+
+    private var fieldAccessibilityHint: String {
+        if !isEnabled { return "Disabled" }
+        if let resolvedError { return "Error: \(resolvedError)" }
+        return ""
+    }
 
     var body: some View {
-        DesignField(title: title, prompt: prompt, text: $text, error: validate(text))
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            if multiline {
+                multilineField
+            } else {
+                singleLineField
+            }
+            if let resolvedStatus {
+                ValidatedFieldStatusView(
+                    status: resolvedStatus,
+                    accessibilityId: accessibilityId.map { "\($0)-\(resolvedStatus.isError ? "error" : "status")" }
+                )
+            }
+            if let counter {
+                Text(counter.displayText)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(counter.displayText)
+                    .accessibilityAddTraits(.updatesFrequently)
+                    .accessibilityIdentifier(accessibilityId.map { "\($0)-count" } ?? "")
+            }
+        }
+    }
+
+    private var label: some View {
+        Text(title)
+            .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+            .foregroundStyle(DuskColors.ink)
+            .frame(minHeight: ValidatedFieldMetrics.labelLineHeight, alignment: .leading)
+    }
+
+    private var singleLineField: some View {
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            label
+            focusableSingleLine
+        }
+    }
+
+    @ViewBuilder
+    private var focusableSingleLine: some View {
+        if let focused {
+            singleLineInput.focused(focused)
+        } else {
+            singleLineInput.focused($internalFocused)
+        }
+    }
+
+    private var singleLineInput: some View {
+        TextField(prompt, text: cappedBinding)
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink)
+            .textFieldStyle(.plain)
+            .padding(.horizontal, Space.md + DesignMetrics.hairline)
+            .frame(minHeight: ValidatedFieldMetrics.visualHeight)
+            .lineLimit(1)
+            .designWell(focused: false, error: false)
+            .background { stateBackground }
+            .overlay { stateOverlay }
+            .frame(minHeight: DesignMetrics.minimumTarget)
+            .contentShape(Rectangle())
+            .disabled(!isEnabled)
+            .submitLabel(submitLabel ?? .return)
+            .onSubmit { onSubmit?() }
+            .onChange(of: text) { _, value in onChange?(value) }
+            .textInputAutocapitalization(autocapitalization ?? .sentences)
+            .autocorrectionDisabled(autocorrectionDisabled)
+            .accessibilityLabel(title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(fieldAccessibilityHint)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var multilineField: some View {
+        VStack(alignment: .leading, spacing: ValidatedFieldMetrics.labelGap) {
+            label
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty, let placeholder = placeholder ?? (prompt.isEmpty ? nil : prompt) {
+                    Text(placeholder)
+                        .font(Typo.ui(TypeScale.base))
+                        .foregroundStyle(DuskColors.ink3)
+                        .padding(.horizontal, DesignMetrics.editorPlaceholderInsetH)
+                        .padding(.vertical, DesignMetrics.editorPlaceholderInsetV)
+                        .allowsHitTesting(false)
+                }
+                focusableMultiline
+            }
+            .frame(height: DesignMetrics.multilineEditorMinHeight)
+            .designWell(
+                focused: false,
+                error: false,
+                showsBorder: false
+            )
+            .background { stateBackground }
+            .overlay {
+                RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                    .strokeBorder(multilineBorderColor, lineWidth: DesignMetrics.hairline)
+                    .allowsHitTesting(false)
+            }
+            .overlay { focusOverlay }
+        }
+    }
+
+    @ViewBuilder
+    private var focusableMultiline: some View {
+        if let focused {
+            multilineInput.focused(focused)
+        } else {
+            multilineInput.focused($internalFocused)
+        }
+    }
+
+    private var multilineInput: some View {
+        TextEditor(text: cappedBinding)
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink)
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, DesignMetrics.editorInset)
+            .padding(.vertical, ValidatedFieldMetrics.editorVerticalInset)
+            .disabled(!isEnabled)
+            .onChange(of: text) { _, value in onChange?(value) }
+            .accessibilityLabel(title)
+            .accessibilityValue(fieldAccessibilityValue)
+            .accessibilityHint(fieldAccessibilityHint)
+            .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var multilineBorderColor: Color {
+        if resolvedError != nil {
+            return DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
+        }
+        if isFocused {
+            return DuskColors.accent.overlaying(
+                DuskColors.line,
+                opacity: DesignMaterialAdapter.wellFocusMix
+            )
+        }
+        return contrast == .increased ? DuskColors.ink3 : DuskColors.line
+    }
+
+    private var stateBorderColor: Color {
+        resolvedError == nil
+            ? DuskColors.line
+            : DuskColors.stop.overlaying(DuskColors.line, opacity: 0.30)
+    }
+
+    @ViewBuilder
+    private var stateBackground: some View {
+        if resolvedError != nil {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(DuskColors.stop.opacity(0.14), lineWidth: DesignMetrics.focusRing)
+                .padding(-(DesignMetrics.focusRing / 2))
+        }
+        focusBackground
+    }
+
+    @ViewBuilder
+    private var stateOverlay: some View {
+        if resolvedError != nil {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(stateBorderColor, lineWidth: DesignMetrics.hairline)
+                .allowsHitTesting(false)
+        }
+        focusOverlay
+    }
+
+    @ViewBuilder
+    private var focusBackground: some View {
+        if isFocused {
+            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+            ZStack {
+                shape.stroke(
+                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
+                    lineWidth: DesignMetrics.focusRing * 2
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                    geometry: DesignDropShadowGeometry(
+                        radius: ValidatedFieldMetrics.focusCastRadius,
+                        y: DesignMaterialAdapter.wellFocusCastY,
+                        sourceInset: ValidatedFieldMetrics.focusCastSourceInset
+                    )
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(
+                    DuskColors.accent.overlaying(
+                        DuskColors.line,
+                        opacity: DesignMaterialAdapter.wellFocusMix
+                    ),
+                    lineWidth: DesignMetrics.hairline
+                )
+            RoundedRectangle(
+                cornerRadius: Radii.sm + DesignMetrics.focusRing,
+                style: .continuous
+            )
+            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var cappedBinding: Binding<String> {
+        Binding(
+            get: { text },
+            set: { newValue in
+                let capped = maxLength.map { String(newValue.prefix($0)) } ?? newValue
+                text = capped
+            }
+        )
+    }
+}
+
+private struct ValidatedFieldStatusView: View {
+    let status: ValidatedFieldStatus
+    let accessibilityId: String?
+
+    var body: some View {
+        Label {
+            Text(status.message)
+        } icon: {
+            Image(systemName: status.isError ? "exclamationmark.triangle" : "checkmark")
+                .accessibilityHidden(true)
+        }
+        .font(Typo.ui(TypeScale.sm))
+        .foregroundStyle(
+            status.isError
+                ? DuskColors.stop.overlaying(DuskColors.ink, opacity: 0.30)
+                : DuskColors.sage
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.isError ? "Error: \(status.message)" : status.message)
+        .accessibilityIdentifier(accessibilityId ?? "")
     }
 }
 
@@ -681,7 +1753,20 @@ struct IdentityFieldGroup: View {
     }
 }
 
+private enum DesignSearchFieldMetrics {
+    static let labelGap: CGFloat = 7
+    static let labelLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    // The browser's 40px minimum grows to its inherited line box plus vertical
+    // padding. SwiftUI's centered hairline supplies the second CSS border edge.
+    static let visualHeight = TypeScale.base * CGFloat(DesignV2.Typography.lineNormal)
+        + 18
+        + DesignMetrics.hairline
+    static let focusCastRadius: CGFloat = 18
+    static let focusCastSourceInset: CGFloat = 14
+}
+
 struct DesignSearchField: View {
+    let title: String
     let prompt: String
     @Binding var query: String
     var accessibilityId: String? = nil
@@ -689,6 +1774,10 @@ struct DesignSearchField: View {
     var textFont: Font = Typo.ui(TypeScale.base)
     var leadingPadding: CGFloat = Space.md
     var trailingPadding: CGFloat = Space.md
+    var showsTitle = true
+    var showsSearchIcon = false
+    var focused: FocusState<Bool>.Binding? = nil
+    @FocusState private var internalFocused: Bool
 
     init(
         prompt: String,
@@ -697,8 +1786,13 @@ struct DesignSearchField: View {
         onClear: (() -> Void)? = nil,
         textFont: Font = Typo.ui(TypeScale.base),
         leadingPadding: CGFloat = Space.md,
-        trailingPadding: CGFloat = Space.md
+        trailingPadding: CGFloat = Space.md,
+        title: String = "Search",
+        showsTitle: Bool = true,
+        showsSearchIcon: Bool = false,
+        focused: FocusState<Bool>.Binding? = nil
     ) {
+        self.title = title
         self.prompt = prompt
         _query = query
         self.accessibilityId = accessibilityId
@@ -706,18 +1800,42 @@ struct DesignSearchField: View {
         self.textFont = textFont
         self.leadingPadding = leadingPadding
         self.trailingPadding = trailingPadding
+        self.showsTitle = showsTitle
+        self.showsSearchIcon = showsSearchIcon
+        self.focused = focused
+    }
+
+    private var isFocused: Bool {
+        focused?.wrappedValue ?? internalFocused
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: DesignSearchFieldMetrics.labelGap) {
+            if showsTitle {
+                Text(title)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                    .foregroundStyle(DuskColors.ink)
+                    .frame(minHeight: DesignSearchFieldMetrics.labelLineHeight)
+            }
+            fieldSurface
+        }
+    }
+
+    @ViewBuilder
+    private var fieldSurface: some View {
         HStack(spacing: Space.sm) {
-            Image(systemName: "magnifyingglass").accessibilityHidden(true)
-            TextField(prompt, text: $query)
-                .font(textFont)
-                .textFieldStyle(.plain)
+            if showsSearchIcon {
+                Image(systemName: "magnifyingglass")
+                    .font(Typo.ui(TypeScale.lg, .regular))
+                    .foregroundStyle(DuskColors.ink3)
+                    .accessibilityHidden(true)
+            }
+            focusableInput
             if let onClear, !query.isEmpty {
                 DesignCompactIconButton(
                     systemName: "xmark.circle.fill",
                     label: "Clear search",
+                    accessibilityId: accessibilityId.map { "\($0)-clear" },
                     action: onClear
                 )
                 .foregroundStyle(DuskColors.ink3)
@@ -725,26 +1843,587 @@ struct DesignSearchField: View {
         }
         .padding(.leading, leadingPadding)
         .padding(.trailing, trailingPadding)
+        .frame(minHeight: DesignSearchFieldMetrics.visualHeight)
+        .designWell(focused: false)
+        .background { focusBackground }
+        .overlay { focusOverlay }
         .frame(minHeight: DesignMetrics.minimumTarget)
-        .designWell()
-        .accessibilityLabel(prompt)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private var focusBackground: some View {
+        if isFocused {
+            let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+            ZStack {
+                shape.stroke(
+                    DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusRingOpacity),
+                    lineWidth: DesignMetrics.focusRing * 2
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.accent.opacity(DesignMaterialAdapter.wellFocusCastOpacity),
+                    geometry: DesignDropShadowGeometry(
+                        radius: DesignSearchFieldMetrics.focusCastRadius,
+                        y: DesignMaterialAdapter.wellFocusCastY,
+                        sourceInset: DesignSearchFieldMetrics.focusCastSourceInset
+                    )
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var focusOverlay: some View {
+        if isFocused {
+            RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+                .stroke(
+                    DuskColors.accent.overlaying(
+                        DuskColors.line,
+                        opacity: DesignMaterialAdapter.wellFocusMix
+                    ),
+                    lineWidth: DesignMetrics.hairline
+                )
+            RoundedRectangle(
+                cornerRadius: Radii.sm + DesignMetrics.focusRing,
+                style: .continuous
+            )
+            .stroke(DuskColors.accent, lineWidth: DesignMetrics.focusBorder)
+            .padding(DesignMetrics.focusBorderInset - DesignMetrics.hairline)
+        }
+    }
+
+    @ViewBuilder
+    private var focusableInput: some View {
+        if let focused {
+            input.focused(focused)
+        } else {
+            input.focused($internalFocused)
+        }
+    }
+
+    private var input: some View {
+        TextField(
+            "",
+            text: $query,
+            prompt: Text(prompt).foregroundStyle(DuskColors.ink3)
+        )
+        .font(textFont)
+        .foregroundStyle(DuskColors.ink)
+        .textFieldStyle(.plain)
+        .submitLabel(.search)
+        .accessibilityLabel(title)
         .accessibilityValue(query.isEmpty ? "Empty" : query)
         .accessibilityIdentifier(accessibilityId ?? "")
     }
 }
 
-struct SearchFilterRow<Filters: View>: View {
+private enum DesignFilterBarMetrics {
+    static let minimumSearchWidth: CGFloat = 220
+    static let menuWidth: CGFloat = 170
+    static let menuVisualHeight: CGFloat = 42
+}
+
+struct DesignFilterMenu<Value: Hashable>: View {
+    let title: String
+    let options: [(value: Value, label: String)]
+    @Binding var selection: Value
+    var accessibilityId: String? = nil
+
+    var body: some View {
+        Menu {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                Button {
+                    selection = option.value
+                } label: {
+                    if option.value == selection {
+                        Label(option.label, systemImage: "checkmark")
+                    } else {
+                        Text(option.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: Space.md) {
+                Text(currentLabel)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize))
+                    .foregroundStyle(DuskColors.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down")
+                    .font(Typo.ui(TypeScale.sm, .medium))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .padding(.horizontal, Space.md)
+            .frame(
+                minWidth: DesignFilterBarMetrics.menuWidth,
+                maxWidth: .infinity,
+                minHeight: DesignFilterBarMetrics.menuVisualHeight
+            )
+            .designWell()
+            .frame(minHeight: DesignMetrics.minimumTarget)
+        }
+        .accessibilityLabel(title)
+        .accessibilityValue(currentLabel)
+        .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var currentLabel: String {
+        options.first(where: { $0.value == selection })?.label ?? "Not selected"
+    }
+}
+
+struct SearchFilterRow<PrimaryFilter: View, Filters: View>: View {
     let prompt: String
     @Binding var query: String
     var accessibilityId: String? = nil
+    @ViewBuilder let primaryFilter: () -> PrimaryFilter
     @ViewBuilder let filters: () -> Filters
 
+    init(
+        prompt: String,
+        query: Binding<String>,
+        accessibilityId: String? = nil,
+        @ViewBuilder primaryFilter: @escaping () -> PrimaryFilter,
+        @ViewBuilder filters: @escaping () -> Filters
+    ) {
+        self.prompt = prompt
+        _query = query
+        self.accessibilityId = accessibilityId
+        self.primaryFilter = primaryFilter
+        self.filters = filters
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Space.sm) {
-            DesignSearchField(prompt: prompt, query: $query)
-            filters()
+        VStack(alignment: .leading, spacing: Space.md) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.md) {
+                    searchField
+                    primaryFilter()
+                        .frame(width: DesignFilterBarMetrics.menuWidth)
+                }
+                VStack(alignment: .leading, spacing: Space.md) {
+                    searchField
+                    primaryFilter()
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: Space.sm) {
+                    filters()
+                }
+                .padding(2)
+            }
+            .accessibilityLabel("Filters")
         }
+        .padding(Space.lg - 2)
+        .designPlate()
         .accessibilityIdentifier(accessibilityId ?? "")
+    }
+
+    private var searchField: some View {
+        DesignSearchField(
+            prompt: prompt,
+            query: $query,
+            onClear: query.isEmpty ? nil : { query = "" },
+            showsTitle: false,
+            showsSearchIcon: true
+        )
+        // Preserve the source grid's minimum search measure. ViewThatFits then
+        // recomposes the native controls vertically when search and menu cannot
+        // both retain useful content width.
+        .frame(minWidth: DesignFilterBarMetrics.minimumSearchWidth, maxWidth: .infinity)
+    }
+}
+
+extension SearchFilterRow where PrimaryFilter == EmptyView {
+    init(
+        prompt: String,
+        query: Binding<String>,
+        accessibilityId: String? = nil,
+        @ViewBuilder filters: @escaping () -> Filters
+    ) {
+        self.init(
+            prompt: prompt,
+            query: query,
+            accessibilityId: accessibilityId,
+            primaryFilter: { EmptyView() },
+            filters: filters
+        )
+    }
+}
+
+private enum AsyncNoticeMetrics {
+    // Loading and empty use the approved centered async-state anatomy rather
+    // than the horizontal notice grid.
+    static let stateGap: CGFloat = 7
+    static let statePadding = Space.lg + DesignMetrics.hairline
+    static let loadingSpinnerSize: CGFloat = 26
+    static let loadingSpinnerLineWidth: CGFloat = 2
+    static let loadingArcFraction: CGFloat = 0.25
+    static let loadingAnimationDuration = 0.9
+    static let emptyMarkSize: CGFloat = 34
+}
+
+/// Decorative recessed mark for a genuine empty collection. The caller-owned
+/// title, detail, and action remain the accessible source of meaning.
+private struct AsyncEmptyMark: View {
+    var body: some View {
+        Text("＋")
+            .font(Typo.ui(TypeScale.base))
+            .foregroundStyle(DuskColors.ink3)
+            .frame(width: AsyncNoticeMetrics.emptyMarkSize, height: AsyncNoticeMetrics.emptyMarkSize)
+            .background {
+                DesignWellFace(shape: Circle(), focused: false, showsInsetHighlights: true)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+/// Decorative loading cue for the common async-state composite. Status meaning
+/// remains owned by `AsyncNotice`; the ring is hidden from VoiceOver.
+private struct AsyncLoadingIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .strokeBorder(DuskColors.line, lineWidth: AsyncNoticeMetrics.loadingSpinnerLineWidth)
+            Circle()
+                .trim(from: 0, to: AsyncNoticeMetrics.loadingArcFraction)
+                .stroke(
+                    DuskColors.accent,
+                    style: StrokeStyle(
+                        lineWidth: AsyncNoticeMetrics.loadingSpinnerLineWidth,
+                        lineCap: .butt
+                    )
+                )
+                .padding(AsyncNoticeMetrics.loadingSpinnerLineWidth / 2)
+                .rotationEffect(.degrees(-135 + rotation))
+        }
+        .frame(
+            width: AsyncNoticeMetrics.loadingSpinnerSize,
+            height: AsyncNoticeMetrics.loadingSpinnerSize
+        )
+        .onAppear { startAnimation() }
+        .onChange(of: reduceMotion) { _, reduced in
+            rotation = reduced ? 0 : 360
+        }
+        .animation(
+            reduceMotion
+                ? nil
+                : .linear(duration: AsyncNoticeMetrics.loadingAnimationDuration)
+                    .repeatForever(autoreverses: false),
+            value: rotation
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func startAnimation() {
+        guard !reduceMotion else { return }
+        rotation = 360
+    }
+}
+
+private enum DesignNoticeMetrics {
+    // These values are the reviewed notice's CSS box model translated to
+    // points. The 78pt notice sits inside a 1pt plate edge on each side.
+    static let surfaceMinHeight: CGFloat = 80
+    // The native plate keeps its 1pt edge inside the shape, so the content
+    // insets include that edge while preserving the source's inner padding.
+    static let horizontalPadding: CGFloat = 15
+    static let verticalPadding: CGFloat = 14
+    static let contentGap: CGFloat = 13
+    static let compactActionGap: CGFloat = 13
+    static let iconSize: CGFloat = 38
+    static let iconRadialRadius: CGFloat = 19
+    static let noticeAuraCenter: CGFloat = 58
+    static let noticeAuraRadius: CGFloat = 150
+    static let iconCastOpacity: Double = 0.90
+    static let iconContactMix: Double = 0.12
+    // The source title inherits 1.55 line height at 14px; its detail sets a
+    // slightly tighter 1.45 line height at the supporting 12.5px size.
+    static let titleLineHeight = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal)
+    static let titleLineSpacing = DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal - 1)
+    static let detailLineHeight = TypeScale.sm * 1.45
+    // CoreText supplies part of the line advance for a custom font; this
+    // native spacing reaches the reviewed 1.45 supporting line box without
+    // exaggerating the gap when detail wraps.
+    static let detailLineSpacing = TypeScale.sm * 0.13
+    static let detailTitleGap: CGFloat = 3
+}
+
+private struct DesignNoticeRecipe {
+    let color: Color
+    let aura: Double
+    let leading: Double
+    let tail: Double
+    let face: Double
+    let edge: Double
+    let cast: Double
+}
+
+/// Native equivalent of the reviewed responsive notice grid. A custom Layout
+/// keeps the action in the trailing column when its intrinsic content fits and
+/// recomposes it below the message when it does not, without browser widths or
+/// presentation-only wrappers.
+private struct DesignNoticeLayout: Layout {
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    private struct Measurement {
+        let compact: Bool
+        let width: CGFloat
+        let height: CGFloat
+        let iconSize: CGSize
+        let bodySize: CGSize
+        let actionSize: CGSize
+        let bodyWidth: CGFloat
+
+        var size: CGSize { CGSize(width: width, height: height) }
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        measure(proposal: proposal, subviews: subviews).size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let measurement = measure(
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height),
+            subviews: subviews
+        )
+        guard subviews.count >= 2 else { return }
+
+        let isRightToLeft = layoutDirection == .rightToLeft
+        let iconX = isRightToLeft
+            ? bounds.maxX - measurement.iconSize.width / 2
+            : bounds.minX + measurement.iconSize.width / 2
+        let bodyX = isRightToLeft
+            ? bounds.maxX - measurement.iconSize.width - DesignNoticeMetrics.contentGap - measurement.bodyWidth
+            : bounds.minX + measurement.iconSize.width + DesignNoticeMetrics.contentGap
+        if measurement.compact {
+            let firstRowHeight = max(measurement.iconSize.height, measurement.bodySize.height)
+            subviews[0].place(
+                at: CGPoint(
+                    x: iconX,
+                    y: bounds.minY + (firstRowHeight / 2)
+                ),
+                anchor: .center,
+                proposal: ProposedViewSize(
+                    width: measurement.iconSize.width,
+                    height: measurement.iconSize.height
+                )
+            )
+            subviews[1].place(
+                at: CGPoint(x: bodyX, y: bounds.minY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(
+                    width: measurement.bodyWidth,
+                    height: measurement.bodySize.height
+                )
+            )
+            if subviews.count > 2 {
+                let actionX = isRightToLeft
+                    ? bodyX + measurement.bodyWidth - measurement.actionSize.width
+                    : bodyX
+                subviews[2].place(
+                    at: CGPoint(
+                        x: actionX,
+                        y: bounds.minY + firstRowHeight + DesignNoticeMetrics.compactActionGap
+                    ),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(
+                        width: measurement.actionSize.width,
+                        height: measurement.actionSize.height
+                    )
+                )
+            }
+            return
+        }
+
+        let centerY = bounds.minY + measurement.height / 2
+        subviews[0].place(
+            at: CGPoint(x: iconX, y: centerY),
+            anchor: .center,
+            proposal: ProposedViewSize(
+                width: measurement.iconSize.width,
+                height: measurement.iconSize.height
+            )
+        )
+        subviews[1].place(
+            at: CGPoint(x: bodyX, y: bounds.minY + (measurement.height - measurement.bodySize.height) / 2),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(
+                width: measurement.bodyWidth,
+                height: measurement.bodySize.height
+            )
+        )
+        if subviews.count > 2 {
+            let actionX = isRightToLeft ? bounds.minX : bounds.maxX - measurement.actionSize.width
+            subviews[2].place(
+                at: CGPoint(
+                    x: actionX,
+                    y: bounds.minY + (measurement.height - measurement.actionSize.height) / 2
+                ),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(
+                    width: measurement.actionSize.width,
+                    height: measurement.actionSize.height
+                )
+            )
+        }
+    }
+
+    private func measure(proposal: ProposedViewSize, subviews: Subviews) -> Measurement {
+        guard subviews.count >= 2 else {
+            return Measurement(
+                compact: false,
+                width: 0,
+                height: 0,
+                iconSize: .zero,
+                bodySize: .zero,
+                actionSize: .zero,
+                bodyWidth: 0
+            )
+        }
+
+        let iconSize = subviews[0].sizeThatFits(.unspecified)
+        let body = subviews[1]
+        let actionSize = subviews.count > 2 ? subviews[2].sizeThatFits(.unspecified) : .zero
+        let bodyIdealSize = body.sizeThatFits(.unspecified)
+        let availableWidth = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        let hasAction = subviews.count > 2
+        let wideIdealWidth = iconSize.width
+            + DesignNoticeMetrics.contentGap
+            + bodyIdealSize.width
+            + (hasAction ? DesignNoticeMetrics.contentGap + actionSize.width : 0)
+        let compact = hasAction && availableWidth.map { wideIdealWidth > $0 } == true
+        let width = availableWidth ?? wideIdealWidth
+
+        if compact {
+            let bodyWidth = max(0, width - iconSize.width - DesignNoticeMetrics.contentGap)
+            let bodySize = body.sizeThatFits(ProposedViewSize(width: bodyWidth, height: nil))
+            let firstRowHeight = max(iconSize.height, bodySize.height)
+            return Measurement(
+                compact: true,
+                width: width,
+                height: firstRowHeight + DesignNoticeMetrics.compactActionGap + actionSize.height,
+                iconSize: iconSize,
+                bodySize: bodySize,
+                actionSize: actionSize,
+                bodyWidth: bodyWidth
+            )
+        }
+
+        let bodyWidth = max(
+            0,
+            width - iconSize.width - DesignNoticeMetrics.contentGap
+                - (hasAction ? DesignNoticeMetrics.contentGap + actionSize.width : 0)
+        )
+        let bodySize = body.sizeThatFits(ProposedViewSize(width: bodyWidth, height: nil))
+        return Measurement(
+            compact: false,
+            width: width,
+            height: max(iconSize.height, max(bodySize.height, actionSize.height)),
+            iconSize: iconSize,
+            bodySize: bodySize,
+            actionSize: actionSize,
+            bodyWidth: bodyWidth
+        )
+    }
+}
+
+private struct DesignNoticeIcon: View {
+    let kind: DesignNoticeKind
+    let recipe: DesignNoticeRecipe
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        ZStack {
+            shape.fill(
+                LinearGradient(
+                    colors: [
+                        DuskColors.paper.overlaying(recipe.color, opacity: recipe.face),
+                        DuskColors.paper.overlaying(recipe.color, opacity: 0.08),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            shape.fill(
+                RadialGradient(
+                    colors: [
+                        DuskColors.paper.overlaying(DuskColors.bgSunk, opacity: 0.34),
+                        .clear,
+                    ],
+                    center: UnitPoint(x: 0.5, y: 0.58),
+                    startRadius: 0,
+                    endRadius: DesignNoticeMetrics.iconRadialRadius
+                )
+            )
+            glyph
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(recipe.color.overlaying(DuskColors.ink, opacity: 0.12))
+                .accessibilityHidden(true)
+        }
+        .frame(width: DesignNoticeMetrics.iconSize, height: DesignNoticeMetrics.iconSize)
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(
+                contrast == .increased
+                    ? DuskColors.ink3
+                    : recipe.color.overlaying(DuskColors.line, opacity: 1 - recipe.edge),
+                lineWidth: DesignMetrics.hairline
+            )
+        }
+        .background {
+            ZStack {
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: recipe.color.opacity(recipe.cast),
+                    geometry: DesignMaterialShadowGeometry.slateGlow
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: .black.opacity(DesignNoticeMetrics.iconCastOpacity),
+                    geometry: DesignMaterialShadowGeometry.slateRest
+                )
+                DesignSpreadShadow(
+                    shape: shape,
+                    color: DuskColors.bgSunk.overlaying(
+                        DuskColors.line,
+                        opacity: DesignNoticeMetrics.iconContactMix
+                    ),
+                    geometry: DesignDropShadowGeometry(radius: 0, y: 2, sourceInset: 1)
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch kind {
+        case .loading:
+            ProgressView().tint(recipe.color).controlSize(.small)
+        case .empty:
+            Image(systemName: "tray")
+        case .info:
+            Image(systemName: "info.circle")
+        case .error, .warning:
+            Image(systemName: "exclamationmark.triangle")
+        case .success:
+            Image(systemName: "checkmark.circle")
+        }
     }
 }
 
@@ -754,35 +2433,170 @@ struct AsyncNotice: View {
     var detail: String? = nil
     var retry: (() -> Void)? = nil
     var accessibilityId: String? = nil
+    // Existing retry callers keep the same label; contextual owners may name
+    // an additive action without taking ownership away from their closure.
+    var actionTitle = "Retry"
+    @Environment(\.layoutDirection) private var layoutDirection
+
+    private var recipe: DesignNoticeRecipe {
+        switch kind {
+        case .info:
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.12, leading: 0.10, tail: 0.03, face: 0.16, edge: 0.42, cast: 0.42)
+        case .warning:
+            DesignNoticeRecipe(color: DuskColors.amber, aura: 0.24, leading: 0.22, tail: 0.08, face: 0.30, edge: 0.60, cast: 0.68)
+        case .error:
+            DesignNoticeRecipe(color: DuskColors.stop, aura: 0.21, leading: 0.19, tail: 0.07, face: 0.27, edge: 0.56, cast: 0.62)
+        case .loading:
+            DesignNoticeRecipe(color: DuskColors.accent, aura: 0.08, leading: 0.06, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.40)
+        case .empty:
+            DesignNoticeRecipe(color: DuskColors.ink3, aura: 0, leading: 0, tail: 0, face: 0.08, edge: 0.30, cast: 0.20)
+        case .success:
+            DesignNoticeRecipe(color: DuskColors.sage, aura: 0.10, leading: 0.08, tail: 0.02, face: 0.12, edge: 0.36, cast: 0.38)
+        }
+    }
+
+    private var actionRole: DesignButtonRole {
+        kind == .error ? .secondary : .quiet
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Space.md) {
-            symbol
-            VStack(alignment: .leading, spacing: Space.xs) {
-                Text(title).font(Typo.ui(TypeScale.base, .semibold))
-                if let detail { Text(detail).font(Typo.ui(TypeScale.sm)).foregroundStyle(DuskColors.ink2) }
-                if let retry {
-                    DesignActionButton(title: "Retry", role: .quiet, accessibilityId: nil, action: retry)
-                }
-            }
-            Spacer()
-        }
-        .padding(Space.md)
-        .designPlate()
-        .accessibilityElement(children: retry == nil ? .combine : .contain)
-        .accessibilityLabel(title)
-        .accessibilityValue(detail ?? kind.accessibilityValue)
-        .accessibilityIdentifier(accessibilityId ?? "")
+        content
+            .designPlate()
+            .accessibilityElement(children: retry == nil ? .combine : .contain)
+            .accessibilityLabel(title)
+            .accessibilityValue(detail ?? kind.accessibilityValue)
+            .accessibilityAddTraits(kind == .empty ? .isHeader : [])
+            .accessibilityIdentifier(accessibilityId ?? "")
     }
 
     @ViewBuilder
-    private var symbol: some View {
+    private var content: some View {
         switch kind {
-        case .loading: ProgressView().tint(DuskColors.accent).accessibilityHidden(true)
-        case .empty: Image(systemName: "tray").accessibilityHidden(true)
-        case .error: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(DuskColors.stop).accessibilityHidden(true)
-        case .success: Image(systemName: "checkmark.circle.fill").foregroundStyle(DuskColors.ok).accessibilityHidden(true)
-        case .warning: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(DuskColors.warn).accessibilityHidden(true)
+        case .loading:
+            loadingContent.padding(AsyncNoticeMetrics.statePadding)
+        case .empty:
+            emptyContent.padding(AsyncNoticeMetrics.statePadding)
+        case .info, .error, .success, .warning:
+            noticeContent
+        }
+    }
+
+    private var loadingContent: some View {
+        VStack(spacing: AsyncNoticeMetrics.stateGap) {
+            AsyncLoadingIndicator()
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .frame(
+                    minHeight: DesignMetrics.controlLabelSize * CGFloat(DesignV2.Typography.lineNormal),
+                    alignment: .center
+                )
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minHeight: TypeScale.sm * 1.45, alignment: .center)
+            }
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: .quiet,
+                    accessibilityId: nil,
+                    action: retry
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+    }
+
+    private var emptyContent: some View {
+        VStack(spacing: AsyncNoticeMetrics.stateGap) {
+            AsyncEmptyMark()
+            Text(title)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                .foregroundStyle(DuskColors.ink)
+                .frame(minHeight: DesignNoticeMetrics.titleLineHeight, alignment: .center)
+            if let detail {
+                Text(detail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                    .frame(minHeight: DesignNoticeMetrics.detailLineHeight, alignment: .center)
+            }
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: .quiet,
+                    accessibilityId: nil,
+                    fillsWidth: false,
+                    action: retry
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+    }
+
+    private var noticeContent: some View {
+        DesignNoticeLayout {
+            DesignNoticeIcon(kind: kind, recipe: recipe)
+            VStack(alignment: .leading, spacing: DesignNoticeMetrics.detailTitleGap) {
+                Text(title)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                    .lineSpacing(DesignNoticeMetrics.titleLineSpacing)
+                    .foregroundStyle(DuskColors.ink)
+                    .frame(minHeight: DesignNoticeMetrics.titleLineHeight, alignment: .leading)
+                if let detail {
+                    Text(detail)
+                        .font(Typo.ui(TypeScale.sm))
+                        .lineSpacing(DesignNoticeMetrics.detailLineSpacing)
+                        .foregroundStyle(DuskColors.ink2)
+                        .frame(minHeight: DesignNoticeMetrics.detailLineHeight, alignment: .leading)
+                }
+            }
+            if let retry {
+                DesignActionButton(
+                    title: actionTitle,
+                    role: actionRole,
+                    accessibilityId: nil,
+                    action: retry
+                )
+            }
+        }
+        .padding(.horizontal, DesignNoticeMetrics.horizontalPadding)
+        .padding(.vertical, DesignNoticeMetrics.verticalPadding)
+        .frame(maxWidth: .infinity, minHeight: DesignNoticeMetrics.surfaceMinHeight, alignment: .leading)
+        .background {
+            GeometryReader { proxy in
+                ZStack {
+                    LinearGradient(
+                        stops: [
+                            .init(
+                                color: DuskColors.bgElev.overlaying(recipe.color, opacity: recipe.leading),
+                                location: 0
+                            ),
+                            .init(
+                                color: DuskColors.bgElev.overlaying(recipe.color, opacity: recipe.tail),
+                                location: 0.58
+                            ),
+                            .init(color: DuskColors.bgElev, location: 1)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    RadialGradient(
+                        colors: [recipe.color.opacity(recipe.aura), .clear],
+                        center: UnitPoint(
+                            x: layoutDirection == .rightToLeft
+                                ? 1 - min(DesignNoticeMetrics.noticeAuraCenter, max(proxy.size.width, 1)) / max(proxy.size.width, 1)
+                                : min(DesignNoticeMetrics.noticeAuraCenter, max(proxy.size.width, 1)) / max(proxy.size.width, 1),
+                            y: 0.5
+                        ),
+                        startRadius: 0,
+                        endRadius: DesignNoticeMetrics.noticeAuraRadius
+                    )
+                }
+            }
         }
     }
 }
@@ -792,6 +2606,7 @@ private extension DesignNoticeKind {
         switch self {
         case .loading: "Loading"
         case .empty: "Empty"
+        case .info: "Information"
         case .error: "Error"
         case .success: "Success"
         case .warning: "Warning"
@@ -887,6 +2702,212 @@ enum DesignApplyState: Equatable {
     case alreadyApplying
     case applied
     case failed(String)
+}
+
+private enum DesignApplyBarPhase: Equatable {
+    case dirty
+    case applying
+    case done
+}
+
+private enum DesignApplyBarMetrics {
+    // The source's 72px border-box retains a 74pt native plate face once the
+    // shared inset edge and flexible Dynamic Type line boxes are represented.
+    static let minimumHeight: CGFloat = 74
+    static let horizontalPadding: CGFloat = 14
+    static let markerSize: CGFloat = 7
+    static let markerTextGap: CGFloat = 10
+    static let markerGlowRadius: CGFloat = 4
+    static let markerPulseDuration: TimeInterval = 0.45
+}
+
+/// Native action surface for the existing settings draft/apply lifecycle. The
+/// screen remains the sole owner of dirty state, persistence, discard, and all
+/// terminal outcomes; this view only derives presentation and emits actions.
+struct DesignApplyBar: View {
+    let isDirty: Bool
+    let state: DesignApplyState
+    var dirtyTitle = "Unsaved changes"
+    var dirtyDetail = "Review before applying to the household."
+    var discardAccessibilityId: String? = nil
+    var applyAccessibilityId: String? = nil
+    let onDiscard: () -> Void
+    let onApply: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var markerPulse = false
+
+    private var phase: DesignApplyBarPhase? {
+        switch state {
+        case .saving, .restarting:
+            return .applying
+        case .applied:
+            return isDirty ? .dirty : .done
+        case .idle, .alreadyApplying, .failed:
+            return isDirty ? .dirty : nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: Space.sm) {
+            switch state {
+            case .alreadyApplying, .failed:
+                DesignApplyFeedback(state: state)
+            case .idle, .saving, .restarting, .applied:
+                EmptyView()
+            }
+            if let phase {
+                bar(phase)
+            }
+        }
+    }
+
+    private func bar(_ phase: DesignApplyBarPhase) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.lg) {
+                status(phase)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                actions(phase, fillsWidth: false)
+            }
+            VStack(alignment: .leading, spacing: Space.md) {
+                status(phase)
+                actions(phase, fillsWidth: true)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, DesignApplyBarMetrics.horizontalPadding)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, minHeight: DesignApplyBarMetrics.minimumHeight)
+        .background(phaseTint(phase))
+        .designPlate()
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: phase
+        )
+        .task(id: "\(phase)-\(reduceMotion)") {
+            markerPulse = false
+            guard phase == .applying, !reduceMotion else { return }
+            await Task.yield()
+            markerPulse = true
+        }
+    }
+
+    private func status(_ phase: DesignApplyBarPhase) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DesignApplyBarMetrics.markerTextGap) {
+            Circle()
+                .fill(phase == .done ? DuskColors.ok : DuskColors.accent)
+                .frame(width: DesignApplyBarMetrics.markerSize, height: DesignApplyBarMetrics.markerSize)
+                .shadow(
+                    color: phase == .done ? .clear : DuskColors.accent,
+                    radius: DesignApplyBarMetrics.markerGlowRadius
+                )
+                .scaleEffect(phase == .applying && markerPulse ? 0.72 : phase == .done ? 1.08 : 1)
+                .opacity(phase == .applying && markerPulse ? 0.65 : 1)
+                .animation(
+                    reduceMotion || phase != .applying
+                        ? nil
+                        : .easeInOut(duration: DesignApplyBarMetrics.markerPulseDuration).repeatForever(),
+                    value: markerPulse
+                )
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Space.xs) {
+                Text(phase == .done ? "Changes applied" : dirtyTitle)
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                    .foregroundStyle(DuskColors.ink)
+                Text(phase == .done ? "The household preference is up to date." : dirtyDetail)
+                    .font(Typo.ui(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func actions(_ phase: DesignApplyBarPhase, fillsWidth: Bool) -> some View {
+        HStack(spacing: Space.sm) {
+            DesignActionButton(
+                title: "Discard",
+                role: .quiet,
+                state: isDirty ? .normal : .disabled,
+                accessibilityId: discardAccessibilityId,
+                fillsWidth: fillsWidth,
+                action: onDiscard
+            )
+            DesignActionButton(
+                title: phase == .applying ? "Applying…" : phase == .done ? "Applied" : "Apply changes",
+                state: phase == .dirty ? .normal : .disabled,
+                accessibilityId: applyAccessibilityId,
+                fillsWidth: fillsWidth,
+                action: onApply
+            )
+        }
+    }
+
+    private func phaseTint(_ phase: DesignApplyBarPhase) -> Color {
+        switch phase {
+        case .dirty: .clear
+        case .applying: DuskColors.accent50.opacity(0.24)
+        case .done: DuskColors.ok.opacity(0.07)
+        }
+    }
+}
+
+private struct DesignApplyBarDockModifier: ViewModifier {
+    let isDirty: Bool
+    let state: DesignApplyState
+    let discardAccessibilityId: String
+    let applyAccessibilityId: String
+    let onDiscard: () -> Void
+    let onApply: () -> Void
+
+    private var isPresented: Bool {
+        if isDirty { return true }
+        switch state {
+        case .idle: return false
+        case .saving, .restarting, .alreadyApplying, .applied, .failed: return true
+        }
+    }
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 0) {
+            if isPresented {
+                DesignApplyBar(
+                    isDirty: isDirty,
+                    state: state,
+                    discardAccessibilityId: discardAccessibilityId,
+                    applyAccessibilityId: applyAccessibilityId,
+                    onDiscard: onDiscard,
+                    onApply: onApply
+                )
+                .padding(.horizontal, Space.lg)
+                .padding(.vertical, Space.sm)
+                .background(DuskColors.bg)
+            }
+        }
+    }
+}
+
+extension View {
+    /// Keeps the existing settings apply owner reachable above the keyboard and
+    /// home indicator without introducing a second draft or persistence owner.
+    func designApplyBarDock(
+        isDirty: Bool,
+        state: DesignApplyState,
+        discardAccessibilityId: String,
+        applyAccessibilityId: String,
+        onDiscard: @escaping () -> Void,
+        onApply: @escaping () -> Void
+    ) -> some View {
+        modifier(
+            DesignApplyBarDockModifier(
+                isDirty: isDirty,
+                state: state,
+                discardAccessibilityId: discardAccessibilityId,
+                applyAccessibilityId: applyAccessibilityId,
+                onDiscard: onDiscard,
+                onApply: onApply
+            )
+        )
+    }
 }
 
 struct DesignApplyFeedback: View {
