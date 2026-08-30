@@ -270,6 +270,12 @@ struct VisualDiffNoticeRenderConfiguration {
     let compact: Bool
 }
 
+struct VisualDiffResultsListRenderConfiguration: Equatable {
+    let compact: Bool
+    let loadingMore: Bool
+    let includesAppendedItem: Bool
+}
+
 /// Capture controller for the identity fixture. It pauses the real Rive view
 /// and advances the authored state machine by explicit elapsed intervals; it
 /// does not synthesize artwork or replace the production view.
@@ -375,6 +381,7 @@ enum VisualDiffFixtureRegistry {
         LoadingStateFixtureCatalog.registration.componentID: LoadingStateFixtureCatalog.registration,
         ApplyBarFixtureCatalog.registration.componentID: ApplyBarFixtureCatalog.registration,
         NoResultsFixtureCatalog.registration.componentID: NoResultsFixtureCatalog.registration,
+        ResultsListFixtureCatalog.registration.componentID: ResultsListFixtureCatalog.registration,
     ]
 
     static func resolve(caseID: String) -> VisualDiffFixtureResolution {
@@ -568,6 +575,12 @@ enum VisualDiffFixtureRegistry {
         for caseID: String
     ) -> VisualDiffNoticeRenderConfiguration? {
         NoticeFixtureCatalog.renderConfigurations[caseID]
+    }
+
+    static func resultsListRenderConfiguration(
+        for caseID: String
+    ) -> VisualDiffResultsListRenderConfiguration? {
+        ResultsListFixtureCatalog.renderConfigurations[caseID]
     }
 
     @MainActor
@@ -876,6 +889,141 @@ private enum NoticeFixtureCatalog {
         componentID: "notice",
         registrations: definitions.map(\.0),
         adapter: NoticeFixtureAdapter(configurations: renderConfigurations)
+    )
+}
+
+private enum ResultsListFixtureMetrics {
+    static let canvasInset: CGFloat = 52
+    static let regularWidth: CGFloat = 600
+    static let compactWidth: CGFloat = 390
+}
+
+private struct ResultsListFixture: View {
+    let configuration: VisualDiffResultsListRenderConfiguration
+
+    private var items: [DesignResultsListItem] {
+        var values = [
+            DesignResultsListItem(
+                id: "household",
+                leading: "A",
+                title: "Household profile",
+                detail: "Ready · Used today",
+                action: {}
+            ),
+            DesignResultsListItem(
+                id: "quiet",
+                leading: "B",
+                title: "Quiet profile",
+                detail: "Shared · Used yesterday",
+                tone: .sage,
+                action: {}
+            ),
+            DesignResultsListItem(
+                id: "travel",
+                leading: "C",
+                title: "Travel profile",
+                detail: "Offline · Updated last week",
+                action: {}
+            ),
+        ]
+        if configuration.includesAppendedItem {
+            values.append(
+                DesignResultsListItem(
+                    id: "guest",
+                    leading: "D",
+                    title: "Guest profile",
+                    detail: "Shared · Added just now",
+                    tone: .sage,
+                    action: {}
+                )
+            )
+        }
+        return values
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            DesignResultsList(
+                countLabel: "24 results",
+                summary: "Filtered by ready and shared",
+                clearLabel: "Clear filters",
+                items: items,
+                pageLabel: "Page 1 of 8",
+                previousLabel: "Previous",
+                loadMoreLabel: "Load more",
+                loadingLabel: "Loading…",
+                previousDisabled: true,
+                loadingMore: configuration.loadingMore,
+                onClear: {},
+                onPrevious: {},
+                onLoadMore: {}
+            )
+            .frame(
+                width: configuration.compact
+                    ? ResultsListFixtureMetrics.compactWidth
+                    : ResultsListFixtureMetrics.regularWidth
+            )
+            .environment(\.horizontalSizeClass, configuration.compact ? .compact : .regular)
+            .padding(ResultsListFixtureMetrics.canvasInset)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .ignoresSafeArea()
+    }
+}
+
+private struct ResultsListFixtureAdapter: VisualDiffNativeFixtureAdapter {
+    let configurations: [String: VisualDiffResultsListRenderConfiguration]
+
+    func makeFixture(for fixture: VisualDiffFixtureCase) throws -> AnyView {
+        guard let configuration = configurations[fixture.caseID] else {
+            throw VisualDiffFixtureAdapterError.missingConfiguration(caseID: fixture.caseID)
+        }
+        return AnyView(ResultsListFixture(configuration: configuration))
+    }
+}
+
+private enum ResultsListFixtureCatalog {
+    private static let definitions: [(VisualDiffFixtureRegistration, VisualDiffResultsListRenderConfiguration)] = [
+        definition("results-list--page-1", stateID: "page-1"),
+        definition("results-list--page-1--compact", stateID: "page-1-compact", compact: true),
+        definition("results-list--loading-more", stateID: "loading-more", loadingMore: true),
+        definition("results-list--appended", stateID: "appended", includesAppendedItem: true),
+    ]
+
+    private static func definition(
+        _ caseID: String,
+        stateID: String,
+        compact: Bool = false,
+        loadingMore: Bool = false,
+        includesAppendedItem: Bool = false
+    ) -> (VisualDiffFixtureRegistration, VisualDiffResultsListRenderConfiguration) {
+        (
+            VisualDiffFixtureRegistration(
+                fixture: VisualDiffFixtureCase(
+                    caseID: caseID,
+                    componentID: "results-list",
+                    variantID: "default",
+                    stateID: stateID
+                ),
+                applicability: .supported
+            ),
+            VisualDiffResultsListRenderConfiguration(
+                compact: compact,
+                loadingMore: loadingMore,
+                includesAppendedItem: includesAppendedItem
+            )
+        )
+    }
+
+    static let renderConfigurations = Dictionary(
+        uniqueKeysWithValues: definitions.map { ($0.0.fixture.caseID, $0.1) }
+    )
+
+    static let registration = VisualDiffComponentRegistration(
+        componentID: "results-list",
+        registrations: definitions.map(\.0),
+        adapter: ResultsListFixtureAdapter(configurations: renderConfigurations)
     )
 }
 

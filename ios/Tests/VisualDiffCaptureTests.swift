@@ -1693,6 +1693,7 @@ final class VisualDiffCaptureTests: XCTestCase {
             "apply-bar",
             "notice",
             "no-results",
+            "results-list",
             "stale-banner",
             "setting-row",
             "settings-group",
@@ -1726,6 +1727,32 @@ final class VisualDiffCaptureTests: XCTestCase {
                     continue
                 }
             }
+        }
+    }
+
+    func testResultsListRegistryPreservesPlainActionAndPaginationStates() {
+        let expected: [String: VisualDiffResultsListRenderConfiguration] = [
+            "results-list--page-1": .init(compact: false, loadingMore: false, includesAppendedItem: false),
+            "results-list--page-1--compact": .init(compact: true, loadingMore: false, includesAppendedItem: false),
+            "results-list--loading-more": .init(compact: false, loadingMore: true, includesAppendedItem: false),
+            "results-list--appended": .init(compact: false, loadingMore: false, includesAppendedItem: true),
+        ]
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "results-list")
+        XCTAssertEqual(Set(registrations.map { $0.fixture.caseID }), Set(expected.keys))
+        XCTAssertTrue(registrations.allSatisfy { $0.applicability == .supported })
+
+        for (caseID, configuration) in expected {
+            XCTAssertEqual(
+                VisualDiffFixtureRegistry.resultsListRenderConfiguration(for: caseID),
+                configuration,
+                caseID
+            )
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Approved results-list case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertEqual(fixture.componentID, "results-list")
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
         }
     }
 

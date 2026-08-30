@@ -322,6 +322,223 @@ struct DesignPane<Content: View>: View {
     }
 }
 
+enum DesignResultsListItemTone {
+    case terra, sage
+}
+
+struct DesignResultsListItem: Identifiable {
+    let id: String
+    let leading: String
+    let title: String
+    let detail: String
+    var tone: DesignResultsListItemTone = .terra
+    let action: () -> Void
+}
+
+/// A bounded summary and incremental result collection whose rows are plain
+/// native actions. Selectable rows and rows with nested actions use their own
+/// product components rather than adding selection state to this contract.
+struct DesignResultsList: View {
+    let countLabel: String
+    let summary: String
+    let clearLabel: String
+    let items: [DesignResultsListItem]
+    let pageLabel: String
+    let previousLabel: String
+    let loadMoreLabel: String
+    let loadingLabel: String
+    var previousDisabled = false
+    var loadingMore = false
+    let onClear: () -> Void
+    let onPrevious: () -> Void
+    let onLoadMore: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    private var compact: Bool { horizontalSizeClass == .compact }
+    private var actionVisualHeight: CGFloat {
+        compact ? DesignMetrics.minimumTarget : DesignMetrics.actionButtonVisualHeight
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            DesignDivider()
+            rows
+            DesignDivider()
+            pagination
+        }
+        .designPlate()
+    }
+
+    private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Space.md) {
+                summaryView
+                Spacer(minLength: 0)
+                clearButton
+            }
+            VStack(alignment: .leading, spacing: Space.sm) {
+                summaryView
+                clearButton
+            }
+        }
+        .padding(.horizontal, 14)
+        // The compact source key grows from 40pt to 44pt inside a bordered
+        // 69pt header; the half-point keeps that native 2x border box integral.
+        .padding(.vertical, compact ? 12.5 : 11)
+        .frame(minHeight: 66, alignment: .leading)
+    }
+
+    private var summaryView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(countLabel)
+                .font(Typo.ui(DesignMetrics.controlLabelSize, .bold))
+                .foregroundStyle(DuskColors.ink)
+            Text(summary)
+                .font(Typo.ui(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+        }
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var clearButton: some View {
+        DesignActionButton(
+            title: clearLabel,
+            role: .quiet,
+            fillsWidth: false,
+            action: onClear,
+            visualHeight: actionVisualHeight
+        )
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                resultRow(item)
+                    .overlay(alignment: .bottom) {
+                        if index < items.count - 1 { DesignDivider() }
+                    }
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .offset(y: Space.sm).combined(with: .opacity)
+                    )
+            }
+        }
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, Space.sm)
+        .animation(
+            DesignV2.Motion.animation(duration: DesignV2.Motion.state, reduceMotion: reduceMotion),
+            value: items.map(\.id)
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private func resultRow(_ item: DesignResultsListItem) -> some View {
+        Button(action: item.action) {
+            HStack(spacing: 11) {
+                resultIcon(item)
+                    .frame(width: 42)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(item.title)
+                        .font(Typo.ui(DesignMetrics.controlLabelSize, .bold))
+                        .foregroundStyle(DuskColors.ink)
+                    Text(item.detail)
+                        .font(Typo.ui(TypeScale.sm))
+                        .foregroundStyle(DuskColors.ink2)
+                }
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.forward")
+                    .font(Typo.ui(TypeScale.base, .medium))
+                    .foregroundStyle(DuskColors.ink3)
+                    .accessibilityHidden(true)
+            }
+            .padding(9)
+            .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(item.detail)
+    }
+
+    private func resultIcon(_ item: DesignResultsListItem) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Radii.sm, style: .continuous)
+        return Text(item.leading)
+            .font(Typo.display(TypeScale.lg))
+            .foregroundStyle(item.tone == .sage ? DuskColors.sage : DuskColors.accent)
+            .frame(width: 38, height: 38)
+            .background {
+                designSlateFace(role: .quiet, muted: true, hovered: false)
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.strokeBorder(DuskColors.line, lineWidth: DesignMetrics.hairline)
+            }
+            .accessibilityHidden(true)
+    }
+
+    private var pagination: some View {
+        ViewThatFits(in: .horizontal) {
+            paginationRow
+            VStack(spacing: Space.sm) {
+                Text(pageLabel)
+                    .font(Typo.mono(TypeScale.sm))
+                    .foregroundStyle(DuskColors.ink2)
+                HStack(spacing: Space.sm) {
+                    previousButton
+                    loadMoreButton
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .trailing)
+    }
+
+    private var paginationRow: some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
+            previousButton
+            Text(pageLabel)
+                .font(Typo.mono(TypeScale.sm))
+                .foregroundStyle(DuskColors.ink2)
+                .fixedSize()
+            loadMoreButton
+        }
+    }
+
+    private var previousButton: some View {
+        DesignActionButton(
+            title: previousLabel,
+            role: .quiet,
+            state: previousDisabled ? .disabled : .normal,
+            fillsWidth: false,
+            action: onPrevious,
+            visualHeight: actionVisualHeight
+        )
+    }
+
+    private var loadMoreButton: some View {
+        DesignActionButton(
+            title: loadingMore ? loadingLabel : loadMoreLabel,
+            role: .secondary,
+            state: loadingMore ? .disabled : .normal,
+            fillsWidth: false,
+            action: onLoadMore,
+            visualHeight: actionVisualHeight
+        )
+    }
+}
+
 private struct DominantVisualCardButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
