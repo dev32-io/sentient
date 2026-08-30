@@ -73,6 +73,8 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
   let readyPromise: Promise<void> | null = null;
   let warmupStarted = false;
   let disposed = false;
+  let audioFrameCount = 0;
+  let audioBytesReceived = 0;
 
   function rejectReadyIfPending(err: Error): void {
     if (readyReject) {
@@ -98,24 +100,37 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
         log.info("ready-received", { format: frame.format, sampleRate: frame.sampleRate, voice: frame.voice });
         resolveReadyIfPending();
         return;
+      case "started":
+        audioFrameCount = 0;
+        audioBytesReceived = 0;
+        log.debug("started-received", { requestId: frame.requestId });
+        return;
       case "audio":
-        log.debug("audio-chunk-received", { bytes: frame.data.length, queueSize: queue.size() });
+        audioFrameCount += 1;
+        audioBytesReceived += frame.data.length;
         queue.enqueue({ data: frame.data, encoding: LIVE_ENCODING, sampleRate: LIVE_SAMPLE_RATE, isFinal: false });
         return;
       case "done":
-        log.debug("done-received", { requestId: frame.requestId, ttfaMs: frame.ttfaMs, rtf: frame.rtf });
+        log.debug("done-received", {
+          requestId: frame.requestId,
+          ttfaMs: frame.ttfaMs,
+          rtf: frame.rtf,
+          audioSeconds: frame.audioSeconds,
+          audioFrameCount,
+          audioBytesReceived,
+        });
         queue.finish();
         return;
       case "error":
-        log.error("server-error", { reason: frame.reason });
+        log.error("server-error", { errorCategory: "service-error", reasonLength: frame.reason.length });
         rejectReadyIfPending(new Error(frame.reason));
         queue.finish();
         return;
       case "warning":
-        log.warn("server-warning", { reason: frame.reason });
+        log.warn("server-warning", { warningCategory: "service-warning", reasonLength: frame.reason.length });
         return;
       default:
-        log.debug("frame-ignored", { kind: frame.kind });
+        return;
     }
   }
 
@@ -199,7 +214,7 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
       return;
     }
     if (text.length === 0) return;
-    log.debug("push-text", { chars: text.length, preview: text.length <= 80 ? text : `${text.slice(0, 80)}…` });
+    log.debug("push-text", { chars: text.length });
     // `text` only buffers server-side — nothing is synthesized until
     // `end`/`flush`. endInput() sends `end`.
     send(textMsg(text));
@@ -242,36 +257,38 @@ export function createLocalTtsProvider(cfg: LocalTtsProviderConfig, overrides?: 
   async function* audioFrames(signal: AbortSignal): AsyncGenerator<TTSAudioChunk> {
     log.debug("audio-frames-start");
     let emitted = 0;
+    let bytesEmitted = 0;
     while (!signal.aborted) {
       if (queue.isDone() && queue.isEmpty()) {
-        log.debug("audio-frames-end", { emitted, reason: "queue-done" });
+        log.debug("audio-frames-end", { emitted, bytesEmitted, reason: "queue-done" });
         return;
       }
 
       while (!queue.isEmpty()) {
         if (signal.aborted) {
-          log.debug("audio-frames-end", { emitted, reason: "aborted-mid-drain" });
+          log.debug("audio-frames-end", { emitted, bytesEmitted, reason: "aborted-mid-drain" });
           return;
         }
         const chunk = queue.dequeue();
         if (chunk) {
           emitted += 1;
+          bytesEmitted += chunk.data.byteLength;
           yield chunk;
         }
       }
 
       if (queue.isDone()) {
-        log.debug("audio-frames-end", { emitted, reason: "queue-done-after-drain" });
+        log.debug("audio-frames-end", { emitted, bytesEmitted, reason: "queue-done-after-drain" });
         return;
       }
 
       const hasItem = await queue.waitForItem(signal);
       if (!hasItem) {
-        log.debug("audio-frames-end", { emitted, reason: "wait-returned-no-item" });
+        log.debug("audio-frames-end", { emitted, bytesEmitted, reason: "wait-returned-no-item" });
         return;
       }
     }
-    log.debug("audio-frames-end", { emitted, reason: "signal-aborted" });
+    log.debug("audio-frames-end", { emitted, bytesEmitted, reason: "signal-aborted" });
   }
 
   return { warmup, ready, pushText, audioFrames, endInput, dispose };

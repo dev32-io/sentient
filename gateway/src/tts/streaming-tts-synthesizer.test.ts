@@ -1,3 +1,4 @@
+import { configure, reset } from "@logtape/logtape";
 import { describe, expect, it } from "vitest";
 import type { TTSAudioChunk, TTSProvider } from "../providers/tts/tts-types.ts";
 import { FLUSH_SIGNAL, type TtsChunk } from "./stages/stage-types.ts";
@@ -58,6 +59,60 @@ async function collectFrames(iter: AsyncIterable<AudioFrame>): Promise<AudioFram
 }
 
 describe("createStreamingTtsSynthesizer", () => {
+  it("logs aggregate text/audio sizes without per-chunk content or frame diagnostics", async () => {
+    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
+    await configure({
+      sinks: {
+        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
+      },
+      loggers: [
+        { category: ["sentient", "tts", "streaming-tts-synthesizer"], sinks: ["test"], lowestLevel: "debug" },
+        { category: "logtape", sinks: [], lowestLevel: "error" },
+      ],
+      reset: true,
+    });
+
+    const sensitiveText = "PRIVATE_STREAMED_TTS_TEXT";
+    try {
+      const { provider } = makeFakeProvider([chunk(1), chunk(2)]);
+      const synth = createStreamingTtsSynthesizer({ sessionFactory: { createSession: async () => provider } });
+      const delayedText: AsyncIterable<TtsChunk> = {
+        async *[Symbol.asyncIterator]() {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          yield sensitiveText;
+        },
+      };
+      await collectFrames(synth.synthesize(delayedText, new AbortController().signal));
+
+      const sensitiveError = new Error(sensitiveText);
+      sensitiveError.name = sensitiveText;
+      const failingText: AsyncIterable<TtsChunk> = {
+        async *[Symbol.asyncIterator]() {
+          yield "";
+          throw sensitiveError;
+        },
+      };
+      const failingProvider = makeFakeProvider([]).provider;
+      const failingSynth = createStreamingTtsSynthesizer({
+        sessionFactory: { createSession: async () => failingProvider },
+      });
+      await collectFrames(failingSynth.synthesize(failingText, new AbortController().signal));
+
+      expect(records.find((record) => record.message === "synthesize-done")?.properties).toEqual({
+        frameCount: 2,
+        audioBytes: 2,
+        textChunkCount: 1,
+        textChars: sensitiveText.length,
+      });
+      expect(records.find((record) => record.message === "producer-error")?.properties).toEqual({ errorType: "error" });
+      expect(records.some((record) => record.message === "delta-push")).toBe(false);
+      expect(records.some((record) => record.message === "frame-yield")).toBe(false);
+      expect(JSON.stringify(records)).not.toContain(sensitiveText);
+    } finally {
+      await reset();
+    }
+  });
+
   it("forwards raw text deltas to the provider with no aggregation", async () => {
     const { provider, calls } = makeFakeProvider([chunk(1)]);
     const synth = createStreamingTtsSynthesizer({

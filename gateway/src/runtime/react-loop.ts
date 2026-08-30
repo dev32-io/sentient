@@ -55,10 +55,8 @@ import type { ToolDefinition, ToolInvocation } from "../tools/tool-types.js";
 
 const log = getLog(["sentient", "runtime", "react-loop"]);
 
-const DEBUG_PREVIEW_LEN = 120;
-
-/** Task-strip preview budget (`taskListItemSchema.argsPreview`). Separate from
- *  DEBUG_PREVIEW_LEN: this one ships to a UI, not a log. */
+/** Task-strip preview budget (`taskListItemSchema.argsPreview`). This ships to
+ *  an authorized UI and must never be copied into logs. */
 const ARGS_PREVIEW_LEN = 120;
 
 export type ToolUpdateStatus = "running" | "done" | "error";
@@ -146,15 +144,18 @@ function parseToolArgs(raw: string, toolName: string, toolCallId: string): Recor
     log.warn("react-loop.tool-args.not-an-object", {
       toolName,
       toolCallId,
-      rawPreview: raw.slice(0, DEBUG_PREVIEW_LEN),
+      argumentLength: raw.length,
+      errorCategory: "not-object",
     });
     return {};
-  } catch (err) {
+  } catch {
+    // JSON parser messages may quote the raw arguments. Keep only a stable
+    // category and size; neutral property names are not a safe content boundary.
     log.warn("react-loop.tool-args.parse-failed", {
       toolName,
       toolCallId,
-      reason: err instanceof Error ? err.message : String(err),
-      rawPreview: raw.slice(0, DEBUG_PREVIEW_LEN),
+      argumentLength: raw.length,
+      errorCategory: "invalid-json",
     });
     return {};
   }
@@ -398,6 +399,10 @@ async function consumeStream(
   let finishReason = "";
   let usage: { promptTokens: number; cachedTokens: number; completionTokens: number } | undefined;
   let stalled = false;
+  let chunkCount = 0;
+  let textChunkCount = 0;
+  let textChars = 0;
+  let toolCallChunkCount = 0;
 
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
   const armStall = (): void => {
@@ -418,16 +423,15 @@ async function consumeStream(
     for await (const chunk of stream) {
       armStall(); // re-arm: measure the gap to the NEXT chunk
       if (signal.aborted) break;
+      chunkCount += 1;
       if (chunk.type === "text") {
         text += chunk.content;
+        textChunkCount += 1;
+        textChars += chunk.content.length;
         onTextDelta(chunk.content);
-        log.debug("react-loop.stream.chunk.text", { length: chunk.content.length });
       } else if (chunk.type === "tool_call") {
         toolCalls.push(chunk.toolCall);
-        log.debug("react-loop.stream.chunk.tool-call", {
-          toolCallId: chunk.toolCall.id,
-          toolName: chunk.toolCall.function.name,
-        });
+        toolCallChunkCount += 1;
       } else if (chunk.type === "done") {
         finishReason = chunk.finishReason;
         usage = chunk.usage;
@@ -439,6 +443,15 @@ async function consumeStream(
   }
 
   const cacheHitRatio = usage && usage.promptTokens > 0 ? usage.cachedTokens / usage.promptTokens : undefined;
+  log.debug("react-loop.stream.completed", {
+    chunkCount,
+    textChunkCount,
+    textChars,
+    toolCallChunkCount,
+    finishReason,
+    aborted: signal.aborted,
+    stalled,
+  });
 
   return {
     text,

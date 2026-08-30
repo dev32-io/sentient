@@ -59,9 +59,6 @@ const log = getLog(["sentient", "tools", "background-completion-note"]);
 /** Appended to an echoed request that did not fit `requestEchoChars`. */
 const TRUNCATION_MARK = "…";
 
-/** Preview length for log lines only (logging rule: ≤120 chars). */
-const LOG_PREVIEW_LEN = 120;
-
 export interface BackgroundCompletionNoteInput {
   /** The broker's id for this run — the same value the dispatch returned. */
   readonly taskId: string;
@@ -113,8 +110,8 @@ function echoRequest(request: Record<string, unknown>, limit: number): string {
 function neutralizeFence(output: string, end: string): string {
   if (!output.includes(end)) return output;
   log.warn("completion-note.fence-marker-in-payload", {
-    reason: "task output contained this task's own closing fence — neutralised before framing",
-    preview: output.slice(0, LOG_PREVIEW_LEN),
+    errorCategory: "closing-fence-neutralized",
+    outputLength: output.length,
   });
   return output.split(end).join("[fence marker removed]");
 }
@@ -150,7 +147,6 @@ export function composeBackgroundCompletionNote(input: BackgroundCompletionNoteI
     isError,
     outputLength: payload.length,
     scanFlagged: screened.flagged,
-    preview: payload.slice(0, LOG_PREVIEW_LEN),
   });
 
   return [

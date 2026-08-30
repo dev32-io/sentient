@@ -1,222 +1,249 @@
 # Wire Contract (`@sentient/protocol`)
 
-The authoritative gateway ↔ client (web / mobile / cube) wire contract. The
-zod schemas in `src/` are the source of truth; this file documents the parts a
-reader can't infer at a glance. Keep it in lockstep with `src/messages.ts` and
-`src/sessions.ts`.
+The zod schemas in `src/messages.ts`, `src/sessions.ts`, and
+`src/conversation.ts` are authoritative for the gateway ↔ client contract.
+This document records sequencing, lifecycle, and rendering rules that are not
+obvious from individual schemas.
 
-## Transport boundary — WS vs REST
+## Transport boundary
 
-A standing architectural rule, not just for one feature:
+The WebSocket at `/api/v1/ws` carries the live session:
 
-- **WebSocket** carries the **live chat session ONLY**: mic audio in, TTS audio
-  out, the live conversation stream (`conversation.entry`, `turn.*`,
-  `permission.*`, `delegation.progress`), `ping`/`pong`, `interrupt`, and the
-  resume handshake. *Everything on the WS push channel is seq-stamped and
-  replay-buffered.*
-- **REST** carries everything client-driven and stateless: session list,
-  conversation history (paginated `getMessages`), search, rename, delete,
-  preferences/settings. The client re-issues on demand; no resume/buffer
-  semantics. Routes live under `/api/v1/sessions` (thin passthroughs over the
-  Hermes dashboard sidecar; auth reuses the PASETO / shared-token model).
+- authentication and `session.configure`;
+- text/mic input and TTS audio;
+- `turn.*`, committed conversation updates, task state, permissions, and
+  delegation progress;
+- session draft/create/activate controls;
+- interrupt, ping/pong, command refusal, and resume coordination.
 
-The WS query RPCs that previously did this (`SessionsConnector.list`,
-`session.switch` → `conversation.snapshot`, preferences) were **removed** from
-the WS schema. A lightweight WS `conversation.activate` control replaced
-`session.switch`: it focuses the live stream + replay buffer and carries **no
-history payload** — the client loads history via REST.
+The implemented sessions REST surface is intentionally small:
 
-## Sequenced push frames — `seq` / `epoch`
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/:id/messages`
 
-Every gateway → client JSON push frame optionally carries two top-level fields,
-stamped by the gateway's `FrameSequencer` before send:
+`conversation.activate` changes the live WebSocket attachment and produces
+`session.switched`; the client then loads committed history through the messages
+route. Search, rename, delete, and preferences are not part of this sessions
+REST handler. Do not infer endpoints from event schema names.
 
-- **`seq`** — a monotonic per-device-session frame counter within the current
-  epoch. Doubles as the resume cursor (replay from `lastSeq + 1`) and the client
-  mirror's ordering key.
-- **`epoch`** — a session-scoped counter that increments on each reconnect. Lets
-  the client tell a true seq gap from a reconnect restart.
+## Durable session, connection, and draft identities
 
-Both are non-negative integers; **absence means the frame pre-dates sequencing**
-(older gateway / pre-sequencing frame). The client first learns the current
-`epoch` from `auth.ok` / `session.ready`, and again from the `stream.resumed`
-reply after a reconnect.
+A durable `sessionId` is server-minted and opaque. One `SessionRuntime` and one
+append-only store partition serve that session; multiple connections can attach
+as windows onto it.
 
-## Binary frame header
+A WebSocket connection has a separate connection id exposed as
+`session.ready.sessionId`. It dies with that socket and is not a conversation
+id.
 
-Binary audio frames (gateway → client) carry `seq` in a fixed 9-byte header
-prepended to the payload:
+A connection with no durable session receives `session.draft { draftKey }`.
+The draft creates no session row or runtime. Its first user message mints the
+durable session and produces `session.created`. Re-presenting the draft key in
+`session.configure.conversationId` preserves mint idempotency across reconnect.
 
+## `session.configure`
+
+This is the first client frame after authentication. Relevant fields are:
+
+- `clientType` — required: `webui`, `cube`, or `mobile`.
+- `deviceId` — required stable device identifier.
+- `surfaceId` — optional window/app-instance identifier; defaults to
+  `deviceId`. It scopes client pending-message dedupe and diagnostics, not
+  authorization, runtime ownership, or the replay journal.
+- `capabilities.supports` — client capability strings.
+- `conversationId` — optional durable session id or draft key currently shown.
+  A durable id is accepted only if it exists in the authenticated caller's own
+  store.
+- `resume` — optional `{ epoch, lastSeq }`; there is no separate
+  `stream.resume` client frame.
+
+After a successful durable-session attach, the gateway sends
+`session.attached { sessionId, generation }`. Current clients stamp that pair on
+bound commands (`text.input`, `audio.start`, `audio.end`, `interrupt`, and
+`permission.response`). Both fields are optional so a draft's first message and
+older clients can bind implicitly to the connection's current attachment; a
+half-present or stale pair is answered explicitly with `command.rejected`, never
+silently dropped.
+
+## Two outbound lanes
+
+Outbound frames belong to one of two delivery lanes:
+
+| Lane | Owner | Sequenced/journaled | Delivery |
+|---|---|---|---|
+| Session | durable session | Yes | Identical bytes fan out to all attached windows |
+| Connection | WebSocket | No | Only the socket the frame answers |
+
+Session-lane frames include turn lifecycle/text/audio brackets,
+`conversation.entry`, `tasklist.state`, permissions, delegation progress,
+`playback.stop`, and `session.title`.
+
+Connection-lane frames include auth, `session.ready`, `session.attached`,
+`command.rejected`, resume coordination, draft/create/switch answers, errors,
+pong, and `conversation.snapshot`. A snapshot contains conversation content but
+is an attach answer that replaces one window's mirror; it must not be fanned out
+or replayed to peers.
+
+A window joining an already active turn can also receive unsequenced,
+unjournaled reconstruction frames for that in-flight state. Therefore `seq` and
+`epoch` are optional in the schemas: absence means the frame is outside the
+session journal, not that it is invalid.
+
+## Session journal, `seq`, and `epoch`
+
+Each durable session has one byte-bounded journal and one monotonic `seq` space.
+A session frame is validated, allocated, encoded, and journaled once, then the
+same bytes are delivered to every attached window. Each window keeps its own
+cursor.
+
+- `seq` — highest-order key within that journal, starting at 1. JSON session
+  frames carry it at the top level; binary output carries it in the header.
+- `epoch` — identifies the journal instance. A fresh journal receives a new,
+  never-reused process-global epoch. Reconnecting to a retained journal keeps
+  its epoch; reconnect itself does not increment it.
+
+The journal evicts oldest frames at its byte cap. Resume succeeds only when the
+requested epoch still names the retained journal and all frames after
+`lastSeq` remain contiguous.
+
+### `stream.resumed`
+
+When `session.configure` carries `resume`, the gateway answers:
+
+```json
+{
+  "type": "stream.resumed",
+  "recovered": true,
+  "epoch": 7,
+  "fromSeq": 42,
+  "toSeq": 57
+}
 ```
+
+- `recovered: true` — `session.ready` is sent unsequenced, then the resume ack,
+  then missed journal frames verbatim in sequence order. The existing client
+  mirror is preserved and frames are applied idempotently.
+- `recovered: false` — the epoch mismatched, no durable session journal was
+  available, the cursor was beyond the head, or an eviction gap existed. The
+  client resets its cursor and the gateway follows with normal readiness plus a
+  fresh committed snapshot.
+
+## Binary gateway audio header
+
+Gateway → client journaled audio prepends a fixed 9-byte header:
+
+```text
 ┌──────────────────────────────┬────────────┬──────────────────────┐
-│  8 bytes (big-endian u64)    │  1 byte    │  N bytes             │
-│  seq (monotonic counter)     │  type      │  payload             │
+│ 8-byte big-endian u64        │ 1 byte     │ N bytes              │
+│ seq                          │ type       │ payload              │
 └──────────────────────────────┴────────────┴──────────────────────┘
 
-  type 0x01 = audio (PCM / Opus payload)
+ type 0x01 = audio
 ```
 
-`epoch` is **NOT** in the binary header — it travels on JSON frames only. The
-client peels the 9-byte header, reads `seq`, dedupes by `seq`, and hands the
-payload to the audio path.
+`epoch` is carried on JSON coordination frames, not in this header. The client
+uses `seq` for ordering/deduplication and routes the payload to the currently
+open `turn.audio.start` bracket. Client → gateway microphone binary frames do
+not use this outbound journal header.
 
-## `session.configure` — now resume-aware
+## Native turn model
 
-`session.configure` is the first client → gateway frame after auth. Required
-fields relevant to resilience:
+A turn is one serialized run of the gateway's native ReAct loop:
 
-- **`deviceId`** (REQUIRED) — a stable per-device identifier the client supplies
-  on **every** connection. The gateway keys the per-device replay buffer on it,
-  so a reconnect reuses the same buffer. A fresh connect gets a fresh buffer.
-- **`resume`** (OPTIONAL) — `{ epoch, lastSeq }`. Present only on a reconnect
-  with a non-zero cursor. The resume request is folded **into**
-  `session.configure` (there is **no** separate `stream.resume` frame), so the
-  gateway's resume decision is a synchronous read off the one parsed configure
-  message — no same-tick frame-ordering race.
+1. a user or background-completion stimulus is appended to the store;
+2. `SessionRuntime` emits `turn.started` with a server-minted `turnId`;
+3. the loop re-reads the store each iteration, streams text, and may dispatch
+   foreground or background tools through the broker;
+4. the final reply is committed and the turn completes, or a user cancellation
+   commits a partial with a cutoff.
 
-## `stream.resumed` — resume reply
+There is at most one active turn per durable session. Input appended while it
+runs can be observed by a later iteration; input not consumed by the settled
+turn starts a back-to-back turn.
 
-Gateway → client, sent after processing a `session.configure` that carried a
-`resume` object. Its own frame (not folded into `session.ready`):
+### Gateway → client turn frames
 
+| Frame | Contract |
+|---|---|
+| `turn.started` | `{ turnId, trigger }`, where trigger is `user` or `background-completion`. |
+| `turn.text.delta` | `{ turnId, text, replyId? }`; `turnId` is required and `replyId` is the live bubble key. |
+| `turn.completed` | `{ turnId }`; clears every open bubble belonging to that turn. |
+| `turn.aborted` | `{ turnId, cutoff }`, cutoff `interrupt` or `barge-in`; also clears every open bubble of the turn. |
+| `turn.audio.start` | `{ turnId, encoding, sampleRate }`; opens the attribution bracket for following binary audio. |
+| `turn.audio.done` | `{ turnId }`; closes that turn's audio bracket. |
+| `playback.stop` | `{ turnId, reason }`; the only frame that flushes queued client audio. |
+
+A new turn never flushes or preempts earlier TTS. Clients queue complete audio
+brackets in order. Only user barge-in or interrupt produces `playback.stop`.
+
+## `replyId` and conversation entries
+
+`turnId` identifies execution; `replyId` identifies a rendered assistant
+bubble. A single turn may narrate, call a tool, and answer in several stored
+assistant stretches that fold into one reply. If a user message lands mid-turn,
+the runtime rotates `replyId`, so one turn can legitimately produce two
+assistant rows separated by the user row.
+
+Client rules:
+
+1. Key in-flight assistant buffers by `replyId` after the first stamped delta.
+   `turn.started` may seed an empty turn-keyed placeholder; the first delta
+   adopts it while empty.
+2. Suppress/upsert the committed twin by `replyId`/`entryId`, never by
+   `turnId` alone.
+3. Clear all live buffers for a turn on `turn.completed` or `turn.aborted`.
+
+`conversation.entry` carries `{ item, turnId?, replyId? }`. Assistant items also
+carry `replyId` so attach snapshots and REST history retain the bubble identity
+without a frame sidecar. `entryId` is stable and comes from the same gateway
+store projection on live, snapshot, and REST paths; clients upsert by it.
+
+`conversation.snapshot { items }` is a full replacement of the committed
+mirror. It is sent on fresh/non-recovered attach, including an empty snapshot
+for a draft boundary. `conversation.entry` is the incremental durable commit.
+Tool calls and tool results never appear as conversation feed items.
+
+## Tool, permission, and delegation frames
+
+`tasklist.state` is the full current composer-strip state:
+
+```text
+{ turnId: string | null,
+  items: [{ id, toolName, kind, status, argsPreview, startedAtMs, endedAtMs? }] }
 ```
-{ type: "stream.resumed", recovered: boolean, epoch: number,
-  fromSeq?: number, toSeq?: number }
-```
 
-- `recovered: true` — the per-device buffer held frames in `[fromSeq, toSeq]`
-  within the requested epoch; the gateway replays them (seq order) then goes
-  live. The client applies them idempotently (dedupe by `seq`).
-- `recovered: false` — epoch rolled over (gateway restart) or the buffer was
-  empty / too old. The client treats it as a clean reconnect and **REST-refetches**
-  the conversation history (no WS snapshot).
+`kind` is `foreground` or `background`; `status` is `running`, `done`, or
+`error`. Full state is last-one-wins. `argsPreview` is renderable user content
+and must never be logged.
 
-## `entryId` on committed entries
+A value-aware confirmation uses:
 
-Each committed `conversation.entry` (live WS) and each REST history entry carries
-a stable `entryId` — the device chat mirror's per-path upsert key. **Live and
-REST use different namespaces** (live = gateway UUID; REST = `${conversationId}:${index}`),
-so cross-path reconcile is **replace-on-REST-reload, not merge**: live frames
-write-through by their live `entryId`; a REST reload wipes + repopulates the
-conversation. Within each path `entryId` dedups; the resume replay dedupes by
-`seq`.
+- `permission.request { requestId, toolCallId, toolName, args, description,
+  expiresAtMs }`
+- client `permission.response { requestId, approved }`
+- `permission.resolved { requestId, outcome }`, with `allowed`, `denied`, or
+  `timeout`
 
-## `replyId` — the live-bubble join key
+Clients answer by `requestId`; every resolution path closes the prompt.
 
-**`replyId` is the bubble.** `turnId` is not, and a client that uses it as one is
-broken in a way that only shows up mid-reveal.
+Background delegated work uses
+`delegation.progress { taskId, turnId, agent, status, note? }`. Its `turnId` is
+the dispatching turn, not necessarily the currently active turn. Interrupt and
+barge-in stop the turn and TTS but do not cancel background work.
 
-A ReAct turn narrates, calls a tool, narrates again, then answers — several
-stretches of text under ONE `turnId` that are ONE bubble that grew. So the
-gateway folds them: a whole reply commits as a **single `conversation.entry`**
-whose `entryId` **is** its `replyId`. `turnId` alone cannot express the one
-exception either: a message the person sends **mid-turn** is drawn as its own row
-between two stretches, so everything after it starts a NEW reply. The gateway
-**rotates `replyId` inside one `turnId`** at that point, which means **one turn
-can commit two assistant rows sharing a turnId**.
+## Client frame inventory
 
-Where it rides:
+After authentication, client JSON frames are:
 
-- **`turn.text.delta`** — `replyId` (optional) names the bubble each delta
-  belongs to. Server-minted in `session-runtime.ts`; never derived client-side.
-- **`conversation.entry`** — `replyId` (optional) sits on the FRAME beside
-  `turnId`, and the gateway also stamps it **on the assistant item itself**, so
-  `conversation.snapshot` and REST history carry it with no frame to read.
-- **`turn.started` / `turn.completed` / `turn.aborted`** — turn-scoped, no
-  `replyId`. A turn's completion clears **every** open bubble of that turn.
+- `session.configure`
+- `audio.start`, `audio.end`, and binary microphone audio
+- `text.input`
+- `permission.response`
+- `interrupt`
+- `ping`
+- `session.new`
+- `conversation.activate`
+- `user.preferences.patch`
 
-The client rule, both SDKs:
-
-1. Key the in-flight buffer by `replyId`, **not** by turn. `turn.started` seeds a
-   turn-keyed placeholder (there is no reply id yet, and the bubble must appear
-   before the first token); the first stamped delta **adopts that placeholder in
-   place while it is still empty**. Every `turn.text.delta` on the wire — the
-   live ones and the one an attaching window is replayed — must therefore be
-   stamped, or the placeholder fills unadopted and a second buffer opens beside
-   it: two live bubbles for one reply.
-2. While a bubble reveals, suppress its committed twin **by `replyId` alone**.
-   There is no turn fallback: a turn-keyed match hides BOTH rows of a rotated
-   turn, and the first stretch of the reply vanishes for the length of the
-   reveal. (`ObserveChatUseCase.kt` / `cycle-helpers.ts`.)
-3. Render-key the live bubble by `replyId` too — two open bubbles under one
-   `turnId` is a real state, and a turn-keyed render id makes them collide.
-
-`replyId` is absent on entries with no bubble (a user row, an out-of-band
-activate entry) and on anything written before the store had the column; a
-client falls back to per-turn grouping there, which is correct for exactly those
-rows.
-
-`turnId` on the `conversation.entry` frame remains what it always was — the
-gateway-owned id of the turn that produced the entry, **stripped from the item**
-(the item is a UI-display projection) and present on the frame for assistant
-entries. It is turn METADATA (which turn is live, what Stop cancels), not a
-bubble key. Absent on user-echo / out-of-band entries and on REST history.
-**Clients read both off the wire — they never derive either** (no text-match, no
-ts-window, no position).
-
-## The 2.0 frame inventory
-
-The native orchestrator (spec §7) replaced the Hermes-cycle vocabulary
-wholesale. `cycle.*`, `message.delta`/`message.done`, `connector.audio.*`,
-`task.update`, `tool.confirm_request`, and `cognition.status` are **deleted** —
-not deprecated. Nothing emits or parses them.
-
-`turn.tool.update` — a 2.0 frame in its own right — is **deleted** too, along
-with the `kind: "tool"` conversation feed item. Live tool activity is one
-full-state `tasklist.state` frame; the gateway owns which rows exist and how
-long each lives, so no client derives tile lifetime or bubble anchoring any
-more. Tool calls stay in the store forever for the MODEL projection; they are
-simply not client-facing.
-
-### Gateway → client
-
-| Frame | Payload | Notes |
-|---|---|---|
-| `turn.started` | `turnId`, `trigger` | `trigger` is `user` or `background-completion`. Clients label the bubble from it; they never infer it. Seeds an EMPTY turn-keyed placeholder bubble — see the `replyId` section. |
-| `turn.text.delta` | `turnId`, `text`, `replyId?` | `turnId` is **required**. Its absence in the Plan-2 interim frame made §7.2's back-to-back turns unroutable. `replyId` is the bubble key — **including on the replay a mid-turn joiner is sent**, or that window opens two bubbles for one reply. |
-| `turn.completed` | `turnId` | Clears **every** open bubble of the turn, not just the turn-keyed one. |
-| `turn.aborted` | `turnId`, `cutoff` | `cutoff` is `interrupt` or `barge-in`. Same all-bubbles rule as `turn.completed`. |
-| `conversation.entry` | `item`, `turnId?`, `replyId?` | ONE committed entry per reply — the gateway folds every stretch of a ReAct turn's text into it. `entryId == replyId` for an assistant entry; both ids also ride the frame. |
-| `conversation.snapshot` | `items[]` | Full replace of the client's committed mirror, never a merge. Carries `replyId` on assistant items (there is no frame sidecar to read), which is what makes `render(replay) == render(live)` hold. Also sent EMPTY by the draft handshake — that empty frame is the only thing that clears a client's mirror on "+". |
-| `tasklist.state` | `turnId` (nullable), `items[]` of `{ id, toolName, kind, status, argsPreview, startedAtMs, endedAtMs? }` | The composer task strip — never a chat bubble. FULL STATE, last-one-wins. `id` is the `toolCallId` for a foreground row, the `taskId` for a background one. `turnId` is null when only background rows outlive their turn. `argsPreview` is USER CONTENT: renderable, never loggable. Re-sent to a joining or switching window (`ws-session-configure.ts`, `ws-conversation-activate.ts`) but **not** on the draft / fresh-mint path, so the CLIENT clears the strip at that boundary. |
-| `turn.audio.start` | `turnId`, `encoding`, `sampleRate` | Does **not** stop a previous turn's audio. |
-| `turn.audio.done` | `turnId` | |
-| `permission.request` | `requestId`, `toolCallId`, `toolName`, `args`, `description`, `expiresAtMs` | Carries real argument VALUES — authorization is value-aware (§2.2). |
-| `permission.resolved` | `requestId`, `outcome` | `allowed` / `denied` / `timeout`. Fires on every resolution path so a dialog is never orphaned. |
-| `delegation.progress` | `taskId`, `turnId`, `agent`, `status`, `note?` | `turnId` is the turn that **dispatched** the task, not necessarily the live one. |
-| `playback.stop` | `turnId`, `reason` | The ONLY frame that may flush the client audio queue. |
-
-### Client → gateway
-
-`permission.response` `{ requestId, approved }` replaced `tool.confirm`. Clients
-answer by `requestId`, so a late answer to a superseded prompt is trivially
-ignorable.
-
-## Audio queueing — a new turnId NEVER flushes
-
-Because the gateway never interrupts its own TTS (spec §4.6), a follow-up turn's
-audio arrives while the previous turn's audio may still be playing. Clients
-**queue by `turnId`; they do not replace**. The queue is flushed *only* on
-`playback.stop` (barge-in or interrupt — both user-initiated). A new
-`turn.audio.start` with a different `turnId` must append, never fade or cancel.
-
-Binary audio frames carry **no `turnId`** — the client attributes bytes to the
-most recent `turn.audio.start`. The gateway therefore MUST bracket each turn's
-audio (`start` → frames → `done`) before beginning the next turn's.
-
-Text does **not** overlap the way audio does: one turn runs at a time per
-session (§4.5), so a follow-up turn starts only after the previous one commits.
-"Two bubbles" means one committed bubble plus one live bubble — never two
-simultaneously streaming.
-
-## Capability gate
-
-The binary header + resume behaviour is advertised via the `stream.resume`
-capability in `session.configure.capabilities.supports`. Clients that don't
-advertise it get the legacy untagged-binary behaviour — protects older clients
-and the not-yet-live ESP32 cube; web/mobile opt in independently.
-
-## See also
-
-Design rationale (build-not-buy, memory math, two-timer model):
-`docs/superpowers/specs/2026-06-09-ws-resilience-and-chat-mirror-design.md`.
+Use the exported zod schemas for exact required/defaulted fields and limits.
+Do not add aliases or convenience envelopes outside those schemas.

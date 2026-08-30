@@ -50,6 +50,9 @@ async function* synthesizeImpl(
   session.warmup();
 
   let frameCount = 0;
+  let audioBytes = 0;
+  let textChunkCount = 0;
+  let textChars = 0;
 
   // Background producer: forward raw text deltas → pushText. No aggregation,
   // no stripping — the local-tts service buffers the document and cleans it
@@ -67,19 +70,20 @@ async function* synthesizeImpl(
             await session.ready(signal);
           } catch (err: unknown) {
             log.error("session-ready-failed", {
-              message: err instanceof Error ? err.message : String(err),
+              errorType: err instanceof Error ? "error" : "non-error",
             });
             session.dispose();
             return;
           }
           firstPush = false;
         }
-        log.debug("delta-push", { chars: chunk.length });
+        textChunkCount += 1;
+        textChars += chunk.length;
         session.pushText(chunk);
       }
     } catch (err: unknown) {
       log.error("producer-error", {
-        message: err instanceof Error ? err.message : String(err),
+        errorType: err instanceof Error ? "error" : "non-error",
       });
     } finally {
       session.endInput();
@@ -96,15 +100,10 @@ async function* synthesizeImpl(
         sampleRate: chunk.sampleRate,
       };
       frameCount += 1;
-      log.debug("frame-yield", { byteSize: frame.data.byteLength, encoding: frame.encoding });
+      audioBytes += frame.data.byteLength;
       yield frame;
     }
   } finally {
-    if (signal.aborted) {
-      log.info("synthesize-aborted", { frameCount });
-    } else {
-      log.info("synthesize-done", { frameCount });
-    }
     // Dispose after the drain loop completes — on abort AND on normal
     // completion alike. The local LocalTTSService — see
     // local-tts-provider.ts's "dispose-after-completion" CONTRACT — never
@@ -116,5 +115,11 @@ async function* synthesizeImpl(
     await producer.catch(() => {
       /* logged */
     });
+    const summary = { frameCount, audioBytes, textChunkCount, textChars };
+    if (signal.aborted) {
+      log.info("synthesize-aborted", summary);
+    } else {
+      log.info("synthesize-done", summary);
+    }
   }
 }

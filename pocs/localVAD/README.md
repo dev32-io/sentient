@@ -1,5 +1,12 @@
 # localVAD PoC — Silero VAD + Smart-Turn v3 on Raspberry Pi 5
 
+> **HISTORICAL POC / NOT A SUPPORTED DEPLOYMENT.** This experiment is retained
+> as Raspberry Pi endpointing evidence. Production now runs the native
+> Apple-silicon Whisper STT addon managed by the gateway; see
+> [`deploy/mac-prod/README.md`](../../deploy/mac-prod/README.md). The Pi,
+> container, and benchmark instructions below intentionally describe the PoC as
+> it existed.
+
 A minimum end-to-end proof-of-concept for running a **local** endpointing stack
 on the Pi:
 
@@ -372,7 +379,7 @@ pocs/localVAD/
 
 ## What this PoC is NOT
 
-- A production replacement for the current Deepgram-based pipeline.
+- A production replacement. This remained an experiment; the supported path is now native Whisper STT on macOS.
 - A measurement of end-to-end user-perceived latency (browser network RTT is
   not captured; only server-side deltas are).
 - A test of Smart-Turn accuracy at scale — you'll need a fixed test corpus

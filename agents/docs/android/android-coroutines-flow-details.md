@@ -1,6 +1,6 @@
 # Coroutines and Flow -- Details & Examples
 
-This file expands `.claude/rules/android/android-coroutines-flow.md`.
+This file expands `.claude/rules/android.md`.
 Worked examples for the patterns the rule names.
 
 ## StateFlow vs SharedFlow -- the comparison
@@ -60,7 +60,7 @@ It pauses when the screen is below STARTED.
 
 ```kotlin
 @Composable
-fun ScreenA(vm: AViewModel) {   // VM passed in from the host; built via viewModelFactory, not hiltViewModel()
+fun ScreenA(vm: AViewModel) {   // VM resolved by the route host through Koin
     val state by vm.state.collectAsStateWithLifecycle()
     // `state` is the latest UiState; collection pauses on background.
     Body(state)
@@ -71,7 +71,7 @@ For one-shot events, collect inside a `LaunchedEffect`:
 
 ```kotlin
 @Composable
-fun ScreenA(vm: AViewModel) {   // VM passed in from the host; built via viewModelFactory, not hiltViewModel()
+fun ScreenA(vm: AViewModel) {   // VM resolved by the route host through Koin
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
         vm.events.collect { event ->
@@ -114,7 +114,7 @@ whose results we want. Older in-flight queries are wasted work
 
 ```kotlin
 class SearchViewModel(
-    private val repo: SearchRepository,   // plain constructor; no DI framework
+    private val repo: SearchRepository,   // constructor supplied by Koin
 ) : ViewModel() {
 
     private val query = MutableStateFlow("")
@@ -200,7 +200,7 @@ Right: dispatcher pushed down into the repository; ViewModel
 runs on Main.
 
 ```kotlin
-class UserRepository(private val api: Api) {   // plain constructor; no DI framework
+class UserRepository(private val api: Api) {
     suspend fun fetch(): List<User> = withContext(Dispatchers.IO) {
         api.fetchUsers()
     }

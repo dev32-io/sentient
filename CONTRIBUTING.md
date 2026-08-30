@@ -1,90 +1,111 @@
 # Contributing to Sentient
 
-Thanks for considering a contribution. This is a personal project run as
-open source, so the bar is pragmatism over process — but a few things
-will save us both time.
+Sentient is a personal, open-source family assistant. Keep contributions narrow,
+practical, and consistent with the current architecture.
 
-## Before you open a PR
+## Before starting
 
-- **Open an issue first** if the change is more than a one-liner. It
-  saves you implementing something that turns out to conflict with
-  in-flight work or roadmap direction.
-- **Search existing issues + closed PRs.** The thing you want to fix may
-  already be tracked or rejected.
+- Read [`AGENTS.md`](AGENTS.md) and the rules for the area you will change.
+- Search existing issues and pull requests.
+- Open an issue before a substantial change so its product and architecture
+  boundary can be agreed first.
+- Never include credentials, `.env` files, private state, transcripts, or audio.
 
-## Setting up a dev environment
+## Development setup
 
-You'll need:
-- Bun (https://bun.sh)
-- Docker
-- Python 3.11+ (for the STT service)
-- Optionally: ESP-IDF v5.x for cube firmware work
-
-Then:
+The supported full stack runs on Apple-silicon macOS. Install the prerequisites
+and native service environments described in the
+[README quick start](README.md#run-the-local-stack), including Gitleaks for the
+pre-commit secret scan. The supported Bun version is recorded in
+[`.bun-version`](.bun-version). Then install JavaScript dependencies:
 
 ```bash
-git clone https://github.com/${OWNER}/sentient.git
+git clone <fork-url> sentient
 cd sentient
 source scripts/env.sh
 bun install
-bun run ci        # lint + typecheck + unit tests; should pass clean
+bun run ci
 ```
 
-## Running the stack locally
+Cube work additionally requires the repository-supported ESP-IDF toolchain.
+Android and iOS setup is documented in
+[`android/README.md`](android/README.md) and [`ios/README.md`](ios/README.md).
 
-See `README.md` quick start. After you have a `.env` with provider keys:
+## Run the local stack
+
+Source the environment in each new shell, then use the root stack commands:
 
 ```bash
-docker compose -f deploy/docker/docker-compose.yml up -d
+source scripts/env.sh
+bun run dev
+bun run stack:status
+bun run stack:down
 ```
 
-Open `https://localhost:8888/`.
+Open <https://localhost/> after startup. `https://localhost:8888` is the
+gateway's loopback diagnostic endpoint, not the client URL.
 
-## Coding standards
+Do not use `docker compose up` for the current stack. The gateway is a native
+host process and supervises native services and Docker addons. Do not run the
+gateway with `bun --hot`; the development path uses process-restarting
+`bun --watch` through `bun run dev`.
 
-- **Rules live under `.claude/rules/`.** Cross-cutting rules are at the
-  top level; subproject rules nest under
-  `.claude/rules/<subproject>/`. Each rule file has a `paths:` glob in
-  frontmatter so Claude Code auto-loads matching rules. These are also
-  good context for human contributors — read the ones that apply to the
-  area you're touching.
-- **Style:** Biome handles lint + format (`bun run lint`).
-- **Types:** strict TypeScript (`bun run typecheck`).
-- **Tests:** Vitest. Mock at process boundaries only — see
-  `.claude/rules/testing.md` for the full philosophy.
+## Make a change
 
-## Commit messages
+- Preserve unrelated work and keep one logical change per pull request.
+- Reuse existing boundaries and dependencies before adding new ones.
+- Keep the append-only session store authoritative; do not add conversation
+  mirrors or ambient current-user authority.
+- Treat model output and tool results as untrusted. A tool call is not
+  authorization.
+- Do not log prompts, messages, transcripts, raw frames, secrets, or audio.
+- Update current documentation when behavior or commands change. Preserve dated
+  design and investigation records unless the task explicitly changes them.
 
-Conventional Commits format: `type(scope): description`. Common types:
-`feat`, `fix`, `refactor`, `chore`, `docs`, `test`. Subject under 72
-chars. Body explains the *why* if not obvious from the diff.
+TypeScript is formatted and linted with Biome. Follow the surrounding Swift,
+Kotlin, Python, and ESP-IDF conventions for their subprojects.
 
-If a commit was meaningfully shaped by Claude Code (or any other AI
-pair-programming tool), include the `Co-Authored-By` trailer per the
-[GitHub convention](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/creating-and-editing-commits/creating-a-commit-with-multiple-authors).
+## Checks
 
-## PR review
+Run the narrowest relevant test while iterating, then the affected package
+checks. Common root checks are:
 
-- One logical change per PR. If the diff covers two unrelated things,
-  split it.
-- Pass CI: lint + typecheck + unit tests + build.
-- Update relevant docs (README / ARCHITECTURE / rules / agents/docs)
-  where the change affects them.
+```bash
+source scripts/env.sh
+bun run lint
+bun run typecheck
+bun run test:unit
+# all three
+bun run ci
 
-## Reporting bugs
+git diff --check
+```
 
-Use the `Bug report` issue template. Include:
-- What you expected to happen
-- What actually happened
-- Steps to reproduce
-- Relevant log excerpts (see `gateway/logs/` and `~/.sentient/gateway/logs/`)
+Tests should protect wire contracts, state machines, security controls, and
+reported regressions. Avoid tests for trivial wiring or presentation details
+already covered at a stable consumer boundary. Local end-to-end tests use the
+real local stack; never drive them against production.
 
-## Reporting security issues
+## Pull requests
 
-Do not open a public issue for security vulnerabilities. Email the
-maintainer directly. A `SECURITY.md` with the contact address will land
-post-v1.
+Use Conventional Commits: `type(scope): description`, with a concise subject
+and a body explaining non-obvious decisions. A pull request should:
 
-## Code of conduct
+- explain the behavior change and its boundary;
+- name the checks run and any expected failure;
+- include relevant documentation changes;
+- avoid generated files, unrelated formatting, and drive-by refactors.
 
-See [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md).
+If an AI tool materially shaped a commit, use GitHub's documented co-author
+trailer convention.
+
+## Bugs and security
+
+For a bug, include expected behavior, actual behavior, reproduction steps, and
+sanitized diagnostics. Do not include user content or secrets in logs or issue
+attachments.
+
+Do not report vulnerabilities in a public issue. Follow the private reporting
+instructions in [`SECURITY.md`](SECURITY.md).
+
+Be respectful and follow [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).

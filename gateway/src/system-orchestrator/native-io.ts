@@ -24,9 +24,6 @@ const PID_FILE_SUFFIX = ".pid";
  *  in this long is wedged, not slow. Matches the fixed-deadline precedent set
  *  by SERVICE_HEALTH_TIMEOUT_MS in this module's sibling factory. */
 const VERSION_PROBE_TIMEOUT_MS = 5000;
-/** Child stdout/stderr lines are echoed into the gateway log; truncate so a
- *  chatty service cannot flood it. */
-const CHILD_LOG_PREVIEW_CHARS = 120;
 /** Exit code reported when the child was killed by a signal rather than
  *  exiting normally, so `exited` always resolves with a number. */
 const EXIT_CODE_SIGNALLED = -1;
@@ -123,17 +120,16 @@ function spawnDetached(cmd: string[], opts: NativeSpawnOptions): NativeProcess {
   // Do not hold the gateway's event loop open on this child.
   child.unref();
 
-  pipeToLog(child.stdout, bin, "stdout");
-  // stderr is ALSO retained in a bounded ring: the gateway runs at INFO, the
-  // per-chunk echo below is DEBUG, and a child that dies on startup takes its
-  // only explanation with it. The driver reports this on `native.exited`.
+  pipeOutputMetrics(child.stdout, bin, "stdout");
+  // stderr is also retained in a bounded ring for internal exit recovery. Raw
+  // subprocess output is never copied into this module's logs.
   const stderrRing = createStderrRing();
-  pipeToLog(child.stderr, bin, "stderr", stderrRing.push);
+  pipeOutputMetrics(child.stderr, bin, "stderr", stderrRing.push);
 
   const exited = new Promise<number>((resolve) => {
     child.once("exit", (code) => resolve(code ?? EXIT_CODE_SIGNALLED));
     child.once("error", (err: unknown) => {
-      log.warn("io.child-error", { bin, reason: errMsg(err) });
+      log.warn("io.child-error", { bin, errorClass: safeErrorClass(err) });
       resolve(EXIT_CODE_SIGNALLED);
     });
   });
@@ -172,18 +168,22 @@ function createStderrRing(): { push: (text: string) => void; read: () => string 
   };
 }
 
-function pipeToLog(
+function pipeOutputMetrics(
   stream: NodeJS.ReadableStream | null,
   bin: string,
   channel: "stdout" | "stderr",
   retain?: (text: string) => void,
 ): void {
   if (!stream) return;
+  let bytes = 0;
+  let chunks = 0;
   stream.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
-    retain?.(text);
-    const preview = text.trim().slice(0, CHILD_LOG_PREVIEW_CHARS);
-    if (preview.length > 0) log.debug("io.child-output", { bin, channel, preview });
+    bytes += chunk.byteLength;
+    chunks += 1;
+    retain?.(chunk.toString("utf8"));
+  });
+  stream.once("end", () => {
+    if (chunks > 0) log.debug("io.child-output-summary", { bin, channel, bytes, chunks });
   });
 }
 
@@ -214,7 +214,7 @@ function runVersionProbe(interpreter: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(interpreter, ["--version"], { timeout: VERSION_PROBE_TIMEOUT_MS }, (err, stdout, stderr) => {
       if (err) {
-        log.warn("io.version-probe-failed", { interpreter, reason: errMsg(err) });
+        log.warn("io.version-probe-failed", { interpreter, errorClass: safeErrorClass(err) });
         resolve(null);
         return;
       }
@@ -309,6 +309,10 @@ function isPidAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function safeErrorClass(err: unknown): "error" | "non-error" {
+  return err instanceof Error ? "error" : "non-error";
 }
 
 function errMsg(err: unknown): string {

@@ -1,12 +1,18 @@
-# localSTT — Service Contract
+# localSTT — Historical PoC Service Contract
+
+> **HISTORICAL POC / NOT THE PRODUCTION CONTRACT.** This records the retired
+> Raspberry Pi/SenseVoice experiment on port 8766. Production uses
+> `capabilityServices/WhisperSTTService` on port 8768. Keep the details below as
+> evidence for clients reproducing the PoC; do not use them to implement the
+> active gateway integration.
 
 A WebSocket service that consumes streamed microphone audio and emits
 structured turn events. Wraps Silero VAD + Smart-Turn v3 + SenseVoice-Small
 on the server side; to the caller it looks like a single black-box "STT
 with VAD" component that speaks one turn at a time.
 
-This document specifies the wire contract a gateway client must honor
-to integrate. Stage-specific implementation details (Silero, Smart-Turn,
+This document records the wire contract a client reproducing the PoC had to
+honor. Stage-specific implementation details (Silero, Smart-Turn,
 SenseVoice, the language allowlist, the pre-speech buffer) are deliberately
 left out — they are internal and may change without breaking this contract.
 
@@ -416,7 +422,7 @@ implementation:
 
 ---
 
-## 8. Minimum viable gateway handler
+## 8. Historical minimum client handler
 
 The smallest correct client implementation in Python:
 
@@ -464,7 +470,6 @@ else (debug events, binary WAV payloads, `turn_rejected`, `ping`/`pong`,
 
 ## 9. Versioning
 
-This PoC predates any formal version scheme. When localSTT graduates
-to a production service, expect a `serverVersion` field on the `ready`
-message and a `requiredClientVersion` field for breaking changes. For
-now, pin your gateway to a specific commit of this repository.
+This PoC predates any formal version scheme and did not graduate to the
+supported production path. Reproductions must pin the corresponding repository
+revision.

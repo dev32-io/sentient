@@ -1,198 +1,98 @@
-# Cerebrum Pipeline — Details & Examples
+# Native Gateway Pipeline — Details
 
-## Core Model
+## Owners
 
-Three components own lifecycle. Everything else is stateless or delegates to these:
-
-| Component | File | Owns |
+| Component | File | Responsibility |
 |---|---|---|
-| `AttentionGate` | `cerebrum/attention-gate.ts` | Cycle dispatch. The only code path that fires cycles. |
-| `SessionAudioController` | `session-handlers/session-audio-controller.ts` | Session-level TTS pipeline reference + cycle `AbortController` reference + cancel primitives. |
-| `TaskManager` | `cerebrum/task-manager.ts` | Tool invocation lifecycle. Registers / cancels / counts tasks. |
+| `SessionRuntime` | `../../src/runtime/session-runtime.ts` | One durable session, turn serialization, cancellation, committed feed, task projection, and retention signals. |
+| ReAct loop | `../../src/runtime/react-loop.ts` | Provider iterations, text streaming, tool dispatch, and durable loop output. |
+| Session store | `../../src/store/session-store.ts` | Append-only source of truth for model and client projections. |
+| `ToolBroker` | `../../src/tools/tool-broker.ts` | Role, permission, capability, validation, timeout, and foreground/background dispatch policy. |
+| Turn voice | `../../src/runtime/turn-voice.ts` | Forks streamed text to TTS under the turn's cancellation signal. |
+| Fan-out emitter | `../../src/session-handlers/fan-out-emitter.ts` | Allocates each session frame once, journals it, and sends identical bytes to attached windows. |
 
-The **cognitive cycle** (`cerebrum/cognitive-cycle.ts`) is the atom of work: one LLM request → streamed tokens → tool dispatch → streaming TTS → commit to `ConversationHistory`. Identified by `cycleId`. Takes a single `AbortSignal` from the session. Returns `CycleResult { aborted, shouldContinue, cutoff? }`.
+A turn is the externally visible unit of work. `SessionRuntime` mints its
+`turnId`, emits `turn.started`, runs the ReAct loop, commits the final reply,
+and emits `turn.completed` or `turn.aborted`.
 
-## Cycle Atomicity
+## Serialization and steering
 
-The attention gate enforces "at most one active cycle per session" structurally:
+There is at most one active turn per durable session. A stimulus is appended to
+the store before dispatch:
 
-```typescript
-function dispatchCycle(triggerReason: string, forceFinal: boolean): void {
-  if (activeCyclePromise !== null) {
-    pendingSalience = true;   // accumulate — do not dispatch concurrent cycle
-    return;
-  }
-  // ... fire cycle ...
-  activeCyclePromise = callbacks.onCycle(...).then((outcome) => onCycleComplete(...));
-}
-```
+- If the runtime is idle, it starts a turn.
+- If a turn is active, no second turn starts concurrently. The active ReAct
+  loop re-reads the store at the beginning of every iteration, so newly
+  appended input can steer it without a second queue or conversation mirror.
+- When the turn settles, `SessionRuntime` compares the loop's consumed
+  high-water mark with later user/background trigger entries. Any stimulus the
+  loop did not consume starts a back-to-back turn.
 
-External events arriving during an active cycle land in `ShortTermContext` like any other event; the gate also flips `pendingSalience = true` so it remembers to re-evaluate when the cycle ends:
+Only `user` and `trigger` entries can start turns. Assistant, tool, system, and
+compaction entries are loop output and never self-trigger another turn.
 
-```typescript
-function onCycleComplete(cycleId, outcome): void {
-  activeCyclePromise = null;
-  if (outcome.shouldContinue && !outcome.aborted) {
-    dispatchCycle("react-continuation", false); // ReAct chain, bounded by maxIterations
-    return;
-  }
-  resetChain("natural-end");
-  maybeHandlePendingSalience();  // may fire the next cycle with accumulated events
-}
-```
+## ReAct loop
 
-Result: new user input during an active cycle NEVER starts a concurrent cycle. It lands in short-term context, and the next cycle picks up everything since `lastCycleEndSeq`.
+For every iteration, `runTurn`:
 
-## Three Cancel Primitives
+1. Reads the session store and builds the model projection.
+2. Calls the configured OpenAI-compatible provider with an immutable tool set.
+3. Streams text through `turn.text.delta` and the turn's TTS stream.
+4. Appends each requested `tool_call`, dispatches it through `ToolBroker`, and
+   appends its `tool_result` before the next provider iteration.
+5. Commits the terminal assistant entry when no further tool call is requested.
 
-`SessionAudioController` owns three primitives. Each maps to one concern.
+`orchestrator.loop.max_iterations` bounds the loop. The final allowed iteration
+receives no tools, forcing a content-only answer rather than ending silently on
+a tool request. Provider calls and stream gaps are deadline-bounded and receive
+the turn's `AbortSignal`.
 
-### `bargeIn()` — voice-first, keep tasks
+## Foreground and background tools
 
-Fired by mic-onset (speech VAD) during active TTS.
+Foreground calls settle inside the current loop iteration. Background calls
+return a task receipt immediately; delegated work continues independently and
+its eventual result returns as a `background-completion` stimulus. That
+stimulus can steer an active turn or start a new one.
 
-```typescript
-bargeIn(): void {
-  if (!hasActiveTts()) return;                             // no-op outside TTS window
-  sendWireMessage({ type: "playback.stop", reason: "barge-in" });
-  activeTtsAbortController?.abort("barge-in");
-  cycleAbortRef.current?.abort("barge-in");                // NEW: kill LLM stream too
-  // tasks untouched — user may still want them to complete
-}
-```
+Live tool UI is `tasklist.state`, a full-state composer strip. Tool call/result
+entries remain in the store for the model projection but are not conversation
+feed items. Hermes may be used only behind the bounded, one-shot
+`delegateTask` path.
 
-Why abort the cycle: otherwise the LLM keeps generating tokens (billed, discarded) until natural end, and the `pendingSalience` check can't fire the next cycle until that finishes. User's new speech becomes the next turn much faster when the cycle is aborted.
+## Cancellation
 
-### `interrupt()` — explicit user stop, full cancel
+`SessionRuntime.bargeIn()` and `SessionRuntime.interrupt()` both:
 
-Fired by `{ type: "interrupt" }` wire message (UI Stop button / Esc).
+- abort the current turn signal when a turn is active;
+- stop this session's draining TTS;
+- emit `playback.stop` so clients flush queued audio;
+- commit any partial assistant output with `barge-in` or `interrupt` cutoff;
+- emit `turn.aborted` for the active turn.
 
-```typescript
-interrupt(): void {
-  sendWireMessage({ type: "playback.stop", reason: "interrupt" });
-  activeTtsAbortController?.abort("interrupt");
-  taskManager.cancelInterruptable("interrupt");
-  cycleAbortRef.current?.abort("interrupt");
-  stageCancelledTaskIdsForCommit();
-}
-```
+They do not cancel background work. Background completion is still appended and
+processed later. A new turn by itself never stops earlier audio.
 
-Full hard stop. Cycle's commit records `cutoff: { kind: "interrupt", cancelledTaskIds }`.
+## STT and TTS
 
-### `cancelTask(taskId)` / `cancelInterruptable(reason)` — task only
+The native gateway reaches both capability services over loopback:
 
-Fired by the `cancel_task` / `cancel_all_tasks` effects. Touches tasks only — cycle and TTS keep running so the model can emit an acknowledgement.
+- whisper-stt: `ws://127.0.0.1:8768`
+- LocalTTSService: `ws://127.0.0.1:8770`
 
-```typescript
-cancelTask(taskId: string, reason: string): void {
-  taskManager.cancel(taskId, reason);
-}
-```
+The STT service owns VAD, semantic turn detection, and transcription. PCM input
+is downsampled to 16 kHz by the adapter; Opus packets are forwarded for
+service-side decoding. LocalTTSService receives text control frames and emits
+binary Opus audio at 48 kHz.
 
-### Composition Is Explicit
+## Wire summary
 
-There is no `stopEverything()` convenience. When a caller wants response + tasks cancelled (the Stop button), it calls `interrupt()` which internally runs all four steps. When the model calls `cancel_all_tasks`, only `taskManager.cancelInterruptable(...)` runs — not the others. No hidden fan-out, no hidden flags.
+Client input includes `text.input`, `audio.start`, binary audio, `audio.end`,
+`interrupt`, and `permission.response`. Session output includes:
 
-## Wire Messages
+- `turn.started`, `turn.text.delta`, `turn.completed`, `turn.aborted`
+- `turn.audio.start`, binary audio, `turn.audio.done`
+- `conversation.entry` and attach-time `conversation.snapshot`
+- `tasklist.state`, `permission.*`, `delegation.progress`
+- `playback.stop`
 
-### Client → Server
-
-| Message | Handler | Effect |
-|---|---|---|
-| `{ type: "interrupt" }` | `ws-handlers.ts` | Calls `SessionAudioController.interrupt()` |
-| `{ type: "text.input", text }` | `ws-handlers.ts` | Injects into `ShortTermContext`; attention gate decides |
-| Audio frames | `ws-session-configure.ts` | STT; speech onset fires `bargeIn()`, speech-final injects into context |
-
-### Server → Client
-
-| Message | Source | When |
-|---|---|---|
-| `{ type: "playback.stop", cycleId, reason: "interrupt" \| "barge-in" }` | `SessionAudioController` | On either cancel primitive that touches TTS |
-| `{ type: "cycle.aborted", cycleId, reason }` | `cognitive-cycle.ts` | Cycle AbortSignal tripped |
-| `{ type: "message.done", cycleId }` | `cognitive-cycle.ts` | Token stream ended, TTS draining |
-| `{ type: "conversation.entry", item }` | `cognitive-cycle.ts` | Assistant entry committed; `cutoff: { kind: "interrupt" \| "barge-in", cancelledTaskIds? }` if applicable |
-
-## Effect Definition
-
-Every LLM-callable tool is an `EffectDefinition` under `gateway/src/effects/`. Contract:
-
-```typescript
-interface EffectDefinition<Args> {
-  name: string;                // LLM-facing tool name
-  description: string;         // LLM-facing description
-  schema: JSONSchema;          // for LLM tool-call validation
-  argsValidator: (raw: unknown) => Args;  // runtime validation
-  impact: "auto" | "requires-confirm" | ...;
-  rolesAllowed: UserRole[];    // capability gate
-  capabilities: Capability[];  // required session capabilities
-  interruptable: boolean;      // false = survives `interrupt()`
-  providesContext: boolean;    // true = afferent injection
-  alwaysAvailable: boolean;    // exposed even with no matching capability
-  handler: (args: Args, ctx: EffectContext) => Promise<EffectResult>;
-}
-```
-
-Always register effects through `effect-wrapper.ts` — never invoke `handler` directly.
-
-### Effects That Orchestrate Cancellation
-
-Both cancellation effects are `interruptable: false` so they survive the cascade they trigger:
-
-```typescript
-// cancel_all_tasks (renamed from the old `interrupt` effect)
-createCancelAllTasksEffect({ taskManager }): EffectDefinition<{}> {
-  return {
-    name: "cancel_all_tasks",
-    description: "Cancel every in-flight task you have running. Call this when the user says 'stop' or 'never mind'. After calling, reply with a brief acknowledgement.",
-    interruptable: false,  // must not self-cancel
-    async handler() {
-      taskManager.cancelInterruptable("cancel_all_tasks");
-      return { ok: true, data: { cancelled: true } };
-    },
-  };
-}
-
-// cancel_task — fine-grained variant
-createCancelTaskEffect({ taskManager }): EffectDefinition<{ task_id: string }> {
-  return {
-    name: "cancel_task",
-    description: "Cancel a single in-flight task by its task_id.",
-    interruptable: false,
-    async handler({ task_id }) {
-      taskManager.cancel(task_id, "cancel_task");
-      return { ok: true, data: { task_id } };
-    },
-  };
-}
-```
-
-Neither effect aborts the cycle or TTS. The model's acknowledgement text streams naturally after the tool call completes.
-
-## ReAct Continuation & Chain Reset
-
-A cycle can report `shouldContinue: true` (set by effects that ask the model to see the result and continue). The gate dispatches the next cycle immediately, bounded by `maxIterations`. The chain counter:
-
-- Resets on any external stimulus (`resetChain("external-stimulus")` in `handleInject`).
-- Resets on barge-in (barge-in counts as external stimulus — the user's new speech will reset once STT finalizes it).
-- Resets on natural chain end (cycle reports `shouldContinue: false`).
-- Resets on aborted cycle (defensive, in `onCycleComplete`).
-
-When the chain hits `maxIterations - 1`, the gate fires ONE more cycle with `forceFinal: true`: the model is forced to produce a content-only closing reply, no tools. Prevents silent mid-chain cutoff.
-
-## Echo Suppression
-
-Echo suppression is a mic-level concern in `ws-session-configure.ts` — it gates STT input based on whether assistant audio is currently playing. It's NOT a cycle or turn concern; no "cooldown after audio.done" hack is needed because the gate is keyed on live audio lifecycle, not a timer.
-
-## What Changed from the Pre-Cerebrum Architecture
-
-For historical context only — do not reintroduce any of these:
-
-- `ContinuousSession` / `TurnController` — removed. Replaced by `AttentionGate` + `SessionAudioController` + cognitive cycles.
-- Three-tier frame hierarchy (`SystemFrame` / `DataFrame` / `ControlFrame`), `InterruptionFrame`, `UninterruptibleFrame` — removed. Frames-as-messages was the Pipecat-style model; cerebrum uses async generators directly plus the effects system for tool-level semantics.
-- `SentenceAggregator` as a pipeline processor — replaced by `content-tts-pipeline.ts` + `utterance-aggregator.ts` effect.
-- Dual-path barge-in (client VAD message + server confidence gate) — removed. Barge-in is now a single path: mic-onset in speech mode fires `SessionAudioController.bargeIn()`.
-- Echo suppression cooldown timer — removed. Mic suppression is keyed on live audio lifecycle.
-
-## Drift Risk
-
-If you find code that references `TurnController`, `ContinuousSession`, `InterruptionFrame`, `UninterruptibleFrame`, `activeTurn`, or `deepgramVadActive`, that code is stale and needs cleanup. Report it.
+The exact contract is [`../../../shared/protocol/WIRE.md`](../../../shared/protocol/WIRE.md).

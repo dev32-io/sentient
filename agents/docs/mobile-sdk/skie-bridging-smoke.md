@@ -1,5 +1,11 @@
 # SKIE Bridging Smoke — SdkEvent Exhaustive Swift Enum
 
+> **Historical verification snapshot (2026-06-06).** This records the generated
+> enum at that date and still uses the retired `cycleId`/`CycleDone` surface. It
+> is not current API guidance. Use
+> `shared/mobile-sdk/src/commonMain/kotlin/io/sentient/mobilesdk/sdk/SdkEvent.kt`
+> for the current `turnId`-based event contract.
+
 **Verification date:** 2026-06-06
 **Task:** 1.10 (KMP refactor series)
 **Status:** FULL SWIFTC TYPECHECK PASS

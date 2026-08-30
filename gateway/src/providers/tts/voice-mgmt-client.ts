@@ -87,7 +87,7 @@ function openSocket(factory: VoiceMgmtSocketFactory, url: string): WebSocket | n
     socket.binaryType = "arraybuffer";
     return socket;
   } catch (err) {
-    log.warn("connect-failed", { reason: err instanceof Error ? err.message : String(err) });
+    log.warn("connect-failed", { errorType: err instanceof Error ? "error" : "non-error" });
     return null;
   }
 }

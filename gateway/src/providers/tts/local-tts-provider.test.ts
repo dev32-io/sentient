@@ -1,3 +1,4 @@
+import { configure, reset } from "@logtape/logtape";
 import { describe, expect, it, vi } from "vitest";
 import { type LocalTtsProviderConfig, createLocalTtsProvider } from "./local-tts-provider.ts";
 import type { TTSProvider } from "./tts-types.ts";
@@ -196,6 +197,68 @@ describe("createLocalTtsProvider — audioFrames()", () => {
     const r2 = await gen.next();
     expect(r2.done).toBe(true);
     expect(r2.value).toBeUndefined();
+  });
+});
+
+describe("createLocalTtsProvider — privacy-safe logging", () => {
+  it("logs text length and audio aggregates without text previews or per-frame diagnostics", async () => {
+    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
+    await configure({
+      sinks: {
+        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
+      },
+      loggers: [
+        { category: ["sentient", "tts", "local-tts"], sinks: ["test"], lowestLevel: "debug" },
+        { category: ["sentient", "tts", "local-tts-socket"], sinks: ["test"], lowestLevel: "debug" },
+        { category: "logtape", sinks: [], lowestLevel: "error" },
+      ],
+      reset: true,
+    });
+
+    try {
+      const { provider, getWs } = await readyProvider();
+      const sensitiveText = "private family transcript";
+      provider.pushText(sensitiveText);
+      getWs()?._receiveBinary(new Uint8Array([1, 2, 3]).buffer);
+      getWs()?._receiveBinary(new Uint8Array([4, 5]).buffer);
+      getWs()?._receiveText({ type: "done", requestId: "req-1", ttfa_ms: 10, rtf: 0.1, audio_seconds: 1 });
+
+      for await (const _chunk of provider.audioFrames(new AbortController().signal)) {
+        // drain
+      }
+
+      expect(records.find((record) => record.message === "push-text")?.properties).toEqual({
+        chars: sensitiveText.length,
+      });
+      expect(records.find((record) => record.message === "done-received")?.properties).toEqual(
+        expect.objectContaining({ audioFrameCount: 2, audioBytesReceived: 5 }),
+      );
+      getWs()?.onerror?.({ message: sensitiveText } as unknown as Event);
+      getWs()?._receiveText({ type: "error", reason: sensitiveText });
+      const broken = setup({
+        socketFactory: () => {
+          const error = new Error(sensitiveText);
+          error.name = sensitiveText;
+          throw error;
+        },
+      });
+      broken.provider.warmup();
+
+      expect(records.find((record) => record.message === "server-error")?.properties).toEqual({
+        errorCategory: "service-error",
+        reasonLength: sensitiveText.length,
+      });
+      expect(records.find((record) => record.message === "ws-error")?.properties).toEqual({
+        errorCategory: "websocket-error",
+        messageLength: sensitiveText.length,
+      });
+      expect(records.find((record) => record.message === "ws-open-failed")?.properties).toEqual({ errorType: "error" });
+      expect(records.some((record) => record.message === "audio-chunk-received")).toBe(false);
+      expect(JSON.stringify(records)).not.toContain(sensitiveText);
+      provider.dispose();
+    } finally {
+      await reset();
+    }
   });
 });
 

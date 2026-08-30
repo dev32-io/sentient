@@ -60,7 +60,11 @@ export function openLocalTtsSocket(cfg: LocalTtsSocketConfig, handlers: LocalTts
     return deadSocket();
   }
 
-  log.info("ws-open-requested", { url: connectUrl });
+  log.info("ws-open-requested", {
+    format: cfg.format,
+    sampleRate: cfg.sampleRate,
+    voiceConfigured: cfg.voice !== undefined,
+  });
   return wireSocket(socket, cfg, handlers);
 }
 
@@ -71,8 +75,7 @@ function openRawSocket(factory: LocalTtsSocketFactory, url: string): WebSocket |
     socket.binaryType = "arraybuffer";
     return socket;
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    log.warn("ws-open-failed", { url, reason });
+    log.warn("ws-open-failed", { errorType: err instanceof Error ? "error" : "non-error" });
     return null;
   }
 }
@@ -137,7 +140,7 @@ function attachSocketHandlers(
 
   socket.onerror = (event) => {
     const msg = (event as { message?: string }).message ?? "local-tts WebSocket error";
-    log.error("ws-error", { message: msg });
+    log.error("ws-error", { errorCategory: "websocket-error", messageLength: msg.length });
     handlers.onError(new Error(msg));
   };
 }

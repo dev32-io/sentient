@@ -1,6 +1,12 @@
 # localTTS PoC — local TTS bake-off for sentient
 
-Goal: replace paid cloud **Fish Audio** with a **local, private** TTS on the Mac mini
+> **HISTORICAL POC / NOT A DEPLOYMENT SELECTION.** This bake-off is retained as
+> benchmark evidence. Its winner is not the supported production engine.
+> Production now uses the gateway-managed native Apple-silicon
+> `capabilityServices/LocalTTSService` with Qwen3-TTS; see
+> [`deploy/mac-prod/README.md`](../../deploy/mac-prod/README.md).
+
+The experiment's goal was to replace paid cloud **Fish Audio** with a **local, private** TTS on the Mac mini
 (`mini0`, base M4 16GB) that is (a) on par with Fish quality, (b) supports **voice
 cloning**, and ideally (c) has community voices. One PoC per candidate, one shared
 harness so the numbers compare.
@@ -60,9 +66,9 @@ See `RESULTS.md` for the full generated table. Headline (M3 Pro; mini = ×1.3):
 | omnivoice | bf16 | 4757 | 0.74 | 0.96 | ✅ | no streaming headroom |
 | voxtral | bf16 (4B) | 18536 | 3.38 | 4.4 | ✅ | 4B — dead on this hardware |
 
-## Verdict
+## Historical verdict at the time of the bake-off
 
-**Chatterbox Turbo 8bit** — cloning + fast enough to stream (RTF 0.36 on the mini, per-sentence
+**Chatterbox Turbo 8bit** won this experiment — cloning + fast enough to stream (RTF 0.36 on the mini, per-sentence
 ~0.72s inside a 1s budget) + the ElevenLabs-blind-test-winning quality + zero tuning + 1.4GB.
 Kokoro stays the fallback if cloning is ever dropped (12× realtime, 54 preset voices).
 

@@ -1,3 +1,4 @@
+import { configure, reset } from "@logtape/logtape";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appendLanguageQuery, createLocalSttAdapter } from "./local-stt-adapter.ts";
 import type { STTAdapter, STTAdapterConfig } from "./stt-adapter-types.ts";
@@ -234,14 +235,35 @@ describe("createLocalSttAdapter — events()", () => {
     controller.abort();
   });
 
-  it("yields turn_dropped on turn_rejected", async () => {
+  it("yields turn_dropped and does not log an unknown rejection body", async () => {
+    const records: Array<{ message: string; properties: Record<string, unknown> }> = [];
+    await configure({
+      sinks: {
+        test: (record) => records.push({ message: record.message.map(String).join(""), properties: record.properties }),
+      },
+      loggers: [
+        { category: ["sentient", "stt"], sinks: ["test"], lowestLevel: "debug" },
+        { category: "logtape", sinks: [], lowestLevel: "error" },
+      ],
+      reset: true,
+    });
+    const sensitiveReason = "PRIVATE_REJECTED_TRANSCRIPT";
     const adapter = await openedAdapter();
     const controller = new AbortController();
-    const gen = adapter.events(controller.signal);
-    currentWs?._receiveText({ type: "turn_rejected", turnIdx: 3, reason: "empty_transcript" });
-    const { value } = await gen.next();
-    expect(value).toEqual({ type: "turn_dropped", turnIdx: 3 });
-    controller.abort();
+    try {
+      const gen = adapter.events(controller.signal);
+      currentWs?._receiveText({ type: "turn_rejected", turnIdx: 3, reason: sensitiveReason });
+      const { value } = await gen.next();
+      expect(value).toEqual({ type: "turn_dropped", turnIdx: 3 });
+      expect(records.find((record) => record.message === "turn-dropped")?.properties).toEqual({
+        turnIdx: 3,
+        reason: "unknown",
+      });
+      expect(JSON.stringify(records)).not.toContain(sensitiveReason);
+    } finally {
+      controller.abort();
+      await reset();
+    }
   });
 
   it("skips unknown types, malformed JSON, and binary frames", async () => {

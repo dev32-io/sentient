@@ -1,122 +1,89 @@
-# Egress Proxy for Hermes Containers
+# Egress proxy for managed addons
 
-This directory defines the tinyproxy instance that sits between each Hermes
-agent container and the outside world. Read this before changing
-`tinyproxy.conf` or `filter.txt` — the threat model is subtler than
-"allowlist everything we trust."
+This directory preserves the tinyproxy source configuration. At runtime the
+gateway seeds the active copies under:
 
-## What this proxy is for
+```text
+~/.sentient/gateway/config/egress-proxy/
+```
 
-The confined `sentient-outbound-worker` performs first-class web search and
-content fetches, using SearXNG for metasearch. Browsing reaches unpredictable
-sites, so the proxy is deliberately
-**open-by-default** for HTTPS with a **denylist** for known-bad hosts.
+and manages the `sentient-egress-proxy` container directly. It is not a compose
+runtime service. The active templates live in
+`gateway/templates/services/egress-proxy.*`; keep intentional source changes
+aligned with those templates.
 
-The proxy exists to provide:
+## What uses it
 
-1. **A place to block known-bad hosts** when an incident, report, or OSS
-   blocklist (StevenBlack, URLhaus, Spamhaus) identifies them.
-2. **Outbound traffic logging** for forensics / audit.
-3. **A central network chokepoint** if policy ever tightens — it's much
-   easier to tune one config than to rewrite container networking later.
+The proxy is the only public-network exit for containers on the internal addon
+network. Today that includes:
 
-It is **not** the primary defense against:
+- `sentient-outbound-worker` for first-class web fetching; and
+- `sentient-searxng` for search-engine requests.
 
-- **Prompt injection.** Handled by the gateway's injection scanner
-  (`gateway/src/security/injection-scanner.*`).
-- **Risky tool invocations.** Handled at the MCP tool boundary by the role
-  gate (`canExecute(role, tier)`, `shared/protocol/src/roles.ts`) and each
-  person's per-tool permission — `allow` / `ask` / `deny` / `off`, resolved
-  in `gateway/src/tools/`. A `confirm`-tier tool an `ask` resolves to is a
-  real permission prompt, never auto-approved.
-- **Runaway agents.** Handled by the session risk accumulator.
-- **Data exfiltration via DNS.** Handled upstream — see *DNS caveat* below.
+Hermes is a one-shot host executable, not a managed container, and does not use
+this proxy as its runtime boundary.
 
-If you find yourself adding allowlist entries here, stop and reconsider.
-This file is a denylist.
+## Policy
 
-## Why not an allowlist?
+Browsing reaches unpredictable sites, so tinyproxy is deliberately
+**open by default** for HTTP/HTTPS and applies a hostname denylist from
+`filter.txt`. The proxy provides:
 
-An allowlist works great for **fixed-endpoint agents** — SQL copilots, ops
-bots, internal API callers. It is the wrong tool for a browsing agent:
+1. a central place to block known-malicious hosts;
+2. outbound request logging for operational diagnosis; and
+3. a network chokepoint that keeps internal-only addons from obtaining direct
+   public egress.
 
-- Every new site the user asks about becomes a proxy 403.
-- Agents start preferring stale allowlisted sources over better ones they
-  can't reach, silently degrading answer quality.
-- Operators end up whack-a-moling the allowlist and giving up.
-
-Production LLM-agent deployments (ChatGPT browsing, Claude computer use,
-Perplexity, Brave Leo) all use some combination of:
-
-- Open or lightly-filtered network egress.
-- DNS-layer blocklists for known-malicious hosts.
-- Reputation checks at fetch time (Google Safe Browsing, URLhaus).
-- Strong content-side scanners on what the agent receives back.
-
-We lean on the same pattern. The network layer is permissive by design; the
-heavy lifting happens at the content layer.
-
-## DNS caveat (important)
-
-**This proxy does not filter DNS.** If a prompt-injection payload tricks an
-agent into resolving `exfil.attacker.example`, the DNS query leaks even if
-the HTTPS connect is later blocked by this proxy's denylist.
-
-In Kevin's home deployment this is covered by a Pi-hole upstream of the
-Docker host, which filters DNS for the entire LAN. **If you are deploying
-Sentient elsewhere, you should either:**
-
-- **Point Docker / Hermes containers at a filtered DNS** such as Quad9
-  (`9.9.9.9`, `149.112.112.112`), NextDNS, or Cloudflare 1.1.1.1 for
-  Families (`1.1.1.3`). One-liner in `docker-compose.yml`:
-  ```yaml
-  services:
-    hermes-alice:
-      dns: ["9.9.9.9", "149.112.112.112"]
-  ```
-- **Or run a DNS sinkhole** (Pi-hole, AdGuard Home, NextDNS self-host) at
-  the network edge and point the Docker host's resolver at it.
-
-Do not ship to untrusted users without one of these in place. The content
-scanners help, but DNS exfiltration bypasses them entirely.
+It is not the primary defense against prompt injection or unsafe tool calls.
+Those controls live at the gateway's content-scanning, authorization, and tool
+mediation boundaries.
 
 ## Matching rules
 
-Hostname-only matching (`FilterURLs Off`, `FilterExtended Off`):
+The shipped settings use hostname matching (`FilterURLs Off`,
+`FilterExtended Off`, `FilterDefaultDeny No`):
 
-- One hostname per line in `filter.txt`. Plain text, no regex, no glob.
-- Matches both plain HTTP and HTTPS CONNECT.
-- **Subdomains are not implied.** `example.com` in the filter does NOT
-  block `www.example.com` — list each explicitly.
-- Comments (lines starting with `#`) are ignored.
+- one hostname or suffix pattern per line in `filter.txt`;
+- no regular expressions or globs;
+- comments start with `#`; and
+- matching applies to plain HTTP and HTTPS `CONNECT` requests.
 
-## Seeding the denylist
+Validate tinyproxy's exact suffix behavior before relying on a broad parent
+entry; list security-critical hostnames explicitly.
 
-The repo ships with `filter.txt` empty. Two sensible starting points:
+The repository denylist is intentionally small. Candidate external sources
+include StevenBlack hosts and URLhaus, but importing or refreshing a third-party
+list is an operator policy decision, not an automated repository behavior.
 
-- **StevenBlack/hosts** — well-maintained hostname-based blocklist that
-  covers ads, trackers, and known malware hosts:
-  <https://github.com/StevenBlack/hosts>
-- **URLhaus** — abuse.ch's active-malware host list:
-  <https://urlhaus.abuse.ch/downloads/hostfile/>
+## DNS caveat
 
-Both publish host-per-line text files compatible with tinyproxy's filter
-format after minor cleanup. A production deployment would sync one of these
-on a timer (systemd unit, cron, or a sidecar) and restart tinyproxy.
+**tinyproxy does not filter DNS.** A filtered resolver or network DNS sinkhole
+is still required if DNS exfiltration is in scope. Docker's resolver path must
+ultimately use that filtered upstream; adding DNS settings to a retired compose
+service does nothing to gateway-created containers.
 
-## Ports
+## Apply and inspect changes
 
-Hermes containers route both HTTP (port 80) and HTTPS (port 443) through
-this proxy via the `HTTP_PROXY` / `HTTPS_PROXY` environment variables set
-in each Hermes service in `deploy/docker/docker-compose.yml`. `CONNECT`
-port 443 is whitelisted explicitly.
+Edit the active files on the host, not just this source directory:
 
-## Operating notes
+```text
+~/.sentient/gateway/config/egress-proxy/tinyproxy.conf
+~/.sentient/gateway/config/egress-proxy/filter.txt
+```
 
-- **Logs:** `docker logs sentient-egress-proxy`. Every denied request
-  shows up with `Proxying refused` + hostname. Useful when diagnosing
-  "why did this fetch fail?"
-- **Reload after config change:** `docker compose restart egress-proxy`.
-- **Tests:** exercise fetch manually with
-  `docker exec hermes-alice curl -sS https://example.com/` — should
-  succeed with the default denylist-only policy.
+Then restart the managed container:
+
+```bash
+docker restart sentient-egress-proxy
+docker logs sentient-egress-proxy
+```
+
+The gateway's health watchdog continues to own reconciliation. The proxy has no
+host-published port, so tests must run from a container on the managed addon
+networks or through the supported web-search/fetch path; old
+`docker exec hermes-alice ...` examples no longer apply.
+
+Repository-owned addon images are baked with
+`deploy/mac-prod/docker-compose.yml`, but the egress proxy uses the configured
+public `kalaksi/tinyproxy` image and is pulled/created by the gateway
+orchestrator.

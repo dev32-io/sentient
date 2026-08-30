@@ -234,12 +234,6 @@ async function drainAudio(
       sink.audioFrame(turnId, frame.data);
       frameCount += 1;
       bytesSent += frame.data.byteLength;
-      log.debug("turn-voice.audio.frame", {
-        sessionId,
-        turnId,
-        frameIndex: frameCount,
-        byteSize: frame.data.byteLength,
-      });
     }
     if (started && !signal.aborted) {
       sink.audioDone(turnId);
@@ -256,7 +250,8 @@ async function drainAudio(
       sessionId,
       turnId,
       frameCount,
-      reason: err instanceof Error ? err.message : String(err),
+      bytesSent,
+      errorType: err instanceof Error ? "error" : "non-error",
     });
   } finally {
     if (signal.aborted) {

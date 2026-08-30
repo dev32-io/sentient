@@ -1,64 +1,62 @@
 # Roadmap
 
-This is what's done, what's in progress, and what's coming.
+Sentient serves one household from an Apple-silicon Mac. This file describes
+current product direction, not the dated implementation history under
+`docs/superpowers/`.
 
-## Done
+## Current foundation
 
-- **Gateway** — Bun/TypeScript voice gateway, production-stable. Cognitive
-  cycle, attention gate, salience accumulation, barge-in arbitration,
-  interrupt controller, decorator-pattern TTS pipeline, MCP host, Hermes
-  adapter client. PASETO browser auth + shared-token service auth.
-- **STT Service** — local Python service (Silero VAD + Smart-Turn v3 +
-  SenseVoice-Small) shipping over WebSocket.
-- **Web client** — Preact toggle-to-talk UI with settings + admin panes,
-  PIN login, WebRTC AEC loopback.
-- **Hermes integration** — per-user worker pool managed by supervisord
-  inside a single `sentient-hermes` container.
-- **Local + Pi deployment** — docker compose for both targets, host-side
-  `~/.sentient/` layout for persistent state.
+- Native Bun gateway with provider calls, streamed ReAct, tool mediation,
+  compaction, and gateway-owned durable sessions.
+- Multi-window session attachment, reconnect replay, past-session history, and
+  streamed tool and permission state.
+- Local Whisper STT, Qwen3 TTS, Markdown memory, optional Deep Memory recall,
+  and nightly consolidation.
+- Web research, calendar, Home Assistant, Music Assistant, reusable skills, and
+  optional one-shot Hermes delegation.
+- Native macOS production install under `launchd`, with gateway-supervised
+  native services and Docker addons.
+- Production Preact web client plus active Android, iOS, ESP32 cube, and devtool
+  clients.
 
-## In progress
+## Active priorities
 
-### ESP32-S3 cube (Phase 5.5)
+### Mobile clients
 
-A small hardware client with a touchscreen, mic, and speaker that talks to
-the same gateway. Phase 1–5 done: foundation, display + touch, speaker,
-sentient connect, opus end-to-end pivot. Phase 6 (cube SDK extraction)
-underway. See `esp32/STATUS.md` and `esp32/cube/` for current state.
+Keep the Android and iOS apps aligned with the shared session and wire
+contracts. The native apps already implement text chat, history, settings,
+voice controls, permissions, and task state. Remaining validation is focused on
+the complete physical acoustic voice loop and release quality rather than a
+future mobile-client launch claim.
 
-## Planned, not yet started
+### ESP32 cube
 
-### Android client
+Bring the cube onto the complete current session protocol while continuing the
+reusable firmware SDK extraction. The hardware, Opus audio path, pairing,
+display, touch, microphone, speaker, logging, and companion diagnostics are
+already development surfaces. See [`esp32/STATUS.md`](esp32/STATUS.md).
 
-A Kotlin/Compose native client that uses the same WebSocket protocol as
-the browser. Will share configuration shape with the web client via the
-existing protocol package. See `android/STATUS.md`.
+### Reliability and safety
 
-### iOS client
+Continue hardening durable task execution, reconnect and multi-window behavior,
+content trust boundaries, capability path handling, and addon recovery. Stable
+wire, state-machine, and authorization boundaries should gain regression tests
+when a concrete gap is found.
 
-Same idea, Swift/SwiftUI. See `ios/STATUS.md`.
+### Operations
 
-### Latency measurement + tuning
+Keep the Apple-silicon installer, health-gated rollback, local model packaging,
+and loopback/container network boundaries reproducible. Production remains
+observational-only outside an explicitly authorized deployment action.
 
-Tabulate p50/p90/p99 at each pipeline stage (mic capture → VAD → STT
-first-partial → STT final → LLM first-token → TTS first-byte → speaker
-first PCM). Commit to `docs/latency.md`. Tune the slow legs.
+## Product boundaries
 
-### Demo capture
+- Self-hosted household assistant; no hosted Sentient service is planned here.
+- Apple-silicon macOS is the supported full-stack host. Raspberry Pi deployment
+  is retired.
+- The gateway remains the agent runtime. Hermes remains optional one-shot
+  delegation, not a standing worker fleet.
+- Mobile apps remain thin native clients over shared KMP state and transport.
 
-A 30–60 second screen capture of a conversation including a barge-in,
-linked from the README.
-
-## Won't do (in this repository)
-
-- **Hosted demo** — the system runs on your own hardware. There's no
-  managed instance.
-- **Pre-built binary releases** — install is `docker compose build` from
-  source. Pre-built images can come later if there's demand from
-  contributors.
-- **Translations / i18n** — out of scope for the v1 release.
-
-## Contributing to the roadmap
-
-Open an issue if there's a missing feature you'd want, or a "good first
-issue" tag that interests you. See `CONTRIBUTING.md`.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current system and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for development commands.

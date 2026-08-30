@@ -1,86 +1,79 @@
 # Coroutines / Flow Public Surface — Details
 
-The SDK's public API uses coroutines primitives that SKIE can cleanly bridge to Swift async/await and AsyncSequence. The surface is SPLIT across three flows so streaming is lossless.
+This file expands `.claude/rules/mobile-shared.md`. The KMP SDK exposes latest-value state as `StateFlow`, ordered one-shot notifications as a buffered `SharedFlow<SdkEvent>`, and asynchronous commands as `suspend` functions where a result is awaited.
 
-## The three surfaces
+## Public observable surfaces
 
 ```kotlin
-// shared/mobile-sdk/.../sdk/SentientSdk.kt
-class SentientSdk(/* config, bundle, scope … */) {
-    // continuous state — conflation is fine, latest value wins
-    val connection: StateFlow<ConnectionState>     // transport status + voice/audio axis
-    val timeline:   StateFlow<List<ChatMessage>>   // committed message history
-
-    // one-shot, no-loss notifications — a SharedFlow, NOT a StateFlow
+class SentientSdk(/* ... */) {
+    val connection: StateFlow<ConnectionState>
+    val timeline: StateFlow<List<ChatMessage>>
+    val tasks: StateFlow<List<TaskListItem>>
+    val permissions: StateFlow<List<PermissionPrompt>>
+    val delegations: StateFlow<List<DelegationSnapshotItem>>
+    val currentSessionId: StateFlow<String?>
     val events: SharedFlow<SdkEvent>
 
-    suspend fun connect()                          // → READY; re-entrancy-guarded
+    suspend fun connect()
     fun disconnect(clearSession: Boolean = true)
     fun sendText(text: String, pendingId: String? = null)
-    fun interrupt(); fun startMic(); fun stopMic()
-    suspend fun listSessions(limit: Int, offset: Int): SessionsListPage
-    suspend fun switchSession(id: String); suspend fun newChat()
-    fun forceReconnect()                           // presence/foreground-driven retry
+    fun interrupt()
+    fun ensureConnected()
 }
 ```
 
-## The no-loss events SharedFlow (the streaming fix)
+Conflation is correct for complete state snapshots (`connection`, committed `timeline`, complete task/prompt/delegation lists). It is not correct for streamed text chunks or one-shot decisions.
 
-```kotlin
-private val _events = MutableSharedFlow<SdkEvent>(
-    replay = 0,
-    extraBufferCapacity = EVENTS_BUFFER_CAPACITY,   // 256
-    onBufferOverflow = BufferOverflow.SUSPEND,       // back-pressure, never drop
-)
-val events: SharedFlow<SdkEvent> = _events.asSharedFlow()
+## SdkEvent
 
-private fun emitEvent(event: SdkEvent) {
-    if (!_events.tryEmit(event)) scope.launch { _events.emit(event) }  // suspend if buffer full
-}
-```
-
-`SdkEvent` is a flat sealed class — every variant SKIE-bridges to a Swift enum case:
+Current variants are flat SKIE-friendly sealed subclasses:
 
 ```kotlin
 sealed class SdkEvent {
-    data class MessageStarted(val cycleId: String) : SdkEvent()
-    data class MessageDelta(val cycleId: String, val chunk: String) : SdkEvent()   // streamed token
-    data class MessageCommitted(val message: ChatMessage) : SdkEvent()             // clear-live signal
-    data class TaskUpserted(val task: TaskSnapshotItem) : SdkEvent()
+    data class MessageStarted(val turnId: String, val replyId: String?) : SdkEvent()
+    data class MessageDelta(val turnId: String, val chunk: String, val replyId: String?) : SdkEvent()
+    data class MessageCommitted(val message: ChatMessage) : SdkEvent()
     data class TranscriptUpdated(val text: String) : SdkEvent()
-    data class CycleDone(val cycleId: String) : SdkEvent()
-    data class CycleAborted(val cycleId: String, val kind: String?) : SdkEvent()
+    data class TurnDone(val turnId: String) : SdkEvent()
+    data class TurnAborted(val turnId: String, val cutoff: String) : SdkEvent()
     data class SessionSwitched(val sessionId: String) : SdkEvent()
-    data class ProtocolError(val error: SentientError) : SdkEvent()                // errors as values
+    data class ProtocolError(val error: SentientError) : SdkEvent()
+    data class PermissionRequested(val prompt: PermissionPrompt) : SdkEvent()
+    data class PermissionResolved(val requestId: String, val outcome: String) : SdkEvent()
+    data class DelegationProgressed(val task: DelegationSnapshotItem) : SdkEvent()
+    data object ReopenFailed : SdkEvent()
 }
 ```
 
-## SKIE consumption in Swift
+Tool-strip updates are not `SdkEvent`: `tasklist.state` is a complete server-authoritative list exposed through `tasks`.
+
+`events` uses `MutableSharedFlow` with `replay = 0`, bounded extra capacity, and `BufferOverflow.SUSPEND`. `tryEmit` falls back to a scoped suspending `emit`, so chunks are not intentionally dropped when the buffer fills.
+
+## turn.* mapping
+
+`InFlightMessageConnector` maps exact gateway frames:
+
+- `turn.started` → `MessageStarted(turnId)` and an empty placeholder;
+- each `turn.text.delta` → one `MessageDelta(turnId, chunk, replyId)`;
+- `turn.completed` → `MessageCommitted` clear signals for that turn's open reply bubbles;
+- `turn.aborted` → drop those buffers; `TurnErrorConnector` emits `TurnAborted`.
+
+`replyId` identifies a bubble within a turn. The first stamped delta adopts the placeholder opened by `turn.started`; later reply ids may open another bubble after a mid-turn steer.
+
+## Consumption boundary
+
+Shared mobile-data consumes SDK flows. `SdkConversationRepository` is a stateless passthrough, and `ObserveChatUseCase` folds `SdkEvent` into the chat projection. Native VMs collect the usecase's `Flow<ChatModel>` and complete state flows; they should not rebuild the event reducer.
+
+SKIE exposes these Kotlin flows as Swift async sequences:
 
 ```swift
-// connection / timeline are StateFlows → AsyncSequence; events is a SharedFlow → AsyncSequence
-for await c in sdk.connection { /* render status */ }
-for await e in sdk.events {
-    onEnum(of: e) { ev in
-        switch ev {
-        case .messageDelta(let d): append(d.chunk)
-        case .protocolError(let p): show(p.error)
-        default: break
-        }
-    }
+for await model in component.observeChat.invoke(pending: pendingFlow) {
+    apply(model)
 }
 ```
 
-The app does NOT collect `events` directly — `ChatRepository` (in `shared/mobile-data`) owns the collector and folds events into `chatStream`. See `mobile-data/repositories`.
+Use `onEnum(of:)` when Swift must exhaustively inspect a sealed value. Do not add `Channel`, `Deferred`, or raw `Job` to the public API, and do not introduce Combine merely to consume a KMP flow.
 
-## Scope tied to connect/disconnect — no GlobalScope
+## Scope ownership
 
-The SDK is handed a `CoroutineScope` at construction (the session scope). `disconnect()` tears down loops; `close()` on the owning `MobileSession` cancels the scope. No coroutine outlives the session.
-
-## Gotchas
-
-- **Streaming deltas MUST be on the SharedFlow.** A `StateFlow` conflates intermediate emissions, so fast token deltas collapse to the latest — the message appears to "pop in at once". The no-loss SharedFlow + a pure reducer downstream is the fix.
-- Exposing a `Flow<T>` of a generic sealed type sometimes needs a SKIE wrapper — see SKIE sealed-class/flow docs.
-- `Channel` exposed as a public property becomes an opaque `SendChannel`/`ReceiveChannel` in Swift with no SKIE sugar — always wrap in a Flow or suspend fun before the public boundary.
-- `Dispatchers.Main` is not in commonMain without the per-platform main-dispatcher artifact; use `Dispatchers.Default` in core and let the UI switch to Main.
-- `StateFlow.value` reads are thread-safe but `collect` on iOS requires a confined dispatcher when bridging to Swift UI.
+Android `UserSessionManager` and iOS `IosUserSession` construct the SDK with an authenticated session scope. Disconnect tears down transport loops; authenticated-boundary close cancels the owning scope. Route-scoped chat VMs cancel only their collectors and keep the shared connection alive.
