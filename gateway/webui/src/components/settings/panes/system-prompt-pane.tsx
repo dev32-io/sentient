@@ -3,7 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import { createLogger } from "@sentient/web-sdk";
 import type { ProfileApi, SoulDoc } from "../../../services/profile-api.js";
 import { renderMarkdown } from "../../../lib/render-markdown.ts";
-import { ActionButton, ActionRow, AsyncState, Dialog, Notice, PaneChrome, SegmentedControl, SettingsCard, TextArea } from "../../common/index.ts";
+import { ActionButton, ActionRow, AsyncState, Dialog, Notice, PaneChrome, SegmentedControl, SettingsEditor, TextArea } from "../../common/index.ts";
 
 const log = createLogger(["sentient", "webui", "settings", "system-prompt-pane"]);
 const DESCRIPTION = "The base personality and behavior instructions used for new conversations. Changes take effect after Apply.";
@@ -62,10 +62,15 @@ export function SystemPromptPane({ api, token, onRestoreDefault, draft, original
       ) : !original || draft === null ? (
         <AsyncState state="loading" title="Loading system prompt" />
       ) : (
-        <SettingsCard title="Persona instructions" subtitle="Markdown is supported." action={<ActionButton variant="destructive" onClick={() => { setRestoreError(null); setConfirmOpen(true); }}>Restore default</ActionButton>}>
+        <SettingsEditor
+          title="Persona instructions"
+          subtitle="Markdown is supported."
+          dirty={draft !== original.content}
+          headerAction={<ActionButton variant="destructive" onClick={() => { setRestoreError(null); setConfirmOpen(true); }}>Restore default</ActionButton>}
+        >
           <SegmentedControl label="System prompt view" value={tab} onChange={(value) => setTab(value as "edit" | "preview")} options={[{ value: "edit", label: "Edit" }, { value: "preview", label: "Preview" }]} />
           {tab === "edit" ? <TextArea label="System prompt" value={draft} monospace dirty={draft !== original.content} rows={18} onInput={(event) => setDraft(event.currentTarget.value)} /> : <div class="md-prev" aria-label="System prompt preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(draft) }} />}
-        </SettingsCard>
+        </SettingsEditor>
       )}
       {confirmOpen && (
         <Dialog

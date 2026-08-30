@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ActionButton, ToggleControl } from "./foundation.tsx";
-import { AsyncState, Notice, PaneChrome, SettingsCard, SettingsGroup, SettingsRow, ValidatedField } from "./composites.tsx";
+import { AsyncState, Notice, PaneChrome, SettingsCard, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "./composites.tsx";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -98,6 +98,25 @@ describe("PaneChrome", () => {
     const header = document.querySelector(".snt-pane-head");
     expect(header?.firstElementChild?.className).toBe("snt-pane-head__copy");
     expect(screen.getByRole("button", { name: "Add item" })).toBeTruthy();
+  });
+});
+
+describe("SettingsEditor", () => {
+  it("derives its visible status without taking ownership of editor actions", () => {
+    const onSave = vi.fn();
+    const { rerender } = render(
+      <SettingsEditor title="Instructions" dirty footer={<ActionButton onClick={onSave}>Save</ActionButton>}>
+        <textarea aria-label="Instructions body" />
+      </SettingsEditor>,
+    );
+
+    expect(screen.getByRole("status", { name: "Unsaved" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+
+    rerender(<SettingsEditor title="Instructions" dirty={false}><textarea aria-label="Instructions body" /></SettingsEditor>);
+    expect(screen.getByRole("status", { name: "Saved" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
 });
 

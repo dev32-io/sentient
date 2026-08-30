@@ -95,6 +95,39 @@ export function SettingsCard({ title, subtitle, action, children, padded = true 
   );
 }
 
+export interface SettingsEditorProps {
+  title: string;
+  subtitle?: string | undefined;
+  children: ComponentChildren;
+  dirty?: boolean | undefined;
+  headerAction?: ComponentChildren | undefined;
+  footer?: ComponentChildren | undefined;
+  className?: string | undefined;
+}
+
+/** Editor composition only; draft, validation, reset, and save remain caller-owned. */
+export function SettingsEditor({ title, subtitle, children, dirty, headerAction, footer, className }: SettingsEditorProps): JSX.Element {
+  const state = dirty === undefined ? undefined : dirty ? "unsaved" : "saved";
+  return (
+    <section class={classes("snt-plate", "snt-settings-editor", className)} data-state={state}>
+      <header class="snt-settings-editor__head">
+        <div class="snt-settings-editor__copy">
+          <h3 class="snt-card-title">{title}</h3>
+          {subtitle && <p class="snt-card-subtitle">{subtitle}</p>}
+        </div>
+        {(headerAction || state) && (
+          <div class="snt-settings-editor__header-actions">
+            {headerAction}
+            {state && <span class="snt-settings-editor__status" role="status" aria-label={dirty ? "Unsaved" : "Saved"}>{dirty ? "Unsaved" : "Saved"}</span>}
+          </div>
+        )}
+      </header>
+      <div class="snt-settings-editor__body">{children}</div>
+      {footer && <footer class="snt-settings-editor__footer">{footer}</footer>}
+    </section>
+  );
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }

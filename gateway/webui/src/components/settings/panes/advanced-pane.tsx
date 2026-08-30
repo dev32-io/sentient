@@ -1,7 +1,7 @@
 import type { JSX } from "preact";
 import { createLogger } from "@sentient/web-sdk";
 import type { ProfileV1, ReasoningEffort } from "../../../services/profile-api.js";
-import { PaneChrome, SelectControl, SettingsCard, SettingsGroup, SettingsRow, SliderControl, TextArea, type SelectOption } from "../../common/index.ts";
+import { PaneChrome, SelectControl, SettingsCard, SettingsEditor, SettingsGroup, SettingsRow, SliderControl, TextArea, type SelectOption } from "../../common/index.ts";
 
 const REASONING_OPTIONS: SelectOption[] = [
   { value: "none", label: "None", tag: "fastest" },
@@ -43,7 +43,7 @@ export function AdvancedPane({ draft, onDraftCompression, onDraftAdvanced }: Adv
           </SettingsRow>
         </SettingsGroup>
       </SettingsCard>
-      <SettingsCard title="Extra instructions" subtitle="Appended to every user message. Use sparingly because this counts against context.">
+      <SettingsEditor title="Extra instructions" subtitle="Appended to every user message. Use sparingly because this counts against context.">
         <TextArea
           label="Extra instructions"
           value={draft.advanced.extraSystemPrompt}
@@ -56,7 +56,7 @@ export function AdvancedPane({ draft, onDraftCompression, onDraftAdvanced }: Adv
             onDraftAdvanced({ ...draft.advanced, extraSystemPrompt });
           }}
         />
-      </SettingsCard>
+      </SettingsEditor>
     </PaneChrome>
   );
 }

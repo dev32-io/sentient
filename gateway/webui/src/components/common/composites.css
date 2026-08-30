@@ -37,6 +37,75 @@
   .snt-pane-head { align-items: flex-start; }
 }
 
+/* Full-measure settings editor. Draft and apply behavior stay with its caller. */
+.snt-settings-editor__head {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.snt-settings-editor__copy { min-width: 0; }
+.snt-settings-editor__copy .snt-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: inherit;
+  letter-spacing: normal;
+}
+.snt-settings-editor__copy .snt-card-subtitle {
+  margin-top: 3px;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+.snt-settings-editor__header-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+.snt-settings-editor__status {
+  padding: 6px 10px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-pill);
+  background: var(--slate-face);
+  color: var(--color-accent);
+  box-shadow: var(--slate-shadow-disabled), 0 8px 14px -12px var(--color-accent);
+  font: var(--font-size-sm) var(--font-mono);
+  white-space: nowrap;
+  transition: color var(--motion-state), background var(--motion-state), box-shadow var(--motion-state);
+}
+.snt-settings-editor[data-state="saved"] .snt-settings-editor__status {
+  color: var(--color-sage);
+  background: color-mix(in oklab, var(--color-sage-soft) 78%, var(--color-paper));
+  box-shadow: 0 0 14px -8px var(--color-sage);
+}
+.snt-settings-editor__body {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+.snt-settings-editor__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  padding: 12px 16px;
+  border-top: 1px solid var(--color-line-soft);
+  background: color-mix(in oklab, var(--color-bg-sunk) 25%, var(--color-paper));
+}
+@media (max-width: 620px) {
+  .snt-settings-editor__head { align-items: flex-start; }
+  .snt-settings-editor__header-actions { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .snt-settings-editor__status { transition: none; }
+}
+@media (prefers-contrast: more) {
+  .snt-settings-editor__status { border-color: var(--color-ink-3); }
+}
+
 /* Dominant visual action card */
 .snt-media-card-grid {
   display: grid;

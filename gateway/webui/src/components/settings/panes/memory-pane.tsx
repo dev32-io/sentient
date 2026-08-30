@@ -10,6 +10,7 @@ import {
   PaneChrome,
   SegmentedControl,
   SettingsCard,
+  SettingsEditor,
   SettingsGroup,
   SettingsRow,
   TextArea,
@@ -85,10 +86,11 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
         options={[{ value: "memory", label: "General memory" }, { value: "user", label: "About you" }]}
       />
 
-      <SettingsCard
+      <SettingsEditor
         title={SLOT_LABEL[slot]}
         subtitle={`${SLOT_EXPLAIN[slot]} Limited to ${cap} characters.`}
-        action={<span class="memory-count" aria-live="polite">{charsUsed} / {cap}</span>}
+        dirty={original !== null && draft !== null && draft !== original.content}
+        headerAction={<span class="memory-count" aria-live="polite">{charsUsed} / {cap}</span>}
       >
         {loadError ? (
           <AsyncState state="error" title={loadError} message="Your unsaved settings were not changed." action={<ActionButton onClick={() => setLoadAttempt((value) => value + 1)}>Retry</ActionButton>} />
@@ -113,7 +115,7 @@ export function MemoryPane({ api, token, drafts, originals, setOriginal, setDraf
             )}
           </>
         )}
-      </SettingsCard>
+      </SettingsEditor>
     </PaneChrome>
   );
 }

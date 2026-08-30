@@ -1429,6 +1429,25 @@ describe("visual diff component cases", () => {
     });
   });
 
+  it("registers the approved settings-editor states and production provenance", () => {
+    const editor = visualDiffComponentRegistry["settings-editor"];
+    expect(editor.fixtureAdapterId).toBe("settings-editor");
+    expect(editor.productionComponent).toBe("gateway/webui/src/components/common/composites.tsx#SettingsEditor");
+    expect(editor.authority).toBe("design/prototype/common-composites/handoff/static");
+    expect(editor.stateApplicability).toEqual({ vertical: ["saved", "unsaved"] });
+
+    for (const stateId of ["saved", "unsaved"]) {
+      expect(resolveVisualDiffCase(`settings-editor--vertical--${stateId}`).status).toBe("ready");
+    }
+    expect(resolveVisualDiffCase("settings-editor--vertical--loading")).toEqual({
+      status: "missing-authority",
+      caseId: "settings-editor--vertical--loading",
+      componentId: "settings-editor",
+      variantId: "vertical",
+      stateId: "loading",
+    });
+  });
+
   it("keeps every registered fixture case globally unique", () => {
     const caseIds = Object.values(visualDiffComponentRegistry).flatMap((component) =>
       Object.entries(component.stateApplicability).flatMap(([variantId, stateIds]) =>

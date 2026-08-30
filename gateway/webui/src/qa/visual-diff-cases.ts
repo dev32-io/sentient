@@ -168,6 +168,17 @@ export interface SettingsGroupVariantProps {
 
 type SettingsGroupVariantDefinition = VisualDiffVariantDefinition<SettingsGroupVariantProps>;
 
+export interface SettingsEditorVariantProps {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly fieldLabel: string;
+  readonly fieldValue: string;
+  readonly textAreaLabel: string;
+  readonly textAreaValue: string;
+}
+
+type SettingsEditorVariantDefinition = VisualDiffVariantDefinition<SettingsEditorVariantProps>;
+
 export interface SegmentedControlOption {
   readonly value: string;
   readonly label: string;
@@ -291,6 +302,19 @@ const TOGGLE_VARIANTS = {
 const SETTINGS_GROUP_VARIANTS = {
   general: { props: { label: "General" } },
 } as const satisfies Readonly<Record<string, SettingsGroupVariantDefinition>>;
+
+const SETTINGS_EDITOR_VARIANTS = {
+  vertical: {
+    props: {
+      title: "Vertical editor row",
+      subtitle: "Use when the field needs the full measure.",
+      fieldLabel: "Household label",
+      fieldValue: "Home",
+      textAreaLabel: "Description",
+      textAreaValue: "A short explanation that helps people understand the effect of this setting.",
+    },
+  },
+} as const satisfies Readonly<Record<string, SettingsEditorVariantDefinition>>;
 
 const SETTING_ROW_VARIANTS = {
   toggle: {
@@ -813,6 +837,16 @@ export const visualDiffComponentRegistry = {
       general: ["rest"],
     },
   },
+  "settings-editor": {
+    id: "settings-editor",
+    fixtureAdapterId: "settings-editor",
+    productionComponent: "gateway/webui/src/components/common/composites.tsx#SettingsEditor",
+    authority: "design/prototype/common-composites/handoff/static",
+    variants: SETTINGS_EDITOR_VARIANTS,
+    stateApplicability: {
+      vertical: ["saved", "unsaved"],
+    },
+  },
   "setting-row": {
     id: "setting-row",
     fixtureAdapterId: "setting-row",
@@ -975,6 +1009,7 @@ const MISSING_AUTHORITY_STATE_COMPONENTS: ReadonlySet<string> = new Set([
   "setting-row",
   "apply-bar",
   "settings-group",
+  "settings-editor",
 ]);
 
 function ownRecordValue<T>(record: Readonly<Record<string, T>>, key: string): T | undefined {

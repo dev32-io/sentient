@@ -6,7 +6,7 @@ import "../styles/tokens/design-foundation-v2.css";
 import "../components/common/foundation.css";
 import "../components/common/composites.css";
 import "../components/settings/apply-bar/apply-bar.css";
-import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
+import { AsyncState, Disclosure, DominantVisualCard, NoResultsState, Notice, PaneChrome, PinKeypad, SearchFilterBar, SettingsEditor, SettingsGroup, SettingsRow, ValidatedField } from "../components/common/composites.tsx";
 import { ActionButton, CheckboxControl, ChipControl, Field, FoundationIconButton, Plate, SegmentedControl, SelectControl, SliderControl, ToggleControl } from "../components/common/foundation.tsx";
 import { SelectMenu } from "../components/common/select-menu.tsx";
 import { Avatar } from "../components/common/avatar.tsx";
@@ -36,6 +36,7 @@ import {
   type SegmentedControlVariantProps,
   type SentientIdentityVariantProps,
   type SettingRowVariantProps,
+  type SettingsEditorVariantProps,
   type SettingsGroupVariantProps,
   type StaleBannerVariantProps,
   type TextAreaVariantProps,
@@ -640,6 +641,25 @@ const fixtureAdapters: Readonly<Record<string, VisualDiffFixtureAdapter>> = {
     // row/control owners on the reviewed Plate surface.
     render: (fixture) => <SettingsGroupFixture fixture={fixture} />,
   },
+  "settings-editor": {
+    // The fixture supplies inert local actions to prove the approved generic
+    // anatomy; production settings panes retain their global Apply owner.
+    render: (fixture) => {
+      const editor = fixture.props as SettingsEditorVariantProps;
+      return (
+        <SettingsEditor
+          className="visual-diff-target visual-diff-settings-editor"
+          title={editor.title}
+          subtitle={editor.subtitle}
+          dirty={fixture.state === "unsaved"}
+          footer={<><ActionButton variant="quiet">Reset</ActionButton><ActionButton variant="primary">Save</ActionButton></>}
+        >
+          <Field label={editor.fieldLabel} value={editor.fieldValue} />
+          <TextArea label={editor.textAreaLabel} value={editor.textAreaValue} />
+        </SettingsEditor>
+      );
+    },
+  },
   "setting-row": {
     // This adapter composes the production SettingsRow with its native control
     // owner; the open native select popup remains intentionally unregistered.
@@ -855,6 +875,12 @@ style.textContent = `
   .visual-diff-settings-group { width: min(650px, 100%); }
   .visual-diff-setting-row { width: 600px; }
   .visual-diff-setting-row__list { padding: 0 16px; }
+  .visual-diff-canvas[data-component-id="settings-editor"] {
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 52px;
+  }
+  .visual-diff-settings-editor { width: 440px; }
   .visual-diff-media-card { width: 260px; }
   /* Composite references retain a 52px logical frame around the card. */
   .visual-diff-canvas[data-case-id^="media-action-card--"] {
