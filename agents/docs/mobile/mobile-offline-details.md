@@ -1,18 +1,20 @@
 # Mobile Offline-First -- Details & Examples
 
-This file expands `.claude/rules/mobile/mobile-offline.md`.
+This file expands `.claude/rules/mobile-shared.md`.
 
 ## Shipped reality (today)
 
 What actually exists is a thin, in-memory slice of the full doctrine below:
 
-- **Connection** — `ConnectionRepository.status` maps the SDK `connection` StateFlow to `SentientResult<ConnectionState>` (Loading/Success/Failure). The UI subscribes; it changes mid-screen.
-- **Writes** — `ChatRepository.send` → an in-memory `Outbox` (`QUEUED → SENT → FAILED`, `LinkedHashMap`), flushed on connection `READY` (`setConnected(true)`). NOT persistent; dies with the process. Per-message `retry(pendingId)` on FAILED.
-- **Reconciliation** — `pendingId` is a client-generated key the gateway ECHOES onto the committed user entry; `chatStream` drops the optimistic bubble on exact id match. There is NO server-side idempotency/replay contract — see the correction under "Idempotency" below.
-- **Reads** — `HistoryRepository` is cache-then-refresh with an IN-MEMORY cache (`seedCache`), not a durable store.
-- **Conflicts / ordering / multi-resource sync** — not applicable yet (single chat-send stream).
+- **Connection** — `SdkConnectionStateRepository.state` passes through the SDK `connection` `StateFlow`. Native VMs subscribe because reachability changes while a screen is open.
+- **Writes** — each chat VM owns one in-memory `OutboundCache`. User-visible states are `QUEUED` and `FAILED`; `markSent` records `sentAtMs` but leaves the entry QUEUED until reconciliation. `SendMessageUseCase` flushes queued entries when transport is READY and `currentSessionId` is non-null. That id may be a draft key before the first send mints the durable session; an attachment is not required first.
+- **Timeout/retry** — native VMs drive `sweepTimeouts()` periodically and on connection emissions. A sent-but-unechoed entry becomes FAILED after the default 10,000 ms timeout; retry clears its timestamp and re-queues the same `pendingId`.
+- **Reconciliation** — the gateway echoes `pendingId` on the committed live user entry. `ObserveChatUseCase` hides that exact optimistic entry and the VM removes it. Cold REST history has no pending ids, so an explicit cold-history replacement drops remaining optimistic entries instead of matching text.
+- **Resend safety** — QUEUED includes previously sent-but-unechoed entries. Reconnect may resend them with the same `pendingId`; the gateway deduplicates before dispatch.
+- **Reads** — conversation timeline and session reads are in-memory client projections over gateway-authoritative data. There is no durable general-purpose offline store.
+- **Conflicts / ordering / multi-resource sync** — not applicable yet beyond the single chat-send queue.
 
-See `mobile-data/outbox-optimistic-send` and `mobile-data/repositories` for the concrete shipped code.
+See `agents/docs/mobile-data/outbox-optimistic-send-details.md` and `agents/docs/mobile-data/repositories-details.md` for the concrete shipped code.
 
 ---
 
@@ -116,11 +118,11 @@ async drainEntry(entry):
         notifyUser(p)
 ```
 
-## Idempotency (roadmap — NOT how the shipped client works)
+## Idempotency (durable-store roadmap)
 
-> CORRECTION vs shipped: the current client does NOT use a server idempotency key. `pendingId` is reconciliation-only — the gateway echoes it on the committed user entry and the optimistic bubble is dropped by id match. The outbox never re-sends a `SENT` id, so there is no replay path to deduplicate. The pattern below applies only IF a durable, replay-on-restart outbox is later adopted.
+> Current chat sends already have a narrow resend contract: `pendingId` is both the exact echo-reconciliation key and the gateway deduplication key. A sent-but-unechoed QUEUED entry may be resent on reconnect with that same id without double-dispatch. The cache is still in-memory, so this does not provide replay after process death and should not be generalized to unrelated mutations.
 
-For a durable outbox, the server endpoint MUST accept an `operationId` (or
+For a future durable outbox on other resources, the server endpoint MUST accept an `operationId` (or
 `Idempotency-Key` header) and treat replays as no-ops. A durable client
 WILL retry -- on reconnect, on app restart, on partial network
 failures where the request was sent but the response was lost.

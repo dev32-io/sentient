@@ -1,72 +1,75 @@
 # Dependency Injection — Details
 
-This file expands `.claude/rules/android/android-di.md`. The app uses manual constructor wiring + Compose `viewModelFactory` — no Hilt/Dagger.
+This file expands `.claude/rules/android.md`. Production DI is Koin; the shared KMP layer remains framework-free.
 
 ## The graph, top-to-bottom
 
-```
+```text
 SentientApp.onCreate
-  ├─ MobileSdk.initAndroid(applicationContext)     // one-time platform init
-  └─ PresenceCoordinator().start()                 // app-scoped fg/bg relay
+  ├─ MobileSdk.initAndroid(applicationContext)
+  ├─ startKoin { androidContext(...); modules(appModule) }
+  └─ PresenceCoordinator.start()
 
-MainActivity → AppRoot → AppConfiguredRoot → ChatRoot
-  └─ val chatSession = remember { SdkSessionFactory.create() }   // chat-scoped MobileSession
-       ├─ chatVm = viewModel(key = "chat-${identityHashCode(chatSession)}") {
-       │      ChatViewModel(repo = chatSession.chatRepo,
-       │                    onOpen = { chatSession.open() }, onClose = { chatSession.close() },
-       │                    onForeground = { chatSession.resume() }, onBackground = { chatSession.pause() },
-       │                    presence = appPresence)
-       │   }
-       └─ historyVm = viewModel(key = "history-…") { HistoryViewModel(chatSession.historyRepo, …) }
+appModule
+  ├─ single PresenceCoordinator
+  ├─ single UserSessionManager                 authenticated user/connection owner
+  ├─ factory SettingsComponent                 re-resolves the current connection scope
+  ├─ viewModel { (sessionId: String?) ->
+  │     ChatViewModel(UserSessionManager.component(), sessionId)
+  │   }
+  └─ route ViewModels over ChatComponent/SettingsComponent usecases
 ```
 
-Activity-scoped VMs with no collaborators use the `by viewModels { … }` form:
+`UserSessionManager` lazily builds one `SentientSdk`, `ChatComponent`, and `SettingsComponent` for the explicit authenticated user. It keeps that connection scope across navigation and destroys it on logout, terminal auth failure, account replacement, or backend replacement.
+
+## Koin ownership
+
+`appModule` is the production composition root:
 
 ```kotlin
-private val authViewModel: AuthViewModel by viewModels {
-    viewModelFactory { initializer { AuthViewModel() } }
-}
-```
-
-## Session-scoped construction (SdkSessionFactory)
-
-```kotlin
-object SdkSessionFactory {
-    fun create(): MobileSession {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default.limitedParallelism(1))
-        val r = resolveBackend(/* override, build-time default */)
-        require(r is ResolvedBackend.Configured)
-        val config = SdkConfig(gatewayWsUrl = r.gatewayWsUrl, capabilities = AppDependencies.capabilities, …)
-        val sdk = SentientSdk(config = config, bundle = createPlatformBundle(), scope = scope)
-        return MobileSession(sdk = sdk, scope = scope)   // repos + lifecycle wired inside MobileSession
+val appModule = module {
+    single { PresenceCoordinator() }
+    single {
+        UserSessionManager(
+            appContext = androidContext(),
+            presence = get(),
+            authenticatedUserStore = AuthenticatedUserHolder.store,
+        )
     }
+
+    factory { get<UserSessionManager>().settingsComponent() }
+
+    viewModel { (sessionId: String?) ->
+        ChatViewModel(get<UserSessionManager>().component(), sessionId)
+    }
+    viewModel { HistoryViewModel(get()) }
 }
 ```
 
-The SDK instance exists ONLY here. There is no process-wide SDK singleton.
+`SettingsComponent` is a `factory`, not a Koin `single`: each resolution must ask `UserSessionManager` for the current connection-scoped instance after logout/login or backend replacement.
 
-## App-scoped, non-SDK deps (AppDependencies)
+## UserSessionManager construction
 
-```kotlin
-object AppDependencies {
-    val capabilities: List<String> = listOf(/* connector CAPABILITY consts */)
-    val tokenStore: SecureTokenStore by lazy { createPlatformBundle().tokenStore }
-    val authClient: AuthClient get() = /* lazily built from resolved backend; invalidate on config change */
-}
-```
+On first `component()` access, `UserSessionManager`:
 
-These outlive a chat screen (token survives logout→login). The SDK does not.
+1. requires the server-authenticated user id and configured backend;
+2. creates a serialized `SupervisorJob` session scope with a boundary exception handler;
+3. builds `SentientSdk` and the hand-written shared `ChatComponent`;
+4. builds `SettingsComponent` beside it on the same authenticated scope;
+5. wires presence/network recovery and starts `component.connect()` in the session scope.
 
-## Keying = teardown
+The SDK exists only inside this authenticated owner. `ChatViewModel` receives `ChatComponent`, never `SentientSdk` or a repository.
 
-Keying the VM by `MobileSession` identity means a logout→login (which exits + re-enters `ChatRoot`, producing a fresh session) clears the old VM. `ChatViewModel.onCleared()` → `onClose` → `session.close()` is the SINGLE teardown path — no `DisposableEffect` needed.
+## Route scope is not connection scope
+
+The chat route passes nullable `sessionId` to a Koin ViewModel. A route change creates fresh per-conversation UI state and a fresh VM-owned `OutboundCache`, while the same `UserSessionManager` and `ChatComponent` remain alive. `ChatViewModel.onCleared()` must not disconnect the socket.
+
+Logout and other authenticated-boundary exits call the appropriate `UserSessionManager` teardown before routing to login. Do not use route disposal as connection teardown.
 
 ## Gotchas
 
-- Do NOT introduce a global `SdkHolder`/`object Sdk`. The whole point of the refactor was to bind the SDK to the chat scope; a singleton resurrects the lifecycle/leak bugs.
-- `viewModel(key = …)` without a stable key reuses the VM across sessions — the stale repo/scope then leaks. Always key by session identity.
-- `AppDependencies` is for app-lived NON-SDK state only. If you find yourself putting a `SentientSdk` there, it belongs in `MobileSession`.
-
-## Future — Hilt (NOT adopted)
-
-Hilt/Dagger is intentionally NOT used today; the graph is small enough that hand-wiring is clearer and avoids an annotation processor. If the app grows enough modules to justify it, the migration target would be: `@HiltAndroidApp` Application, `@HiltViewModel @Inject constructor` VMs, `hiltViewModel()` in Compose, `@Module @InstallIn` bindings, KSP (`ksp(libs.hilt.compiler)`, not KAPT), and `@TestInstallIn` for test doubles. Until that decision is made, do not add Hilt annotations — they will not compile (no Hilt plugin/deps on the classpath).
+- Do not add Hilt/Dagger, KSP DI, manual `viewModelFactory` wiring, or a second service locator.
+- Do not put `SentientSdk` in `AppDependencies` or a process-global holder.
+- Do not inject repositories into screen VMs. Resolve shared usecases and passthrough commands from `ChatComponent`/`SettingsComponent`.
+- Do not cache `SettingsComponent` independently of `UserSessionManager`; it becomes stale across authenticated-scope replacement.
+- A conversation switch recreates screen state, not the authenticated connection.

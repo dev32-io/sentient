@@ -1,6 +1,6 @@
 # Combine -- Details & Examples
 
-This file expands `.claude/rules/ios/combine.md`. The patterns
+This file expands `.claude/rules/ios.md`. The patterns
 below show legacy-bridge usage and the retain-cycle anti-patterns
 that bite Combine code most often.
 

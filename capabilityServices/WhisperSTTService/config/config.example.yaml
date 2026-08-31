@@ -1,22 +1,26 @@
 # STT Service — runtime tuning
 # ==============================
 #
-# Copy this file to ~/.sentient/stt-service/config/config.yaml on your
-# Raspberry Pi (or wherever you mount it in docker-compose.yml). The
-# container loads it ONCE at startup. To change a value, edit and run:
+# Before a fresh production install, copy this file to:
 #
-#     docker compose restart stt-service
+#     ~/.sentient/whisper-stt/config/config.yaml
 #
-# Every key below is required — the service fails loud at startup if
-# anything is missing or the wrong type. There are no silent defaults.
+# setup-prod.py does not currently seed native-service configs. The gateway
+# launches Whisper STT as a native Apple-silicon addon and points
+# WHISPER_STT_CONFIG_PATH at the operator-owned copy. The service reads it once
+# at startup; restart the gateway's launchd job (which respawns its native
+# children) after editing it. deploy/mac-prod/docker-compose.yml does not run
+# this service.
 #
-# Container-internal paths (/app/models, /app/logs, /app/data/recordings)
-# are fixed in the Dockerfile and mounted from the host. Change the
-# HOST paths in deploy/mac-prod/docker-compose.yml if you want the data
-# somewhere other than ~/.sentient/stt-service/.
+# Every key below is required unless a comment explicitly documents a legacy
+# compatibility default. Invalid values fail loudly at startup.
+#
+# Model, log, and recording directories are host paths supplied by the
+# WHISPER_STT_MODEL_DIR, WHISPER_STT_LOG_DIR, and
+# WHISPER_STT_RECORDING_DIR environment variables in gateway/config.yaml.
 
 # =============================================================================
-# Schema version — bumped by deploy/setup.py migrations. Do not hand-edit.
+# Schema marker retained in copied operator configs.
 # =============================================================================
 schema_version: "0.1.0"
 
@@ -84,7 +88,7 @@ vad:
   # silent_timeout watchdog to trip — e.g. a TV playing in the room with
   # the mic open, or a very long uninterrupted monologue.
   # 600_000 ms = 10 min; if you normally dictate longer than that in one
-  # breath, raise it — but note the Pi only has 8 GB of RAM.
+  # breath, raise it while accounting for the Mac's shared-memory budget.
   max_turn_duration_ms: 600000
 
   # Hard floor on accepted turn audio length (ms). Turns whose total
@@ -107,9 +111,8 @@ smart_turn:
   # prematurely; lower if the service waits too long after clearly-done speech.
   decision_threshold: 0.5
 
-  # ONNX Runtime intra-op threads per inference. 4 matches the RPi5's
-  # four Cortex-A76 cores -> ~80 ms per turn. Drop to 2 if you're
-  # sharing the Pi with heavy other workloads.
+  # ONNX Runtime intra-op threads per Smart-Turn inference. Four is the tested
+  # production setting; drop to 2 if native addons contend for host CPU.
   intra_op_threads: 4
 
 # =============================================================================
@@ -220,7 +223,7 @@ recordings:
 # Logging + in-process metrics
 # =============================================================================
 logging:
-  # stdout log level — what `docker logs stt-service` shows.
+  # stdout log level — captured by the gateway/launchd process logs.
   # One of: debug | info | warning | error.
   # JSONL log files always capture everything regardless of this setting.
   level: "info"

@@ -1,193 +1,193 @@
 # Sentient — macOS production deploy (`mac-prod`)
 
-The production deploy target: gateway + all sibling services on a single
-Apple-silicon Mac. **This replaces the retired Raspberry Pi deploy** — see
-[Why macOS](#why-macos).
+The supported production shape is one Apple-silicon Mac running:
 
-> **Native-stack migration banner (2026-07-29):** the gateway is a native
-> binary under `launchd` now, not a container. The only supported install is
-> [Native installer — first real run](#native-installer--first-real-run)
-> (`sudo python3 deploy/mac-prod/setup-prod.py install <tarball>`); compose
-> builds addon images only. **Do not follow** any section below that detects
-> `HOST_DOCKER_GID`, runs the top-level `python3 deploy/setup-prod.py`, or
-> brings the gateway up with `docker compose ... up -d` — those describe the
-> pre-migration flow. That top-level `deploy/setup-prod.py` and its
-> `native/stt-backend.py` / `native/tts-backend.py` value-rewriters (which
-> still patch `host.docker.internal` URLs into the gateway config — including
-> the STT-backend table below) have **no caller left outside this file**.
-> Whether they get deleted or re-grounded is an **open decision**, deliberately
-> not settled here. Until it is, treat those sections as historical.
+- a standalone Bun-compiled gateway supervised by `launchd`;
+- native, gateway-managed `whisper-stt`, `local-tts`, and optional
+  `deep-memory` processes; and
+- gateway-managed Docker addons.
 
-## Why macOS
+The Raspberry Pi deployment, containerized gateway, SenseVoice
+`stt-service`, per-service STT/TTS LaunchAgents, and compose-based runtime are
+retired. `deploy/mac-prod/docker-compose.yml` is only an image bakery; do not
+run `docker compose up` from this directory.
 
-The Pi 5 couldn't give local speech models enough headroom. Running the
-heavy pieces — **a faster agent loop, local Whisper-large STT, and large
-local TTS models** — needs an Apple-silicon box with unified memory and the
-Neural Engine. So the canonical production target moved from the Pi to a Mac
-mini.
+## Runtime ownership
 
-You are **not** forced into all-on-one. The architecture still supports a
-split: run the lightweight **gateway on a Pi** (or any small box) and point
-its orchestrator at **sibling services hosted on a more powerful machine**.
-This folder simply targets the common case: everything on one macOS host.
+The gateway is the only long-running host supervisor. It starts native addons
+as child processes and creates/reconciles addon containers through Docker
+Desktop. Hermes is not a managed service or container; `delegateTask` invokes
+it as a one-shot executable.
 
-## Layout
+Compose builds only the three repository-owned images:
 
-Only the **gateway** is a long-running compose service. `hermes` and the MCPs
-are `build-only` — the gateway's orchestrator
-creates/starts/recreates them at runtime over `/var/run/docker.sock`. Compose
-only builds their images. `stt-service` (SenseVoice) is gated behind the
-`stt-docker` profile: built/managed **only** when the docker-sensevoice STT
-backend is selected (see [STT backend](#stt-backend-deployconf)).
+- `sentient/outbound-worker:local`
+- `sentient/ingress-proxy:local`
+- `sentient/inbound-proxy:local`
 
-### State lives under `~/.sentient/`
-Every piece of persistent state — gateway data, profiles, secrets, and the
-**Hermes "brain"** (`~/.sentient/hermes/data`: chat sessions, memories,
-`SOUL.md`, skills) — is bind-mounted under `~/.sentient/`. Migrating or
-backing up the whole assistant is a single `rsync` of `~/.sentient/`.
+The orchestrator pulls the configured public images for `egress-proxy` and
+SearXNG itself. Runtime networks and containers are defined by
+`gateway/config.yaml` plus `gateway/templates/services/`, not by compose.
 
-Two deliberate exceptions, both non-state:
-- **`/data/supervisor`** is a named docker volume (`sentient-supervisor`),
-  not a bind. Docker Desktop's virtiofs rejects the supervisord AF_UNIX
-  socket `bind()`; a named volume (ext4 in the VM) fixes it. Runtime only.
-- **TLS cert** at `~/.data/certs/sentient.dev32.io/` — externally managed by
-  `acme.sh` (DNS-01 via Route53) on the LAN, renewed + rsynced in. Infra,
-  re-derivable on renewal, not app state.
+## Prerequisites
 
-## STT backend (`deploy.conf`)
+- Apple-silicon macOS
+- Docker Desktop, configured to start after login
+- Bun (source `scripts/env.sh` before repository commands)
+- Homebrew Python 3.14 for `whisper-stt` and `deep-memory`
+- Homebrew Python 3.11 for `local-tts`
+- `opus` and `ffmpeg`
 
-`deploy/mac-prod/deploy.conf` is the single source of truth for which STT
-service the gateway dials. `setup-prod.py` reads it and reconciles the three
-parts that must agree:
+The default production domain is a GUI LaunchAgent, so the operator must log in
+(or use auto-login) after boot for both the gateway and Docker Desktop to run.
+For a machine that must run with nobody logged in, explicitly select the
+`system` LaunchDaemon domain; Docker availability remains an operator concern.
 
-| `STT_BACKEND` | STT service | gateway config | compose |
-|---------------|-------------|----------------|---------|
-| `native-whisper` (default) | host MLX Whisper on `:8768`, launchd (`native/whisper-stt.sh`) | `stt.url` → `host.docker.internal:8768`; `managed_services.stt-service` removed | SenseVoice image **not** built |
-| `docker-sensevoice` | orchestrator-managed SenseVoice container on `:8766` | `stt.url` → `sentient-stt-service:8766`; `managed_services.stt-service` present | SenseVoice built via `--profile stt-docker` |
+## Build a release
 
-Switching backend = edit `STT_BACKEND` in `deploy.conf`, re-run
-`setup-prod.py`, `compose up`. The run is idempotent — it installs a fresh
-host or **migrates** an existing stack between backends (patches the config in
-place, installs/stops the native service, and clears the old STT container as
-part of the normal container reset).
-
-The default is **native-whisper**, matching the `deploy/macos/` dev stack.
-
-## First boot / migrate
+From the repository root:
 
 ```bash
-cp deploy/mac-prod/.env.example deploy/mac-prod/.env
-# set HOST_DOCKER_GID — detect with:
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c '%g' /var/run/docker.sock
+source scripts/env.sh
 
-# Reconcile STT backend (deploy.conf), build images, clear stale containers.
-# Idempotent — same command installs a new host or migrates an existing one.
-python3 deploy/setup-prod.py
+docker compose -f deploy/mac-prod/docker-compose.yml \
+  --profile build-only build
 
-docker compose -f deploy/mac-prod/docker-compose.yml up -d
-```
-Then visit `https://sentient.dev32.io:8888` — the wizard handles secrets,
-voice, and MCP setup. For `native-whisper`, verify the host service first with
-`bash deploy/mac-prod/native/whisper-stt.sh status`.
-
-## Migrating an existing Chatterbox-TTS host to local-tts
-
-The TTS service was renamed `chatterbox-tts` → `local-tts` and its engine
-swapped from Chatterbox to Qwen3-TTS. A host that was set up before this
-change (launchd label `io.dev32.sentient.chatterbox-tts`, data dir
-`~/.sentient/chatterbox-tts`) needs a one-time migration — `setup-prod.py`
-does not do this automatically, since it never deletes or renames existing
-host state. Run these steps **on the Mac mini** once, before re-running
-`setup-prod.py`:
-
-```bash
-# stop + remove the old agent
-launchctl bootout gui/$(id -u)/io.dev32.sentient.chatterbox-tts 2>/dev/null || launchctl unload ~/Library/LaunchAgents/io.dev32.sentient.chatterbox-tts.plist
-rm -f ~/Library/LaunchAgents/io.dev32.sentient.chatterbox-tts.plist
-
-# migrate data dir (config + user voices + logs)
-mv ~/.sentient/chatterbox-tts ~/.sentient/local-tts
-
-# update the migrated config to the qwen engine
-#   model: mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit
-#   add: default_lang: "auto"   ;  remove: exaggeration, cfg_weight
-
-# reinstall + start under the new label
-bash deploy/mac-prod/native/local-tts.sh install
-bash deploy/mac-prod/native/local-tts.sh start
-bash deploy/mac-prod/native/local-tts.sh status   # expect :8771/health OK
-```
-
-User-created voice packs under `voices/` are moved with the data dir, but
-any pack that was cloned under the **old Chatterbox** engine holds a
-`conds.safetensors` (no `ref.wav`), which Qwen cannot use — those packs
-silently resolve to the default voice at synth time (`voice_store.get`
-logs `fallback=default reason=unknown_voice`; the service never errors on
-them) and must be **re-cloned** to sound like themselves again. Packs
-cloned after the swap are already `ref.wav`-format and carry over as-is.
-The built-in voice packs ship with the service itself, so nothing to copy
-there. Once the agent is loaded and healthy, re-run
-`python3 deploy/setup-prod.py` as usual to reconcile the gateway config's
-`tts.url` / `companions.tts_health_url`.
-
-## Native installer — first real run
-
-`setup-prod.py install <tarball>` unpacks a release under `/opt/sentient`,
-builds each native service's venv from vendored wheels, flips the `current`
-symlink, restarts the LaunchDaemon, and **health-gates the result over verified
-TLS — rolling back to the previous release if the new one does not come up**.
-
-Three of its operations need root, so they are the parts a dev box cannot
-exercise. Everything else is covered before you ever run this on the mini:
-
-| Behaviour | Where it is verified |
-|---|---|
-| install / rollback FSM, checksum gate, TLS trust decisions | `tests/test_setup_prod.py` (unit) |
-| ordering between the real collaborators — real tarball, real plist, real filesystem, real HTTPS (gateway + edge) + pinned CA | `bash tests/e2e-install.sh <workdir>` (rootless, 8 cases incl. rollback) |
-| the real `launchctl` contract — `print` exit codes, bootstrap-vs-kickstart, a rendered plist actually spawning a process with the substituted env | `SENTIENT_LAUNCHD_REHEARSAL=1 pytest deploy/mac-prod/tests/` (real launchctl, `gui/<uid>` domain) |
-| `chown -R root:wheel`; the `system` domain; `UserName` switching to another account | **first real run — the commands below** |
-
-Run these once on the mini and read the output rather than assuming:
-
-```bash
+./scripts/build-python-wheels.sh
 ./scripts/build-gateway.sh --release
-sudo python3 deploy/mac-prod/setup-prod.py install dist/gateway/<version>.tar.gz
-
-ls -la /opt/sentient/                 # versioned dir root:wheel, `current` symlink
-launchctl print system/io.sentient.gateway | grep -E "state|username|path"
-curl -sk https://localhost:8888/api/v1/health     # {"status":"ok"}
 ```
 
-Expected: the release dir owned by `root:wheel`, the daemon `state = running`
-with `username = <operator>` (NOT root), and health ok. A failed health gate
-exits non-zero having already rolled back — the message names the version it
-reverted to, or says manual intervention is needed and why.
+`build-python-wheels.sh` uses the three committed, hashed locks under
+`deploy/mac-prod/native/requirements/` and creates the offline wheel payload.
+`build-gateway.sh` refuses to package a release without all three wheel sets.
+The resulting tarball and checksum are under `dist/gateway/`.
 
-**Prerequisite the installer will refuse without:** `brew install python@3.11`.
-`native/install-venv.sh` pins local-tts to 3.11 (mlx-audio ships no 3.14
-wheels) and fails loudly rather than building a venv on the wrong interpreter.
+Nothing fetches during installation: the archive carries the compiled gateway,
+runtime assets, native-service sources, locks, and vendored wheels.
 
-## Headless 24×7 host notes
+Before the first install on a host, create the operator-owned native-service
+configs. `setup-prod.py` currently seeds only the gateway config:
 
-The Mac mini runs headless. Required host setup (auto-login so Docker Desktop
-starts after reboot, power/no-sleep, firewall, stable MAC, etc.) is out of
-scope for this compose — keep it in your ops runbook.
+```bash
+mkdir -p ~/.sentient/{whisper-stt,local-tts,deep-memory}/config
+cp -n capabilityServices/WhisperSTTService/config/config.example.yaml \
+  ~/.sentient/whisper-stt/config/config.yaml
+cp -n capabilityServices/LocalTTSService/config/config.example.yaml \
+  ~/.sentient/local-tts/config/config.yaml
+cp -n capabilityServices/DeepMemoryService/config/config.example.yaml \
+  ~/.sentient/deep-memory/config/config.yaml
+```
 
-## Ownership / uid
+## Install or upgrade
 
-The hermes container runs as uid:gid **10000** (`USER hermes`). On Linux the
-bind-mount host dirs must be chowned to 10000 (the gateway does this via
-`admin/chown-hermes.ts`, overridable with `SENTIENT_HERMES_UID`/`_GID`). On
-macOS Docker Desktop, virtiofs remaps bind-mount ownership, so the container
-reads/writes regardless of host ownership.
+### Default: GUI LaunchAgent
 
-## Dev vs prod
+```bash
+python3 deploy/mac-prod/setup-prod.py install \
+  dist/gateway/<version>.tar.gz
+```
 
-- `deploy/mac-prod/` — this folder, release build (`BUILD_PROFILE=release`).
-- Local dev runs the gateway from the checkout (`cd gateway && bun --watch
-  src/main.ts`) against the SAME addon images this folder's `build-only`
-  profile bakes. There is no separate dev compose file. Never `--hot`:
-  `gateway/src/main.ts` refuses it outright, because a second in-process
-  evaluation would arm a second addon supervisor inside the still-live
-  process, and the two would reap and respawn each other's `whisper-stt` /
-  `local-tts` children until nothing owns the ports.
+This installs immutable versioned releases under
+`~/.sentient/gateway/releases/`, points
+`~/.sentient/gateway/current` at the selected release, and installs
+`~/Library/LaunchAgents/io.sentient.gateway.plist`.
+
+### Optional: system LaunchDaemon
+
+```bash
+sudo python3 deploy/mac-prod/setup-prod.py install \
+  dist/gateway/<version>.tar.gz --domain system
+```
+
+This installs root-owned releases under `/opt/sentient/releases/`, points
+`/opt/sentient/current` at the selected release, and installs
+`/Library/LaunchDaemons/io.sentient.gateway.plist`. The daemon still runs as
+the operator named by the installer.
+
+For either domain, the installer:
+
+1. verifies the adjacent `.sha256` file;
+2. extracts and stages the release;
+3. builds native-service venvs offline from vendored wheels;
+4. atomically switches `current`;
+5. starts or restarts the `io.sentient.gateway` job; and
+6. health-gates both the gateway on `:8888` and the public edge on `:443` with
+   certificate verification.
+
+A failed health gate rolls back to the previous release. Operator state and
+configuration are shared across releases and are not rolled back.
+
+## Configuration and state
+
+The installer seeds, but never overwrites:
+
+```text
+~/.sentient/gateway/config/config.yaml
+```
+
+That is the active operator config in production. The tracked
+`gateway/config.yaml` is its seed/template and the local-development default.
+The gateway's installed plist sets `GATEWAY_CONFIG_PATH` to the operator copy.
+
+Other mutable Sentient state remains under `~/.sentient/`, including gateway
+data, secrets, users, logs, certificates, and native-addon state. Optional
+Hermes delegation uses a separate `~/.hermes/` profile store. Back up both
+roots when Hermes is configured. In GUI-domain installs `~/.sentient/` also
+contains the immutable release tree under `gateway/releases/`; in system-domain
+installs executable code is under `/opt/sentient/` instead.
+
+The first-run web wizard creates the admin and stores provider/integration
+secrets. Operator-only process environment such as
+`DEEP_MEMORY_ADMIN_TOKEN` and `DEEP_MEMORY_DATA_TOKEN` must still be supplied
+to the gateway's launchd job; those values do not belong in `config.yaml`.
+
+## TLS and URLs
+
+The gateway binds loopback on `https://127.0.0.1:8888`. The public
+`inbound-proxy` exposes ports 80/443; clients use the hostname configured for
+the installation, without port 8888.
+
+`inbound_proxy.cert_dir` in the operator config selects the outward certificate
+directory. If it is absent, the proxy falls back to the gateway's self-signed
+certificate under `~/.sentient/gateway/certs/`. The proxy always verifies its
+loopback TLS hop using that gateway certificate as a separate trust anchor.
+
+After an externally managed certificate is renewed in place, reload the
+running proxy so nginx rereads it:
+
+```bash
+docker kill -s HUP sentient-inbound-proxy
+```
+
+Restarting the gateway does not necessarily recreate an unchanged infra
+container, so it is not a substitute for the HUP.
+
+## Verification
+
+For the default GUI domain:
+
+```bash
+launchctl print gui/$(id -u)/io.sentient.gateway | grep -E 'state|path'
+curl --cacert ~/.sentient/gateway/certs/cert.pem \
+  https://127.0.0.1:8888/api/v1/health
+curl -I https://<configured-host>/
+```
+
+For the system domain, inspect
+`system/io.sentient.gateway` instead. Addon state is available through the
+admin UI/API; `docker ps --filter label=sentient.managed=true` is the direct
+container diagnostic.
+
+## Local development
+
+Local development does not use the production LaunchAgent:
+
+```bash
+source scripts/env.sh
+bun run dev
+```
+
+`scripts/stack.sh` performs preflight, builds the web UI and repository-owned
+addon images, starts the gateway with `bun --watch` (never `--hot`), and lets
+the gateway supervise native and Docker addons. Use `bun run stack:status` and
+`bun run stack:down` for that local stack.

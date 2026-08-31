@@ -1,12 +1,18 @@
-# localSTT — Service Contract
+# localSTT — Historical Service Contract
+
+> **RETIRED / HISTORICAL.** This contract records the former Raspberry
+> Pi/SenseVoice service on port 8766. It is not the supported gateway STT
+> contract or production path. Production uses the native Apple-silicon
+> `capabilityServices/WhisperSTTService` on port 8768. The details below remain
+> unchanged as evidence for the retired implementation.
 
 A WebSocket service that consumes streamed microphone audio and emits
 structured turn events. Wraps Silero VAD + Smart-Turn v3 + SenseVoice-Small
 on the server side; to the caller it looks like a single black-box "STT
 with VAD" component that speaks one turn at a time.
 
-This document specifies the wire contract a gateway client must honor
-to integrate. Stage-specific implementation details (Silero, Smart-Turn,
+This document records the wire contract a client of the retired service had
+to honor. Stage-specific implementation details (Silero, Smart-Turn,
 SenseVoice, the language allowlist, the pre-speech buffer) are deliberately
 left out — they are internal and may change without breaking this contract.
 
@@ -503,7 +509,7 @@ implementation:
 
 ---
 
-## 8. Minimum viable gateway handler
+## 8. Historical minimum client handler
 
 The smallest correct client implementation in Python:
 
@@ -551,7 +557,6 @@ else (debug events, binary WAV payloads, `turn_rejected`, `ping`/`pong`,
 
 ## 9. Versioning
 
-This PoC predates any formal version scheme. When localSTT graduates
-to a production service, expect a `serverVersion` field on the `ready`
-message and a `requiredClientVersion` field for breaking changes. For
-now, pin your gateway to a specific commit of this repository.
+This retired service predates any formal version scheme and did not graduate
+to the supported production path. Consumers reproducing the historical system
+must pin the corresponding repository revision.

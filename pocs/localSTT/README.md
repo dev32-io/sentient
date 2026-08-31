@@ -1,5 +1,13 @@
 # localSTT PoC — Silero VAD + Smart-Turn v3 + SenseVoice-Small on Raspberry Pi 5
 
+> **HISTORICAL POC / NOT A SUPPORTED DEPLOYMENT.** This Raspberry Pi/SenseVoice
+> experiment is retained as benchmark and protocol evidence. Production uses
+> the gateway-managed native Apple-silicon
+> [`WhisperSTTService`](../../capabilityServices/WhisperSTTService/) on port
+> 8768; see [`deploy/mac-prod/README.md`](../../deploy/mac-prod/README.md). The
+> Pi/container instructions and measurements below intentionally remain
+> historical.
+
 The second minimum end-to-end proof-of-concept for running a **fully local**
 voice endpointing + transcription stack on the Pi. Everything `localVAD`
 did, plus a batch STT pass at turn boundaries:

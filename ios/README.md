@@ -7,24 +7,25 @@ opus, and logging live in the SDK — this app is UI + scopes + navigation only.
 server-side; no on-device wake word in v1.
 
 - **Project:** `ios/SentientApp.xcodeproj` · **scheme:** `SentientApp`
-- **Version:** `0.0.1` (`CFBundleShortVersionString` in `App/Info.plist`)
+- **Version:** `1.4.0` (`CFBundleShortVersionString` in authoritative `project.yml`)
 - **Deployment target:** iOS 18 (some views carry iOS-17 fallbacks).
 
 ## Architecture
 
 Layering — dependencies flow inward only:
 
-```
-blackbox SDK (shared/mobile-sdk)
-  → stateless repositories            (shared/mobile-data .data)
-    → usecases (combine/transform)    (shared/mobile-data .usecase)
-      → one thin @Observable/@StateObject ViewModel per screen (this app)
-        → SwiftUI
+```mermaid
+flowchart LR
+    SDK[Black-box mobile SDK] --> Repositories[Stateless repositories]
+    Repositories --> UseCases[Shared use cases]
+    UseCases --> VM[Thin route ViewModel]
+    VM --> UI[SwiftUI]
 ```
 
-- **ViewModels are thin** — per-screen + view-local state only; combine/transform logic
-  lives in shared usecases (bridged Kotlin `Flow` consumed as `AsyncSequence`). A VM never
-  touches the SDK or a repository directly.
+- **ViewModels are thin** — per-screen + view-local state only. Stateless repositories
+  pass through SDK surfaces; shared usecases fold `SdkEvent` and combine `timeline`,
+  full-state `tasks`, and the VM-owned optimistic cache. Kotlin `Flow` bridges through
+  SKIE as `AsyncSequence`; a VM never touches the SDK or a repository directly.
 - **A conversation is a route.** The root `ChatView` is keyed `.id(activeSessionId)` inside a
   `NavigationStack`; changing the active session rebuilds the view → a fresh `@StateObject`
   VM. That recreation IS the per-screen cleanup boundary — never reset state in place.
@@ -34,7 +35,9 @@ blackbox SDK (shared/mobile-sdk)
 - **Presence:** a `scenePhase` relay (`UserSessionHost`) forwards foreground/background with a
   cold-start skip. Background keeps the socket; foreground sends a one-shot liveness probe and
   reconnects only if it's dead.
-- **Offline-first:** sends are optimistic via an in-memory outbox flushed on ready.
+- **Optimistic send:** `OutboundCache` is per-conversation, VM-owned, and in-memory.
+  Entries remain queued until their exact `pendingId` echo, fail after 10 seconds
+  unechoed, and are resend-safe because the gateway deduplicates by `pendingId`.
 
 ## Layout
 
@@ -56,10 +59,10 @@ The app links the `MobileData` XCFramework, so rebuild it after any change in
 
 ```bash
 source scripts/env.sh
-./gradlew :shared:mobile-data:assembleMobileDataDebugXCFramework   # (re)build the framework
+./scripts/ios-setup.sh   # build/copy the debug MobileData XCFramework + run XcodeGen
 
 xcodebuild -project ios/SentientApp.xcodeproj -scheme SentientApp \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build       # build the app
+  -destination 'generic/platform=iOS Simulator' build
 ```
 
 **Always build SIGNED.** Never pass `CODE_SIGNING_ALLOWED=NO` — it strips the keychain
@@ -69,15 +72,14 @@ on this host — see the root `deploy/` docs).
 
 ## Testing
 
-- **Unit** (Swift Testing preferred, XCTest legacy): VMs, use-cases, repositories with fake
-  transport — never real network. `async` tests are first-class; inject a `Clock`, never sleep.
-- **UI regression:** XCUITest (target elements by `accessibilityIdentifier`).
-- **E2E:** checked-in **Maestro** `.yaml` flows via `xcrun simctl` (cold launch → login → chat
-  → switch → logout). Some flows have known iOS-beta-simulator harness gaps — flagged in the
-  testing-knowledge docs, not silently skipped.
+- **Unit:** `xcodebuild ... test` for Swift VMs/platform boundaries, plus shared KMP tests;
+  use controllable async seams and never a real network in unit tests.
+- **UI regression:** XCUITest targets `accessibilityIdentifier`.
+- **E2E:** checked-in Maestro flows under `qa/mobile/flows/ios/`, run with
+  `./qa/mobile/run-e2e.sh ios --tags ...` against the real local stack. Record simulator or
+  harness gaps in testing knowledge rather than silently treating them as passes.
 
 ## Rules
 
-Conventions live in the repo root `.claude/rules/ios/*.md` (Swift, SwiftUI, concurrency,
-Combine, MVVM, testing) and the cross-platform `.claude/rules/mobile/*.md` (navigation,
-lifecycle, offline). Read those before changing this app.
+Read `.claude/rules/ios.md` and `.claude/rules/mobile-shared.md`; follow their linked
+detail files under `agents/docs/` when a rule needs expansion.

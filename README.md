@@ -161,12 +161,12 @@ The full stack currently requires an Apple-silicon Mac. You also need:
 - JDK 21
 - Python 3.14 for Whisper STT and Deep Memory
 - Python 3.11 for Local TTS
-- Homebrew `opus` and `ffmpeg`
+- Homebrew `opus`, `ffmpeg`, and `gitleaks`
 
 Install the host and JavaScript dependencies first:
 
 ```bash
-brew install openjdk@21 python@3.14 python@3.11 opus ffmpeg
+brew install openjdk@21 python@3.14 python@3.11 opus ffmpeg gitleaks
 ```
 
 Then clone the repository:
@@ -289,6 +289,8 @@ to `launchd` and `deploy/mac-prod/setup-prod.py`.
 - [Memory System design](docs/superpowers/specs/2026-08-08-memory-system-design.md)
 - [Wire protocol](shared/protocol/WIRE.md)
 - [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
 
 Common checks:
 

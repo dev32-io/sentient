@@ -5,13 +5,16 @@ title: '[bug] '
 labels: bug
 ---
 
+> For security vulnerabilities, stop here and follow
+> [`SECURITY.md`](../../SECURITY.md). Do not disclose them in a public issue.
+
 ## What I expected
 
 (One sentence.)
 
 ## What actually happened
 
-(One sentence + any error message verbatim.)
+(One sentence and a sanitized error message, if available.)
 
 ## Steps to reproduce
 
@@ -21,12 +24,15 @@ labels: bug
 
 ## Environment
 
-- OS:
-- Browser (if web client):
-- Sentient version / commit:
-- Deployment (local docker / Pi):
+- OS and version:
+- Browser or client:
+- Sentient commit:
+- Deployment: local stack / Mac production host / other
 
-## Logs
+## Diagnostics
 
-(Excerpt from `gateway/logs/` or `~/.sentient/gateway/logs/`. Redact any
-session tokens or PINs.)
+Include only the smallest useful, sanitized excerpt. Never paste API keys,
+tokens, PINs, private URLs, message text, prompts, transcripts, household data,
+raw frames, or audio. Prefer identifiers, types, sizes, state transitions, and
+reasons. Production is observational-only unless the maintainer explicitly
+authorizes a specific action.
