@@ -131,15 +131,13 @@ private struct VoiceCapturePrimaryButton: View {
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
 
-    @ComposerReduceMotion private var reduceMotion
-
     var body: some View {
         Button(action: onActivate) {
             ZStack {
                 PttBigWave(
                     levels: levels,
                     tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
-                    animates: !reduceMotion
+                    isActive: presentation.showsWaveform
                 )
                 .frame(height: VoiceCaptureLayout.waveformHeight)
                 .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)

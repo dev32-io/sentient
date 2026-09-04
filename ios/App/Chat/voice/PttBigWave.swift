@@ -6,13 +6,13 @@ import SwiftUI
 struct PttBigWave: View {
     let levels: [Float]
     var tint: Color = DuskColors.waveBar
-    var animates = true
+    var isActive = true
 
     @ComposerReduceMotion private var reduceMotion
 
     var body: some View {
         Group {
-            if reduceMotion || !animates {
+            if reduceMotion {
                 staticBars
             } else {
                 animatedBars
@@ -30,7 +30,7 @@ struct PttBigWave: View {
     }
 
     private var animatedBars: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30, paused: !isActive)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             bars { index in
                 PttWaveMetrics.sampledAnimatedScale(levels, bar: index, time: time)
