@@ -7,54 +7,190 @@ enum VoiceCaptureGestureTermination: Equatable, Sendable {
 }
 
 struct VoiceCaptureGestureSample: Equatable, Sendable {
-    let location: CGPoint
     let locationInWindow: CGPoint
-    let viewSize: CGSize
+    let targetGeometryInWindow: VoiceCaptureTargetGeometry
 }
 
-/// UIKit-backed physical hold recognition distinguishes a confirmed finger-up
-/// from cancellation by the system. SwiftUI's `DragGesture.onEnded` does not
-/// expose that distinction. Window-space samples keep travel stable while the
-/// recognized view expands from the idle control into the Hold pod.
-struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
+struct VoiceCaptureGesture {
     let onBegin: (VoiceCaptureGestureSample) -> Void
     let onChange: (VoiceCaptureGestureSample) -> Void
     let onTerminate: (VoiceCaptureGestureTermination, VoiceCaptureGestureSample) -> Void
+}
 
-    func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
-        let recognizer = UILongPressGestureRecognizer()
-        recognizer.minimumPressDuration = 0
-        recognizer.allowableMovement = .greatestFiniteMagnitude
-        recognizer.cancelsTouchesInView = true
-        return recognizer
+/// Fixed geometry for the UIKit gesture host. The host always covers the full
+/// crown-and-pod envelope; only its initial hit region changes between the idle
+/// button and expanded pod. This keeps the recognizer view's identity and
+/// bounds stable while a held touch changes the SwiftUI presentation.
+struct VoiceCaptureGestureHostGeometry: Equatable, Sendable {
+    let hostSize: CGSize
+    let idleBounds: CGRect
+    let podBounds: CGRect
+    let crownBounds: CGRect
+    let rightToLeft: Bool
+
+    init(
+        idleSize: CGFloat,
+        podSize: CGSize,
+        crownSize: CGSize,
+        seamOverlap: CGFloat,
+        rightToLeft: Bool
+    ) {
+        let idleSize = max(0, idleSize)
+        let podSize = CGSize(width: max(0, podSize.width), height: max(0, podSize.height))
+        let crownSize = CGSize(width: max(0, crownSize.width), height: max(0, crownSize.height))
+        let overlap = min(max(0, seamOverlap), min(podSize.height, crownSize.height))
+        let width = max(podSize.width, crownSize.width)
+        let height = podSize.height + crownSize.height - overlap
+        let logicalTrailingX: (CGFloat) -> CGFloat = { itemWidth in
+            rightToLeft ? 0 : width - itemWidth
+        }
+
+        hostSize = CGSize(width: width, height: height)
+        podBounds = CGRect(
+            x: logicalTrailingX(podSize.width),
+            y: height - podSize.height,
+            width: podSize.width,
+            height: podSize.height
+        )
+        crownBounds = CGRect(
+            x: logicalTrailingX(crownSize.width),
+            y: 0,
+            width: crownSize.width,
+            height: crownSize.height
+        )
+        idleBounds = CGRect(
+            x: logicalTrailingX(idleSize),
+            y: height - idleSize,
+            width: idleSize,
+            height: idleSize
+        )
+        self.rightToLeft = rightToLeft
     }
 
-    func handleUIGestureRecognizerAction(
-        _ recognizer: UILongPressGestureRecognizer,
-        context: Context
-    ) {
-        let sample = VoiceCaptureGestureSample(
-            location: recognizer.location(in: recognizer.view),
-            locationInWindow: recognizer.location(in: recognizer.view?.window),
-            viewSize: recognizer.view?.bounds.size ?? .zero
+    func initialHitBounds(expanded: Bool) -> CGRect {
+        expanded ? podBounds : idleBounds
+    }
+
+    func targetGeometry(in view: UIView) -> VoiceCaptureTargetGeometry {
+        VoiceCaptureTargetGeometry(
+            podBounds: view.convert(podBounds, to: view.window),
+            crownBounds: view.convert(crownBounds, to: view.window),
+            rightToLeft: rightToLeft
         )
-        switch recognizer.state {
-        case .began:
-            onBegin(sample)
-        case .changed:
-            onChange(sample)
-        case .ended:
-            onTerminate(.released, sample)
-        case .cancelled, .failed:
-            onTerminate(.cancelled, sample)
-        default:
-            break
+    }
+}
+
+/// A layout-stable UIKit host owns one immediate tracking recognizer for the
+/// complete down/move/up sequence. A zero-duration `UILongPressGestureRecognizer`
+/// is intentionally not used: it still performs long-press recognition and can
+/// lose ownership when attached to the SwiftUI button that morphs and resizes.
+struct VoiceCaptureGestureHost: UIViewRepresentable {
+    let geometry: VoiceCaptureGestureHostGeometry
+    let expanded: Bool
+    let disabled: Bool
+    let gesture: VoiceCaptureGesture
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(gesture: gesture, geometry: geometry)
+    }
+
+    func makeUIView(context: Context) -> VoiceCaptureGestureHostView {
+        let view = VoiceCaptureGestureHostView()
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        view.isAccessibilityElement = false
+        context.coordinator.attach(to: view)
+        return view
+    }
+
+    func updateUIView(_ view: VoiceCaptureGestureHostView, context: Context) {
+        context.coordinator.update(gesture: gesture, geometry: geometry)
+        view.acceptedHitBounds = geometry.initialHitBounds(expanded: expanded)
+        view.acceptsNewTouches = !disabled
+    }
+
+    final class Coordinator: NSObject {
+        private var gesture: VoiceCaptureGesture
+        private var geometry: VoiceCaptureGestureHostGeometry
+        private let recognizer = VoiceCaptureTrackingGestureRecognizer()
+
+        init(gesture: VoiceCaptureGesture, geometry: VoiceCaptureGestureHostGeometry) {
+            self.gesture = gesture
+            self.geometry = geometry
+            super.init()
+            recognizer.addTarget(self, action: #selector(handleRecognizer(_:)))
+            recognizer.cancelsTouchesInView = true
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+        }
+
+        func attach(to view: UIView) {
+            view.addGestureRecognizer(recognizer)
+        }
+
+        func update(
+            gesture: VoiceCaptureGesture,
+            geometry: VoiceCaptureGestureHostGeometry
+        ) {
+            self.gesture = gesture
+            self.geometry = geometry
+        }
+
+        @objc private func handleRecognizer(_ recognizer: UIGestureRecognizer) {
+            guard let view = recognizer.view else { return }
+            let sample = VoiceCaptureGestureSample(
+                locationInWindow: recognizer.location(in: view.window),
+                targetGeometryInWindow: geometry.targetGeometry(in: view)
+            )
+            switch recognizer.state {
+            case .began:
+                gesture.onBegin(sample)
+            case .changed:
+                gesture.onChange(sample)
+            case .ended:
+                gesture.onTerminate(.released, sample)
+            case .cancelled, .failed:
+                gesture.onTerminate(.cancelled, sample)
+            default:
+                break
+            }
         }
     }
+}
 
-    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator {
-        Coordinator()
+final class VoiceCaptureGestureHostView: UIView {
+    var acceptedHitBounds: CGRect = .zero
+    var acceptsNewTouches = true
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        acceptsNewTouches && acceptedHitBounds.contains(point)
+    }
+}
+
+/// Immediate single-touch tracking without a duration gate or location timer.
+/// UIKit retains the recognized touch after it leaves the host's bounds and
+/// reports system cancellation separately from a confirmed finger-up.
+final class VoiceCaptureTrackingGestureRecognizer: UIGestureRecognizer {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .possible, touches.count == 1 else {
+            state = .failed
+            return
+        }
+        state = .began
     }
 
-    final class Coordinator {}
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .began || state == .changed else { return }
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .began || state == .changed else { return }
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard state == .began || state == .changed else { return }
+        state = .cancelled
+    }
 }

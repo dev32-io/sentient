@@ -16,6 +16,7 @@ struct VoiceCaptureSurface: View {
     @ComposerReduceMotion private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.layoutDirection) private var layoutDirection
 
     private var presentation: VoiceCapturePresentationState {
         VoiceCapturePresentationState(state: state, disabled: disabled)
@@ -40,6 +41,19 @@ struct VoiceCaptureSurface: View {
         VoiceCaptureLayout.crownWidth(
             horizontalSizeClass: horizontalSizeClass,
             dynamicTypeSize: dynamicTypeSize
+        )
+    }
+
+    private var gestureHostGeometry: VoiceCaptureGestureHostGeometry {
+        VoiceCaptureGestureHostGeometry(
+            idleSize: idleSize,
+            podSize: CGSize(width: liveWidth, height: liveHeight),
+            crownSize: CGSize(
+                width: crownWidth,
+                height: VoiceCaptureLayout.crownHeight(dynamicTypeSize)
+            ),
+            seamOverlap: VoiceCaptureLayout.seamOverlap,
+            rightToLeft: layoutDirection == .rightToLeft
         )
     }
 
@@ -68,7 +82,6 @@ struct VoiceCaptureSurface: View {
                     levels: levels,
                     width: presentation.isExpanded ? liveWidth : idleSize,
                     height: presentation.isExpanded ? liveHeight : idleSize,
-                    captureGesture: captureGesture,
                     onActivate: onActivate,
                     onStartAccessibleHold: onStartAccessibleHold,
                     onTarget: onTarget
@@ -80,6 +93,19 @@ struct VoiceCaptureSurface: View {
                 height: presentation.isExpanded ? liveHeight : idleSize,
                 alignment: .bottomTrailing
             )
+            .overlay(alignment: .bottomTrailing) {
+                VoiceCaptureGestureHost(
+                    geometry: gestureHostGeometry,
+                    expanded: presentation.isExpanded,
+                    disabled: presentation.isDisabled,
+                    gesture: captureGesture
+                )
+                .frame(
+                    width: gestureHostGeometry.hostSize.width,
+                    height: gestureHostGeometry.hostSize.height
+                )
+                .zIndex(2)
+            }
 
             if presentation.showsFailureNotice {
                 VoiceCaptureFailureNotice(message: presentation.failureMessage)
@@ -99,7 +125,6 @@ private struct VoiceCapturePrimaryButton: View {
     let levels: [Float]
     let width: CGFloat
     let height: CGFloat
-    let captureGesture: VoiceCaptureGesture
     let onActivate: () -> Void
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
@@ -133,7 +158,6 @@ private struct VoiceCapturePrimaryButton: View {
             height: height
         ))
         .disabled(presentation.isDisabled)
-        .gesture(captureGesture)
         .accessibilityLabel(presentation.primaryLabel)
         .accessibilityHint(presentation.primaryHint)
         .accessibilityAddTraits(presentation.isAuto ? .isSelected : [])
@@ -159,7 +183,7 @@ private struct VoiceCapturePrimaryButton: View {
                         .rotationEffect(.degrees(45))
                 }
         } else {
-            Image(systemName: presentation.isAuto ? "waveform" : "mic.fill")
+            Image(composerGlyph: presentation.isAuto ? .auto : .microphone)
                 .font(.system(size: 20, weight: .semibold))
         }
     }
@@ -252,16 +276,8 @@ private struct VoiceCaptureTargetDeck: View {
     }
 
     private func targetIcon(_ choice: VoiceCaptureTarget) -> some View {
-        Image(systemName: targetIconName(choice))
+        Image(composerGlyph: choice.composerGlyph)
             .font(.system(size: 15, weight: .semibold))
-    }
-
-    private func targetIconName(_ choice: VoiceCaptureTarget) -> String {
-        switch choice {
-        case .auto: "waveform"
-        case .cancel: "xmark"
-        case .send: "paperplane"
-        }
     }
 
     private func targetLabel(_ choice: VoiceCaptureTarget) -> String {
@@ -355,26 +371,6 @@ enum VoiceCaptureLayout {
 
     static func crownHeight(_ dynamicTypeSize: DynamicTypeSize) -> CGFloat {
         dynamicTypeSize.isAccessibilitySize ? accessibilityCrownHeight : standardCrownHeight
-    }
-
-    static func targetGeometry(
-        podSize: CGSize,
-        horizontalSizeClass: UserInterfaceSizeClass?,
-        dynamicTypeSize: DynamicTypeSize,
-        layoutDirection: LayoutDirection
-    ) -> VoiceCaptureTargetGeometry {
-        VoiceCaptureTargetGeometry(
-            podSize: podSize,
-            crownSize: CGSize(
-                width: crownWidth(
-                    horizontalSizeClass: horizontalSizeClass,
-                    dynamicTypeSize: dynamicTypeSize
-                ),
-                height: crownHeight(dynamicTypeSize)
-            ),
-            seamOverlap: seamOverlap,
-            rightToLeft: layoutDirection == .rightToLeft
-        )
     }
 
     static func podShape(

@@ -73,10 +73,10 @@ struct VoiceCaptureGestureProgress: Equatable, Sendable {
     }
 }
 
-/// Visible Hold geometry in the pod's local coordinate space. The crown is
-/// joined above the trailing edge of the pod and its three equal facets extend
-/// through the connected pod. Points outside either visible surface retain the
-/// safe default, Send, instead of forming unbounded horizontal stripes.
+/// Visible Hold geometry expressed in one coordinate space. Production uses
+/// window coordinates from the stable UIKit host; pure tests may use local
+/// coordinates. Points outside the joined crown and pod retain the safe Send
+/// default instead of forming unbounded horizontal stripes.
 struct VoiceCaptureTargetGeometry: Equatable, Sendable {
     let podBounds: CGRect
     let crownBounds: CGRect
@@ -94,13 +94,25 @@ struct VoiceCaptureTargetGeometry: Equatable, Sendable {
         let crownHeight = max(0, crownSize.height)
         let overlap = min(max(0, seamOverlap), min(podHeight, crownHeight))
 
-        podBounds = CGRect(x: 0, y: 0, width: podWidth, height: podHeight)
-        crownBounds = CGRect(
-            x: rightToLeft ? 0 : podWidth - crownWidth,
-            y: -crownHeight + overlap,
-            width: crownWidth,
-            height: crownHeight
+        self.init(
+            podBounds: CGRect(x: 0, y: 0, width: podWidth, height: podHeight),
+            crownBounds: CGRect(
+                x: rightToLeft ? 0 : podWidth - crownWidth,
+                y: -crownHeight + overlap,
+                width: crownWidth,
+                height: crownHeight
+            ),
+            rightToLeft: rightToLeft
         )
+    }
+
+    init(
+        podBounds: CGRect,
+        crownBounds: CGRect,
+        rightToLeft: Bool = false
+    ) {
+        self.podBounds = podBounds.standardized
+        self.crownBounds = crownBounds.standardized
         self.rightToLeft = rightToLeft
     }
 

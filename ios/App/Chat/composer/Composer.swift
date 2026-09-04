@@ -272,7 +272,7 @@ private struct ComposerActions: View {
             HStack(spacing: ComposerGeometry.actionGap) {
                 if !held {
                     Button(action: {}) {
-                        Image(systemName: "paperclip")
+                        Image(composerGlyph: .attachment)
                     }
                     .buttonStyle(ComposerControlButtonStyle(tone: .quiet, size: ComposerGeometry.smallControlSize))
                     .disabled(true)
@@ -280,7 +280,7 @@ private struct ComposerActions: View {
                     .accessibilityIdentifier("chat-attach")
 
                     Button(action: onTtsToggle) {
-                        Image(systemName: ttsEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        Image(composerGlyph: ttsEnabled ? .spokenResponsesOn : .spokenResponsesOff)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: ttsEnabled ? .toggleOn : .quiet,
@@ -299,7 +299,7 @@ private struct ComposerActions: View {
             ) {
                 if canInterrupt && !held {
                     Button(action: onInterrupt) {
-                        Image(systemName: "stop.fill")
+                        Image(composerGlyph: .stopResponse)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: .stop,
@@ -312,7 +312,7 @@ private struct ComposerActions: View {
 
                 if actions.showsSend {
                     Button(action: onSend) {
-                        Image(systemName: "paperplane")
+                        Image(composerGlyph: .send)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: .send,

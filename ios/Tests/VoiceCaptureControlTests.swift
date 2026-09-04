@@ -165,6 +165,48 @@ struct VoiceCaptureControlTests {
         #expect(repeated.intents.isEmpty)
     }
 
+    @Test func stableGestureHostKeepsOneEnvelopeAcrossIdleAndHold() {
+        let geometry = VoiceCaptureGestureHostGeometry(
+            idleSize: 48,
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8,
+            rightToLeft: false
+        )
+
+        #expect(geometry.hostSize == CGSize(width: 210, height: 102))
+        #expect(geometry.initialHitBounds(expanded: false) == CGRect(x: 162, y: 54, width: 48, height: 48))
+        #expect(geometry.initialHitBounds(expanded: true) == CGRect(x: 12, y: 50, width: 198, height: 52))
+        #expect(geometry.crownBounds == CGRect(x: 0, y: 0, width: 210, height: 58))
+    }
+
+    @Test func stableGestureHostMirrorsLogicalTrailingGeometryForRightToLeft() {
+        let geometry = VoiceCaptureGestureHostGeometry(
+            idleSize: 48,
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8,
+            rightToLeft: true
+        )
+
+        #expect(geometry.hostSize == CGSize(width: 210, height: 102))
+        #expect(geometry.idleBounds == CGRect(x: 0, y: 54, width: 48, height: 48))
+        #expect(geometry.podBounds == CGRect(x: 0, y: 50, width: 198, height: 52))
+        #expect(geometry.crownBounds == CGRect(x: 0, y: 0, width: 210, height: 58))
+    }
+
+    @Test func windowSpaceTargetGeometryTracksContinuousDrag() {
+        let geometry = VoiceCaptureTargetGeometry(
+            podBounds: CGRect(x: 100, y: 250, width: 198, height: 52),
+            crownBounds: CGRect(x: 88, y: 200, width: 210, height: 58)
+        )
+
+        #expect(geometry.target(at: CGPoint(x: 110, y: 225)) == .auto)
+        #expect(geometry.target(at: CGPoint(x: 190, y: 225)) == .cancel)
+        #expect(geometry.target(at: CGPoint(x: 275, y: 225)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 190, y: 280)) == .cancel)
+    }
+
     @Test func targetGeometryMatchesConnectedCompactCrownAndPod() {
         let geometry = VoiceCaptureTargetGeometry(
             podSize: CGSize(width: 198, height: 52),
@@ -279,6 +321,30 @@ struct VoiceCaptureControlTests {
         #expect(VoiceCaptureLayout.compactLiveHeight >= 44)
         #expect(VoiceCaptureLayout.accessibilityCrownHeight >= 44)
         #expect(VoiceCaptureLayout.accessibilityLiveWidth / 3 >= 44)
+    }
+
+    @Test func approvedComposerGlyphsKeepActionAndLeafSemantics() {
+        #expect(ComposerGlyph.attachment.systemName == "paperclip")
+        #expect(ComposerGlyph.spokenResponsesOn.systemName == "speaker.wave.2")
+        #expect(ComposerGlyph.spokenResponsesOff.systemName == "speaker.slash")
+        #expect(ComposerGlyph.stopResponse.systemName == "stop")
+        #expect(ComposerGlyph.send.systemName == "paperplane")
+        #expect(ComposerGlyph.microphone.systemName == "mic")
+        #expect(ComposerGlyph.auto.systemName == "lightbulb")
+        #expect(ComposerGlyph.cancel.systemName == "xmark")
+        #expect(VoiceCaptureTarget.auto.composerGlyph == .auto)
+        #expect(VoiceCaptureTarget.cancel.composerGlyph == .cancel)
+        #expect(VoiceCaptureTarget.send.composerGlyph == .send)
+    }
+
+    @Test func heldPresentationFansDeckWhileAutoKeepsItFolded() {
+        let held = VoiceCapturePresentationState(state: .hold, disabled: false)
+        let auto = VoiceCapturePresentationState(state: .auto, disabled: false)
+
+        #expect(held.isExpanded)
+        #expect(held.showsTargetDeck)
+        #expect(auto.isExpanded)
+        #expect(!auto.showsTargetDeck)
     }
 
     @Test func presentationKeepsFailureAndDisabledStatesExplicit() {

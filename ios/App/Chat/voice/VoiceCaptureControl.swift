@@ -27,9 +27,6 @@ struct VoiceCaptureControl: View {
     @State private var suppressButtonActivationUntil = Date.distantPast
     @State private var announcement = ""
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.layoutDirection) private var layoutDirection
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private static let trailingButtonSuppression: TimeInterval = 0.5
 
@@ -132,13 +129,10 @@ struct VoiceCaptureControl: View {
     }
 
     private func selectTarget(at sample: VoiceCaptureGestureSample) {
-        let geometry = VoiceCaptureLayout.targetGeometry(
-            podSize: sample.viewSize,
-            horizontalSizeClass: horizontalSizeClass,
-            dynamicTypeSize: dynamicTypeSize,
-            layoutDirection: layoutDirection
+        let next = VoiceCaptureReducer.target(
+            at: sample.locationInWindow,
+            geometry: sample.targetGeometryInWindow
         )
-        let next = VoiceCaptureReducer.target(at: sample.location, geometry: geometry)
         if next != target {
             target = next
             UISelectionFeedbackGenerator().selectionChanged()
