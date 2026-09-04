@@ -11,7 +11,7 @@ enum VoiceCaptureGestureTermination: Equatable, Sendable {
 /// expose that distinction.
 struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
     let onBegin: () -> Void
-    let onChange: (CGFloat) -> Void
+    let onChange: (CGPoint, CGSize) -> Void
     let onTerminate: (VoiceCaptureGestureTermination) -> Void
 
     func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
@@ -28,11 +28,10 @@ struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
     ) {
         switch recognizer.state {
         case .began:
-            context.coordinator.startY = recognizer.location(in: recognizer.view).y
             onBegin()
         case .changed:
-            let currentY = recognizer.location(in: recognizer.view).y
-            onChange(max(0, context.coordinator.startY - currentY))
+            let view = recognizer.view
+            onChange(recognizer.location(in: view), view?.bounds.size ?? .zero)
         case .ended:
             onTerminate(.released)
         case .cancelled, .failed:
@@ -46,7 +45,5 @@ struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
         Coordinator()
     }
 
-    final class Coordinator {
-        var startY: CGFloat = 0
-    }
+    final class Coordinator {}
 }

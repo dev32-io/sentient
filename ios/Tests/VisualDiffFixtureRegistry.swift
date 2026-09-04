@@ -361,6 +361,7 @@ final class VisualDiffSentientIdentityCapture {
 
 enum VisualDiffFixtureRegistry {
     private static let components: [String: VisualDiffComponentRegistration] = [
+        ComposerVisualFixtureCatalog.registration.componentID: ComposerVisualFixtureCatalog.registration,
         ActionButtonFixtureCatalog.registration.componentID: ActionButtonFixtureCatalog.registration,
         IconButtonFixtureCatalog.registration.componentID: IconButtonFixtureCatalog.registration,
         CheckboxFixtureCatalog.registration.componentID: CheckboxFixtureCatalog.registration,

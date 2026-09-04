@@ -105,19 +105,58 @@ struct VoiceCaptureControlTests {
         #expect(repeated.intents.isEmpty)
     }
 
-    @Test func dragTargetsUseAutoCancelSendOrder() {
-        #expect(VoiceCaptureReducer.target(for: 0) == .send)
-        #expect(VoiceCaptureReducer.target(for: VoiceCaptureReducer.targetStep) == .cancel)
-        #expect(VoiceCaptureReducer.target(for: VoiceCaptureReducer.targetStep * 2) == .auto)
+    @Test func dragTargetsUseHorizontalAutoCancelSendRegionsAcrossCrownAndPod() {
+        let width: CGFloat = 198
+
+        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 12, y: -46), controlWidth: width) == .auto)
+        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 99, y: -20), controlWidth: width) == .cancel)
+        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 184, y: 26), controlWidth: width) == .send)
+        #expect(VoiceCaptureReducer.target(at: CGPoint(x: -40, y: 8), controlWidth: width) == .auto)
+        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 240, y: -40), controlWidth: width) == .send)
+        #expect(VoiceCaptureReducer.target(
+            at: CGPoint(x: 12, y: -46),
+            controlWidth: width,
+            rightToLeft: true
+        ) == .send)
+        #expect(VoiceCaptureReducer.target(
+            at: CGPoint(x: 184, y: -46),
+            controlWidth: width,
+            rightToLeft: true
+        ) == .auto)
+    }
+
+    @Test func composerActionGroupsWrapAgainstTheirParentProposal() {
+        #expect(!ComposerActionLayout.shouldStack(
+            availableWidth: 359,
+            leadingWidth: 93,
+            trailingWidth: 248,
+            spacing: 5
+        ))
+        #expect(ComposerActionLayout.shouldStack(
+            availableWidth: 330,
+            leadingWidth: 93,
+            trailingWidth: 248,
+            spacing: 5
+        ))
+        #expect(!ComposerActionLayout.shouldStack(
+            availableWidth: 198,
+            leadingWidth: 0,
+            trailingWidth: 198,
+            spacing: 5
+        ))
     }
 
     @Test func presentationKeepsFailureAndDisabledStatesExplicit() {
         let denied = VoiceCapturePresentationState(state: .denied, disabled: false)
         let failed = VoiceCapturePresentationState(state: .failed, disabled: false)
+        let transitioning = VoiceCapturePresentationState(state: .transitioning, disabled: false)
         let disabled = VoiceCapturePresentationState(state: .disabled, disabled: true)
 
         #expect(denied.showsFailureNotice)
         #expect(failed.showsFailureNotice)
+        #expect(transitioning.isDisabled)
+        #expect(!transitioning.showsWaveform)
+        #expect(transitioning.primaryLabel == "Voice capture is changing modes")
         #expect(disabled.isDisabled)
         #expect(!disabled.showsWaveform)
         #expect(disabled.primaryLabel == "Voice unavailable while reconnecting")

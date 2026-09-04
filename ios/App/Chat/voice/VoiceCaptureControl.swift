@@ -1,7 +1,7 @@
 import Foundation
+import MobileData
 import SwiftUI
 import UIKit
-import MobileData
 
 /// Internal capture mini-component. It emits semantic intents only; KMP owns
 /// capture IDs, first-terminal-wins, frame ordering, and barge-in.
@@ -26,8 +26,25 @@ struct VoiceCaptureControl: View {
     @State private var suppressButtonActivationUntil = Date.distantPast
     @State private var announcement = ""
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.layoutDirection) private var layoutDirection
 
     private static let trailingButtonSuppression: TimeInterval = 0.5
+
+    init(
+        talkMode: TalkMode,
+        levels: [Float],
+        disabled: Bool,
+        permission: VoiceCapturePermission = .live,
+        onIntent: @escaping (VoiceCaptureIntent) -> Void
+    ) {
+        self.talkMode = talkMode
+        self.levels = levels
+        self.disabled = disabled
+        self.permission = permission
+        self.onIntent = onIntent
+        _state = State(initialValue: VoiceCaptureReducer.authority(talkMode, disabled: disabled))
+        _captureNeedsCancellation = State(initialValue: talkMode != .idle && !disabled)
+    }
 
     var body: some View {
         VoiceCaptureSurface(
@@ -38,6 +55,7 @@ struct VoiceCaptureControl: View {
             announcement: announcement,
             captureGesture: captureGesture,
             onActivate: activateForAccessibility,
+            onStartAccessibleHold: beginAccessibleHold,
             onTarget: completeHold
         )
         .onAppear { synchronize() }
@@ -66,9 +84,13 @@ struct VoiceCaptureControl: View {
                     beginPhysicalHold()
                 }
             },
-            onChange: { upwardTravel in
+            onChange: { location, size in
                 guard gestureActive, state == .hold else { return }
-                let next = VoiceCaptureReducer.target(for: upwardTravel)
+                let next = VoiceCaptureReducer.target(
+                    at: location,
+                    controlWidth: size.width,
+                    rightToLeft: layoutDirection == .rightToLeft
+                )
                 if next != target {
                     target = next
                     UISelectionFeedbackGenerator().selectionChanged()
@@ -91,12 +113,15 @@ struct VoiceCaptureControl: View {
                     return
                 }
                 let elapsed = Date().timeIntervalSince(startedAt ?? Date())
-                apply(VoiceCaptureReducer.terminatePhysicalHold(
-                    from: state,
-                    target: target,
-                    elapsed: elapsed,
+                finishHold(
+                    VoiceCaptureReducer.terminatePhysicalHold(
+                        from: state,
+                        target: target,
+                        elapsed: elapsed,
+                        termination: termination
+                    ),
                     termination: termination
-                ))
+                )
             }
         )
     }
@@ -126,10 +151,39 @@ struct VoiceCaptureControl: View {
         }
     }
 
+    private func beginAccessibleHold() {
+        guard !disabled, state != .transitioning else { return }
+        beginPhysicalHold()
+    }
+
     private func completeHold(_ choice: VoiceCaptureTarget) {
         target = choice
         gestureActive = false
-        apply(VoiceCaptureReducer.release(from: state, target: choice, elapsed: VoiceCaptureReducer.quickAutoThreshold))
+        finishHold(
+            VoiceCaptureReducer.release(
+                from: state,
+                target: choice,
+                elapsed: VoiceCaptureReducer.quickAutoThreshold
+            ),
+            termination: .released
+        )
+    }
+
+    private func finishHold(
+        _ transition: VoiceCaptureTransition,
+        termination: VoiceCaptureGestureTermination
+    ) {
+        apply(transition)
+        guard !transition.intents.isEmpty else { return }
+        if termination == .cancelled {
+            announce("Voice capture cancelled by the system.")
+        } else if transition.intents.contains(.cancelHeld) {
+            announce("Voice message cancelled.")
+        } else if transition.intents.contains(.enterAuto) {
+            announce("Auto listening on.")
+        } else if transition.intents.contains(.sendHeld) {
+            announce("Voice message sent.")
+        }
     }
 
     private func activateForAccessibility() {

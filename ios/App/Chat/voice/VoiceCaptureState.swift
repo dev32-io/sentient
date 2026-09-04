@@ -15,16 +15,28 @@ struct VoiceCapturePresentationState: Equatable, Sendable {
     let state: VoiceCaptureState
     let disabled: Bool
 
-    var isDisabled: Bool { disabled || state == .disabled }
+    var isTransitioning: Bool { state == .transitioning }
+    var isDisabled: Bool { disabled || state == .disabled || isTransitioning }
     var isAuto: Bool { state == .auto && !isDisabled }
-    var showsWaveform: Bool { (state == .hold || state == .auto) && !isDisabled }
-    var showsTargetDeck: Bool { state == .hold && !isDisabled }
+    var isHolding: Bool { state == .hold && !isDisabled }
+    var isExpanded: Bool { isHolding || isAuto }
+    var showsWaveform: Bool { isExpanded }
+    var showsTargetDeck: Bool { isHolding }
     var showsFailureNotice: Bool { state == .denied || state == .failed }
 
     var primaryLabel: String {
+        if isTransitioning { return "Voice capture is changing modes" }
         if isDisabled { return "Voice unavailable while reconnecting" }
         if isAuto { return "Auto listening is on; activate to send and turn it off" }
         return "Tap for Auto listening or hold to talk"
+    }
+
+    var primaryHint: String {
+        if isTransitioning { return "Wait for voice capture to finish changing modes" }
+        if isDisabled { return "Text input remains available" }
+        if isAuto { return "Double-tap to send and turn off Auto listening" }
+        if isHolding { return "Slide across Auto, Cancel, and Send, then lift" }
+        return "Double-tap for Auto listening, or use the Start Hold action"
     }
 
     var failureMessage: String {
@@ -51,7 +63,6 @@ struct VoiceCaptureTransition: Equatable, Sendable {
 /// KMP owns capture IDs, terminal races, frame ordering, and stale isolation.
 enum VoiceCaptureReducer {
     static let quickAutoThreshold: TimeInterval = 0.22
-    static let targetStep: CGFloat = 58
 
     static func begin(from state: VoiceCaptureState) -> VoiceCaptureTransition {
         guard state == .idle || state == .denied || state == .failed else {
@@ -119,10 +130,19 @@ enum VoiceCaptureReducer {
         }
     }
 
-    /// Dragging upward selects the reviewed fan order: Send (default), Cancel, Auto.
-    static func target(for upwardTravel: CGFloat) -> VoiceCaptureTarget {
-        if upwardTravel >= targetStep * 1.5 { return .auto }
-        if upwardTravel >= targetStep * 0.5 { return .cancel }
+    /// The connected crown and pod share three horizontal regions. Keeping the
+    /// classifier independent of vertical travel lets a held pointer move over
+    /// either surface without changing the Auto, Cancel, Send order.
+    static func target(
+        at location: CGPoint,
+        controlWidth: CGFloat,
+        rightToLeft: Bool = false
+    ) -> VoiceCaptureTarget {
+        guard controlWidth > 0 else { return .send }
+        let boundedX = min(max(location.x, 0), controlWidth)
+        let directionalX = rightToLeft ? controlWidth - boundedX : boundedX
+        if directionalX < controlWidth / 3 { return .auto }
+        if directionalX < controlWidth * 2 / 3 { return .cancel }
         return .send
     }
 }

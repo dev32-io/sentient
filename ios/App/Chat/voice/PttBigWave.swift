@@ -1,20 +1,18 @@
-// ---------------------------------------------------------------------------
-// PttBigWave — the recording-takeover waveform: 32 flexible bars with a sine
-// contour, overlaid across the FULL composer card while the corner mic is
-// held or locked. Bars use the live microphone envelope for amplitude and a
-// staggered pulse for motion. Reduced Motion renders the envelope directly,
-// without a timeline or an implicit animation.
-// ---------------------------------------------------------------------------
 import Foundation
 import SwiftUI
 
+/// Compact live envelope used inside the Hold and Auto voice pod. It samples
+/// the KMP microphone levels without owning capture or audio behavior.
 struct PttBigWave: View {
     let levels: [Float]
+    var tint: Color = DuskColors.waveBar
+    var animates = true
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if reduceMotion {
+            if reduceMotion || !animates {
                 staticBars
             } else {
                 animatedBars
@@ -26,51 +24,54 @@ struct PttBigWave: View {
     }
 
     private var staticBars: some View {
-        bars { i in
-            PttWaveMetrics.levelScale(levels, at: i)
+        bars { index in
+            PttWaveMetrics.sampledLevelScale(levels, bar: index)
         }
     }
 
     private var animatedBars: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
-            bars { i in
-                PttWaveMetrics.animatedScale(levels, at: i, time: time)
+            bars { index in
+                PttWaveMetrics.sampledAnimatedScale(levels, bar: index, time: time)
             }
         }
     }
 
     private func bars(_ scale: @escaping (Int) -> Double) -> some View {
-        HStack(alignment: .center, spacing: PttWaveMetrics.barSpacing) {
-            ForEach(0..<PttWaveMetrics.barCount, id: \.self) { i in
+        HStack(alignment: .center, spacing: 0) {
+            ForEach(0..<PttWaveMetrics.barCount, id: \.self) { index in
                 Capsule()
-                    .fill(DuskColors.waveBar)
-                    .frame(minWidth: PttWaveMetrics.barMinWidth, maxWidth: .infinity)
-                    .frame(height: PttWaveMetrics.contourHeight(at: i) * CGFloat(scale(i)))
+                    .fill(
+                        LinearGradient(
+                            colors: [tint, tint.opacity(0.58)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: PttWaveMetrics.barWidth)
+                    .frame(height: PttWaveMetrics.contourHeight(at: index) * CGFloat(scale(index)))
+                    .shadow(color: tint.opacity(0.38), radius: 3)
+
+                if index < PttWaveMetrics.barCount - 1 {
+                    Spacer(minLength: 0)
+                }
             }
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
-/// Pure waveform math keeps the live and Reduced Motion paths honest and
-/// testable without rendering a view or opening an audio device.
+/// Pure waveform math keeps live and Reduced Motion rendering testable without
+/// opening an audio device.
 enum PttWaveMetrics {
-    /// Number of waveform bars (design mobile variant).
-    static let barCount = 32
-    /// Waveform lane height in points (webui height: 40px).
-    static let laneHeight: CGFloat = 40
-    /// Horizontal gap between bars.
-    static let barSpacing: CGFloat = 3
-    /// Bar width floor; bars grow evenly to fill the lane.
-    static let barMinWidth: CGFloat = 2
-    /// One pulse cycle (webui ptt-wave 1s ease-in-out infinite).
+    static let barCount = 11
+    static let laneHeight: CGFloat = 30
+    static let barWidth: CGFloat = 3
     static let cycleDuration: Double = 1.0
-    /// Stagger: delay = (i mod 13) · 0.06 s.
-    static let delayBucket = 13
-    static let delayStep: Double = 0.06
-    /// scaleY trough of the pulse (webui keyframes .24 → 1 → .24).
+    static let delayBucket = 11
+    static let delayStep: Double = 0.055
     static let minScale: Double = 0.24
-    /// Baseline and level contribution from the mobile envelope contract.
     static let levelFloor: Double = 0.35
     static let levelRange: Double = 0.65
 
@@ -86,7 +87,7 @@ enum PttWaveMetrics {
     }
 
     static func contourHeight(at index: Int) -> CGFloat {
-        laneHeight * (0.20 + 0.64 * abs(sin(Double(index) * 0.7)))
+        laneHeight * (0.42 + 0.48 * abs(sin(Double(index) * 0.78 + 0.35)))
     }
 
     static func pulseScale(at time: Double, bar index: Int) -> Double {
@@ -103,10 +104,27 @@ enum PttWaveMetrics {
         let pulse = pulseScale(at: time, bar: index)
         return minScale + (levelScale - minScale) * pulse
     }
+
+    static func sampledLevelScale(_ levels: [Float], bar: Int) -> Double {
+        levelScale(levels, at: sourceIndex(for: bar, sourceCount: levels.count))
+    }
+
+    static func sampledAnimatedScale(_ levels: [Float], bar: Int, time: Double) -> Double {
+        let levelScale = sampledLevelScale(levels, bar: bar)
+        let pulse = pulseScale(at: time, bar: bar)
+        return minScale + (levelScale - minScale) * pulse
+    }
+
+    static func sourceIndex(for bar: Int, sourceCount: Int) -> Int {
+        guard sourceCount > 1, barCount > 1 else { return 0 }
+        let boundedBar = min(max(bar, 0), barCount - 1)
+        return Int((Double(boundedBar) * Double(sourceCount - 1) / Double(barCount - 1)).rounded())
+    }
 }
 
-#Preview("Animated") {
-    PttBigWave(levels: Array(repeating: 0, count: PttWaveMetrics.barCount))
+#Preview("Compact pod waveform") {
+    PttBigWave(levels: Array(repeating: 0, count: 32))
+        .frame(width: 130)
         .padding()
         .background(DuskColors.paper, in: RoundedRectangle(cornerRadius: 12))
         .padding()
