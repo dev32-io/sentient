@@ -137,7 +137,8 @@ enum DesignTextRole {
     var family: String {
         switch self {
         case .telemetry: DesignV2.Typography.monoFamily
-        case .caption, .supporting, .label, .body, .large: DesignV2.Typography.uiFamily
+        case .caption, .supporting, .body, .large: DesignV2.Typography.uiFamily
+        case .label: DesignTypographyAdapter.uiMediumFace
         case .title, .display: DesignV2.Typography.displayFamily
         }
     }

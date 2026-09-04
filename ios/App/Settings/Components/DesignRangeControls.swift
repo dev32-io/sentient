@@ -347,7 +347,7 @@ struct DesignSlider: View {
                 // still scaling with the user's accessibility setting.
                 .font(
                     .custom(
-                        "DMSans-Medium",
+                        DesignTypographyAdapter.uiMediumFace,
                         size: DesignMetrics.controlLabelSize,
                         relativeTo: .body
                     )

@@ -89,7 +89,6 @@ struct AudioScreen: View {
             VStack(alignment: .leading, spacing: Space.sm) {
                 Text("Reply channel")
                     .designText(.label)
-                    .fontWeight(.medium)
                     .foregroundStyle(DuskColors.ink)
                 DesignSegmentedPicker(
                     title: "Reply channel",
@@ -117,7 +116,7 @@ struct AudioScreen: View {
                     isOn: .constant(true), accessibilityId: "settings-audio-tts"
                 )
                 VStack(alignment: .leading, spacing: Space.sm) {
-                    Text("Reply channel").designText(.label).fontWeight(.medium).foregroundStyle(DuskColors.ink)
+                    Text("Reply channel").designText(.label).foregroundStyle(DuskColors.ink)
                     DesignSegmentedPicker(
                         title: "Reply channel",
                         options: audioChannelOptions.map { (value: $0.id, label: $0.label) },

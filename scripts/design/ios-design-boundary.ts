@@ -138,7 +138,7 @@ const COMPATIBILITY_DELEGATES: Readonly<Record<string, readonly string[]>> = {
 
 const rawControlPattern = /\b(?:TextField|SecureField|TextEditor|Slider|Picker|Toggle|ProgressView|Menu)\s*(?:\(|\{)/;
 const styledButtonPattern = /\.(?:buttonStyle|font|foregroundStyle|padding|frame|background|overlay|shadow)\s*\(/;
-const hardcodedFontPattern = /\.custom\s*\(\s*["']/;
+const hardcodedFontPattern = /\.custom\s*\(\s*["']/g;
 const visualLiteralPatterns: readonly RegExp[] = [
   /(?:Color|UIColor)\s*\([^\n]*(?:red:|white:|hue:)/,
   /#[0-9a-fA-F]{3,8}\b/,
@@ -222,11 +222,12 @@ export function findPageBoundaryViolations(sources: readonly IosDesignSource[]):
     const lines = executable.split("\n");
 
     // Font family projection is a global rule, including the foundation itself.
-    lines.forEach((line, index) => {
-      if (hardcodedFontPattern.test(line)) {
-        violations.push(`${source.path}:${index + 1}: hardcoded font family; use the generated KMP typography role`);
-      }
-    });
+    // Match the complete source so formatting the first argument onto another
+    // line cannot bypass the rule; report the line where `.custom` begins.
+    for (const match of executable.matchAll(hardcodedFontPattern)) {
+      const line = executable.slice(0, match.index).split("\n").length;
+      violations.push(`${source.path}:${line}: hardcoded font family; use the generated KMP typography role`);
+    }
 
     if (isFoundation(source.path) || transitionalPaths.has(source.path)) continue;
 

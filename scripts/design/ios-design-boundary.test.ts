@@ -75,6 +75,36 @@ describe("iOS design boundary", () => {
     ]).join("\n")).toContain("page-local visual constant");
   });
 
+  test("rejects multiline hardcoded families at the custom call line", () => {
+    const path = "ios/App/Theme/FutureTheme.swift";
+    expect(findPageBoundaryViolations([
+      {
+        path,
+        source: [
+          "let body = Font",
+          "    .custom(",
+          "        \"DM Sans\",",
+          "        size: 15",
+          "    )",
+        ].join("\n"),
+      },
+    ])).toEqual([
+      `${path}:2: hardcoded font family; use the generated KMP typography role`,
+    ]);
+
+    expect(findPageBoundaryViolations([
+      {
+        path: "ios/App/Theme/DesignV2.swift",
+        source: [
+          "Font.custom(",
+          "    DesignTypographyAdapter.uiMediumFace,",
+          "    size: 14",
+          ")",
+        ].join("\n"),
+      },
+    ])).toEqual([]);
+  });
+
   test("does not turn product exclusions into migration exceptions", () => {
     expect(findPageBoundaryViolations([
       {

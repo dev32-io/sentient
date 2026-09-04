@@ -92,7 +92,7 @@ struct DesignField: View {
         VStack(alignment: .leading, spacing: DesignFieldMetrics.labelGap) {
             if showsTitle {
                 Text(title)
-                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                    .font(DesignTextRole.label.font)
                     // Native custom-font line metrics sit one half-point below
                     // the CSS label baseline at the reviewed scale.
                     .baselineOffset(0.5)

@@ -1,5 +1,6 @@
 import XCTest
 import MobileData
+import UIKit
 @testable import SentientApp
 
 final class DesignFoundationV2Tests: XCTestCase {
@@ -121,9 +122,11 @@ final class DesignFoundationV2Tests: XCTestCase {
 
         XCTAssertEqual(DesignTypographyAdapter.displayFamily, firstFamily(MobileData.Fonts_.shared.display))
         XCTAssertEqual(DesignTypographyAdapter.uiFamily, firstFamily(MobileData.Fonts_.shared.ui))
+        XCTAssertEqual(DesignTypographyAdapter.uiMediumFace, "DMSans-Medium")
+        XCTAssertNotNil(UIFont(name: DesignTypographyAdapter.uiMediumFace, size: DesignMetrics.controlLabelSize))
         XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
         XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
-        XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiFamily)
+        XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiMediumFace)
         XCTAssertEqual(DesignTextRole.caption.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.telemetry.family, DesignTypographyAdapter.monoFamily)

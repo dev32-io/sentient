@@ -323,6 +323,7 @@ enum DesignMaterialShadowGeometry {
 enum DesignTypographyAdapter {
     static let displayFamily = nativeFamily(MobileData.Fonts_.shared.display)
     static let uiFamily = nativeFamily(MobileData.Fonts_.shared.ui)
+    static let uiMediumFace = bundledFace(family: uiFamily, weight: "Medium")
     static let monoFamily = nativeFamily(MobileData.Fonts_.shared.mono)
 
     static func nativeFamily(_ fallbackList: String) -> String {
@@ -331,5 +332,9 @@ enum DesignTypographyAdapter {
             .first
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             ?? fallbackList.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func bundledFace(family: String, weight: String) -> String {
+        "\(family.filter { !$0.isWhitespace })-\(weight)"
     }
 }
