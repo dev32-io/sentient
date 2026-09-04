@@ -138,6 +138,7 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
   const semantic = isSemanticProps(props);
   const [legacyDraft, setLegacyDraft] = useState("");
   const [voiceState, setVoiceState] = useState<VoiceCaptureState>(() => props.connectionReady ? "idle" : "reconnect-disabled");
+  const [focusOrigin, setFocusOrigin] = useState<"intentional" | "pointer-voice">("intentional");
   const [blockedFlash, setBlockedFlash] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const blurAfterSend = useRef(isTouchDevice());
@@ -200,6 +201,18 @@ export function ChatComposer(props: ChatComposerInputProps): JSX.Element {
             <div
               class={`dock-composer__surface dock-composer__surface--${voiceState}`}
               data-voice-state={voiceState}
+              data-focus-origin={focusOrigin}
+              onPointerDownCapture={(event) => {
+                const target = event.target as Element;
+                setFocusOrigin(target.closest(".dock-voice-capture") === null ? "intentional" : "pointer-voice");
+              }}
+              onKeyDownCapture={() => setFocusOrigin("intentional")}
+              onClickCapture={(event) => {
+                if (event.detail === 0) setFocusOrigin("intentional");
+              }}
+              onFocusCapture={(event) => {
+                if ((event.target as Element).closest(".dock-voice-capture") === null) setFocusOrigin("intentional");
+              }}
               onPointerDown={(event) => {
                 if ((event.target as Element).closest("textarea,button,input,a,[role='button']")) return;
                 event.preventDefault();

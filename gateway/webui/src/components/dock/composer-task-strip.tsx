@@ -74,6 +74,7 @@ function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.El
     >
       <span class={`dock-task-pill__dot dock-task-pill__dot--${task.status}`} aria-hidden="true" />
       <span class="dock-task-pill__name">{label}</span>
+      <span class="dock-task-pill__status" aria-hidden="true">{task.status}</span>
     </button>
   );
 }

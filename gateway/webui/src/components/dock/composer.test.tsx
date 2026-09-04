@@ -118,6 +118,32 @@ describe("ChatComposer semantic boundary", () => {
     expect(editor.selectionEnd).toBe(editor.value.length);
   });
 
+  it("separates pointer voice focus from intentional textarea focus during Auto", async () => {
+    render(<ChatComposer {...composerProps()} />);
+    const editor = screen.getByRole("textbox", { name: "Message Sentient" });
+    const surface = editor.closest(".dock-composer__surface") as HTMLElement;
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    editor.focus();
+    expect(surface.getAttribute("data-focus-origin")).toBe("intentional");
+
+    firePointer(primary, "PointerDown", { button: 0, pointerId: 4, clientX: 20, clientY: 20 });
+    firePointer(primary, "PointerUp", { pointerId: 4, clientX: 20, clientY: 20 });
+    const auto = await screen.findByRole("button", { name: "Auto listening is on; activate to turn it off" });
+    expect(document.activeElement).toBe(auto);
+    expect(surface.getAttribute("data-focus-origin")).toBe("pointer-voice");
+
+    fireEvent.pointerDown(editor, { button: 0, pointerId: 5 });
+    editor.focus();
+    expect(document.activeElement).toBe(editor);
+    expect(surface.getAttribute("data-voice-state")).toBe("auto");
+    expect(surface.getAttribute("data-focus-origin")).toBe("intentional");
+
+    fireEvent.pointerDown(auto, { button: 0, pointerId: 6 });
+    expect(surface.getAttribute("data-focus-origin")).toBe("pointer-voice");
+    fireEvent.keyDown(auto, { key: "ArrowRight" });
+    expect(surface.getAttribute("data-focus-origin")).toBe("intentional");
+  });
+
   it("keeps the draft usable across reconnect and capture permission failure", async () => {
     const denied = new DOMException("denied", "NotAllowedError");
     const props = composerProps({
@@ -372,6 +398,9 @@ describe("ChatComposer semantic boundary", () => {
     expect(running.querySelector(".dock-task-pill__dot--running")).toBeTruthy();
     expect(done.querySelector(".dock-task-pill__dot--done")).toBeTruthy();
     expect(failed.querySelector(".dock-task-pill__dot--error")).toBeTruthy();
+    expect(running.querySelector(".dock-task-pill__status")?.textContent).toBe("running");
+    expect(done.querySelector(".dock-task-pill__status")?.textContent).toBe("done");
+    expect(failed.querySelector(".dock-task-pill__status")?.textContent).toBe("error");
 
     const detailSlot = document.querySelector(".dock-task-shelf__detail-slot");
     expect(detailSlot?.getAttribute("data-open")).toBe("false");
@@ -524,8 +553,9 @@ describe("pure VoiceCapture presentation mapping", () => {
 });
 
 describe("dock foundation boundary", () => {
-  it("keeps pointer capture from lighting the composer while preserving focus-visible emphasis", () => {
-    expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within:has\(:focus-visible\):not\(\[data-voice-state="hold"\]\):not\(\[data-voice-state="auto"\]\):not\(\[data-voice-state="transitioning"\]\)\s*{/);
+  it("keeps pointer voice focus neutral while preserving intentional focus-visible emphasis", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within:has\(:focus-visible\):not\(\[data-focus-origin="pointer-voice"\]\)\s*{/);
+    expect(DOCK_STYLES).not.toMatch(/focus-within:has\(:focus-visible\):not\(\[data-voice-state=/);
     expect(DOCK_STYLES).not.toMatch(/\.dock-composer__surface:focus-within\s*{/);
     expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer-control:focus-visible\s*{[^}]*outline:/s);
     expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-voice-capture__primary:focus-visible,/);
@@ -562,7 +592,19 @@ describe("dock foundation boundary", () => {
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error\s*{[^}]*background:\s*var\(--color-stop\);/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\s*{[^}]*grid-template-rows:\s*0fr;[^}]*transition:/s);
     expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\[data-open="true"\]\s*{[^}]*grid-template-rows:\s*1fr;/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill\s*{\s*animation:\s*dock-task-pill-enter 260ms cubic-bezier\(\.16, 1, \.3, 1\) backwards;/);
+    expect(DOCK_STYLES).not.toMatch(/dock-task-pill-enter[^;]*\bboth\b/);
     expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running,[\s\S]*?animation:\s*none;/);
     expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running\s*{[^}]*box-shadow:\s*0 0 0 3px/s);
+  });
+
+  it("uses system-color shape, glyph, and label distinctions in Forced Colors", () => {
+    expect(DOCK_STYLES).toMatch(/@media \(forced-colors: active\)\s*{/);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot\s*{[^}]*border:\s*2px solid CanvasText;[^}]*background:\s*Canvas;[^}]*color:\s*CanvasText;[^}]*forced-color-adjust:\s*none;/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running\s*{[^}]*border-radius:\s*50%;[^}]*background:\s*Highlight;[^}]*color:\s*HighlightText;/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done::after\s*{[^}]*content:\s*"✓";/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error\s*{[^}]*transform:\s*rotate\(45deg\);/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error::after\s*{[^}]*content:\s*"!";/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__status\s*{[^}]*position:\s*static;[^}]*color:\s*CanvasText;/s);
   });
 });

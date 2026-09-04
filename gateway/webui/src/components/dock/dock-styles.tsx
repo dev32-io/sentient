@@ -87,7 +87,7 @@ export const DOCK_STYLES = `
   opacity: 0.62;
   pointer-events: none;
 }
-.dock-composer__surface:focus-within:has(:focus-visible):not([data-voice-state="hold"]):not([data-voice-state="auto"]):not([data-voice-state="transitioning"]) {
+.dock-composer__surface:focus-within:has(:focus-visible):not([data-focus-origin="pointer-voice"]) {
   border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line));
   box-shadow:
     var(--slate-top-light),
@@ -376,6 +376,17 @@ export const DOCK_STYLES = `
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dock-task-pill__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
 .dock-task-pill__dot {
   width: var(--space-sm);
   height: var(--space-sm);
@@ -452,7 +463,7 @@ export const DOCK_STYLES = `
   from { opacity: 0; transform: translateY(6px) scale(0.96); }
 }
 .dock-task-pill {
-  animation: dock-task-pill-enter 260ms cubic-bezier(.16, 1, .3, 1) both;
+  animation: dock-task-pill-enter 260ms cubic-bezier(.16, 1, .3, 1) backwards;
 }
 
 .dock-suggestions {
@@ -1025,6 +1036,58 @@ export const DOCK_STYLES = `
   }
   .dock-task-pill__dot {
     box-shadow: none;
+  }
+}
+@media (forced-colors: active) {
+  .dock-task-pill__dot {
+    width: 16px;
+    height: 16px;
+    display: inline-grid;
+    place-items: center;
+    border: 2px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    font: 700 12px / 1 var(--font-ui);
+    forced-color-adjust: none;
+  }
+  .dock-task-pill__dot--running {
+    border-radius: 50%;
+    border-color: Highlight;
+    background: Highlight;
+    color: HighlightText;
+  }
+  .dock-task-pill__dot--running::after {
+    content: "…";
+    transform: translateY(-2px);
+  }
+  .dock-task-pill__dot--done {
+    border-radius: 2px;
+  }
+  .dock-task-pill__dot--done::after {
+    content: "✓";
+  }
+  .dock-task-pill__dot--error {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    transform: rotate(45deg);
+  }
+  .dock-task-pill__dot--error::after {
+    content: "!";
+    transform: rotate(-45deg);
+  }
+  .dock-task-pill__status {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    border: 0;
+    clip: auto;
+    color: CanvasText;
+    font: 600 var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
+    white-space: nowrap;
   }
 }
 `;
