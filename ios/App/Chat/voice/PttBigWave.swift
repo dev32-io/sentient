@@ -8,7 +8,7 @@ struct PttBigWave: View {
     var tint: Color = DuskColors.waveBar
     var animates = true
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
 
     var body: some View {
         Group {

@@ -1,6 +1,25 @@
 import MobileData
 import SwiftUI
 
+private struct ComposerReduceMotionOverrideKey: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    var composerReduceMotionOverride: Bool? {
+        get { self[ComposerReduceMotionOverrideKey.self] }
+        set { self[ComposerReduceMotionOverrideKey.self] = newValue }
+    }
+}
+
+@propertyWrapper
+struct ComposerReduceMotion: DynamicProperty {
+    @Environment(\.accessibilityReduceMotion) private var systemValue
+    @Environment(\.composerReduceMotionOverride) private var override
+
+    var wrappedValue: Bool { override ?? systemValue }
+}
+
 /// Encapsulated native composer. Draft ownership stays here so permission,
 /// capture failures, reconnects, and Hold/Auto transitions never erase text.
 struct Composer: View {
@@ -15,6 +34,7 @@ struct Composer: View {
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
     let onFocusGained: () -> Void
+    private let initiallyExpandedTaskId: String?
 
     @State private var draft: String
     @FocusState private var inputFocused: Bool
@@ -28,6 +48,7 @@ struct Composer: View {
         voiceDisabled: Bool,
         canInterrupt: Bool,
         initialDraft: String = "",
+        initiallyExpandedTaskId: String? = nil,
         onSend: @escaping (String) -> Void,
         onVoiceIntent: @escaping (VoiceCaptureIntent) -> Void,
         onTtsToggle: @escaping () -> Void,
@@ -45,6 +66,7 @@ struct Composer: View {
         self.onTtsToggle = onTtsToggle
         self.onInterrupt = onInterrupt
         self.onFocusGained = onFocusGained
+        self.initiallyExpandedTaskId = initiallyExpandedTaskId
         _draft = State(initialValue: initialDraft)
     }
 
@@ -56,7 +78,10 @@ struct Composer: View {
     var body: some View {
         VStack(spacing: tasks.isEmpty ? 0 : ComposerGeometry.joinOverlap) {
             if !tasks.isEmpty {
-                ComposerTaskStrip(items: tasks)
+                ComposerTaskStrip(
+                    items: tasks,
+                    initiallyExpandedTaskId: initiallyExpandedTaskId
+                )
                     .padding(
                         .horizontal,
                         ComposerGeometry.taskShelfInset(horizontalSizeClass: horizontalSizeClass)
@@ -157,7 +182,7 @@ private struct DraftEditor: View {
     let horizontalInset: CGFloat
     let onSubmit: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var promptText: String {
@@ -233,7 +258,7 @@ private struct ComposerActions: View {
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -268,7 +293,10 @@ private struct ComposerActions: View {
                 }
             }
 
-            HStack(spacing: ComposerGeometry.trailingActionGap) {
+            ComposerTrailingActionLayout(
+                spacing: ComposerGeometry.trailingActionGap,
+                layoutDirection: layoutDirection
+            ) {
                 if canInterrupt && !held {
                     Button(action: onInterrupt) {
                         Image(systemName: "stop.fill")
@@ -323,6 +351,120 @@ private struct ComposerActions: View {
     }
 }
 
+/// Wraps trailing controls into logical trailing-aligned rows without
+/// shrinking any target. This covers the widest supported combination: Stop,
+/// text Send, and persistent Auto at Accessibility Dynamic Type.
+struct ComposerTrailingActionLayout: Layout {
+    let spacing: CGFloat
+    let layoutDirection: LayoutDirection
+
+    static func rows(
+        availableWidth: CGFloat,
+        itemWidths: [CGFloat],
+        spacing: CGFloat
+    ) -> [[Int]] {
+        guard !itemWidths.isEmpty else { return [] }
+        let limit = max(0, availableWidth)
+        var result: [[Int]] = []
+        var row: [Int] = []
+        var rowWidth: CGFloat = 0
+
+        for (index, width) in itemWidths.enumerated() {
+            let nextWidth = rowWidth + (row.isEmpty ? 0 : spacing) + width
+            if !row.isEmpty, nextWidth > limit {
+                result.append(row)
+                row = [index]
+                rowWidth = width
+            } else {
+                row.append(index)
+                rowWidth = nextWidth
+            }
+        }
+        if !row.isEmpty { result.append(row) }
+        return result
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let availableWidth = proposal.width ?? .greatestFiniteMagnitude
+        let rows = Self.rows(
+            availableWidth: availableWidth,
+            itemWidths: sizes.map(\.width),
+            spacing: spacing
+        )
+        let rowSizes = rows.map { rowSize($0, sizes: sizes) }
+        return CGSize(
+            width: rowSizes.map(\.width).max() ?? 0,
+            height: rowSizes.map(\.height).reduce(0, +)
+                + CGFloat(max(0, rowSizes.count - 1)) * spacing
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let rows = Self.rows(
+            availableWidth: bounds.width,
+            itemWidths: sizes.map(\.width),
+            spacing: spacing
+        )
+        var y = bounds.minY
+
+        for row in rows {
+            let rowSize = rowSize(row, sizes: sizes)
+            if layoutDirection == .leftToRight {
+                var x = bounds.maxX - rowSize.width
+                for index in row {
+                    place(
+                        subviews[index],
+                        size: sizes[index],
+                        x: x,
+                        y: y + (rowSize.height - sizes[index].height) / 2
+                    )
+                    x += sizes[index].width + spacing
+                }
+            } else {
+                var x = bounds.minX + rowSize.width
+                for index in row {
+                    x -= sizes[index].width
+                    place(
+                        subviews[index],
+                        size: sizes[index],
+                        x: x,
+                        y: y + (rowSize.height - sizes[index].height) / 2
+                    )
+                    x -= spacing
+                }
+            }
+            y += rowSize.height + spacing
+        }
+    }
+
+    private func rowSize(_ row: [Int], sizes: [CGSize]) -> CGSize {
+        CGSize(
+            width: row.map { sizes[$0].width }.reduce(0, +)
+                + CGFloat(max(0, row.count - 1)) * spacing,
+            height: row.map { sizes[$0].height }.max() ?? 0
+        )
+    }
+
+    private func place(_ subview: LayoutSubview, size: CGSize, x: CGFloat, y: CGFloat) {
+        subview.place(
+            at: CGPoint(x: x, y: y),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: size.width, height: size.height)
+        )
+    }
+}
+
 /// Lays out the two action groups against the current parent proposal. On a
 /// narrow or large-text proposal, the trailing group moves below rather than
 /// shrinking controls or measuring against global screen bounds.
@@ -346,14 +488,20 @@ struct ComposerActionLayout: Layout {
     ) -> CGSize {
         guard subviews.count == 2 else { return .zero }
         let leading = subviews[0].sizeThatFits(.unspecified)
-        let trailing = subviews[1].sizeThatFits(.unspecified)
-        let naturalWidth = leading.width + (leading.width > 0 ? spacing : 0) + trailing.width
+        let naturalTrailing = subviews[1].sizeThatFits(.unspecified)
+        let naturalWidth = leading.width + (leading.width > 0 ? spacing : 0) + naturalTrailing.width
         let width = proposal.width ?? naturalWidth
         let stacked = Self.shouldStack(
             availableWidth: width,
             leadingWidth: leading.width,
-            trailingWidth: trailing.width,
+            trailingWidth: naturalTrailing.width,
             spacing: spacing
+        )
+        let trailingLimit = stacked
+            ? width
+            : max(0, width - leading.width - (leading.width > 0 ? spacing : 0))
+        let trailing = subviews[1].sizeThatFits(
+            ProposedViewSize(width: trailingLimit, height: nil)
         )
         let height = stacked
             ? leading.height + spacing + trailing.height
@@ -369,12 +517,18 @@ struct ComposerActionLayout: Layout {
     ) {
         guard subviews.count == 2 else { return }
         let leading = subviews[0].sizeThatFits(.unspecified)
-        let trailing = subviews[1].sizeThatFits(.unspecified)
+        let naturalTrailing = subviews[1].sizeThatFits(.unspecified)
         let stacked = Self.shouldStack(
             availableWidth: bounds.width,
             leadingWidth: leading.width,
-            trailingWidth: trailing.width,
+            trailingWidth: naturalTrailing.width,
             spacing: spacing
+        )
+        let trailingLimit = stacked
+            ? bounds.width
+            : max(0, bounds.width - leading.width - (leading.width > 0 ? spacing : 0))
+        let trailing = subviews[1].sizeThatFits(
+            ProposedViewSize(width: trailingLimit, height: nil)
         )
 
         if stacked {
@@ -643,7 +797,7 @@ private struct ComposerControlButtonStyle: ButtonStyle {
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var shape: RoundedRectangle {

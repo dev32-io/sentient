@@ -19,7 +19,12 @@ struct ComposerTaskStrip: View {
     let items: [TaskListItem]
 
     @State private var expandedTaskId: String?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
+
+    init(items: [TaskListItem], initiallyExpandedTaskId: String? = nil) {
+        self.items = items
+        _expandedTaskId = State(initialValue: initiallyExpandedTaskId)
+    }
 
     var body: some View {
         if !items.isEmpty {
@@ -87,10 +92,8 @@ struct ComposerTaskStrip: View {
 
     private func taskDetail(_ item: TaskListItem) -> some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            Text("TASK DETAILS")
-                .font(Typo.mono(TypeScale.xs))
-                .fontWeight(.medium)
-                .tracking(0.8)
+            Text("Task details")
+                .font(Typo.ui(ComposerTaskShelfGeometry.detailTitleTypeSize, .medium))
                 .foregroundStyle(DuskColors.ink3)
 
             Text(item.argsPreview.isEmpty ? "No argument summary" : item.argsPreview)
@@ -116,10 +119,9 @@ struct ComposerTaskStrip: View {
     private func taskStatusLabel(_ status: String) -> String {
         switch status.lowercased() {
         case "running": return "Running"
-        case "done", "completed", "success": return "Completed"
-        case "error", "failed": return "Failed"
-        case "approval", "permission", "blocked": return "Needs review"
-        default: return status
+        case "done": return "Completed"
+        case "error": return "Failed"
+        default: return "Unknown"
         }
     }
 }
@@ -134,6 +136,7 @@ enum ComposerTaskShelfGeometry {
     static let maximumLabelWidth: CGFloat = 164
     static let detailPadding: CGFloat = 12
     static let detailRadius: CGFloat = 10
+    static let detailTitleTypeSize: CGFloat = max(TypeScale.sm, 12.5)
     static let shelfRadius: CGFloat = 14
     static let pulseDiameter: CGFloat = 8
 
@@ -184,7 +187,7 @@ private struct TaskPillButtonStyle: ButtonStyle {
     let isExpanded: Bool
 
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var shape: RoundedRectangle {
@@ -235,7 +238,7 @@ private struct TaskPillButtonStyle: ButtonStyle {
 private struct TaskStatusIndicator: View {
     let status: String
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion || !isRunning)) { timeline in
@@ -265,9 +268,8 @@ private struct TaskStatusIndicator: View {
 
     private var statusColor: Color {
         switch status.lowercased() {
-        case "done", "completed", "success": return DuskColors.sage
-        case "error", "failed": return DuskColors.stop
-        case "approval", "permission", "blocked": return DuskColors.accent
+        case "done": return DuskColors.sage
+        case "error": return DuskColors.stop
         default: return DuskColors.ink4
         }
     }

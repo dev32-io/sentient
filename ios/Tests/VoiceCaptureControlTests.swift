@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 import Testing
 @testable import SentientApp
 
@@ -13,12 +14,14 @@ struct VoiceCaptureControlTests {
             from: .hold,
             target: .send,
             elapsed: 0.5,
+            maximumTravel: 0,
             termination: .released
         )
         let lateRelease = VoiceCaptureReducer.terminatePhysicalHold(
             from: release.state,
             target: .send,
             elapsed: 0.6,
+            maximumTravel: 0,
             termination: .released
         )
 
@@ -30,12 +33,14 @@ struct VoiceCaptureControlTests {
             from: .hold,
             target: .send,
             elapsed: 0.5,
+            maximumTravel: 0,
             termination: .cancelled
         )
         let lateRelease = VoiceCaptureReducer.terminatePhysicalHold(
             from: cancellation.state,
             target: .send,
             elapsed: 0.6,
+            maximumTravel: 0,
             termination: .released
         )
         let intents = cancellation.intents + lateRelease.intents
@@ -51,6 +56,7 @@ struct VoiceCaptureControlTests {
             from: interruption.state,
             target: .send,
             elapsed: 0.5,
+            maximumTravel: 0,
             termination: .released
         )
         let intents = interruption.intents + repeatedInterruption.intents + lateRelease.intents
@@ -60,17 +66,61 @@ struct VoiceCaptureControlTests {
     }
 
     @Test func explicitCancelDiscards() {
-        let result = VoiceCaptureReducer.release(from: .hold, target: .cancel, elapsed: 0.5)
+        let result = VoiceCaptureReducer.release(
+            from: .hold,
+            target: .cancel,
+            elapsed: 0.5,
+            maximumTravel: 40
+        )
         #expect(result.intents == [.cancelHeld])
     }
 
-    @Test func quickActivationTransitionsHoldToFreshAuto() {
-        let result = VoiceCaptureReducer.release(from: .hold, target: .send, elapsed: 0.1)
-        #expect(result.intents == [.enterAuto])
+    @Test func quickAutoRequiresBothStrictTimeAndTravelThresholds() {
+        let quickTap = VoiceCaptureReducer.release(
+            from: .hold,
+            target: .send,
+            elapsed: VoiceCaptureReducer.quickAutoThreshold - 0.001,
+            maximumTravel: VoiceCaptureReducer.quickAutoTravelThreshold - 0.001
+        )
+        let atTimeThreshold = VoiceCaptureReducer.release(
+            from: .hold,
+            target: .send,
+            elapsed: VoiceCaptureReducer.quickAutoThreshold,
+            maximumTravel: 0
+        )
+        let atTravelThreshold = VoiceCaptureReducer.release(
+            from: .hold,
+            target: .send,
+            elapsed: 0.1,
+            maximumTravel: VoiceCaptureReducer.quickAutoTravelThreshold
+        )
+
+        #expect(quickTap.intents == [.enterAuto])
+        #expect(atTimeThreshold.intents == [.sendHeld])
+        #expect(atTravelThreshold.intents == [.sendHeld])
+    }
+
+    @Test func maximumTravelPersistsWhenFingerReturnsToOrigin() {
+        var progress = VoiceCaptureGestureProgress()
+        progress.begin(at: CGPoint(x: 40, y: 30))
+        progress.update(at: CGPoint(x: 60, y: 30))
+        progress.update(at: CGPoint(x: 41, y: 30))
+
+        #expect(progress.origin == CGPoint(x: 40, y: 30))
+        #expect(progress.maximumTravel == 20)
+
+        progress.reset()
+        #expect(progress.origin == nil)
+        #expect(progress.maximumTravel == 0)
     }
 
     @Test func deliberateAutoTargetWinsOverElapsedTime() {
-        let result = VoiceCaptureReducer.release(from: .hold, target: .auto, elapsed: 1)
+        let result = VoiceCaptureReducer.release(
+            from: .hold,
+            target: .auto,
+            elapsed: 1,
+            maximumTravel: 80
+        )
         #expect(result.intents == [.enterAuto])
     }
 
@@ -93,8 +143,18 @@ struct VoiceCaptureControlTests {
     }
 
     @Test func staleTerminalOutsideHoldIsNoOp() {
-        #expect(VoiceCaptureReducer.release(from: .auto, target: .cancel, elapsed: 1).intents.isEmpty)
-        #expect(VoiceCaptureReducer.release(from: .idle, target: .send, elapsed: 1).intents.isEmpty)
+        #expect(VoiceCaptureReducer.release(
+            from: .auto,
+            target: .cancel,
+            elapsed: 1,
+            maximumTravel: 0
+        ).intents.isEmpty)
+        #expect(VoiceCaptureReducer.release(
+            from: .idle,
+            target: .send,
+            elapsed: 1,
+            maximumTravel: 0
+        ).intents.isEmpty)
     }
 
     @Test func autoSystemInterruptionExitsWithoutASecondTerminal() {
@@ -105,24 +165,74 @@ struct VoiceCaptureControlTests {
         #expect(repeated.intents.isEmpty)
     }
 
-    @Test func dragTargetsUseHorizontalAutoCancelSendRegionsAcrossCrownAndPod() {
-        let width: CGFloat = 198
+    @Test func targetGeometryMatchesConnectedCompactCrownAndPod() {
+        let geometry = VoiceCaptureTargetGeometry(
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8
+        )
 
-        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 12, y: -46), controlWidth: width) == .auto)
-        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 99, y: -20), controlWidth: width) == .cancel)
-        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 184, y: 26), controlWidth: width) == .send)
-        #expect(VoiceCaptureReducer.target(at: CGPoint(x: -40, y: 8), controlWidth: width) == .auto)
-        #expect(VoiceCaptureReducer.target(at: CGPoint(x: 240, y: -40), controlWidth: width) == .send)
-        #expect(VoiceCaptureReducer.target(
-            at: CGPoint(x: 12, y: -46),
-            controlWidth: width,
+        #expect(geometry.podBounds == CGRect(x: 0, y: 0, width: 198, height: 52))
+        #expect(geometry.crownBounds == CGRect(x: -12, y: -50, width: 210, height: 58))
+        #expect(geometry.target(at: CGPoint(x: 20, y: -30)) == .auto)
+        #expect(geometry.target(at: CGPoint(x: 93, y: -30)) == .cancel)
+        #expect(geometry.target(at: CGPoint(x: 170, y: -30)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 20, y: 26)) == .auto)
+        #expect(geometry.target(at: CGPoint(x: 93, y: 26)) == .cancel)
+        #expect(geometry.target(at: CGPoint(x: 170, y: 26)) == .send)
+    }
+
+    @Test func targetGeometryFallsBackToSendOutsideVisibleSurfaces() {
+        let geometry = VoiceCaptureTargetGeometry(
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8
+        )
+
+        #expect(geometry.target(at: CGPoint(x: 20, y: -500)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 20, y: 80)) == .send)
+        #expect(geometry.target(at: CGPoint(x: -80, y: -20)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 240, y: 20)) == .send)
+    }
+
+    @Test func targetGeometryMirrorsFacetOrderInRightToLeftLayout() {
+        let geometry = VoiceCaptureTargetGeometry(
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8,
             rightToLeft: true
-        ) == .send)
-        #expect(VoiceCaptureReducer.target(
-            at: CGPoint(x: 184, y: -46),
-            controlWidth: width,
-            rightToLeft: true
-        ) == .auto)
+        )
+
+        #expect(geometry.crownBounds == CGRect(x: 0, y: -50, width: 210, height: 58))
+        #expect(geometry.target(at: CGPoint(x: 25, y: -25)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 105, y: -25)) == .cancel)
+        #expect(geometry.target(at: CGPoint(x: 185, y: -25)) == .auto)
+        #expect(geometry.target(at: CGPoint(x: 25, y: 25)) == .send)
+        #expect(geometry.target(at: CGPoint(x: 185, y: 25)) == .auto)
+    }
+
+    @Test func rapidDeliberateDragsRetainTheBoundedSelectedRegion() {
+        let geometry = VoiceCaptureTargetGeometry(
+            podSize: CGSize(width: 198, height: 52),
+            crownSize: CGSize(width: 210, height: 58),
+            seamOverlap: 8
+        )
+        let cases: [(CGPoint, VoiceCaptureIntent)] = [
+            (CGPoint(x: 20, y: -25), .enterAuto),
+            (CGPoint(x: 93, y: -25), .cancelHeld),
+            (CGPoint(x: 170, y: -25), .sendHeld),
+        ]
+
+        for (location, expectedIntent) in cases {
+            let target = VoiceCaptureReducer.target(at: location, geometry: geometry)
+            let transition = VoiceCaptureReducer.release(
+                from: .hold,
+                target: target,
+                elapsed: 0.1,
+                maximumTravel: 48
+            )
+            #expect(transition.intents == [expectedIntent])
+        }
     }
 
     @Test func composerActionGroupsWrapAgainstTheirParentProposal() {
@@ -144,6 +254,31 @@ struct VoiceCaptureControlTests {
             trailingWidth: 198,
             spacing: 5
         ))
+    }
+
+    @Test func widestTrailingActionsWrapWithoutShrinkingTouchTargets() {
+        let availableWidth: CGFloat = 286
+        let widths = [
+            ComposerGeometry.smallControlSize,
+            ComposerGeometry.compactTrailingControlSize,
+            VoiceCaptureLayout.accessibilityLiveWidth,
+        ]
+        let rows = ComposerTrailingActionLayout.rows(
+            availableWidth: availableWidth,
+            itemWidths: widths,
+            spacing: ComposerGeometry.trailingActionGap
+        )
+
+        #expect(rows == [[0, 1], [2]])
+        #expect(widths.allSatisfy { $0 >= 44 })
+        #expect(rows.allSatisfy { row in
+            let width = row.map { widths[$0] }.reduce(0, +)
+                + CGFloat(max(0, row.count - 1)) * ComposerGeometry.trailingActionGap
+            return width <= availableWidth
+        })
+        #expect(VoiceCaptureLayout.compactLiveHeight >= 44)
+        #expect(VoiceCaptureLayout.accessibilityCrownHeight >= 44)
+        #expect(VoiceCaptureLayout.accessibilityLiveWidth / 3 >= 44)
     }
 
     @Test func presentationKeepsFailureAndDisabledStatesExplicit() {

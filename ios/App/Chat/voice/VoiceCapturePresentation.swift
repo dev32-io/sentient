@@ -13,7 +13,7 @@ struct VoiceCaptureSurface: View {
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -104,7 +104,7 @@ private struct VoiceCapturePrimaryButton: View {
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
 
     var body: some View {
         Button(action: onActivate) {
@@ -170,7 +170,7 @@ private struct VoiceCaptureTargetDeck: View {
     let width: CGFloat
     let onSelect: (VoiceCaptureTarget) -> Void
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -357,6 +357,26 @@ enum VoiceCaptureLayout {
         dynamicTypeSize.isAccessibilitySize ? accessibilityCrownHeight : standardCrownHeight
     }
 
+    static func targetGeometry(
+        podSize: CGSize,
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        dynamicTypeSize: DynamicTypeSize,
+        layoutDirection: LayoutDirection
+    ) -> VoiceCaptureTargetGeometry {
+        VoiceCaptureTargetGeometry(
+            podSize: podSize,
+            crownSize: CGSize(
+                width: crownWidth(
+                    horizontalSizeClass: horizontalSizeClass,
+                    dynamicTypeSize: dynamicTypeSize
+                ),
+                height: crownHeight(dynamicTypeSize)
+            ),
+            seamOverlap: seamOverlap,
+            rightToLeft: layoutDirection == .rightToLeft
+        )
+    }
+
     static func podShape(
         expanded: Bool,
         layoutDirection: LayoutDirection
@@ -389,7 +409,7 @@ private struct VoicePodButtonStyle: ButtonStyle {
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -495,7 +515,7 @@ private struct VoiceTargetButtonStyle: ButtonStyle {
     let selected: Bool
 
     @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var shape: UnevenRoundedRectangle {
@@ -584,7 +604,7 @@ private struct VoiceTargetButtonStyle: ButtonStyle {
 private struct VoiceAutoOrbit<S: InsettableShape>: View {
     let shape: S
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ComposerReduceMotion private var reduceMotion
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in

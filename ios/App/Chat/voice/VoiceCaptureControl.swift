@@ -16,6 +16,7 @@ struct VoiceCaptureControl: View {
     @State private var target: VoiceCaptureTarget = .send
     @State private var startedAt: Date?
     @State private var gestureActive = false
+    @State private var gestureProgress = VoiceCaptureGestureProgress()
     /// True after a semantic capture has started and until its terminal or
     /// lifecycle transition is delivered. It prevents teardown from emitting a
     /// second terminal intent for the same capture.
@@ -27,6 +28,8 @@ struct VoiceCaptureControl: View {
     @State private var announcement = ""
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.layoutDirection) private var layoutDirection
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private static let trailingButtonSuppression: TimeInterval = 0.5
 
@@ -72,8 +75,9 @@ struct VoiceCaptureControl: View {
 
     private var captureGesture: VoiceCaptureGesture {
         VoiceCaptureGesture(
-            onBegin: {
+            onBegin: { sample in
                 guard !disabled else { return }
+                gestureProgress.begin(at: sample.locationInWindow)
                 if state == .auto {
                     // The physical release is the Auto exit action; do not let
                     // the enclosing Button replay it as a second activation.
@@ -84,21 +88,21 @@ struct VoiceCaptureControl: View {
                     beginPhysicalHold()
                 }
             },
-            onChange: { location, size in
-                guard gestureActive, state == .hold else { return }
-                let next = VoiceCaptureReducer.target(
-                    at: location,
-                    controlWidth: size.width,
-                    rightToLeft: layoutDirection == .rightToLeft
-                )
-                if next != target {
-                    target = next
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    announce("\(next.rawValue.capitalized) selected.")
-                }
-            },
-            onTerminate: { termination in
+            onChange: { sample in
                 guard gestureActive else { return }
+                gestureProgress.update(at: sample.locationInWindow)
+                if state == .hold { selectTarget(at: sample) }
+            },
+            onTerminate: { termination, sample in
+                guard gestureActive else { return }
+                gestureProgress.update(at: sample.locationInWindow)
+                if state == .hold, termination == .released {
+                    // UIKit can deliver the final position with `.ended`
+                    // without a matching `.changed` callback.
+                    selectTarget(at: sample)
+                }
+                let maximumTravel = gestureProgress.maximumTravel
+                gestureProgress.reset()
                 gestureActive = false
                 // Cover the trailing Button event even when the physical hold
                 // lasted longer than the initial gesture window.
@@ -118,12 +122,28 @@ struct VoiceCaptureControl: View {
                         from: state,
                         target: target,
                         elapsed: elapsed,
+                        maximumTravel: maximumTravel,
                         termination: termination
                     ),
                     termination: termination
                 )
             }
         )
+    }
+
+    private func selectTarget(at sample: VoiceCaptureGestureSample) {
+        let geometry = VoiceCaptureLayout.targetGeometry(
+            podSize: sample.viewSize,
+            horizontalSizeClass: horizontalSizeClass,
+            dynamicTypeSize: dynamicTypeSize,
+            layoutDirection: layoutDirection
+        )
+        let next = VoiceCaptureReducer.target(at: sample.location, geometry: geometry)
+        if next != target {
+            target = next
+            UISelectionFeedbackGenerator().selectionChanged()
+            announce("\(next.rawValue.capitalized) selected.")
+        }
     }
 
     private func beginPhysicalHold() {
@@ -159,11 +179,13 @@ struct VoiceCaptureControl: View {
     private func completeHold(_ choice: VoiceCaptureTarget) {
         target = choice
         gestureActive = false
+        gestureProgress.reset()
         finishHold(
             VoiceCaptureReducer.release(
                 from: state,
                 target: choice,
-                elapsed: VoiceCaptureReducer.quickAutoThreshold
+                elapsed: VoiceCaptureReducer.quickAutoThreshold,
+                maximumTravel: VoiceCaptureReducer.quickAutoTravelThreshold
             ),
             termination: .released
         )
@@ -222,12 +244,16 @@ struct VoiceCaptureControl: View {
     private func synchronize() {
         state = VoiceCaptureReducer.authority(talkMode, disabled: disabled)
         captureNeedsCancellation = talkMode != .idle && !disabled
-        if state == .idle || state == .disabled { gestureActive = false }
+        if state == .idle || state == .disabled {
+            gestureActive = false
+            gestureProgress.reset()
+        }
     }
 
     private func lifecycleCancel() {
         guard captureNeedsCancellation else { return }
         gestureActive = false
+        gestureProgress.reset()
         let transition = VoiceCaptureReducer.interrupt(from: state)
         guard !transition.intents.isEmpty else {
             captureNeedsCancellation = false

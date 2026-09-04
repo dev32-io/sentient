@@ -158,6 +158,7 @@ final class VisualDiffCaptureTests: XCTestCase {
                 || caseID.hasPrefix("settings-editor--")
                 || caseID.hasPrefix("validated-field--")
                 || caseID.hasPrefix("inline-secret-editor--")
+                || caseID.hasPrefix("composer--focus--")
         var focusHostWindow: VisualDiffFocusWindow?
         var focusContainer: VisualDiffCanvasViewController?
         if usesNativeTextInputCapture {
@@ -244,6 +245,32 @@ final class VisualDiffCaptureTests: XCTestCase {
             XCTAssertTrue(textView.isFirstResponder, "The focused text-area fixture must hold native focus")
             controller.view.setNeedsLayout()
             controller.view.layoutIfNeeded()
+        } else if caseID.hasPrefix("composer--focus--") {
+            let input: UIView
+            if let textView = textView(in: controller.view) {
+                textView.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                textView.tintColor = .clear
+                input = textView
+            } else if let textField = textField(in: controller.view) {
+                textField.inputView = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+                textField.tintColor = .clear
+                input = textField
+            } else {
+                XCTFail("The focused Composer fixture must mount its native text input")
+                return
+            }
+            XCTAssertTrue(input.becomeFirstResponder(), "The Composer input must accept native focus")
+            let focused = XCTNSPredicateExpectation(
+                predicate: NSPredicate { [weak controller] _, _ in
+                    guard let controller else { return false }
+                    return self.firstResponder(in: controller.view) != nil
+                },
+                object: nil
+            )
+            wait(for: [focused], timeout: 2)
+            XCTAssertTrue(input.isFirstResponder, "The Composer input must hold native focus")
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
         }
 
         let rendered = expectation(description: "Render \(caseID)")
@@ -294,6 +321,60 @@ final class VisualDiffCaptureTests: XCTestCase {
         guard let captured = image else { return }
         XCTAssertEqual(captured.size, logicalSize)
         XCTAssertEqual(captured.scale, 2)
+    }
+
+    func testComposerRegistryUsesAuthoritativeTaskStatesAndExplicitBlockers() throws {
+        let registrations = VisualDiffFixtureRegistry.registrations(for: "composer")
+        let interactionCases = Set(registrations.filter {
+            $0.applicability == .missingAuthority(.stateRequiresInteraction)
+        }.map { $0.fixture.caseID })
+        XCTAssertEqual(
+            interactionCases,
+            Set([
+                "composer--hold-cancel--compact",
+                "composer--hold-cancel--desktop",
+                "composer--hold-auto--compact",
+                "composer--hold-auto--desktop",
+            ])
+        )
+
+        guard case .missingAuthority(let permission) = VisualDiffFixtureRegistry.resolve(
+            caseID: "composer--task-permission-open--desktop"
+        ) else {
+            XCTFail("Unsupported task permission data must remain explicit")
+            return
+        }
+        XCTAssertEqual(permission.reason, .stateNotApplicable)
+
+        let items = ComposerVisualFixtureState.authoritativeTaskItems
+        XCTAssertEqual(Set(items.map(\.status)), Set(["running", "done", "error"]))
+        for item in items {
+            if item.status == "running" {
+                XCTAssertNil(item.endedAtMs)
+            } else {
+                let endedAtMs = try XCTUnwrap(item.endedAtMs)
+                XCTAssertGreaterThanOrEqual(endedAtMs.int64Value, item.startedAtMs)
+            }
+        }
+        XCTAssertGreaterThanOrEqual(ComposerTaskShelfGeometry.detailTitleTypeSize, 12.5)
+
+        for caseID in [
+            "composer--focus--compact",
+            "composer--multiline--compact",
+            "composer--tts-off--desktop",
+            "composer--hold--reduced-motion",
+            "composer--auto--reduced-motion",
+            "composer--task-travel-open--desktop",
+            "composer--task-draft-open--desktop",
+            "composer--auto-draft-responding--accessibility-compact",
+            "composer--hold-send--rtl-compact",
+        ] {
+            guard case .supported(let adapter, let fixture) = VisualDiffFixtureRegistry.resolve(caseID: caseID) else {
+                XCTFail("Feasible Composer case must resolve: \(caseID)")
+                continue
+            }
+            XCTAssertNoThrow(try adapter.makeFixture(for: fixture), caseID)
+        }
     }
 
     func testApplyBarRegistryPreservesExistingDraftAndApplyStates() {

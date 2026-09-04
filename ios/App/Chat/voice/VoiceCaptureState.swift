@@ -50,6 +50,76 @@ enum VoiceCaptureTarget: String, Equatable, Sendable {
     case auto, cancel, send
 }
 
+/// Gesture travel is measured in the window coordinate space so the pod's
+/// idle-to-Hold resize cannot turn layout movement into finger movement. The
+/// maximum is retained even if the finger returns near its origin before lift.
+struct VoiceCaptureGestureProgress: Equatable, Sendable {
+    private(set) var origin: CGPoint?
+    private(set) var maximumTravel: CGFloat = 0
+
+    mutating func begin(at location: CGPoint) {
+        origin = location
+        maximumTravel = 0
+    }
+
+    mutating func update(at location: CGPoint) {
+        guard let origin else { return }
+        maximumTravel = max(maximumTravel, hypot(location.x - origin.x, location.y - origin.y))
+    }
+
+    mutating func reset() {
+        origin = nil
+        maximumTravel = 0
+    }
+}
+
+/// Visible Hold geometry in the pod's local coordinate space. The crown is
+/// joined above the trailing edge of the pod and its three equal facets extend
+/// through the connected pod. Points outside either visible surface retain the
+/// safe default, Send, instead of forming unbounded horizontal stripes.
+struct VoiceCaptureTargetGeometry: Equatable, Sendable {
+    let podBounds: CGRect
+    let crownBounds: CGRect
+    let rightToLeft: Bool
+
+    init(
+        podSize: CGSize,
+        crownSize: CGSize,
+        seamOverlap: CGFloat,
+        rightToLeft: Bool = false
+    ) {
+        let podWidth = max(0, podSize.width)
+        let podHeight = max(0, podSize.height)
+        let crownWidth = max(0, crownSize.width)
+        let crownHeight = max(0, crownSize.height)
+        let overlap = min(max(0, seamOverlap), min(podHeight, crownHeight))
+
+        podBounds = CGRect(x: 0, y: 0, width: podWidth, height: podHeight)
+        crownBounds = CGRect(
+            x: rightToLeft ? 0 : podWidth - crownWidth,
+            y: -crownHeight + overlap,
+            width: crownWidth,
+            height: crownHeight
+        )
+        self.rightToLeft = rightToLeft
+    }
+
+    func target(at location: CGPoint) -> VoiceCaptureTarget {
+        guard podBounds.contains(location) || crownBounds.contains(location),
+              crownBounds.width > 0
+        else {
+            return .send
+        }
+
+        let normalizedX = (location.x - crownBounds.minX) / crownBounds.width
+        guard normalizedX >= 0, normalizedX <= 1 else { return .send }
+        let directionalX = rightToLeft ? 1 - normalizedX : normalizedX
+        if directionalX < 1 / 3 { return .auto }
+        if directionalX < 2 / 3 { return .cancel }
+        return .send
+    }
+}
+
 enum VoiceCaptureIntent: Equatable, Sendable {
     case holdStart, sendHeld, cancelHeld, enterAuto, exitAuto, lifecycleCancel
 }
@@ -63,6 +133,7 @@ struct VoiceCaptureTransition: Equatable, Sendable {
 /// KMP owns capture IDs, terminal races, frame ordering, and stale isolation.
 enum VoiceCaptureReducer {
     static let quickAutoThreshold: TimeInterval = 0.22
+    static let quickAutoTravelThreshold: CGFloat = 12
 
     static func begin(from state: VoiceCaptureState) -> VoiceCaptureTransition {
         guard state == .idle || state == .denied || state == .failed else {
@@ -75,12 +146,14 @@ enum VoiceCaptureReducer {
         from state: VoiceCaptureState,
         target: VoiceCaptureTarget,
         elapsed: TimeInterval,
+        maximumTravel: CGFloat,
         cancelled: Bool = false
     ) -> VoiceCaptureTransition {
         terminatePhysicalHold(
             from: state,
             target: target,
             elapsed: elapsed,
+            maximumTravel: maximumTravel,
             termination: cancelled ? .cancelled : .released
         )
     }
@@ -89,13 +162,16 @@ enum VoiceCaptureReducer {
         from state: VoiceCaptureState,
         target: VoiceCaptureTarget,
         elapsed: TimeInterval,
+        maximumTravel: CGFloat,
         termination: VoiceCaptureGestureTermination
     ) -> VoiceCaptureTransition {
         guard state == .hold else { return .init(state: state, intents: []) }
         if termination == .cancelled || target == .cancel {
             return .init(state: .transitioning, intents: [.cancelHeld])
         }
-        if target == .auto || elapsed < quickAutoThreshold {
+        let isQuickTap = elapsed < quickAutoThreshold
+            && maximumTravel < quickAutoTravelThreshold
+        if target == .auto || isQuickTap {
             return .init(state: .transitioning, intents: [.enterAuto])
         }
         return .init(state: .transitioning, intents: [.sendHeld])
@@ -130,19 +206,10 @@ enum VoiceCaptureReducer {
         }
     }
 
-    /// The connected crown and pod share three horizontal regions. Keeping the
-    /// classifier independent of vertical travel lets a held pointer move over
-    /// either surface without changing the Auto, Cancel, Send order.
     static func target(
         at location: CGPoint,
-        controlWidth: CGFloat,
-        rightToLeft: Bool = false
+        geometry: VoiceCaptureTargetGeometry
     ) -> VoiceCaptureTarget {
-        guard controlWidth > 0 else { return .send }
-        let boundedX = min(max(location.x, 0), controlWidth)
-        let directionalX = rightToLeft ? controlWidth - boundedX : boundedX
-        if directionalX < controlWidth / 3 { return .auto }
-        if directionalX < controlWidth * 2 / 3 { return .cancel }
-        return .send
+        geometry.target(at: location)
     }
 }

@@ -6,13 +6,20 @@ enum VoiceCaptureGestureTermination: Equatable, Sendable {
     case cancelled
 }
 
+struct VoiceCaptureGestureSample: Equatable, Sendable {
+    let location: CGPoint
+    let locationInWindow: CGPoint
+    let viewSize: CGSize
+}
+
 /// UIKit-backed physical hold recognition distinguishes a confirmed finger-up
 /// from cancellation by the system. SwiftUI's `DragGesture.onEnded` does not
-/// expose that distinction.
+/// expose that distinction. Window-space samples keep travel stable while the
+/// recognized view expands from the idle control into the Hold pod.
 struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
-    let onBegin: () -> Void
-    let onChange: (CGPoint, CGSize) -> Void
-    let onTerminate: (VoiceCaptureGestureTermination) -> Void
+    let onBegin: (VoiceCaptureGestureSample) -> Void
+    let onChange: (VoiceCaptureGestureSample) -> Void
+    let onTerminate: (VoiceCaptureGestureTermination, VoiceCaptureGestureSample) -> Void
 
     func makeUIGestureRecognizer(context: Context) -> UILongPressGestureRecognizer {
         let recognizer = UILongPressGestureRecognizer()
@@ -26,16 +33,20 @@ struct VoiceCaptureGesture: UIGestureRecognizerRepresentable {
         _ recognizer: UILongPressGestureRecognizer,
         context: Context
     ) {
+        let sample = VoiceCaptureGestureSample(
+            location: recognizer.location(in: recognizer.view),
+            locationInWindow: recognizer.location(in: recognizer.view?.window),
+            viewSize: recognizer.view?.bounds.size ?? .zero
+        )
         switch recognizer.state {
         case .began:
-            onBegin()
+            onBegin(sample)
         case .changed:
-            let view = recognizer.view
-            onChange(recognizer.location(in: view), view?.bounds.size ?? .zero)
+            onChange(sample)
         case .ended:
-            onTerminate(.released)
+            onTerminate(.released, sample)
         case .cancelled, .failed:
-            onTerminate(.cancelled)
+            onTerminate(.cancelled, sample)
         default:
             break
         }
