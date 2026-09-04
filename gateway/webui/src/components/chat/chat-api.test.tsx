@@ -88,6 +88,22 @@ describe("chat public component API", () => {
     expect(screen.getByRole("status").textContent).toContain("unavailable");
   });
 
+  it("nests the active assistant effect in the face while text remains an unclipped sibling", () => {
+    const { container } = render(
+      <MessageBubble
+        message={message({ id: "a1", role: "assistant", text: "Growing", timestamp: 1, isStreaming: true })}
+        identityState="responding"
+        currentUser={currentUser}
+      />,
+    );
+    const surface = container.querySelector(".message-bubble__surface");
+    const wave = container.querySelector(".bubble-speaking-wave");
+
+    expect(wave?.parentElement).toBe(surface);
+    expect(surface?.nextElementSibling?.classList.contains("message-bubble__text-inner")).toBe(true);
+    expect(surface?.contains(screen.getByText("Growing"))).toBe(false);
+  });
+
   it("keeps the public API free of style hooks", () => {
     const styledProps: MessageBubbleProps = {
       message: message({ id: "u1", role: "user", text: "Hello", timestamp: 1 }),

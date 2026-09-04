@@ -7,6 +7,7 @@ export interface MessageBubbleFrameProps {
   name: string;
   identity: ComponentChildren;
   content: ComponentChildren;
+  surfaceEffect?: ComponentChildren;
   state?: MessageVisualState | undefined;
   continuation: boolean;
   position?: number | undefined;
@@ -17,7 +18,7 @@ function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function MessageBubbleFrame({ message, name, identity, content, state, continuation, position, total }: MessageBubbleFrameProps): JSX.Element {
+export function MessageBubbleFrame({ message, name, identity, content, surfaceEffect, state, continuation, position, total }: MessageBubbleFrameProps): JSX.Element {
   const chronology = position !== undefined && total !== undefined ? `Message ${position} of ${total}` : "Message";
   const cutoffLabel = message.cutoff ? ", interrupted" : "";
 
@@ -38,7 +39,7 @@ export function MessageBubbleFrame({ message, name, identity, content, state, co
           </header>
         )}
         <div class="message-bubble__text-wrap">
-          <span class="message-bubble__surface" aria-hidden="true" />
+          <span class="message-bubble__surface" aria-hidden="true">{surfaceEffect}</span>
           <div class="message-bubble__text-inner">{content}</div>
         </div>
       </div>

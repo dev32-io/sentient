@@ -12,6 +12,16 @@ describe("chat message responsive and motion contract", () => {
     expect(css).toContain("@media (max-width: 620px)");
   });
 
+  it("clips active effects to the shaped face while leaving its outer cast visible", () => {
+    const wrapRule = css.match(/\.message-bubble__text-wrap \{([^}]*)\}/)?.[1];
+    const surfaceRule = css.match(/\.message-bubble__surface \{([^}]*)\}/)?.[1];
+
+    expect(wrapRule).toContain("overflow: visible");
+    expect(surfaceRule).toContain("overflow: hidden");
+    expect(surfaceRule).toContain("border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg)");
+    expect(surfaceRule).toContain("box-shadow: var(--plate-shadow)");
+  });
+
   it("removes nonessential native response motion for Reduced Motion", () => {
     const reducedMotion = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
     expect(reducedMotion).toContain(".bubble-speaking-wave");

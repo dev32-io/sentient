@@ -207,6 +207,7 @@
   position: absolute;
   z-index: -1;
   inset: 0;
+  overflow: hidden;
   border: 1px solid var(--slate-border);
   border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
   background: var(--slate-face);

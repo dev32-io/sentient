@@ -25,12 +25,8 @@ export function AssistantMessageBubble({ message, identityState, continuation, p
       continuation={continuation}
       position={position}
       total={total}
-      content={
-        <>
-          <SpeakingWave active={identityState === "responding"} />
-          <MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} />
-        </>
-      }
+      surfaceEffect={<SpeakingWave active={identityState === "responding"} />}
+      content={<MessageContent text={message.text} isStreaming={message.isStreaming} cutoff={message.cutoff} />}
     />
   );
 }
