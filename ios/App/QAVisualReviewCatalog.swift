@@ -142,8 +142,9 @@ private struct QACatalogSpecimen<Content: View>: View {
 }
 
 /// Debug-only catalog for reviewing the actual iOS foundation and common
-/// composites without entering an authenticated product flow. It deliberately
-/// uses the same public SwiftUI views as the app; it is not a prototype renderer.
+/// composites without entering an authenticated product flow. Production
+/// specimens use the app's public SwiftUI views; explicitly labeled renderer
+/// comparisons are isolated experiments and never replace those specimens.
 struct QAFoundationCatalog: View {
     @State private var selectedSection: QAFoundationCatalogSection = .foundation
     @State private var fieldText = "Ada Lovelace"
@@ -350,6 +351,13 @@ struct QAFoundationCatalog: View {
 
     private var controlsSection: some View {
         catalogSection(.controls) {
+            QACatalogSpecimen(
+                "One-pass icon renderer comparison",
+                contract: "Canvas · Core Graphics"
+            ) {
+                QAIconRendererComparison()
+            }
+
             QACatalogSpecimen("Action buttons", contract: "DesignActionButton") {
                 VStack(spacing: Space.sm) {
                     HStack(spacing: Space.sm) {
