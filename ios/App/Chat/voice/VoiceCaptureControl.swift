@@ -23,14 +23,8 @@ struct VoiceCaptureControl: View {
     /// lifecycle transition is delivered. It prevents teardown from emitting a
     /// second terminal intent for the same capture.
     @State private var captureNeedsCancellation = false
-    /// A physical release is handled by the zero-distance gesture. Suppress the
-    /// Button's trailing activation so a quick Hold-to-Auto cannot immediately
-    /// fire the assistive Auto-exit action for the same touch.
-    @State private var suppressButtonActivationUntil = Date.distantPast
     @State private var announcement = ""
     @Environment(\.scenePhase) private var scenePhase
-
-    private static let trailingButtonSuppression: TimeInterval = 0.5
 
     init(
         talkMode: TalkMode,
@@ -82,9 +76,6 @@ struct VoiceCaptureControl: View {
                 physicalPressState.begin()
                 gestureProgress.begin(at: sample.locationInWindow)
                 if state == .auto {
-                    // The physical release is the Auto exit action; do not let
-                    // the enclosing Button replay it as a second activation.
-                    suppressButtonActivation()
                     gestureActive = true
                     startedAt = Date()
                 } else {
@@ -108,9 +99,6 @@ struct VoiceCaptureControl: View {
                 let maximumTravel = gestureProgress.maximumTravel
                 gestureProgress.reset()
                 gestureActive = false
-                // Cover the trailing Button event even when the physical hold
-                // lasted longer than the initial gesture window.
-                suppressButtonActivation()
                 if state == .auto {
                     if termination == .released {
                         apply(VoiceCaptureReducer.activate(from: state))
@@ -149,7 +137,6 @@ struct VoiceCaptureControl: View {
 
     private func beginPhysicalHold() {
         guard state != .transitioning else { return }
-        suppressButtonActivation()
         switch permission.status() {
         case .granted:
             gestureActive = true
@@ -211,7 +198,7 @@ struct VoiceCaptureControl: View {
     }
 
     private func activateForAccessibility() {
-        guard !disabled, state != .transitioning, Date() >= suppressButtonActivationUntil else { return }
+        guard !disabled, state != .transitioning else { return }
         if state == .auto {
             apply(VoiceCaptureReducer.activate(from: state))
             announce("Auto listening off. Voice message sent.")
@@ -224,10 +211,6 @@ struct VoiceCaptureControl: View {
         }
         apply(VoiceCaptureReducer.activate(from: state))
         announce("Auto listening on.")
-    }
-
-    private func suppressButtonActivation() {
-        suppressButtonActivationUntil = Date().addingTimeInterval(Self.trailingButtonSuppression)
     }
 
     private func apply(_ transition: VoiceCaptureTransition) {

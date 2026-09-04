@@ -90,6 +90,11 @@ private final class DesignSpreadShadowView: UIView {
         self.extent = extent
         self.faceSize = faceSize
         super.init(frame: .zero)
+        // SwiftUI's allowsHitTesting(false) does not reliably disable the
+        // bridged UIKit leaf outside its source frame. Shadows are decorative;
+        // make that boundary explicit so their expanded draw fields cannot
+        // intercept neighboring controls.
+        isUserInteractionEnabled = false
         isOpaque = false
         backgroundColor = .clear
         contentMode = .redraw

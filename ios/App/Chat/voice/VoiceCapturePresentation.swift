@@ -102,8 +102,16 @@ struct VoiceCaptureSurface: View {
                     gesture: captureGesture
                 )
                 .frame(
-                    width: gestureHostGeometry.hostSize.width,
-                    height: gestureHostGeometry.hostSize.height
+                    width: presentation.isAuto ? liveWidth : gestureHostGeometry.hostSize.width,
+                    height: presentation.isAuto ? liveHeight : gestureHostGeometry.hostSize.height
+                )
+                // SwiftUI expands interaction shapes beyond their layout
+                // bounds. Counter that platform touch slop here; the hosted
+                // UIKit view still enforces its exact visible bounds and owns
+                // a gesture continuously after it begins.
+                .contentShape(
+                    .interaction,
+                    Rectangle().inset(by: VoiceCaptureLayout.interactionShapeInset)
                 )
                 .zIndex(2)
             }
@@ -132,40 +140,41 @@ private struct VoiceCapturePrimaryButton: View {
     let onTarget: (VoiceCaptureTarget) -> Void
 
     var body: some View {
-        Button(action: onActivate) {
-            ZStack {
-                PttBigWave(
-                    levels: levels,
-                    tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
-                    isActive: presentation.showsWaveform
-                )
-                .frame(height: VoiceCaptureLayout.waveformHeight)
-                .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
-                .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
-                .opacity(presentation.showsWaveform ? 1 : 0)
-                .scaleEffect(
-                    x: presentation.showsWaveform ? 1 : 0.25,
-                    y: 1,
-                    anchor: .trailing
-                )
-                .accessibilityHidden(true)
+        ZStack {
+            PttBigWave(
+                levels: levels,
+                tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
+                isActive: presentation.showsWaveform
+            )
+            .frame(height: VoiceCaptureLayout.waveformHeight)
+            .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
+            .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
+            .opacity(presentation.showsWaveform ? 1 : 0)
+            .scaleEffect(
+                x: presentation.showsWaveform ? 1 : 0.25,
+                y: 1,
+                anchor: .trailing
+            )
+            .accessibilityHidden(true)
 
-                captureGlyph
-                    .frame(maxWidth: .infinity, alignment: presentation.isExpanded ? .trailing : .center)
-                    .padding(.trailing, presentation.isExpanded ? VoiceCaptureLayout.glyphTrailingInset : 0)
-            }
-            .frame(width: width, height: height)
+            captureGlyph
+                .frame(maxWidth: .infinity, alignment: presentation.isExpanded ? .trailing : .center)
+                .padding(.trailing, presentation.isExpanded ? VoiceCaptureLayout.glyphTrailingInset : 0)
         }
-        .buttonStyle(VoicePodButtonStyle(
+        .frame(width: width, height: height)
+        .modifier(VoicePodSurfaceModifier(
             presentation: presentation,
             width: width,
             height: height,
             physicallyPressed: physicallyPressed
         ))
         .disabled(presentation.isDisabled)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.primaryLabel)
         .accessibilityHint(presentation.primaryHint)
+        .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(presentation.isAuto ? .isSelected : [])
+        .accessibilityAction { onActivate() }
         .voiceCaptureAccessibilityActions(
             presentation: presentation,
             onStartHold: onStartAccessibleHold,
@@ -365,6 +374,7 @@ enum VoiceCaptureLayout {
     static let standardCrownHeight: CGFloat = 58
     static let accessibilityCrownHeight: CGFloat = 72
     static let seamOverlap: CGFloat = 8
+    static let interactionShapeInset: CGFloat = 12
     static let waveformHeight: CGFloat = 30
     static let waveformLeadingInset: CGFloat = 15
     static let glyphWellWidth: CGFloat = 52
@@ -431,7 +441,7 @@ enum VoiceCaptureLayout {
     }
 }
 
-private struct VoicePodButtonStyle: ButtonStyle {
+private struct VoicePodSurfaceModifier: ViewModifier {
     let presentation: VoiceCapturePresentationState
     let width: CGFloat
     let height: CGFloat
@@ -450,13 +460,13 @@ private struct VoicePodButtonStyle: ButtonStyle {
         )
     }
 
-    func makeBody(configuration: Configuration) -> some View {
+    func body(content: Content) -> some View {
         let pressed = VoicePodPressBehavior.appliesPressedDepth(
             presentation: presentation,
-            pressed: configuration.isPressed || physicallyPressed
+            pressed: physicallyPressed
         )
 
-        configuration.label
+        content
             .foregroundStyle(foregroundColor)
             .frame(width: width, height: height)
             .background { podFace(pressed: pressed) }
@@ -466,7 +476,6 @@ private struct VoicePodButtonStyle: ButtonStyle {
                         .padding(-5)
                 }
             }
-            .contentShape(shape)
             .offset(y: pressed && !reduceMotion ? 1 : 0)
             .animation(
                 reduceMotion ? nil : .easeOut(duration: DesignV2.Motion.feedback),
