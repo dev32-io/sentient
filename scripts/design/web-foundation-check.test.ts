@@ -69,6 +69,18 @@ describe("Web foundation boundary", () => {
     ])).toEqual([]);
   });
 
+  test("allows reviewed composer presentation without exempting neighboring dock code", () => {
+    expect(findPageBoundaryViolations([
+      { path: "src/components/dock/dock-styles.tsx", source: "const css = `.control { transform-style: preserve-3d; }`;" },
+      { path: "src/components/dock/tts-button.tsx", source: "<button>Toggle voice</button>" },
+    ])).toEqual([]);
+    expect(findPageBoundaryViolations([
+      { path: "src/components/dock/unreviewed-control.tsx", source: "<button>Unreviewed</button>" },
+    ])).toEqual([
+      "src/components/dock/unreviewed-control.tsx:1: raw visual control outside foundation",
+    ]);
+  });
+
   test("keeps the production stylesheet graph rooted at the generated projection", () => {
     expect(findImportGraphViolations(
       'import "./styles/tokens/design-foundation-v2.css";\nimport "./styles/tokens/compatibility.css";\nimport "./styles/components.css";',
