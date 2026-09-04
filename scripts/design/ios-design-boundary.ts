@@ -52,14 +52,20 @@ export const IOS_DESIGN_TRANSITIONAL_ALLOWLIST: readonly IosDesignTransitionalEn
 const transitionalPaths = new Set(IOS_DESIGN_TRANSITIONAL_ALLOWLIST.map((entry) => entry.path));
 
 /** Exact files that are allowed to contain the native design implementation. */
-const FOUNDATION_PATHS = new Set([
+export const IOS_DESIGN_FOUNDATION_PATHS = new Set([
   "ios/App/Theme/Colors.swift",
   "ios/App/Theme/DesignMaterials.swift",
+  "ios/App/Theme/DesignSurfaces.swift",
   "ios/App/Theme/DesignV2.swift",
   "ios/App/Theme/Tokens.swift",
   "ios/App/Theme/Typo.swift",
+  "ios/App/Settings/Components/DesignButtons.swift",
   "ios/App/Settings/Components/DesignComposites.swift",
   "ios/App/Settings/Components/DesignControls.swift",
+  "ios/App/Settings/Components/DesignIdentityControls.swift",
+  "ios/App/Settings/Components/DesignRangeControls.swift",
+  "ios/App/Settings/Components/DesignSelectionControls.swift",
+  "ios/App/Settings/Components/DesignTextFields.swift",
   "ios/App/Settings/Components/UpdateFooter.swift",
 ]);
 
@@ -148,7 +154,7 @@ function isInScope(path: string): boolean {
 }
 
 function isFoundation(path: string): boolean {
-  return FOUNDATION_PATHS.has(path);
+  return IOS_DESIGN_FOUNDATION_PATHS.has(path);
 }
 
 function stripComments(source: string): string {

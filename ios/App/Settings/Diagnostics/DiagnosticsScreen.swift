@@ -26,7 +26,7 @@ struct DiagnosticsScreen: View {
     var body: some View {
         SettingsPageScaffold(title: "Diagnostics", screenId: "settings-diagnostics") {
             Text(diagnosticsSummary)
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.caption)
                 .foregroundStyle(DuskColors.ink3)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

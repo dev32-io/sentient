@@ -3,6 +3,7 @@ import {
   findDuplicatePrimitiveDeclarations,
   findPageBoundaryViolations,
   findIosDesignBoundaryViolations,
+  IOS_DESIGN_FOUNDATION_PATHS,
   IOS_DESIGN_TRANSITIONAL_ALLOWLIST,
   readIosDesignSources,
   type IosDesignSource,
@@ -11,6 +12,32 @@ import {
 describe("iOS design boundary", () => {
   test("keeps the checked-in Theme and non-Calendar Settings graph closed", () => {
     expect(findIosDesignBoundaryViolations(readIosDesignSources())).toEqual([]);
+  });
+
+  test("exempts only the exact split foundation modules", () => {
+    expect([...IOS_DESIGN_FOUNDATION_PATHS].sort()).toEqual([
+      "ios/App/Settings/Components/DesignButtons.swift",
+      "ios/App/Settings/Components/DesignComposites.swift",
+      "ios/App/Settings/Components/DesignControls.swift",
+      "ios/App/Settings/Components/DesignIdentityControls.swift",
+      "ios/App/Settings/Components/DesignRangeControls.swift",
+      "ios/App/Settings/Components/DesignSelectionControls.swift",
+      "ios/App/Settings/Components/DesignTextFields.swift",
+      "ios/App/Settings/Components/UpdateFooter.swift",
+      "ios/App/Theme/Colors.swift",
+      "ios/App/Theme/DesignMaterials.swift",
+      "ios/App/Theme/DesignSurfaces.swift",
+      "ios/App/Theme/DesignV2.swift",
+      "ios/App/Theme/Tokens.swift",
+      "ios/App/Theme/Typo.swift",
+    ]);
+
+    expect(findPageBoundaryViolations([
+      {
+        path: "ios/App/Settings/Components/FutureControl.swift",
+        source: "TextField(\"Name\", text: $name)",
+      },
+    ]).join("\n")).toContain("raw visual control");
   });
 
   test("rejects duplicate canonical primitive declarations", () => {

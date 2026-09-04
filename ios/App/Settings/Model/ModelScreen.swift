@@ -177,7 +177,7 @@ private struct ModelCard: View {
     @ViewBuilder
     private var capabilityItems: some View {
         Text("\(entry.contextLength / Int32(contextPerK))k context")
-            .font(Typo.ui(TypeScale.sm))
+            .designText(.caption)
             .foregroundStyle(DuskColors.ink3)
         if entry.supportsTools { capabilityLabel("Tools", systemImage: "wrench.and.screwdriver") }
         if entry.supportsVision { capabilityLabel("Vision", systemImage: "eye") }

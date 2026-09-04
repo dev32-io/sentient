@@ -70,12 +70,12 @@ struct SecretKeyRow: View {
     private var contextLabel: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(label)
-                .designText(.body)
+                .designText(.label)
                 .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink)
                 .accessibilityIdentifier("settings-secret-\(idKey)")
             Text(secretPresenceText(isConfigured: hasKey))
-                .designText(.supporting)
+                .designText(.caption)
                 .foregroundStyle(hasKey ? DuskColors.ink2 : DuskColors.ink4)
         }
         .accessibilityElement(children: .combine)
@@ -174,7 +174,7 @@ struct SecretUrlRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Base URL").designText(.body).foregroundStyle(DuskColors.ink2)
+            Text("Base URL").designText(.label).foregroundStyle(DuskColors.ink2)
             if isEditing { editor } else { presence }
         }
         .padding(.vertical, Space.sm)
@@ -208,7 +208,7 @@ struct SecretUrlRow: View {
     private var presence: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(secretPresenceText(isConfigured: hasValue))
-                .designText(.supporting)
+                .designText(.caption)
                 .foregroundStyle(hasValue ? DuskColors.ink2 : DuskColors.ink4)
                 .accessibilityLabel(hasValue ? "Base URL configured" : "Base URL not configured")
             DesignTextButton(

@@ -36,7 +36,8 @@ struct SettingsDiagnostics: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.sm) {
             Text(diagnosticsLabel)
-                .font(Typo.ui(TypeScale.base, .semibold))
+                .designText(.label)
+                .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink3)
 
             sendLogsButton
@@ -121,7 +122,8 @@ private struct SessionUploadRow: View {
     var body: some View {
         HStack(spacing: Space.sm) {
             Text((info.crashed ? crashFlag : "") + label)
-                .font(Typo.ui(TypeScale.sm, selected ? .semibold : .regular))
+                .designText(.caption)
+                .fontWeight(selected ? .semibold : .regular)
                 .foregroundStyle(selected ? DuskColors.accent : DuskColors.ink)
                 .frame(maxWidth: .infinity, alignment: .leading)
             UploadControl(
@@ -156,7 +158,7 @@ private struct UploadControl: View {
                 .frame(width: DesignMetrics.progressWidth)
         case let (_, _, .sent(ref)):
             Text(ref.isEmpty ? labelSent : "\(sentRefPrefix)\(ref)")
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.caption)
                 .foregroundStyle(DuskColors.accent)
                 .accessibilityIdentifier("settings-log-sent")
         case (_, _, .failed):

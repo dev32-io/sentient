@@ -127,7 +127,7 @@ private struct SettingsRootView: View {
 
     var body: some View {
         DesignPageChrome(title: titleText, accessibilityId: "settings-screen", bottomPadding: Space.xl) {
-            VStack(alignment: .leading, spacing: Space.lg) {
+            VStack(alignment: .leading, spacing: Space.md) {
                 accessNotice
                 group(groupAssistant, soulItems)
                 group(groupUser, userItems)
@@ -140,7 +140,6 @@ private struct SettingsRootView: View {
                     accessibilityId: "settings-logout",
                     action: { isConfirmingLogout = true }
                 )
-                .padding(.top, Space.sm)
 
                 UpdateFooter(
                     status: updateStatus,
@@ -150,7 +149,6 @@ private struct SettingsRootView: View {
                     onCheck: onCheck,
                     onInstall: onInstall
                 )
-                .padding(.top, Space.sm)
             }
         }
         .confirmationDialog(
@@ -186,7 +184,7 @@ private struct SettingsRootView: View {
     /// A titled section: design header + its category rows.
     @ViewBuilder
     private func group(_ header: String, _ items: [CategoryItem]) -> some View {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: .zero) {
             DesignGroupHeader(title: header)
             ForEach(items) { item in
                 DesignCategoryRow(

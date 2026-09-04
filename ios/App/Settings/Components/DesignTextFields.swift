@@ -92,11 +92,7 @@ struct DesignField: View {
         VStack(alignment: .leading, spacing: DesignFieldMetrics.labelGap) {
             if showsTitle {
                 Text(title)
-                    .font(.custom(
-                        "DMSans-Medium",
-                        size: DesignMetrics.controlLabelSize,
-                        relativeTo: .footnote
-                    ))
+                    .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
                     // Native custom-font line metrics sit one half-point below
                     // the CSS label baseline at the reviewed scale.
                     .baselineOffset(0.5)
@@ -130,7 +126,7 @@ struct DesignField: View {
 
     private var baseInput: some View {
         nativeField
-            .font(.custom("DMSans-Regular", size: TypeScale.base, relativeTo: .body))
+            .font(Typo.ui(TypeScale.base))
             // Match the CSS border-box content inset: 1px border + 12px pad.
             // Native TextField centers its glyph run below the browser line
             // box; this positive baseline adjustment restores the source's

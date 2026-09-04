@@ -140,7 +140,7 @@ struct ToolsScreen: View {
                     action: { builtInsOpen.toggle() }
                 ) {
                     Text("\(vm.hermesActiveCount(builtins)) of \(builtins.count) enabled")
-                        .font(Typo.ui(TypeScale.sm))
+                        .designText(.caption)
                         .foregroundStyle(DuskColors.ink3)
                 }
             } content: {

@@ -86,7 +86,7 @@ struct VoiceAddScreen: View {
             )
             if let uploadedName = vm.uploadedName {
                 Text(uploadedName)
-                    .font(Typo.ui(TypeScale.sm))
+                    .designText(.caption)
                     .foregroundStyle(DuskColors.ink3)
                     .lineLimit(2)
             }

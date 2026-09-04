@@ -109,7 +109,8 @@ struct PersonalitiesScreen: View {
                 ) {
                     HStack(spacing: Space.sm) {
                         Text(personality.name)
-                            .font(Typo.ui(DesignMetrics.controlLabelSize, .semibold))
+                            .designText(.label)
+                            .fontWeight(.semibold)
                             .foregroundStyle(DuskColors.ink)
                         if isActive { activeBadge }
                     }
@@ -170,7 +171,7 @@ struct PersonalitiesScreen: View {
                     action: {}
                 ) {
                     HStack(spacing: Space.sm) {
-                        Text("Default").font(Typo.ui(TypeScale.sm, .semibold)).foregroundStyle(DuskColors.ink)
+                        Text("Default").designText(.label).fontWeight(.semibold).foregroundStyle(DuskColors.ink)
                         DesignStatusBadge(title: "Active")
                     }
                 }

@@ -951,12 +951,12 @@ struct DesignSettingsRow<Accessory: View>: View {
     private var labelContent: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
-                .font(Typo.ui(DesignMetrics.controlLabelSize, .medium))
+                .designText(.label)
+                .fontWeight(.medium)
                 .foregroundStyle(DuskColors.ink)
             if let detail {
                 Text(detail)
-                    .font(Typo.ui(TypeScale.sm))
-                    .lineSpacing(TypeScale.sm * CGFloat(DesignV2.Typography.lineNormal - 1))
+                    .designText(.caption)
                     .foregroundStyle(DuskColors.ink2)
             }
         }
@@ -1052,7 +1052,8 @@ struct DesignGroupHeader: View {
 
     var body: some View {
         Text(title)
-            .font(Typo.ui(TypeScale.base, .semibold))
+            .designText(.caption)
+            .fontWeight(.semibold)
             .foregroundStyle(DuskColors.ink2)
             .frame(maxWidth: .infinity, minHeight: DesignMetrics.minimumTarget, alignment: .leading)
             .accessibilityAddTraits(.isHeader)
@@ -1075,7 +1076,8 @@ struct DesignCategoryRow: View {
                     .frame(width: DesignMetrics.categoryIconSlot, alignment: .center)
                     .accessibilityHidden(true)
                 Text(title)
-                    .font(Typo.ui(TypeScale.base, .medium))
+                    .designText(.label)
+                    .fontWeight(.medium)
                     .foregroundStyle(DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right")
@@ -1083,8 +1085,8 @@ struct DesignCategoryRow: View {
                     .foregroundStyle(DuskColors.ink3)
                     .accessibilityHidden(true)
             }
+            .padding(.vertical, Space.xs)
             .frame(minHeight: DesignMetrics.minimumTarget)
-            .padding(.vertical, Space.sm)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

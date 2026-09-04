@@ -123,8 +123,12 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertEqual(DesignTypographyAdapter.uiFamily, firstFamily(MobileData.Fonts_.shared.ui))
         XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
         XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
+        XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiFamily)
+        XCTAssertEqual(DesignTextRole.caption.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.telemetry.family, DesignTypographyAdapter.monoFamily)
+        XCTAssertEqual(DesignTextRole.label.baseSize, DesignMetrics.controlLabelSize)
+        XCTAssertEqual(DesignTextRole.caption.baseSize, DesignV2.Typography.supporting)
     }
 
     func testControlSemanticsAndAccessibilityMetricsAreStable() {

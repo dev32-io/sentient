@@ -132,12 +132,12 @@ extension Color {
 }
 
 enum DesignTextRole {
-    case telemetry, supporting, body, large, title, display
+    case telemetry, caption, supporting, label, body, large, title, display
 
     var family: String {
         switch self {
         case .telemetry: DesignV2.Typography.monoFamily
-        case .supporting, .body, .large: DesignV2.Typography.uiFamily
+        case .caption, .supporting, .label, .body, .large: DesignV2.Typography.uiFamily
         case .title, .display: DesignV2.Typography.displayFamily
         }
     }
@@ -146,8 +146,10 @@ enum DesignTextRole {
         switch self {
         case .telemetry:
             .custom(family, size: DesignV2.Typography.xs, relativeTo: .caption2)
-        case .supporting:
+        case .caption, .supporting:
             .custom(family, size: DesignV2.Typography.supporting, relativeTo: .footnote)
+        case .label:
+            .custom(family, size: DesignMetrics.controlLabelSize, relativeTo: .footnote)
         case .body:
             .custom(family, size: DesignV2.Typography.body, relativeTo: .body)
         case .large:
@@ -162,7 +164,8 @@ enum DesignTextRole {
     var baseSize: CGFloat {
         switch self {
         case .telemetry: DesignV2.Typography.xs
-        case .supporting: DesignV2.Typography.supporting
+        case .caption, .supporting: DesignV2.Typography.supporting
+        case .label: DesignMetrics.controlLabelSize
         case .body: DesignV2.Typography.body
         case .large: DesignV2.Typography.large
         case .title: DesignV2.Typography.title

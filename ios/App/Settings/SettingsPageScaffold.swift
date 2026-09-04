@@ -32,11 +32,12 @@ struct SettingsStubScreen: View {
     var body: some View {
         SettingsPageScaffold(title: title, screenId: screenId) {
             Text(summary)
-                .font(Typo.ui(TypeScale.sm))
+                .designText(.caption)
                 .foregroundStyle(DuskColors.ink3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text("Coming soon")
-                .font(Typo.ui(TypeScale.xs, .semibold))
+                .designText(.caption)
+                .fontWeight(.semibold)
                 .foregroundStyle(DuskColors.ink4)
         }
     }

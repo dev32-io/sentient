@@ -48,7 +48,8 @@ struct ToolsServerCard: View {
                     action: onToggleOpen
                 ) {
                     Text(capabilityName(id))
-                        .font(Typo.ui(TypeScale.base, .semibold))
+                        .designText(.label)
+                        .fontWeight(.semibold)
                         .foregroundStyle(DuskColors.ink)
                 }
                 DesignToggleSwitch(

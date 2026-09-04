@@ -143,8 +143,8 @@ private struct MemberRow: View {
         HStack(spacing: Space.md) {
             ElevatedUserAvatar(name: user.displayName)
             VStack(alignment: .leading, spacing: Space.xs) {
-                Text(user.displayName).designText(.body).foregroundStyle(DuskColors.ink)
-                Text(roleDescription).designText(.supporting).foregroundStyle(DuskColors.ink3)
+                Text(user.displayName).designText(.label).foregroundStyle(DuskColors.ink)
+                Text(roleDescription).designText(.caption).foregroundStyle(DuskColors.ink3)
             }
             Spacer(minLength: Space.sm)
             if isMutating {
