@@ -228,6 +228,41 @@ describe("createWebAudioPlayback — interface", () => {
 // Guard tests — safe to call before init
 // ---------------------------------------------------------------------------
 
+describe("createWebAudioPlayback — AEC setup lifecycle", () => {
+  it("cancels an in-flight setup and waits for it to unwind before creating a replacement pair", async () => {
+    let finishOffer: ((offer: RTCSessionDescriptionInit) => void) | undefined;
+    const firstLocal = makeMockPeer();
+    firstLocal.createOffer = vi.fn(
+      () =>
+        new Promise<RTCSessionDescriptionInit>((resolve) => {
+          finishOffer = resolve;
+        }),
+    );
+    const peers = [firstLocal, makeMockPeer(), makeMockPeer(), makeMockPeer()];
+    let peerIndex = 0;
+    const PeerConnectionMock = vi.fn(() => peers[peerIndex++]);
+    vi.stubGlobal("RTCPeerConnection", PeerConnectionMock);
+
+    const adapter = createWebAudioPlayback();
+    adapter.unlock();
+    adapter.setAecEnabled(true);
+    expect(PeerConnectionMock).toHaveBeenCalledTimes(2);
+
+    adapter.setAecEnabled(false);
+    expect(peers[0]?.close).toHaveBeenCalledOnce();
+    expect(peers[1]?.close).toHaveBeenCalledOnce();
+
+    adapter.setAecEnabled(true);
+    // The cancelled setup still owns its asynchronous continuation. A second
+    // pair must not start until that continuation observes cancellation.
+    expect(PeerConnectionMock).toHaveBeenCalledTimes(2);
+
+    finishOffer?.({ type: "offer", sdp: "" });
+    await vi.waitFor(() => expect(PeerConnectionMock).toHaveBeenCalledTimes(4));
+    adapter.destroy();
+  });
+});
+
 describe("createWebAudioPlayback — pre-init guards", () => {
   it("enqueue does not throw when called before init", () => {
     // No AudioContext mock needed — adapter won't have ctx before init

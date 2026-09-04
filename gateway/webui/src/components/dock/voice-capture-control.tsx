@@ -313,11 +313,12 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     if (event.button > 0 || disabledRef.current || stateRef.current !== "idle") return;
     event.preventDefault();
     suppressNextClickRef.current = true;
-    pointerRef.current = { id: event.pointerId, at: Date.now(), x: event.clientX, y: event.clientY };
+    const pointerId = event.pointerId;
+    pointerRef.current = { id: pointerId, at: Date.now(), x: event.clientX, y: event.clientY };
     targetRef.current = "send";
     setTarget("send");
     pendingReleaseRef.current = null;
-    primaryRef.current?.setPointerCapture?.(event.pointerId);
+    primaryRef.current?.setPointerCapture?.(pointerId);
     void start("hold").then((id) => {
       if (id === null) return;
       const pending = pendingReleaseRef.current;
@@ -325,9 +326,9 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
       if (pending === "auto") void enterAutoFromHold(id);
       else if (pending === "cancel") void terminal("cancel", id);
       else if (pending === "commit") void terminal("commit", id);
-      else if (pointerRef.current?.id === event.pointerId) {
+      else if (pointerRef.current?.id === pointerId) {
         fanTimerRef.current = setTimeout(() => {
-          if (pointerRef.current?.id === event.pointerId && captureRef.current === id) setFanOpen(true);
+          if (pointerRef.current?.id === pointerId && captureRef.current === id) setFanOpen(true);
         }, FAN_REVEAL_MS);
       }
     });

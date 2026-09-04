@@ -64,6 +64,8 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
   let gainNode: GainNode | null = null;
   let aecEnabled = false;
   let peerReady = false;
+  let peerGeneration = 0;
+  let peerSetup: Promise<void> | null = null;
   let generation = 0;
   let isPlaying = false;
   let nextStartTime = 0;
@@ -122,11 +124,16 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
    * during long pauses saves battery. The peer is rebuilt on next enqueue if
    * AEC is enabled.
    */
+  function invalidatePeer(): void {
+    ++peerGeneration;
+    peer.destroy();
+    peerReady = false;
+  }
+
   function teardownPeerForIdle(): void {
     if (!peerReady) return;
     log.info("idle-teardown: destroying AEC peer", { aecEnabled });
-    peer.destroy();
-    peerReady = false;
+    invalidatePeer();
   }
 
   function scheduleIdleSuspend(): void {
@@ -205,17 +212,33 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
    * the result by checking `peerReady` before scheduling.
    */
   function ensurePeerReady(): void {
-    if (!aecEnabled || peerReady) return;
+    if (!aecEnabled || peerReady || peerSetup !== null) return;
     if (!audioContext || !destinationNode) return;
-    peer
-      .setup(destinationNode)
+    const setupGeneration = peerGeneration;
+    const setup = peer.setup(destinationNode);
+    peerSetup = setup;
+    void setup
       .then(() => {
+        if (setupGeneration !== peerGeneration || !aecEnabled) return;
         peerReady = true;
         warmPipeline();
         flushPreResume();
       })
       .catch((err) => {
-        log.error("ensurePeerReady: peer.setup failed", { err });
+        // Teardown deliberately invalidates an in-flight setup. Its rejected
+        // continuation is expected and must not be presented as an AEC fault.
+        if (setupGeneration === peerGeneration && aecEnabled) {
+          peer.destroy();
+          peerReady = false;
+          log.error("ensurePeerReady: peer.setup failed", { err });
+        }
+      })
+      .finally(() => {
+        if (peerSetup !== setup) return;
+        peerSetup = null;
+        // A rapid Hold -> Auto transition may have re-enabled AEC while the
+        // cancelled setup was unwinding. Start exactly one replacement now.
+        if (setupGeneration !== peerGeneration && aecEnabled) ensurePeerReady();
       });
   }
 
@@ -348,12 +371,9 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       pendingSourceCount = 0;
       preResumeBuffer = [];
 
-      // Tear down the loopback peer (if any) so its receiver buffer can't
-      // replay already-delivered audio after barge-in.
-      if (peerReady) {
-        peer.destroy();
-        peerReady = false;
-      }
+      // Tear down the loopback peer (including an in-flight setup) so its
+      // receiver buffer cannot replay already-delivered audio after barge-in.
+      invalidatePeer();
 
       const rate = audioContext.sampleRate;
       audioContext.close().catch(() => {});
@@ -374,10 +394,7 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
     destroy() {
       cancelDrainTimer();
       cancelIdleSuspendTimer();
-      if (peerReady) {
-        peer.destroy();
-        peerReady = false;
-      }
+      invalidatePeer();
       audioContext?.close().catch(() => {});
       audioContext = null;
       destinationNode = null;
@@ -421,10 +438,10 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
         connectGainSink();
         ensurePeerReady();
       } else {
-        if (peerReady) {
-          peer.destroy();
-          peerReady = false;
-        }
+        // setup() is asynchronous. Cancelling only a ready peer lets a quick
+        // Hold -> Auto transition create a second pair while the first still
+        // mutates the same peer owner, which is unsafe in Firefox's audio path.
+        invalidatePeer();
         connectGainSink();
       }
     },

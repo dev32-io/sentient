@@ -353,6 +353,29 @@ describe("ChatComposer semantic boundary", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 
+  it("does not retain the native pointer event across asynchronous capture startup", async () => {
+    let resolveStart: (() => void) | undefined;
+    const startGate = new Promise<void>((resolve) => { resolveStart = resolve; });
+    const onCaptureIntent = vi.fn((intent: CaptureIntent) => intent.type === "start" ? startGate : undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    const event = createEvent("PointerDown", primary, { bubbles: true, cancelable: true });
+    let pointerIdReads = 0;
+    Object.defineProperties(event, {
+      button: { value: 0 },
+      clientX: { value: 20 },
+      clientY: { value: 20 },
+      pointerId: { get: () => { pointerIdReads += 1; return 18; } },
+    });
+
+    fireEvent(primary, event);
+    const synchronousReads = pointerIdReads;
+    resolveStart?.();
+    await waitFor(() => expect(primary.closest("[data-state]")?.getAttribute("data-state")).toBe("hold"));
+
+    expect(pointerIdReads).toBe(synchronousReads);
+  });
+
   it("fences a release that arrives before Hold start resolves", async () => {
     let resolveStart: ((value: void | PromiseLike<void>) => void) | undefined;
     const startGate = new Promise<void>((resolve) => { resolveStart = resolve; });
