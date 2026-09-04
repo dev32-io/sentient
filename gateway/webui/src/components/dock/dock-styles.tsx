@@ -529,7 +529,8 @@ export const DOCK_STYLES = `
   transition: width var(--motion-state), flex-basis var(--motion-state), height var(--motion-state);
 }
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) {
-  width: min(var(--dock-voice-width), 100%);
+  /* Keep intrinsic flex sizing definite; max-width above retains the parent bound. */
+  width: var(--dock-voice-width);
   height: var(--dock-live-height);
   flex-basis: var(--dock-voice-width);
 }

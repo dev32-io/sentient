@@ -538,6 +538,13 @@ describe("dock foundation boundary", () => {
     expect(DOCK_STYLES).not.toMatch(/\b(?:rgba?|hsla?)\s*\(/i);
   });
 
+  it("keeps active voice geometry definite while bounded by its parent", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-voice-capture\s*{[^}]*max-width:\s*100%;/s);
+    expect(DOCK_STYLES).toMatch(
+      /\.dock-voice-capture:is\([^}]+\)\s*{[^}]*width:\s*var\(--dock-voice-width\);[^}]*flex-basis:\s*var\(--dock-voice-width\);/s,
+    );
+  });
+
   it("keeps task statuses shape-distinct without motion or color", () => {
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running::after\s*{/);
     expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done::after\s*{/);
