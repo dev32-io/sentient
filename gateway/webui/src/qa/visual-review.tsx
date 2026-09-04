@@ -9,6 +9,7 @@ import "./visual-review.css";
 import { AsyncState, NoResultsState, Notice } from "../components/common/composites.tsx";
 import { ActionButton, Field, MenuTrigger, Plate, ToggleControl } from "../components/common/foundation.tsx";
 import { MessageBubble } from "../components/chat/message-bubble.tsx";
+import { DockStyleSheet } from "../components/dock/dock-styles.tsx";
 import { VoiceCaptureControl } from "../components/dock/voice-capture-control.tsx";
 import { webVisualRows } from "./visual-review-inventory.ts";
 
@@ -63,7 +64,12 @@ function Catalog() {
       document.documentElement.dataset.qaReady = "true";
     });
   }, []);
-  return <main class="qa-catalog" aria-label="Design refresh production component review catalog"><header><h1>Design refresh · Web</h1><p>{config} · page {page + 1}</p></header>{rows.map((row) => <Plate className="qa-specimen" key={row.id}><div class="qa-label"><code>{row.id}</code><span>{row.state}</span></div><section data-inventory-id={row.id} class="qa-render"><StateSpecimen id={row.id} state={row.state} /></section></Plate>)}</main>;
+  return (
+    <>
+      <DockStyleSheet />
+      <main class="qa-catalog" aria-label="Design refresh production component review catalog"><header><h1>Design refresh · Web</h1><p>{config} · page {page + 1}</p></header>{rows.map((row) => <Plate className="qa-specimen" key={row.id}><div class="qa-label"><code>{row.id}</code><span>{row.state}</span></div><section data-inventory-id={row.id} class="qa-render"><StateSpecimen id={row.id} state={row.state} /></section></Plate>)}</main>
+    </>
+  );
 }
 
 const root = document.getElementById("app");

@@ -3,7 +3,7 @@ import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComposerGlyph, type ComposerGlyphName } from "./composer-glyph.tsx";
-import { DOCK_STYLES } from "./dock-styles.tsx";
+import { DOCK_STYLES, DockStyleSheet } from "./dock-styles.tsx";
 import { type CaptureIntent, ChatComposer, type ChatComposerProps } from "./index.ts";
 import { VoiceCaptureControl } from "./voice-capture-control.tsx";
 import { VOICE_CAPTURE_STATES, isVoiceCaptureLive, mapVoiceCapturePresentation } from "./voice-capture-state.ts";
@@ -590,20 +590,28 @@ describe("ChatComposer semantic boundary", () => {
     ]);
   });
 
-  it("injects dock styles once for the composer and for the standalone QA control", () => {
-    const composer = render(<ChatComposer {...composerProps()} />);
+  it("injects dock styles once for the composer", () => {
+    render(<ChatComposer {...composerProps()} />);
     expect(document.querySelectorAll("style[data-sentient-dock-style]")).toHaveLength(1);
-    composer.unmount();
+  });
+
+  it("shares one explicit dock style owner across standalone legacy voice controls", () => {
+    const legacyProps = {
+      disabled: false,
+      captureActive: false,
+      onStart: async () => "qa-capture",
+      onCommit: async () => {},
+      onCancel: async () => {},
+    };
 
     render(
-      <VoiceCaptureControl
-        disabled={false}
-        captureActive={false}
-        onStart={async () => "qa-capture"}
-        onCommit={async () => {}}
-        onCancel={async () => {}}
-      />,
+      <>
+        <DockStyleSheet />
+        <VoiceCaptureControl {...legacyProps} />
+        <VoiceCaptureControl {...legacyProps} />
+      </>,
     );
+
     expect(document.querySelectorAll("style[data-sentient-dock-style]")).toHaveLength(1);
   });
 });

@@ -7,7 +7,6 @@ import {
   createCapturePort,
 } from "./capture-adapter.ts";
 import { ComposerGlyph } from "./composer-glyph.tsx";
-import { DockStyleSheet } from "./dock-styles.tsx";
 import {
   type VoiceCaptureState,
   type VoiceCaptureTarget,
@@ -431,7 +430,6 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
 
   return (
     <>
-      {!internal && <DockStyleSheet />}
       <div class={`dock-voice-capture dock-voice-capture--${presentation.state}`} data-state={presentation.state} data-tone={presentation.tone} data-target={target}>
         <div
           ref={fanRef}
