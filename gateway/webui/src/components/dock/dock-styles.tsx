@@ -87,20 +87,13 @@ export const DOCK_STYLES = `
   opacity: 0.62;
   pointer-events: none;
 }
-.dock-composer__surface:focus-within {
+.dock-composer__surface:focus-within:has(:focus-visible):not([data-voice-state="hold"]):not([data-voice-state="auto"]):not([data-voice-state="transitioning"]) {
   border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line));
   box-shadow:
     var(--slate-top-light),
     0 2px 0 -1px var(--color-bg-sunk),
     0 18px 32px -20px color-mix(in oklab, var(--color-bg-sunk) 94%, transparent),
     4px 19px 32px -20px color-mix(in oklab, var(--color-accent) 64%, transparent);
-}
-.dock-composer__surface[data-voice-state="hold"],
-.dock-composer__surface[data-voice-state="auto"] {
-  border-color: color-mix(in oklab, var(--color-accent) 44%, var(--color-line));
-}
-.dock-composer__surface[data-voice-state="auto"] {
-  border-color: color-mix(in oklab, var(--color-sage) 42%, var(--color-line));
 }
 .dock-composer__surface[data-voice-state="reconnect-disabled"] {
   border-color: color-mix(in oklab, var(--color-warn) 52%, var(--color-line));
@@ -184,7 +177,10 @@ export const DOCK_STYLES = `
       var(--composer-key) 100%
     );
   color: var(--color-ink);
-  box-shadow: var(--slate-shadow);
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 10px 16px -12px color-mix(in oklab, black 96%, transparent);
   cursor: pointer;
   transform: translateY(0);
   transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease, opacity var(--motion-feedback);
@@ -319,6 +315,7 @@ export const DOCK_STYLES = `
   display: flex;
   flex-direction: column;
   container-type: inline-size;
+  animation: dock-task-shelf-reveal 360ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .dock-task-shelf__pills {
   position: relative;
@@ -349,7 +346,8 @@ export const DOCK_STYLES = `
   box-shadow: none;
   font: 500 14px / var(--line-height-tight) var(--font-ui);
   white-space: nowrap;
-  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-feedback);
+  transform: translateY(0);
+  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-feedback), transform 160ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
   .dock-task-pill:hover {
@@ -369,6 +367,7 @@ export const DOCK_STYLES = `
     inset 0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent),
     0 2px 0 color-mix(in oklab, var(--color-bg-sunk) 76%, var(--color-line)),
     0 6px 10px -9px color-mix(in oklab, var(--color-bg-sunk) 92%, transparent);
+  transform: translateY(1px);
 }
 .dock-task-pill__name {
   min-width: 0;
@@ -378,65 +377,40 @@ export const DOCK_STYLES = `
   white-space: nowrap;
 }
 .dock-task-pill__dot {
-  position: relative;
-  width: 10px;
-  height: 10px;
+  width: var(--space-sm);
+  height: var(--space-sm);
   flex: 0 0 auto;
-  box-sizing: border-box;
-  border: 2px solid currentColor;
-  background: transparent;
-  color: var(--color-ink-4);
+  border-radius: 50%;
+  background: var(--color-ink-4);
+  transition: background var(--motion-feedback), box-shadow var(--motion-feedback), opacity var(--motion-feedback), transform var(--motion-feedback);
 }
 .dock-task-pill__dot--running {
-  border-radius: 50%;
-  color: var(--color-amber);
+  background: var(--color-amber);
   box-shadow: 0 0 0 var(--space-xs) color-mix(in oklab, var(--color-amber) 16%, transparent);
   animation: dock-task-pulse 1.45s ease-in-out infinite;
 }
-.dock-task-pill__dot--running::after {
-  content: "";
-  position: absolute;
-  inset: 2px;
-  border-radius: 50%;
-  background: currentColor;
-}
 .dock-task-pill__dot--done {
-  border-radius: 50%;
-  color: var(--color-sage);
-  background: color-mix(in oklab, var(--color-sage) 18%, transparent);
-}
-.dock-task-pill__dot--done::after {
-  content: "";
-  position: absolute;
-  inset-block-start: -1px;
-  inset-inline-start: 2px;
-  width: 3px;
-  height: 5px;
-  border-inline-end: 2px solid currentColor;
-  border-block-end: 2px solid currentColor;
-  transform: rotate(45deg);
+  background: var(--color-sage);
 }
 .dock-task-pill__dot--error {
-  border-radius: 2px;
-  color: var(--color-stop);
-  background: color-mix(in oklab, var(--color-stop) 16%, transparent);
+  background: var(--color-stop);
   box-shadow: 0 0 var(--space-sm) color-mix(in oklab, var(--color-stop) 48%, transparent);
 }
-.dock-task-pill__dot--error::before,
-.dock-task-pill__dot--error::after {
-  content: "";
-  position: absolute;
-  inset-block-start: 2px;
-  inset-inline-start: 0;
-  width: 6px;
-  height: 2px;
-  background: currentColor;
+.dock-task-shelf__detail-slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: grid-template-rows 360ms cubic-bezier(.16, 1, .3, 1), opacity 180ms ease, transform 360ms cubic-bezier(.16, 1, .3, 1);
 }
-.dock-task-pill__dot--error::before {
-  transform: rotate(45deg);
+.dock-task-shelf__detail-slot[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
 }
-.dock-task-pill__dot--error::after {
-  transform: rotate(-45deg);
+.dock-task-shelf__detail-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 .dock-task-shelf .tool-inline-detail {
   position: relative;
@@ -450,6 +424,7 @@ export const DOCK_STYLES = `
   background: color-mix(in oklab, var(--color-paper) 72%, var(--color-bg-sunk));
   color: var(--color-ink);
   box-shadow: var(--plate-shadow);
+  animation: dock-task-detail-enter 220ms cubic-bezier(.16, 1, .3, 1) both;
 }
 .dock-task-shelf .tool-inline-detail__label {
   display: block;
@@ -466,6 +441,18 @@ export const DOCK_STYLES = `
 }
 @keyframes dock-task-pulse {
   50% { opacity: 0.55; transform: scale(0.72); }
+}
+@keyframes dock-task-shelf-reveal {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+}
+@keyframes dock-task-detail-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+@keyframes dock-task-pill-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+}
+.dock-task-pill {
+  animation: dock-task-pill-enter 260ms cubic-bezier(.16, 1, .3, 1) both;
 }
 
 .dock-suggestions {
@@ -526,7 +513,7 @@ export const DOCK_STYLES = `
   min-width: 0;
   max-width: 100%;
   flex: 0 0 var(--dock-target-size);
-  transition: width var(--motion-state), flex-basis var(--motion-state), height var(--motion-state);
+  transition: width 360ms cubic-bezier(.16, 1, .3, 1), flex-basis 360ms cubic-bezier(.16, 1, .3, 1), height 260ms cubic-bezier(.16, 1, .3, 1);
 }
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) {
   /* Keep intrinsic flex sizing definite; max-width above retains the parent bound. */
@@ -542,11 +529,11 @@ export const DOCK_STYLES = `
   border: 1px solid color-mix(in oklab, var(--color-sage) 52%, transparent);
   border-radius: 19px 11px 19px 19px;
   opacity: 0.72;
-  animation: dock-auto-orbit var(--motion-responding-cadence) infinite;
+  animation: dock-auto-orbit 1.55s ease-in-out infinite;
   pointer-events: none;
 }
 @keyframes dock-auto-orbit {
-  50% { opacity: 0.34; transform: scale(1.04); }
+  50% { opacity: 0.34; transform: scale(1.08); }
 }
 .dock-voice-capture__primary {
   --voice-key: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2));
@@ -568,16 +555,19 @@ export const DOCK_STYLES = `
     radial-gradient(
       ellipse 82% 105% at 50% 52%,
       color-mix(in oklab, var(--voice-key) 78%, var(--color-bg-sunk)) 0%,
-      color-mix(in oklab, var(--voice-key) 90%, var(--color-bg-sunk)) 52%,
+      color-mix(in oklab, var(--voice-key) 90%, var(--color-bg-sunk)) 50%,
       var(--voice-key) 100%
     );
   color: var(--color-ink);
-  box-shadow: var(--slate-shadow);
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 10px 16px -12px color-mix(in oklab, black 96%, transparent);
   cursor: pointer;
   touch-action: none;
   user-select: none;
   transform: translateY(0);
-  transition: width var(--motion-state), height var(--motion-state), border-radius var(--motion-state), background var(--motion-feedback), color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease;
+  transition: width 360ms cubic-bezier(.16, 1, .3, 1), height 260ms cubic-bezier(.16, 1, .3, 1), border-radius 280ms cubic-bezier(.16, 1, .3, 1), background var(--motion-feedback), color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease;
 }
 @media (hover: hover) and (pointer: fine) {
   .dock-voice-capture__primary:hover:not(:disabled) {
@@ -610,28 +600,35 @@ export const DOCK_STYLES = `
   box-shadow: var(--slate-shadow), 4px 12px 18px -14px color-mix(in oklab, var(--color-stop) 60%, transparent);
 }
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--transitioning) .dock-voice-capture__primary {
-  --voice-key: color-mix(in oklab, var(--color-paper) 88%, var(--color-accent-soft));
   width: 100%;
   height: var(--dock-live-height);
   border-radius: 18px 11px 11px 18px;
+  background:
+    radial-gradient(
+      ellipse 70% 120% at 46% 54%,
+      color-mix(in oklab, var(--color-paper) 68%, var(--color-bg-sunk)),
+      transparent 72%
+    ),
+    linear-gradient(
+      105deg,
+      color-mix(in oklab, var(--color-paper) 88%, var(--color-accent-soft)),
+      color-mix(in oklab, var(--color-paper) 88%, var(--color-accent)) 100%
+    );
   box-shadow:
     var(--slate-top-light),
     0 2px 0 -1px var(--color-bg-sunk),
-    0 13px 22px -12px color-mix(in oklab, var(--color-bg-sunk) 92%, transparent),
-    4px 15px 24px -12px color-mix(in oklab, var(--color-accent) 68%, transparent);
+    0 13px 22px -12px color-mix(in oklab, var(--color-accent) 68%, transparent);
 }
 .dock-voice-capture--auto .dock-voice-capture__primary {
   --voice-key: color-mix(in oklab, var(--color-paper) 52%, var(--color-sage));
   width: 100%;
   height: var(--dock-live-height);
-  border-color: color-mix(in oklab, var(--color-sage) 28%, var(--color-line));
   border-radius: 18px 10px 15px 18px;
   color: var(--color-bg-sunk);
   box-shadow:
     var(--slate-top-light),
     0 2px 0 -1px var(--color-bg-sunk),
-    0 11px 18px -11px color-mix(in oklab, var(--color-bg-sunk) 90%, transparent),
-    4px 14px 24px -13px color-mix(in oklab, var(--color-sage) 58%, transparent);
+    0 11px 18px -11px color-mix(in oklab, var(--color-sage) 58%, transparent);
 }
 .dock-voice-capture__glyph {
   position: absolute;
@@ -643,12 +640,14 @@ export const DOCK_STYLES = `
   display: grid;
   place-items: center;
   transform: translate(-50%, -50%);
-  transition: inset-inline-start var(--motion-state), transform var(--motion-state);
+  transition: inset-inline-start 360ms cubic-bezier(.16, 1, .3, 1), transform 260ms cubic-bezier(.16, 1, .3, 1);
 }
 .dock-voice-capture__glyph svg {
+  width: 20px;
+  height: 20px;
   opacity: 1;
   transform: rotate(0) scale(1);
-  transition: opacity 130ms ease, transform var(--motion-state);
+  transition: opacity 130ms ease, transform 240ms cubic-bezier(.16, 1, .3, 1);
 }
 .dock-voice-capture__glyph::after {
   content: "";
@@ -660,7 +659,7 @@ export const DOCK_STYLES = `
   box-shadow: none;
   opacity: 0;
   transform: rotate(0) scale(0.4);
-  transition: opacity 120ms ease, width var(--motion-state), height var(--motion-state), border-radius var(--motion-state), transform var(--motion-state), box-shadow var(--motion-state);
+  transition: opacity 120ms ease, width 220ms cubic-bezier(.16, 1, .3, 1), height 220ms cubic-bezier(.16, 1, .3, 1), border-radius 220ms ease, transform 260ms cubic-bezier(.16, 1, .3, 1), box-shadow 240ms ease;
 }
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) .dock-voice-capture__glyph {
   inset-inline-start: calc(100% - 27px);
@@ -690,6 +689,10 @@ export const DOCK_STYLES = `
   justify-content: space-between;
   gap: var(--space-xs);
   transform: translateY(-50%);
+  animation: dock-voice-wave-reveal 360ms cubic-bezier(.16, 1, .3, 1) both;
+}
+:dir(rtl) .dock-voice-capture__wave {
+  --dock-wave-entry-x: -28px;
 }
 .dock-voice-capture__wave i {
   --dock-wave-rest: 0.34;
@@ -720,6 +723,9 @@ export const DOCK_STYLES = `
 @keyframes dock-voice-wave {
   to { opacity: 0.62; transform: scaleY(1); }
 }
+@keyframes dock-voice-wave-reveal {
+  from { opacity: 0; transform: translateY(-50%) translateX(var(--dock-wave-entry-x, 28px)) scaleX(0.25); }
+}
 .dock-voice-capture__fan {
   --dock-seam-index: 2;
   --dock-seam-color: var(--color-accent);
@@ -736,11 +742,11 @@ export const DOCK_STYLES = `
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  filter: drop-shadow(0 11px 10px color-mix(in oklab, var(--color-bg-sunk) 70%, transparent));
+  filter: drop-shadow(0 11px 10px color-mix(in oklab, black 42%, transparent));
   transform: perspective(420px) translateY(17px) rotateX(-74deg) scaleX(0.88);
   transform-origin: 50% 100%;
   transform-style: preserve-3d;
-  transition: opacity 130ms ease, transform var(--motion-state), visibility 0s linear var(--motion-state);
+  transition: opacity 130ms ease, transform 390ms cubic-bezier(.16, 1, .3, 1), visibility 0s linear 390ms;
 }
 .dock-voice-capture__fan[data-target="auto"] {
   --dock-seam-index: 0;
@@ -756,7 +762,7 @@ export const DOCK_STYLES = `
   z-index: 3;
   inset-block-end: 1px;
   inset-inline-start: calc((100% / 3) * var(--dock-seam-index) + var(--space-sm));
-  width: calc(100% / 3 - var(--space-lg));
+  width: calc(100% / 3 - 15px);
   height: 3px;
   border-radius: var(--radius-pill);
   background: linear-gradient(90deg, transparent, var(--dock-seam-color), transparent);
@@ -783,7 +789,7 @@ export const DOCK_STYLES = `
   visibility: visible;
   pointer-events: auto;
   transform: perspective(420px) translateY(0) rotateX(0) scaleX(1);
-  transition: opacity 130ms ease, transform var(--motion-state), visibility 0s;
+  transition: opacity 130ms ease, transform 390ms cubic-bezier(.16, 1, .3, 1), visibility 0s;
 }
 .dock-voice-capture__choice {
   --voice-choice-key: color-mix(in oklab, var(--color-paper) 94%, var(--color-bg-elev));
@@ -814,7 +820,7 @@ export const DOCK_STYLES = `
   cursor: pointer;
   transform: translateY(16px) scaleY(0.72);
   transform-origin: 50% 100%;
-  transition: opacity 120ms ease, transform var(--motion-state), color var(--motion-feedback), filter var(--motion-feedback), background var(--motion-feedback), box-shadow var(--motion-feedback);
+  transition: opacity 120ms ease, transform 350ms cubic-bezier(.16, 1, .3, 1), color var(--motion-feedback), filter var(--motion-feedback), background var(--motion-feedback), box-shadow var(--motion-feedback);
 }
 .dock-voice-capture__choice::after {
   content: "";
@@ -827,7 +833,7 @@ export const DOCK_STYLES = `
   pointer-events: none;
 }
 .dock-voice-capture__choice--auto {
-  --voice-choice-key: color-mix(in oklab, var(--color-paper) 82%, var(--color-sage-soft));
+  --voice-choice-key: color-mix(in oklab, var(--color-paper) 82%, var(--color-sage));
   border-radius: 20px 11px 7px 16px;
   color: color-mix(in oklab, var(--color-ink-2) 82%, var(--color-sage));
   transition-delay: 0ms;
@@ -846,18 +852,18 @@ export const DOCK_STYLES = `
 .dock-voice-capture__choice.is-selected {
   --voice-choice-key: var(--color-accent);
   color: var(--color-bg-sunk);
-  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-accent) 30%, var(--color-bg-sunk)));
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-accent) 30%, color-mix(in oklab, black 58%, transparent)));
   transform: translateY(-5px) scale(1.015);
 }
 .dock-voice-capture__choice--auto.is-selected {
   --voice-choice-key: color-mix(in oklab, var(--color-sage) 78%, var(--color-paper));
   color: var(--color-bg-sunk);
-  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-sage) 38%, var(--color-bg-sunk)));
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-sage) 38%, color-mix(in oklab, black 58%, transparent)));
 }
 .dock-voice-capture__choice--cancel.is-selected {
   --voice-choice-key: var(--color-stop);
   color: var(--color-ink);
-  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-stop) 34%, var(--color-bg-sunk)));
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-stop) 34%, color-mix(in oklab, black 58%, transparent)));
 }
 .dock-voice-capture__choice:active {
   filter: none;
@@ -915,11 +921,25 @@ export const DOCK_STYLES = `
     overflow-y: auto;
   }
   .dock-voice-capture {
+    --dock-target-size: 48px;
+    --dock-live-height: 52px;
     --dock-voice-width: var(--dock-live-width-narrow);
+  }
+  .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--transitioning) .dock-voice-capture__primary,
+  .dock-voice-capture--auto .dock-voice-capture__primary {
+    border-radius: 17px 10px 10px 17px;
+  }
+  .dock-voice-capture__fan {
+    width: min(210px, calc(100vw - 18px));
   }
   .dock-voice-capture__wave {
     inset-inline: 15px 52px;
     gap: 3px;
+  }
+}
+@media (max-width: 380px) {
+  .dock-voice-capture__fan {
+    width: 100%;
   }
 }
 /* The 390px reference fits one exact row; below it the active end controls
@@ -965,6 +985,8 @@ export const DOCK_STYLES = `
   .dock-composer__end-actions,
   .dock-composer__interrupt,
   .dock-task-pill,
+  .dock-task-pill__dot,
+  .dock-task-shelf__detail-slot,
   .dock-voice-capture,
   .dock-voice-capture__primary,
   .dock-voice-capture__glyph,
@@ -975,13 +997,17 @@ export const DOCK_STYLES = `
   .dock-voice-capture__choice {
     transition: none;
   }
+  .dock-task-shelf,
+  .dock-task-shelf .tool-inline-detail,
+  .dock-task-pill,
   .dock-task-pill__dot--running,
   .dock-voice-capture--auto::before,
+  .dock-voice-capture__wave,
   .dock-voice-capture__wave i {
     animation: none;
   }
   .dock-task-pill__dot--running {
-    box-shadow: none;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-amber) 20%, transparent);
   }
   .dock-voice-capture__wave i {
     opacity: 0.82;

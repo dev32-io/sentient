@@ -18,6 +18,9 @@ export interface ComposerTaskShelfProps {
   items: readonly TaskListItem[];
 }
 
+// `tasklist.state` currently carries running/done/error only. Do not infer a
+// queued state from row order or foreground/background kind; the gateway owns
+// task state and the strip renders its full-state projection verbatim.
 function statusClass(s: TaskListItem["status"]): string {
   return `dock-task-pill--${s}`;
 }
@@ -98,7 +101,11 @@ export function ComposerTaskShelf({ items }: ComposerTaskShelfProps): JSX.Elemen
           <ToolPillButton key={t.id} task={t} isOpen={openId === t.id} onToggle={toggle} />
         ))}
       </div>
-      {open && <ToolInlineDetail item={open} direction="up" />}
+      <div class="dock-task-shelf__detail-slot" data-open={String(open !== undefined)}>
+        <div class="dock-task-shelf__detail-inner">
+          {open && <ToolInlineDetail key={open.id} item={open} direction="up" />}
+        </div>
+      </div>
     </div>
   );
 }

@@ -373,11 +373,17 @@ describe("ChatComposer semantic boundary", () => {
     expect(done.querySelector(".dock-task-pill__dot--done")).toBeTruthy();
     expect(failed.querySelector(".dock-task-pill__dot--error")).toBeTruthy();
 
+    const detailSlot = document.querySelector(".dock-task-shelf__detail-slot");
+    expect(detailSlot?.getAttribute("data-open")).toBe("false");
+
     fireEvent.click(running);
     expect(screen.getByText(/safe/)).toBeTruthy();
     expect(running.getAttribute("aria-expanded")).toBe("true");
+    expect(detailSlot?.getAttribute("data-open")).toBe("true");
     fireEvent.click(done);
     expect(screen.queryByText(/safe/)).toBeNull();
+    expect(screen.getByText(/song/)).toBeTruthy();
+    expect(document.querySelectorAll(".tool-inline-detail")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Interrupt" })).toBeTruthy();
   });
 
@@ -518,8 +524,11 @@ describe("pure VoiceCapture presentation mapping", () => {
 });
 
 describe("dock foundation boundary", () => {
-  it("keeps textarea focus transparent and assigns emphasis to the composer surface", () => {
-    expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within\s*{/);
+  it("keeps pointer capture from lighting the composer while preserving focus-visible emphasis", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within:has\(:focus-visible\):not\(\[data-voice-state="hold"\]\):not\(\[data-voice-state="auto"\]\):not\(\[data-voice-state="transitioning"\]\)\s*{/);
+    expect(DOCK_STYLES).not.toMatch(/\.dock-composer__surface:focus-within\s*{/);
+    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer-control:focus-visible\s*{[^}]*outline:/s);
+    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-voice-capture__primary:focus-visible,/);
     expect(DOCK_STYLES).toMatch(/\.dock-composer__draft\s*{[^}]*field-sizing:\s*content;[^}]*background:\s*transparent;/s);
     expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
     expect(DOCK_STYLES).not.toMatch(/\.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*var\(/s);
@@ -531,6 +540,8 @@ describe("dock foundation boundary", () => {
     expect(DOCK_STYLES).toContain("var(--slate-face)");
     expect(DOCK_STYLES).toContain("var(--slate-shadow)");
     expect(DOCK_STYLES).toContain("@media (max-width: 480px)");
+    expect(DOCK_STYLES).toMatch(/@media \(max-width: 480px\)[\s\S]*?\.dock-voice-capture\s*{[^}]*--dock-target-size:\s*48px;[^}]*--dock-live-height:\s*52px;[^}]*--dock-voice-width:\s*var\(--dock-live-width-narrow\);/);
+    expect(DOCK_STYLES).toContain("@media (max-width: 380px)");
     expect(DOCK_STYLES).toContain("@media (max-width: 389px)");
     expect(DOCK_STYLES).toMatch(/@media \(max-width: 389px\)[\s\S]*?\.dock-composer__end-actions\s*{[^}]*grid-column:\s*1 \/ -1;/);
     expect(DOCK_STYLES).toContain("@media (prefers-reduced-motion: reduce)");
@@ -545,12 +556,13 @@ describe("dock foundation boundary", () => {
     );
   });
 
-  it("keeps task statuses shape-distinct without motion or color", () => {
-    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running::after\s*{/);
-    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done::after\s*{/);
-    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error::before,/);
+  it("matches task activity motion and keeps a static reduced-motion signal", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running\s*{[^}]*background:\s*var\(--color-amber\);[^}]*animation:\s*dock-task-pulse 1\.45s ease-in-out infinite;/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done\s*{[^}]*background:\s*var\(--color-sage\);/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error\s*{[^}]*background:\s*var\(--color-stop\);/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\s*{[^}]*grid-template-rows:\s*0fr;[^}]*transition:/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-shelf__detail-slot\[data-open="true"\]\s*{[^}]*grid-template-rows:\s*1fr;/s);
     expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running,[\s\S]*?animation:\s*none;/);
-    expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running\s*{[^}]*box-shadow:\s*none;/);
-    expect(DOCK_STYLES).toMatch(/@media \(prefers-contrast: more\), \(forced-colors: active\)[\s\S]*?\.dock-task-pill__dot\s*{[^}]*box-shadow:\s*none;/);
+    expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running\s*{[^}]*box-shadow:\s*0 0 0 3px/s);
   });
 });
