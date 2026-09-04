@@ -7,6 +7,7 @@ struct VoiceCaptureSurface: View {
     let target: VoiceCaptureTarget
     let levels: [Float]
     let disabled: Bool
+    let physicallyPressed: Bool
     let announcement: String
     let captureGesture: VoiceCaptureGesture
     let onActivate: () -> Void
@@ -66,7 +67,7 @@ struct VoiceCaptureSurface: View {
                         width: crownWidth,
                         onSelect: onTarget
                     )
-                    .offset(y: -(VoiceCaptureLayout.crownHeight(dynamicTypeSize) - VoiceCaptureLayout.seamOverlap))
+                    .offset(y: gestureHostGeometry.crownBottomAlignmentOffset)
                     .zIndex(0)
                     .transition(
                         reduceMotion
@@ -82,6 +83,7 @@ struct VoiceCaptureSurface: View {
                     levels: levels,
                     width: presentation.isExpanded ? liveWidth : idleSize,
                     height: presentation.isExpanded ? liveHeight : idleSize,
+                    physicallyPressed: physicallyPressed,
                     onActivate: onActivate,
                     onStartAccessibleHold: onStartAccessibleHold,
                     onTarget: onTarget
@@ -125,6 +127,7 @@ private struct VoiceCapturePrimaryButton: View {
     let levels: [Float]
     let width: CGFloat
     let height: CGFloat
+    let physicallyPressed: Bool
     let onActivate: () -> Void
     let onStartAccessibleHold: () -> Void
     let onTarget: (VoiceCaptureTarget) -> Void
@@ -155,7 +158,8 @@ private struct VoiceCapturePrimaryButton: View {
         .buttonStyle(VoicePodButtonStyle(
             presentation: presentation,
             width: width,
-            height: height
+            height: height,
+            physicallyPressed: physicallyPressed
         ))
         .disabled(presentation.isDisabled)
         .accessibilityLabel(presentation.primaryLabel)
@@ -182,8 +186,11 @@ private struct VoiceCapturePrimaryButton: View {
                         .stroke(DuskColors.accent.opacity(0.2), lineWidth: 5)
                         .rotationEffect(.degrees(45))
                 }
+        } else if presentation.isAuto {
+            ComposerAutoGlyph()
+                .frame(width: 20, height: 20)
         } else {
-            Image(composerGlyph: presentation.isAuto ? .auto : .microphone)
+            Image(composerGlyph: .microphone)
                 .font(.system(size: 20, weight: .semibold))
         }
     }
@@ -275,9 +282,15 @@ private struct VoiceCaptureTargetDeck: View {
         .accessibilityIdentifier("voice-\(choice.rawValue)")
     }
 
+    @ViewBuilder
     private func targetIcon(_ choice: VoiceCaptureTarget) -> some View {
-        Image(composerGlyph: choice.composerGlyph)
-            .font(.system(size: 15, weight: .semibold))
+        if choice == .auto {
+            ComposerAutoGlyph()
+                .frame(width: 15, height: 15)
+        } else {
+            Image(composerGlyph: choice == .cancel ? .cancel : .send)
+                .font(.system(size: 15, weight: .semibold))
+        }
     }
 
     private func targetLabel(_ choice: VoiceCaptureTarget) -> String {
@@ -402,6 +415,7 @@ private struct VoicePodButtonStyle: ButtonStyle {
     let presentation: VoiceCapturePresentationState
     let width: CGFloat
     let height: CGFloat
+    let physicallyPressed: Bool
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.isFocused) private var isFocused
@@ -417,10 +431,12 @@ private struct VoicePodButtonStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed || physicallyPressed
+
         configuration.label
             .foregroundStyle(foregroundColor)
             .frame(width: width, height: height)
-            .background { podFace(pressed: configuration.isPressed) }
+            .background { podFace(pressed: pressed) }
             .overlay {
                 if presentation.isAuto {
                     VoiceAutoOrbit(shape: shape)
@@ -428,10 +444,10 @@ private struct VoicePodButtonStyle: ButtonStyle {
                 }
             }
             .contentShape(shape)
-            .offset(y: configuration.isPressed && !reduceMotion ? 1 : 0)
+            .offset(y: pressed && !reduceMotion ? 1 : 0)
             .animation(
                 reduceMotion ? nil : .easeOut(duration: DesignV2.Motion.feedback),
-                value: configuration.isPressed
+                value: pressed
             )
     }
 

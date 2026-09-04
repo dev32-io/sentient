@@ -50,6 +50,20 @@ enum VoiceCaptureTarget: String, Equatable, Sendable {
     case auto, cancel, send
 }
 
+/// Pressed depth is driven by the stable UIKit host because the morphing
+/// SwiftUI Button does not own the physical touch sequence.
+struct VoiceCapturePhysicalPressState: Equatable, Sendable {
+    private(set) var isPressed = false
+
+    mutating func begin() {
+        isPressed = true
+    }
+
+    mutating func end() {
+        isPressed = false
+    }
+}
+
 /// Gesture travel is measured in the window coordinate space so the pod's
 /// idle-to-Hold resize cannot turn layout movement into finger movement. The
 /// maximum is retained even if the finger returns near its origin before lift.
@@ -117,7 +131,8 @@ struct VoiceCaptureTargetGeometry: Equatable, Sendable {
     }
 
     func target(at location: CGPoint) -> VoiceCaptureTarget {
-        guard podBounds.contains(location) || crownBounds.contains(location),
+        guard containsVisiblePoint(location, in: podBounds)
+                || containsVisiblePoint(location, in: crownBounds),
               crownBounds.width > 0
         else {
             return .send
@@ -129,6 +144,11 @@ struct VoiceCaptureTargetGeometry: Equatable, Sendable {
         if directionalX < 1 / 3 { return .auto }
         if directionalX < 2 / 3 { return .cancel }
         return .send
+    }
+
+    private func containsVisiblePoint(_ point: CGPoint, in bounds: CGRect) -> Bool {
+        point.x >= bounds.minX && point.x <= bounds.maxX
+            && point.y >= bounds.minY && point.y <= bounds.maxY
     }
 }
 

@@ -71,6 +71,12 @@ struct VoiceCaptureGestureHostGeometry: Equatable, Sendable {
         expanded ? podBounds : idleBounds
     }
 
+    /// Offset for a crown that SwiftUI initially bottom-aligns with the pod.
+    /// Both visual placement and target frames derive from these same bounds.
+    var crownBottomAlignmentOffset: CGFloat {
+        crownBounds.maxY - podBounds.maxY
+    }
+
     func targetGeometry(in view: UIView) -> VoiceCaptureTargetGeometry {
         VoiceCaptureTargetGeometry(
             podBounds: view.convert(podBounds, to: view.window),
@@ -167,30 +173,93 @@ final class VoiceCaptureGestureHostView: UIView {
     }
 }
 
+enum VoiceCaptureTrackedTouchEvent: Equatable, Sendable {
+    case started
+    case changed
+    case released
+    case cancelled
+    case rejected
+    case ignored
+}
+
+/// Tracks one primary touch. Extra touches that arrive after ownership begins
+/// cannot terminate or invalidate the recognized primary sequence.
+struct VoiceCaptureTouchTracker<TouchID: Hashable> {
+    private(set) var primaryTouch: TouchID?
+
+    mutating func touchesBegan(_ touches: Set<TouchID>) -> VoiceCaptureTrackedTouchEvent {
+        if primaryTouch != nil { return .ignored }
+        guard touches.count == 1, let touch = touches.first else { return .rejected }
+        primaryTouch = touch
+        return .started
+    }
+
+    mutating func touchesMoved(_ touches: Set<TouchID>) -> VoiceCaptureTrackedTouchEvent {
+        guard let primaryTouch, touches.contains(primaryTouch) else { return .ignored }
+        return .changed
+    }
+
+    mutating func touchesEnded(_ touches: Set<TouchID>) -> VoiceCaptureTrackedTouchEvent {
+        guard let primaryTouch, touches.contains(primaryTouch) else { return .ignored }
+        self.primaryTouch = nil
+        return .released
+    }
+
+    mutating func touchesCancelled(_ touches: Set<TouchID>) -> VoiceCaptureTrackedTouchEvent {
+        guard let primaryTouch, touches.contains(primaryTouch) else { return .ignored }
+        self.primaryTouch = nil
+        return .cancelled
+    }
+
+    mutating func reset() {
+        primaryTouch = nil
+    }
+}
+
 /// Immediate single-touch tracking without a duration gate or location timer.
 /// UIKit retains the recognized touch after it leaves the host's bounds and
 /// reports system cancellation separately from a confirmed finger-up.
 final class VoiceCaptureTrackingGestureRecognizer: UIGestureRecognizer {
+    private var touchTracker = VoiceCaptureTouchTracker<ObjectIdentifier>()
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard state == .possible, touches.count == 1 else {
+        switch touchTracker.touchesBegan(identifiers(for: touches)) {
+        case .started:
+            state = .began
+        case .rejected:
             state = .failed
-            return
+        case .changed, .released, .cancelled, .ignored:
+            break
         }
-        state = .began
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard state == .began || state == .changed else { return }
-        state = .changed
+        if touchTracker.touchesMoved(identifiers(for: touches)) == .changed,
+           state == .began || state == .changed {
+            state = .changed
+        }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard state == .began || state == .changed else { return }
-        state = .ended
+        if touchTracker.touchesEnded(identifiers(for: touches)) == .released,
+           state == .began || state == .changed {
+            state = .ended
+        }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        guard state == .began || state == .changed else { return }
-        state = .cancelled
+        if touchTracker.touchesCancelled(identifiers(for: touches)) == .cancelled,
+           state == .began || state == .changed {
+            state = .cancelled
+        }
+    }
+
+    override func reset() {
+        touchTracker.reset()
+        super.reset()
+    }
+
+    private func identifiers(for touches: Set<UITouch>) -> Set<ObjectIdentifier> {
+        Set(touches.map(ObjectIdentifier.init))
     }
 }

@@ -165,6 +165,79 @@ struct VoiceCaptureControlTests {
         #expect(repeated.intents.isEmpty)
     }
 
+    @Test func hostedVisualAndTargetGeometryAlignInAllDynamicTypeAndDirectionCases() {
+        let cases: [(dynamicType: DynamicTypeSize, rightToLeft: Bool, relativeCrown: CGRect)] = [
+            (.large, false, CGRect(x: -12, y: -50, width: 210, height: 58)),
+            (.large, true, CGRect(x: 0, y: -50, width: 210, height: 58)),
+            (.accessibility3, false, CGRect(x: 0, y: -64, width: 276, height: 72)),
+            (.accessibility3, true, CGRect(x: 0, y: -64, width: 276, height: 72)),
+        ]
+
+        for item in cases {
+            let pod = CGSize(
+                width: VoiceCaptureLayout.liveWidth(
+                    horizontalSizeClass: .compact,
+                    dynamicTypeSize: item.dynamicType
+                ),
+                height: VoiceCaptureLayout.liveHeight(horizontalSizeClass: .compact)
+            )
+            let crown = CGSize(
+                width: VoiceCaptureLayout.crownWidth(
+                    horizontalSizeClass: .compact,
+                    dynamicTypeSize: item.dynamicType
+                ),
+                height: VoiceCaptureLayout.crownHeight(item.dynamicType)
+            )
+            let host = VoiceCaptureGestureHostGeometry(
+                idleSize: VoiceCaptureLayout.idleSize(horizontalSizeClass: .compact),
+                podSize: pod,
+                crownSize: crown,
+                seamOverlap: VoiceCaptureLayout.seamOverlap,
+                rightToLeft: item.rightToLeft
+            )
+            let crownRelativeToPod = host.crownBounds.offsetBy(
+                dx: -host.podBounds.minX,
+                dy: -host.podBounds.minY
+            )
+            let visuallyRenderedCrownTop = pod.height - crown.height
+                + host.crownBottomAlignmentOffset
+
+            #expect(crownRelativeToPod == item.relativeCrown)
+            #expect(visuallyRenderedCrownTop == item.relativeCrown.minY)
+            #expect(
+                host.crownBottomAlignmentOffset
+                    == -(pod.height - VoiceCaptureLayout.seamOverlap)
+            )
+
+            let targets = VoiceCaptureTargetGeometry(
+                podBounds: host.podBounds,
+                crownBounds: host.crownBounds,
+                rightToLeft: item.rightToLeft
+            )
+            let segment = host.crownBounds.width / 3
+            let expected: [VoiceCaptureTarget] = item.rightToLeft
+                ? [.send, .cancel, .auto]
+                : [.auto, .cancel, .send]
+            for y in [host.crownBounds.midY, host.podBounds.midY] {
+                for index in 0..<3 {
+                    let point = CGPoint(
+                        x: host.crownBounds.minX + (CGFloat(index) + 0.5) * segment,
+                        y: y
+                    )
+                    #expect(targets.target(at: point) == expected[index])
+                }
+            }
+            #expect(targets.target(at: CGPoint(
+                x: host.crownBounds.minX,
+                y: host.crownBounds.minY
+            )) == expected[0])
+            #expect(targets.target(at: CGPoint(
+                x: host.crownBounds.maxX,
+                y: host.crownBounds.maxY
+            )) == expected[2])
+        }
+    }
+
     @Test func stableGestureHostKeepsOneEnvelopeAcrossIdleAndHold() {
         let geometry = VoiceCaptureGestureHostGeometry(
             idleSize: 48,
@@ -177,22 +250,6 @@ struct VoiceCaptureControlTests {
         #expect(geometry.hostSize == CGSize(width: 210, height: 102))
         #expect(geometry.initialHitBounds(expanded: false) == CGRect(x: 162, y: 54, width: 48, height: 48))
         #expect(geometry.initialHitBounds(expanded: true) == CGRect(x: 12, y: 50, width: 198, height: 52))
-        #expect(geometry.crownBounds == CGRect(x: 0, y: 0, width: 210, height: 58))
-    }
-
-    @Test func stableGestureHostMirrorsLogicalTrailingGeometryForRightToLeft() {
-        let geometry = VoiceCaptureGestureHostGeometry(
-            idleSize: 48,
-            podSize: CGSize(width: 198, height: 52),
-            crownSize: CGSize(width: 210, height: 58),
-            seamOverlap: 8,
-            rightToLeft: true
-        )
-
-        #expect(geometry.hostSize == CGSize(width: 210, height: 102))
-        #expect(geometry.idleBounds == CGRect(x: 0, y: 54, width: 48, height: 48))
-        #expect(geometry.podBounds == CGRect(x: 0, y: 50, width: 198, height: 52))
-        #expect(geometry.crownBounds == CGRect(x: 0, y: 0, width: 210, height: 58))
     }
 
     @Test func windowSpaceTargetGeometryTracksContinuousDrag() {
@@ -330,11 +387,54 @@ struct VoiceCaptureControlTests {
         #expect(ComposerGlyph.stopResponse.systemName == "stop")
         #expect(ComposerGlyph.send.systemName == "paperplane")
         #expect(ComposerGlyph.microphone.systemName == "mic")
-        #expect(ComposerGlyph.auto.systemName == "lightbulb")
         #expect(ComposerGlyph.cancel.systemName == "xmark")
-        #expect(VoiceCaptureTarget.auto.composerGlyph == .auto)
-        #expect(VoiceCaptureTarget.cancel.composerGlyph == .cancel)
-        #expect(VoiceCaptureTarget.send.composerGlyph == .send)
+    }
+
+    @Test func autoGlyphKeepsApprovedPathContract() {
+        #expect(ComposerAutoGlyphShape.approvedViewBox == CGSize(width: 24, height: 24))
+        #expect(ComposerAutoGlyphShape.bulbStart == CGPoint(x: 8, y: 17))
+        #expect(ComposerAutoGlyphShape.bulbEnd == CGPoint(x: 16, y: 17))
+        #expect(ComposerAutoGlyphShape.horizontalMarkStart == CGPoint(x: 9, y: 12))
+        #expect(ComposerAutoGlyphShape.horizontalMarkEnd == CGPoint(x: 15, y: 12))
+        #expect(ComposerAutoGlyphShape.verticalMarkStart == CGPoint(x: 12, y: 9))
+        #expect(ComposerAutoGlyphShape.verticalMarkEnd == CGPoint(x: 12, y: 15))
+        #expect(ComposerAutoGlyphShape.baseStart == CGPoint(x: 8, y: 20))
+        #expect(ComposerAutoGlyphShape.baseEnd == CGPoint(x: 16, y: 20))
+
+        let bounds = ComposerAutoGlyphShape()
+            .path(in: CGRect(origin: .zero, size: ComposerAutoGlyphShape.approvedViewBox))
+            .boundingRect
+        #expect(abs(bounds.minX - 6) < 0.01)
+        #expect(abs(bounds.maxX - 18) < 0.01)
+        #expect(abs(bounds.maxY - 20) < 0.01)
+    }
+
+    @Test func hostedPressDepthTracksBeginAndTermination() {
+        var state = VoiceCapturePhysicalPressState()
+        #expect(!state.isPressed)
+
+        state.begin()
+        #expect(state.isPressed)
+        state.end()
+        #expect(!state.isPressed)
+    }
+
+    @Test func extraTouchesCannotTerminateThePrimaryGesture() {
+        var tracker = VoiceCaptureTouchTracker<Int>()
+
+        #expect(tracker.touchesBegan([1]) == .started)
+        #expect(tracker.touchesBegan([2]) == .ignored)
+        #expect(tracker.touchesEnded([2]) == .ignored)
+        #expect(tracker.primaryTouch == 1)
+        #expect(tracker.touchesMoved([1]) == .changed)
+        #expect(tracker.touchesEnded([1]) == .released)
+        #expect(tracker.primaryTouch == nil)
+
+        #expect(tracker.touchesBegan([1, 2]) == .rejected)
+        #expect(tracker.primaryTouch == nil)
+        #expect(tracker.touchesBegan([3]) == .started)
+        #expect(tracker.touchesCancelled([3]) == .cancelled)
+        #expect(tracker.primaryTouch == nil)
     }
 
     @Test func heldPresentationFansDeckWhileAutoKeepsItFolded() {

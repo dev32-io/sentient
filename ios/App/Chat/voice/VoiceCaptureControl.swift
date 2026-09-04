@@ -17,6 +17,7 @@ struct VoiceCaptureControl: View {
     @State private var startedAt: Date?
     @State private var gestureActive = false
     @State private var gestureProgress = VoiceCaptureGestureProgress()
+    @State private var physicalPressState = VoiceCapturePhysicalPressState()
     /// True after a semantic capture has started and until its terminal or
     /// lifecycle transition is delivered. It prevents teardown from emitting a
     /// second terminal intent for the same capture.
@@ -52,6 +53,7 @@ struct VoiceCaptureControl: View {
             target: target,
             levels: levels,
             disabled: disabled,
+            physicallyPressed: physicalPressState.isPressed,
             announcement: announcement,
             captureGesture: captureGesture,
             onActivate: activateForAccessibility,
@@ -74,6 +76,7 @@ struct VoiceCaptureControl: View {
         VoiceCaptureGesture(
             onBegin: { sample in
                 guard !disabled else { return }
+                physicalPressState.begin()
                 gestureProgress.begin(at: sample.locationInWindow)
                 if state == .auto {
                     // The physical release is the Auto exit action; do not let
@@ -91,6 +94,7 @@ struct VoiceCaptureControl: View {
                 if state == .hold { selectTarget(at: sample) }
             },
             onTerminate: { termination, sample in
+                physicalPressState.end()
                 guard gestureActive else { return }
                 gestureProgress.update(at: sample.locationInWindow)
                 if state == .hold, termination == .released {
@@ -173,6 +177,7 @@ struct VoiceCaptureControl: View {
     private func completeHold(_ choice: VoiceCaptureTarget) {
         target = choice
         gestureActive = false
+        physicalPressState.end()
         gestureProgress.reset()
         finishHold(
             VoiceCaptureReducer.release(
@@ -241,10 +246,12 @@ struct VoiceCaptureControl: View {
         if state == .idle || state == .disabled {
             gestureActive = false
             gestureProgress.reset()
+            physicalPressState.end()
         }
     }
 
     private func lifecycleCancel() {
+        physicalPressState.end()
         guard captureNeedsCancellation else { return }
         gestureActive = false
         gestureProgress.reset()
