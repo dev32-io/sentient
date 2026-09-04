@@ -4,7 +4,7 @@ import { extname, join, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../..");
 const webRoot = join(root, "gateway/webui");
-const expectedRive = "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b";
+const expectedRive = "3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7";
 const expectedMark = "4a50a4b3a05fc7e5bf3d094b1e3b7b517a978d8ec74dc7d66695cc0041a074f1";
 
 export interface WebFoundationSource {

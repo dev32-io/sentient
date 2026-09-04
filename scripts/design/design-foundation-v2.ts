@@ -26,7 +26,7 @@ const OUTPUT_PATHS = {
 
 const EXPECTED_VERSION = "2.0.0";
 // Updating the canonical contract requires an intentional version/hash lock update here.
-const EXPECTED_CONTRACT_SHA256 = "f7799ee0711e7d8e4bd944606ab9342607f326ff109a44d905d8a2a7b91c7dc6";
+const EXPECTED_CONTRACT_SHA256 = "12c9be6961247345caa3330a6f1b1224d07560be7255f1aa9bdbd9e8ecb01d2a";
 const EXPECTED_STATES = ["rest", "hover", "focus", "pressed", "selected", "on", "destructive", "disabled"];
 const EXPECTED_AVATAR_STATES = ["idle", "thinking", "responding"];
 const EXPECTED_COLORS = {

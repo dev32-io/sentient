@@ -1,11 +1,11 @@
 // GENERATED FILE — DO NOT EDIT.
-// Design foundation 2.0.0; contract sha256: f7799ee0711e7d8e4bd944606ab9342607f326ff109a44d905d8a2a7b91c7dc6
+// Design foundation 2.0.0; contract sha256: 12c9be6961247345caa3330a6f1b1224d07560be7255f1aa9bdbd9e8ecb01d2a
 // Source: shared/mobile-sdk/design-foundation-v2.json
 package io.sentient.mobilesdk.design.v2
 
 object DesignFoundationV2 {
     const val version: String = "2.0.0"
-    const val contractSha256: String = "f7799ee0711e7d8e4bd944606ab9342607f326ff109a44d905d8a2a7b91c7dc6"
+    const val contractSha256: String = "12c9be6961247345caa3330a6f1b1224d07560be7255f1aa9bdbd9e8ecb01d2a"
 }
 
 object Colors {
@@ -124,8 +124,8 @@ enum class SentientAvatarState { IDLE, THINKING, RESPONDING }
 object SentientAvatar {
     const val runtimeFile: String = "sentient-avatar.riv"
     const val manifestPath: String = "design/prototype/foundation-components/assets/avatars/sentient-avatar.rive-manifest.json"
-    const val manifestSha256: String = "b9a8a732688499510050e023c541667ddb5dacb5bc9d1ab368cca97b23b810ee"
-    const val runtimeSha256: String = "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b"
+    const val manifestSha256: String = "b8754c7d1ae52786c661f7dc8d35a6b11bd20ec6ade4aea1311cf3d2305dcf58"
+    const val runtimeSha256: String = "3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7"
     const val artboard: String = "SentientAvatar"
     const val stateMachine: String = "Avatar"
     const val reducedMotionInput: String = "reducedMotion"

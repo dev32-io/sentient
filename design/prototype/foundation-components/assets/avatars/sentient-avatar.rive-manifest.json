@@ -15,9 +15,9 @@
   },
   "generated_asset": {
     "scene": "sentient-avatar.rive.json",
-    "scene_sha256": "c1acf7542e6fa9663771bf8d41f235e7762d851a29e94e720f1b02bcf7dfbb1e",
+    "scene_sha256": "65364fbc57125114eb5735e1d1b0e0efa179a9897e6507f6462a62243629ad6c",
     "riv": "sentient-avatar.riv",
-    "riv_sha256": "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b"
+    "riv_sha256": "3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7"
   },
   "generator": {
     "repository": "https://github.com/George-RD/rive-rs-cli.git",
@@ -144,24 +144,25 @@
       64,
       64
     ],
-    "blur_fallback": "Layered low-opacity rim strokes replace unsupported SVG Gaussian blur/feather.",
-    "thinking_aperture": "Independent trimmed circular arcs approximate SVG dash arrays.",
-    "electron_paths": "Scaled rotating nodes reproduce the three elliptical SVG motion paths and direction-specific phase offsets.",
-    "dynamic_strokes": "Scale, opacity, color, and layered fixed-width strokes approximate unsupported animated stroke width.",
+    "blur_fallback": "Sampled radial alpha profiles reproduce SVG Gaussian-blurred rim strokes while retaining transparent artboard pixels.",
+    "thinking_aperture": "Independent trimmed circular arcs retain the SVG dash proportions and circle-start phase.",
+    "electron_paths": "Paced position keyframes reproduce the three elliptical SVG motion paths and direction-specific phase offsets.",
+    "dynamic_strokes": "Opacity, color, scale, radial blur profiles, and representative fixed core widths approximate unsupported animated stroke width.",
     "wave_startup": "Perpetual Rive wave loops use the source 0/.8/1.6 second phase spacing; the SVG's one-time initial animation-delay hold is represented as steady-state phase offset."
   },
   "verification": {
     "command": "scripts/design/sentient-avatar-rive.sh verify",
     "render_output": "/tmp/sentient-rive-render",
-    "background": "#17120F",
+    "background": "#2B2621",
     "svg_reference_times_seconds": {
       "idle": 0,
       "thinking": 1,
       "responding": 2
     },
     "image_comparison_bounds": {
-      "normalized_rgb_mae_max": 0.15,
-      "foreground_iou_min": 0.42
+      "normalized_rgb_mae_max": 0.035,
+      "foreground_iou_min": 0.9,
+      "transparent_composite_rgb_mae_max": 0.001
     },
     "rapid_transition_schedule": "toThinking@10, toResponding@20, toIdle@30",
     "deterministic_generations": 2,

@@ -81,7 +81,7 @@ PY
 render() {
   rm -rf "$RENDER_DIR"
   mkdir -p "$RENDER_DIR"
-  local common=(--width 256 --height 256 --scale 2 --background '#17120F' --preview --contact-sheet)
+  local common=(--width 256 --height 256 --scale 2 --background '#2B2621' --preview --contact-sheet)
 
   "$CLI" render "$RIV" --state-machine Avatar --frames 0,30,60 "${common[@]}" -o "$RENDER_DIR/state-idle"
   "$CLI" render "$RIV" --state-machine Avatar --input toThinking=trigger --frames 0,8,15,60,243,471 "${common[@]}" -o "$RENDER_DIR/state-thinking"
@@ -101,6 +101,9 @@ render() {
   "$CLI" render "$RIV" --state-machine Avatar \
     --input toThinking=trigger@10 --input toResponding=trigger@20 --input toIdle=trigger@30 \
     --frames 0,9,15,25,35,60,90 "${common[@]}" -o "$RENDER_DIR/rapid"
+
+  "$CLI" render "$RIV" --state-machine Avatar --frames 60 \
+    --width 256 --height 256 --scale 2 --preview -o "$RENDER_DIR/transparent-idle"
 
   node "$ROOT/scripts/design/capture-sentient-avatar-svg.mjs" "$ASSET_DIR" "$RENDER_DIR/svg-reference"
   node "$ROOT/scripts/design/capture-sentient-avatar-svg.mjs" "$ASSET_DIR" "$RENDER_DIR/svg-reference-repeat"

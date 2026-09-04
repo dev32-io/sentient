@@ -23,7 +23,7 @@ final class IdentityStartupTests: XCTestCase {
         let riveURL = try XCTUnwrap(bundle.url(forResource: "sentient-avatar", withExtension: "riv"))
         let digest = SHA256.hash(data: try Data(contentsOf: riveURL))
         XCTAssertEqual(digest.map { String(format: "%02x", $0) }.joined(),
-                       "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b")
+                       "3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7")
         XCTAssertNotNil(bundle.url(forResource: "SentientMarkFallback", withExtension: "png"))
     }
 

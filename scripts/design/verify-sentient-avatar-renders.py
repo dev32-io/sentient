@@ -10,9 +10,10 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageStat
 
-BACKGROUND = (23, 18, 15)
-MAX_NORMALIZED_MAE = 0.15
-MIN_FOREGROUND_IOU = 0.42
+BACKGROUND = (43, 38, 33)
+MAX_NORMALIZED_MAE = 0.035
+MIN_FOREGROUND_IOU = 0.90
+MAX_TRANSPARENT_COMPOSITE_MAE = 0.001
 
 
 def digest(path: Path) -> str:
@@ -57,6 +58,7 @@ def main() -> None:
         "reduced-thinking",
         "reduced-responding",
         "rapid",
+        "transparent-idle",
     )
     for name in names:
         manifest(root, name)
@@ -95,6 +97,26 @@ def main() -> None:
     if rapid[60] != idle or rapid[90] != idle:
         raise AssertionError("rapid sequence did not converge to and hold the latest idle request")
 
+    transparent = Image.open(frame(root, "transparent-idle", 60)).convert("RGBA")
+    corners = (
+        transparent.getpixel((0, 0)),
+        transparent.getpixel((transparent.width - 1, 0)),
+        transparent.getpixel((0, transparent.height - 1)),
+        transparent.getpixel((transparent.width - 1, transparent.height - 1)),
+    )
+    if any(pixel[3] != 0 for pixel in corners):
+        raise AssertionError(f"transparent idle render has an embedded backdrop: corners={corners}")
+    if transparent.getpixel((transparent.width // 2, transparent.height // 2))[3] == 0:
+        raise AssertionError("transparent idle render lost its foreground artwork")
+    composited = Image.new("RGBA", transparent.size, (*BACKGROUND, 255))
+    composited.alpha_composite(transparent)
+    expected_composite = Image.open(frame(root, "state-idle", 60)).convert("RGB")
+    composite_mae = sum(
+        ImageStat.Stat(ImageChops.difference(composited.convert("RGB"), expected_composite)).mean
+    ) / (3 * 255)
+    if composite_mae > MAX_TRANSPARENT_COMPOSITE_MAE:
+        raise AssertionError(f"transparent idle render did not composite cleanly (mae={composite_mae:.6f})")
+
     comparisons = (
         (references / "idle.png", frame(root, "state-idle", 60), "idle"),
         (references / "thinking-1.0s.png", frame(root, "state-thinking", 60), "thinking@1.0s"),
@@ -107,7 +129,7 @@ def main() -> None:
             raise AssertionError(f"{label}: SVG parity outside bounds (mae={mae:.4f}, iou={iou:.4f})")
         results.append(f"{label}: mae={mae:.4f}, iou={iou:.4f}")
 
-    print("render assertions passed: nonblank, distinct, deterministic reduced motion, independent periods, transition choreography, latest-state convergence")
+    print("render assertions passed: nonblank, distinct, deterministic reduced motion, independent periods, transition choreography, latest-state convergence, transparent compositing")
     print("bounded SVG parity: " + "; ".join(results))
 
 

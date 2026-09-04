@@ -115,8 +115,8 @@
     "sentient": {
       "runtimeFile": "sentient-avatar.riv",
       "manifestPath": "design/prototype/foundation-components/assets/avatars/sentient-avatar.rive-manifest.json",
-      "manifestSha256": "b9a8a732688499510050e023c541667ddb5dacb5bc9d1ab368cca97b23b810ee",
-      "runtimeSha256": "bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b",
+      "manifestSha256": "b8754c7d1ae52786c661f7dc8d35a6b11bd20ec6ade4aea1311cf3d2305dcf58",
+      "runtimeSha256": "3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7",
       "artboard": "SentientAvatar",
       "stateMachine": "Avatar",
       "states": [

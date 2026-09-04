@@ -76,7 +76,7 @@ targets:
         script: |
           set -euo pipefail
           asset="$SRCROOT/App/Resources/Identity/sentient-avatar.riv"
-          expected="bad6f8c82fba6386233cef356adc59fa6017a7c97c0de61a377546405b1e892b"
+          expected="3111d27fbdeb48527e45e024148171fc0f77ecfed89decf7e8f4cd85fe1beec7"
           actual="$(shasum -a 256 "$asset" | awk '{print $1}')"
           test "$actual" = "$expected" || {
             echo "error: Sentient identity checksum mismatch: $actual"

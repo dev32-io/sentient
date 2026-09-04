@@ -68,7 +68,7 @@ async function capture(chrome, svgPath, seconds, output) {
   const work = await mkdtemp(join(tmpdir(), 'sentient-svg-capture-'));
   const profile = join(work, 'profile');
   const markup = await readFile(svgPath, 'utf8');
-  const html = `<!doctype html><meta charset=utf-8><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#17120f}svg{display:block;width:512px;height:512px}</style>${markup}`;
+  const html = `<!doctype html><meta charset=utf-8><style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#2b2621}svg{display:block;width:512px;height:512px}</style>${markup}`;
   const pagePath = join(work, 'capture.html');
   await writeFile(pagePath, html);
   const child = spawn(chrome, ['--headless=new', '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--disable-dev-shm-usage', '--force-device-scale-factor=1', `--user-data-dir=${profile}`], { stdio: ['ignore', 'ignore', 'pipe'] });
