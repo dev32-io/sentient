@@ -1,5 +1,5 @@
 import type { JSX } from "preact";
-import { Icon } from "../common/icon.tsx";
+import { ComposerGlyph } from "./composer-glyph.tsx";
 
 export interface TtsButtonProps {
   enabled: boolean;
@@ -17,7 +17,7 @@ export function TtsButton({ enabled, onToggle }: TtsButtonProps): JSX.Element {
       title={label}
       onClick={onToggle}
     >
-      <Icon name={enabled ? "volume-2" : "volume-x"} size={18} />
+      <ComposerGlyph name={enabled ? "volume" : "volume-off"} />
     </button>
   );
 }

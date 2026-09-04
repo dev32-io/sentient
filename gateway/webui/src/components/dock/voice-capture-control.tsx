@@ -1,13 +1,18 @@
 import type { JSX } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Icon } from "../common/icon.tsx";
-import { createCapturePort, type CapturePort, type LegacyCaptureMode, type LegacyCaptureSource } from "./capture-adapter.ts";
+import {
+  type CapturePort,
+  type LegacyCaptureMode,
+  type LegacyCaptureSource,
+  createCapturePort,
+} from "./capture-adapter.ts";
+import { ComposerGlyph } from "./composer-glyph.tsx";
 import { DockStyleSheet } from "./dock-styles.tsx";
 import {
-  mapVoiceCapturePresentation,
-  targetLabel,
   type VoiceCaptureState,
   type VoiceCaptureTarget,
+  mapVoiceCapturePresentation,
+  targetLabel,
 } from "./voice-capture-state.ts";
 
 export type { VoiceCaptureMode, VoiceCaptureState } from "./voice-capture-state.ts";
@@ -41,24 +46,6 @@ type ReleaseOutcome = "auto" | "commit" | "cancel";
 const QUICK_AUTO_THRESHOLD_MS = 220;
 const QUICK_AUTO_DISTANCE_PX = 12;
 const FAN_REVEAL_MS = 105;
-
-function AutoListenGlyph({ size = 15 }: { size?: number }): JSX.Element {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8" />
-    </svg>
-  );
-}
 
 function isInternalProps(props: VoiceCaptureControlProps): props is InternalVoiceCaptureControlProps {
   return "capturePort" in props;
@@ -444,7 +431,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
 
   return (
     <>
-      <DockStyleSheet />
+      {!internal && <DockStyleSheet />}
       <div class={`dock-voice-capture dock-voice-capture--${presentation.state}`} data-state={presentation.state} data-tone={presentation.tone} data-target={target}>
         <div
           ref={fanRef}
@@ -480,7 +467,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
                 else void terminal(choice === "cancel" ? "cancel" : "commit", id);
               }}
             >
-              {choice === "auto" ? <AutoListenGlyph /> : <Icon name={choice === "cancel" ? "x" : "send"} size={15} />}
+              <ComposerGlyph name={choice} size={18} />
               <span>{choice === "auto" ? "Auto" : choice === "cancel" ? "Cancel" : "Send"}</span>
             </button>
           ))}
@@ -526,7 +513,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
         >
           {presentation.live && <span class="dock-voice-capture__wave" aria-hidden="true">{Array.from({ length: 11 }, (_, index) => <i key={index} />)}</span>}
           <span class="dock-voice-capture__glyph" aria-hidden="true">
-            {presentation.primaryPressed ? <AutoListenGlyph size={18} /> : <Icon name="mic" size={19} />}
+            <ComposerGlyph name={presentation.primaryPressed ? "auto" : "mic"} size={presentation.primaryPressed ? 18 : 20} />
           </span>
         </button>
         <span class="sr-only" aria-live="polite">{announcement}</span>

@@ -1,4 +1,5 @@
 import type { JSX } from "preact";
+import { ComposerGlyph } from "./composer-glyph.tsx";
 
 export interface InterruptButtonProps {
   onInterrupt(): void;
@@ -13,7 +14,7 @@ export function InterruptButton({ onInterrupt }: InterruptButtonProps): JSX.Elem
       title="Interrupt"
       onClick={onInterrupt}
     >
-      <span class="dock-interrupt-button__glyph" aria-hidden="true" />
+      <ComposerGlyph name="stop" />
     </button>
   );
 }

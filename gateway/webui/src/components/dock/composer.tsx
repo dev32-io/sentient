@@ -3,11 +3,18 @@ import type { JSX, RefObject } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
 import { Surface } from "../common/foundation.tsx";
-import { Icon } from "../common/icon.tsx";
-import { type CapturePort, createCapturePort, legacySource, semanticSource, type LegacyCaptureMode, type CaptureSource } from "./capture-adapter.ts";
+import {
+  type CapturePort,
+  type CaptureSource,
+  type LegacyCaptureMode,
+  createCapturePort,
+  legacySource,
+  semanticSource,
+} from "./capture-adapter.ts";
 import type { ChatComposerProps as SemanticChatComposerProps } from "./composer-api.ts";
-import { DockStyleSheet } from "./dock-styles.tsx";
+import { ComposerGlyph } from "./composer-glyph.tsx";
 import { ComposerTaskShelf } from "./composer-task-strip.tsx";
+import { DockStyleSheet } from "./dock-styles.tsx";
 import { InterruptButton } from "./interrupt-button.tsx";
 import { SuggestionChips } from "./suggestion-chips.tsx";
 import { TtsButton } from "./tts-button.tsx";
@@ -98,7 +105,7 @@ function ComposerActions(props: ComposerActionsProps): JSX.Element {
         aria-label="Attachments are not available"
         title="Attachments are not available"
       >
-        <Icon name="paperclip" size={19} />
+        <ComposerGlyph name="attachment" />
       </button>
       <TtsButton enabled={props.ttsEnabled} onToggle={props.onTtsToggle} />
       <span class="dock-composer__grow" />
@@ -117,7 +124,7 @@ function ComposerActions(props: ComposerActionsProps): JSX.Element {
             title="Send message"
             onClick={props.onSend}
           >
-            <Icon name="send" size={19} />
+            <ComposerGlyph name="send" />
           </button>
         ) : (
           <VoiceCaptureControl

@@ -2,8 +2,10 @@ import { createEvent, fireEvent, render, screen, waitFor } from "@testing-librar
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatComposer, type CaptureIntent, type ChatComposerProps } from "./index.ts";
+import { ComposerGlyph, type ComposerGlyphName } from "./composer-glyph.tsx";
 import { DOCK_STYLES } from "./dock-styles.tsx";
+import { type CaptureIntent, ChatComposer, type ChatComposerProps } from "./index.ts";
+import { VoiceCaptureControl } from "./voice-capture-control.tsx";
 import { VOICE_CAPTURE_STATES, isVoiceCaptureLive, mapVoiceCapturePresentation } from "./voice-capture-state.ts";
 
 function composerProps(overrides: Partial<ChatComposerProps> = {}): ChatComposerProps {
@@ -555,6 +557,55 @@ describe("ChatComposer semantic boundary", () => {
     await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: "cancel" }));
     expect(screen.getByRole("button", { name: "Voice unavailable while reconnecting" })).toBeTruthy();
   });
+
+  it("uses approved local glyphs across composer and voice states", async () => {
+    const props = composerProps({ cycleStatus: "streaming" });
+    const view = render(<ChatComposer {...props} />);
+    expect(screen.getByRole("button", { name: "Attachments are not available" }).querySelector("path")?.getAttribute("d")).toBe(
+      "m9 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l8-8",
+    );
+    expect(screen.getByRole("button", { name: "Mute assistant voice" }).querySelector("path")?.getAttribute("d")).toBe(
+      "M5 10v4h4l5 4V6l-5 4zM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12",
+    );
+    expect(screen.getByRole("button", { name: "Interrupt" }).querySelector("rect")?.getAttribute("x")).toBe("7");
+    expect(screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" }).querySelector("rect")?.getAttribute("x")).toBe("8");
+
+    view.rerender(<ChatComposer {...props} ttsEnabled={false} value="draft" />);
+    expect(screen.getByRole("button", { name: "Unmute assistant voice" }).querySelector("path")?.getAttribute("d")).toBe(
+      "M5 10v4h4l5 4V6l-5 4zM3 3l18 18",
+    );
+    expect(screen.getByRole("button", { name: "Send message" }).querySelector("path")?.getAttribute("d")).toBe(
+      "m4 4 17 8-17 8 3-8zM7 12h14",
+    );
+
+    view.rerender(<ChatComposer {...props} value="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Start Hold voice capture" }));
+    await screen.findByRole("button", { name: "Cancel voice message" });
+    const choices = [...document.querySelectorAll<HTMLButtonElement>(".dock-voice-capture__choice")];
+    expect(choices.map((choice) => choice.querySelector("svg")?.getAttribute("width"))).toEqual(["18", "18", "18"]);
+    expect(choices.map((choice) => choice.querySelector("path")?.getAttribute("d"))).toEqual([
+      "M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8",
+      "m6 6 12 12M18 6 6 18",
+      "m4 4 17 8-17 8 3-8zM7 12h14",
+    ]);
+  });
+
+  it("injects dock styles once for the composer and for the standalone QA control", () => {
+    const composer = render(<ChatComposer {...composerProps()} />);
+    expect(document.querySelectorAll("style[data-sentient-dock-style]")).toHaveLength(1);
+    composer.unmount();
+
+    render(
+      <VoiceCaptureControl
+        disabled={false}
+        captureActive={false}
+        onStart={async () => "qa-capture"}
+        onCommit={async () => {}}
+        onCancel={async () => {}}
+      />,
+    );
+    expect(document.querySelectorAll("style[data-sentient-dock-style]")).toHaveLength(1);
+  });
 });
 
 describe("pure VoiceCapture presentation mapping", () => {
@@ -576,15 +627,52 @@ describe("pure VoiceCapture presentation mapping", () => {
 });
 
 describe("dock foundation boundary", () => {
-  it("keeps pointer voice focus neutral while preserving intentional focus-visible emphasis", () => {
+  it("keeps pointer voice focus neutral while preserving intentional non-box focus emphasis", () => {
     expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within:has\(:focus-visible\):not\(\[data-focus-origin="pointer-voice"\]\)\s*{/);
     expect(DOCK_STYLES).not.toMatch(/focus-within:has\(:focus-visible\):not\(\[data-voice-state=/);
     expect(DOCK_STYLES).not.toMatch(/\.dock-composer__surface:focus-within\s*{/);
     expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer-control:focus-visible\s*{[^}]*outline:/s);
-    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-voice-capture__primary:focus-visible,/);
+    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-voice-capture__choice:focus-visible\s*{[^}]*outline:/s);
+    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-voice-capture__primary:focus-visible\s*{[^}]*outline:\s*none;/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-voice-capture:has\(\.dock-voice-capture__primary:focus-visible\)::after\s*{[^}]*height:\s*3px;[^}]*background:\s*var\(--color-accent\);/s);
+    expect(DOCK_STYLES).toMatch(/\[data-focus-origin="pointer-voice"\] \.dock-voice-capture:has\([^}]+\)::after\s*{[^}]*content:\s*none;/s);
+    expect(DOCK_STYLES).toMatch(/@media \(forced-colors: active\)[\s\S]*?\.dock-voice-capture:has\([^}]+\)::after\s*{[^}]*background:\s*Highlight;[^}]*forced-color-adjust:\s*none;/s);
     expect(DOCK_STYLES).toMatch(/\.dock-composer__draft\s*{[^}]*field-sizing:\s*content;[^}]*background:\s*transparent;/s);
     expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
     expect(DOCK_STYLES).not.toMatch(/\.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*var\(/s);
+  });
+
+  it("pins the approved composer-local 24px glyph geometry", () => {
+    const expected: Record<ComposerGlyphName, { path?: string; rect?: readonly string[] }> = {
+      attachment: { path: "m9 12 6-6a4 4 0 0 1 6 6l-8 8a6 6 0 0 1-8-8l8-8" },
+      auto: { path: "M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8" },
+      cancel: { path: "m6 6 12 12M18 6 6 18" },
+      mic: { path: "M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6", rect: ["8", "3", "8", "12", "4"] },
+      send: { path: "m4 4 17 8-17 8 3-8zM7 12h14" },
+      stop: { rect: ["7", "7", "10", "10", "2"] },
+      volume: { path: "M5 10v4h4l5 4V6l-5 4zM17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12" },
+      "volume-off": { path: "M5 10v4h4l5 4V6l-5 4zM3 3l18 18" },
+    };
+    render(<div>{(Object.keys(expected) as ComposerGlyphName[]).map((name) => <span key={name} data-glyph={name}><ComposerGlyph name={name} /></span>)}</div>);
+
+    for (const [name, geometry] of Object.entries(expected) as [ComposerGlyphName, (typeof expected)[ComposerGlyphName]][]) {
+      const glyph = document.querySelector<SVGElement>(`[data-glyph="${name}"] svg`);
+      expect(glyph?.getAttribute("viewBox")).toBe("0 0 24 24");
+      expect(glyph?.getAttribute("stroke-width") ?? glyph?.getAttribute("strokeWidth")).toBe("1.7");
+      if (geometry.path) expect(glyph?.querySelector("path")?.getAttribute("d")).toBe(geometry.path);
+      if (geometry.rect) {
+        const rect = glyph?.querySelector("rect");
+        expect(["x", "y", "width", "height", "rx"].map((attribute) => rect?.getAttribute(attribute))).toEqual(geometry.rect);
+      }
+    }
+  });
+
+  it("keeps targeted crown leaves seated while retaining depressed activation", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-voice-capture__choice\.is-selected\s*{[^}]*transform:\s*translateY\(0\) scale\(1\);/s);
+    expect(DOCK_STYLES).not.toMatch(/\.dock-voice-capture__choice\.is-selected\s*{[^}]*translateY\(-/s);
+    expect(DOCK_STYLES).not.toMatch(/\.dock-voice-capture__choice:hover/);
+    expect(DOCK_STYLES).toMatch(/\.dock-voice-capture__choice:active\s*{[^}]*transform:\s*translateY\(1px\) scale\(0\.985\);/s);
+    expect(DOCK_STYLES).toMatch(/\.dock-voice-capture__choice svg\s*{[^}]*width:\s*18px;[^}]*height:\s*18px;/s);
   });
 
   it("uses semantic foundation materials and responsive/reduced-motion rules", () => {
