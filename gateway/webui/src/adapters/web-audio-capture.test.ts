@@ -99,6 +99,75 @@ describe("createWebAudioCapture lifecycle", () => {
     adapter.stop();
   });
 
+  it("applies the Firefox/macOS capture policy without changing the AudioWorklet path", async () => {
+    const capture = makeCaptureMocks();
+    const getUserMedia = vi.fn().mockResolvedValue(capture.stream);
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+    vi.stubGlobal(
+      "AudioContext",
+      vi.fn(() => capture.context),
+    );
+    const AudioWorkletNodeMock = vi.fn(() => capture.worklet);
+    vi.stubGlobal("AudioWorkletNode", AudioWorkletNodeMock);
+
+    const adapter = createWebAudioCapture({
+      audioPolicy: {
+        captureProcessing: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+        webRtcAecLoopback: false,
+      },
+    });
+    await adapter.start();
+
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        sampleRate: 48_000,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
+    });
+    expect(capture.context.audioWorklet.addModule).toHaveBeenCalledOnce();
+    expect(AudioWorkletNodeMock).toHaveBeenCalledOnce();
+    adapter.stop();
+  });
+
+  it("treats a deferred addModule rejection after stop as cancellation", async () => {
+    let rejectAddModule: ((error: Error) => void) | undefined;
+    const capture = makeCaptureMocks();
+    vi.mocked(capture.context.audioWorklet.addModule).mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectAddModule = reject;
+        }),
+    );
+    const onError = vi.fn();
+    vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(capture.stream) } });
+    vi.stubGlobal(
+      "AudioContext",
+      vi.fn(() => capture.context),
+    );
+    vi.stubGlobal(
+      "AudioWorkletNode",
+      vi.fn(() => capture.worklet),
+    );
+
+    const adapter = createWebAudioCapture();
+    adapter.onError(onError);
+    const start = adapter.start();
+    await vi.waitFor(() => expect(capture.context.audioWorklet.addModule).toHaveBeenCalledOnce());
+    adapter.stop();
+    rejectAddModule?.(new Error("context closed"));
+
+    await expect(start).rejects.toMatchObject({ name: "AbortError" });
+    expect(onError).not.toHaveBeenCalled();
+    expect(capture.trackStop).toHaveBeenCalledOnce();
+    expect(capture.contextClose).toHaveBeenCalledOnce();
+  });
+
   it("fences a getUserMedia result that arrives after stop", async () => {
     let finishGetUserMedia: ((stream: MediaStream) => void) | undefined;
     const pendingStream = new Promise<MediaStream>((resolve) => {

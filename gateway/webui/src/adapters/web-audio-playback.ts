@@ -1,5 +1,6 @@
 import { type AudioPlaybackAdapter, createLogger } from "@sentient/web-sdk";
 import { AUDIO_SAMPLE_RATE, IDLE_SUSPEND_MS, PLAYBACK_GAIN_DESKTOP, PLAYBACK_GAIN_MOBILE } from "../constants.ts";
+import { type BrowserAudioPolicy, currentBrowserAudioPolicy } from "./browser-audio-policy.ts";
 import { createAudioLoopbackPeer } from "./web-audio-playback-peer.ts";
 
 /**
@@ -53,10 +54,12 @@ const log = createLogger(["sentient", "webui", "audio-playback"]);
 
 export interface WebAudioPlaybackOptions {
   sampleRate?: number;
+  audioPolicy?: BrowserAudioPolicy;
 }
 
 export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): FadeablePlaybackAdapter {
   const sampleRate = options?.sampleRate ?? AUDIO_SAMPLE_RATE;
+  const audioPolicy = options?.audioPolicy ?? currentBrowserAudioPolicy();
   const peer = createAudioLoopbackPeer();
 
   let audioContext: AudioContext | null = null;
@@ -425,7 +428,8 @@ export function createWebAudioPlayback(options?: WebAudioPlaybackOptions): Fadea
       this.clear();
     },
 
-    setAecEnabled(on: boolean): void {
+    setAecEnabled(requested: boolean): void {
+      const on = requested && audioPolicy.webRtcAecLoopback;
       if (aecEnabled === on) return;
       log.info("setAecEnabled", { from: aecEnabled, to: on });
       aecEnabled = on;

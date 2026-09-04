@@ -41,10 +41,14 @@ export function createAudioLoopbackPeer(): AudioLoopbackPeer {
     // Wire ICE candidates between the two local peers. Each callback closes
     // over its own pair so a stale setup can never mutate a replacement pair.
     nextLocalPeer.onicecandidate = (e) => {
-      if (e.candidate && remotePeer === nextRemotePeer) void nextRemotePeer.addIceCandidate(e.candidate);
+      if (e.candidate && remotePeer === nextRemotePeer) {
+        void nextRemotePeer.addIceCandidate(e.candidate).catch(() => undefined);
+      }
     };
     nextRemotePeer.onicecandidate = (e) => {
-      if (e.candidate && localPeer === nextLocalPeer) void nextLocalPeer.addIceCandidate(e.candidate);
+      if (e.candidate && localPeer === nextLocalPeer) {
+        void nextLocalPeer.addIceCandidate(e.candidate).catch(() => undefined);
+      }
     };
 
     // When the remote peer receives the audio track, play it through <audio>.

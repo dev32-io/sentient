@@ -1,10 +1,12 @@
 import type { AudioCaptureAdapter } from "@sentient/web-sdk";
 import captureWorkletUrl from "../audio/capture-worklet.ts?worker&url";
 import { CAPTURE_GAIN, CAPTURE_SAMPLE_RATE } from "../constants.ts";
+import { type BrowserAudioPolicy, currentBrowserAudioPolicy } from "./browser-audio-policy.ts";
 
 export interface WebAudioCaptureOptions {
   sampleRate?: number;
   gain?: number;
+  audioPolicy?: BrowserAudioPolicy;
 }
 
 /** PCM message from capture worklet. */
@@ -43,6 +45,7 @@ function isWorkletMessage(value: unknown): value is WorkletMessage {
 export function createWebAudioCapture(options?: WebAudioCaptureOptions): AudioCaptureAdapter {
   const sampleRate = options?.sampleRate ?? CAPTURE_SAMPLE_RATE;
   const gainValue = options?.gain ?? CAPTURE_GAIN;
+  const audioPolicy = options?.audioPolicy ?? currentBrowserAudioPolicy();
 
   let resources: CaptureResources | null = null;
   let generation = 0;
@@ -110,8 +113,7 @@ export function createWebAudioCapture(options?: WebAudioCaptureOptions): AudioCa
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate,
-            echoCancellation: true,
-            noiseSuppression: true,
+            ...audioPolicy.captureProcessing,
           },
         });
         candidate = {
@@ -139,7 +141,9 @@ export function createWebAudioCapture(options?: WebAudioCaptureOptions): AudioCa
         // Chain: source -> gain -> worklet (no output to destination -- avoids feedback).
         candidate.sourceNode.connect(candidate.gainNode).connect(candidate.workletNode);
       } catch (error) {
+        const intentionallyStopped = generation !== expectedGeneration || candidate?.cleaned === true;
         cleanup(candidate);
+        if (intentionallyStopped) throw new CaptureStartCancelled();
         if (!(error instanceof CaptureStartCancelled)) {
           const message = error instanceof Error ? error.message : "Mic access failed";
           for (const h of errorHandlers) h(message);

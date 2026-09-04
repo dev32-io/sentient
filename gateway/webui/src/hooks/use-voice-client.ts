@@ -30,6 +30,7 @@ import {
 } from "@sentient/web-sdk";
 import type { VoiceStatus } from "@sentient/web-sdk";
 import { useEffect, useMemo, useRef } from "preact/hooks";
+import { currentBrowserAudioPolicy, setCaptureAecEnabled } from "../adapters/browser-audio-policy.ts";
 import { createWebAudioCapture } from "../adapters/web-audio-capture.ts";
 import { createWebAudioPlayback } from "../adapters/web-audio-playback.ts";
 import { int16ToFloat32 } from "../audio/int16-float32.ts";
@@ -168,8 +169,9 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: options deps are stable per wsUrl/token
   const resources = useMemo(() => {
     const gatewayUrl = resolveGatewayUrl(options.wsUrl);
-    const capture = createWebAudioCapture();
-    const playback = createWebAudioPlayback();
+    const audioPolicy = currentBrowserAudioPolicy();
+    const capture = createWebAudioCapture({ audioPolicy });
+    const playback = createWebAudioPlayback({ audioPolicy });
     // Strict sequential FIFO keyed by turnId (spec §7.2). A follow-up turn's
     // audio queues BEHIND the turn already sounding; nothing preempts or
     // fades. `cancelAll()` (barge-in / interrupt) is the only flush path, so
@@ -409,7 +411,7 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
       capture.stop();
       speechGate.close();
       denoiser?.reset();
-      playback.setAecEnabled(false);
+      setCaptureAecEnabled(playback, audioPolicy, false);
       voiceMode.value = "off";
       refreshStatus();
       // Drain packets produced before the generation fence. They are dropped
@@ -426,18 +428,18 @@ export function useVoiceClient(options: UseVoiceClientOptions) {
         if (!opusEncoder || opusEncoderUnavailable || !denoiser || isRnNoiseUnavailable) {
           throw new Error("Voice input requires a recent browser (Chrome 98+, Firefox 130+, Safari 17.2+).");
         }
-        playback.setAecEnabled(true);
+        setCaptureAecEnabled(playback, audioPolicy, true);
         try {
           await capture.start();
           if (!captureAcceptingStarts || sdkStatusRef.current !== "ready") {
             capture.stop();
-            playback.setAecEnabled(false);
+            setCaptureAecEnabled(playback, audioPolicy, false);
             throw new Error("Voice input disconnected while starting.");
           }
           const captureId = audioInputConnector.startStreaming({ turnMode });
           if (captureId === null) {
             capture.stop();
-            playback.setAecEnabled(false);
+            setCaptureAecEnabled(playback, audioPolicy, false);
             throw new Error("Voice capture could not be opened.");
           }
           activeCaptureId = captureId;

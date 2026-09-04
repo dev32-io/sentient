@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveBrowserAudioPolicy, setCaptureAecEnabled } from "./browser-audio-policy.ts";
 import { createWebAudioPlayback } from "./web-audio-playback.ts";
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,7 @@ let mockAudioContext: {
   state: string;
   currentTime: number;
   sampleRate: number;
+  destination: AudioDestinationNode;
   close: ReturnType<typeof vi.fn>;
   resume: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
@@ -118,6 +120,7 @@ beforeEach(() => {
     state: "running",
     currentTime: 0,
     sampleRate: 44100,
+    destination: { connect: vi.fn(), disconnect: vi.fn() } as unknown as AudioDestinationNode,
     close: vi.fn().mockResolvedValue(undefined),
     resume: vi.fn().mockResolvedValue(undefined),
     suspend: vi.fn().mockResolvedValue(undefined),
@@ -229,6 +232,23 @@ describe("createWebAudioPlayback — interface", () => {
 // ---------------------------------------------------------------------------
 
 describe("createWebAudioPlayback — AEC setup lifecycle", () => {
+  it("keeps Firefox on macOS on direct playback without creating peer connections", () => {
+    const policy = resolveBrowserAudioPolicy({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0",
+      platform: "MacIntel",
+    });
+    const adapter = createWebAudioPlayback({ audioPolicy: policy });
+
+    adapter.unlock();
+    setCaptureAecEnabled(adapter, policy, true);
+
+    expect(RTCPeerConnection).not.toHaveBeenCalled();
+    expect(mockAudioContext.createMediaStreamDestination).not.toHaveBeenCalled();
+    const directGain = mockAudioContext.createGain.mock.results[0]?.value as GainNode;
+    expect(directGain.connect).toHaveBeenCalledWith(mockAudioContext.destination);
+    adapter.destroy();
+  });
+
   it("cancels an in-flight setup and waits for it to unwind before creating a replacement pair", async () => {
     let finishOffer: ((offer: RTCSessionDescriptionInit) => void) | undefined;
     const firstLocal = makeMockPeer();
