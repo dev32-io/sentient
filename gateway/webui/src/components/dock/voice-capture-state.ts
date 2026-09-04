@@ -64,7 +64,7 @@ export function mapVoiceCapturePresentation(
     primaryLabel: unavailable
       ? "Voice unavailable while reconnecting"
       : state === "auto"
-        ? "Auto listening is on; activate to send and turn it off"
+        ? "Auto listening is on; activate to turn it off"
         : "Tap for Auto listening or hold to talk",
     primaryPressed: state === "auto" && !unavailable,
     tone,

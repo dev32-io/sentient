@@ -177,6 +177,10 @@ describe("ChatComposer semantic boundary", () => {
       { type: "start", mode: "hold" },
       { type: terminal },
     ]);
+    const restored = screen.getByRole("button", {
+      name: terminal === "auto" ? "Auto listening is on; activate to turn it off" : "Tap for Auto listening or hold to talk",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(restored));
   });
 
   it("falls back to Send when a held pointer leaves the combined crown and pod", async () => {
@@ -213,6 +217,58 @@ describe("ChatComposer semantic boundary", () => {
     expect(onInterrupt).toHaveBeenCalledOnce();
   });
 
+  it("keeps keyboard Hold focus safe across an async start and exposes the crown in forward order", async () => {
+    let resolveStart: (() => void) | undefined;
+    const startGate = new Promise<void>((resolve) => { resolveStart = resolve; });
+    const onCaptureIntent = vi.fn((intent: CaptureIntent) => intent.type === "start" ? startGate : undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    const hold = screen.getByRole("button", { name: "Start Hold voice capture" });
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+
+    hold.focus();
+    fireEvent.click(hold, { detail: 0 });
+    await waitFor(() => expect(document.activeElement).toBe(primary));
+
+    resolveStart?.();
+    const send = await screen.findByRole("button", { name: "Send voice message" });
+    const auto = screen.getByRole("button", { name: "Switch to Auto listening" });
+    const cancel = screen.getByRole("button", { name: "Cancel voice message" });
+    await waitFor(() => expect(document.activeElement).toBe(send));
+    expect([...document.querySelectorAll<HTMLButtonElement>(".dock-voice-capture__choice")].map((choice) => choice.getAttribute("aria-label"))).toEqual([
+      "Switch to Auto listening",
+      "Cancel voice message",
+      "Send voice message",
+    ]);
+    expect([auto.tabIndex, cancel.tabIndex, send.tabIndex]).toEqual([0, 0, 0]);
+
+    fireEvent.keyDown(send, { key: "Tab" });
+    expect(document.activeElement).toBe(auto);
+    cancel.focus();
+    fireEvent.click(cancel, { detail: 0 });
+
+    await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: "cancel" }));
+    const restored = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    await waitFor(() => expect(document.activeElement).toBe(restored));
+  });
+
+  it("restores the primary control when an asynchronous keyboard Hold start fails", async () => {
+    let rejectStart: ((reason?: unknown) => void) | undefined;
+    const startGate = new Promise<void>((_resolve, reject) => { rejectStart = reject; });
+    const onCaptureIntent = vi.fn((intent: CaptureIntent) => intent.type === "start" ? startGate : undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    const hold = screen.getByRole("button", { name: "Start Hold voice capture" });
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+
+    hold.focus();
+    fireEvent.click(hold, { detail: 0 });
+    await waitFor(() => expect(document.activeElement).toBe(primary));
+    rejectStart?.(new Error("capture unavailable"));
+
+    await screen.findByText("Microphone could not start. Text input is still available.");
+    await waitFor(() => expect(document.activeElement).toBe(primary));
+    expect(document.querySelector(".dock-voice-capture__fan")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("does not show Interrupt for background-only awaiting tasks", () => {
     const background = {
       id: "background-1",
@@ -226,17 +282,46 @@ describe("ChatComposer semantic boundary", () => {
     expect(screen.queryByRole("button", { name: "Interrupt" })).toBeNull();
   });
 
-  it("keeps a typed draft through Auto and finalizes on an explicit second activation", async () => {
+  it.each([
+    { activation: "pointer", detail: 1 },
+    { activation: "keyboard or assistive", detail: 0 },
+  ])("turns Auto off without submitting buffered audio on $activation activation", async ({ detail }) => {
+    const onCaptureIntent = vi.fn(async (_intent: CaptureIntent) => undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" }));
+    const auto = await screen.findByRole("button", { name: "Auto listening is on; activate to turn it off" });
+
+    if (detail === 1) {
+      firePointer(auto, "PointerDown", { button: 0, pointerId: 17, clientX: 20, clientY: 20 });
+      firePointer(auto, "PointerUp", { pointerId: 17, clientX: 20, clientY: 20 });
+      fireEvent.click(auto, { detail });
+    } else {
+      auto.focus();
+      fireEvent.keyDown(auto, { key: "Enter" });
+      fireEvent.keyUp(auto, { key: "Enter" });
+      fireEvent.click(auto, { detail });
+    }
+
+    await screen.findByText("Auto listening off.");
+    expect(onCaptureIntent.mock.calls.map(([intent]) => intent)).toEqual([
+      { type: "start", mode: "auto" },
+      { type: "cancel" },
+    ]);
+    expect(onCaptureIntent).not.toHaveBeenCalledWith({ type: "commit" });
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    await waitFor(() => expect(document.activeElement).toBe(primary));
+  });
+
+  it("keeps a typed draft when Auto is turned off", async () => {
     const props = composerProps();
     render(<ControlledComposer props={props} />);
-    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
-    fireEvent.click(primary);
-    const auto = await screen.findByRole("button", { name: /Auto listening is on/ });
+    fireEvent.click(screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" }));
+    const auto = await screen.findByRole("button", { name: "Auto listening is on; activate to turn it off" });
 
     const editor = screen.getByRole("textbox", { name: "Message Sentient" });
     fireEvent.input(editor, { target: { value: "typed while auto" } });
     fireEvent.click(auto, { detail: 1 });
-    await waitFor(() => expect(props.onCaptureIntent).toHaveBeenCalledWith({ type: "commit" }));
+    await waitFor(() => expect(props.onCaptureIntent).toHaveBeenCalledWith({ type: "cancel" }));
 
     expect((screen.getByRole("textbox", { name: "Message Sentient" }) as HTMLTextAreaElement).value).toBe("typed while auto");
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
@@ -270,20 +355,28 @@ describe("ChatComposer semantic boundary", () => {
     expect(screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" })).toBeTruthy();
   });
 
-  it("renders a full server-owned task shelf with one upward detail", () => {
+  it("renders a full server-owned task shelf with accessible statuses and one upward detail", () => {
     const props = composerProps({
       cycleStatus: "streaming",
       tasks: [
         { id: "one", toolName: "search_web", kind: "foreground", status: "running", argsPreview: "query: safe", startedAtMs: 1 },
         { id: "two", toolName: "play_music", kind: "foreground", status: "done", argsPreview: "title: song", startedAtMs: 2, endedAtMs: 3 },
+        { id: "three", toolName: "syncCalendar", kind: "background", status: "error", argsPreview: "calendar", startedAtMs: 4, endedAtMs: 5 },
       ],
     });
     render(<ChatComposer {...props} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Task search_web" }));
+    const running = screen.getByRole("button", { name: "Task Search web, running" });
+    const done = screen.getByRole("button", { name: "Task Play music, done" });
+    const failed = screen.getByRole("button", { name: "Task Sync Calendar, failed" });
+    expect(running.querySelector(".dock-task-pill__dot--running")).toBeTruthy();
+    expect(done.querySelector(".dock-task-pill__dot--done")).toBeTruthy();
+    expect(failed.querySelector(".dock-task-pill__dot--error")).toBeTruthy();
+
+    fireEvent.click(running);
     expect(screen.getByText(/safe/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Task search_web" }).getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: "Task play_music" }));
+    expect(running.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(done);
     expect(screen.queryByText(/safe/)).toBeNull();
     expect(screen.getByRole("button", { name: "Interrupt" })).toBeTruthy();
   });
@@ -316,7 +409,9 @@ describe("ChatComposer semantic boundary", () => {
       { type: "start", mode: "hold" },
       { type: "auto" },
     ]);
-    expect(screen.getByRole("button", { name: /Auto listening is on/ })).toBeTruthy();
+    const primary = screen.getByRole("button", { name: "Auto listening is on; activate to turn it off" });
+    expect(primary).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(primary));
   });
 
   it("adapts the existing identified caller and serializes Hold-to-Auto before restart", async () => {
@@ -358,6 +453,38 @@ describe("ChatComposer semantic boundary", () => {
     expect(onCaptureCancel).not.toHaveBeenCalled();
   });
 
+  it("discards persistent Auto through the identified compatibility adapter", async () => {
+    const onCaptureStart = vi.fn(async (_mode: "manual" | "semantic") => "semantic-1");
+    const onCaptureCommit = vi.fn(async (_id: string) => undefined);
+    const onCaptureCancel = vi.fn(async (_id: string) => undefined);
+    render(
+      <ChatComposer
+        cycleStatus="idle"
+        connectionReady
+        captureActive={false}
+        ttsEnabled
+        suggestions={[]}
+        tasks={[]}
+        onSendText={vi.fn()}
+        onCaptureStart={onCaptureStart}
+        onCaptureCommit={onCaptureCommit}
+        onCaptureCancel={onCaptureCancel}
+        onTtsToggle={vi.fn()}
+        onInterrupt={vi.fn()}
+        onSuggestionClick={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" }), { detail: 0 });
+    const auto = await screen.findByRole("button", { name: "Auto listening is on; activate to turn it off" });
+    fireEvent.click(auto, { detail: 0 });
+
+    await waitFor(() => expect(onCaptureCancel).toHaveBeenCalledWith("semantic-1"));
+    expect(onCaptureCommit).not.toHaveBeenCalled();
+    expect(onCaptureStart).toHaveBeenCalledOnce();
+    await screen.findByText("Auto listening off.");
+  });
+
   it("does not let a fenced start reopen the control after reconnect", async () => {
     let resolveStart: (() => void) | undefined;
     const startGate = new Promise<void>((resolve) => { resolveStart = resolve; });
@@ -382,8 +509,9 @@ describe("pure VoiceCapture presentation mapping", () => {
     expect(presentation.fanOpen).toBe(state === "hold");
   });
 
-  it("maps disabled and error tones without changing capture state", () => {
+  it("maps disabled, Auto, and error semantics without changing capture state", () => {
     expect(mapVoiceCapturePresentation("idle", true, false)).toMatchObject({ disabled: true, tone: "disabled" });
+    expect(mapVoiceCapturePresentation("auto", false, false).primaryLabel).toBe("Auto listening is on; activate to turn it off");
     expect(mapVoiceCapturePresentation("permission-denied", false, false)).toMatchObject({ disabled: false, tone: "error" });
     expect(mapVoiceCapturePresentation("start-failed", false, false)).toMatchObject({ disabled: false, tone: "error" });
   });
@@ -403,8 +531,19 @@ describe("dock foundation boundary", () => {
     expect(DOCK_STYLES).toContain("var(--slate-face)");
     expect(DOCK_STYLES).toContain("var(--slate-shadow)");
     expect(DOCK_STYLES).toContain("@media (max-width: 480px)");
+    expect(DOCK_STYLES).toContain("@media (max-width: 389px)");
+    expect(DOCK_STYLES).toMatch(/@media \(max-width: 389px\)[\s\S]*?\.dock-composer__end-actions\s*{[^}]*grid-column:\s*1 \/ -1;/);
     expect(DOCK_STYLES).toContain("@media (prefers-reduced-motion: reduce)");
     expect(DOCK_STYLES).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(DOCK_STYLES).not.toMatch(/\b(?:rgba?|hsla?)\s*\(/i);
+  });
+
+  it("keeps task statuses shape-distinct without motion or color", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--running::after\s*{/);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--done::after\s*{/);
+    expect(DOCK_STYLES).toMatch(/\.dock-task-pill__dot--error::before,/);
+    expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running,[\s\S]*?animation:\s*none;/);
+    expect(DOCK_STYLES).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.dock-task-pill__dot--running\s*{[^}]*box-shadow:\s*none;/);
+    expect(DOCK_STYLES).toMatch(/@media \(prefers-contrast: more\), \(forced-colors: active\)[\s\S]*?\.dock-task-pill__dot\s*{[^}]*box-shadow:\s*none;/);
   });
 });

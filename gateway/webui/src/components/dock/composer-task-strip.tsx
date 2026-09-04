@@ -22,6 +22,10 @@ function statusClass(s: TaskListItem["status"]): string {
   return `dock-task-pill--${s}`;
 }
 
+function statusLabel(status: TaskListItem["status"]): string {
+  return status === "error" ? "failed" : status;
+}
+
 // Tool names ship with redundant routing prefixes that don't fit on
 // phone-width pills. Real examples seen in the wild:
 //   `mcp_home_assistant_ha_get_state`     → strip mcp_home_, then assistant_ha_
@@ -55,17 +59,18 @@ interface ToolPillButtonProps {
 }
 
 function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.Element {
+  const label = displayToolName(task.toolName);
   return (
     <button
       type="button"
       class={`dock-task-pill ${statusClass(task.status)}`}
       title={task.toolName}
-      aria-label={`Task ${shortToolName(task.toolName)}`}
+      aria-label={`Task ${label}, ${statusLabel(task.status)}`}
       aria-expanded={isOpen}
       onClick={() => onToggle(task.id)}
     >
       <span class={`dock-task-pill__dot dock-task-pill__dot--${task.status}`} aria-hidden="true" />
-      <span class="dock-task-pill__name">{displayToolName(task.toolName)}</span>
+      <span class="dock-task-pill__name">{label}</span>
     </button>
   );
 }

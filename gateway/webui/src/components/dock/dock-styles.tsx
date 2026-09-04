@@ -378,23 +378,65 @@ export const DOCK_STYLES = `
   white-space: nowrap;
 }
 .dock-task-pill__dot {
-  width: var(--space-sm);
-  height: var(--space-sm);
+  position: relative;
+  width: 10px;
+  height: 10px;
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--color-ink-4);
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  background: transparent;
+  color: var(--color-ink-4);
 }
 .dock-task-pill__dot--running {
-  background: var(--color-amber);
+  border-radius: 50%;
+  color: var(--color-amber);
   box-shadow: 0 0 0 var(--space-xs) color-mix(in oklab, var(--color-amber) 16%, transparent);
   animation: dock-task-pulse 1.45s ease-in-out infinite;
 }
+.dock-task-pill__dot--running::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .dock-task-pill__dot--done {
-  background: var(--color-sage);
+  border-radius: 50%;
+  color: var(--color-sage);
+  background: color-mix(in oklab, var(--color-sage) 18%, transparent);
+}
+.dock-task-pill__dot--done::after {
+  content: "";
+  position: absolute;
+  inset-block-start: -1px;
+  inset-inline-start: 2px;
+  width: 3px;
+  height: 5px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: rotate(45deg);
 }
 .dock-task-pill__dot--error {
-  background: var(--color-stop);
+  border-radius: 2px;
+  color: var(--color-stop);
+  background: color-mix(in oklab, var(--color-stop) 16%, transparent);
   box-shadow: 0 0 var(--space-sm) color-mix(in oklab, var(--color-stop) 48%, transparent);
+}
+.dock-task-pill__dot--error::before,
+.dock-task-pill__dot--error::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-start: 0;
+  width: 6px;
+  height: 2px;
+  background: currentColor;
+}
+.dock-task-pill__dot--error::before {
+  transform: rotate(45deg);
+}
+.dock-task-pill__dot--error::after {
+  transform: rotate(-45deg);
 }
 .dock-task-shelf .tool-inline-detail {
   position: relative;
@@ -879,6 +921,17 @@ export const DOCK_STYLES = `
     gap: 3px;
   }
 }
+/* The 390px reference fits one exact row; below it the active end controls
+   move together so Stop cannot collide with TTS or the voice pod. */
+@media (max-width: 389px) {
+  .dock-composer__actions:has(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) {
+    grid-template-columns: var(--dock-target-size) var(--dock-target-size) minmax(0, 1fr);
+  }
+  .dock-composer__actions:has(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) .dock-composer__end-actions {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
 @media (max-width: 300px) {
   .dock-composer__attachment {
     display: none;
@@ -926,12 +979,15 @@ export const DOCK_STYLES = `
   .dock-voice-capture__wave i {
     animation: none;
   }
+  .dock-task-pill__dot--running {
+    box-shadow: none;
+  }
   .dock-voice-capture__wave i {
     opacity: 0.82;
     transform: scaleY(var(--dock-wave-rest));
   }
 }
-@media (prefers-contrast: more) {
+@media (prefers-contrast: more), (forced-colors: active) {
   .dock-composer__surface,
   .dock-composer__frame > .dock-task-shelf,
   .dock-task-shelf .tool-inline-detail,
@@ -939,6 +995,9 @@ export const DOCK_STYLES = `
   .dock-voice-capture__primary,
   .dock-voice-capture__choice {
     border-color: var(--color-ink-3);
+  }
+  .dock-task-pill__dot {
+    box-shadow: none;
   }
 }
 `;

@@ -131,6 +131,12 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
   const disabledRef = useRef(props.disabled);
   const previousCaptureActiveRef = useRef(props.captureActive);
   const mountedRef = useRef(true);
+  const fanRef = useRef<HTMLDivElement>(null);
+  const primaryRef = useRef<HTMLButtonElement>(null);
+  const autoChoiceRef = useRef<HTMLButtonElement>(null);
+  const sendChoiceRef = useRef<HTMLButtonElement>(null);
+  const keyboardHoldPendingRef = useRef(false);
+  const cycleFromDefaultSendRef = useRef(false);
   // A pointer gesture is handled by pointer-up. Its follow-up click must not
   // also activate Auto; a real click on active Auto has no such marker.
   const suppressNextClickRef = useRef(false);
@@ -154,6 +160,13 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     setAnnouncement("");
     queueMicrotask(() => {
       if (mountedRef.current) setAnnouncement(message);
+    });
+  }
+
+  function focusPrimary(): void {
+    queueMicrotask(() => {
+      const primary = primaryRef.current;
+      if (mountedRef.current && primary && !primary.disabled) primary.focus({ preventScroll: true });
     });
   }
 
@@ -190,16 +203,23 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     if (captureRef.current !== id || operationPendingRef.current) return null;
     operationPendingRef.current = true;
     captureRef.current = null;
+    keyboardHoldPendingRef.current = false;
+    cycleFromDefaultSendRef.current = false;
     clearFanTimer();
     pointerRef.current = null;
     pendingReleaseRef.current = null;
     setFanOpen(false);
     const generation = ++generationRef.current;
     updateState("transitioning");
+    focusPrimary();
     return generation;
   }
 
-  async function terminal(kind: "commit" | "cancel", expectedId = captureRef.current): Promise<boolean> {
+  async function terminal(
+    kind: "commit" | "cancel",
+    expectedId = captureRef.current,
+    completionAnnouncement?: string,
+  ): Promise<boolean> {
     if (expectedId === null || expectedId === undefined) return false;
     const generation = beginTerminal(expectedId);
     if (generation === null) return false;
@@ -221,7 +241,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
       return true;
     }
     updateState(disabledRef.current ? "reconnect-disabled" : "idle");
-    announce(kind === "commit" ? "Voice message sent." : "Voice message cancelled.");
+    announce(completionAnnouncement ?? (kind === "commit" ? "Voice message sent." : "Voice message cancelled."));
     operationPendingRef.current = false;
     return true;
   }
@@ -352,12 +372,9 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
 
   function activatePrimary(): void {
     if (disabledRef.current) return;
-    if (stateRef.current === "auto") void terminal("commit");
+    if (stateRef.current === "auto") void terminal("cancel", captureRef.current, "Auto listening off.");
     else if (stateRef.current === "idle" || stateRef.current === "permission-denied" || stateRef.current === "start-failed") void start("auto");
   }
-
-  const fanRef = useRef<HTMLDivElement>(null);
-  const primaryRef = useRef<HTMLButtonElement>(null);
 
   // The runtime adapter terminalizes the capture. Mirror only its active→idle
   // edge so the UI does not emit a duplicate terminal intent.
@@ -370,12 +387,15 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     ++generationRef.current;
     captureRef.current = null;
     if (id !== null) capturePort.invalidate(id);
+    keyboardHoldPendingRef.current = false;
+    cycleFromDefaultSendRef.current = false;
     pointerRef.current = null;
     pendingReleaseRef.current = null;
     clearFanTimer();
     setFanOpen(false);
     updateState(disabledRef.current ? "reconnect-disabled" : "idle");
     announce("Voice capture cancelled by the system.");
+    focusPrimary();
   }, [props.captureActive, capturePort]);
 
   // Disconnect and view disappearance discard, never commit, the identified
@@ -385,6 +405,8 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
       const id = captureRef.current;
       ++generationRef.current;
       captureRef.current = null;
+      keyboardHoldPendingRef.current = false;
+      cycleFromDefaultSendRef.current = false;
       pointerRef.current = null;
       pendingReleaseRef.current = null;
       clearFanTimer();
@@ -396,9 +418,20 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     }
   }, [props.disabled, capturePort]);
 
+  // Keyboard Hold opens on the safe Send default. Its first forward Tab wraps
+  // to the visual start, after which native DOM order is Auto → Cancel → Send.
+  useEffect(() => {
+    if (!keyboardHoldPendingRef.current || state !== "hold" || !fanOpen) return;
+    keyboardHoldPendingRef.current = false;
+    cycleFromDefaultSendRef.current = true;
+    sendChoiceRef.current?.focus({ preventScroll: true });
+  }, [state, fanOpen]);
+
   useEffect(() => () => {
     mountedRef.current = false;
     ++generationRef.current;
+    keyboardHoldPendingRef.current = false;
+    cycleFromDefaultSendRef.current = false;
     clearFanTimer();
     const id = captureRef.current;
     captureRef.current = null;
@@ -412,15 +445,32 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     <>
       <DockStyleSheet />
       <div class={`dock-voice-capture dock-voice-capture--${presentation.state}`} data-state={presentation.state} data-tone={presentation.tone} data-target={target}>
-        <div ref={fanRef} class={`dock-voice-capture__fan${presentation.fanOpen ? " dock-voice-capture__fan--open" : ""}`} data-target={target} aria-hidden={!presentation.fanOpen}>
+        <div
+          ref={fanRef}
+          class={`dock-voice-capture__fan${presentation.fanOpen ? " dock-voice-capture__fan--open" : ""}`}
+          data-target={target}
+          role="group"
+          aria-label="Hold voice capture actions"
+          aria-hidden={!presentation.fanOpen}
+        >
           {(["auto", "cancel", "send"] as const).map((choice) => (
             <button
               key={choice}
+              ref={choice === "auto" ? autoChoiceRef : choice === "send" ? sendChoiceRef : null}
               type="button"
               class={`dock-voice-capture__choice dock-voice-capture__choice--${choice}${target === choice ? " is-selected" : ""}`}
               data-voice-target={choice}
               tabIndex={presentation.fanOpen ? 0 : -1}
               aria-label={choice === "auto" ? "Switch to Auto listening" : choice === "cancel" ? "Cancel voice message" : "Send voice message"}
+              onFocus={() => {
+                if (choice !== "send") cycleFromDefaultSendRef.current = false;
+              }}
+              onKeyDown={(event) => {
+                if (choice !== "send" || event.key !== "Tab" || event.shiftKey || !cycleFromDefaultSendRef.current) return;
+                event.preventDefault();
+                cycleFromDefaultSendRef.current = false;
+                autoChoiceRef.current?.focus({ preventScroll: true });
+              }}
               onPointerEnter={() => selectTarget(choice)}
               onClick={() => {
                 const id = captureRef.current;
@@ -439,11 +489,17 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
           class="dock-voice-capture__hold-access sr-only"
           disabled={presentation.disabled || state !== "idle"}
           onClick={() => {
-            void start("hold").then((id) => {
-              if (id !== null) {
-                setFanOpen(true);
-                announce("Hold listening. Choose Send, Cancel, or Auto.");
+            keyboardHoldPendingRef.current = true;
+            const pendingStart = start("hold");
+            focusPrimary();
+            void pendingStart.then((id) => {
+              if (id === null) {
+                keyboardHoldPendingRef.current = false;
+                focusPrimary();
+                return;
               }
+              setFanOpen(true);
+              announce("Hold listening. Send selected. Choose Auto, Cancel, or Send.");
             });
           }}
         >Start Hold voice capture</button>
