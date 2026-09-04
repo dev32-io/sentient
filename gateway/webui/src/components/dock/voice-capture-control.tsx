@@ -42,6 +42,24 @@ const QUICK_AUTO_THRESHOLD_MS = 220;
 const QUICK_AUTO_DISTANCE_PX = 12;
 const FAN_REVEAL_MS = 105;
 
+function AutoListenGlyph({ size = 15 }: { size?: number }): JSX.Element {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M8 17a6 6 0 1 1 8 0M9 12h6M12 9v6M8 20h8" />
+    </svg>
+  );
+}
+
 function isInternalProps(props: VoiceCaptureControlProps): props is InternalVoiceCaptureControlProps {
   return "capturePort" in props;
 }
@@ -250,9 +268,25 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
   }
 
   function targetAt(x: number, y: number): VoiceCaptureTarget {
-    const element = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-voice-target]");
-    const value = element?.dataset.voiceTarget;
-    return value === "auto" || value === "cancel" ? value : "send";
+    const fan = fanRef.current?.getBoundingClientRect();
+    const pod = primaryRef.current?.getBoundingClientRect();
+    if (!fan || !pod) return "send";
+
+    const left = Math.min(fan.left, pod.left);
+    const right = Math.max(fan.right, pod.right);
+    const top = Math.min(fan.top, pod.top);
+    const bottom = Math.max(fan.bottom, pod.bottom);
+    if (right <= left || bottom <= top || x < left || x > right || y < top || y > bottom) return "send";
+
+    const regionWidth = (right - left) / 3;
+    const centers: readonly [VoiceCaptureTarget, number][] = [
+      ["auto", left + regionWidth * 0.5],
+      ["cancel", left + regionWidth * 1.5],
+      ["send", left + regionWidth * 2.5],
+    ];
+    return centers.reduce((nearest, candidate) => (
+      Math.abs(x - candidate[1]) < Math.abs(x - nearest[1]) ? candidate : nearest
+    ))[0];
   }
 
   function handlePointerDown(event: PointerEvent): void {
@@ -302,11 +336,12 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     const id = captureRef.current;
     const elapsed = Date.now() - pointer.at;
     const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y);
+    const releaseTarget = targetAt(event.clientX, event.clientY);
     const outcome: ReleaseOutcome = cancelled
       ? "cancel"
-      : (elapsed < QUICK_AUTO_THRESHOLD_MS && distance < QUICK_AUTO_DISTANCE_PX) || targetRef.current === "auto"
+      : (elapsed < QUICK_AUTO_THRESHOLD_MS && distance < QUICK_AUTO_DISTANCE_PX) || releaseTarget === "auto"
         ? "auto"
-        : targetRef.current === "cancel" ? "cancel" : "commit";
+        : releaseTarget === "cancel" ? "cancel" : "commit";
     if (id === null) {
       pendingReleaseRef.current = outcome;
       return;
@@ -321,6 +356,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
     else if (stateRef.current === "idle" || stateRef.current === "permission-denied" || stateRef.current === "start-failed") void start("auto");
   }
 
+  const fanRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLButtonElement>(null);
 
   // The runtime adapter terminalizes the capture. Mirror only its active→idle
@@ -375,8 +411,8 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
   return (
     <>
       <DockStyleSheet />
-      <div class={`dock-voice-capture dock-voice-capture--${presentation.state}`} data-state={presentation.state} data-tone={presentation.tone}>
-        <div class={`dock-voice-capture__fan${presentation.fanOpen ? " dock-voice-capture__fan--open" : ""}`} aria-hidden={!presentation.fanOpen}>
+      <div class={`dock-voice-capture dock-voice-capture--${presentation.state}`} data-state={presentation.state} data-tone={presentation.tone} data-target={target}>
+        <div ref={fanRef} class={`dock-voice-capture__fan${presentation.fanOpen ? " dock-voice-capture__fan--open" : ""}`} data-target={target} aria-hidden={!presentation.fanOpen}>
           {(["auto", "cancel", "send"] as const).map((choice) => (
             <button
               key={choice}
@@ -393,7 +429,7 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
                 else void terminal(choice === "cancel" ? "cancel" : "commit", id);
               }}
             >
-              {choice === "auto" ? <Icon name="waveform" size={15} /> : <Icon name={choice === "cancel" ? "x" : "send"} size={15} />}
+              {choice === "auto" ? <AutoListenGlyph /> : <Icon name={choice === "cancel" ? "x" : "send"} size={15} />}
               <span>{choice === "auto" ? "Auto" : choice === "cancel" ? "Cancel" : "Send"}</span>
             </button>
           ))}
@@ -431,9 +467,9 @@ export function VoiceCaptureControl(props: VoiceCaptureControlProps): JSX.Elemen
             if (event.detail === 0 || stateRef.current === "auto") activatePrimary();
           }}
         >
-          {presentation.live && <span class="dock-voice-capture__wave" aria-hidden="true">{Array.from({ length: 13 }, (_, index) => <i key={index} />)}</span>}
+          {presentation.live && <span class="dock-voice-capture__wave" aria-hidden="true">{Array.from({ length: 11 }, (_, index) => <i key={index} />)}</span>}
           <span class="dock-voice-capture__glyph" aria-hidden="true">
-            <Icon name={presentation.primaryPressed ? "waveform" : "mic"} size={19} />
+            {presentation.primaryPressed ? <AutoListenGlyph size={18} /> : <Icon name="mic" size={19} />}
           </span>
         </button>
         <span class="sr-only" aria-live="polite">{announcement}</span>

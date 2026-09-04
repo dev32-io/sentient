@@ -2,7 +2,7 @@ import type { TaskListItem } from "@sentient/protocol";
 import type { JSX, RefObject } from "preact";
 import { useRef, useState } from "preact/hooks";
 import type { CycleStatus } from "../../hooks/cycle-helpers.ts";
-import { ActionButton, Surface } from "../common/foundation.tsx";
+import { Surface } from "../common/foundation.tsx";
 import { Icon } from "../common/icon.tsx";
 import { type CapturePort, createCapturePort, legacySource, semanticSource, type LegacyCaptureMode, type CaptureSource } from "./capture-adapter.ts";
 import type { ChatComposerProps as SemanticChatComposerProps } from "./composer-api.ts";
@@ -60,7 +60,7 @@ function DraftEditor({ value, receded, inputRef, onValueChange, onSubmit }: Draf
       ref={inputRef}
       class={`dock-composer__draft${receded ? " dock-composer__draft--receded" : ""}`}
       aria-label="Message Sentient"
-      placeholder="Message Sentient"
+      placeholder="Message or speak to Sentient"
       rows={1}
       value={value}
       onInput={(event) => onValueChange(event.currentTarget.value)}
@@ -91,37 +91,43 @@ interface ComposerActionsProps {
 function ComposerActions(props: ComposerActionsProps): JSX.Element {
   return (
     <div class="dock-composer__actions">
-      <ActionButton
-        className="dock-composer__attachment"
+      <button
+        type="button"
+        class="dock-composer-control dock-composer__attachment"
         disabled
-        ariaLabel="Attachments are not available"
+        aria-label="Attachments are not available"
         title="Attachments are not available"
       >
-        <Icon name="plus" size={18} />
-      </ActionButton>
+        <Icon name="paperclip" size={19} />
+      </button>
       <TtsButton enabled={props.ttsEnabled} onToggle={props.onTtsToggle} />
       <span class="dock-composer__grow" />
-      <span class={`dock-composer__interrupt${props.held ? " dock-composer__interrupt--receded" : ""}`}>
-        {props.canInterrupt && <InterruptButton onInterrupt={props.onInterrupt} />}
-      </span>
-      {props.draftPresent ? (
-        <ActionButton
-          variant="primary"
-          className="dock-composer__send"
-          disabled={!props.connectionReady}
-          ariaLabel="Send message"
-          onClick={props.onSend}
-        >
-          <Icon name="send" size={17} />
-        </ActionButton>
-      ) : (
-        <VoiceCaptureControl
-          disabled={!props.connectionReady}
-          captureActive={props.captureActive}
-          capturePort={props.capturePort}
-          onStateChange={props.onVoiceState}
-        />
-      )}
+      <div class={`dock-composer__end-actions${props.held ? " dock-composer__end-actions--held" : ""}`}>
+        {props.canInterrupt && (
+          <span class={`dock-composer__interrupt${props.held ? " dock-composer__interrupt--receded" : ""}`}>
+            <InterruptButton onInterrupt={props.onInterrupt} />
+          </span>
+        )}
+        {props.draftPresent ? (
+          <button
+            type="button"
+            class="dock-composer-control dock-composer-control--primary dock-composer__send"
+            disabled={!props.connectionReady}
+            aria-label="Send message"
+            title="Send message"
+            onClick={props.onSend}
+          >
+            <Icon name="send" size={19} />
+          </button>
+        ) : (
+          <VoiceCaptureControl
+            disabled={!props.connectionReady}
+            captureActive={props.captureActive}
+            capturePort={props.capturePort}
+            onStateChange={props.onVoiceState}
+          />
+        )}
+      </div>
     </div>
   );
 }

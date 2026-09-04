@@ -1,25 +1,26 @@
 import type { JSX } from "preact";
 
 /**
- * Dock-local composition styles. Material faces, wells, shadows, typography,
- * and motion all come from the generated foundation; this sheet owns only the
- * dock's layout and state wiring.
+ * Product-local composer composition. Shared tokens still own palette, type,
+ * spacing, and motion; this sheet owns the approved asymmetric face, joined
+ * task shelf, purpose-built keys, and capture pod/crown anatomy.
  */
 export const DOCK_STYLES = `
 .dock-composer {
   --dock-target-size: 44px;
-  --dock-live-width: 14.875rem;
-  --dock-live-width-narrow: 12.375rem;
+  --dock-live-width: 238px;
+  --dock-live-width-narrow: 198px;
   --dock-live-height: 54px;
   --dock-focus-width: 2px;
   width: 100%;
   display: flex;
   justify-content: center;
   padding: var(--space-xl) var(--space-lg) var(--space-lg);
+  background: transparent;
 }
 .dock-composer__inner {
   width: 100%;
-  max-width: 45rem;
+  max-width: 900px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -28,49 +29,92 @@ export const DOCK_STYLES = `
 .dock-composer__frame {
   position: relative;
   min-width: 0;
-}
-.dock-composer__frame > .dock-task-shelf {
-  position: relative;
-  z-index: 2;
-  margin-inline: var(--space-md);
-  margin-block-end: calc(-1 * var(--dock-focus-width));
-  overflow: hidden;
-  border: 1px solid var(--color-line-soft);
-  border-block-end: 0;
-  border-radius: var(--radius-md);
-  background: var(--color-bg-sunk);
+  filter: drop-shadow(0 22px 24px color-mix(in oklab, var(--color-bg-sunk) 82%, transparent));
 }
 .dock-composer__surface {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   min-width: 0;
   display: grid;
-  gap: var(--space-sm);
+  gap: 10px;
   padding: var(--space-md);
   overflow: visible;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  background: var(--slate-face);
-  box-shadow: var(--float-shadow);
+  background:
+    radial-gradient(
+      ellipse 72% 115% at 50% 52%,
+      color-mix(in oklab, var(--color-paper) 74%, var(--color-bg-sunk)) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      circle at 84% 8%,
+      color-mix(in oklab, var(--color-accent) 5%, transparent) 0%,
+      transparent 34%
+    ),
+    linear-gradient(
+      118deg,
+      color-mix(in oklab, var(--color-paper) 94%, var(--color-ink-4)) 0%,
+      var(--color-paper) 48%,
+      color-mix(in oklab, var(--color-paper) 96%, var(--color-accent-soft)) 100%
+    );
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 18px 32px -20px color-mix(in oklab, var(--color-bg-sunk) 94%, transparent),
+    4px 19px 32px -25px color-mix(in oklab, var(--color-accent) 48%, transparent);
   cursor: text;
   transition: border-color var(--motion-state), box-shadow var(--motion-state);
 }
+.dock-composer__surface::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 1px;
+  border-radius: calc(var(--radius-lg) - 1px);
+  background:
+    linear-gradient(
+      108deg,
+      transparent 0 40%,
+      color-mix(in oklab, var(--color-ink) 2.4%, transparent) 49%,
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse 44% 56% at 82% 112%,
+      color-mix(in oklab, var(--color-accent) 8%, transparent),
+      transparent 72%
+    );
+  opacity: 0.62;
+  pointer-events: none;
+}
 .dock-composer__surface:focus-within {
-  border-color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 46%, var(--color-line));
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 18px 32px -20px color-mix(in oklab, var(--color-bg-sunk) 94%, transparent),
+    4px 19px 32px -20px color-mix(in oklab, var(--color-accent) 64%, transparent);
 }
 .dock-composer__surface[data-voice-state="hold"],
 .dock-composer__surface[data-voice-state="auto"] {
-  border-color: var(--color-accent);
+  border-color: color-mix(in oklab, var(--color-accent) 44%, var(--color-line));
+}
+.dock-composer__surface[data-voice-state="auto"] {
+  border-color: color-mix(in oklab, var(--color-sage) 42%, var(--color-line));
 }
 .dock-composer__surface[data-voice-state="reconnect-disabled"] {
-  border-color: var(--color-warn);
+  border-color: color-mix(in oklab, var(--color-warn) 52%, var(--color-line));
+}
+.dock-composer__surface > :not(style) {
+  position: relative;
+  z-index: 1;
 }
 .dock-composer__draft {
   width: 100%;
-  min-height: var(--dock-target-size);
-  max-height: calc(var(--space-3xl) * 3 + var(--space-xs));
+  min-height: 52px;
+  max-height: 132px;
   display: block;
-  padding: var(--space-xs) var(--space-xs);
+  padding: var(--space-xs) 5px;
   overflow-y: auto;
   border: 0;
   outline: 0;
@@ -78,12 +122,14 @@ export const DOCK_STYLES = `
   field-sizing: content;
   background: transparent;
   color: var(--color-ink);
-  font: var(--font-size-base) / var(--line-height-relaxed) var(--font-ui);
-  transition: opacity var(--motion-feedback), transform var(--motion-state);
+  font: 16px / var(--line-height-normal) var(--font-ui);
+  transition: height 180ms cubic-bezier(.16, 1, .3, 1), opacity var(--motion-feedback), transform var(--motion-state), color var(--motion-feedback);
 }
-.dock-composer__draft:focus-visible {
-  outline: var(--dock-focus-width) solid var(--color-accent);
-  outline-offset: var(--space-xs);
+.snt-surface .dock-composer__draft:focus-visible {
+  border: 0;
+  outline: 0;
+  outline-offset: 0;
+  box-shadow: none;
 }
 .dock-composer__draft::placeholder {
   color: var(--color-ink-3);
@@ -91,59 +137,149 @@ export const DOCK_STYLES = `
 .dock-composer__draft--receded {
   opacity: 0.08;
   pointer-events: none;
-  transform: translateY(var(--space-xs));
+  transform: translateY(3px);
 }
 .dock-composer__actions {
   position: relative;
   z-index: 3;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-sm);
 }
 .dock-composer__grow {
-  flex: 1 1 var(--space-sm);
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.dock-composer__actions > :is(.dock-composer__attachment, .dock-composer__send, .icon-btn, .dock-composer__interrupt-button),
-.dock-composer__actions > .dock-composer__interrupt {
+.dock-composer__end-actions {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  transition: gap var(--motion-state);
+}
+.dock-composer__end-actions--held {
+  gap: 0;
+}
+.dock-composer-control {
+  --composer-key: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2));
+  position: relative;
+  width: var(--dock-target-size);
+  height: var(--dock-target-size);
   min-width: var(--dock-target-size);
   min-height: var(--dock-target-size);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(
+      ellipse 82% 105% at 50% 52%,
+      color-mix(in oklab, var(--composer-key) 78%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--composer-key) 90%, var(--color-bg-sunk)) 50%,
+      var(--composer-key) 100%
+    );
+  color: var(--color-ink);
+  box-shadow: var(--slate-shadow);
+  cursor: pointer;
+  transform: translateY(0);
+  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease, opacity var(--motion-feedback);
 }
-.dock-composer__attachment,
-.dock-composer__send {
+@media (hover: hover) and (pointer: fine) {
+  .dock-composer-control:hover:not(:disabled) {
+    border-color: transparent;
+    color: var(--color-ink);
+    box-shadow: var(--slate-shadow-hover);
+    transform: translateY(-1px);
+  }
+}
+.snt-surface .dock-composer-control:focus-visible {
+  outline: var(--dock-focus-width) solid var(--color-accent);
+  outline-offset: 3px;
+}
+.dock-composer-control:active:not(:disabled) {
+  box-shadow: var(--slate-shadow-pressed);
+  transform: translateY(1px);
+  transition-duration: 70ms;
+}
+.dock-composer-control:disabled {
+  --composer-key: color-mix(in oklab, var(--color-bg-elev) 92%, var(--color-ink-4));
+  border-color: color-mix(in oklab, var(--color-line-soft) 74%, var(--color-bg));
+  background: var(--slate-face-muted);
+  color: var(--color-ink-3);
+  box-shadow: var(--slate-shadow-disabled);
+  cursor: not-allowed;
+  opacity: 1;
+  transform: none;
+}
+.dock-composer-control--primary,
+.dock-composer__tts--enabled {
+  --composer-key: var(--color-accent);
+  color: var(--color-bg-sunk);
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 12px 18px -12px color-mix(in oklab, var(--color-accent) 66%, transparent);
+}
+.dock-composer__tts--enabled::after {
+  content: "";
+  position: absolute;
+  inset-block-start: var(--space-xs);
+  inset-inline-end: var(--space-xs);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-ink);
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+.dock-composer-control--stop {
+  --composer-key: color-mix(in oklab, var(--color-paper) 50%, var(--color-stop));
+  color: var(--color-ink);
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px color-mix(in oklab, var(--color-stop) 38%, var(--color-bg-sunk)),
+    0 12px 18px -12px color-mix(in oklab, var(--color-stop) 62%, transparent);
+}
+.dock-composer__interrupt {
   width: var(--dock-target-size);
   min-width: var(--dock-target-size);
   min-height: var(--dock-target-size);
-  padding: 0;
-}
-.dock-composer__attachment:disabled {
-  color: var(--color-ink-3);
-}
-.dock-composer__send {
-  --slate-base: var(--color-accent);
-}
-.dock-composer__send:disabled {
-  opacity: 0.45;
-}
-.dock-composer__interrupt {
   display: inline-flex;
-  min-width: var(--dock-target-size);
-  transition: opacity var(--motion-feedback), transform var(--motion-state), width var(--motion-state);
+  overflow: visible;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity var(--motion-feedback), transform var(--motion-state), width var(--motion-state), min-width var(--motion-state);
 }
 .dock-composer__interrupt--receded {
   width: 0;
   min-width: 0;
   overflow: hidden;
   opacity: 0;
-  transform: scale(0.8);
+  transform: translateY(var(--space-xs)) scale(0.82);
   pointer-events: none;
+}
+.dock-interrupt-button__glyph {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+}
+.dock-composer__surface[data-voice-state="hold"] .dock-composer__attachment,
+.dock-composer__surface[data-voice-state="hold"] .dock-composer__tts {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(var(--space-xs)) scale(0.86);
 }
 .dock-composer__connection {
   justify-self: start;
   padding: var(--space-xs) var(--space-md);
+  border: 1px solid color-mix(in oklab, var(--color-warn) 28%, var(--color-line-soft));
   border-radius: var(--radius-pill);
-  background: var(--color-accent-soft);
+  background: color-mix(in oklab, var(--color-accent-soft) 72%, var(--color-bg-sunk));
   color: var(--color-ink-2);
   font: var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
 }
@@ -152,107 +288,131 @@ export const DOCK_STYLES = `
   color: var(--color-bg-sunk);
 }
 
+.dock-composer__frame > .dock-task-shelf {
+  position: relative;
+  z-index: 1;
+  margin: 0 var(--space-lg) -1px;
+  padding: 7px 7px var(--space-sm);
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--color-line) 86%, var(--color-bg-sunk));
+  border-block-end: 0;
+  border-radius: 14px 14px 0 0;
+  background: color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-ink) 5%, transparent),
+    0 -9px 18px -17px color-mix(in oklab, var(--color-bg-sunk) 94%, transparent);
+}
+.dock-composer__frame > .dock-task-shelf::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-inline: -1px;
+  inset-block-end: -9px;
+  height: 10px;
+  border-inline: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-bg-sunk) 86%, var(--color-paper));
+  pointer-events: none;
+}
 .dock-task-shelf {
+  width: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  width: 100%;
   container-type: inline-size;
 }
 .dock-task-shelf__pills {
-  display: flex;
-  align-items: stretch;
-  flex-wrap: nowrap;
+  position: relative;
+  z-index: 1;
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
   overflow-x: auto;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.dock-task-shelf__pills::-webkit-scrollbar {
+  display: none;
 }
 .dock-task-pill {
-  --slate-base: var(--color-bg-elev);
   flex: 0 0 auto;
-  min-width: clamp(7rem, 42cqw, 12.5rem);
-  max-width: 12.5rem;
+  min-width: 0;
   min-height: var(--dock-target-size);
-  padding: var(--space-sm) var(--space-md);
-  border: 0;
-  border-inline-start: 1px solid var(--color-line-soft);
-  border-radius: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 var(--space-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-ink-2);
-  font: 600 var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
   box-shadow: none;
-  text-align: start;
-  transition: background var(--motion-feedback), color var(--motion-feedback);
+  font: 500 14px / var(--line-height-tight) var(--font-ui);
+  white-space: nowrap;
+  transition: background var(--motion-feedback), color var(--motion-feedback), border-color var(--motion-feedback), box-shadow var(--motion-feedback);
 }
-.dock-task-pill:first-child {
-  border-inline-start: 0;
+@media (hover: hover) and (pointer: fine) {
+  .dock-task-pill:hover {
+    background: color-mix(in oklab, var(--color-paper) 66%, var(--color-bg-sunk));
+    color: var(--color-ink);
+  }
 }
-.dock-task-pill:hover,
+.snt-surface .dock-task-pill:focus-visible {
+  outline: var(--dock-focus-width) solid var(--color-accent);
+  outline-offset: -1px;
+}
 .dock-task-pill[aria-expanded="true"] {
-  background: var(--color-accent-soft);
+  background: color-mix(in oklab, var(--color-paper) 79%, var(--color-bg-sunk));
+  border-color: color-mix(in oklab, var(--color-line) 88%, var(--color-bg-sunk));
   color: var(--color-ink);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent),
+    0 2px 0 color-mix(in oklab, var(--color-bg-sunk) 76%, var(--color-line)),
+    0 6px 10px -9px color-mix(in oklab, var(--color-bg-sunk) 92%, transparent);
 }
 .dock-task-pill__name {
   min-width: 0;
-  flex: 1 1 auto;
   overflow: hidden;
-  color: var(--color-ink);
-  font: var(--font-size-sm) / var(--line-height-tight) var(--font-mono);
+  color: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dock-task-pill__icon,
-.dock-task-pill__chevron {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-}
-.dock-task-pill__icon {
-  width: var(--space-lg);
-  height: var(--space-lg);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-sunk);
-  color: var(--color-ink-2);
-}
 .dock-task-pill__dot {
-  width: var(--space-xs);
-  height: var(--space-xs);
+  width: var(--space-sm);
+  height: var(--space-sm);
   flex: 0 0 auto;
-  border-radius: var(--radius-pill);
+  border-radius: 50%;
   background: var(--color-ink-4);
 }
 .dock-task-pill__dot--running {
-  border: var(--dock-focus-width) solid var(--color-accent);
-  border-inline-end-color: transparent;
-  background: transparent;
-  animation: dock-task-spin var(--motion-state) infinite;
+  background: var(--color-amber);
+  box-shadow: 0 0 0 var(--space-xs) color-mix(in oklab, var(--color-amber) 16%, transparent);
+  animation: dock-task-pulse 1.45s ease-in-out infinite;
 }
 .dock-task-pill__dot--done {
-  background: var(--color-ok);
+  background: var(--color-sage);
 }
 .dock-task-pill__dot--error {
   background: var(--color-stop);
-}
-.dock-task-pill__chevron {
-  color: var(--color-ink-4);
-  transition: transform var(--motion-feedback), color var(--motion-feedback);
-}
-.dock-task-pill[aria-expanded="true"] .dock-task-pill__chevron {
-  color: var(--color-accent);
-  transform: rotate(90deg);
+  box-shadow: 0 0 var(--space-sm) color-mix(in oklab, var(--color-stop) 48%, transparent);
 }
 .dock-task-shelf .tool-inline-detail {
-  padding: var(--space-md) var(--space-lg);
-  background: var(--color-accent-soft);
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: var(--space-xs);
+  margin-block-start: 7px;
+  padding: var(--space-md) 13px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--color-paper) 72%, var(--color-bg-sunk));
   color: var(--color-ink);
-  font: var(--font-size-sm) / var(--line-height-normal) var(--font-mono);
+  box-shadow: var(--plate-shadow);
 }
 .dock-task-shelf .tool-inline-detail__label {
   display: block;
-  margin-block-end: var(--space-xs);
   color: var(--color-ink-3);
-  font: 500 var(--font-size-xs) / var(--line-height-tight) var(--font-mono);
-  text-transform: uppercase;
+  font: 500 var(--font-size-sm) / var(--line-height-tight) var(--font-mono);
 }
 .dock-task-shelf .tool-inline-detail__preview {
   display: block;
@@ -262,19 +422,8 @@ export const DOCK_STYLES = `
   font: var(--font-size-sm) / var(--line-height-normal) var(--font-mono);
   white-space: pre-wrap;
 }
-@keyframes dock-task-spin {
-  to { transform: rotate(1turn); }
-}
-
-.dock-interrupt-button {
-  min-width: var(--dock-target-size);
-  min-height: var(--dock-target-size);
-}
-.dock-interrupt-button__glyph {
-  width: var(--space-sm);
-  height: var(--space-sm);
-  border-radius: var(--radius-sm);
-  background: currentColor;
+@keyframes dock-task-pulse {
+  50% { opacity: 0.55; transform: scale(0.72); }
 }
 
 .dock-suggestions {
@@ -304,7 +453,7 @@ export const DOCK_STYLES = `
   position: absolute;
   inset-block-end: calc(100% + var(--space-xs));
   inset-inline-end: 0;
-  z-index: 5;
+  z-index: 8;
   width: auto;
   height: var(--dock-target-size);
   min-width: var(--dock-target-size);
@@ -318,92 +467,181 @@ export const DOCK_STYLES = `
   background: var(--slate-face);
   color: var(--color-ink);
   box-shadow: var(--slate-shadow);
-  font: var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
+  font: 500 14px / var(--line-height-tight) var(--font-ui);
   white-space: nowrap;
 }
 .dock-voice-capture {
   --dock-target-size: 44px;
-  --dock-live-width: 14.875rem;
-  --dock-live-width-narrow: 12.375rem;
+  --dock-live-width: 238px;
+  --dock-live-width-narrow: 198px;
   --dock-live-height: 54px;
   --dock-focus-width: 2px;
-  --dock-voice-target: var(--dock-target-size);
   --dock-voice-width: var(--dock-live-width);
   position: relative;
-  width: var(--dock-voice-target);
-  height: var(--dock-voice-target);
+  isolation: isolate;
+  width: var(--dock-target-size);
+  height: var(--dock-target-size);
   min-width: 0;
-  flex: 0 1 var(--dock-voice-target);
+  max-width: 100%;
+  flex: 0 0 var(--dock-target-size);
   transition: width var(--motion-state), flex-basis var(--motion-state), height var(--motion-state);
 }
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) {
   width: min(var(--dock-voice-width), 100%);
   height: var(--dock-live-height);
-  flex-basis: min(var(--dock-voice-width), 100%);
+  flex-basis: var(--dock-voice-width);
+}
+.dock-voice-capture--auto::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: -5px;
+  border: 1px solid color-mix(in oklab, var(--color-sage) 52%, transparent);
+  border-radius: 19px 11px 19px 19px;
+  opacity: 0.72;
+  animation: dock-auto-orbit var(--motion-responding-cadence) infinite;
+  pointer-events: none;
+}
+@keyframes dock-auto-orbit {
+  50% { opacity: 0.34; transform: scale(1.04); }
 }
 .dock-voice-capture__primary {
+  --voice-key: color-mix(in oklab, var(--color-paper) 91%, var(--color-ink-2));
   position: absolute;
   inset-block-end: 0;
   inset-inline-end: 0;
-  z-index: 4;
-  width: var(--dock-voice-target);
-  height: var(--dock-voice-target);
-  min-width: var(--dock-voice-target);
-  min-height: var(--dock-voice-target);
+  z-index: 6;
+  width: var(--dock-target-size);
+  height: var(--dock-target-size);
+  min-width: var(--dock-target-size);
+  min-height: var(--dock-target-size);
+  display: block;
   overflow: hidden;
   padding: 0;
+  appearance: none;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--slate-face);
+  background:
+    radial-gradient(
+      ellipse 82% 105% at 50% 52%,
+      color-mix(in oklab, var(--voice-key) 78%, var(--color-bg-sunk)) 0%,
+      color-mix(in oklab, var(--voice-key) 90%, var(--color-bg-sunk)) 52%,
+      var(--voice-key) 100%
+    );
   color: var(--color-ink);
   box-shadow: var(--slate-shadow);
   cursor: pointer;
   touch-action: none;
-  transition: width var(--motion-state), height var(--motion-state), border-radius var(--motion-state), background var(--motion-feedback), box-shadow var(--motion-feedback);
+  user-select: none;
+  transform: translateY(0);
+  transition: width var(--motion-state), height var(--motion-state), border-radius var(--motion-state), background var(--motion-feedback), color var(--motion-feedback), box-shadow var(--motion-state), transform 90ms ease;
 }
-.dock-voice-capture__primary:focus-visible,
-.dock-voice-capture__choice:focus-visible {
+@media (hover: hover) and (pointer: fine) {
+  .dock-voice-capture__primary:hover:not(:disabled) {
+    box-shadow: var(--slate-shadow-hover);
+    transform: translateY(-1px);
+  }
+}
+.snt-surface .dock-voice-capture__primary:focus-visible,
+.snt-surface .dock-voice-capture__choice:focus-visible {
   outline: var(--dock-focus-width) solid var(--color-accent);
-  outline-offset: var(--space-xs);
+  outline-offset: 3px;
+}
+.dock-voice-capture__primary:active:not(:disabled) {
+  box-shadow: var(--slate-shadow-pressed);
+  transform: translateY(1px);
+  transition-duration: 70ms;
 }
 .dock-voice-capture__primary:disabled {
+  --voice-key: color-mix(in oklab, var(--color-bg-elev) 92%, var(--color-ink-4));
+  border-color: color-mix(in oklab, var(--color-line-soft) 74%, var(--color-bg));
+  background: var(--slate-face-muted);
+  color: var(--color-ink-4);
+  box-shadow: var(--slate-shadow-disabled);
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 1;
 }
 .dock-voice-capture[data-tone="error"] .dock-voice-capture__primary {
-  border-color: var(--color-stop);
-  color: var(--color-stop);
+  border-color: color-mix(in oklab, var(--color-stop) 72%, var(--color-line));
+  color: color-mix(in oklab, var(--color-stop) 72%, var(--color-ink));
+  box-shadow: var(--slate-shadow), 4px 12px 18px -14px color-mix(in oklab, var(--color-stop) 60%, transparent);
 }
-.dock-voice-capture[data-tone="disabled"] .dock-voice-capture__primary {
-  border-color: var(--color-line-soft);
-}
-.dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) .dock-voice-capture__primary {
+.dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--transitioning) .dock-voice-capture__primary {
+  --voice-key: color-mix(in oklab, var(--color-paper) 88%, var(--color-accent-soft));
   width: 100%;
   height: var(--dock-live-height);
-  border-radius: var(--radius-lg);
-  --slate-base: var(--color-paper);
-  background: var(--slate-face-hover);
+  border-radius: 18px 11px 11px 18px;
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 13px 22px -12px color-mix(in oklab, var(--color-bg-sunk) 92%, transparent),
+    4px 15px 24px -12px color-mix(in oklab, var(--color-accent) 68%, transparent);
 }
 .dock-voice-capture--auto .dock-voice-capture__primary {
-  --slate-base: var(--color-sage-soft);
+  --voice-key: color-mix(in oklab, var(--color-paper) 52%, var(--color-sage));
+  width: 100%;
+  height: var(--dock-live-height);
+  border-color: color-mix(in oklab, var(--color-sage) 28%, var(--color-line));
+  border-radius: 18px 10px 15px 18px;
+  color: var(--color-bg-sunk);
+  box-shadow:
+    var(--slate-top-light),
+    0 2px 0 -1px var(--color-bg-sunk),
+    0 11px 18px -11px color-mix(in oklab, var(--color-bg-sunk) 90%, transparent),
+    4px 14px 24px -13px color-mix(in oklab, var(--color-sage) 58%, transparent);
 }
 .dock-voice-capture__glyph {
   position: absolute;
+  z-index: 3;
   inset-block-start: 50%;
   inset-inline-start: 50%;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   transform: translate(-50%, -50%);
   transition: inset-inline-start var(--motion-state), transform var(--motion-state);
 }
+.dock-voice-capture__glyph svg {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+  transition: opacity 130ms ease, transform var(--motion-state);
+}
+.dock-voice-capture__glyph::after {
+  content: "";
+  position: absolute;
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: none;
+  opacity: 0;
+  transform: rotate(0) scale(0.4);
+  transition: opacity 120ms ease, width var(--motion-state), height var(--motion-state), border-radius var(--motion-state), transform var(--motion-state), box-shadow var(--motion-state);
+}
 .dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) .dock-voice-capture__glyph {
-  inset-inline-start: calc(100% - var(--space-lg));
+  inset-inline-start: calc(100% - 27px);
+}
+.dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--transitioning) .dock-voice-capture__glyph svg {
+  opacity: 0;
+  transform: rotate(-70deg) scale(0.28);
+}
+.dock-voice-capture:is(.dock-voice-capture--hold, .dock-voice-capture--transitioning) .dock-voice-capture__glyph::after {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+  box-shadow:
+    0 0 0 5px color-mix(in oklab, var(--color-accent) 13%, transparent),
+    0 0 15px color-mix(in oklab, var(--color-accent) 56%, transparent);
 }
 .dock-voice-capture__wave {
   position: absolute;
+  z-index: 2;
   inset-block-start: 50%;
-  inset-inline: var(--space-lg) var(--space-3xl);
-  height: var(--space-2xl);
+  inset-inline: 18px 55px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -411,74 +649,184 @@ export const DOCK_STYLES = `
   transform: translateY(-50%);
 }
 .dock-voice-capture__wave i {
-  width: var(--space-xs);
+  --dock-wave-rest: 0.34;
+  width: 3px;
   height: var(--space-lg);
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  transform: scaleY(0.35);
-  animation: dock-voice-wave var(--motion-responding-cadence) infinite alternate;
+  background: linear-gradient(180deg, var(--color-accent), color-mix(in oklab, var(--color-accent) 54%, var(--color-accent-soft)));
+  box-shadow: 0 0 var(--space-sm) -3px color-mix(in oklab, var(--color-accent) 58%, transparent);
+  transform: scaleY(var(--dock-wave-rest));
+  animation: dock-voice-wave 760ms ease-in-out infinite alternate;
+}
+.dock-voice-capture__wave i:nth-child(2n) {
+  --dock-wave-rest: 0.72;
+  animation-delay: -210ms;
+}
+.dock-voice-capture__wave i:nth-child(3n) {
+  --dock-wave-rest: 0.52;
+  animation-delay: -430ms;
+}
+.dock-voice-capture__wave i:nth-child(5n) {
+  --dock-wave-rest: 0.88;
+  animation-delay: -590ms;
 }
 .dock-voice-capture--auto .dock-voice-capture__wave i {
-  background: var(--color-sage);
+  background: linear-gradient(180deg, var(--color-sage), color-mix(in oklab, var(--color-sage) 58%, var(--color-bg-elev)));
+  box-shadow: 0 0 var(--space-sm) -3px color-mix(in oklab, var(--color-sage) 58%, transparent);
 }
 @keyframes dock-voice-wave {
-  to { transform: scaleY(1); opacity: 0.62; }
+  to { opacity: 0.62; transform: scaleY(1); }
 }
 .dock-voice-capture__fan {
+  --dock-seam-index: 2;
+  --dock-seam-color: var(--color-accent);
   position: absolute;
+  z-index: 4;
   inset-block-end: calc(100% - var(--space-sm));
   inset-inline-end: 0;
-  z-index: 3;
-  width: min(var(--dock-voice-width), 100%);
+  width: 100%;
   min-width: 0;
-  height: var(--dock-live-height);
+  height: 58px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(var(--space-md));
+  filter: drop-shadow(0 11px 10px color-mix(in oklab, var(--color-bg-sunk) 70%, transparent));
+  transform: perspective(420px) translateY(17px) rotateX(-74deg) scaleX(0.88);
   transform-origin: 50% 100%;
-  transition: opacity var(--motion-feedback), transform var(--motion-state), visibility var(--motion-state);
+  transform-style: preserve-3d;
+  transition: opacity 130ms ease, transform var(--motion-state), visibility 0s linear var(--motion-state);
+}
+.dock-voice-capture__fan[data-target="auto"] {
+  --dock-seam-index: 0;
+  --dock-seam-color: var(--color-sage);
+}
+.dock-voice-capture__fan[data-target="cancel"] {
+  --dock-seam-index: 1;
+  --dock-seam-color: var(--color-stop);
+}
+.dock-voice-capture__fan::before {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  inset-block-end: 1px;
+  inset-inline-start: calc((100% / 3) * var(--dock-seam-index) + var(--space-sm));
+  width: calc(100% / 3 - var(--space-lg));
+  height: 3px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, transparent, var(--dock-seam-color), transparent);
+  box-shadow: 0 0 var(--space-md) color-mix(in oklab, var(--dock-seam-color) 55%, transparent);
+  transition: inset-inline-start 210ms cubic-bezier(.16, 1, .3, 1);
+  pointer-events: none;
+}
+.dock-voice-capture__fan::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset-inline: 5px;
+  inset-block-end: 0;
+  height: 15px;
+  border-radius: var(--radius-sm) var(--radius-sm) 3px 3px;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-paper) 88%, var(--color-line)), color-mix(in oklab, var(--color-paper) 68%, var(--color-bg-sunk)));
+  box-shadow:
+    inset 0 2px 5px -3px color-mix(in oklab, var(--color-bg-sunk) 88%, transparent),
+    0 2px 0 -1px var(--color-bg-sunk);
+  pointer-events: none;
 }
 .dock-voice-capture__fan--open {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translateY(0);
-  transition-delay: 0s;
+  transform: perspective(420px) translateY(0) rotateX(0) scaleX(1);
+  transition: opacity 130ms ease, transform var(--motion-state), visibility 0s;
 }
 .dock-voice-capture__choice {
+  --voice-choice-key: color-mix(in oklab, var(--color-paper) 94%, var(--color-bg-elev));
+  position: relative;
+  z-index: 1;
   min-width: 0;
-  min-height: var(--dock-target-size);
+  min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-xs);
-  padding: 0 var(--space-xs);
-  border: 1px solid var(--color-line-soft);
-  border-radius: var(--radius-sm);
-  background: var(--slate-face-muted);
+  gap: 5px;
+  padding: 0 7px 7px;
+  appearance: none;
+  border: 0;
+  border-radius: 14px 14px 7px 7px;
+  background:
+    radial-gradient(
+      ellipse 90% 118% at 50% 58%,
+      color-mix(in oklab, var(--voice-choice-key) 74%, var(--color-bg-sunk)),
+      var(--voice-choice-key)
+    );
   color: var(--color-ink-2);
-  font: 600 var(--font-size-sm) / var(--line-height-tight) var(--font-ui);
-  box-shadow: var(--slate-shadow);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--color-ink) 8%, transparent),
+    inset -1px 0 0 color-mix(in oklab, var(--color-line) 72%, transparent);
+  font: 600 14px / var(--line-height-tight) var(--font-ui);
+  opacity: 0;
   cursor: pointer;
-  transition: transform var(--motion-feedback), background var(--motion-feedback), color var(--motion-feedback);
+  transform: translateY(16px) scaleY(0.72);
+  transform-origin: 50% 100%;
+  transition: opacity 120ms ease, transform var(--motion-state), color var(--motion-feedback), filter var(--motion-feedback), background var(--motion-feedback), box-shadow var(--motion-feedback);
 }
-.dock-voice-capture__choice + .dock-voice-capture__choice {
-  border-inline-start-color: var(--color-line);
+.dock-voice-capture__choice::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline: 17%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-ink) 14%, transparent), transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.dock-voice-capture__choice--auto {
+  --voice-choice-key: color-mix(in oklab, var(--color-paper) 82%, var(--color-sage-soft));
+  border-radius: 20px 11px 7px 16px;
+  color: color-mix(in oklab, var(--color-ink-2) 82%, var(--color-sage));
+  transition-delay: 0ms;
+}
+.dock-voice-capture__choice--cancel {
+  transition-delay: 34ms;
+}
+.dock-voice-capture__choice--send {
+  border-radius: 11px 20px 16px 7px;
+  transition-delay: 68ms;
+}
+.dock-voice-capture__fan--open .dock-voice-capture__choice {
+  opacity: 1;
+  transform: translateY(0) scaleY(1);
 }
 .dock-voice-capture__choice.is-selected {
-  background: var(--color-accent);
+  --voice-choice-key: var(--color-accent);
   color: var(--color-bg-sunk);
-  transform: translateY(calc(-1 * var(--space-xs)));
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-accent) 30%, var(--color-bg-sunk)));
+  transform: translateY(-5px) scale(1.015);
 }
 .dock-voice-capture__choice--auto.is-selected {
-  background: var(--color-sage);
+  --voice-choice-key: color-mix(in oklab, var(--color-sage) 78%, var(--color-paper));
+  color: var(--color-bg-sunk);
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-sage) 38%, var(--color-bg-sunk)));
 }
 .dock-voice-capture__choice--cancel.is-selected {
-  background: var(--color-stop);
+  --voice-choice-key: var(--color-stop);
   color: var(--color-ink);
+  filter: drop-shadow(0 8px 9px color-mix(in oklab, var(--color-stop) 34%, var(--color-bg-sunk)));
+}
+.dock-voice-capture__choice:active {
+  filter: none;
+  transform: translateY(1px) scale(0.985);
+  transition-duration: 70ms;
+}
+@media (hover: hover) and (pointer: fine) {
+  .dock-voice-capture__choice:hover:not(.is-selected) {
+    color: var(--color-ink);
+    filter: drop-shadow(0 7px 8px color-mix(in oklab, var(--color-bg-sunk) 72%, transparent));
+    transform: translateY(-4px) scale(1.012);
+  }
 }
 
 @media (max-width: 860px) {
@@ -488,28 +836,47 @@ export const DOCK_STYLES = `
 }
 @media (max-width: 480px) {
   .dock-composer {
-    padding-inline: var(--space-sm);
+    padding: var(--space-md) var(--space-sm) calc(var(--space-sm) + env(safe-area-inset-bottom));
   }
   .dock-composer__surface {
-    padding: var(--space-sm);
-    border-radius: var(--radius-md);
+    gap: 7px;
+    padding: 9px;
+    border-radius: 16px;
+  }
+  .dock-composer__surface::after {
+    border-radius: 15px;
+  }
+  .dock-composer__draft {
+    min-height: 42px;
+    max-height: 108px;
+    padding: 3px var(--space-xs);
+  }
+  .dock-composer__actions {
+    display: grid;
+    grid-template-columns: var(--dock-target-size) var(--dock-target-size) minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+  .dock-composer__end-actions {
+    gap: 6px;
+  }
+  .dock-composer__frame > .dock-task-shelf {
+    margin-inline: 10px;
+    padding-inline: 5px;
+  }
+  .dock-task-pill {
+    padding-inline: 10px;
+  }
+  .dock-task-shelf .tool-inline-detail {
+    max-height: min(30dvh, 260px);
+    padding: var(--space-md);
+    overflow-y: auto;
   }
   .dock-voice-capture {
     --dock-voice-width: var(--dock-live-width-narrow);
   }
-  .dock-task-shelf .tool-inline-detail {
-    padding: var(--space-sm) var(--space-md);
-  }
-  .dock-suggestions {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .dock-suggestions::-webkit-scrollbar {
-    display: none;
-  }
-  .dock-suggestions .snt-chip {
-    flex: 0 0 auto;
+  .dock-voice-capture__wave {
+    inset-inline: 15px 52px;
+    gap: 3px;
   }
 }
 @media (max-width: 300px) {
@@ -517,28 +884,61 @@ export const DOCK_STYLES = `
     display: none;
   }
   .dock-composer__actions {
+    display: flex;
+    flex-wrap: wrap;
     gap: var(--space-xs);
+  }
+  .dock-composer__end-actions {
+    max-width: 100%;
+  }
+  .dock-composer__actions:has(.dock-voice-capture--hold, .dock-voice-capture--auto, .dock-voice-capture--transitioning) .dock-composer__end-actions {
+    width: 100%;
+  }
+  .dock-voice-capture__fan {
+    height: 68px;
+  }
+  .dock-voice-capture__choice {
+    min-height: 60px;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--space-xs) 2px var(--space-sm);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .dock-composer__surface,
   .dock-composer__draft,
+  .dock-composer-control,
+  .dock-composer__end-actions,
   .dock-composer__interrupt,
   .dock-task-pill,
-  .dock-task-pill__chevron,
   .dock-voice-capture,
   .dock-voice-capture__primary,
   .dock-voice-capture__glyph,
+  .dock-voice-capture__glyph svg,
+  .dock-voice-capture__glyph::after,
   .dock-voice-capture__fan,
+  .dock-voice-capture__fan::before,
   .dock-voice-capture__choice {
     transition: none;
   }
   .dock-task-pill__dot--running,
+  .dock-voice-capture--auto::before,
   .dock-voice-capture__wave i {
     animation: none;
   }
   .dock-voice-capture__wave i {
-    transform: scaleY(0.62);
+    opacity: 0.82;
+    transform: scaleY(var(--dock-wave-rest));
+  }
+}
+@media (prefers-contrast: more) {
+  .dock-composer__surface,
+  .dock-composer__frame > .dock-task-shelf,
+  .dock-task-shelf .tool-inline-detail,
+  .dock-composer-control,
+  .dock-voice-capture__primary,
+  .dock-voice-capture__choice {
+    border-color: var(--color-ink-3);
   }
 }
 `;

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +39,37 @@ function ControlledComposer({ props }: { props: ChatComposerProps }): JSX.Elemen
   );
 }
 
+function mockRect(element: Element, left: number, top: number, width: number, height: number): void {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    toJSON: () => ({}),
+  } as DOMRect);
+}
+
+function firePointer(
+  element: Element,
+  type: "PointerDown" | "PointerMove" | "PointerUp",
+  init: { pointerId: number; clientX: number; clientY: number; button?: number },
+): void {
+  // happy-dom does not expose onpointer* properties, so Preact registers these
+  // listeners with the JSX casing rather than the browser's lowercase casing.
+  const event = createEvent(type, element, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    button: { value: init.button ?? 0 },
+    clientX: { value: init.clientX },
+    clientY: { value: init.clientY },
+    pointerId: { value: init.pointerId },
+  });
+  fireEvent(element, event);
+}
+
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -70,6 +101,21 @@ describe("ChatComposer semantic boundary", () => {
     expect(props.onValueChange).toHaveBeenLastCalledWith("");
     expect(document.activeElement).toBe(editor);
     expect(props.onCaptureIntent).not.toHaveBeenCalled();
+  });
+
+  it("lets the composer face own textarea focus and moves the caret to the draft end", () => {
+    const props = composerProps({ value: "draft text" });
+    render(<ChatComposer {...props} />);
+    const editor = screen.getByRole("textbox", { name: "Message Sentient" }) as HTMLTextAreaElement;
+    const surface = editor.closest(".dock-composer__surface") as HTMLElement;
+    editor.setSelectionRange(0, 0);
+
+    fireEvent.pointerDown(surface, { button: 0, pointerId: 3 });
+
+    expect(document.activeElement).toBe(editor);
+    expect(editor.parentElement).toBe(surface);
+    expect(editor.selectionStart).toBe(editor.value.length);
+    expect(editor.selectionEnd).toBe(editor.value.length);
   });
 
   it("keeps the draft usable across reconnect and capture permission failure", async () => {
@@ -105,6 +151,49 @@ describe("ChatComposer semantic boundary", () => {
 
     expect(props.onCaptureIntent).toHaveBeenNthCalledWith(1, { type: "start", mode: "hold" });
     expect(props.onCaptureIntent).toHaveBeenNthCalledWith(2, { type: "commit" });
+  });
+
+  it.each([
+    { label: "Auto", x: 140, terminal: "auto" },
+    { label: "Cancel", x: 220, terminal: "cancel" },
+    { label: "Send", x: 300, terminal: "commit" },
+  ] as const)("resolves a lower-pod drag through the $label horizontal region", async ({ label, x, terminal }) => {
+    const onCaptureIntent = vi.fn(async (_intent: CaptureIntent) => undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    const fan = document.querySelector(".dock-voice-capture__fan");
+    if (!fan) throw new Error("Voice target crown not found");
+    mockRect(fan, 100, 80, 240, 58);
+    mockRect(primary, 100, 130, 240, 54);
+
+    firePointer(primary, "PointerDown", { button: 0, pointerId: 9, clientX: 320, clientY: 160 });
+    await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: "start", mode: "hold" }));
+    firePointer(primary, "PointerMove", { pointerId: 9, clientX: x, clientY: 160 });
+    if (label !== "Send") await screen.findByText(`${label} selected.`);
+    firePointer(primary, "PointerUp", { pointerId: 9, clientX: x, clientY: 160 });
+
+    await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: terminal }));
+    expect(onCaptureIntent.mock.calls.map(([intent]) => intent)).toEqual([
+      { type: "start", mode: "hold" },
+      { type: terminal },
+    ]);
+  });
+
+  it("falls back to Send when a held pointer leaves the combined crown and pod", async () => {
+    const onCaptureIntent = vi.fn(async (_intent: CaptureIntent) => undefined);
+    render(<ChatComposer {...composerProps({ onCaptureIntent })} />);
+    const primary = screen.getByRole("button", { name: "Tap for Auto listening or hold to talk" });
+    const fan = document.querySelector(".dock-voice-capture__fan");
+    if (!fan) throw new Error("Voice target crown not found");
+    mockRect(fan, 100, 80, 240, 58);
+    mockRect(primary, 100, 130, 240, 54);
+
+    firePointer(primary, "PointerDown", { button: 0, pointerId: 10, clientX: 320, clientY: 160 });
+    await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: "start", mode: "hold" }));
+    firePointer(primary, "PointerMove", { pointerId: 10, clientX: 60, clientY: 160 });
+    firePointer(primary, "PointerUp", { pointerId: 10, clientX: 60, clientY: 160 });
+
+    await waitFor(() => expect(onCaptureIntent).toHaveBeenCalledWith({ type: "commit" }));
   });
 
   it("offers Hold Cancel and keeps foreground Interrupt independent", async () => {
@@ -301,7 +390,16 @@ describe("pure VoiceCapture presentation mapping", () => {
 });
 
 describe("dock foundation boundary", () => {
+  it("keeps textarea focus transparent and assigns emphasis to the composer surface", () => {
+    expect(DOCK_STYLES).toMatch(/\.dock-composer__surface:focus-within\s*{/);
+    expect(DOCK_STYLES).toMatch(/\.dock-composer__draft\s*{[^}]*field-sizing:\s*content;[^}]*background:\s*transparent;/s);
+    expect(DOCK_STYLES).toMatch(/\.snt-surface \.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*0;[^}]*box-shadow:\s*none;/s);
+    expect(DOCK_STYLES).not.toMatch(/\.dock-composer__draft:focus-visible\s*{[^}]*outline:\s*var\(/s);
+  });
+
   it("uses semantic foundation materials and responsive/reduced-motion rules", () => {
+    expect(DOCK_STYLES).toContain("max-width: 900px");
+    expect(DOCK_STYLES).toContain("--dock-target-size: 44px");
     expect(DOCK_STYLES).toContain("var(--slate-face)");
     expect(DOCK_STYLES).toContain("var(--slate-shadow)");
     expect(DOCK_STYLES).toContain("@media (max-width: 480px)");

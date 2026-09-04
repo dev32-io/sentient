@@ -13,8 +13,6 @@ import type { TaskListItem } from "@sentient/protocol";
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import { ToolInlineDetail } from "../chat/tool-inline-detail.tsx";
-import { ActionButton } from "../common/foundation.tsx";
-import { Icon } from "../common/icon.tsx";
 
 export interface ComposerTaskShelfProps {
   items: readonly TaskListItem[];
@@ -42,19 +40,12 @@ function shortToolName(name: string): string {
   return n.length > 0 ? n : name;
 }
 
-type ToolIconName = "lamp" | "music" | "globe" | "check" | "phone" | "spark" | "thermo" | "sliders" | "x";
-
-function iconForTool(toolName: string): ToolIconName {
-  const n = toolName.toLowerCase();
-  if (n.includes("light") || n.includes("scene")) return "lamp";
-  if (n.includes("music") || n.includes("play")) return "music";
-  if (n.includes("search") || n.includes("web")) return "globe";
-  if (n.includes("message") || n.includes("send")) return "phone";
-  if (n.includes("list") || n.includes("add")) return "check";
-  if (n.includes("thermostat")) return "thermo";
-  if (n.includes("configure") || n.includes("setting") || n.includes("preference")) return "sliders";
-  if (n.includes("cancel")) return "x";
-  return "spark";
+function displayToolName(name: string): string {
+  const words = shortToolName(name)
+    .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  return words.length > 0 ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : name;
 }
 
 interface ToolPillButtonProps {
@@ -65,29 +56,24 @@ interface ToolPillButtonProps {
 
 function ToolPillButton({ task, isOpen, onToggle }: ToolPillButtonProps): JSX.Element {
   return (
-    <ActionButton
-      variant="quiet"
-      className={`dock-task-pill ${statusClass(task.status)}`}
+    <button
+      type="button"
+      class={`dock-task-pill ${statusClass(task.status)}`}
       title={task.toolName}
-      ariaLabel={`Task ${shortToolName(task.toolName)}`}
-      expanded={isOpen}
+      aria-label={`Task ${shortToolName(task.toolName)}`}
+      aria-expanded={isOpen}
       onClick={() => onToggle(task.id)}
     >
-      <span class="dock-task-pill__icon" aria-hidden="true">
-        <Icon name={iconForTool(task.toolName)} size={14} />
-      </span>
-      <code class="dock-task-pill__name">{shortToolName(task.toolName)}</code>
       <span class={`dock-task-pill__dot dock-task-pill__dot--${task.status}`} aria-hidden="true" />
-      <span class="dock-task-pill__chevron" aria-hidden="true"><Icon name="chevron" size={10} /></span>
-    </ActionButton>
+      <span class="dock-task-pill__name">{displayToolName(task.toolName)}</span>
+    </button>
   );
 }
 
 /**
  * Owns its own `openId` — no bubble to coordinate an anchor with any more.
- * Detail renders ABOVE the pills (spec §4.9: "click pill to expand detail
- * upward") because the strip sits at the very top of the composer card; an
- * expansion has nowhere to grow but up.
+ * The shelf is joined above the composer. Its detail follows the selected
+ * pill row, so an anchored dock grows the combined surface upward.
  */
 export function ComposerTaskShelf({ items }: ComposerTaskShelfProps): JSX.Element | null {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -102,12 +88,12 @@ export function ComposerTaskShelf({ items }: ComposerTaskShelfProps): JSX.Elemen
 
   return (
     <div class="dock-task-shelf">
-      {open && <ToolInlineDetail item={open} direction="up" />}
       <div class="dock-task-shelf__pills">
         {items.map((t) => (
           <ToolPillButton key={t.id} task={t} isOpen={openId === t.id} onToggle={toggle} />
         ))}
       </div>
+      {open && <ToolInlineDetail item={open} direction="up" />}
     </div>
   );
 }

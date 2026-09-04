@@ -15,7 +15,7 @@ export function TaskDetail({ item, direction }: TaskDetailProps): JSX.Element {
   const text = item.argsPreview || "—";
   return (
     <div class={`tool-inline-detail tool-inline-detail--${direction}`}>
-      <span class="tool-inline-detail__label">arguments</span>
+      <span class="tool-inline-detail__label">Arguments</span>
       <code class="tool-inline-detail__preview">{text}</code>
     </div>
   );
