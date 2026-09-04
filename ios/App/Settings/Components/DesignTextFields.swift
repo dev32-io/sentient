@@ -92,7 +92,11 @@ struct DesignField: View {
         VStack(alignment: .leading, spacing: DesignFieldMetrics.labelGap) {
             if showsTitle {
                 Text(title)
-                    .font(DesignTextRole.label.font)
+                    .font(.custom(
+                        DesignTypographyAdapter.uiMediumFace,
+                        size: DesignMetrics.controlLabelSize,
+                        relativeTo: .footnote
+                    ))
                     // Native custom-font line metrics sit one half-point below
                     // the CSS label baseline at the reviewed scale.
                     .baselineOffset(0.5)

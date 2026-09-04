@@ -126,7 +126,7 @@ final class DesignFoundationV2Tests: XCTestCase {
         XCTAssertNotNil(UIFont(name: DesignTypographyAdapter.uiMediumFace, size: DesignMetrics.controlLabelSize))
         XCTAssertEqual(DesignTypographyAdapter.monoFamily, firstFamily(MobileData.Fonts_.shared.mono))
         XCTAssertEqual(DesignTextRole.title.family, DesignTypographyAdapter.displayFamily)
-        XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiMediumFace)
+        XCTAssertEqual(DesignTextRole.label.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.caption.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.body.family, DesignTypographyAdapter.uiFamily)
         XCTAssertEqual(DesignTextRole.telemetry.family, DesignTypographyAdapter.monoFamily)

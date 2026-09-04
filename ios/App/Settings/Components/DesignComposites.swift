@@ -952,6 +952,7 @@ struct DesignSettingsRow<Accessory: View>: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title)
                 .designText(.label)
+                .fontWeight(.medium)
                 .foregroundStyle(DuskColors.ink)
             if let detail {
                 Text(detail)
@@ -1076,6 +1077,7 @@ struct DesignCategoryRow: View {
                     .accessibilityHidden(true)
                 Text(title)
                     .designText(.label)
+                    .fontWeight(.medium)
                     .foregroundStyle(DuskColors.ink)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "chevron.right")
