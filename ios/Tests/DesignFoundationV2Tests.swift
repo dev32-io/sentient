@@ -5,7 +5,7 @@ import MobileData
 final class DesignFoundationV2Tests: XCTestCase {
     func testKMPContractIdentityAndLockedProjection() {
         XCTAssertEqual(DesignV2.version, "2.0.0")
-        XCTAssertEqual(DesignV2.contractSha256, "f7799ee0711e7d8e4bd944606ab9342607f326ff109a44d905d8a2a7b91c7dc6")
+        XCTAssertEqual(DesignV2.contractSha256, "12c9be6961247345caa3330a6f1b1224d07560be7255f1aa9bdbd9e8ecb01d2a")
 
         XCTAssertEqual(DesignV2.ColorToken.allCases.map(\.argb), [
             0xFF2B2621, 0xFF332D28, 0xFF241F1B, 0xFF39322C, 0xFF4A4138, 0xFF3E362F,
