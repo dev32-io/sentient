@@ -37,6 +37,7 @@ struct Composer: View {
     private let initiallyExpandedTaskId: String?
 
     @State private var draft: String
+    @State private var localHoldPresentationActive = false
     @FocusState private var inputFocused: Bool
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -70,7 +71,13 @@ struct Composer: View {
         _draft = State(initialValue: initialDraft)
     }
 
-    private var isHolding: Bool { talkMode == .hold }
+    private var voicePresentation: ComposerVoicePresentationState {
+        ComposerVoicePresentationState(
+            talkMode: talkMode,
+            localHoldActive: localHoldPresentationActive
+        )
+    }
+    private var isHolding: Bool { voicePresentation.isHolding }
     private var draftPresent: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -127,6 +134,7 @@ struct Composer: View {
                 voiceDisabled: voiceDisabled,
                 canInterrupt: canInterrupt,
                 onSend: sendDraft,
+                onHoldPresentationChanged: { localHoldPresentationActive = $0 },
                 onVoiceIntent: onVoiceIntent,
                 onTtsToggle: onTtsToggle,
                 onInterrupt: onInterrupt
@@ -245,6 +253,16 @@ struct ComposerActionState: Equatable {
     var showsVoiceCapture: Bool { !draftPresent || talkMode != .idle }
 }
 
+/// The child reports physical Hold presentation synchronously so the composer
+/// recedes siblings in the same layout pass. Shared `TalkMode` remains the
+/// semantic authority and keeps Hold active once its asynchronous update lands.
+struct ComposerVoicePresentationState: Equatable {
+    let talkMode: TalkMode
+    let localHoldActive: Bool
+
+    var isHolding: Bool { localHoldActive || talkMode == .hold }
+}
+
 private struct ComposerActions: View {
     let draftPresent: Bool
     let held: Bool
@@ -254,6 +272,7 @@ private struct ComposerActions: View {
     let voiceDisabled: Bool
     let canInterrupt: Bool
     let onSend: () -> Void
+    let onHoldPresentationChanged: (Bool) -> Void
     let onVoiceIntent: (VoiceCaptureIntent) -> Void
     let onTtsToggle: () -> Void
     let onInterrupt: () -> Void
@@ -272,7 +291,8 @@ private struct ComposerActions: View {
             HStack(spacing: ComposerGeometry.actionGap) {
                 if !held {
                     Button(action: {}) {
-                        Image(composerGlyph: .attachment)
+                        ComposerGlyphView(.attachment)
+                            .frame(width: 19, height: 19)
                     }
                     .buttonStyle(ComposerControlButtonStyle(tone: .quiet, size: ComposerGeometry.smallControlSize))
                     .disabled(true)
@@ -280,7 +300,8 @@ private struct ComposerActions: View {
                     .accessibilityIdentifier("chat-attach")
 
                     Button(action: onTtsToggle) {
-                        Image(composerGlyph: ttsEnabled ? .spokenResponsesOn : .spokenResponsesOff)
+                        ComposerGlyphView(ttsEnabled ? .spokenResponsesOn : .spokenResponsesOff)
+                            .frame(width: 19, height: 19)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: ttsEnabled ? .toggleOn : .quiet,
@@ -299,7 +320,8 @@ private struct ComposerActions: View {
             ) {
                 if canInterrupt && !held {
                     Button(action: onInterrupt) {
-                        Image(composerGlyph: .stopResponse)
+                        ComposerGlyphView(.stopResponse)
+                            .frame(width: 19, height: 19)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: .stop,
@@ -312,7 +334,8 @@ private struct ComposerActions: View {
 
                 if actions.showsSend {
                     Button(action: onSend) {
-                        Image(composerGlyph: .send)
+                        ComposerGlyphView(.send)
+                            .frame(width: 19, height: 19)
                     }
                     .buttonStyle(ComposerControlButtonStyle(
                         tone: .send,
@@ -330,6 +353,7 @@ private struct ComposerActions: View {
                         talkMode: talkMode,
                         levels: micLevels,
                         disabled: voiceDisabled,
+                        onHoldPresentationChanged: onHoldPresentationChanged,
                         onIntent: onVoiceIntent
                     )
                     .transition(.scale(scale: 0.88).combined(with: .opacity))
@@ -806,7 +830,6 @@ private struct ComposerControlButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: tone == .stop ? 13 : 19, weight: .semibold))
             .foregroundStyle(foregroundColor)
             .frame(width: size, height: size)
             .background { controlFace(pressed: configuration.isPressed) }

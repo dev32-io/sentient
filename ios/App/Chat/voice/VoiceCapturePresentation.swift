@@ -98,7 +98,6 @@ struct VoiceCaptureSurface: View {
             .overlay(alignment: .bottomTrailing) {
                 VoiceCaptureGestureHost(
                     geometry: gestureHostGeometry,
-                    expanded: presentation.isExpanded,
                     disabled: presentation.isDisabled,
                     gesture: captureGesture
                 )
@@ -137,17 +136,21 @@ private struct VoiceCapturePrimaryButton: View {
     var body: some View {
         Button(action: onActivate) {
             ZStack {
-                if presentation.showsWaveform {
-                    PttBigWave(
-                        levels: levels,
-                        tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
-                        animates: !reduceMotion
-                    )
-                    .frame(height: VoiceCaptureLayout.waveformHeight)
-                    .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
-                    .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
-                    .accessibilityHidden(true)
-                }
+                PttBigWave(
+                    levels: levels,
+                    tint: presentation.isAuto ? DuskColors.sage : DuskColors.accent,
+                    animates: !reduceMotion
+                )
+                .frame(height: VoiceCaptureLayout.waveformHeight)
+                .padding(.leading, VoiceCaptureLayout.waveformLeadingInset)
+                .padding(.trailing, VoiceCaptureLayout.glyphWellWidth)
+                .opacity(presentation.showsWaveform ? 1 : 0)
+                .scaleEffect(
+                    x: presentation.showsWaveform ? 1 : 0.25,
+                    y: 1,
+                    anchor: .trailing
+                )
+                .accessibilityHidden(true)
 
                 captureGlyph
                     .frame(maxWidth: .infinity, alignment: presentation.isExpanded ? .trailing : .center)
@@ -173,26 +176,39 @@ private struct VoiceCapturePrimaryButton: View {
         .accessibilityIdentifier("chat-mic")
     }
 
-    @ViewBuilder
     private var captureGlyph: some View {
-        if presentation.isHolding {
+        ZStack {
+            ComposerGlyphView(.microphone)
+                .frame(width: 20, height: 20)
+                .opacity(presentation.isExpanded ? 0 : 1)
+                .rotationEffect(.degrees(presentation.isExpanded ? -70 : 0))
+                .scaleEffect(presentation.isExpanded ? 0.28 : 1)
+
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(DuskColors.accent)
                 .frame(width: 11, height: 11)
-                .rotationEffect(.degrees(45))
-                .shadow(color: DuskColors.accent.opacity(0.56), radius: 7)
+                .rotationEffect(.degrees(presentation.isHolding ? 45 : 0))
+                .scaleEffect(presentation.isHolding ? 1 : 0.4)
+                .opacity(presentation.isHolding ? 1 : 0)
+                .shadow(
+                    color: DuskColors.accent.opacity(presentation.isHolding ? 0.56 : 0),
+                    radius: 7
+                )
                 .overlay {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .stroke(DuskColors.accent.opacity(0.2), lineWidth: 5)
+                        .stroke(
+                            DuskColors.accent.opacity(presentation.isHolding ? 0.2 : 0),
+                            lineWidth: 5
+                        )
                         .rotationEffect(.degrees(45))
                 }
-        } else if presentation.isAuto {
-            ComposerAutoGlyph()
+
+            ComposerGlyphView(.auto)
                 .frame(width: 20, height: 20)
-        } else {
-            Image(composerGlyph: .microphone)
-                .font(.system(size: 20, weight: .semibold))
+                .opacity(presentation.isAuto ? 1 : 0)
+                .scaleEffect(presentation.isAuto ? 1 : 0.4)
         }
+        .frame(width: 22, height: 22)
     }
 }
 
@@ -284,13 +300,10 @@ private struct VoiceCaptureTargetDeck: View {
 
     @ViewBuilder
     private func targetIcon(_ choice: VoiceCaptureTarget) -> some View {
-        if choice == .auto {
-            ComposerAutoGlyph()
-                .frame(width: 15, height: 15)
-        } else {
-            Image(composerGlyph: choice == .cancel ? .cancel : .send)
-                .font(.system(size: 15, weight: .semibold))
-        }
+        ComposerGlyphView(
+            choice == .auto ? .auto : choice == .cancel ? .cancel : .send
+        )
+        .frame(width: 15, height: 15)
     }
 
     private func targetLabel(_ choice: VoiceCaptureTarget) -> String {
@@ -332,6 +345,15 @@ private struct VoiceCaptureFailureNotice: View {
 }
 
 // MARK: - Purpose-built voice material
+
+enum VoicePodPressBehavior {
+    static func appliesPressedDepth(
+        presentation: VoiceCapturePresentationState,
+        pressed: Bool
+    ) -> Bool {
+        pressed && !presentation.isExpanded
+    }
+}
 
 enum VoiceCaptureLayout {
     static let compactIdleSize: CGFloat = 48
@@ -431,7 +453,10 @@ private struct VoicePodButtonStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed || physicallyPressed
+        let pressed = VoicePodPressBehavior.appliesPressedDepth(
+            presentation: presentation,
+            pressed: configuration.isPressed || physicallyPressed
+        )
 
         configuration.label
             .foregroundStyle(foregroundColor)

@@ -17,10 +17,10 @@ struct VoiceCaptureGesture {
     let onTerminate: (VoiceCaptureGestureTermination, VoiceCaptureGestureSample) -> Void
 }
 
-/// Fixed geometry for the UIKit gesture host. The host always covers the full
-/// crown-and-pod envelope; only its initial hit region changes between the idle
-/// button and expanded pod. This keeps the recognizer view's identity and
-/// bounds stable while a held touch changes the SwiftUI presentation.
+/// Fixed geometry relative to the idle button's trailing/bottom anchor. The
+/// UIKit host is exactly the visible idle button, while pod and crown bounds
+/// may extend outside it for window-space drag targeting. UIKit keeps the
+/// recognized touch after it leaves this stable view.
 struct VoiceCaptureGestureHostGeometry: Equatable, Sendable {
     let hostSize: CGSize
     let idleBounds: CGRect
@@ -39,36 +39,25 @@ struct VoiceCaptureGestureHostGeometry: Equatable, Sendable {
         let podSize = CGSize(width: max(0, podSize.width), height: max(0, podSize.height))
         let crownSize = CGSize(width: max(0, crownSize.width), height: max(0, crownSize.height))
         let overlap = min(max(0, seamOverlap), min(podSize.height, crownSize.height))
-        let width = max(podSize.width, crownSize.width)
-        let height = podSize.height + crownSize.height - overlap
         let logicalTrailingX: (CGFloat) -> CGFloat = { itemWidth in
-            rightToLeft ? 0 : width - itemWidth
+            rightToLeft ? 0 : idleSize - itemWidth
         }
 
-        hostSize = CGSize(width: width, height: height)
+        hostSize = CGSize(width: idleSize, height: idleSize)
+        idleBounds = CGRect(origin: .zero, size: hostSize)
         podBounds = CGRect(
             x: logicalTrailingX(podSize.width),
-            y: height - podSize.height,
+            y: idleSize - podSize.height,
             width: podSize.width,
             height: podSize.height
         )
         crownBounds = CGRect(
             x: logicalTrailingX(crownSize.width),
-            y: 0,
+            y: idleSize - podSize.height - crownSize.height + overlap,
             width: crownSize.width,
             height: crownSize.height
         )
-        idleBounds = CGRect(
-            x: logicalTrailingX(idleSize),
-            y: height - idleSize,
-            width: idleSize,
-            height: idleSize
-        )
         self.rightToLeft = rightToLeft
-    }
-
-    func initialHitBounds(expanded: Bool) -> CGRect {
-        expanded ? podBounds : idleBounds
     }
 
     /// Offset for a crown that SwiftUI initially bottom-aligns with the pod.
@@ -92,7 +81,6 @@ struct VoiceCaptureGestureHostGeometry: Equatable, Sendable {
 /// lose ownership when attached to the SwiftUI button that morphs and resizes.
 struct VoiceCaptureGestureHost: UIViewRepresentable {
     let geometry: VoiceCaptureGestureHostGeometry
-    let expanded: Bool
     let disabled: Bool
     let gesture: VoiceCaptureGesture
 
@@ -111,7 +99,6 @@ struct VoiceCaptureGestureHost: UIViewRepresentable {
 
     func updateUIView(_ view: VoiceCaptureGestureHostView, context: Context) {
         context.coordinator.update(gesture: gesture, geometry: geometry)
-        view.acceptedHitBounds = geometry.initialHitBounds(expanded: expanded)
         view.acceptsNewTouches = !disabled
     }
 
@@ -165,11 +152,10 @@ struct VoiceCaptureGestureHost: UIViewRepresentable {
 }
 
 final class VoiceCaptureGestureHostView: UIView {
-    var acceptedHitBounds: CGRect = .zero
     var acceptsNewTouches = true
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        acceptsNewTouches && acceptedHitBounds.contains(point)
+        acceptsNewTouches && bounds.contains(point)
     }
 }
 

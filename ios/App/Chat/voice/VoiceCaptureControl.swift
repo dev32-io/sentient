@@ -10,6 +10,7 @@ struct VoiceCaptureControl: View {
     let levels: [Float]
     let disabled: Bool
     var permission: VoiceCapturePermission = .live
+    let onHoldPresentationChanged: (Bool) -> Void
     let onIntent: (VoiceCaptureIntent) -> Void
 
     @State private var state: VoiceCaptureState = .idle
@@ -36,12 +37,14 @@ struct VoiceCaptureControl: View {
         levels: [Float],
         disabled: Bool,
         permission: VoiceCapturePermission = .live,
+        onHoldPresentationChanged: @escaping (Bool) -> Void,
         onIntent: @escaping (VoiceCaptureIntent) -> Void
     ) {
         self.talkMode = talkMode
         self.levels = levels
         self.disabled = disabled
         self.permission = permission
+        self.onHoldPresentationChanged = onHoldPresentationChanged
         self.onIntent = onIntent
         _state = State(initialValue: VoiceCaptureReducer.authority(talkMode, disabled: disabled))
         _captureNeedsCancellation = State(initialValue: talkMode != .idle && !disabled)
@@ -156,13 +159,13 @@ struct VoiceCaptureControl: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             announce("Listening. Send selected.")
         case .denied:
-            state = .denied
+            setPresentationState(.denied)
             announce("Microphone permission denied. Text input is still available.")
         case .undetermined:
-            state = .transitioning
+            setPresentationState(.transitioning)
             permission.request { granted in
                 Task { @MainActor in
-                    state = granted ? .idle : .denied
+                    setPresentationState(granted ? .idle : .denied)
                     announce(granted ? "Microphone ready. Hold again to talk." : "Microphone permission denied. Text input is still available.")
                 }
             }
@@ -228,7 +231,7 @@ struct VoiceCaptureControl: View {
     }
 
     private func apply(_ transition: VoiceCaptureTransition) {
-        state = transition.state
+        setPresentationState(transition.state)
         for intent in transition.intents {
             switch intent {
             case .holdStart, .enterAuto:
@@ -241,7 +244,7 @@ struct VoiceCaptureControl: View {
     }
 
     private func synchronize() {
-        state = VoiceCaptureReducer.authority(talkMode, disabled: disabled)
+        setPresentationState(VoiceCaptureReducer.authority(talkMode, disabled: disabled))
         captureNeedsCancellation = talkMode != .idle && !disabled
         if state == .idle || state == .disabled {
             gestureActive = false
@@ -261,8 +264,13 @@ struct VoiceCaptureControl: View {
             return
         }
         apply(transition)
-        if disabled { state = .disabled }
+        if disabled { setPresentationState(.disabled) }
         announce("Voice capture cancelled by the system.")
+    }
+
+    private func setPresentationState(_ next: VoiceCaptureState) {
+        state = next
+        onHoldPresentationChanged(next == .hold && !disabled)
     }
 
     private func announce(_ text: String) {
